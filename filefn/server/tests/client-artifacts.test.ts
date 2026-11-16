@@ -34,7 +34,7 @@ async function storedObjects(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1));
 }
 
-type Gate = { op: 'upload' | 'delete'; match: (key: string) => boolean; run: () => Promise<void> };
+type Gate = { op: 'upload' | 'close' | 'delete'; match: (key: string) => boolean; run: () => Promise<void> };
 
 /**
  * Storage whose server-side uploads can be switched off, or whose next upload
@@ -54,7 +54,7 @@ function controlledStorage(local: StorageAdapter) {
     proxyUploads: true,
     /** Fails every delete of a matching key while set. */
     failDeletes: null as ((key: string) => boolean) | null,
-    /** Holds the next server-side upload (or delete) whose key matches until `release` is called. */
+    /** Holds the next server-side upload (or its close, or a delete) whose key matches until `release` is called. */
     hold(match: (key: string) => boolean, op: Gate['op'] = 'upload') {
       let reached!: () => void;
       let release!: () => void;
@@ -82,7 +82,18 @@ function controlledStorage(local: StorageAdapter) {
         if (!control.proxyUploads) return undefined;
         return async (input: { key: string; target?: string; contentType?: string }) => {
           await pass('upload', input.key);
-          return target.openUploadStream!(input);
+          if (gate?.op !== 'close' || !gate.match(input.key)) return target.openUploadStream!(input);
+          // Held at its close, the object is published only then, as on R2.
+          const chunks: Uint8Array[] = [];
+          return new WritableStream<Uint8Array>({
+            write: (chunk) => { chunks.push(chunk); },
+            close: async () => {
+              await pass('close', input.key);
+              const inner = (await target.openUploadStream!(input)).getWriter();
+              for (const chunk of chunks) await inner.write(chunk);
+              await inner.close();
+            },
+          });
         };
       }
       if (property === 'deleteObject') {
@@ -445,6 +456,31 @@ describe('client-supplied processing artifacts', () => {
 
     expect(await app.artifacts()).toEqual([]);
     expect(await storedObjects(app.root)).toEqual(before);
+  });
+
+  it('refuses a streamed body longer or shorter than its Content-Length, storing and recording nothing', async () => {
+    const app = await createApp();
+    const before = await storedObjects(app.root);
+    // Chunks large enough that each write waits until local storage has the file open.
+    const chunk = new Uint8Array(128 * 1024);
+    const streamOf = (count: number) => new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < count; index += 1) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const attach = (count: number, contentLength?: number) => app.fileFn.services.processing.attachClientArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: streamOf(count), contentLength,
+    }, app.owner);
+    const declared = chunk.byteLength + 1;
+    await expect(attach(2, declared)).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST', message: expect.stringContaining('longer') });
+    await expect(attach(1, declared)).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST', message: expect.stringContaining('shorter') });
+    expect(await app.artifacts()).toEqual([]);
+    expect(await storedObjects(app.root)).toEqual(before);
+    expect(await app.displacedRecords()).toEqual([]);
+
+    // A stream with no declared length is still stored as it comes.
+    expect((await attach(2)).size).toBe(2 * chunk.byteLength);
   });
 
   it('refuses an oversized Blob by its size and streams an accepted one, never copying it whole', async () => {
@@ -1209,6 +1245,97 @@ describe('client-supplied processing artifacts', () => {
       expect(await clientObjectsOf(app.root)).toEqual([]);
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
       expect(await app.displacedRecords()).toEqual([]);
+    });
+
+    it("keeps an upload's record while a store it gave up on at its deadline may still publish, through sweeps and an interruption", async () => {
+      const app = await createApp();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'), 'close');
+      const outcome = app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner).then(() => 'attached', (error: unknown) => error);
+      await held.reached;
+      // The close is still pending at the deadline, so the upload gives up on it.
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 1);
+      expect(await Promise.race([outcome, Promise.resolve('still storing')])).toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
+      await app.clientFor('owner').deleteFile(app.fileId);
+      // Days later the close is still pending, and sweeps keep the record.
+      await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+
+      // The close then publishes the object, and the upload's cleanup of it fails, as when its worker is evicted.
+      let failedDeletes = 0;
+      app.databaseControl.down = true;
+      app.storageControl.failDeletes = (key) => key.includes('.client-artifacts/') && ++failedDeletes > 0;
+      held.release();
+      await vi.waitFor(() => expect(failedDeletes).toBe(1));
+      app.databaseControl.down = false;
+      app.storageControl.failDeletes = null;
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
+      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+
+      // Once nothing holds the record any more, a sweep deletes the object and retires it.
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
+    describe('a server object a client upload displaced, after the policy target changed', () => {
+      /** A file on R2 artifact storage whose server thumbnail a client upload displaced. */
+      async function displacedOnR2(processor: Processor) {
+        const app = await createApp({ processors: [processor], artifactsOnR2: true });
+        await app.drainJobs();
+        await app.fileFn.services.processing.attachClientArtifact({
+          fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+        }, app.owner);
+        const serverSmall = [...app.bucket.objects.keys()].find((key) => key.endsWith('thumb-small.jpg'))!;
+        expect(serverSmall).toBeDefined();
+        // Artifacts of the policy now go to the default target.
+        delete app.photoPolicy.artifactStorageTarget;
+        return { app, serverSmall };
+      }
+
+      it('is deleted from the target it was stored in when the file is deleted', async () => {
+        const { app, serverSmall } = await displacedOnR2(thumbnailProcessor([]));
+        await app.clientFor('owner').deleteFile(app.fileId);
+        expect(app.bucket.objects.has(serverSmall)).toBe(false);
+        expect((await app.displacedRecords()).map((record) => record.storageKey)).not.toContain(serverSmall);
+      });
+
+      it('keeps its record when that delete fails', async () => {
+        const { app, serverSmall } = await displacedOnR2(thumbnailProcessor([]));
+        app.storageControl.failDeletes = (key) => key === serverSmall;
+        await app.clientFor('owner').deleteFile(app.fileId);
+        expect(app.bucket.objects.has(serverSmall)).toBe(true);
+        expect(await app.displacedRecords()).toContainEqual(expect.objectContaining({
+          storageKey: serverSmall, metadata: expect.objectContaining({ processing: expect.objectContaining({ storageTarget: 'r2' }) }),
+        }));
+      });
+
+      it("is kept while another file's row names the same key there", async () => {
+        const sharedKey = 'shared/thumb-small.jpg';
+        const { app } = await displacedOnR2({
+          name: 'shared-thumbnail',
+          supportedMimeTypes: ['image/png'],
+          async process() {
+            return { success: true, artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey: sharedKey }] };
+          },
+        });
+        // Another file's processing stored the same key on R2 before the policy changed.
+        app.photoPolicy.artifactStorageTarget = 'r2';
+        const other = await app.uploadPhoto();
+        await app.drainJobs();
+        delete app.photoPolicy.artifactStorageTarget;
+
+        await app.clientFor('owner').deleteFile(app.fileId);
+        expect(app.bucket.objects.has(sharedKey)).toBe(true);
+        expect((await app.displacedRecords()).map((record) => record.storageKey)).not.toContain(sharedKey);
+        expect((await app.fileFn.services.processing.listArtifactsForFile(other.fileId, app.owner)).map((a) => a.storageKey))
+          .toContain(sharedKey);
+      });
     });
 
     it('keeps the record of a replaced client object whose deletes failed while its file was deleted', async () => {

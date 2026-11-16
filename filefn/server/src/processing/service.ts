@@ -158,10 +158,12 @@ export const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
  * Kind of the `fileArtifacts` rows that record a client upload's own object
  * from before it is written until a row names it or it is deleted. An upload
  * lives at most `CLIENT_ARTIFACT_UPLOAD_MS` from before its record and
- * writes or commits nothing after that, so besides the upload itself only
- * `cleanupOrphanedArtifacts` removes one, once its version is gone and that
- * lifetime and a grace period are over; file and version cleanup leave them
- * in place.
+ * starts or waits for no write and commits nothing after that, so besides
+ * the upload itself only `cleanupOrphanedArtifacts` removes one, once its
+ * version is gone and that lifetime and a grace period are over, counted
+ * from the record's last renewal while a store the upload gave up on was
+ * still under way (see `holdUntilSettled`); file and version cleanup leave
+ * them in place.
  */
 export const UPLOAD_INTENT_KIND = 'filefn.upload-intent';
 
@@ -398,6 +400,12 @@ const SIGNED_SERVER_UPLOAD_TTL_SECONDS = 300;
 const CLIENT_ARTIFACT_UPLOAD_MS = 30 * 60 * 1000;
 /** How long after an upload's lifetime a sweep still leaves its record alone, for storage writes already in flight. */
 const CLIENT_ARTIFACT_RECORD_GRACE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How often an upload renews the record of an object whose store it gave up
+ * on while that store is still under way, well within the grace period, so a
+ * sweep never retires it while that store may still publish the object.
+ */
+const CLIENT_ARTIFACT_HOLD_RENEW_MS = 60 * 60 * 1000;
 
 interface StoredObject {
   key: string;
@@ -949,10 +957,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
   /**
    * Stores a client body in a new object, refusing it once it passes
-   * `maxBytes` or when it is empty, without holding it in memory whole, and
-   * writing nothing past `deadline`. The caller has recorded the object
-   * before (see `attachClientArtifact`) and deletes whatever a refused or
-   * failed upload wrote.
+   * `maxBytes`, when it is empty, or when it is longer or shorter than a
+   * declared length, without holding it in memory whole. No write or close
+   * is started past `deadline`, and none is waited for past it: the writer
+   * is aborted and the store refused as expired. A close that was already
+   * under way may still publish the object after that, so `onAbandon` gets a
+   * promise that settles once the stream has. The caller has recorded the
+   * object before (see `attachClientArtifact`) and deletes whatever a refused
+   * or failed upload wrote.
    */
   async function storeBounded(
     body: NonNullable<ClientArtifactUpload['body']>,
@@ -961,6 +973,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     maxBytes: number,
     declaredLength: number | undefined,
     deadline: number,
+    onAbandon: (settled: Promise<unknown>) => void,
   ): Promise<number> {
     const beforeDeadline = () => {
       if (Date.now() > deadline) throw errors.uploadExpired();
@@ -969,6 +982,25 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     // The stream is opened only for a first chunk within the limit, so a body
     // refused at once leaves no object half-created behind.
     let writer: WritableStreamDefaultWriter | null = null;
+    let abandoned = false;
+    const untilDeadline = async <T>(operation: Promise<T>): Promise<T> => {
+      const expired = Symbol('expired');
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        operation,
+        new Promise<typeof expired>((resolve) => {
+          timer = setTimeout(() => resolve(expired), Math.max(0, deadline - Date.now()));
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (outcome !== expired) return outcome as T;
+      abandoned = true;
+      const settled = (writer ? writer.closed : operation).then(() => undefined, () => undefined);
+      operation.catch(() => undefined);
+      onAbandon(settled);
+      throw errors.uploadExpired();
+    };
+    const lengthMismatch = (relation: 'longer' | 'shorter') =>
+      errors.invalidRequest(`Artifact body is ${relation} than its Content-Length`, { contentLength: declaredLength });
     try {
       if (mode === 'signed') {
         return await putSignedBounded(body, object, kind, maxBytes, declaredLength, deadline);
@@ -976,21 +1008,26 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       let size = 0;
       for await (const chunk of bodyChunks(body)) {
         size += chunk.byteLength;
+        if (declaredLength !== undefined && size > declaredLength) throw lengthMismatch('longer');
         if (size > maxBytes) {
           throw errors.artifactTooLarge(kind, maxBytes);
         }
-        writer ??= (await storage.openUploadStream!(object)).getWriter();
         beforeDeadline();
-        await writer.write(chunk);
+        writer ??= (await untilDeadline(storage.openUploadStream!(object))).getWriter();
+        beforeDeadline();
+        await untilDeadline(writer.write(chunk));
       }
       if (size === 0) {
         throw errors.invalidRequest('Artifact body is empty');
       }
+      if (declaredLength !== undefined && size < declaredLength) throw lengthMismatch('shorter');
       beforeDeadline();
-      await writer!.close();
+      await untilDeadline(writer!.close());
       return size;
     } catch (error) {
-      await writer?.abort(error).catch(() => undefined);
+      // An abort waits for a write or close under way, so an abandoned one is not waited for.
+      const aborted = writer?.abort(error).catch(() => undefined);
+      if (!abandoned) await aborted;
       throw error;
     }
   }
@@ -1091,6 +1128,38 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
     if (row?.storageKey === object.storageKey) return;
     await discardDisplacedObject(object, target, 'intent');
+  }
+
+  /**
+   * Keeps an upload's own record of `object` while a store it gave up on is
+   * still under way, renewing it (see `CLIENT_ARTIFACT_HOLD_RENEW_MS`) until
+   * `settled`, and then deletes the object as `discardDisplacedObject` does.
+   * Until then the store may publish the object at any moment, so the record
+   * stays whatever else fails; if this process dies, its store dies with it,
+   * and the sweep retires the record once the grace period after its last
+   * renewal is over.
+   */
+  async function holdUntilSettled(object: DisplacedObject, target: string, settled: Promise<unknown>): Promise<void> {
+    const renew = async () => {
+      try {
+        const id = await journalDisplaced(object, target, 'intent');
+        await db.updateMany({
+          model: 'fileArtifacts',
+          where: [{ field: 'artifactId', operator: 'eq', value: id }],
+          data: { metadata: { processing: { source: 'client', storageTarget: target, heldAt: new Date().toISOString() } } },
+          namespace,
+        });
+      } catch (error) {
+        logger?.warn('client artifact upload record not renewed', { fileId: object.fileId, versionId: object.versionId, error: errorMessage(error) });
+      }
+    };
+    await renew();
+    const timer = setInterval(() => void renew(), CLIENT_ARTIFACT_HOLD_RENEW_MS);
+    (timer as { unref?: () => void }).unref?.();
+    void settled.then(async () => {
+      clearInterval(timer);
+      await discardDisplacedObject(object, target, 'intent');
+    });
   }
 
   /**
@@ -1792,6 +1861,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       // interrupted attempt leaves behind stays findable by cleanup.
       const intentId = await journalDisplaced(ownObject, target, 'intent');
       let size: number;
+      let abandonedStore: Promise<unknown> | undefined;
       try {
         size = await storeBounded(
           upload.body,
@@ -1800,9 +1870,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           rule.maxSizeBytes,
           upload.contentLength,
           deadline,
+          (settled) => { abandonedStore = settled; },
         );
       } catch (error) {
-        await discardDisplacedObject(ownObject, target, 'intent');
+        if (abandonedStore) {
+          await holdUntilSettled(ownObject, target, abandonedStore);
+        } else {
+          await discardDisplacedObject(ownObject, target, 'intent');
+        }
         throw error;
       }
 
@@ -1904,11 +1979,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
      * records that kept them (see `DISPLACED_OBJECT_KIND`,
      * `UPLOAD_INTENT_KIND`), each only after its delete is confirmed: every
      * displaced object, and the object of an upload once its lifetime and a
-     * grace period are over. A client object's key is unique to its upload,
-     * so nothing else can name or write it, and a row of a version that is
-     * gone is never served. A server key's record is left to file and
-     * version cleanup, which check references before deleting and retry: a
-     * processor of another file may publish the same key at any moment. A
+     * grace period after the record's last renewal are over. A client
+     * object's key is unique to its upload, so nothing else can name or
+     * write it, and a row of a version that is gone is never served. A server
+     * key's record is left alone: file and version cleanup delete its object
+     * after a reference check and keep the record of one they could not
+     * delete, while a processor of another file may publish the same key at
+     * any moment, so this sweep, which runs on its own, never deletes it. A
      * failed delete keeps its record for the next run. `deletedObjects`
      * counts confirmed deletes. Call it from a scheduled job; FileFn does
      * not run it on its own.
@@ -1929,8 +2006,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           namespace,
         });
         const live = await findLiveVersionIds(records);
-        const expired = (record: FileArtifactRecord) =>
-          record.kind === UPLOAD_INTENT_KIND && new Date(record.createdAt).getTime() < expiredBefore;
+        // An upload renews the record while a store it gave up on may still publish.
+        const expired = (record: FileArtifactRecord) => {
+          const heldAt = (record.metadata?.processing as { heldAt?: unknown } | undefined)?.heldAt;
+          const since = Math.max(new Date(record.createdAt).getTime(), typeof heldAt === 'string' ? new Date(heldAt).getTime() : 0);
+          return record.kind === UPLOAD_INTENT_KIND && since < expiredBefore;
+        };
         for (const record of records) {
           const intent = record.kind === UPLOAD_INTENT_KIND;
           const due = artifactSourceOf(record) === 'client' && !live.has(record.versionId) && (!intent || expired(record));

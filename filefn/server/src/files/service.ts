@@ -789,13 +789,19 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // A client object, and a server object a row no longer names, is
+      // deleted where its row recorded storing it; a server artifact row's
+      // object is where reads find it, by policy. The reference check below
+      // counts both places for every other row, so a shared server key is
+      // kept wherever another row may still read it.
+      const refOf = (artifact: FileArtifactRecord) => {
+        const recorded = artifactSourceOf(artifact) === 'client' || artifact.kind === DISPLACED_OBJECT_KIND;
+        return storageRef((recorded ? recordedStorageTarget(artifact) : undefined) ?? artifactStorageTarget, artifact.storageKey);
+      };
       const artifactStorageRefs = new Set<string>();
       for (const artifact of artifacts) {
         if (artifact.kind !== PROCESSING_RUN_KIND) {
-          // A client object is deleted where it was stored. A server key may be
-          // shared, and the reference check below resolves other rows by policy.
-          const target = artifactSourceOf(artifact) === 'client' ? recordedStorageTarget(artifact) : undefined;
-          artifactStorageRefs.add(storageRef(target ?? artifactStorageTarget, artifact.storageKey));
+          artifactStorageRefs.add(refOf(artifact));
         }
       }
 
@@ -809,7 +815,8 @@ export function createFileService(config: FileServiceConfig) {
       // stays until `cleanupOrphanedArtifacts` confirms its delete, whatever
       // happens to the deletes below or to a concurrent upload's: each client
       // artifact row becomes such a record, and upload and displaced-object
-      // records of client objects stay. A server key's record goes with the file.
+      // records of client objects stay. A displaced server object's record
+      // goes once its object is deleted or another row still names it.
       const clientRowIds = artifacts
         .filter((artifact) => artifactSourceOf(artifact) === 'client' && !RECORD_KINDS.includes(artifact.kind))
         .map((artifact) => artifact.artifactId);
@@ -829,17 +836,6 @@ export function createFileService(config: FileServiceConfig) {
         ],
         namespace,
       });
-      const serverRecordIds = artifacts
-        .filter((artifact) => artifact.kind === DISPLACED_OBJECT_KIND && artifactSourceOf(artifact) !== 'client')
-        .map((artifact) => artifact.artifactId);
-      if (serverRecordIds.length > 0) {
-        await db.deleteMany({
-          model: 'fileArtifacts',
-          where: [{ field: 'artifactId', operator: 'in', value: serverRecordIds }],
-          namespace,
-        });
-      }
-
       await db.deleteMany({
         model: 'uploadSessions',
         where: openSessionsWhere,
@@ -852,10 +848,23 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      const settledRefs = new Set<string>();
       for (const ref of artifactStorageRefs) {
-        if (!artifactRefsReferencedElsewhere.has(ref)) {
-          await deleteObjectBestEffort(ref);
+        if (artifactRefsReferencedElsewhere.has(ref) || (await deleteObjectBestEffort(ref))) {
+          settledRefs.add(ref);
         }
+      }
+      // A failed delete keeps the record, the only locator of that object left.
+      const serverRecordIds = artifacts
+        .filter((artifact) => artifact.kind === DISPLACED_OBJECT_KIND && artifactSourceOf(artifact) !== 'client')
+        .filter((artifact) => settledRefs.has(refOf(artifact)))
+        .map((artifact) => artifact.artifactId);
+      if (serverRecordIds.length > 0) {
+        await db.deleteMany({
+          model: 'fileArtifacts',
+          where: [{ field: 'artifactId', operator: 'in', value: serverRecordIds }],
+          namespace,
+        });
       }
 
       events.emit('file:deleted', createFileDeletedEvent({

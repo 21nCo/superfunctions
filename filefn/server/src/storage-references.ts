@@ -1,6 +1,6 @@
 import type { Adapter } from '@superfunctions/db';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from './policies.js';
-import { PROCESSING_RUN_KIND } from './processing/service.js';
+import { PROCESSING_RUN_KIND, recordedStorageTarget } from './processing/service.js';
 
 /**
  * One stored object: the same key in two storage targets is two objects, so
@@ -25,7 +25,9 @@ export interface StorageReferenceLookup {
  * Returns the refs among `candidates` that a `fileVersions` or `fileArtifacts`
  * row still references; a processing run row stores no object and references
  * nothing. Each row's target comes from its file's policy: the storage target
- * for a version, the artifact storage target for an artifact.
+ * for a version, the artifact storage target for an artifact. An artifact row
+ * that recorded another target references the object there too, since the
+ * policy may have changed since it was stored.
  * Rows of the `exclude` file are ignored; with a `versionId`, only that
  * version's rows are.
  */
@@ -67,18 +69,23 @@ export async function findReferencedStorageRefs(
     }
   }
 
-  const allArtifacts = await db.findMany<{ fileId: string; versionId: string; kind: string; storageKey: string }>({
+  const allArtifacts = await db.findMany<{
+    fileId: string; versionId: string; kind: string; storageKey: string; metadata?: Record<string, unknown>;
+  }>({
     model: 'fileArtifacts',
     where: [],
-    select: ['fileId', 'versionId', 'kind', 'storageKey'],
+    select: ['fileId', 'versionId', 'kind', 'storageKey', 'metadata'],
     namespace,
   });
   for (const artifact of allArtifacts) {
     // A processing run row stores no object; its key is a placeholder.
-    if (artifact.kind === PROCESSING_RUN_KIND) continue;
-    const ref = storageRef(resolveArtifactStorageTarget(policyFor(artifact.fileId)), artifact.storageKey);
-    if (!isExcluded(artifact) && candidates.has(ref)) {
-      referenced.add(ref);
+    if (artifact.kind === PROCESSING_RUN_KIND || isExcluded(artifact)) continue;
+    const targets = [resolveArtifactStorageTarget(policyFor(artifact.fileId)), recordedStorageTarget(artifact)];
+    for (const target of targets) {
+      const ref = target === undefined ? '' : storageRef(target, artifact.storageKey);
+      if (candidates.has(ref)) {
+        referenced.add(ref);
+      }
     }
   }
 
