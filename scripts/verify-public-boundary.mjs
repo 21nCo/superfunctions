@@ -5,20 +5,23 @@
 //   public-release     every release-packages.json entry and every Python project is public-owned: its slug or
 //                      project is listed as public and its path lies under a listed top-level directory.
 //   workspace-package  every root workspace package has a name, the name belongs to exactly one workspace, and its
-//                      directory lies under a listed top-level directory.
-//   fn-dependency      no source file imports, and no package.json depends on, a `*fn` package (`@<name>fn/<pkg>` or
-//                      bare `<name>fn`) that is neither a public workspace package nor pinned in
-//                      scripts/public-boundary.allow.json.
+//                      directory lies under a listed top-level directory; no tracked symlink or submodule at a
+//                      workspace match or an ancestor of one lets npm read a package this check does not inventory.
+//   fn-dependency      no source file imports, and no package.json depends on (including npm aliases in
+//                      dependency fields and overrides), a `*fn` package (`@<name>fn/<pkg>` or bare `<name>fn`) that
+//                      is neither a public workspace package nor pinned in scripts/public-boundary.allow.json.
 // Every tracked path counts, including symlinks and submodules (gitlinks); a symlinked file is read through its link
 // when it resolves to a regular file inside the repository, and is otherwise a finding, as is a source file that does
 // not parse. Imports are read from each file's syntax tree (TypeScript for JS/TS modules, svelte/compiler for
 // .svelte, parse5 for .html, micromark's MDX extension for .mdx), so comments, strings, Markdown prose and fenced
-// code are not checked. Python files are read with Python's ast module: an absolute `import <name>fn` or
-// `from <name>fn import` must name a public Python project or an allowed package.
+// code are not checked; the module loader calls read are listed under "Module loaders" below. Python files are read
+// with Python's ast module: an absolute `import <name>fn`, `from <name>fn import`, or a literal
+// `importlib.import_module("<name>fn")` / `import_module(...)` / `__import__(...)` must name a public Python
+// project or an allowed package.
 // Usage: node scripts/verify-public-boundary.mjs [--root <checkout>]
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OwnersError, PUBLIC_MANIFEST, REPO_ROOT, createOwners, readManifest } from "./owners.mjs";
@@ -199,6 +202,16 @@ export function matchesWorkspace(pattern, directory) {
   return patternSegments.length === segments.length && patternSegments.every((segment, index) => segmentPattern(segment).test(segments[index]));
 }
 
+/**
+ * True when a directory is a workspace match of a pattern or an ancestor of one: it matches the pattern's first
+ * segments (all of them, or fewer when the pattern goes deeper). npm expands a pattern through such a directory.
+ */
+export function reachesWorkspace(pattern, directory) {
+  const patternSegments = pattern.split("/");
+  const segments = directory.split("/");
+  return segments.length <= patternSegments.length && segments.every((segment, index) => segmentPattern(patternSegments[index]).test(segment));
+}
+
 /** Workspace package directories: directories of tracked package.json files (outside node_modules) a pattern matches. */
 export function workspaceDirectories(patterns, files) {
   return files
@@ -281,15 +294,135 @@ function scriptKind(ts, extension) {
   }
 }
 
-function isRequireCallee(ts, node) {
-  if (ts.isIdentifier(node)) return node.text === "require";
-  return ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require" && node.name.text === "resolve";
+// Module loaders (the complete set of call forms whose literal first argument is read as a module specifier):
+//   import("x")                       dynamic import
+//   require("x"), require.resolve("x")
+//   import.meta.resolve("x")
+//   createRequire(...)("x"), createRequire(...).resolve("x"), and the same through module.createRequire(...) or any
+//                                     `<expr>.createRequire(...)`, or a name imported as createRequire from "module" or
+//                                     "node:module"
+//   r("x"), r.resolve("x"), res("x") where an identifier r (or res) is bound anywhere in the same file, by a
+//                                     const/let/var declarator or a plain `=` assignment, to one of the loaders above
+//                                     (require, a createRequire(...) result, or such a loader's .resolve)
+// A callee is read through parentheses, `as`, `satisfies`, `<T>` assertions and `!`, and `x["resolve"]` reads as
+// `x.resolve`. Not read: computed specifiers, and loaders passed across functions, objects or files (package.json
+// dependencies stay the backstop for those). Bindings are file-wide, not scoped, so a shadowed name still counts.
+const LOADER_MODULES = new Set(["module", "node:module"]);
+
+/**
+ * Recognises loader callees for one file, given an adapter over its syntax tree (TypeScript or ESTree): the adapter
+ * strips transparent wrappers and exposes identifiers, member accesses, calls, `import.meta` and bindings.
+ */
+function loaderRecognizer(adapter) {
+  const requireNames = new Set(["require"]);
+  const resolveNames = new Set();
+  const createRequireNames = new Set(["createRequire"]);
+  const isCreateRequire = (node) => {
+    const expression = adapter.unwrap(node);
+    const name = adapter.identifier(expression);
+    if (name !== null) return createRequireNames.has(name);
+    return adapter.member(expression)?.name === "createRequire";
+  };
+  const isRequire = (node) => {
+    const expression = adapter.unwrap(node);
+    const name = adapter.identifier(expression);
+    if (name !== null) return requireNames.has(name);
+    const call = adapter.call(expression);
+    return call !== null && isCreateRequire(call.callee);
+  };
+  const isResolve = (node) => {
+    const expression = adapter.unwrap(node);
+    const name = adapter.identifier(expression);
+    if (name !== null) return resolveNames.has(name);
+    const member = adapter.member(expression);
+    return member?.name === "resolve" && (isRequire(member.object) || adapter.isImportMeta(adapter.unwrap(member.object)));
+  };
+  return {
+    /** Learns the file's loader bindings (`{ name, init }`) and createRequire import aliases (`{ alias }`). */
+    learn(bindings) {
+      for (const binding of bindings) if (binding.alias !== undefined) createRequireNames.add(binding.alias);
+      const values = bindings.filter((binding) => binding.alias === undefined);
+      // Repeat until stable, so a binding to an earlier binding (`const a = createRequire(u); const b = a;`) counts.
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const { name, init } of values) {
+          const sets = [
+            [requireNames, isRequire],
+            [resolveNames, isResolve],
+            [createRequireNames, isCreateRequire],
+          ];
+          for (const [names, test] of sets) {
+            if (!names.has(name) && test(init)) {
+              names.add(name);
+              changed = true;
+            }
+          }
+        }
+      }
+    },
+    isLoaderCallee: (callee) => adapter.isImportKeyword(callee) || isRequire(callee) || isResolve(callee),
+  };
+}
+
+function tsUnwrap(ts, node) {
+  let expression = node;
+  while (
+    expression &&
+    (ts.isParenthesizedExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isSatisfiesExpression(expression) ||
+      ts.isTypeAssertionExpression(expression) ||
+      ts.isNonNullExpression(expression))
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
+function tsLoaderAdapter(ts) {
+  const unwrap = (node) => tsUnwrap(ts, node);
+  return {
+    unwrap,
+    identifier: (node) => (node && ts.isIdentifier(node) ? node.text : null),
+    member(node) {
+      if (!node) return null;
+      if (ts.isPropertyAccessExpression(node)) return { object: node.expression, name: node.name.text };
+      if (ts.isElementAccessExpression(node)) {
+        const key = unwrap(node.argumentExpression);
+        return key && ts.isStringLiteralLike(key) ? { object: node.expression, name: key.text } : null;
+      }
+      return null;
+    },
+    call: (node) => (node && ts.isCallExpression(node) ? { callee: node.expression } : null),
+    isImportMeta: (node) => Boolean(node) && ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword && node.name.text === "meta",
+    isImportKeyword: (node) => node?.kind === ts.SyntaxKind.ImportKeyword,
+  };
+}
+
+/** Loader bindings and createRequire import aliases of a TypeScript syntax tree. */
+function tsLoaderBindings(ts, sourceFile) {
+  const bindings = [];
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) bindings.push({ name: node.name.text, init: node.initializer });
+    else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const left = tsUnwrap(ts, node.left);
+      if (ts.isIdentifier(left)) bindings.push({ name: left.text, init: node.right });
+    } else if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && LOADER_MODULES.has(node.moduleSpecifier.text)) {
+      const named = node.importClause?.namedBindings;
+      if (named && ts.isNamedImports(named)) {
+        for (const element of named.elements) if ((element.propertyName ?? element.name).text === "createRequire") bindings.push({ alias: element.name.text });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return bindings;
 }
 
 /**
- * Module specifiers of JS/TS code, from TypeScript's syntax tree: `import`/`export ... from`, `import()` (as an
- * expression and as a type), `require()`, `require.resolve()`, `import x = require()` and `/// <reference types>`.
- * Offsets are into `code`.
+ * Module specifiers of JS/TS code, from TypeScript's syntax tree: `import`/`export ... from`, `import()` types,
+ * `import x = require()`, `/// <reference types>` and calls to the module loaders listed above. Offsets are into
+ * `code`.
  */
 function tsSpecifiers(ts, file, code, kind) {
   const sourceFile = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, kind);
@@ -300,23 +433,15 @@ function tsSpecifiers(ts, file, code, kind) {
   const found = [];
   const add = (node) => {
     // Parentheses, `as`, `satisfies`, `<T>` assertions and `!` do not change the module a literal names.
-    let literal = node;
-    while (
-      literal &&
-      (ts.isParenthesizedExpression(literal) ||
-        ts.isAsExpression(literal) ||
-        ts.isSatisfiesExpression(literal) ||
-        ts.isTypeAssertionExpression(literal) ||
-        ts.isNonNullExpression(literal))
-    ) {
-      literal = literal.expression;
-    }
+    const literal = tsUnwrap(ts, node);
     if (literal && ts.isStringLiteralLike(literal)) found.push({ specifier: literal.text, offset: literal.getStart(sourceFile) });
   };
+  const loaders = loaderRecognizer(tsLoaderAdapter(ts));
+  loaders.learn(tsLoaderBindings(ts, sourceFile));
   const visit = (node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node.moduleSpecifier);
     else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) add(node.moduleReference.expression);
-    else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || isRequireCallee(ts, node.expression))) add(node.arguments[0]);
+    else if (ts.isCallExpression(node) && loaders.isLoaderCallee(node.expression)) add(node.arguments[0]);
     else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal);
     ts.forEachChild(node, visit);
   };
@@ -325,7 +450,13 @@ function tsSpecifiers(ts, file, code, kind) {
   return found;
 }
 
-const ESTREE_WRAPPERS = new Set(["ParenthesizedExpression", "TSAsExpression", "TSSatisfiesExpression", "TSTypeAssertion", "TSNonNullExpression"]);
+const ESTREE_WRAPPERS = new Set(["ParenthesizedExpression", "TSAsExpression", "TSSatisfiesExpression", "TSTypeAssertion", "TSNonNullExpression", "ChainExpression"]);
+
+function estreeUnwrap(node) {
+  let expression = node;
+  while (ESTREE_WRAPPERS.has(expression?.type)) expression = expression.expression;
+  return expression;
+}
 
 function stringLiteral(node) {
   if (ESTREE_WRAPPERS.has(node?.type)) return stringLiteral(node.expression);
@@ -335,9 +466,59 @@ function stringLiteral(node) {
   return null;
 }
 
+const ESTREE_LOADER_ADAPTER = {
+  unwrap: estreeUnwrap,
+  identifier: (node) => (node?.type === "Identifier" ? node.name : null),
+  member(node) {
+    if (node?.type !== "MemberExpression") return null;
+    if (!node.computed) return node.property?.type === "Identifier" || node.property?.type === "PrivateIdentifier" ? { object: node.object, name: node.property.name } : null;
+    const key = stringLiteral(node.property);
+    return key ? { object: node.object, name: key.value } : null;
+  },
+  call: (node) => (node?.type === "CallExpression" ? { callee: node.callee } : null),
+  isImportMeta: (node) => node?.type === "MetaProperty" && node.meta?.name === "import" && node.property?.name === "meta",
+  isImportKeyword: () => false,
+};
+
+/** Every ESTree node of a tree (skipping parent links and nodes already visited), depth first. */
+function walkEstree(tree, callback) {
+  const seen = new WeakSet();
+  const visit = (node) => {
+    if (node === null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (typeof node.type === "string") callback(node);
+    for (const [key, child] of Object.entries(node)) if (key !== "parent") visit(child);
+  };
+  visit(tree);
+}
+
+/** Loader bindings and createRequire import aliases of an ESTree tree. */
+function estreeLoaderBindings(tree) {
+  const bindings = [];
+  walkEstree(tree, (node) => {
+    if (node.type === "VariableDeclarator" && node.id?.type === "Identifier" && node.init) bindings.push({ name: node.id.name, init: node.init });
+    else if (node.type === "AssignmentExpression" && node.operator === "=") {
+      const left = estreeUnwrap(node.left);
+      if (left?.type === "Identifier") bindings.push({ name: left.name, init: node.right });
+    } else if (node.type === "ImportDeclaration" && LOADER_MODULES.has(stringLiteral(node.source)?.value)) {
+      for (const specifier of node.specifiers ?? []) {
+        const imported = specifier.imported?.name ?? specifier.imported?.value;
+        if (specifier.type === "ImportSpecifier" && imported === "createRequire") bindings.push({ alias: specifier.local.name });
+      }
+    }
+  });
+  return bindings;
+}
+
 /** Module specifiers of every ESTree node in a tree (Svelte and MDX syntax trees carry their code as ESTree). */
 function estreeSpecifiers(tree) {
   const found = [];
+  const loaders = loaderRecognizer(ESTREE_LOADER_ADAPTER);
+  loaders.learn(estreeLoaderBindings(tree));
   const seen = new WeakSet();
   const add = (node) => {
     const literal = stringLiteral(node);
@@ -357,14 +538,9 @@ function estreeSpecifiers(tree) {
       case "ImportExpression":
         add(node.source);
         break;
-      case "CallExpression": {
-        const { callee } = node;
-        const isRequire =
-          (callee?.type === "Identifier" && callee.name === "require") ||
-          (callee?.type === "MemberExpression" && callee.object?.type === "Identifier" && callee.object.name === "require" && callee.property?.name === "resolve");
-        if (isRequire) add(node.arguments[0]);
+      case "CallExpression":
+        if (loaders.isLoaderCallee(node.callee)) add(node.arguments[0]);
         break;
-      }
       case "TSImportType":
         add(node.argument ?? node.parameter);
         break;
@@ -472,6 +648,14 @@ function svelteSpecifiers({ ts, svelte }, file, source) {
       for (const child of node) visit(child);
       return;
     }
+    // A static `on*` attribute is rendered as written, so the browser runs it as an inline handler (as in .html).
+    if (node.type === "RegularElement" || node.type === "SvelteElement") {
+      for (const attribute of node.attributes ?? []) {
+        const parts = Array.isArray(attribute.value) ? attribute.value : [];
+        if (attribute.type !== "Attribute" || !/^on/i.test(attribute.name) || parts.length === 0 || !parts.every((part) => part.type === "Text")) continue;
+        found.push(...embeddedSpecifiers(ts, file, source, parts.map((part) => part.data).join(""), parts[0].start, ts.ScriptKind.JS));
+      }
+    }
     if (node.type === "RegularElement" && node.name === "script") {
       const attributes = node.attributes
         .filter((attribute) => attribute.type === "Attribute")
@@ -533,7 +717,8 @@ export function importSpecifiers(file, source, parsed) {
 // Python imports
 
 // Reads absolute paths (NUL-separated) on stdin and prints, per file, its absolute `import x` / `from x import`
-// modules with their lines, or the syntax error that stopped it. Relative imports name no package.
+// modules and literal `importlib.import_module("x")`, `import_module("x")` and `__import__("x")` calls with their
+// lines, or the syntax error that stopped it. Relative imports name no package.
 const PYTHON_IMPORTS = String.raw`
 import ast, json, sys
 results = []
@@ -552,6 +737,12 @@ for path in sys.stdin.read().split("\0"):
             found.extend({"module": alias.name, "line": node.lineno} for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             found.append({"module": node.module, "line": node.lineno})
+        elif isinstance(node, ast.Call) and node.args:
+            func, arg = node.func, node.args[0]
+            loader = (isinstance(func, ast.Name) and func.id in ("__import__", "import_module")) or (
+                isinstance(func, ast.Attribute) and func.attr == "import_module" and isinstance(func.value, ast.Name) and func.value.id == "importlib")
+            if loader and isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value and not arg.value.startswith("."):
+                found.append({"module": arg.value, "line": node.lineno})
     results.append({"imports": found})
 json.dump(results, sys.stdout)
 `;
@@ -610,6 +801,16 @@ export function dependencyNames(manifest) {
     if (!Array.isArray(manifest[field])) continue;
     for (const name of manifest[field]) if (typeof name === "string") found.push({ name, field });
   }
+  // An override whose value is an npm alias installs its target wherever the overridden package resolves.
+  const overrides = (value, at) => {
+    if (!isPlainObject(value)) return;
+    for (const [key, range] of Object.entries(value)) {
+      const target = aliasTarget(range);
+      if (target) found.push({ name: target, field: `${at}.${key} (npm alias)` });
+      else overrides(range, `${at}.${key}`);
+    }
+  };
+  overrides(manifest.overrides, "overrides");
   return found;
 }
 
@@ -698,16 +899,11 @@ function publicReleaseFindings(owners, releases, python) {
  * Workspace packages and their findings. Returns the names of public workspace packages: named, unique and under a
  * listed top-level directory.
  */
-function workspaceFindings(publicManifest, { directories, linked, patterns, root, resolve, readJson }) {
+function workspaceFindings(publicManifest, { directories, linked, patterns, files, root, modes, resolve, readJson }) {
   const findings = [];
-  // npm reads a workspace through a symlinked or submodule directory, but its package.json is not tracked here.
   for (const entry of linked) {
-    if (!patterns.some((pattern) => matchesWorkspace(pattern, entry))) continue;
-    const content = resolve(entry);
-    if (content?.problem?.startsWith("is a submodule") || existsSync(path.join(root, entry, "package.json"))) {
-      const kind = content?.problem?.startsWith("is a submodule") ? "a submodule (gitlink)" : "a symlinked directory";
-      findings.push(finding(entry, RULES.workspacePackage, `workspace directory is ${kind}; its package is not tracked in this tree`));
-    }
+    const message = linkedWorkspaceProblem({ entry, patterns, files, root, modes });
+    if (message) findings.push(finding(entry, RULES.workspacePackage, message));
   }
   const byName = new Map();
   for (const directory of directories) {
@@ -743,6 +939,44 @@ function workspaceFindings(publicManifest, { directories, linked, patterns, root
     publicPackages.add(name);
   }
   return { findings, publicPackages };
+}
+
+/**
+ * Why npm would read a workspace package through a tracked symlink or submodule (gitlink), or null. A linked entry
+ * matters when it is a workspace match or an ancestor of one, since npm expands patterns through links. A submodule
+ * there always fails: its packages are not tracked in this tree. A symlink there fails when it dangles or leaves the
+ * repository, or when a tracked package.json under its target is a workspace match through the link's path (that
+ * package is then read under a path this check does not inventory). A symlink to a file is not expanded.
+ */
+function linkedWorkspaceProblem({ entry, patterns, files, root, modes }) {
+  const reached = patterns.filter((pattern) => reachesWorkspace(pattern, entry));
+  if (reached.length === 0) return null;
+  const via = `workspace pattern${reached.length > 1 ? "s" : ""} ${reached.map((pattern) => JSON.stringify(pattern)).join(", ")}`;
+  if (modes.get(entry) === GITLINK) return `is a submodule (gitlink) that npm expands ${via} through; packages read through it are not tracked in this tree`;
+  const absolute = path.join(root, entry);
+  const link = `is a symlink to ${JSON.stringify(readlinkSync(absolute))}`;
+  let target;
+  try {
+    target = realpathSync(absolute);
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR", "ELOOP"].includes(error.code)) return `${link}, which does not exist, where npm expands ${via}`;
+    throw error;
+  }
+  const relative = path.relative(realpathSync(root), target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return `${link}, outside the repository, where npm expands ${via}`;
+  }
+  if (!statSync(target).isDirectory()) return null;
+  const prefix = relative === "" ? "" : `${relative.split(path.sep).join("/")}/`;
+  for (const file of files) {
+    if (!file.startsWith(prefix) || path.posix.basename(file) !== "package.json") continue;
+    const directory = path.posix.dirname(`${entry}/${file.slice(prefix.length)}`);
+    if (directory.split("/").includes("node_modules")) continue;
+    if (reached.some((pattern) => matchesWorkspace(pattern, directory))) {
+      return `${link}; npm reads workspace ${JSON.stringify(directory)} through it from ${file}, so that package is not checked at the path npm uses`;
+    }
+  }
+  return null;
 }
 
 function notAllowed(name) {
@@ -912,7 +1146,9 @@ export async function verifyPublicBoundary({ root = REPO_ROOT } = {}) {
     directories: workspaceDirectories(patterns, files),
     linked: files.filter((file) => modes.get(file) === GITLINK || modes.get(file) === SYMLINK),
     patterns,
+    files,
     root,
+    modes,
     resolve,
     readJson,
   });

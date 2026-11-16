@@ -270,6 +270,76 @@ test("parentheses, as, satisfies, type assertions and ! around a specifier do no
   ]);
 });
 
+test("every module loader form is read; unrelated calls and plain strings are not", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/loaders.mts": [
+        'import { createRequire } from "node:module";',
+        'import { createRequire as makeRequire } from "module";',
+        'import * as nodeModule from "node:module";',
+        "const r = createRequire(import.meta.url);",
+        'r("@flowfn/a");',
+        'createRequire(import.meta.url).resolve("@flowfn/b");',
+        'import.meta.resolve("@flowfn/c");',
+        '(require)("@flowfn/d");',
+        '(require.resolve)("@flowfn/e");',
+        'require["resolve"]("@flowfn/f");',
+        '(require as NodeRequire)("@flowfn/g");',
+        'makeRequire(import.meta.url)("@flowfn/h");',
+        'nodeModule.createRequire(import.meta.url)("@flowfn/i");',
+        "const resolveFrom = r.resolve;",
+        'resolveFrom("@flowfn/j");',
+        "let later; later = createRequire(import.meta.url);",
+        'later("@flowfn/k");',
+        "const copy = r;",
+        'copy("@flowfn/l");',
+        '(createRequire(import.meta.url) as NodeRequire)["resolve"]!("@flowfn/m");',
+        'unrelated("@flowfn/n"); other.resolve("@flowfn/o"); createRequire("@flowfn/p"); const s = "@flowfn/q";',
+      ].join("\n"),
+      "datafn/svelte/src/Loaders.svelte": [
+        '<script lang="ts">',
+        '  import { createRequire } from "node:module";',
+        "  const load = createRequire(import.meta.url);",
+        '  load("@flowfn/a");',
+        '  import.meta.resolve("@flowfn/b");',
+        '  unrelated("@flowfn/c");',
+        "</script>",
+        '<button onclick={() => (require as any)["resolve"]("@flowfn/d")}>go</button>',
+      ].join("\n"),
+      "datafn/docs/loaders.mdx": [
+        'import { createRequire } from "node:module";',
+        "",
+        "export const load = createRequire(import.meta.url);",
+        "",
+        '{load.resolve("@flowfn/a")} and {import.meta.resolve("@flowfn/b")} and {unrelated("@flowfn/c")}',
+        "",
+      ].join("\n"),
+    },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/core\/src\/loaders\.mts:5: \[fn-dependency\] imports "@flowfn\/a"/);
+  assert.deepEqual(await findings(root), [
+    ...[5, 7, 6, 8, 9, 10, 11, 12, 13, 15, 17, 19, 20].sort((a, b) => a - b).map((line) => `datafn/core/src/loaders.mts:${line} ${RULES.fnDependency}`),
+    ...[5, 5].map((line) => `datafn/docs/loaders.mdx:${line} ${RULES.fnDependency}`),
+    ...[4, 5, 8].map((line) => `datafn/svelte/src/Loaders.svelte:${line} ${RULES.fnDependency}`),
+  ]);
+});
+
+test("svelte static on* attributes are read as inline handlers; other static attributes are not", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/svelte/src/Handlers.svelte": [
+        "<button onclick={() => import(\"@flowfn/expression\")}>a</button>",
+        "<button onclick=\"import('@flowfn/static')\">b</button>",
+        "<button title=\"import('@flowfn/title')\" data-x=\"require('@flowfn/data')\">c</button>",
+        "<svelte:element this=\"div\" onmouseover=\"require('@flowfn/element')\">d</svelte:element>",
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual(await findings(root), [1, 2, 4].map((line) => `datafn/svelte/src/Handlers.svelte:${line} ${RULES.fnDependency}`));
+});
+
 test("html scripts of every JavaScript MIME type and legacy language are read; data blocks are not", async (t) => {
   const types = ["application/ecmascript", "text/jscript", "TEXT/JavaScript; charset=utf-8", "application/x-javascript", "text/livescript", "module", ""];
   const scripts = types.map((type) => `<script type="${type}">import("@flowfn/core")</script>`);
@@ -413,6 +483,61 @@ test("a symlinked or submodule workspace directory fails; a symlinked directory 
   assert.deepEqual((await findings(root)).sort(), [`datafn/private ${RULES.workspacePackage}`, `datafn/vendored ${RULES.workspacePackage}`]);
 });
 
+test("symlinks and submodules at an ancestor of a workspace match fail, naming the link and rule", async (t) => {
+  const root = fixture(t, {
+    workspaces: ["datafn/core", "datafn/client", "datafn/nested/*", "datafn/deep/*/*", "datafn/gone/*", "*/packages/*"],
+    files: {
+      "scripts/deep/a/b/package.json": json({ name: "@private/deep" }),
+      "scripts/private/x/package.json": json({ name: "@private/x" }),
+      "scripts/private-shallow/package.json": json({ name: "@private/shallow" }),
+      "scripts/docs/readme.md": "# docs\n",
+    },
+    links: {
+      // Ancestors npm expands workspaces through: each fails.
+      "datafn/deep": "../scripts/deep",
+      "datafn/packages": "../scripts/private",
+      "datafn/gone": "../scripts/missing",
+      // Reached by */packages/*, but no tracked package.json lies at a workspace match through it: passes.
+      "scripts/packages": "docs",
+      // Reached by datafn/deep/*/*, but its package.json is one level too shallow: passes.
+      "datafn/shallow": "../scripts/private-shallow",
+      // No workspace pattern reaches it: passes.
+      "datafn/other": "../scripts/private",
+    },
+    gitlinks: ["datafn/nested"],
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/nested: \[workspace-package\] is a submodule \(gitlink\) that npm expands workspace pattern "datafn\/nested\/\*" through/);
+  assert.match(result.stderr, /datafn\/packages: \[workspace-package\] is a symlink to "\.\.\/scripts\/private"; npm reads workspace "datafn\/packages\/x" through it from scripts\/private\/x\/package\.json/);
+  assert.deepEqual((await findings(root)).sort(), [
+    `datafn/deep ${RULES.workspacePackage}`,
+    `datafn/gone ${RULES.workspacePackage}`,
+    `datafn/nested ${RULES.workspacePackage}`,
+    `datafn/packages ${RULES.workspacePackage}`,
+  ]);
+});
+
+test("python importlib.import_module and __import__ calls with a literal *fn name are checked", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/python/datafn/dynamic.py": [
+        "import importlib",
+        "from importlib import import_module",
+        'importlib.import_module("flowfn")',
+        'import_module("flowfn.core")',
+        '__import__("flowfn")',
+        'importlib.import_module(".flowfn", "datafn")',
+        'importlib.import_module("datafn.client")',
+        '"""importlib.import_module("flowfn") in a docstring"""',
+        'name = "flowfn"',
+        "",
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual((await findings(root)).sort(), [3, 4, 5].map((line) => `datafn/python/datafn/dynamic.py:${line} ${RULES.fnDependency}`));
+});
+
 test("python imports of *fn modules must name a public Python project or an allowed package", async (t) => {
   const root = fixture(t, {
     allow: { pinnedfn: { reason: "published on PyPI" } },
@@ -477,6 +602,15 @@ test("npm aliases count by both their alias and their target", () => {
   assert.deepEqual(
     dependencyNames({ dependencies: { local: "npm:@flowfn/core@^1" }, bundleDependencies: ["flowfn"] }).map(({ name }) => name),
     ["local", "@flowfn/core", "flowfn"],
+  );
+});
+
+test("npm aliases in overrides, including nested ones, count as dependencies on their target", () => {
+  assert.deepEqual(
+    dependencyNames({
+      overrides: { nanoid: "npm:@flowfn/core@1", zod: "3.0.0", react: { ".": "npm:flowfn@2", scheduler: "npm:@flowfn/scheduler" } },
+    }).map(({ name, field }) => `${field} ${name}`),
+    ["overrides.nanoid (npm alias) @flowfn/core", "overrides.react.. (npm alias) flowfn", "overrides.react.scheduler (npm alias) @flowfn/scheduler"],
   );
 });
 
