@@ -1,0 +1,27 @@
+datafn/server/src/execution/sync/__tests__/clone-owner-and-page-joins.test.ts
+  s_f058f999ab46b7::t_79853042feb0f5 436-490
+datafn/server/src/execution/sync/clone.ts
+  s_f058f999ab46b7::t_63d72b162dfe94 96-98,291,315,352-353
+datafn/server/src/execution/sync/reconcile.ts
+  s_f058f999ab46b7::t_493d15e5124ce6 202-214,295,297-314
+datafn/server/src/routes/__tests__/query-owner-access.test.ts
+  s_f058f999ab46b7::t_7ceee7f0715391 24,265-283
+datafn/server/src/validation/query.ts
+  s_f058f999ab46b7::t_0760f678cee591 628-629,634-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "18911ada5f3d1d15419d75e7347c9802fef46da6",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
