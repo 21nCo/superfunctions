@@ -1033,25 +1033,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, purpose?: 'intent'): Promise<void> {
     if (artifactSourceOf(object) !== 'client') return;
     const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
-    let id: string | undefined;
     try {
-      id = await journalDisplaced(object, fallbackTarget, purpose);
+      const id = await journalDisplaced(object, fallbackTarget, purpose);
       await storage.deleteObject({ key: object.storageKey, target });
       await removeDisplacedRecord(id);
     } catch (error) {
+      // An upload's own record stays as it is: file deletion leaves it alone.
       logger?.warn('displaced artifact object not deleted', {
         fileId: object.fileId,
         versionId: object.versionId,
         error: errorMessage(error),
       });
-      // An upload discarding its object writes no more, so its record becomes
-      // one that cleanup may remove once it deletes the object.
-      if (purpose === 'intent' && id !== undefined) {
-        const recordId = id;
-        await journalDisplaced(object, fallbackTarget)
-          .then(() => removeDisplacedRecord(recordId))
-          .catch(() => undefined);
-      }
     }
   }
 

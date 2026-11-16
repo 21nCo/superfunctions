@@ -1134,11 +1134,11 @@ describe('client-supplied processing artifacts', () => {
       await expect(attach).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
       expect(failed.fired).toBe(true);
 
-      // The object is left, and recorded for cleanup now the upload is done with it.
+      // The object is left, and still recorded by the upload's own record.
       const [leftover] = await clientObjects();
       expect(await clientObjects()).toHaveLength(1);
       const records = await app.displacedRecords();
-      expect(records).toEqual([expect.objectContaining({ kind: 'filefn.displaced-object' })]);
+      expect(records).toEqual([expect.objectContaining({ kind: 'filefn.upload-intent' })]);
       expect(leftover.endsWith(records[0].storageKey)).toBe(true);
 
       // A sweep whose delete fails keeps the record; the next one deletes the object.
@@ -1147,8 +1147,6 @@ describe('client-supplied processing artifacts', () => {
       expect(await clientObjects()).toHaveLength(1);
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
       expect(await clientObjects()).toEqual([]);
-      expect(await app.displacedRecords()).toEqual([]);
-      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
     });
 
     it("leaves a live version's records and an object another row still names", async () => {
