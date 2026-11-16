@@ -16,7 +16,9 @@ import {
   normalizePaths,
   parseArgs,
   promote,
+  pythonMoves,
   releaseMoves,
+  resolveSource,
 } from "./promote.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
 
@@ -129,8 +131,8 @@ function fixture(name) {
   return { dev, next, pin };
 }
 
-function promoteCli(dev, args, env = process.env) {
-  return spawnSync(process.execPath, [SCRIPT, "--root", dev, ...args], { encoding: "utf8", env });
+function promoteCli(dev, args, { env = process.env, cwd } = {}) {
+  return spawnSync(process.execPath, [SCRIPT, "--root", dev, ...args], { encoding: "utf8", env, cwd });
 }
 
 const throwsCode = (fn, code) =>
@@ -236,6 +238,60 @@ historyTest("paths outside the public manifest, missing paths and an unknown pin
   throwsCode(() => promote({ root: dev, paths: ["nothere"], pin }), "path-missing");
   throwsCode(() => promote({ root: dev, paths: ["uifn/foo"], pin: "0".repeat(40) }), "pin-missing");
   throwsCode(() => promote({ root: dev, fn: "widgetfn", pin: "refs/remotes/next/missing" }), "pin-missing");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", pin: "--upload-pack=x" }), "usage");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", source: "--upload-pack=x" }), "usage");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+});
+
+historyTest("two imported release entries sharing a slug or npm name, or a Python canonical name, are refused before the branch", () => {
+  const { dev, next } = fixture("batch");
+  const head = git(dev, "rev-parse", "HEAD");
+  const overlays = [
+    {
+      "release-packages.next.json": [
+        { slug: "widgetfn-core", path: "widgetfn/core", name: "@widgetfn/core" },
+        { slug: "widgetfn-core", path: "widgetfn/python", name: "@widgetfn/other" },
+      ],
+    },
+    {
+      "release-packages.next.json": [
+        { slug: "widgetfn-core", path: "widgetfn/core", name: "@widgetfn/core" },
+        { slug: "widgetfn-other", path: "widgetfn/python", name: "@widgetfn/core" },
+      ],
+    },
+    {
+      "release-packages.next.json": [],
+      "python-release-packages.next.json": [
+        { name: "widgetfn", path: "widgetfn/python" },
+        { name: "WidgetFn", path: "widgetfn/core" },
+      ],
+    },
+  ];
+  for (const files of overlays) {
+    const pin = commit(next, "bad overlay", files);
+    throwsCode(() => promote({ root: dev, fn: "widgetfn", pin, source: next }), "release-conflict");
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  }
+});
+
+historyTest("a relative --source is resolved against the caller's working directory", () => {
+  const { dev, next, pin } = fixture("relative");
+  const run = promoteCli(dev, ["--path", "uifn/foo", "--pin", pin, "--source", "next"], { cwd: path.dirname(next) });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(git(dev, "rev-parse", "HEAD:uifn/foo"), git(next, "rev-parse", `${pin}:uifn/foo`));
+});
+
+historyTest("malformed files here or at the pin fail with one promote: line, not a stack trace", () => {
+  const { dev, next } = fixture("malformed");
+  const pin = commit(next, "broken pyproject", { "widgetfn/python/pyproject.toml": "[project\nname = \n" });
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", pin, source: next }), "malformed-file");
+
+  const head = commit(dev, "broken release list", { "release-packages.json": "[\n  { \"slug\": \n" });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  const run = promoteCli(dev, ["widgetfn"]);
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /^promote: malformed-file: release-packages\.json: invalid JSON: [^\n]*\n$/);
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
 });
 
@@ -287,6 +343,31 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
   ]);
   throwsCode(() => releaseMoves({ pinOverlay: [{ slug: "alphafn-core", path: "widgetfn/x", name: "@widgetfn/x" }], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   throwsCode(() => releaseMoves({ pinOverlay: [{ slug: "widgetfn-x", path: "widgetfn/x", name: "@alphafn/core" }], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  // Two imported entries colliding with each other (next's overlay is not validated before the first sync).
+  const pair = (a, b) => [
+    { slug: "widgetfn-a", path: "widgetfn/a", name: "@widgetfn/a", ...a },
+    { slug: "widgetfn-b", path: "widgetfn/b", name: "@widgetfn/b", ...b },
+  ];
+  throwsCode(() => releaseMoves({ pinOverlay: pair({}, { slug: "widgetfn-a" }), pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  throwsCode(() => releaseMoves({ pinOverlay: pair({}, { name: "@widgetfn/a" }), pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
+  throwsCode(() => releaseMoves({ pinOverlay: null, pinBase: pair({}, { name: "@widgetfn/a" }), current, paths: ["widgetfn"] }), "release-conflict");
+  assert.equal(releaseMoves({ pinOverlay: pair({}, {}), pinBase: [], current, paths: ["widgetfn"] }).length, 2);
+});
+
+test("Python moves: matched by canonical name against TARGETS and against each other", () => {
+  const targets = new Map([["Alpha_FN", "alphafn/python"]]);
+  assert.deepEqual(pythonMoves([{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta" }], ["alphafn"], targets), [
+    { name: "beta", path: "alphafn/beta" },
+  ]);
+  throwsCode(() => pythonMoves([{ name: "alpha.fn", path: "alphafn/other" }], ["alphafn"], targets), "release-conflict");
+  throwsCode(() => pythonMoves([{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b2" }], ["alphafn"], targets), "release-conflict");
+});
+
+test("sources: local paths resolve against the caller's directory, URLs stay, a leading dash is refused", () => {
+  assert.equal(resolveSource("next", "/work"), path.resolve("/work", "next"));
+  assert.equal(resolveSource("../next", "/work/dev"), path.resolve("/work/next"));
+  for (const url of ["https://github.com/o/r.git", "ssh://git@host/r", "git@github.com:o/r.git", "file:///tmp/r"]) assert.equal(resolveSource(url, "/work"), url);
+  throwsCode(() => resolveSource("--upload-pack=x", "/work"), "usage");
 });
 
 test("release file and manifest edits keep existing formatting and order", () => {

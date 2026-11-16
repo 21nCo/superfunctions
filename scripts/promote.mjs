@@ -19,11 +19,11 @@
 // Exit status: 0 promoted, 1 refused or failed (nothing changed), 2 promoted with merge conflicts left (--reconcile).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEXT_MANIFEST, PUBLIC_MANIFEST, REPO_ROOT, canonicalPythonName, normalizePath, parseManifest } from "./owners.mjs";
+import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST, REPO_ROOT, canonicalPythonName, normalizePath, parseManifest } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
 import { RELEASE_FILES, pyprojectName } from "./verify-owners.mjs";
 
@@ -76,6 +76,48 @@ export function hasFilterRepo() {
 }
 
 const isUnder = (target, prefix) => target === prefix || target.startsWith(`${prefix}/`);
+
+/** Runs `fn`, turning an OwnersError (a malformed manifest or pyproject.toml) into a PromoteError. */
+function ownersCheck(fn) {
+  try {
+    return fn();
+  } catch (error) {
+    if (error instanceof OwnersError) throw new PromoteError("malformed-file", error.message);
+    throw error;
+  }
+}
+
+/** Parsed JSON of a file in the working checkout. */
+function readJsonFile(root, file) {
+  const text = readFileSync(path.join(root, file), "utf8");
+  try {
+    return { text, data: JSON.parse(text) };
+  } catch (error) {
+    throw new PromoteError("malformed-file", `${file}: invalid JSON: ${error.message}`);
+  }
+}
+
+const URL_SOURCE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const SCP_SOURCE = /^[^/\\]+:/;
+const DRIVE_PATH = /^[a-z]:[/\\]/i;
+
+/**
+ * A URL or scp-style `host:path` source is kept as given; a local path is resolved against the caller's working
+ * directory, since git fetches it from inside a temporary repository.
+ */
+export function resolveSource(source, cwd = process.cwd()) {
+  if (source.startsWith("-")) throw new PromoteError("usage", `--source ${JSON.stringify(source)} must not start with "-"`);
+  if (URL_SOURCE.test(source) || (SCP_SOURCE.test(source) && !DRIVE_PATH.test(source))) return source;
+  return path.resolve(cwd, source);
+}
+
+const realPath = (target) => {
+  try {
+    return realpathSync(target);
+  } catch {
+    return target;
+  }
+};
 
 /** Normalised, de-duplicated paths; a path inside another listed path is dropped. */
 export function normalizePaths(paths) {
@@ -173,18 +215,33 @@ function releaseEntriesUnder(entries, file, paths) {
   });
 }
 
+/** Refuses two candidates that share a key: next's files are not validated before the first sync, so a pin may hold one. */
+function refuseBatchDuplicates(candidates, keys, describe) {
+  for (const [field, keyOf] of Object.entries(keys)) {
+    const seen = new Map();
+    for (const entry of candidates) {
+      const key = keyOf(entry);
+      if (seen.has(key)) {
+        throw new PromoteError("release-conflict", `${describe(entry)} and ${describe(seen.get(key))} share the ${field} ${JSON.stringify(key)}; fix next first`);
+      }
+      seen.set(key, entry);
+    }
+  }
+}
+
 /**
  * npm release entries to move: next's overlay entries under the paths, or, for a pin from before the overlay
  * existed, next's release-packages.json entries under the paths. An entry this checkout already lists identically
- * is skipped; a slug or npm name listed here differently is a conflict.
+ * is skipped; a slug or npm name listed here differently, or shared by two imported entries, is a conflict.
  */
 export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   const source = pinOverlay === null ? RELEASE_FILES.public : RELEASE_FILES.next;
   const candidates = releaseEntriesUnder(pinOverlay ?? pinBase, source, paths);
+  refuseBatchDuplicates(candidates, { slug: (entry) => entry.slug, "npm name": (entry) => entry.name }, (entry) => `release ${JSON.stringify(entry.slug)} (${entry.name}, ${entry.path}) in next's ${source}`);
   const moves = [];
   for (const entry of candidates) {
-    const sameSlug = current.find((existing) => existing.slug === entry.slug);
-    const sameName = current.find((existing) => existing.name === entry.name);
+    const sameSlug = current.find((existing) => existing?.slug === entry.slug);
+    const sameName = current.find((existing) => existing?.name === entry.name);
     if (sameSlug && sameSlug.path === entry.path && sameSlug.name === entry.name) continue;
     if (sameSlug || sameName) {
       const other = sameSlug ?? sameName;
@@ -198,19 +255,27 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   return moves;
 }
 
-/** Python overlay entries ({name, path}) under the paths that TARGETS does not list yet. */
-function pythonMoves(overlay, paths, targetsSource) {
+/**
+ * Python overlay entries ({name, path}) under the paths that TARGETS does not list yet, matched by canonical name.
+ * A project TARGETS lists with another path, or two imported entries with one canonical name, is a conflict.
+ */
+export function pythonMoves(overlay, paths, targetsSource) {
   if (overlay === null) return [];
   if (!Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
-  const moves = [];
-  for (const entry of overlay) {
-    if (typeof entry?.name !== "string" || typeof entry?.path !== "string") {
+  const candidates = overlay.filter((entry) => {
+    if (typeof entry?.name !== "string" || entry.name === "" || typeof entry?.path !== "string" || entry.path === "") {
       throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin: entry ${JSON.stringify(entry)} needs a name and a path`);
     }
-    if (!paths.some((target) => isUnder(path.posix.normalize(entry.path), target))) continue;
-    if (targetsSource.has(entry.name)) {
-      if (targetsSource.get(entry.name) === entry.path) continue;
-      throw new PromoteError("release-conflict", `Python project ${JSON.stringify(entry.name)} is already in TARGETS with path ${targetsSource.get(entry.name)}`);
+    return paths.some((target) => isUnder(path.posix.normalize(entry.path), target));
+  });
+  refuseBatchDuplicates(candidates, { "canonical name": (entry) => canonicalPythonName(entry.name) }, (entry) => `Python project ${JSON.stringify(entry.name)} (${entry.path}) in next's ${PYTHON_OVERLAY}`);
+  const targets = new Map([...targetsSource].map(([name, directory]) => [canonicalPythonName(name), { name, directory }]));
+  const moves = [];
+  for (const entry of candidates) {
+    const listed = targets.get(canonicalPythonName(entry.name));
+    if (listed) {
+      if (listed.directory === entry.path) continue;
+      throw new PromoteError("release-conflict", `Python project ${JSON.stringify(entry.name)} is already in TARGETS as ${JSON.stringify(listed.name)} with path ${listed.directory}`);
     }
     moves.push({ name: entry.name, path: entry.path });
   }
@@ -274,24 +339,27 @@ function setOwner(section, key) {
 export function flipManifest(manifest, { topLevel, rootFiles, slugs, pythonNames }) {
   const changed = { paths: [], rootFiles: [], releases: [], python: [] };
   for (const name of topLevel) if (setOwner(manifest.paths, name)) changed.paths.push(name);
-  manifest.rootFiles.public ??= [];
   for (const name of rootFiles) {
-    if (Object.values(manifest.rootFiles).some((list) => list.includes(name))) continue;
+    if (Object.values(manifest.rootFiles ?? {}).some((list) => list.includes(name))) continue;
+    manifest.rootFiles ??= {};
+    manifest.rootFiles.public ??= [];
     manifest.rootFiles.public.push(name);
     if (isSorted(manifest.rootFiles.public.slice(0, -1))) manifest.rootFiles.public.sort();
     changed.rootFiles.push(name);
   }
-  manifest.releases ??= {};
-  for (const slug of slugs) if (setOwner(manifest.releases, slug)) changed.releases.push(slug);
-  manifest.python ??= {};
-  const listed = new Set(Object.keys(manifest.python).map(canonicalPythonName));
+  for (const slug of slugs) {
+    manifest.releases ??= {};
+    if (setOwner(manifest.releases, slug)) changed.releases.push(slug);
+  }
+  const listed = new Set(Object.keys(manifest.python ?? {}).map(canonicalPythonName));
   for (const name of pythonNames) {
     if (listed.has(canonicalPythonName(name))) continue;
+    manifest.python ??= {};
     setOwner(manifest.python, name);
     listed.add(canonicalPythonName(name));
     changed.python.push(name);
   }
-  parseManifest(manifest, { kind: "public" });
+  ownersCheck(() => parseManifest(manifest, { kind: "public" }));
   return changed;
 }
 
@@ -326,7 +394,7 @@ function checkWorkingRepo(root, { base, branch }) {
 /** Fetches the pin into a new temporary repository and reads everything the promotion needs from it. */
 function readPin(work, { source, pin, paths }) {
   git(work, ["init", "-q"]);
-  const fetched = git(work, ["fetch", "-q", "--no-tags", source, pin], { allowFailure: true });
+  const fetched = git(work, ["fetch", "-q", "--no-tags", "--", source, pin], { allowFailure: true });
   if (fetched.status !== 0 || !gitOk(work, ["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"])) {
     throw new PromoteError("pin-missing", `pin ${pin} not found in ${source}: ${(fetched.stderr ?? "").trim()}`);
   }
@@ -345,7 +413,7 @@ function readPin(work, { source, pin, paths }) {
   }
   const pythonNames = files
     .filter((file) => path.posix.basename(file) === "pyproject.toml")
-    .map((file) => pyprojectName(git(work, ["show", `${sha}:${file}`]), file))
+    .map((file) => ownersCheck(() => pyprojectName(git(work, ["show", `${sha}:${file}`]), file)))
     .filter((name) => name !== null);
   return {
     sha,
@@ -394,17 +462,20 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   const paths = normalizePaths(fn === undefined ? rawPaths : [fn]);
   if (!hasFilterRepo()) throw new PromoteError("missing-filter-repo", FILTER_REPO_HINT);
   branch ??= `promote/${fn ?? paths[0]}`;
+  if (pin?.startsWith("-")) throw new PromoteError("usage", `--pin ${JSON.stringify(pin)} must not start with "-"`);
+  source = source === undefined ? root : resolveSource(source);
   checkWorkingRepo(root, { base, branch });
-  source ??= root;
   pin ??= "refs/remotes/next/next";
-  if (source === root) {
+  if (source === root || (path.isAbsolute(source) && realPath(source) === realPath(root))) {
+    source = root;
     if (!gitOk(root, ["rev-parse", "--verify", "--quiet", `${pin}^{commit}`])) {
       throw new PromoteError("pin-missing", `pin ${pin} is not in this checkout; run git fetch next (or pass --source)`);
     }
     pin = git(root, ["rev-parse", `${pin}^{commit}`]).trim();
   }
 
-  const current = JSON.parse(readFileSync(path.join(root, RELEASE_FILES.public), "utf8"));
+  const current = readJsonFile(root, RELEASE_FILES.public).data;
+  if (!Array.isArray(current)) throw new PromoteError("malformed-file", `${RELEASE_FILES.public} must be an array`);
   const pythonScript = path.join(root, PYTHON_RELEASE_SCRIPT);
   const work = mkdtempSync(path.join(tmpdir(), "promote-"));
   try {
@@ -414,8 +485,8 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     }
     const topLevel = [];
     const rootFiles = [];
-    const manifestText = readFileSync(path.join(root, PUBLIC_MANIFEST), "utf8");
-    const manifest = JSON.parse(manifestText);
+    const manifest = readJsonFile(root, PUBLIC_MANIFEST).data;
+    ownersCheck(() => parseManifest(structuredClone(manifest), { kind: "public" }));
     for (const target of paths) {
       const top = target.split("/")[0];
       if (target === top) {
@@ -549,6 +620,10 @@ export function main(argv = process.argv.slice(2)) {
     console.log(formatReport(result));
     return result.conflicts.length > 0 ? 2 : 0;
   } catch (error) {
+    if (error instanceof OwnersError) {
+      console.error(`promote: malformed-file: ${error.message}`);
+      return 1;
+    }
     if (!(error instanceof PromoteError)) throw error;
     console.error(`promote: ${error.code}: ${error.message}`);
     return 1;

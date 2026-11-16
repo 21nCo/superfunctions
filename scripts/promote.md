@@ -39,8 +39,14 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   anyway and leaves the conflicts for you (exit status 2): resolve them, `git add` them and `git commit`;
 - a `--path` lies inside a top-level directory `superfunctions.owners.json` does not list (promote the whole
   directory instead), or names a file the script edits or a `next`-only file (manifests, release lists, lockfiles);
-- a release slug or npm name it would move is already listed in `release-packages.json` with other values;
+- a release slug or npm name it would move is already listed in `release-packages.json` with other values, or two
+  imported entries share a slug or npm name (or two imported Python projects share a canonical name): fix `next`'s
+  overlay first;
+- a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
 - `git-filter-repo` is missing (it prints the install command).
+
+`--source <repo>` fetches the pin from another repository: a URL, or a local path resolved against your current
+directory.
 
 It creates `promote/<fn or first path>` from the current commit with:
 
