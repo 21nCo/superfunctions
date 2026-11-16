@@ -267,7 +267,7 @@ export function describeDrizzleSqliteConformance(
           expect(pushed.status).toBe(200);
           expect(pushed.body.result.ok).toBe(true);
         }
-        const all = await app.call("POST", "/datafn/query", { resource: "task", version: 1, select: ["id", "title", "priority", "done"] });
+        const all = await app.call("POST", "/datafn/query", { resource: "task", version: 1, select: ["*", "projectId"] });
         const records: Record<string, Json> = {};
         for (const row of all.body.result.data) records[row.id] = row;
         const store = new MemoryStore({
@@ -329,6 +329,27 @@ export function describeDrizzleSqliteConformance(
         });
         expect(grouped.result.groups.length).toBeGreaterThan(20);
         expect(grouped.rowsRead).toBe(monthRows);
+      });
+
+      it("keeps in-memory ordering of NULL sort values and foreign-key projection", async () => {
+        const ctx = await startTemporal();
+        // Give a few in-range tasks a project so the sort column mixes NULL and values.
+        const project = await ctx.app.call("POST", "/datafn/mutation", {
+          resource: "project", version: 1, operation: "insert", id: "project:p", clientId: "seed", mutationId: "seed-project", record: { name: "P" },
+        });
+        expect(project.body.result.ok).toBe(true);
+        const temporal = time.day("priority", "2026-05-18T12:00:00.000Z");
+        const day = await expectParity(ctx, { resource: "task", version: 1, select: ["id"], sort: ["id:asc"], temporal });
+        for (const [i, row] of day.result.data.slice(0, 2).entries()) {
+          const res = await ctx.app.call("POST", "/datafn/mutation", {
+            resource: "task", version: 1, operation: "merge", id: row.id, clientId: "seed", mutationId: `seed-project-${i}`, record: { projectId: "project:p" },
+          });
+          expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+          const record = (ctx.store as any).data.records.task[row.id];
+          record.projectId = "project:p";
+        }
+        await expectParity(ctx, { resource: "task", version: 1, select: ["id", "projectId"], sort: ["projectId:asc", "id:asc"], limit: 1, temporal });
+        await expectParity(ctx, { resource: "task", version: 1, select: ["*"], sort: ["id:asc"], limit: 3, temporal });
       });
 
       it("matches in-memory results for unix-s storage", async () => {

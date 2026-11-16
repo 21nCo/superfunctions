@@ -253,10 +253,13 @@ export async function executeSingleQuery(
 
   // Temporal period/range clauses become field bounds so the database
   // returns only the rows in range; see temporal-pushdown.ts.
-  const temporalPlan = await planTemporalQuery(query, schema, db, timezoneNamespace);
+  // Temporal queries keep the in-memory execution path they always used
+  // (sorting, pagination and projection unchanged); only the rows it loads
+  // are narrowed, through the pre-filter below.
+  const temporalPlan = await planTemporalQuery(query, schema, db, timezoneNamespace, logger);
   query = temporalPlan.query;
 
-  const strategy = classifyQuery(query, schema);
+  const strategy = temporalPlan.config ? "IN_MEMORY" : classifyQuery(query, schema);
 
   timer?.startPhase("fetch");
 
@@ -341,7 +344,7 @@ export async function executeSingleQuery(
       },
     };
     if (searchProvider) {
-      return executeSearchQuery(scopedQuery as any, schema, store, searchProvider, undefined, logger);
+      return executeSearchQuery(scopedQuery as any, schema, store, searchProvider, undefined, logger, temporalPlan.config);
     }
     if (!hasDbNativeSearchSupport(db)) {
       throw new DatafnExecutionError(
@@ -376,6 +379,7 @@ export async function executeSingleQuery(
           signal,
         } as any),
       logger,
+      temporalPlan.config,
     );
   }
 

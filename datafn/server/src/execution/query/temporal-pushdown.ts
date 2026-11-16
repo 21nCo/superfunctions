@@ -3,9 +3,11 @@
  *
  * A DFQL `temporal` clause with a `period` or `range` is a plain bound on one
  * field: the in-memory evaluator turns it into `{ field: { $gte, $lte } }`
- * through `normalizeTemporalQuery`. Doing that conversion before the query is
- * planned lets the database return only the rows in range instead of the
- * whole table. The bounds come from the same core function, with the same
+ * through `normalizeTemporalQuery`. Doing that conversion before the query
+ * runs lets the IN_MEMORY pre-filter push the bounds, so the database returns
+ * only the rows in range instead of the whole table. Temporal queries keep
+ * the in-memory execution path (sorting, pagination, projection), so only the
+ * set of rows loaded changes. The bounds come from the same core function, with the same
  * timezone resolution, so a lowered query matches exactly what in-memory
  * evaluation of the original clause would return.
  *
@@ -30,6 +32,7 @@ import {
   type DatafnTemporalConfig,
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
+import type { DatafnLogger } from "../../logger.js";
 
 export interface TemporalQueryPlan {
   /** The query with every lowerable period/range clause turned into filters. */
@@ -57,13 +60,22 @@ export async function loadTemporalConfig(
   db: Adapter,
   namespace: string,
   clauses: readonly DatafnTemporalClause[],
+  logger?: DatafnLogger,
 ): Promise<DatafnTemporalConfig> {
   if (!clauses.some(usesTimezoneHistory)) {
     return { timezoneResolver: createTimezoneResolver([]) };
   }
+  // Without a readable history (e.g. a database without the built-in table),
+  // "user" falls back to UTC, as it did before the history was read here.
   const changes = await db
     .findMany({ model: TIMEZONE_CHANGE_RESOURCE_NAME, where: [], namespace })
-    .catch(() => []);
+    .catch((error: unknown) => {
+      logger?.warn("Timezone-change history unavailable; temporal \"user\" resolves to UTC", {
+        error: String(error),
+        operation: "temporal-timezone-history",
+      });
+      return [];
+    });
   return { timezoneResolver: createTimezoneResolver(changes as Record<string, unknown>[]) };
 }
 
@@ -130,7 +142,10 @@ function mergeFilters(
   if (!existing || Object.keys(existing).length === 0) {
     return generated.length === 1 ? generated[0] : { $and: generated };
   }
-  return { $and: [existing, ...generated] };
+  // Keep the existing keys at the top level: the pre-filter pushes them key
+  // by key, but would push an `$and` entry only if all of it were pushable.
+  const existingAnd = Array.isArray(existing.$and) ? (existing.$and as unknown[]) : [];
+  return { ...existing, $and: [...existingAnd, ...generated] };
 }
 
 /**
@@ -198,12 +213,13 @@ export async function planTemporalQuery(
   schema: DatafnSchema,
   db: Adapter,
   timezoneNamespace: string,
+  logger?: DatafnLogger,
 ): Promise<TemporalQueryPlan> {
   const clauses = getTemporalClauses(query);
   if (clauses.length === 0) {
     return { query, lowered: [] };
   }
-  const config = await loadTemporalConfig(db, timezoneNamespace, clauses);
+  const config = await loadTemporalConfig(db, timezoneNamespace, clauses, logger);
   const { query: lowered, lowered: fields } = lowerTemporalRanges(query, schema, config);
   return { query: lowered, config, lowered: fields };
 }

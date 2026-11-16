@@ -20,7 +20,7 @@ import {
 import { createDatafnServer } from "../src/server.js";
 import { executeQuery } from "../src/execution/query/execute.js";
 import { MemoryStore } from "../src/execution/memory-store.js";
-import { classifyQuery } from "../src/execution/query/planner.js";
+import { extractPushableFilters } from "../src/execution/query/planner.js";
 import { lowerTemporalRanges } from "../src/execution/query/temporal-pushdown.js";
 
 const NS = "datafn";
@@ -91,7 +91,7 @@ function seedInstants(): number[] {
   return [...instants].sort((a, b) => a - b);
 }
 
-async function createFixture() {
+async function createFixture(options: { searchIds?: () => string[] } = {}) {
   const db = memoryAdapter();
   await db.initialize();
   const rows: Record<string, unknown>[] = [];
@@ -117,8 +117,17 @@ async function createFixture() {
     schema: SCHEMA,
     limits: { maxLimit: 100_000 },
     database: db,
+    ...(options.searchIds
+      ? {
+          searchProvider: {
+            name: "test-search",
+            search: async () => options.searchIds!(),
+            updateIndices: async () => {},
+          } as any,
+        }
+      : {}),
   });
-  return { db, server, rowCount: rows.length };
+  return { db, server, rowCount: rows.length, ids: rows.map((row) => row.id as string) };
 }
 
 type Fixture = Awaited<ReturnType<typeof createFixture>>;
@@ -365,6 +374,27 @@ describe("temporal range push-down", () => {
   });
 });
 
+describe("temporal search queries", () => {
+  it("resolves timezone \"user\" the same way for lowered bounds and in-memory clauses", async () => {
+    let fx!: Fixture;
+    fx = await createFixture({ searchIds: () => fx.ids });
+    const at = "2026-05-18T12:00:00.000Z";
+    const search = { query: "anything", type: "fullText" };
+    const viaSearch = await served(fx, {
+      ...q([time.week("startUnix", at, { timezone: "user" }), time.day("startIso", at, { timezone: "user", storage: "iso" })]),
+      search,
+      select: ["id"],
+    });
+    const plain = await expectParity(fx, {
+      ...q([time.week("startUnix", at, { timezone: "user" }), time.day("startIso", at, { timezone: "user", storage: "iso" })]),
+      select: ["id"],
+    });
+    expect(plain.result.data.length).toBeGreaterThan(0);
+    expect(viaSearch.result.data).toEqual(plain.result.data);
+    expect(viaSearch.rowsRead).toBeLessThan(fx.rowCount);
+  });
+});
+
 describe("lowerTemporalRanges", () => {
   const config = {};
   it("lowers a period to the in-memory bounds and leaves a pushable query", () => {
@@ -378,15 +408,40 @@ describe("lowerTemporalRanges", () => {
     );
     expect(fields).toEqual(["startUnix"]);
     expect(lowered.temporal).toBeUndefined();
-    expect(lowered.filters).toEqual({ $and: [{ kind: "focus" }, { startUnix: { $gte: start, $lte: end } }] });
-    expect(classifyQuery(lowered, SCHEMA)).toBe("FULL_PUSHDOWN");
+    expect(lowered.filters).toEqual({ kind: "focus", $and: [{ startUnix: { $gte: start, $lte: end } }] });
+  });
+
+  it("keeps existing filters at the top level so the pre-filter still pushes them key by key", () => {
+    const schema = {
+      ...SCHEMA,
+      resources: [...SCHEMA.resources, { name: "tag", version: 1, fields: [{ name: "label", type: "string", required: true }] }],
+      relations: [{ from: "session", to: "tag", type: "many-many", relation: "tags", inverse: "sessions" }],
+    } as unknown as DatafnSchema;
+    const query = q(time.day("startUnix", "2026-05-18T12:00:00.000Z"), {
+      filters: { kind: "focus", tags: { $any: { label: "x" } }, $and: [{ minutes: { $gte: 3 } }] },
+    });
+    const { query: lowered } = lowerTemporalRanges(query, schema, config);
+    const { start, end } = resolveTemporalPeriodRange({ scale: "day", at: "2026-05-18T12:00:00.000Z" });
+    expect(lowered.filters).toEqual({
+      kind: "focus",
+      tags: { $any: { label: "x" } },
+      $and: [{ minutes: { $gte: 3 } }, { startUnix: { $gte: start, $lte: end } }],
+    });
+    const { pushable } = extractPushableFilters(lowered.filters as Record<string, unknown>, "session", schema);
+    expect(pushable).toEqual(
+      expect.arrayContaining([
+        { field: "kind", operator: "eq", value: "focus" },
+        { field: "minutes", operator: "gte", value: 3 },
+        { field: "startUnix", operator: "gte", value: start },
+        { field: "startUnix", operator: "lte", value: end },
+      ]),
+    );
   });
 
   it("keeps only the grouping of a clause whose period was lowered", () => {
     const clause = { ...time.groupByDay("startUnix", { alias: "day" }), period: { scale: "week" as const } };
     const { query: lowered } = lowerTemporalRanges(q(clause), SCHEMA, config);
     expect(lowered.temporal).toEqual({ field: "startUnix", groupBy: { scale: "day", alias: "day", output: undefined } });
-    expect(classifyQuery(lowered, SCHEMA)).toBe("IN_MEMORY");
   });
 
   it("leaves non-numeric storage, non-number fields and invalid bounds untouched", () => {
