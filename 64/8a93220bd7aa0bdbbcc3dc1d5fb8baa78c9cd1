@@ -1,12 +1,16 @@
 datafn/client/src/signals/querySignal.ts
   s_f058f999ab46b7::t_8bca5a43a64567 878-879
   s_f058f999ab46b7::t_dc9fe61411c30e 611-612,626-633,876-877,880
+  s_f058f999ab46b7::t_b892cd6e3a9fa6 611-612,626-633,876-877,880
 datafn/client/__tests__/signal-idle.test.ts
   s_f058f999ab46b7::t_f61c0b8a955dcf 1-143
+  s_f058f999ab46b7::t_c805db088385f8 1-8,10-82
 datafn/client/__tests__/signal-refresh-coalescing.test.ts
   s_f058f999ab46b7::t_a383d9411b4088 344-345,389-390
+  s_f058f999ab46b7::t_6dae856b18722f 344-345,389-390
 datafn/client/src/signals/liveSignal.ts
   s_f058f999ab46b7::t_31b792645c8424 42,45,48,60-81,99-101,104,132-136,140,144-148
+  s_f058f999ab46b7::t_d0947fc9de26e2 60-65,67,71-73,80-81,132-136,140,145-148
 ---
 {
   "schema_version": "authorship/3.0.0",
