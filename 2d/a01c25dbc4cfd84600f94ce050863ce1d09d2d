@@ -1,0 +1,33 @@
+reviewfn/harness-cli/src/adapter.ts
+  s_079c2963650fc9::t_eb0064117f700d 34-38,303-322,324,426-427,429-432,435-441,444-447,449-457,459-482,485-504,633-634,644-656,670-671,682-684,707-710
+reviewfn/harness-cli/README.md
+  s_dbebd2ca15a3fe::t_97b6d8635bbcb0 66
+reviewfn/harness-cli/test/adapter.test.ts
+  s_dbebd2ca15a3fe::t_bbc3f420eb5904 220,223,227-233,238-239,245,258-259,328-341,370-376
+reviewfn/harness-cli/test/panel.test.ts
+  s_dbebd2ca15a3fe::t_72280b9dd87517 130-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2da01c25dbc4cfd84600f94ce050863ce1d09d2d",
+  "prompts": {},
+  "sessions": {
+    "s_079c2963650fc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17ad5776-69c6-40a4-98d5-5e4b694fbf79",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_dbebd2ca15a3fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec583015-ca21-4c01-a566-1e65d7911f22",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

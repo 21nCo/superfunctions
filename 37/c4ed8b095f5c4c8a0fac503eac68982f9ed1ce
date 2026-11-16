@@ -1,0 +1,31 @@
+reviewfn/core/src/executable.ts
+  s_dbebd2ca15a3fe::t_fc69d930e83848 21,31-46
+reviewfn/core/src/panel/policy.ts
+  s_dbebd2ca15a3fe::t_fe3c628f3f0679 55-57
+reviewfn/core/test/panel-orchestrator.test.ts
+  s_dbebd2ca15a3fe::t_9b09561fc4f0fc 66-69
+reviewfn/harness-cli/README.md
+  s_dbebd2ca15a3fe::t_93d991edaa5615 52,66
+reviewfn/harness-cli/src/adapter.ts
+  s_dbebd2ca15a3fe::t_02449f9c3f4135 8,51-63,65-73,77,84,89,91,94,330-332,342,411-415,419-420,423-424,426-430,432,434,438,445,447-452,461-462,471,499-500,502,504-505,584-586,614-615,617-623,625-628
+reviewfn/harness-cli/test/adapter.test.ts
+  s_dbebd2ca15a3fe::t_3c33ae596dd55a 7,12-14,39,41,47,56,117,230-254,306-320,342-348,376-378,392-414,429-430,450
+reviewfn/harness-cli/test/panel.test.ts
+  s_dbebd2ca15a3fe::t_c75d341b47a29a 14-16,44,48,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37c4ed8b095f5c4c8a0fac503eac68982f9ed1ce",
+  "prompts": {},
+  "sessions": {
+    "s_dbebd2ca15a3fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec583015-ca21-4c01-a566-1e65d7911f22",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
