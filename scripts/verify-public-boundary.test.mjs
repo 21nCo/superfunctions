@@ -643,7 +643,7 @@ test("python importlib.import_module and __import__ calls with a literal *fn nam
   ]);
 });
 
-test("python __import__ levels, importlib wildcard imports and assignment aliases follow the closed loader set", async (t) => {
+test("python __import__ levels, starred arguments, importlib wildcard imports and assignment aliases follow the closed loader set", async (t) => {
   const root = fixture(t, {
     files: {
       "datafn/python/datafn/levels.py": [
@@ -680,6 +680,22 @@ test("python __import__ levels, importlib wildcard imports and assignment aliase
         "late = f",
         "",
       ].join("\n"),
+      "datafn/python/datafn/starred.py": [
+        "import importlib",
+        'importlib.import_module(*(), name="flowfn")',
+        '__import__(*(), name="flowfn")',
+        "im = importlib.import_module",
+        'im(*(), name="flowfn")',
+        "f = __import__",
+        'f(*args, name="flowfn")',
+        'importlib.import_module(*(), name="datafn")',
+        '__import__(*(), name="datafn")',
+        '__import__(*(), name="flowfn", level=1)',
+        '__import__("flowfn", *rest)',
+        '__import__(*a, "flowfn")',
+        'f(*(), name="flowfn", level=1)',
+        "",
+      ].join("\n"),
       "datafn/python/datafn/unrelated.py": [
         "def import_module(name, level=0):",
         "    return name",
@@ -697,6 +713,7 @@ test("python __import__ levels, importlib wildcard imports and assignment aliase
   assert.deepEqual((await findings(root)).sort(), [
     ...[3, 5, 8, 10, 12, 13].map((line) => `datafn/python/datafn/aliases.py:${line} ${RULES.fnDependency}`),
     ...[3, 4, 5, 6, 7, 8, 9, 10, 13].map((line) => `datafn/python/datafn/levels.py:${line} ${RULES.fnDependency}`),
+    ...[2, 3, 5, 7, 11].map((line) => `datafn/python/datafn/starred.py:${line} ${RULES.fnDependency}`),
     `datafn/python/datafn/wildcard.py:2 ${RULES.fnDependency}`,
   ].sort());
 });

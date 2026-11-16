@@ -837,12 +837,15 @@ export function importSpecifiers(file, source, parsed) {
 //             import_module [as f]` or `from importlib import *` (binds import_module); and a name bound by a simple
 //             assignment (`f = <loader>`, also annotated or `:=`) to any loader, `<m>.import_module` included.
 //   namespace `import importlib`, `import importlib.<sub>`, `import importlib as m`, or `m = <namespace>`.
-//   name      the first positional argument or `name=`, a non-empty string literal; one starting with "." is relative.
-//   level     `__import__` only (5th positional or `level=`): the call is relative, and not checked, only when its
+//   argument  argument i is the i-th positional one only when no `*args` occurs at or before position i; otherwise
+//             it is the keyword (`name=`, `level=`). One helper (arg_at) reads both, for every loader and alias.
+//   name      argument 0 or `name=`, a non-empty string literal; one starting with "." is relative.
+//   level     `__import__` only (argument 4 or `level=`): the call is relative, and not checked, only when its
 //             level is a literal (`ast.literal_eval`: `1`, `True`, `+2`) whose value is an int > 0. Every other call
 //             is checked as absolute: no level, a zero level (`0`, `False`, `-0`), and a level that is not a literal
 //             or may come from *args/**kwargs.
-// Not read: computed names, loaders passed across functions, objects or modules, `getattr(importlib, ...)`,
+// Not read: computed names, a name after `*args` with no `name=` keyword (`__import__(*a, "x")`), loaders passed
+// across functions, objects or modules, `getattr(importlib, ...)`,
 // `builtins.__import__`, `importlib.__import__`, tuple-unpacking assignments and a loader rebound to something else
 // (a name once bound to a loader stays one for the whole file).
 const PYTHON_IMPORTS = String.raw`
@@ -851,11 +854,13 @@ import ast, json, sys
 def literal_name(node):
     return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value and not node.value.startswith(".")
 
-def keyword(call, name):
+def arg_at(call, index, name):
+    if len(call.args) > index and not any(isinstance(arg, ast.Starred) for arg in call.args[:index + 1]):
+        return call.args[index]
     return next((item.value for item in call.keywords if item.arg == name), None)
 
 def dunder_level_relative(call):
-    level = call.args[4] if len(call.args) > 4 and not any(isinstance(arg, ast.Starred) for arg in call.args[:5]) else keyword(call, "level")
+    level = arg_at(call, 4, "level")
     if level is None:
         return False
     try:
@@ -926,7 +931,7 @@ for path in sys.stdin.read().split("\0"):
         kinds = kinds_of(node.func)
         if not kinds:
             continue
-        arg = node.args[0] if node.args else keyword(node, "name")
+        arg = arg_at(node, 0, "name")
         if not literal_name(arg):
             continue
         if "import_module" in kinds or not dunder_level_relative(node):
