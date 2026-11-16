@@ -61,6 +61,56 @@ function countingAdapter(db: Adapter) {
   return { db: wrapped, counts };
 }
 
+/** The adapter with one method replaced. */
+function withMethod(db: Adapter, method: string, replace: (original: any, target: Adapter) => unknown): Adapter {
+  return new Proxy(db, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === method) return replace(value, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Adapter;
+}
+
+/** An adapter whose count() fails for one model. */
+function withFailingCount(db: Adapter, model: string): Adapter {
+  return withMethod(db, "count", (original, target) => async (args: { model: string }) => {
+    if (args.model === model) throw new Error("count failed");
+    return original.call(target, args);
+  });
+}
+
+/** An adapter whose findOne() always fails. */
+function withFailingFindOne(db: Adapter, message: string): Adapter {
+  return withMethod(db, "findOne", () => async () => {
+    throw new Error(message);
+  });
+}
+
+/** An adapter that counts findMany() calls on one model. */
+function countingFindMany(db: Adapter, model: string) {
+  const counter = { count: 0 };
+  const wrapped = withMethod(db, "findMany", (original, target) => (args: { model: string }) => {
+    if (args.model === model) counter.count += 1;
+    return original.call(target, args);
+  });
+  return { db: wrapped, counter };
+}
+
+/** Adds an "extras" resource with five records, to push clones over a cap. */
+async function addExtrasTable(db: Adapter): Promise<DatafnSchema> {
+  for (let i = 1; i <= 5; i++) {
+    await db.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
+  }
+  return {
+    ...schema,
+    resources: [
+      ...schema.resources,
+      { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
+    ],
+  };
+}
+
 async function seed() {
   const db = memoryAdapter();
   await db.initialize?.();
@@ -316,19 +366,7 @@ describe("paginated clone join rows", () => {
         namespace: NAMESPACE,
       });
     }
-    let joinQueries = 0;
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "findMany") {
-          return (args: { model: string }) => {
-            if (args.model === "__datafn_join_tags_links") joinQueries += 1;
-            return value.call(target, args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const { db, counter } = countingFindMany(base, "__datafn_join_tags_links");
 
     const page = await executeClone(
       {
@@ -343,7 +381,7 @@ describe("paginated clone join rows", () => {
     );
 
     expect(page.data.tags).toHaveLength(1000);
-    expect(joinQueries).toBe(1);
+    expect(counter.count).toBe(1);
     expect(page.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1", "l2"]);
   });
 
@@ -361,19 +399,7 @@ describe("paginated clone join rows", () => {
       data: { id: "l1", from: "t1", to: "t2" },
       namespace: NAMESPACE,
     });
-    let joinQueries = 0;
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "findMany") {
-          return (args: { model: string }) => {
-            if (args.model === "__datafn_join_tags_links") joinQueries += 1;
-            return value.call(target, args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const { db, counter } = countingFindMany(base, "__datafn_join_tags_links");
     const pageOf = (tables: string[] | undefined) =>
       executeClone(
         {
@@ -390,13 +416,13 @@ describe("paginated clone join rows", () => {
     // No `tables`: every resource is cloned, so cursor reads already spend a
     // query per table and the join table is read once.
     const multi = await pageOf(undefined);
-    expect(joinQueries).toBe(1);
+    expect(counter.count).toBe(1);
     expect(multi.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
 
     // A single-table page still looks its join rows up by id.
-    joinQueries = 0;
+    counter.count = 0;
     const single = await pageOf(["tags"]);
-    expect(joinQueries).toBeGreaterThan(1);
+    expect(counter.count).toBeGreaterThan(1);
     expect(single.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
   });
 
@@ -488,28 +514,8 @@ describe("paginated clone join rows", () => {
 
   it("a deferred table whose count failed still gets a continuation", async () => {
     const base = await seed();
-    const withExtras: DatafnSchema = {
-      ...schema,
-      resources: [
-        ...schema.resources,
-        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
-      ],
-    };
-    for (let i = 1; i <= 5; i++) {
-      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
-    }
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "count") {
-          return async (args: { model: string }) => {
-            if (args.model === "extras") throw new Error("count failed");
-            return value.call(target, args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const withExtras = await addExtrasTable(base);
+    const db = withFailingCount(base, "extras");
     // Tags (3) and notes (6) exceed the cap of 4; extras are deferred.
     const capped = await executeClone(
       { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "alice" },
@@ -532,16 +538,7 @@ describe("paginated clone join rows", () => {
       data: { createdBy: "bob" },
       namespace: NAMESPACE,
     });
-    const withExtras: DatafnSchema = {
-      ...schema,
-      resources: [
-        ...schema.resources,
-        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
-      ],
-    };
-    for (let i = 1; i <= 5; i++) {
-      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
-    }
+    const withExtras = await addExtrasTable(base);
     const { db, counts } = countingAdapter(base);
     // Cap 9: tags (3) then notes (6) fill it exactly; extras are deferred.
     const request = { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "bob" };
@@ -589,17 +586,7 @@ describe("paginated clone join rows", () => {
 
   it("reconcile counts nothing for a join store whose access check fails", async () => {
     const base = await seed();
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "findOne") {
-          return async () => {
-            throw new Error("lookup failed");
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const db = withFailingFindOne(base, "lookup failed");
     // Only tags are reconciled, so the private note endpoints are looked up.
     const reconcile = await executeReconcile(
       { clientId: "c1", resources: ["tags"], actorId: "bob", includeJoins: true } as any,
@@ -619,31 +606,11 @@ describe("paginated clone join rows", () => {
       data: { createdBy: "bob" },
       namespace: NAMESPACE,
     });
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "count") {
-          return async (args: { model: string }) => {
-            if (args.model === "notes") throw new Error("count failed");
-            return value.call(target, args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const db = withFailingCount(base, "notes");
     // An extra table makes the clone exceed the cap even though the notes
     // count failed; tags fill 3 of the 4-record cap and the notes read stops
     // after n1.
-    const withExtras: DatafnSchema = {
-      ...schema,
-      resources: [
-        ...schema.resources,
-        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
-      ],
-    };
-    for (let i = 1; i <= 5; i++) {
-      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
-    }
+    const withExtras = await addExtrasTable(base);
     const capped = await executeClone(
       { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "bob", includeJoins: true },
       withExtras,
@@ -661,17 +628,7 @@ describe("paginated clone join rows", () => {
 
   it("fails the clone when a join endpoint's access check fails", async () => {
     const base = await seed();
-    const db = new Proxy(base, {
-      get(target, prop, receiver) {
-        if (prop === "findOne") {
-          return async () => {
-            throw new Error("database unavailable");
-          };
-        }
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Adapter;
+    const db = withFailingFindOne(base, "database unavailable");
 
     await expect(
       executeClone(
