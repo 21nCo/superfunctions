@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   api-check:
+    if: github.repository == '21nCo/superfunctions'
     uses: ./.github/workflows/apifn-api-check.yml
     with:
       spec_path: apifn/cli/__tests__/fixtures/diff/before.yml

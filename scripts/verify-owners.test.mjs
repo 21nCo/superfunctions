@@ -7,9 +7,11 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { pyprojectName, repoFromEnv, verifyOwners } from "./verify-owners.mjs";
+import { REPOSITORY_GUARD, SHARED_WORKFLOWS, hasRepositoryGuard, pyprojectName, repoFromEnv, verifyOwners, workflowGuardErrors } from "./verify-owners.mjs";
 
 const script = fileURLToPath(new URL("./verify-owners.mjs", import.meta.url));
+
+const guardedWorkflow = `name: CI\non: push\njobs:\n  test:\n    if: ${REPOSITORY_GUARD}\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n`;
 
 const manifest = () => ({
   version: 1,
@@ -27,7 +29,7 @@ function fixture(t, { owners = manifest(), next, releases = [{ slug: "datafn-cor
     "package-lock.json": "{}\n",
     "release-packages.json": JSON.stringify(releases),
     [PUBLIC_MANIFEST]: JSON.stringify(owners),
-    ".github/workflows/ci.yml": "name: CI\n",
+    ".github/workflows/ci.yml": guardedWorkflow,
     "datafn/core/package.json": "{}\n",
     "datafn/python/pyproject.toml": '[build-system]\nrequires = ["hatchling"]\n\n[project]\nname = "datafn"\nversion = "0.1.0"\n',
     ...(next ? { [NEXT_MANIFEST]: JSON.stringify(next) } : {}),
@@ -421,6 +423,80 @@ test("the self-check uses the checkout's semantics, so a next-shaped tree passes
   assert.equal(forcedPublic.status, 1);
   assert.match(forcedPublic.stderr, /docsfn\/: top-level directory is not listed/);
   assert.equal(runWith({ OWNERS_REPO: "public" }, root, "--repo", "next").status, 0);
+});
+
+test("a workflow job without the repository guard fails unless the workflow is on the shared list", (t) => {
+  assert.deepEqual(SHARED_WORKFLOWS, ["publish-tag.yml", "publish-python.yml"]);
+  const unguarded = "name: X\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.repository == '21nCo/superfunctions'\n        run: echo hi\n";
+  const root = fixture(t, {
+    files: {
+      ".github/workflows/deploy.yml": unguarded,
+      ".github/workflows/publish-tag.yml": unguarded,
+      ".github/workflows/publish-python.yml": unguarded,
+      ".github/workflows/README.md": "not a workflow\n",
+    },
+  });
+  const result = run(root, "--repo", "public");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /\.github\/workflows\/deploy\.yml: job "build" has no if:/);
+  assert.doesNotMatch(result.stderr, /publish-tag|publish-python|README|ci\.yml/);
+  // Both repositories run the check: .github is public-owned and synced to next.
+  assert.deepEqual(
+    verifyOwners({ root, repo: "next" }).filter((message) => message.includes(".github/workflows")),
+    ['.github/workflows/deploy.yml: job "build" has no if:; jobs outside the shared list must start their if: with ' + REPOSITORY_GUARD],
+  );
+});
+
+test("hasRepositoryGuard accepts only the guard or the guard joined by && to one parenthesised condition", () => {
+  const guard = REPOSITORY_GUARD;
+  for (const condition of [
+    guard,
+    `\${{ ${guard} }}`,
+    `${guard} && (always())`,
+    `${guard}   &&   (github.event_name == 'pull_request' && github.base_ref == 'dev')`,
+    `${guard} && (contains(github.ref, ')') || github.ref == 'refs/heads/dev')`,
+    `${guard} && (github.actor == 'it''s')`,
+  ]) {
+    assert.equal(hasRepositoryGuard(condition), true, condition);
+  }
+  for (const condition of [
+    "always()",
+    `${guard} || always()`,
+    `always() && ${guard}`,
+    `${guard} && (a) || (b)`,
+    `${guard} && a == 'b'`,
+    `${guard} && (a`,
+    "github.repository == '21nCo/super-functions.next'",
+    "github.repository != '21nCo/superfunctions'",
+  ]) {
+    assert.equal(hasRepositoryGuard(condition), false, condition);
+  }
+});
+
+test("workflowGuardErrors reads every if: spelling, names each unguarded job and fails closed on layouts it cannot read", () => {
+  const workflow = (jobs) => `name: X\non: push\njobs:\n${jobs}`;
+  const guard = REPOSITORY_GUARD;
+  const ok = [
+    `  a:\n    name: A\n    if: ${guard}\n    runs-on: x\n`,
+    `  a:\n    if: '${guard.replaceAll("'", "''")} && (always())'\n`,
+    `  a:\n    if: "${guard} && (always())" # quoted\n`,
+    `  a:\n    if: \${{ ${guard} }} # comment\n`,
+    `  a:\n    if: >-\n      ${guard} &&\n      (needs.plan.outputs.run == 'true')\n    runs-on: x\n`,
+    `  # a comment\n  a:\n\n    if: ${guard}\n    steps:\n      - run: |\n          if: not a key\n  'b':\n    needs: a\n    if: ${guard} && (always())\n`,
+  ];
+  for (const jobs of ok) assert.deepEqual(workflowGuardErrors("w.yml", workflow(jobs)), [], jobs);
+
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    runs-on: x\n  b:\n    if: always()\n  c:\n    if: ${guard}\n`)), [
+    `w.yml: job "a" has no if:; jobs outside the shared list must start their if: with ${guard}`,
+    `w.yml: job "b" has if: "always()"; jobs outside the shared list must start their if: with ${guard}`,
+  ]);
+  // An if: nested under steps or with: is not the job's condition.
+  assert.equal(workflowGuardErrors("w.yml", workflow(`  a:\n    steps:\n      - if: ${guard}\n    with:\n      if: ${guard}\n`)).length, 1);
+  assert.match(workflowGuardErrors("w.yml", "name: X\non: push\n")[0], /has no block-style top-level jobs/);
+  assert.match(workflowGuardErrors("w.yml", "name: X\njobs: { a: { runs-on: x } }\n")[0], /has no block-style top-level jobs/);
+  assert.match(workflowGuardErrors("w.yml", "name: X\njobs:\nenv: {}\n")[0], /has no jobs/);
+  assert.match(workflowGuardErrors("w.yml", workflow("  a: { runs-on: x }\n"))[0], /not a block-style job key/);
+  assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    if: '${guard}\n`))[0], /cannot be read/);
 });
 
 test("the checked-out repository matches its manifest", () => {

@@ -41,6 +41,7 @@ on:
 
 jobs:
   routes:
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     concurrency:

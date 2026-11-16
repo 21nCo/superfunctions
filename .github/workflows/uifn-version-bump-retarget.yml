@@ -20,6 +20,7 @@ concurrency:
 jobs:
   uifn-version-bump:
     name: UIFn version bump
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     steps:
       # The PR merge ref, which holds the checker even for a branch made before it, with every branch's history.

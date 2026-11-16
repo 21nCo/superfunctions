@@ -20,6 +20,7 @@ on:
 jobs:
   test-action:
     name: Tusk Test Runner
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     strategy:
       matrix:

@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveReleaseTag } from './resolve-release-tag.mjs';
 
-const target = await resolveReleaseTag(process.argv[2] ?? process.env.RELEASE_TAG);
 const root = path.resolve(import.meta.dirname, '..');
+// The target may come from release-packages.json or the repository overlay; both are read from this checkout.
+const target = await resolveReleaseTag(process.argv[2] ?? process.env.RELEASE_TAG, { root });
 const cwd = path.join(root, target.path);
 const manifestFile = path.join(cwd, 'package.json');
 const manifestSource = await readFile(manifestFile, 'utf8');

@@ -107,6 +107,7 @@ on:
 
 jobs:
   detect:
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.detect.outputs.environment }}
@@ -138,7 +139,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: detect
-    if: needs.detect.outputs.products != '[]'
+    if: github.repository == '21nCo/superfunctions' && (needs.detect.outputs.products != '[]')
     environment: ${{ needs.detect.outputs.environment }}
     concurrency:
       group: superfunctions-docs-cloudflare-${{ needs.detect.outputs.environment }}-${{ matrix.product }}

@@ -4,7 +4,8 @@
 // semantics: an unlisted path is public-owned, so only superfunctions.owners.next.json entries are checked for
 // existence. In both, every release slug and Python project must be listed (in either manifest on next), its path
 // must be ownable and owned by the repository that publishes it, and every entry of the repository's own manifest
-// (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist.
+// (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist. In both, every job of
+// every workflow in .github/workflows outside SHARED_WORKFLOWS must carry the repository guard (D14).
 // Usage: node scripts/verify-owners.mjs [--repo public|next] [--root <checkout>]
 // Without --repo, OWNERS_REPO selects the semantics; without either, the checkout decides (next when
 // superfunctions.owners.next.json exists, public otherwise).
@@ -49,6 +50,134 @@ export function readReleaseEntries(root, repo) {
     }
   }
   return entries;
+}
+
+// Workflows under .github/workflows are public-owned and synced to next (SFNS-121 D14). Every job of a workflow that
+// is not on the shared list must skip outside the public repository, so `next` (whose CI runs on Depot) never runs it.
+export const WORKFLOW_DIR = ".github/workflows";
+export const REPOSITORY_GUARD = "github.repository == '21nCo/superfunctions'";
+/** Workflows that run in both repositories (each repository publishes its own packages, D8). */
+export const SHARED_WORKFLOWS = Object.freeze(["publish-tag.yml", "publish-python.yml"]);
+
+const indentOf = (line) => line.length - line.trimStart().length;
+const isContent = (line) => line.trim() !== "" && !line.trimStart().startsWith("#");
+
+/** Index of the parenthesis that closes the one at `open`, skipping single-quoted expression strings; -1 if none. */
+function closingParen(expression, open) {
+  let depth = 0;
+  for (let index = open; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (char === "'") {
+      index += 1;
+      while (index < expression.length && !(expression[index] === "'" && expression[index + 1] !== "'")) {
+        index += expression[index] === "'" ? 2 : 1;
+      }
+    } else if (char === "(") depth += 1;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+/**
+ * Whether a job `if:` expression can only be true in the public repository: exactly the guard, or the guard joined
+ * by `&&` to one parenthesised condition (so no top-level `||` can bypass it).
+ */
+export function hasRepositoryGuard(condition) {
+  let expression = condition.trim();
+  const wrapped = expression.match(/^\$\{\{([\s\S]*)\}\}$/);
+  if (wrapped) expression = wrapped[1].trim();
+  expression = expression.replaceAll(/\s+/g, " ");
+  if (expression === REPOSITORY_GUARD) return true;
+  const prefix = `${REPOSITORY_GUARD} && (`;
+  if (!expression.startsWith(prefix)) return false;
+  return closingParen(expression, prefix.length - 1) === expression.length - 1;
+}
+
+/** Scalar value of an `if:` key starting at `lines[index]`, or null when it cannot be read reliably. */
+function readIfValue(lines, index) {
+  const indent = indentOf(lines[index]);
+  const raw = lines[index].trimStart().slice("if:".length).trim();
+  if (/^[>|][+-]?\s*(?:#.*)?$/.test(raw)) {
+    const parts = [];
+    for (let next = index + 1; next < lines.length && (lines[next].trim() === "" || indentOf(lines[next]) > indent); next += 1) {
+      parts.push(lines[next].trim());
+    }
+    return parts.join(" ");
+  }
+  if (raw.startsWith("'")) {
+    const match = raw.match(/^'((?:[^']|'')*)'\s*(?:#.*)?$/);
+    return match ? match[1].replaceAll("''", "'") : null;
+  }
+  if (raw.startsWith('"')) {
+    const match = raw.match(/^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/);
+    return match ? JSON.parse(`"${match[1]}"`) : null;
+  }
+  // A plain scalar ends at " #" outside an expression string.
+  let quoted = false;
+  for (let char = 0; char < raw.length; char += 1) {
+    if (raw[char] === "'") quoted = !quoted;
+    else if (!quoted && raw[char] === "#" && /\s/.test(raw[char - 1] ?? " ")) return raw.slice(0, char).trim();
+  }
+  return raw;
+}
+
+/**
+ * Errors for one workflow file: every job must carry the repository guard in its `if:`. Workflows are read line by
+ * line (block style, as every workflow here is written); a layout the reader cannot follow fails closed.
+ */
+export function workflowGuardErrors(file, source) {
+  const lines = source.split(/\r?\n/);
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*(?:#.*)?$/.test(line));
+  if (jobsAt === -1) return [`${file}: has no block-style top-level jobs: key, so its repository guard cannot be checked`];
+  const errors = [];
+  let jobIndent = null;
+  let job = null;
+  const finish = () => {
+    if (job && !job.guarded) {
+      const reason = job.condition === undefined ? "has no if:" : `has if: ${JSON.stringify(job.condition)}`;
+      errors.push(`${file}: job "${job.name}" ${reason}; jobs outside the shared list must start their if: with ${REPOSITORY_GUARD}`);
+    }
+  };
+  for (let index = jobsAt + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isContent(line)) continue;
+    const indent = indentOf(line);
+    if (indent === 0) break;
+    jobIndent ??= indent;
+    if (indent < jobIndent) return [`${file}: line ${index + 1} is indented less than the jobs it follows`];
+    if (indent === jobIndent) {
+      finish();
+      const header = line.trim().match(/^(['"]?)([A-Za-z_][A-Za-z0-9_-]*)\1:\s*(?:#.*)?$/);
+      if (!header) return [`${file}: line ${index + 1} is not a block-style job key, so its repository guard cannot be checked`];
+      job = { name: header[2], propertyIndent: null, guarded: false, condition: undefined };
+      continue;
+    }
+    job.propertyIndent ??= indent;
+    if (indent === job.propertyIndent && /^if\s*:/.test(line.trimStart())) {
+      const condition = readIfValue(lines, index);
+      if (condition === null) return [`${file}: line ${index + 1} has an if: value that cannot be read`];
+      job.condition = condition;
+      job.guarded = hasRepositoryGuard(condition);
+    }
+  }
+  finish();
+  if (job === null) errors.push(`${file}: jobs: has no jobs, so its repository guard cannot be checked`);
+  return errors;
+}
+
+/** Workflow files that must carry the repository guard: every tracked workflow not on the shared list. */
+export function findWorkflowGuardErrors(workflows) {
+  return workflows
+    .filter(({ file }) => !SHARED_WORKFLOWS.includes(path.posix.basename(file)))
+    .flatMap(({ file, source }) => workflowGuardErrors(file, source));
+}
+
+/** Tracked workflow files directly under .github/workflows, with their contents. */
+export function readWorkflows(root, files) {
+  return files
+    .filter((file) => path.posix.dirname(file) === WORKFLOW_DIR && /\.ya?ml$/.test(file))
+    .sort(compareStrings)
+    .map((file) => ({ file, source: readFileSync(path.join(root, file), "utf8") }));
 }
 
 /** Throws the typed error for a pyproject.toml whose project metadata cannot be read reliably. */
@@ -568,13 +697,16 @@ export function verifyOwners({ root = REPO_ROOT, repo } = {}) {
   repo ??= owners.defaultRepo;
   if (!REPOS.includes(repo)) throw new OwnersError("invalid-repo", `--repo must be "public" or "next", not ${JSON.stringify(repo)}`, { repo });
   const files = trackedFiles(root);
-  return findOwnershipErrors({
-    owners,
-    repo,
-    files,
-    releases: readReleaseEntries(root, repo),
-    python: readPythonProjects(root, files),
-  });
+  return [
+    ...findOwnershipErrors({
+      owners,
+      repo,
+      files,
+      releases: readReleaseEntries(root, repo),
+      python: readPythonProjects(root, files),
+    }),
+    ...findWorkflowGuardErrors(readWorkflows(root, files)),
+  ];
 }
 
 function parseArgs(argv) {

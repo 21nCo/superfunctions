@@ -101,6 +101,7 @@ permissions:
 
 jobs:
   api-check:
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
 
     steps:

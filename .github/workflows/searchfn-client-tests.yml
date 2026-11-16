@@ -28,6 +28,7 @@ on:
 
 jobs:
   test-node-18:
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

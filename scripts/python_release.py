@@ -36,22 +36,72 @@ TARGETS = {
 # Non-library fixture files needed by tests outside the checkout.
 TEST_FIXTURES = {"billfn": ("examples/mock_api.py",)}
 
+# Repositories other than public may add Python projects in an overlay (SFNS-121 D3): a JSON array of
+# {"name": <canonical project name>, "path": <directory>} entries. An overlay never repeats a TARGETS project.
+OVERLAY_REPOS = ("next",)
+
+
+def overlay_file(repo):
+    return f"python-release-packages.{repo}.json"
+
+
+class ReleaseTargetError(ValueError):
+    """A malformed or conflicting release target; `code` names the failure."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def release_targets(root=ROOT):
+    """TARGETS merged with the repository overlay when one is present in the checkout."""
+    targets = dict(TARGETS)
+    for repo in OVERLAY_REPOS:
+        file = overlay_file(repo)
+        source = Path(root) / file
+        if not source.is_file():
+            continue
+        try:
+            entries = json.loads(source.read_text(encoding="utf8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ReleaseTargetError("malformed-release-file", f"{file}: invalid JSON: {error}") from error
+        if not isinstance(entries, list):
+            raise ReleaseTargetError("malformed-release-file", f"Expected {file} to contain an array")
+        overlay = set()
+        for entry in entries:
+            invalid = ReleaseTargetError("invalid-target", f"{file}: entry {json.dumps(entry)} needs exactly a canonical project name and a path")
+            if not isinstance(entry, dict) or set(entry) != {"name", "path"}:
+                raise invalid
+            name, directory = entry["name"], entry["path"]
+            if not isinstance(name, str) or not name or canonicalize_name(name) != name or not isinstance(directory, str) or not directory:
+                raise invalid
+            if name in targets:
+                where = f"more than once in {file}" if name in overlay else f"in both TARGETS and {file}"
+                raise ReleaseTargetError("duplicate-slug", f"Python project {name!r} is listed {where}; an overlay must not repeat a base project")
+            normalized = os.path.normpath(directory)
+            if os.path.isabs(directory) or normalized in (".", "..") or normalized.startswith(".." + os.sep):
+                raise ReleaseTargetError("invalid-target-path", f"{file}: invalid target path {directory!r} for {name!r}")
+            overlay.add(name)
+            targets[name] = directory
+    return targets
+
 
 def resolve(tag, root=ROOT):
+    targets = release_targets(root)
     prefix, separator, version = tag.rpartition("-v")
     name = prefix.removeprefix("python-")
-    if not separator or prefix != f"python-{name}" or name not in TARGETS:
+    if not separator or prefix != f"python-{name}" or name not in targets:
         raise ValueError("Expected python-<supported-project>-v<PEP440-version>")
     parsed = Version(version)
     if str(parsed) != version or parsed.local is not None or parsed.is_devrelease or parsed.is_postrelease or parsed.epoch:
         raise ValueError("Use a canonical stable or a/b/rc prerelease version without local, epoch, dev or post identifiers")
-    directory = root / TARGETS[name]
+    directory = Path(root) / targets[name]
     with (directory / "pyproject.toml").open("rb") as source:
         manifest = tomllib.load(source)
     project = manifest["project"]
     if project.get("name") != name or project.get("version") != version:
         raise ValueError(f"Tag identity {name}@{version} does not exactly match pyproject.toml")
-    return {"tag": tag, "name": name, "version": version, "path": TARGETS[name], "prerelease": parsed.is_prerelease}
+    return {"tag": tag, "name": name, "version": version, "path": targets[name], "prerelease": parsed.is_prerelease}
 
 
 def check_version_policy(target, releases):

@@ -1,11 +1,12 @@
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
 import zipfile
 
-from python_release import TARGETS, check_version_policy, resolve, verify_artifacts
+from python_release import TARGETS, ReleaseTargetError, check_version_policy, overlay_file, release_targets, resolve, verify_artifacts
 
 
 class PythonReleaseTests(unittest.TestCase):
@@ -44,6 +45,46 @@ class PythonReleaseTests(unittest.TestCase):
             for version in ["01.0.0", "1.0.0RC1", "1.0.0+local", "1.0.0.dev1", "1.0.0.post1", "1!1.0.0"]:
                 with self.assertRaises(ValueError):
                     resolve(f"python-apifn-v{version}", root)
+
+    def test_next_overlay_adds_projects_and_never_repeats_a_base_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, path in [("apifn", TARGETS["apifn"]), ("nextfn", "nextfn/python")]:
+                (root / path).mkdir(parents=True)
+                (root / path / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="1.0.0"\n')
+            overlay = root / overlay_file("next")
+            self.assertEqual(overlay.name, "python-release-packages.next.json")
+
+            # Without an overlay the targets are exactly TARGETS.
+            self.assertEqual(release_targets(root), TARGETS)
+            with self.assertRaises(ValueError):
+                resolve("python-nextfn-v1.0.0", root)
+
+            overlay.write_text(json.dumps([{"name": "nextfn", "path": "nextfn/python"}]))
+            self.assertEqual(resolve("python-nextfn-v1.0.0", root)["path"], "nextfn/python")
+            self.assertEqual(resolve("python-apifn-v1.0.0", root)["path"], TARGETS["apifn"])
+
+            cases = [
+                ([{"name": "apifn", "path": "nextfn/python"}], "duplicate-slug", "in both TARGETS"),
+                ([{"name": "nextfn", "path": "nextfn/python"}, {"name": "nextfn", "path": "other"}], "duplicate-slug", "more than once"),
+                ([{"name": "nextfn", "path": "../outside"}], "invalid-target-path", "nextfn"),
+                ([{"name": "nextfn", "path": "/abs"}], "invalid-target-path", "nextfn"),
+                ([{"name": "NextFn", "path": "nextfn/python"}], "invalid-target", "canonical"),
+                ([{"name": "nextfn"}], "invalid-target", "canonical"),
+                ([{"name": "nextfn", "path": "nextfn/python", "slug": "x"}], "invalid-target", "canonical"),
+                ({"nextfn": "nextfn/python"}, "malformed-release-file", "array"),
+            ]
+            for entries, code, message in cases:
+                overlay.write_text(json.dumps(entries))
+                with self.subTest(entries=entries):
+                    with self.assertRaises(ReleaseTargetError) as raised:
+                        resolve("python-apifn-v1.0.0", root)
+                    self.assertEqual(raised.exception.code, code)
+                    self.assertIn(message, str(raised.exception))
+            overlay.write_text("[")
+            with self.assertRaises(ReleaseTargetError) as raised:
+                resolve("python-apifn-v1.0.0", root)
+            self.assertEqual(raised.exception.code, "malformed-release-file")
 
     def test_pypi_occupied_and_regressive_versions_fail(self):
         for version in ["0.1.0", "0.0.9", "0.1.0rc1"]:

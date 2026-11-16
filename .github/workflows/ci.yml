@@ -23,6 +23,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     outputs:
       base_ref: ${{ steps.plan.outputs.base_ref }}
@@ -91,7 +92,7 @@ jobs:
   # uifn-version-bump-retarget.yml reruns this job when a PR is edited, which is how a PR retargeted to dev gets it.
   uifn-version-bump:
     name: UIFn version bump
-    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    if: github.repository == '21nCo/superfunctions' && (github.event_name == 'pull_request' && github.base_ref == 'dev')
     runs-on: ubuntu-latest
     steps:
       # The PR merge ref, which holds the checker even for a branch made before it, with every branch's history.
@@ -133,7 +134,7 @@ jobs:
   javascript:
     name: JavaScript
     needs: plan
-    if: needs.plan.outputs.run_js == 'true' && needs.plan.outputs.mcpfn_only != 'true'
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_js == 'true' && needs.plan.outputs.mcpfn_only != 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -212,7 +213,7 @@ jobs:
   mcpfn-node20:
     name: McpFn Node 20 compatibility
     needs: plan
-    if: needs.plan.outputs.run_mcpfn == 'true'
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_mcpfn == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -242,10 +243,41 @@ jobs:
           npm run typecheck --workspace=@mcpfn/client --workspace=@mcpfn/testing --workspace=@mcpfn/cli
           npm test --workspace=@mcpfn/client --workspace=@mcpfn/testing --workspace=@mcpfn/cli
 
+  # Release target resolution (release-packages.json plus a repository overlay) on the runtimes the publish
+  # workflows use, and the root workspace globs against the explicit list they replaced (SFNS-123).
+  release-scripts:
+    name: Release scripts
+    if: github.repository == '21nCo/superfunctions'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Workspace globs and npm release targets
+        run: node --test scripts/workspaces.test.mjs scripts/resolve-release-tag.test.mjs
+
+      - name: Python release targets
+        run: |
+          python -m pip install --only-binary=:all: packaging==25.0
+          python -m unittest discover -s scripts -p test_python_release.py -v
+
   python:
     name: Python package (${{ matrix.package.path }})
     needs: plan
-    if: needs.plan.outputs.run_python == 'true' && needs.plan.outputs.mcpfn_only != 'true'
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_python == 'true' && needs.plan.outputs.mcpfn_only != 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -279,7 +311,7 @@ jobs:
   python-result:
     name: Python
     needs: [plan, python]
-    if: always()
+    if: github.repository == '21nCo/superfunctions' && (always())
     runs-on: ubuntu-latest
     steps:
       - name: Require every planned Python package check to pass
@@ -303,7 +335,7 @@ jobs:
   mcpfn:
     name: McpFn release gate
     needs: plan
-    if: needs.plan.outputs.run_mcpfn == 'true'
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_mcpfn == 'true')
     runs-on: ubuntu-24.04 # Playwright 1.59 does not support ubuntu-latest (26.04)
     steps:
       - name: Checkout
@@ -349,7 +381,7 @@ jobs:
   mcpfn-node18-cjs:
     name: McpFn Node 18 CommonJS
     needs: plan
-    if: needs.plan.outputs.run_mcpfn == 'true'
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_mcpfn == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
