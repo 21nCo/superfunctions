@@ -554,7 +554,7 @@ function matchesSubFilter(row: Record<string, unknown>, subFilter: Record<string
 function normalizeShorthandLists(filter: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(filter)) {
-    if (key === "$and" || key === "$or" || key === "and" || key === "or") {
+    if (key === "$and" || key === "$or") {
       out[key] = Array.isArray(value)
         ? value.map((sub) => (isPlainObject(sub) ? normalizeShorthandLists(sub) : sub))
         : value;

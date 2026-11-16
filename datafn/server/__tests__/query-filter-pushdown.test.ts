@@ -540,6 +540,24 @@ describe("$any / $none relation filter push-down", () => {
     ]) {
       await expectParity({ resource: "task", filters, sort: ["id:asc"], count: true });
     }
+    // `and` / `or` without `$` are field names; their array shorthand is a value list.
+    const schema: DatafnSchema = {
+      ...SCHEMA,
+      resources: SCHEMA.resources.map((resource) =>
+        resource.name === "objective"
+          ? { ...resource, fields: [...resource.fields, { name: "or", type: "string", required: false, nullable: true }] }
+          : resource,
+      ) as DatafnSchema["resources"],
+    };
+    const { db, server } = await createServer({ schema });
+    await db.update({ model: "objective", where: [{ field: "id", operator: "eq", value: "objective:goal" }], data: { or: "P" }, namespace: "datafn" });
+    const spy = vi.spyOn(db as Adapter, "findMany");
+    const body = { resource: "task", filters: { objective: { $any: { or: ["P"] } } }, select: ["id"], sort: ["id:asc"], count: true };
+    const pushed = await query(server, body);
+    expect(pushed.status, JSON.stringify(pushed.body)).toBe(200);
+    expect(pushdownReads(spy, "task").length).toBeGreaterThan(0);
+    expect(ids(pushed.body.result)).toEqual(["task:1"]);
+    expect(pushed.body.result.count).toBe(1);
     expect(ids(await expectParity({
       resource: "task",
       filters: { objective: { $any: { $and: [{ label: "Goal" }, { label: ["Goal", "Other"] }] } } },
