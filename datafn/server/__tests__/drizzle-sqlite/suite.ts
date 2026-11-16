@@ -11,7 +11,9 @@ import { toHono } from "@superfunctions/http-hono";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Adapter } from "@superfunctions/db";
 import { createDatafnServer } from "../../src/index.js";
-import { isDatafnE2eeEnvelope } from "@datafn/core";
+import { isDatafnE2eeEnvelope, resolveTemporalPeriodRange, time, TIMEZONE_CHANGE_RESOURCE_NAME } from "@datafn/core";
+import { executeQuery } from "../../src/execution/query/execute.js";
+import { MemoryStore } from "../../src/execution/memory-store.js";
 import {
   allTables,
   conformanceSchema,
@@ -196,6 +198,172 @@ export function describeDrizzleSqliteConformance(
           cursor: { after: { priority: 3, id: "task:a" } },
         });
         expect(afterCursor.body.result.data).toEqual([{ id: "task:c" }, { id: "task:e" }]);
+      });
+    });
+
+    describe("temporal push-down", () => {
+      // `priority` is an integer column; these cases store epoch timestamps in
+      // it (milliseconds, or seconds for unix-s) to stand in for a time field.
+      // Kept small: the memory-adapter suite (temporal-pushdown.test.ts) covers the
+      // full matrix; this checks the SQL comparison on each driver.
+      const anchors = ["2026-03-08T07:30:00.000Z", "2026-12-31T23:30:00.000Z"];
+      const timezoneChange = {
+        id: "timezoneChange:1:America_New_York",
+        timezone: "America/New_York",
+        effectiveFrom: Date.parse("2025-01-01T00:00:00.000Z"),
+        recordedAt: Date.parse("2025-01-01T00:00:00.000Z"),
+      };
+
+      function instants(): number[] {
+        const out = new Set<number>();
+        for (let t = Date.parse("2025-12-20T00:00:00.000Z"); t < Date.parse("2027-01-10T00:00:00.000Z"); t += 31 * 3_600_000 + 13 * 60_000) {
+          out.add(t);
+        }
+        for (const at of anchors) {
+          for (const scale of ["hour", "day", "week", "month", "quarter", "year"] as const) {
+            for (const timezone of ["America/New_York", "Asia/Kolkata"]) {
+              for (const weekStartsOn of scale === "week" ? [0, 1] : [1]) {
+                const { start, end } = resolveTemporalPeriodRange({ scale, at }, timezone, weekStartsOn);
+                for (const t of [start - 1, start, end, end + 1]) out.add(t);
+              }
+            }
+          }
+        }
+        return [...out].sort((a, b) => a - b);
+      }
+
+      async function startTemporal(seconds = false) {
+        await harness.exec(createTableStatements(allTables));
+        const rowsRead = { task: 0 };
+        const app = await serve((adapter) => new Proxy(adapter, {
+          get(target, property, receiver) {
+            const original = Reflect.get(target, property, receiver);
+            if (property !== "findMany") return original;
+            return async (params: { model: string }) => {
+              const rows = (await (original as (p: unknown) => Promise<unknown[]>).call(target, params)) as unknown[];
+              if (params.model === "task") rowsRead.task += rows.length;
+              return rows;
+            };
+          },
+        }));
+        const mutations = instants().map((t, i) => ({
+          resource: "task",
+          version: 1,
+          operation: "insert",
+          id: `task:${String(i).padStart(5, "0")}`,
+          clientId: "seed",
+          mutationId: `seed-${i}`,
+          record: { title: i % 2 ? "odd" : "even", priority: seconds ? Math.floor(t / 1000) : t, done: i % 3 === 0 },
+        }));
+        mutations.push({
+          resource: TIMEZONE_CHANGE_RESOURCE_NAME,
+          version: 1,
+          operation: "insert",
+          id: timezoneChange.id,
+          clientId: "seed",
+          mutationId: "seed-tz",
+          record: { timezone: timezoneChange.timezone, effectiveFrom: timezoneChange.effectiveFrom, recordedAt: timezoneChange.recordedAt } as any,
+        });
+        for (let i = 0; i < mutations.length; i += 200) {
+          const pushed = await app.call("POST", "/datafn/push", { clientId: "seed", mutations: mutations.slice(i, i + 200) });
+          expect(pushed.status).toBe(200);
+          expect(pushed.body.result.ok).toBe(true);
+        }
+        const all = await app.call("POST", "/datafn/query", { resource: "task", version: 1, select: ["*", "projectId"] });
+        const records: Record<string, Json> = {};
+        for (const row of all.body.result.data) records[row.id] = row;
+        const store = new MemoryStore({
+          records: { task: records, [TIMEZONE_CHANGE_RESOURCE_NAME]: { [timezoneChange.id]: timezoneChange } },
+          joins: {},
+        });
+        rowsRead.task = 0;
+        return { app, store, rowsRead, total: mutations.length - 1 };
+      }
+
+      /** Serves the query and checks it against in-memory evaluation over every row. */
+      async function expectParity(ctx: Awaited<ReturnType<typeof startTemporal>>, query: Json) {
+        const expected = JSON.parse(JSON.stringify(executeQuery(structuredClone(query) as any, ctx.app.server.schema, ctx.store)));
+        ctx.rowsRead.task = 0;
+        const res = await ctx.app.call("POST", "/datafn/query", query);
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect(res.body.result).toEqual(expected);
+        return { result: res.body.result, rowsRead: ctx.rowsRead.task };
+      }
+
+      const select = ["id", "priority", "title"];
+
+      it("reads only the rows in range and matches in-memory results for each period scale", async () => {
+        const ctx = await startTemporal();
+        for (const at of anchors) {
+          for (const scale of ["hour", "day", "week", "month", "quarter", "year"] as const) {
+            for (const timezone of ["Asia/Kolkata", "user"]) {
+              for (const weekStartsOn of scale === "week" ? [0, 1] : [undefined]) {
+                const temporal = time.period("priority", { scale, at }, { timezone, ...(weekStartsOn === undefined ? {} : { weekStartsOn }) });
+                const { result, rowsRead } = await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal });
+                expect(result.data.length).toBeGreaterThan(0);
+                expect(rowsRead).toBe(result.data.length);
+              }
+            }
+          }
+          const range = time.range("priority", { start: Date.parse(at) - 86_400_000, end: Date.parse(at) + 3_600_000 });
+          const { result, rowsRead } = await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal: range });
+          expect(rowsRead).toBe(result.data.length);
+        }
+      });
+
+      it("matches in-memory results with filters, limits, cursors and day grouping", async () => {
+        const ctx = await startTemporal();
+        const temporal = time.month("priority", "2026-05-18T12:00:00.000Z", { timezone: "user" });
+        const page = await expectParity(ctx, {
+          resource: "task", version: 1, select, temporal, filters: { done: false }, sort: ["title:asc", "id:desc"], limit: 9, count: true,
+        });
+        expect(page.result.data).toHaveLength(9);
+        await expectParity(ctx, {
+          resource: "task", version: 1, select, temporal, filters: { done: false }, sort: ["title:asc", "id:desc"], limit: 9,
+          cursor: { after: page.result.nextCursor },
+        });
+        const monthRows = (await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal })).result.data.length;
+        const grouped = await expectParity(ctx, {
+          resource: "task",
+          version: 1,
+          temporal: [temporal, time.groupByDay("priority", { alias: "day", timezone: "user" })],
+          aggregations: { tasks: { op: "count", field: "id" }, top: { op: "max", field: "priority" } },
+        });
+        expect(grouped.result.groups.length).toBeGreaterThan(10);
+        expect(grouped.rowsRead).toBe(monthRows);
+      });
+
+      it("keeps in-memory ordering of NULL sort values and foreign-key projection", async () => {
+        const ctx = await startTemporal();
+        // Give a few in-range tasks a project so the sort column mixes NULL and values.
+        const project = await ctx.app.call("POST", "/datafn/mutation", {
+          resource: "project", version: 1, operation: "insert", id: "project:p", clientId: "seed", mutationId: "seed-project", record: { name: "P" },
+        });
+        expect(project.body.result.ok).toBe(true);
+        const temporal = time.day("priority", "2026-12-31T23:30:00.000Z");
+        const day = await expectParity(ctx, { resource: "task", version: 1, select: ["id"], sort: ["id:asc"], temporal });
+        for (const [i, row] of day.result.data.slice(0, 2).entries()) {
+          const res = await ctx.app.call("POST", "/datafn/mutation", {
+            resource: "task", version: 1, operation: "merge", id: row.id, clientId: "seed", mutationId: `seed-project-${i}`, record: { projectId: "project:p" },
+          });
+          expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+          const record = (ctx.store as any).data.records.task[row.id];
+          record.projectId = "project:p";
+        }
+        await expectParity(ctx, { resource: "task", version: 1, select: ["id", "projectId"], sort: ["projectId:asc", "id:asc"], limit: 1, temporal });
+        await expectParity(ctx, { resource: "task", version: 1, select: ["*"], sort: ["id:asc"], limit: 3, temporal });
+      });
+
+      it("matches in-memory results for unix-s storage", async () => {
+        const ctx = await startTemporal(true);
+        for (const at of anchors) {
+          for (const scale of ["day", "month"] as const) {
+            const temporal = time.period("priority", { scale, at }, { storage: "unix-s", timezone: "America/New_York" });
+            const { result, rowsRead } = await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal });
+            expect(result.data.length).toBeGreaterThan(0);
+            expect(rowsRead).toBe(result.data.length);
+          }
+        }
       });
     });
 

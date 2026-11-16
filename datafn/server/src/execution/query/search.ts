@@ -5,6 +5,7 @@ import { executeQuery } from "./execute.js";
 import type { SearchProvider } from "../../search-provider.js";
 import { DatafnExecutionError } from "../errors.js";
 import type { DatafnLogger } from "../../logger.js";
+import type { DatafnTemporalConfig } from "@datafn/core";
 import { NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE } from "../search/native-fallback.js";
 
 const DEFAULT_SEARCH_CHUNK_SIZE = 1000;
@@ -38,6 +39,7 @@ export async function executeSearchQuery(
     signal?: AbortSignal;
   }) => Promise<string[]>,
   logger?: DatafnLogger,
+  temporal?: DatafnTemporalConfig,
 ): Promise<QueryResult | AggregateResult> {
   if (!query.search) {
     throw new DatafnExecutionError(
@@ -103,7 +105,7 @@ export async function executeSearchQuery(
     if (query.filters && Object.keys(query.filters).length > 0) {
       mergedFilters = { $and: [query.filters, candidateFilter] };
     }
-    return executeQuery({ ...query, filters: mergedFilters }, schema, store);
+    return executeQuery({ ...query, filters: mergedFilters }, schema, store, temporal);
   }
 
   // Multi-chunk path: process all candidates in pages
@@ -131,7 +133,7 @@ export async function executeSearchQuery(
       sort: undefined,
       cursor: undefined,
     };
-    const chunkResult = executeQuery(chunkQuery, schema, store) as QueryResult;
+    const chunkResult = executeQuery(chunkQuery, schema, store, temporal) as QueryResult;
     if (chunkResult.data) {
       allData.push(...chunkResult.data);
     }
@@ -146,5 +148,5 @@ export async function executeSearchQuery(
     finalMergedFilters = { $and: [query.filters, finalFilter] };
   }
 
-  return executeQuery({ ...query, filters: finalMergedFilters }, schema, store);
+  return executeQuery({ ...query, filters: finalMergedFilters }, schema, store, temporal);
 }
