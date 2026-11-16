@@ -503,6 +503,64 @@ describe('cancelSubscription and resumeSubscription -> PATCH /subscriptions/{id}
   });
 });
 
+describe('cancel and resume answers that are not the subscription', () => {
+  it.each([
+    ['JSON null', () => Response.json(null)],
+    ['an empty object', () => Response.json({})],
+    ['an array', () => Response.json([])],
+    ['an empty body', () => new Response('', { status: 200 })],
+    ['another subscription', () => Response.json({ ...recorded.getSubscription.response, subscription_id: 'sub_other' })]
+  ])('keeps an accepted cancellation applied without a state when Dodo answers %s', async (_label, answer) => {
+    const api = dodoApi({ [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: answer });
+
+    const result = await provider(api.fetchMock).cancelSubscription?.({ subscription: subscription() });
+
+    expect(result?.operationStatus).toBe('applied');
+    expect(result?.billingState).toBeUndefined();
+  });
+
+  it('keeps an accepted resume applied without a fabricated pending state when Dodo answers an empty object', async () => {
+    const api = dodoApi({ [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: {} });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({ subscription: subscription({ autoRenew: false }) });
+
+    expect(result?.operationStatus).toBe('applied');
+    expect(result?.billingState).toBeUndefined();
+  });
+
+  it('clears the scheduled cancel of a held subscription and records no state when the second answer is empty', async () => {
+    const api = dodoApi({
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: (body: Record<string, unknown> | undefined) =>
+        body?.status === 'active'
+          ? Response.json({ ...recorded.getSubscription.response, cancel_at_next_billing_date: true })
+          : Response.json({})
+    });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({
+      subscription: subscription({ status: 'paused', autoRenew: false })
+    });
+
+    expect(api.calls.map((call) => call.body)).toEqual([{ status: 'active' }, { cancel_at_next_billing_date: false }]);
+    expect(result?.operationStatus).toBe('applied');
+    expect(result?.billingState).toBeUndefined();
+  });
+
+  it('asks for support without a state when the resume answer is unreadable and clearing the cancel fails', async () => {
+    const api = dodoApi({
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: (body: Record<string, unknown> | undefined) =>
+        body?.status === 'active' ? Response.json(null) : new Response('unavailable', { status: 503 })
+    });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({
+      subscription: subscription({ status: 'paused', autoRenew: false })
+    });
+
+    expect(api.calls).toHaveLength(2);
+    expect(result).toMatchObject({ operationStatus: 'requires_action', clientAction: { metadata: { action: 'contact-support' } } });
+    expect(result?.billingState).toBeUndefined();
+  });
+});
+
 describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
   const changeInput = () => ({
     subscription: subscription(),
@@ -553,7 +611,11 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
   });
 
   it.each([
-    ['the request gets no answer', () => Promise.reject(new TypeError('fetch failed'))],
+    [
+      'the request gets no answer',
+      () => Promise.reject(new TypeError('fetch failed')),
+      { subscriptionReadError: { status: 0 } }
+    ],
     [
       'the body read fails',
       () =>
@@ -561,10 +623,28 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
           ok: true,
           status: 200,
           text: () => Promise.reject(new DOMException('The operation was aborted', 'AbortError'))
-        } as unknown as Response)
+        } as unknown as Response),
+      { subscription: { bodyError: expect.stringContaining('AbortError') } }
     ],
-    ['the body is not JSON', () => Promise.resolve(new Response('<html>gateway</html>', { status: 200 }))]
-  ])('keeps an applied change applied when %s on the follow-up read', async (_label, answerRead) => {
+    [
+      'the body is not JSON',
+      () => Promise.resolve(new Response('<html>gateway</html>', { status: 200 })),
+      { subscription: { bodyError: expect.stringContaining('SyntaxError') } }
+    ],
+    ['the body is JSON null', () => Promise.resolve(Response.json(null)), { subscription: { body: null } }],
+    ['the body is an empty object', () => Promise.resolve(Response.json({})), { subscription: {} }],
+    ['the body is an array', () => Promise.resolve(Response.json([])), { subscription: { body: [] } }],
+    [
+      'the subscription has a status Dodo does not define',
+      () => Promise.resolve(Response.json({ ...recorded.getSubscription.response, status: 'migrating' })),
+      { subscription: { status: 'migrating' } }
+    ],
+    [
+      'Dodo answers with another subscription',
+      () => Promise.resolve(Response.json({ ...recorded.getSubscription.response, subscription_id: 'sub_other' })),
+      { subscription: { subscription_id: 'sub_other' } }
+    ]
+  ])('keeps an applied change applied, recording no state, when %s on the follow-up read', async (_label, answerRead, raw) => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
       init?.method === 'POST' ? Response.json(recorded.changePlan.response) : answerRead()
     ) as typeof fetch;
@@ -572,9 +652,32 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
     const result = await provider(fetchMock).changeSubscription?.(changeInput());
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ operationStatus: 'applied', raw: { changePlan: recorded.changePlan.response, ...raw } });
+    expect(result?.billingState).toBeUndefined();
+  });
+
+  it('reads the subscription after a change Dodo accepted with an unreadable answer', async () => {
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: () => new Response('ok', { status: 200 }),
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+
+    expect(result).toMatchObject({ operationStatus: 'applied', billingState: { subscriptionStatus: 'active' } });
+  });
+
+  it('records no state for an immediate replacement checkout whose cancellation answer is not the subscription', async () => {
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: () => new Response('not allowed', { status: 405 }),
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: {}
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+
     expect(result).toMatchObject({
-      operationStatus: 'applied',
-      raw: { changePlan: recorded.changePlan.response, subscriptionReadError: { status: 0 } }
+      operationStatus: 'requires_action',
+      clientAction: { metadata: { action: 'replacement-checkout' } }
     });
     expect(result?.billingState).toBeUndefined();
   });
@@ -660,7 +763,12 @@ describe('refundCharge -> POST /refunds', () => {
     ['was paid in another currency than the catalog price', { ...recorded.getSubscriptionPayment.response, currency: 'INR', settlement_currency: 'USD' }],
     [
       'does not record the catalog price currency',
-      { ...recorded.getSubscriptionPayment.response, metadata: { ...recorded.getSubscriptionPayment.response.metadata, billfn_currency: undefined } }
+      { ...recorded.getOneTimePayment.response, metadata: { ...recorded.getOneTimePayment.response.metadata, billfn_currency: undefined } }
+    ],
+    // A plan change moved the subscription to another price, whose currency BillFn records the refund in.
+    [
+      'was made for another catalog price than the subscription has now',
+      { ...recorded.getSubscriptionPayment.response, metadata: { ...recorded.getSubscriptionPayment.response.metadata, billfn_price_id: 'price_nucleus_year_eur' } }
     ]
   ])('refuses a partial refund of a payment that %s before any line items or refund', async (_label, payment) => {
     const api = dodoApi({
@@ -673,6 +781,55 @@ describe('refundCharge -> POST /refunds', () => {
       provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }))
     ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
     expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`]);
+  });
+
+  it('takes the checkout markers of a renewal payment from its subscription and refunds in the paid currency', async () => {
+    const renewal = { ...recorded.getSubscriptionPayment.response, payment_id: 'pay_renewal_1', checkout_session_id: null, metadata: {} };
+    const api = dodoApi({
+      'GET /payments/pay_renewal_1': renewal,
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response,
+      'GET /payments/pay_renewal_1/line-items': recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await provider(api.fetchMock).refundCharge?.(
+      refundInput({ subscription: subscription({ providerChargeId: 'pay_renewal_1' }), mode: 'custom', amount: 600 })
+    );
+
+    expect(paths(api.calls)).toEqual([
+      'GET /payments/pay_renewal_1',
+      `GET /subscriptions/${SUBSCRIPTION_ID}`,
+      'GET /payments/pay_renewal_1/line-items',
+      'POST /refunds'
+    ]);
+    expect(api.calls[3]?.body).toMatchObject({ payment_id: 'pay_renewal_1', currency: 'USD' });
+  });
+
+  it.each([
+    ['records no checkout markers', {}],
+    ['records another catalog price', { ...recorded.getSubscription.response.metadata, billfn_price_id: 'price_nucleus_year_eur' }],
+    ['records another currency', { ...recorded.getSubscription.response.metadata, billfn_currency: 'EUR' }]
+  ])('refuses a partial refund of a renewal payment whose subscription %s', async (_label, subscriptionMetadata) => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getSubscriptionPayment.response, metadata: {} },
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: { ...recorded.getSubscription.response, metadata: subscriptionMetadata },
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /subscriptions/${SUBSCRIPTION_ID}`]);
+  });
+
+  it('keeps a refund Dodo accepted applied when its answer is unreadable', async () => {
+    const api = dodoApi({ 'POST /refunds': () => new Response('<html>gateway</html>', { status: 200 }) });
+
+    const result = await provider(api.fetchMock).refundCharge?.(refundInput());
+
+    expect(result).toMatchObject({ operationStatus: 'applied', raw: { bodyError: expect.stringContaining('SyntaxError') } });
+    expect(result?.providerRefundId).toBeUndefined();
   });
 
   it('refuses line items Dodo answers in another currency than the one requested', async () => {

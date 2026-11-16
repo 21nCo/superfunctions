@@ -40,7 +40,8 @@ The default webhook signature header is `webhook-signature`.
 - cancels subscriptions
 - attempts direct subscription changes and falls back to replacement-checkout orchestration
 - resumes subscriptions when the provider allows it; a held subscription that is also scheduled to cancel gets its scheduled cancel cleared in a second request
-- creates refunds: a full refund by payment id, a partial one through the payment's line items in the currency the customer paid. A partial refund is refused unless that currency is the catalog price currency the checkout recorded in `billfn_currency`, because BillFn records the refunded amount in the catalog currency
+- keeps a cancel, plan change, resume or refund that Dodo accepted as applied even when Dodo's answer or the read after it is unusable; a billing state is recorded only from an answer that is this subscription with a Dodo subscription status, otherwise the next webhook or sync supplies it
+- creates refunds: a full refund by payment id, a partial one through the payment's line items in the currency the customer paid. BillFn records the refunded amount in the currency of the subscription's current catalog price, so a partial refund is refused unless the payment's `billfn_price_id` is that price and its `billfn_currency` is the currency the customer paid. A renewal payment, which carries no BillFn metadata, takes both from its subscription; a payment made before a plan change or without the metadata can be refunded in full or in Dodo
 - restores purchases
 - verifies webhook signatures and parses webhook events
 

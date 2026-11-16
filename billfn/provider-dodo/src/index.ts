@@ -53,12 +53,27 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
   const webhookSignatureHeader = (config.webhookSignatureHeader ?? 'webhook-signature').toLowerCase();
   const get = (...segments: string[]) =>
     requestJson(fetchImpl, dodoUrl(baseUrl, segments), { method: 'GET', headers: createHeaders(config.apiKey) });
-  const patchSubscription = (providerSubscriptionId: string, body: Record<string, unknown>) =>
-    requestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
-      method: 'PATCH',
-      headers: createHeaders(config.apiKey),
-      body: JSON.stringify(body)
-    });
+  const patchInit = (body: Record<string, unknown>): RequestInit => ({
+    method: 'PATCH',
+    headers: createHeaders(config.apiKey),
+    body: JSON.stringify(body)
+  });
+  /** A subscription PATCH whose non-2xx answer fails the operation; a 2xx answer commits it whatever its body. */
+  const patchSubscription = async (providerSubscriptionId: string, body: Record<string, unknown>) => {
+    const response = await sendDodoMutation(
+      fetchImpl,
+      dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]),
+      patchInit(body)
+    );
+    if (!response.ok) {
+      throw createBillFnError({
+        code: 'BILLFN_PROVIDER_ERROR',
+        message: `Dodo request failed with status ${response.error.status}`,
+        details: response.error
+      });
+    }
+    return response;
+  };
 
   return {
     provider: 'dodo',
@@ -228,8 +243,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       const response = await patchSubscription(providerSubscriptionId, { cancel_at_next_billing_date: true });
       return {
         operationStatus: 'applied',
-        billingState: mapDodoSubscriptionState(response),
-        raw: response
+        billingState: mapCommittedDodoSubscription(providerSubscriptionId, response),
+        raw: committedRaw(response)
       } satisfies BillFnProviderOperationResult;
     },
     async changeSubscription(input: BillFnChangeSubscriptionInput) {
@@ -241,7 +256,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         });
       }
 
-      const attempted = await tryRequestJson(
+      const attempted = await sendDodoMutation(
         fetchImpl,
         dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId, 'change-plan']),
         {
@@ -258,38 +273,32 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
 
       if (attempted.ok) {
         // Change-plan answers with payment handles, not the subscription, so the subscription is read after it.
-        const paymentLink = readString(attempted.data, ['payment_link']);
+        const changePlan = asPlainRecord(attempted.data);
+        const paymentLink = changePlan ? readString(changePlan, ['payment_link']) : undefined;
         if (paymentLink) {
           return {
             operationStatus: 'requires_action',
             clientAction: {
               type: 'redirect',
               url: paymentLink,
-              metadata: { action: 'plan-change-payment', paymentId: readString(attempted.data, ['payment_id']) }
+              metadata: { action: 'plan-change-payment', paymentId: changePlan ? readString(changePlan, ['payment_id']) : undefined }
             },
-            raw: attempted.data
+            raw: committedRaw(attempted)
           } satisfies BillFnProviderOperationResult;
         }
-        // The change is committed at Dodo: no failure of this read (status, transport, body or JSON) may report it
-        // as failed, so a failed read leaves the state to the next webhook or sync.
-        let subscription: Awaited<ReturnType<typeof tryRequestJson>>;
-        try {
-          subscription = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
-            method: 'GET',
-            headers: createHeaders(config.apiKey)
-          });
-        } catch (error) {
-          subscription = {
-            ok: false,
-            error: { status: 0, body: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }
-          };
-        }
+        // The change is committed at Dodo: no failure of this read (status, transport, body, JSON or an answer that
+        // is not this subscription) may report it as failed, so an unusable read leaves the state to the next
+        // webhook or sync.
+        const subscription = await sendDodoFollowUp(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
+          method: 'GET',
+          headers: createHeaders(config.apiKey)
+        });
         return {
           operationStatus: 'applied',
-          billingState: subscription.ok ? mapDodoSubscriptionState(subscription.data) : undefined,
+          billingState: subscription.ok ? mapCommittedDodoSubscription(providerSubscriptionId, subscription) : undefined,
           raw: subscription.ok
-            ? { changePlan: attempted.data, subscription: subscription.data }
-            : { changePlan: attempted.data, subscriptionReadError: subscription.error }
+            ? { changePlan: committedRaw(attempted), subscription: committedRaw(subscription) }
+            : { changePlan: committedRaw(attempted), subscriptionReadError: subscription.error }
         } satisfies BillFnProviderOperationResult;
       }
 
@@ -305,7 +314,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
 
       return {
         operationStatus: 'requires_action',
-        billingState: input.effectiveAt === 'immediate' ? mapDodoSubscriptionState(cancellation) : undefined,
+        billingState:
+          input.effectiveAt === 'immediate' ? mapCommittedDodoSubscription(providerSubscriptionId, cancellation) : undefined,
         clientAction: {
           type: 'redirect',
           metadata: {
@@ -317,7 +327,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         raw: {
           fallback: 'replacement-checkout',
           updateError: attempted.error,
-          cancellation
+          cancellation: committedRaw(cancellation)
         }
       } satisfies BillFnProviderOperationResult;
     },
@@ -332,11 +342,11 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
 
       // Dodo resumes a paused subscription with `status: active` sent alone, and a scheduled cancel by clearing it.
       const paused = input.subscription.status === 'paused';
-      const attempted = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
-        method: 'PATCH',
-        headers: createHeaders(config.apiKey),
-        body: JSON.stringify(paused ? { status: 'active' } : { cancel_at_next_billing_date: false })
-      });
+      const attempted = await sendDodoMutation(
+        fetchImpl,
+        dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]),
+        patchInit(paused ? { status: 'active' } : { cancel_at_next_billing_date: false })
+      );
 
       if (!attempted.ok) {
         return {
@@ -354,29 +364,26 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       }
 
       // A held subscription can also be scheduled to cancel: resuming it clears that too, in a second request.
-      if (
-        paused &&
-        (attempted.data.cancel_at_next_billing_date === true ||
-          (attempted.data.cancel_at_next_billing_date === undefined && !input.subscription.autoRenew))
-      ) {
-        let cleared: Awaited<ReturnType<typeof tryRequestJson>>;
-        try {
-          cleared = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
-            method: 'PATCH',
-            headers: createHeaders(config.apiKey),
-            body: JSON.stringify({ cancel_at_next_billing_date: false })
-          });
-        } catch (error) {
-          cleared = {
-            ok: false,
-            error: { status: 0, body: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }
-          };
-        }
+      // An unreadable answer leaves the scheduled cancel to the stored renewal intent.
+      const resumed = asPlainRecord(attempted.data);
+      const scheduledCancel = resumed?.cancel_at_next_billing_date;
+      if (paused && (scheduledCancel === true || (scheduledCancel === undefined && !input.subscription.autoRenew))) {
+        const cleared = await sendDodoFollowUp(
+          fetchImpl,
+          dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]),
+          patchInit({ cancel_at_next_billing_date: false })
+        );
         if (!cleared.ok) {
-          // The subscription is active again but still ends at its next billing date: BillFn records that state.
+          // The subscription is active again but still ends at its next billing date: BillFn records that state
+          // when Dodo's answer to the resume showed it.
           return {
             operationStatus: 'requires_action',
-            billingState: mapDodoSubscriptionState({ cancel_at_next_billing_date: true, ...attempted.data }),
+            billingState: resumed
+              ? mapCommittedDodoSubscription(providerSubscriptionId, {
+                  ok: true,
+                  data: { cancel_at_next_billing_date: true, ...resumed }
+                })
+              : undefined,
             clientAction: {
               type: 'redirect',
               metadata: {
@@ -384,22 +391,22 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
               }
             },
             raw: {
-              resumed: attempted.data,
+              resumed: committedRaw(attempted),
               cancellationClearError: cleared.error
             }
           } satisfies BillFnProviderOperationResult;
         }
         return {
           operationStatus: 'applied',
-          billingState: mapDodoSubscriptionState(cleared.data),
-          raw: { resumed: attempted.data, cancellationCleared: cleared.data }
+          billingState: mapCommittedDodoSubscription(providerSubscriptionId, cleared),
+          raw: { resumed: committedRaw(attempted), cancellationCleared: committedRaw(cleared) }
         } satisfies BillFnProviderOperationResult;
       }
 
       return {
         operationStatus: 'applied',
-        billingState: mapDodoSubscriptionState(attempted.data),
-        raw: attempted.data
+        billingState: mapCommittedDodoSubscription(providerSubscriptionId, attempted),
+        raw: committedRaw(attempted)
       } satisfies BillFnProviderOperationResult;
     },
     async refundCharge(input: BillFnRefundChargeInput) {
@@ -416,9 +423,11 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       };
       if ((input.mode === 'custom' || input.mode === 'prorated_remaining_period') && input.amount !== undefined) {
         assertDodoRefundAmount(input.amount);
-        // BillFn records the amount in the catalog price's currency; Dodo refunds it in the currency the customer
-        // paid, so the two must be the same currency before any money moves.
-        const currency = readDodoRefundCurrency(await get('payments', paymentId));
+        // BillFn records the amount in the currency of the subscription's current catalog price; Dodo refunds it in
+        // the currency the customer paid, so the two must be shown to be the same before any money moves.
+        const payment = await get('payments', paymentId);
+        const markers = await readDodoRefundMarkers(payment, (subscriptionId) => get('subscriptions', subscriptionId));
+        const currency = assertDodoRefundCurrency(input, payment, markers);
         // Dodo refunds part of a payment only through its line items, each up to its refundable amount, read in
         // the paid currency (without it Dodo answers in the settlement currency).
         const lineItems = await requestJson(fetchImpl, dodoUrl(baseUrl, ['payments', paymentId, 'line-items'], { currency }), {
@@ -428,23 +437,32 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         Object.assign(refundBody, { items: allocateDodoPartialRefund(input.amount, lineItems, currency), currency });
       }
 
-      const response = await requestJson(fetchImpl, dodoUrl(baseUrl, ['refunds']), {
+      const response = await sendDodoMutation(fetchImpl, dodoUrl(baseUrl, ['refunds']), {
         method: 'POST',
         headers: createHeaders(config.apiKey),
         body: JSON.stringify(refundBody)
       });
-      if (readString(response, ['status']) === 'failed') {
+      if (!response.ok) {
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: `Dodo request failed with status ${response.error.status}`,
+          details: response.error
+        });
+      }
+      // Dodo accepted the refund: an unreadable answer still records it, without its id.
+      const refund = asPlainRecord(response.data) ?? {};
+      if (readString(refund, ['status']) === 'failed') {
         throw createBillFnError({
           code: 'BILLFN_PROVIDER_ERROR',
           message: 'Dodo reported the refund as failed',
-          details: { refundId: readString(response, ['refund_id']), status: 'failed' }
+          details: { refundId: readString(refund, ['refund_id']), status: 'failed' }
         });
       }
 
       return {
         operationStatus: 'applied',
-        providerRefundId: readString(response, ['refund_id', 'id']),
-        raw: response
+        providerRefundId: readString(refund, ['refund_id', 'id']),
+        raw: committedRaw(response)
       } satisfies BillFnProviderOperationResult;
     },
     async restorePurchases(input: BillFnRestorePurchasesInput) {
@@ -776,6 +794,96 @@ async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: Reques
   };
 }
 
+type DodoRequestError = { status: number; body: string };
+/** A 2xx answer to a request that changes the subscription: the change is committed whatever the body holds. */
+type DodoCommittedResponse = { ok: true; data: unknown; bodyError?: string };
+type DodoMutationResponse = DodoCommittedResponse | { ok: false; error: DodoRequestError };
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+/**
+ * Sends a request that changes Dodo state. A transport failure rejects (the outcome is unknown) and a non-2xx
+ * status is returned as an error; after a 2xx status the change is committed, so an unreadable body never fails it.
+ */
+async function sendDodoMutation(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
+  const response = await fetchImpl(url, init);
+  let raw: string;
+  try {
+    raw = await response.text();
+  } catch (error) {
+    return response.ok
+      ? { ok: true, data: undefined, bodyError: describeError(error) }
+      : { ok: false, error: { status: response.status, body: '' } };
+  }
+  if (!response.ok) {
+    return { ok: false, error: { status: response.status, body: raw } };
+  }
+  if (!raw) {
+    return { ok: true, data: undefined };
+  }
+  try {
+    return { ok: true, data: JSON.parse(raw) as unknown };
+  } catch (error) {
+    return { ok: true, data: undefined, bodyError: describeError(error) };
+  }
+}
+
+/** A request made after a committed change: every failure, a transport one included, is returned, never thrown. */
+async function sendDodoFollowUp(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
+  try {
+    return await sendDodoMutation(fetchImpl, url, init);
+  } catch (error) {
+    return { ok: false, error: { status: 0, body: describeError(error) } };
+  }
+}
+
+/** The diagnostic record of a committed answer, whatever its body was. */
+function committedRaw(response: DodoCommittedResponse): Record<string, unknown> {
+  const record = asPlainRecord(response.data);
+  if (record && !response.bodyError) {
+    return record;
+  }
+  return response.bodyError ? { body: null, bodyError: response.bodyError } : { body: response.data ?? null };
+}
+
+/**
+ * The billing state a committed subscription change answered with. Only an object for this subscription (its
+ * `subscription_id` equal when present) with a Dodo `SubscriptionStatus` is a state; anything else gives none,
+ * so BillFn keeps its row until the next webhook or sync instead of recording a fabricated one.
+ */
+function mapCommittedDodoSubscription(
+  providerSubscriptionId: string,
+  response: DodoCommittedResponse
+): BillFnVerifiedBillingState | undefined {
+  const record = asPlainRecord(response.data);
+  if (!record || response.bodyError) {
+    return undefined;
+  }
+  const responseId = record.subscription_id;
+  if (responseId !== undefined && responseId !== null && responseId !== providerSubscriptionId) {
+    return undefined;
+  }
+  const status = record.status;
+  if (typeof status !== 'string' || !DODO_SUBSCRIPTION_STATUSES.has(status)) {
+    return undefined;
+  }
+  return { ...mapDodoSubscriptionState(record), providerSubscriptionId };
+}
+
+/** Dodo's `SubscriptionStatus` values (and `paused`, which older answers report for a held subscription). */
+const DODO_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'active',
+  'on_hold',
+  'paused',
+  'past_due',
+  'cancelled',
+  'expired',
+  'failed'
+]);
+
 type DodoRecordKind = 'subscription' | 'payment' | 'other';
 
 /** Whether a webhook carries a subscription, a payment, or another record (refund, dispute, license key...). */
@@ -932,11 +1040,53 @@ function assertDodoRefundAmount(amount: unknown): asserts amount is number {
   }
 }
 
+/** The catalog price and currency checkout recorded for a payment, in the metadata Dodo copied it to. */
+interface DodoRefundMarkers {
+  priceId?: string;
+  currency?: string;
+  source: 'payment' | 'subscription' | 'none';
+}
+
 /**
- * The currency of a partial refund: the one the customer paid, which must be the catalog price's currency the
- * checkout recorded, because BillFn records the refunded amount in that currency.
+ * A payment's checkout markers: its own metadata, or for a subscription payment that lacks them (a renewal carries
+ * none), the metadata of the subscription it charged. Both markers come from the same record.
  */
-function readDodoRefundCurrency(payment: Record<string, unknown>): string {
+async function readDodoRefundMarkers(
+  payment: Record<string, unknown>,
+  readSubscription: (subscriptionId: string) => Promise<Record<string, unknown>>
+): Promise<DodoRefundMarkers> {
+  const fromRecord = (record: Record<string, unknown>) => ({
+    priceId: readMetadataString(record, DODO_PRICE_METADATA_KEY),
+    currency: readMetadataString(record, DODO_CURRENCY_METADATA_KEY)?.toUpperCase()
+  });
+  const own = fromRecord(payment);
+  if (own.priceId && own.currency) {
+    return { ...own, source: 'payment' };
+  }
+  const subscriptionId = readDodoPaymentSubscriptionId(payment);
+  if (!subscriptionId) {
+    return { source: 'none' };
+  }
+  const subscription = asPlainRecord(await readSubscription(subscriptionId));
+  if (!subscription || readString(subscription, ['subscription_id']) !== subscriptionId) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Dodo returned a different subscription than the one the payment charged'
+    });
+  }
+  return { ...fromRecord(subscription), source: 'subscription' };
+}
+
+/**
+ * The currency of a partial refund: the one the customer paid, which must be the currency of the catalog price
+ * checkout recorded, and that price must be the subscription's current one, because BillFn records the refunded
+ * amount in the current price's currency.
+ */
+function assertDodoRefundCurrency(
+  input: BillFnRefundChargeInput,
+  payment: Record<string, unknown>,
+  markers: DodoRefundMarkers
+): string {
   const paid = readString(payment, ['currency'])?.toUpperCase();
   if (!paid) {
     throw createBillFnError({
@@ -944,14 +1094,32 @@ function readDodoRefundCurrency(payment: Record<string, unknown>): string {
       message: 'Dodo returned a payment without its currency'
     });
   }
-  const catalog = readMetadataString(payment, DODO_CURRENCY_METADATA_KEY)?.toUpperCase();
-  if (catalog !== paid) {
+  const details = {
+    paymentCurrency: paid,
+    catalogCurrency: markers.currency,
+    checkoutPriceId: markers.priceId,
+    subscriptionPriceId: input.subscription?.priceId,
+    markerSource: markers.source
+  };
+  if (!markers.priceId || !markers.currency) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
-      message: catalog
-        ? 'The Dodo payment was made in a different currency than the catalog price; refund it in full or in Dodo'
-        : 'The Dodo payment does not record the catalog price currency; refund it in full or in Dodo',
-      details: { paymentCurrency: paid, catalogCurrency: catalog }
+      message: 'The Dodo payment does not record the catalog price and currency; refund it in full or in Dodo',
+      details
+    });
+  }
+  if (input.subscription && markers.priceId !== input.subscription.priceId) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'The Dodo payment was made for a different catalog price than the current one; refund it in full or in Dodo',
+      details
+    });
+  }
+  if (markers.currency !== paid) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'The Dodo payment was made in a different currency than the catalog price; refund it in full or in Dodo',
+      details
     });
   }
   return paid;
@@ -1029,6 +1197,11 @@ function readString(record: Record<string, unknown>, keys: string[]): string | u
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+/** A JSON object: not null, not an array. */
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function asArrayOfRecords(value: unknown): Record<string, unknown>[] {
