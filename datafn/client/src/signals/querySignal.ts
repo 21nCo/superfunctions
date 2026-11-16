@@ -293,6 +293,85 @@ const CAPABILITY_STATE_FIELDS = [
   "isAncestorInactive",
 ];
 
+/**
+ * The ids a query's filters restrict it to: `id` as a value, `eq`/`$eq` or
+ * `in`/`$in` of strings, at the top level or in a top-level `$and` clause.
+ * Only records with these ids can ever be in the result.
+ */
+export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
+  const fromClause = (clause: unknown): Set<string> | undefined => {
+    if (!isPlainObject(clause)) return undefined;
+    const pinned = idsFromIdFilter(clause.id);
+    if (pinned) return pinned;
+    if (Array.isArray(clause.$and)) {
+      for (const sub of clause.$and) {
+        const pinned = fromClause(sub);
+        if (pinned) return pinned;
+      }
+    }
+    return undefined;
+  };
+  return fromClause(query?.filters);
+}
+
+/**
+ * The ids one `id` filter value restricts a query to: a string, or a single
+ * `eq`/`$eq` string or `in`/`$in` list of strings.
+ */
+function idsFromIdFilter(idFilter: unknown): Set<string> | undefined {
+  if (typeof idFilter === "string") return new Set([idFilter]);
+  // Exactly one operator: aliases given together (`eq` and `$eq`) are
+  // resolved by the executor, not here.
+  if (!isPlainObject(idFilter) || Object.keys(idFilter).length !== 1) return undefined;
+  const [operator, operand] = Object.entries(idFilter)[0];
+  if ((operator === "eq" || operator === "$eq") && typeof operand === "string") {
+    return new Set([operand]);
+  }
+  if (
+    (operator === "in" || operator === "$in") &&
+    Array.isArray(operand) &&
+    operand.every((value: unknown) => typeof value === "string")
+  ) {
+    return new Set(operand as string[]);
+  }
+  return undefined;
+}
+
+/** The field a sort term names: `"-field"`, `"field:dir"` or `{ field }`. */
+function sortTermField(term: unknown): unknown {
+  if (typeof term !== "string") return (term as { field?: unknown } | null | undefined)?.field;
+  if (term.startsWith("-")) return term.slice(1);
+  return term.split(":")[0];
+}
+
+/**
+ * Whether a query reads only its records' own fields: deriveMembershipFields
+ * rejects relations and dotted paths in select and filters and every
+ * field-independent shape (search, temporal, aggregates); sort terms must
+ * also name own fields.
+ */
+function readsOwnFieldsOnly(schema: DatafnSchema, query: any): boolean {
+  if (!deriveMembershipFields(query, schema)) return false;
+  for (const term of Array.isArray(query.sort) ? query.sort : []) {
+    const field = sortTermField(term);
+    if (
+      typeof field !== "string" ||
+      field.includes(".") ||
+      findRelationMatch(schema, query.resource, field)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resourceHasRelations(schema: DatafnSchema, resource: string): boolean {
+  return (schema.relations ?? []).some(
+    (relation) =>
+      endpointList(relation.from).includes(resource) || endpointList(relation.to).includes(resource),
+  );
+}
+
 /** Fields a local merge stamps without the caller naming them. */
 const IMPLICIT_MERGE_FIELDS = ["updatedAt", "updatedBy"];
 
@@ -579,6 +658,49 @@ function createQuerySignal<T>(
     : deriveMembershipFields(fullQuery, schema);
   let membershipFields: Set<string> | null =
     queryHooks.length > 0 ? null : baseMembershipFields;
+
+  // A query pinned to record ids (e.g. a KV key's signal) can only change
+  // when one of those records does, as long as it reads only those records'
+  // own fields: no relation in its select, filters or sort, and no search,
+  // whose candidate limit depends on how every record ranks
+  // (deriveMembershipFields is null otherwise). Only a resource that takes
+  // part in no relation qualifies: there a write changes only the records it
+  // names, with no cascade, inactive propagation or tree move. Plugins can
+  // rewrite the query or its result, so a signal they run on is never
+  // treated as pinned.
+  const pinnedIds =
+    !resourceHasRelations(schema, resource) &&
+    !clientPlugins.some(
+      (plugin) => typeof plugin.beforeQuery === "function" || typeof plugin.afterQuery === "function",
+    ) &&
+    readsOwnFieldsOnly(schema, fullQuery)
+      ? resolvePinnedQueryIds(fullQuery)
+      : undefined;
+  /**
+   * How a write to this signal's resource affects its pinned records:
+   * "skip" when it names none of them, "refresh" when its record carries an
+   * `id` other than the ids it names (a store may write under either), and
+   * null to use the general rules. A write that may carry a record but
+   * arrives without one (relayed from another tab) is never skipped.
+   */
+  const pinnedWriteDecision = (event: any): "skip" | "refresh" | null => {
+    if (!pinnedIds) return null;
+    const ids = event.ids;
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      !ids.every((id: unknown) => typeof id === "string") ||
+      ids.some((id: string) => pinnedIds.has(id))
+    ) {
+      return null;
+    }
+    if (event.action === "delete") return "skip";
+    if (!isPlainObject(event.record)) return null;
+    const recordId = event.record.id;
+    if (recordId === undefined) return "skip";
+    if (typeof recordId !== "string" || pinnedIds.has(recordId)) return "refresh";
+    return "skip";
+  };
   let membershipRun = 0;
   /**
    * Runs the signal's query. When plugins can rewrite it, the membership set
@@ -740,6 +862,15 @@ function createQuerySignal<T>(
         return;
       }
       
+      const pinnedDecision = pinnedWriteDecision(event);
+      if (pinnedDecision === "skip") {
+        return;
+      }
+      if (pinnedDecision === "refresh") {
+        scheduleRefresh();
+        return;
+      }
+
       // Fine-grained invalidation logic (SIG-002) for primary resource mutations
       const action = event.action;
       
