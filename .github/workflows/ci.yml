@@ -243,6 +243,40 @@ jobs:
           npm run typecheck --workspace=@mcpfn/client --workspace=@mcpfn/testing --workspace=@mcpfn/cli
           npm test --workspace=@mcpfn/client --workspace=@mcpfn/testing --workspace=@mcpfn/cli
 
+  # Leak guard (SFNS-125): the public tree holds only what superfunctions.owners.json allows (top-level paths,
+  # release entries, Python projects, workspace packages) and imports or depends on no *fn package that is neither a
+  # public workspace package nor pinned in scripts/public-boundary.allow.json. Guarded, so it never runs on next.
+  public-boundary:
+    name: Public boundary
+    if: github.repository == '21nCo/superfunctions'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # Imports are read with the installed parsers (typescript, svelte, parse5, MDX) and Python's ast module.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify public boundary checker
+        run: node --test scripts/verify-public-boundary.test.mjs
+
+      - name: Public tree stays inside the public manifest
+        run: node scripts/verify-public-boundary.mjs
+
   # Release target resolution (release-packages.json plus a repository overlay) on the runtimes the publish
   # workflows use, and the root workspace globs against the explicit list they replaced (SFNS-123).
   release-scripts:

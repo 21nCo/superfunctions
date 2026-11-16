@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "packages": {
+    "@authfn/core": {
+      "reason": "Published on npm (0.1.1); a type-only import in an authfn admin test predating SFNS-125.",
+      "paths": ["authfn/admin"]
+    },
+    "@docsfn/cli": { "reason": "Published DocsFn toolkit on npm; the docs sites build with it." },
+    "@docsfn/core": { "reason": "Published DocsFn toolkit on npm; the docs sites build with it." },
+    "@docsfn/provider-fs": { "reason": "Published DocsFn toolkit on npm; the docs sites build with it." },
+    "@docsfn/svelte": { "reason": "Published DocsFn toolkit on npm; the docs sites build with it." },
+    "@docsfn/sveltekit": { "reason": "Published DocsFn toolkit on npm; the docs sites build with it." },
+    "@testfn/core": {
+      "reason": "Published TestFn toolkit on npm; @apifn/core's testfn integration depends on it.",
+      "paths": ["apifn/core"]
+    },
+    "@uifn/vite-plugin-svelte": {
+      "reason": "Not a package: a local npm alias of @sveltejs/vite-plugin-svelte in the uifn Svelte examples.",
+      "paths": ["uifn/examples/svelte-playground", "uifn/examples/svelte-workbench"]
+    },
+    "docsfn": {
+      "reason": "Published DocsFn package on npm; @apifn/docsfn has it as a peer dependency.",
+      "paths": ["apifn/docsfn"]
+    },
+    "extfn": {
+      "reason": "Not a package: extfn/runtime is a Vite resolve.alias for @extfn/core's runtime in the extfn examples.",
+      "paths": ["extfn/examples"]
+    },
+    "secfn": {
+      "reason": "Published SecFn package on npm; @memoryfn/core has it as an optional peer dependency.",
+      "paths": ["memoryfn/typescript"]
+    }
+  }
+}
