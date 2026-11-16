@@ -1916,13 +1916,16 @@ async function processReconciliationJob(
       return;
     }
     case 'lifecycle-events': {
-      await deps.lifecycle.recordGrantExpiry();
-      // Grant changes whose events a failed write or a stop left unrecorded, without waiting for account traffic.
-      // Bounded per run, and a failed repair is left to the next run without stopping the dispatch.
-      try {
-        await deps.repairPendingGrantEvents?.(assertLease);
-      } catch {
-        deps.metrics.track('grant.event_deferred', { type: 'repair' });
+      // The expiry sweep, then grant changes whose events a failed write or a stop left unrecorded, without waiting
+      // for account traffic. Each is bounded per run, and a failed step is left to the next run without stopping
+      // the dispatch.
+      const steps = { expiry: deps.lifecycle.recordGrantExpiry, repair: deps.repairPendingGrantEvents };
+      for (const [type, step] of Object.entries(steps)) {
+        try {
+          await step?.(assertLease);
+        } catch {
+          deps.metrics.track('grant.event_deferred', { type });
+        }
       }
       // The lease is renewed before each delivery, so a job whose lease lapsed stops delivering.
       await deps.lifecycle.dispatch({}, assertLease);

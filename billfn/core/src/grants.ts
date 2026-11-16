@@ -110,12 +110,16 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
     if (events.length === 0) {
       return;
     }
-    const recorded = await deps.db.findMany<{ id: string }>({
-      model: BILLING_EVENTS_TABLE,
-      where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
-      namespace: deps.namespace
-    });
-    const recordedIds = new Set(recorded.map((event) => event.id));
+    const recordedIds = new Set<string>();
+    // At most GRANT_REPAIR_BATCH_SIZE ids per query, within D1's bound-parameter limit.
+    for (let start = 0; start < events.length; start += GRANT_REPAIR_BATCH_SIZE) {
+      const recorded = await deps.db.findMany<{ id: string }>({
+        model: BILLING_EVENTS_TABLE,
+        where: [{ field: 'id', operator: 'in', value: events.slice(start, start + GRANT_REPAIR_BATCH_SIZE).map((event) => event.id) }],
+        namespace: deps.namespace
+      });
+      recorded.forEach((event) => recordedIds.add(event.id));
+    }
     missing = events.filter((candidate) => !recordedIds.has(candidate.id));
   } catch {
     deps.metrics.track('grant.event_deferred', { type: 'repair' });
@@ -228,7 +232,7 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       ...pendingFlag(deps)
     };
     try {
-      await commitWithEvent(deps, record, grantCreatedEvent(record), async (db) => {
+      await commitWithEvent(deps, record, grantCreatedEvent(record), undefined, async (db) => {
         await db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
         return true;
       });
@@ -317,7 +321,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
       // Strictly later than the stored time, so a racing revoke's compare-and-set on it fails.
       updatedAt: laterThan(now, existing.updatedAt)
     };
-    const applied = await commitWithEvent(deps, revoked, grantRevokedEvent(revoked), async (db) => {
+    const applied = await commitWithEvent(deps, revoked, grantRevokedEvent(revoked), grantCreatedEvent(revoked), async (db) => {
       const updated = await db.updateMany({
         model: GRANTS_TABLE,
         where: [
@@ -359,6 +363,7 @@ async function commitWithEvent(
   deps: GrantDeps,
   grant: GrantRecord,
   event: BillFnBillingEvent,
+  prior: BillFnBillingEvent | undefined,
   write: (db: Adapter) => Promise<boolean>
 ) {
   if (deps.db.capabilities.transactions.supported) {
@@ -374,7 +379,10 @@ async function commitWithEvent(
   if (!(await write(deps.db))) {
     return false;
   }
-  if (await recordCommittedEvent(deps, event)) {
+  // The flag stays until every event the stored grant derives is recorded: a revoke records its creation event
+  // too (a no-op once recorded), which an earlier failed write may have left out.
+  const priorRecorded = !prior || !grant.eventsPending || (await recordCommittedEvent(deps, prior));
+  if ((await recordCommittedEvent(deps, event)) && priorRecorded) {
     await clearEventsPending(deps, grant);
   }
   return true;

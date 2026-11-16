@@ -178,7 +178,9 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
     /** The next snapshot update applies and then fails. */
     snapshotWrite: null as 'after' | null,
     /** Runs once before the next outbox row is created, as another call racing this one. */
-    raceStage: null as (() => Promise<void>) | null
+    raceStage: null as (() => Promise<void>) | null,
+    /** Fails each create this matches. */
+    failCreate: null as ((model: string, data: Record<string, any>) => boolean) | null
   };
   const faulty = <A extends Pick<Adapter, 'create' | 'updateMany' | 'deleteMany'>>(adapter: A): A => ({
     ...adapter,
@@ -195,6 +197,7 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
       if (faults.create && params.model === 'lifecycleEvents') throw new Error('outbox write failed');
       if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
       if (faults.billingEvent && params.model === 'billingEvents') throw new Error('process stopped');
+      if (faults.failCreate?.(params.model, params.data as Record<string, any>)) throw new Error('write failed');
       return adapter.create<T>(params);
     },
     async updateMany(params: Parameters<Adapter['updateMany']>[0]) {
@@ -795,13 +798,18 @@ describe('lifecycle events of a write without transactions', () => {
 
     /** Counts grant and billing event reads, and fails a grant query on neither account nor expiry while `failScan` is on. */
     function countingGrantReads(db: Adapter) {
-      const reads = { count: 0, failScan: false };
+      const reads = { count: 0, failScan: false, failExpiry: false, maxIn: 0 };
       const counting: Adapter = {
         ...db,
         async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
           if (params.model === 'entitlementGrants' || params.model === 'billingEvents') reads.count += 1;
-          const scan = !params.where?.some((clause) => clause.field === 'billingAccountId' || clause.field === 'expiresAt');
+          for (const clause of params.where ?? []) {
+            if (clause.operator === 'in') reads.maxIn = Math.max(reads.maxIn, (clause.value as unknown[]).length);
+          }
+          const expiry = params.where?.some((clause) => clause.field === 'expiresAt');
+          const scan = !expiry && !params.where?.some((clause) => clause.field === 'billingAccountId');
           if (reads.failScan && params.model === 'entitlementGrants' && scan) throw new Error('query limit');
+          if (reads.failExpiry && params.model === 'entitlementGrants' && expiry) throw new Error('query limit');
           return db.findMany<T>(params);
         }
       };
@@ -843,6 +851,70 @@ describe('lifecycle events of a write without transactions', () => {
       expect(reads.count).toBeLessThanOrEqual(2);
     });
 
+    it('a failed expiry sweep still lets the run deliver a due event, and a later run records grant.expiring', async () => {
+      const { db } = staging();
+      const { counting, reads } = countingGrantReads(db);
+      let failing = true;
+      const env = setup({
+        db: counting,
+        onEvent: (event) => {
+          if (failing) throw new Error('mail provider down');
+          env.delivered.push(event);
+        }
+      });
+      expect((await env.trial(2 * DAY)).ok).toBe(true);
+      failing = false;
+      reads.failExpiry = true;
+      env.advance(HOUR_MS);
+      expect((await env.runLifecycleJob()).status).toBe('succeeded');
+      expect(started(env)).toHaveLength(1);
+      expect(env.ofType('grant.expiring')).toEqual([]);
+      reads.failExpiry = false;
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.expiring')).toHaveLength(1);
+    });
+
+    it('a revoke whose repair cannot record the comp creation keeps the flag, so the job records it once', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      faults.create = true;
+      faults.billingEvent = true;
+      const comp = await env.billfn.services.grants.create({
+        billingAccountId: ACCOUNT,
+        subject: env.subject,
+        planKey: 'nucleus',
+        kind: 'comp',
+        expiresAt: new Date(env.clock.current.getTime() + 30 * DAY).toISOString()
+      });
+      faults.create = false;
+      faults.billingEvent = false;
+      if (!comp.ok) throw new Error('expected the grant to commit');
+      const grantId = comp.data.grant.id;
+      // Only the creation's writes fail during the revoke; its revocation event is recorded.
+      faults.failCreate = (model, data) =>
+        (model === 'billingEvents' && data.type === 'billfn.grant.created') ||
+        (model === 'lifecycleEvents' && (data.type === 'grant.started' || data.data?.cause === 'grant.started'));
+      env.advance(MINUTE);
+      expect((await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId })).ok).toBe(true);
+      faults.failCreate = null;
+      const [stored] = await db.findMany<{ eventsPending?: boolean }>({ model: 'entitlementGrants', namespace: 'billfn' });
+      expect(stored?.eventsPending).toBe(true);
+      expect(started(env)).toEqual([]);
+
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(env.delivered.map((event) => [event.type, event.data.grantId, (event.data as { cause?: string }).cause])).toEqual([
+        ['entitlement.changed', grantId, 'grant.revoked'],
+        ['grant.started', grantId, undefined],
+        ['entitlement.changed', grantId, 'grant.started']
+      ]);
+      const [cleared] = await db.findMany<{ eventsPending?: boolean }>({ model: 'entitlementGrants', namespace: 'billfn' });
+      expect(cleared?.eventsPending).toBe(false);
+    });
+
     it('without onEvent, a grant write leaves eventsPending unset (a schema 5 table still takes it)', async () => {
       const { db } = staging();
       const env = setup({ db, onEvent: null });
@@ -865,6 +937,9 @@ describe('lifecycle events of a write without transactions', () => {
       expect((await env.runLifecycleJob()).status).toBe('succeeded');
       expect(env.ofType('grant.expiring')).toHaveLength(60);
       expect(started(env)).toEqual([]);
+      // No id list over 50 values (D1 binds at most 100 parameters).
+      expect(reads.maxIn).toBeGreaterThan(0);
+      expect(reads.maxIn).toBeLessThanOrEqual(50);
 
       reads.failScan = false;
       env.advance(HOUR_MS);

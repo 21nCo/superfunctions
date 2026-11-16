@@ -37,7 +37,8 @@ export const GRANT_EXPIRED_LOOKBACK_MS = 7 * DAY_MS;
 /** How long a call waits for the inline delivery of its events; a slower handler finishes in the background. */
 export const LIFECYCLE_INLINE_DELIVERY_MS = 10 * 1000;
 const DEFAULT_LIMIT = 100;
-const SWEEP_PAGE_SIZE = 200;
+/** At most 50 ids per `in` query, within D1's 100 bound parameters. */
+const SWEEP_PAGE_SIZE = 50;
 
 /** An event to record: its id derives from what it describes, so recording it again is a no-op. */
 export type LifecycleEventInput = {
@@ -539,9 +540,10 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   /**
    * Records `grant.expiring` for each grant that is not revoked and expires
    * within 3 days, and `entitlement.changed` (cause `grant.expired`) for each
-   * that expired in the last 7 days. Both are recorded once per grant.
+   * that expired in the last 7 days. Both are recorded once per grant. `beforePage` runs before each page (the
+   * job's lease check).
    */
-  async function recordGrantExpiry() {
+  async function recordGrantExpiry(beforePage?: () => Promise<void>) {
     if (!handler) {
       return;
     }
@@ -551,6 +553,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       { field: 'expiresAt', operator: 'lte', value: toIsoString(new Date(now + GRANT_EXPIRING_LEAD_MS)) }
     ];
     for (let offset = 0; ; offset += SWEEP_PAGE_SIZE) {
+      await beforePage?.();
       const grants = await deps.db.findMany<BillFnEntitlementGrant>({
         model: GRANTS_TABLE,
         where,
