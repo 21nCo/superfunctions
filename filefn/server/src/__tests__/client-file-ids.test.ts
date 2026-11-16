@@ -1406,39 +1406,71 @@ describe('in-process completion serialization bound', () => {
     expect(await one.readBytes(CLIENT_ID, 'user_a')).toBe('bytes in one');
   });
 
-  it('unique-enforcing adapter: a completion that waited out a stalled one on the same ID proceeds, and the unique insert arbitrates them', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const uniqueDb = createUniqueEnforcingDb({});
-    const database = {
-      ...uniqueDb,
-      capabilities: { ...uniqueDb.capabilities, schema: { ...uniqueDb.capabilities.schema, constraints: true } },
-    } as Adapter;
-    const storageFixture = createStorage('multipart');
-    const app = createApp({ mode: 'multipart', database, storageFixture });
-    const a = await app.stage('user_a', CLIENT_ID, 'stalled bytes');
-    const b = await app.stage('user_b', CLIENT_ID, 'prompt bytes');
-    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
-    const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
-    const resume = storageFixture.holdStat(keyA);
-    const stalled = a.complete();
-    await flushPromises();
+  for (const phase of ['before its storage step', 'at its commit step'] as const) {
+    it(`unique-enforcing adapter: a completion that waited out a commit stalled on the same ID ${phase} takes the key, and the unique insert arbitrates them`, async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let holdFilesInsert: Promise<void> | undefined;
+      const uniqueDb = createUniqueEnforcingDb({
+        before: async (model) => {
+          // Holds only the first files insert once armed: A's, inside its commit step.
+          if (model === 'files' && holdFilesInsert) {
+            const hold = holdFilesInsert;
+            holdFilesInsert = undefined;
+            await hold;
+          }
+        },
+      });
+      const database = {
+        ...uniqueDb,
+        capabilities: { ...uniqueDb.capabilities, schema: { ...uniqueDb.capabilities.schema, constraints: true } },
+      } as Adapter;
+      const storageFixture = createStorage('multipart');
+      const app = createApp({ mode: 'multipart', database, storageFixture });
+      const a = await app.stage('user_a', CLIENT_ID, 'stalled bytes');
+      const b = await app.stage('user_b', CLIENT_ID, 'prompt bytes');
+      const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+      const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+      let releaseInsert!: () => void;
+      const arm = () => { holdFilesInsert = new Promise<void>((resolve) => { releaseInsert = resolve; }); };
 
-    const prompt = b.complete();
-    await flushPromises();
-    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
-    const won = await prompt;
-    expect(won.status).toBe(200);
-
-    resume();
-    const lost = await stalled;
-    expect(lost.status).toBe(403);
-    const rows = await fileRows(database, CLIENT_ID);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ownerId).toBe('user_b');
-    expect(storageFixture.objects.has(keyA)).toBe(false);
-    expect(storageFixture.objects.has(keyB)).toBe(true);
-    expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('prompt bytes');
-  });
+      let prompt: ReturnType<typeof b.complete>;
+      if (phase === 'before its storage step') {
+        arm();
+        const stalled = a.complete();
+        await flushPromises();
+        prompt = b.complete();
+        await flushPromises();
+        expect(storageFixture.finalizeCount(keyB)).toBe(0);
+        await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+        const won = await prompt;
+        expect(won.status).toBe(200);
+        releaseInsert();
+        expect((await stalled).status).toBe(403);
+      } else {
+        // B passes its pre-storage wait, then A's commit stalls while B is in storage.
+        const resumeB = storageFixture.holdStat(keyB);
+        prompt = b.complete();
+        await flushPromises();
+        arm();
+        const stalled = a.complete();
+        await flushPromises();
+        resumeB();
+        await flushPromises();
+        expect(storageFixture.finalizeCount(keyB)).toBe(1);
+        await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+        const won = await prompt;
+        expect(won.status).toBe(200);
+        releaseInsert();
+        expect((await stalled).status).toBe(403);
+      }
+      const rows = await fileRows(database, CLIENT_ID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].ownerId).toBe('user_b');
+      expect(storageFixture.objects.has(keyA)).toBe(false);
+      expect(storageFixture.objects.has(keyB)).toBe(true);
+      expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('prompt bytes');
+    });
+  }
 
   it('unique-enforcing adapters: completions of one new ID against two databases in one process do not wait on each other', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
