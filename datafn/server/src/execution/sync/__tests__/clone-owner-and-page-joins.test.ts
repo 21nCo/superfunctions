@@ -433,6 +433,61 @@ describe("paginated clone join rows", () => {
     expect(unpaged.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
   });
 
+  it("an unpaginated clone doesn't re-check endpoints of tables it fully loaded", async () => {
+    const base = await seed();
+    await base.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const { db, counts } = countingAdapter(base);
+    const clone = await executeClone(
+      { clientId: "c1", tables: ["notes", "tags"], actorId: "bob", includeJoins: true },
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(clone.data.notes.map((r) => r.id)).toEqual(["n3"]);
+    expect(clone.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
+    // One access lookup per note row while filtering, none again for the
+    // join rows' hidden endpoints.
+    expect(counts.findOne).toBe(6);
+  });
+
+  it("reconcile counts the join rows a clone returns to the actor", async () => {
+    const db = await seed();
+    await db.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const clone = await executeClone(
+      { clientId: "c1", tables: ["notes", "tags"], actorId: "bob", includeJoins: true },
+      schema,
+      db,
+      NAMESPACE,
+    );
+    const reconcile = await executeReconcile(
+      { clientId: "c1", resources: ["notes", "tags"], actorId: "bob", includeJoins: true } as any,
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(clone.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
+    expect(reconcile.joinCounts?.[joinKey]).toBe(1);
+
+    const owner = await executeReconcile(
+      { clientId: "c1", resources: ["notes", "tags"], actorId: "alice", includeJoins: true } as any,
+      schema,
+      db,
+      NAMESPACE,
+    );
+    // The namespace owner sees every row.
+    expect(owner.joinCounts?.[joinKey]).toBe(5);
+  });
+
   it("fails the clone when a join endpoint's access check fails", async () => {
     const base = await seed();
     const db = new Proxy(base, {

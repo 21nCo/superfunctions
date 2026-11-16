@@ -199,6 +199,19 @@ export async function executeReconcile(
   // Include join counts if requested (SYNC-007)
   if (request.includeJoins && schema.relations) {
     joinCounts = {};
+    const actorIsOwner = isNamespaceOwnerActor(actorId, namespace);
+    const endpointAccess = new Map<string, boolean>();
+    const isJoinEndpointVisible = async (resource: string, id: unknown): Promise<boolean> => {
+      if (!isPrivateShareableResource(schema, resource)) return true;
+      if (typeof id !== "string" || !actorId) return false;
+      const key = `${resource}\u0000${id}`;
+      let visible = endpointAccess.get(key);
+      if (visible === undefined) {
+        visible = !!(await resolveAccessLevel(db, schema, resource, id, actorId, namespace));
+        endpointAccess.set(key, visible);
+      }
+      return visible;
+    };
 
     for (const relation of schema.relations) {
       // Skip relations that aren't many-many (no join rows)
@@ -279,9 +292,26 @@ export async function executeReconcile(
             continue;
           }
 
-          joinCounts[joinStoreKey] = normalizedRows.filter((row) =>
+          const storeRows = normalizedRows.filter((row) =>
             shouldIncludeJoinRowForStore(row, relation, schema, fromResource, toResource),
-          ).length;
+          );
+          if (!relationTouchesPrivateResource || actorIsOwner) {
+            joinCounts[joinStoreKey] = storeRows.length;
+            continue;
+          }
+          // Count only the rows a clone returns to this actor: both private
+          // endpoints visible. Otherwise the client sees a drift it can never
+          // resolve and re-clones on every reconcile.
+          let visibleRows = 0;
+          for (const row of storeRows) {
+            if (
+              (await isJoinEndpointVisible(fromResource, row.from)) &&
+              (await isJoinEndpointVisible(toResource, row.to))
+            ) {
+              visibleRows += 1;
+            }
+          }
+          joinCounts[joinStoreKey] = visibleRows;
         }
       }
     }
