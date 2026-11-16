@@ -178,3 +178,56 @@ describe('WorkspaceManager.rewritePackageJson', () => {
     expect(rewrittenPackageJson.devDependencies['@hostfn/tooling']).toBe('file:./__workspace__/@hostfn/tooling');
   });
 });
+
+describe('WorkspaceManager workspace shape globs', () => {
+  let rootDir: string;
+  let serviceDir: string;
+  let targetDir: string;
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(join(tmpdir(), 'hostfn-workspace-root-'));
+    serviceDir = join(rootDir, 'svc', 'typescript');
+    targetDir = mkdtempSync(join(tmpdir(), 'hostfn-workspace-target-'));
+    const toolingDir = join(rootDir, 'tooling', 'typescript');
+    const installedDir = join(rootDir, 'node_modules', 'typescript');
+    const nestedInstalledDir = join(rootDir, 'node_modules', '@scope', 'node_modules', 'typescript');
+
+    for (const dir of [serviceDir, toolingDir, installedDir, nestedInstalledDir]) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    writeFileSync(
+      join(rootDir, 'package.json'),
+      JSON.stringify({ private: true, workspaces: ['*/typescript', '*/*/typescript'] }, null, 2),
+    );
+    writeFileSync(join(toolingDir, 'package.json'), JSON.stringify({ name: '@hostfn/tooling', version: '1.0.0' }));
+    writeFileSync(join(installedDir, 'package.json'), JSON.stringify({ name: 'typescript', version: '5.6.3' }));
+    writeFileSync(join(nestedInstalledDir, 'package.json'), JSON.stringify({ name: 'typescript', version: '5.4.0' }));
+
+    const servicePackage = JSON.stringify({
+      name: '@hostfn/svc',
+      dependencies: { '@hostfn/tooling': '*' },
+      devDependencies: { typescript: '*' },
+    }, null, 2);
+    writeFileSync(join(serviceDir, 'package.json'), servicePackage);
+    writeFileSync(join(targetDir, 'package.json'), servicePackage);
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+    rmSync(targetDir, { recursive: true, force: true });
+  });
+
+  it('neither classifies nor rewrites an installed registry package matched by a shape glob', async () => {
+    const manager = new WorkspaceManager();
+    await manager.detectWorkspace(serviceDir);
+
+    expect(manager.getWorkspaceDependencies(serviceDir)).toEqual(['@hostfn/tooling']);
+
+    manager.rewritePackageJson(serviceDir, targetDir);
+
+    const rewrittenPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
+    expect(rewrittenPackageJson.dependencies['@hostfn/tooling']).toBe('file:./__workspace__/@hostfn/tooling');
+    expect(rewrittenPackageJson.devDependencies.typescript).toBe('*');
+  });
+});

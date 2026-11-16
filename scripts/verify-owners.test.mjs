@@ -653,6 +653,27 @@ test("the reusable-workflow guard is accepted only with a call-only marker input
   for (const [on, message] of rejected) {
     assert.match(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, on))[0] ?? "", message, on);
   }
+  // GitHub's inputs context is case-insensitive, so inputs.called_as_reusable_workflow reads a case alias too.
+  const aliasMarker = (name) => `      ${name}:\n        type: boolean\n        default: true\n`;
+  for (const alias of ["CALLED_AS_REUSABLE_WORKFLOW", "Called_As_Reusable_Workflow", "called_AS_reusable_workflow", "'CALLED_AS_REUSABLE_WORKFLOW'"]) {
+    const name = alias.replaceAll("'", "");
+    const dispatchOn = `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n${aliasMarker(alias)}`;
+    const errors = workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, dispatchOn));
+    assert.equal(errors.length, 1, alias);
+    assert.match(errors[0], new RegExp(`workflow_dispatch also declares ${name} \\(inputs are case-insensitive`), alias);
+    assert.match(
+      workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n      spec:\n        type: string\n${aliasMarker(alias)}`))[0] ?? "",
+      /workflow_dispatch also declares/,
+      `${alias} after another dispatch input`,
+    );
+    // A case alias under workflow_call is the marker itself, so it serves a call like the lowercase name.
+    assert.deepEqual(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn(aliasMarker(alias))}`)), [], `${alias} under workflow_call`);
+  }
+  // Two case variants under workflow_call are ambiguous, and fail closed.
+  assert.match(
+    workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn(`${marker}${aliasMarker("CALLED_AS_REUSABLE_WORKFLOW").replace("default: true", "default: false")}`)}`))[0] ?? "",
+    /does not declare the input called_as_reusable_workflow/,
+  );
   assert.match(workflowGuardErrors(file, reusable(`${REUSABLE_WORKFLOW_GUARD} || always()`))[0] ?? "", /job "api-check" has if:/);
   assert.match(workflowGuardErrors(file, reusable(`${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT}`))[0] ?? "", /job "api-check" has if:/);
 });

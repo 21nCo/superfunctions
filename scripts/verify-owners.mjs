@@ -229,24 +229,34 @@ export function workflowInputs(source, trigger) {
   return inputs;
 }
 
+/** Entries of an inputs Map whose name is REUSABLE_CALL_INPUT in any letter case (GitHub resolves inputs that way). */
+function markerInputs(inputs) {
+  return [...(inputs ?? [])].filter(([name]) => name.toLowerCase() === REUSABLE_CALL_INPUT);
+}
+
 /**
  * Why the workflow may not carry REUSABLE_WORKFLOW_GUARD, or null when it may: it must be triggered only by
  * workflow_call (and optionally workflow_dispatch), declare REUSABLE_CALL_INPUT under workflow_call as an optional
- * boolean defaulting to true, and not declare it under workflow_dispatch.
+ * boolean defaulting to true, and not declare it under workflow_dispatch. Input names are matched case-insensitively,
+ * as GitHub's inputs context is, so a case alias of the marker counts as the marker.
  */
 function reusableGuardError(source) {
   const triggers = workflowTriggers(source);
   if (triggers === null || !triggers.includes("workflow_call") || !triggers.every((name) => REUSABLE_TRIGGERS.includes(name))) {
     return `the workflow is not triggered only by ${REUSABLE_TRIGGERS.join(" and ")} (triggers: ${triggers === null ? "unreadable" : triggers.join(", ")})`;
   }
-  const marker = workflowInputs(source, "workflow_call")?.get(REUSABLE_CALL_INPUT);
+  const markers = markerInputs(workflowInputs(source, "workflow_call"));
+  const marker = markers.length === 1 ? markers[0][1] : undefined;
   if (marker?.type !== "boolean" || marker.default !== "true" || (marker.required ?? "false") !== "false") {
     return `workflow_call does not declare the input ${REUSABLE_CALL_INPUT} with type: boolean, default: true and required: false`;
   }
   if (!triggers.includes("workflow_dispatch")) return null;
   const dispatch = workflowInputs(source, "workflow_dispatch");
   if (dispatch === null) return "its workflow_dispatch inputs cannot be read";
-  if (dispatch.has(REUSABLE_CALL_INPUT)) return `workflow_dispatch also declares ${REUSABLE_CALL_INPUT}, so a direct dispatch would run outside public`;
+  const aliases = markerInputs(dispatch).map(([name]) => name);
+  if (aliases.length > 0) {
+    return `workflow_dispatch also declares ${aliases.join(", ")} (inputs are case-insensitive, so it is ${REUSABLE_CALL_INPUT}), so a direct dispatch would run outside public`;
+  }
   return null;
 }
 
