@@ -1497,9 +1497,8 @@ export class SyncEngine {
         // Tables a clone is writing are left to it (see cloningTables).
         const skippedKeys = this.cloningSyncKeys();
         const requestCursors = omitKeys(iterationCursors, skippedKeys);
-        if (Object.keys(requestCursors).length < Object.keys(iterationCursors).length) {
-          this.pullAfterClone = true;
-        }
+        let leftToClone =
+          Object.keys(requestCursors).length < Object.keys(iterationCursors).length;
         const iterPayload = { ...(transformedPayload as object), cursors: requestCursors };
         const response: any = await this.remote.pull(iterPayload);
 
@@ -1511,8 +1510,16 @@ export class SyncEngine {
           );
           // Recomputed: a clone may have started while the request was out.
           const keysAtApply = this.cloningSyncKeys();
-          if (keysAtApply.size > 0) {
-            lastResult = omitPullResultKeys(lastResult, keysAtApply);
+          if (keysAtApply.size > 0) leftToClone = true;
+          if (leftToClone) {
+            // The actor feed cursor stays where it was: the server derives
+            // share and unshare effects only for requested tables, so the
+            // pull after the clone must read those feed entries again for
+            // the tables left out here.
+            lastResult = omitPullResultKeys(
+              lastResult,
+              new Set([...keysAtApply, ACTOR_FEED_CURSOR_KEY]),
+            );
             this.pullAfterClone = true;
           }
           await applyPullResult(this.storage, lastResult);
@@ -1545,7 +1552,9 @@ export class SyncEngine {
             }
           }
 
-          hasMore = lastResult.hasMore === true;
+          // A pull that left tables to a clone stops here; the pull after
+          // the clone catches up from the cursors it kept.
+          hasMore = lastResult.hasMore === true && !leftToClone;
           if (hasMore && lastResult.cursors) {
             // Advance cursors for the next iteration (monotonic)
             iterationCursors = { ...iterationCursors, ...lastResult.cursors };

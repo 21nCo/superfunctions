@@ -360,7 +360,9 @@ describe("pulls during a clone", () => {
           ok: true,
           records: { notes: [{ id: "n4", title: "from pull" }] },
           deleted: { notes: [] },
-          cursors: { notes: "8" },
+          cursors: { notes: "8", __datafn_actor_feed__: "20" },
+          // More is pending, but a pull that left a table to the clone stops.
+          hasMore: pullPayloads.length === 1,
         },
       };
     });
@@ -371,8 +373,11 @@ describe("pulls during a clone", () => {
 
     // During the clone the pull neither asked for nor wrote the table.
     expect(pullPayloads[0]).not.toHaveProperty("notes");
-    // Afterwards it pulls from the earliest cursor the clone stored.
+    // Afterwards it pulls from the earliest cursor the clone stored, and
+    // re-reads the actor feed (share/unshare effects for the skipped table).
     expect(pullPayloads[1].notes).toBe("5");
+    expect(pullPayloads[1].__datafn_actor_feed__).toBe(pullPayloads[0].__datafn_actor_feed__);
+    expect(remote.pull).toHaveBeenCalledTimes(2);
   });
 });
 
