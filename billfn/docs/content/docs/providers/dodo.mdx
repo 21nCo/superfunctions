@@ -35,7 +35,7 @@ The default webhook signature header is `webhook-signature`.
 ## What the Adapter Does
 
 - creates a Dodo checkout session (`POST /checkouts`) for the catalog price checkout selected, with the price's trial and BillFn metadata (`billfn_checkout_session_id`, `billfn_billing_account_id`, `billfn_product_id`, `billfn_price_id`, `billfn_currency`)
-- verifies checkouts by following the checkout session to its payment and subscription, checking the BillFn metadata on each; a declined payment the customer retried in the same session is replaced by the session's current payment
+- verifies checkouts by following the checkout session to its payment and subscription, checking the BillFn metadata on each; a declined payment the customer retried in the same session is replaced by the session's current payment. A checkout created by 0.7.0, which recorded its payment as the checkout, is verified from that payment without a checkout session
 - syncs subscriptions
 - cancels subscriptions
 - attempts direct subscription changes and falls back to replacement-checkout orchestration
@@ -55,6 +55,7 @@ Dodo webhooks fail closed in Phase 1:
 - invalid signatures raise `BILLFN_WEBHOOK_SIGNATURE_INVALID`
 - malformed JSON becomes a BillFn validation error
 - parsed events carry `signatureVerified: true`
+- a subscription event or subscription payment names its Dodo product, not the `billfn_price_id` its checkout recorded: Dodo keeps the checkout metadata through plan changes, so BillFn picks the price from the product and the subscription's recorded price. Only a one-time payment names its checkout's catalog price
 
 Webhook receipts are then deduped in core by provider plus provider event id.
 

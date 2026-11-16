@@ -44,6 +44,8 @@ const DODO_CHECKOUT_SESSION_METADATA_KEY = 'billfn_checkout_session_id';
 const DODO_BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
 const DODO_PRODUCT_METADATA_KEY = 'billfn_product_id';
 const DODO_PRICE_METADATA_KEY = 'billfn_price_id';
+/** Dodo payment identifiers; 0.7.0 recorded one as a checkout's provider checkout id. */
+const DODO_PAYMENT_ID_PREFIX = 'pay_';
 /** The currency of the catalog price the checkout sold, in which BillFn records the payment's refunds. */
 const DODO_CURRENCY_METADATA_KEY = 'billfn_currency';
 
@@ -114,15 +116,24 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     },
     async verifyCheckout(input: BillFnVerifyCheckoutInput): Promise<BillFnVerifiedBillingState> {
       const isSubscription = input.price.kind === 'subscription';
-      const providerCheckoutId = input.checkoutSession.providerCheckoutId;
+      const recordedCheckoutId = input.checkoutSession.providerCheckoutId;
+      // 0.7.0 created payment links and recorded their payment as the checkout: such a row has no checkout session,
+      // and its recorded payment is the one to verify.
+      const legacyPaymentId =
+        recordedCheckoutId &&
+        (recordedCheckoutId === input.checkoutSession.providerChargeId ||
+          recordedCheckoutId.startsWith(DODO_PAYMENT_ID_PREFIX))
+          ? recordedCheckoutId
+          : undefined;
+      const providerCheckoutId = legacyPaymentId ? undefined : recordedCheckoutId;
+      const recordedChargeId = input.checkoutSession.providerChargeId ?? legacyPaymentId;
       let subscriptionId =
         input.checkoutSession.providerSubscriptionId ??
         readString(input.payload ?? {}, ['subscriptionId', 'subscription_id']);
-      let chargeId =
-        input.checkoutSession.providerChargeId ?? readString(input.payload ?? {}, ['paymentId', 'payment_id']);
+      let chargeId = recordedChargeId ?? readString(input.payload ?? {}, ['paymentId', 'payment_id']);
       let sessionCheckoutId: string | undefined;
       // A charge BillFn links to the subscription must be server-recorded or read from Dodo, never only client-sent.
-      let chargeVerified = Boolean(input.checkoutSession.providerChargeId);
+      let chargeVerified = Boolean(recordedChargeId);
 
       /** The payment the checkout session names now: after a declined payment, the customer's retry. */
       const readSessionPaymentId = async (): Promise<string> => {
@@ -1011,19 +1022,35 @@ function readDodoPaymentSubscriptionId(payment: Record<string, unknown>): string
 }
 
 /**
- * The price a webhook record names: the BillFn catalog price checkout recorded in its metadata while the record
- * still sells that price's product (a plan change moves the product, not the metadata), else the product.
+ * The price a webhook record names. Checkout metadata is historical: Dodo keeps it on a subscription and its payments
+ * through every plan change, so a subscription record or subscription payment names only its current product and
+ * core picks the price with the subscription's stored selection. Only a one-time payment, whose product never
+ * changes, names the catalog price its checkout recorded, and only while it still sells that price's product.
  */
 function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<string, unknown>): string | undefined {
+  if (kind === 'subscription') {
+    return readString(data, ['product_id']);
+  }
   const product =
-    kind === 'subscription'
-      ? readString(data, ['product_id'])
-      : (readString(data, ['product_id']) ?? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']));
+    readString(data, ['product_id']) ?? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']);
   const priceId = readMetadataString(data, DODO_PRICE_METADATA_KEY);
-  if (priceId && product && readMetadataString(data, DODO_PRODUCT_METADATA_KEY) === product) {
+  if (
+    priceId &&
+    product &&
+    isDodoOneTimePayment(data) &&
+    readMetadataString(data, DODO_PRODUCT_METADATA_KEY) === product
+  ) {
     return priceId;
   }
   return product;
+}
+
+/** A payment that charges no subscription: neither `subscription_id` nor any `subscription_ids` entry. */
+function isDodoOneTimePayment(payment: Record<string, unknown>): boolean {
+  if (readString(payment, ['subscription_id'])) {
+    return false;
+  }
+  return !(Array.isArray(payment.subscription_ids) && payment.subscription_ids.length > 0);
 }
 
 function readMetadataString(record: Record<string, unknown>, key: string): string | undefined {

@@ -35,6 +35,11 @@ function createDodoApi() {
         metadata: subscription.metadata
       });
     }
+    if (init?.method === 'POST' && path === '/subscriptions/sub_dodo_1/change-plan' && subscription) {
+      // Dodo moves the subscription to the new product and keeps the checkout's metadata as it was.
+      subscription = { ...subscription, product_id: body.product_id };
+      return Response.json({ subscription_id: 'sub_dodo_1', payment_id: null, payment_link: null });
+    }
     if (path === '/subscriptions/sub_dodo_1' && subscription) {
       if (init?.method === 'PATCH') {
         // Dodo keeps a subscription canceled at its next billing date active until then.
@@ -71,7 +76,24 @@ function dodoWebhook(id: string, payload: unknown) {
   };
 }
 
-async function subscribed(options: { verify?: boolean } = {}) {
+const monthlyPrice = {
+  priceId: 'price_nucleus_month',
+  provider: 'dodo' as const,
+  providerProductId: 'pdt_nucleus_month',
+  currency: 'USD',
+  amount: 12,
+  kind: 'subscription' as const,
+  interval: 'month' as const
+};
+
+/** A second monthly price sold through the same Dodo product, and a yearly price on its own product. */
+const sharedProductPrices = [
+  monthlyPrice,
+  { ...monthlyPrice, priceId: 'price_nucleus_month_loyal', amount: 10 },
+  { ...monthlyPrice, priceId: 'price_nucleus_year', providerProductId: 'pdt_nucleus_year', amount: 120, interval: 'year' as const }
+];
+
+async function subscribed(options: { verify?: boolean; prices?: Array<typeof monthlyPrice> } = {}) {
   const api = createDodoApi();
   const { fetchMock } = api;
   const delivered: BillFnLifecycleEvent[] = [];
@@ -85,17 +107,7 @@ async function subscribed(options: { verify?: boolean } = {}) {
           displayName: 'Nucleus',
           features: { memotron: true },
           limits: {},
-          prices: [
-            {
-              priceId: 'price_nucleus_month',
-              provider: 'dodo',
-              providerProductId: 'pdt_nucleus_month',
-              currency: 'USD',
-              amount: 12,
-              kind: 'subscription',
-              interval: 'month'
-            }
-          ]
+          prices: options.prices ?? [monthlyPrice]
         }
       ]
     },
@@ -112,7 +124,13 @@ async function subscribed(options: { verify?: boolean } = {}) {
     }
   });
   const subject = { principalId: 'user_1' };
-  const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', interval: 'month' });
+  const created = await billfn.createCheckout({
+    subject,
+    planKey: 'nucleus',
+    provider: 'dodo',
+    interval: 'month',
+    priceId: monthlyPrice.priceId
+  });
   if (!created.ok) throw new Error('expected checkout');
   if (options.verify === false) {
     return { api, billfn, subject, delivered };
@@ -222,5 +240,53 @@ describe('@billfn/provider-dodo lifecycle events', () => {
     expect((await billfn.handleWebhook(dodoWebhook('msg_subscription', subscriptionActive))).ok).toBe(true);
     const afterBoth = await billfn.getEntitlements(subject);
     expect(afterBoth.ok && afterBoth.data.subscription).toMatchObject({ status: 'active', autoRenew: true });
+  });
+  describe('webhooks after a plan change keep the price BillFn recorded, not the checkout price in the metadata', () => {
+    async function webhooksAfterChanges(targetPriceIds: string[]) {
+      const { api, billfn, subject } = await subscribed({ prices: sharedProductPrices });
+      for (const targetPriceId of targetPriceIds) {
+        const changed = await billfn.changeSubscription({ subject, targetPriceId, effectiveAt: 'immediate' });
+        expect(changed.ok).toBe(true);
+      }
+      expect(api.current()).toMatchObject({
+        product_id: 'pdt_nucleus_month',
+        metadata: { billfn_price_id: 'price_nucleus_month', billfn_product_id: 'pdt_nucleus_month' }
+      });
+      const recorded = await billfn.getEntitlements(subject);
+      expect(recorded.ok && recorded.data.subscription).toMatchObject({ priceId: 'price_nucleus_month_loyal' });
+
+      const planChanged = {
+        type: 'subscription.plan_changed',
+        timestamp: '2026-11-11T00:00:00Z',
+        data: { payload_type: 'Subscription', ...api.current() }
+      };
+      const renewal = {
+        type: 'payment.succeeded',
+        timestamp: '2026-12-10T00:00:05Z',
+        data: {
+          payload_type: 'Payment',
+          payment_id: 'pay_dodo_2',
+          status: 'succeeded',
+          checkout_session_id: null,
+          subscription_id: 'sub_dodo_1',
+          product_cart: null,
+          metadata: api.current().metadata
+        }
+      };
+      const renewed = { type: 'subscription.renewed', timestamp: '2026-12-10T00:00:10Z', data: { payload_type: 'Subscription', ...api.current() } };
+      for (const [id, payload] of [['msg_plan_changed', planChanged], ['msg_renewal', renewal], ['msg_renewed', renewed]] as const) {
+        expect((await billfn.handleWebhook(dodoWebhook(id, payload))).ok).toBe(true);
+      }
+      const after = await billfn.getEntitlements(subject);
+      expect(after.ok && after.data.subscription).toMatchObject({ priceId: 'price_nucleus_month_loyal', status: 'active' });
+    }
+
+    it('checkout price, change to another product, then change to another price of the checkout product', async () => {
+      await webhooksAfterChanges(['price_nucleus_year', 'price_nucleus_month_loyal']);
+    });
+
+    it('a change to another price of the checkout product', async () => {
+      await webhooksAfterChanges(['price_nucleus_month_loyal']);
+    });
   });
 });

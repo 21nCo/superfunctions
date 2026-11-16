@@ -352,6 +352,34 @@ describe('verifyCheckout -> GET /checkouts/{id}, /payments/{id}, /subscriptions/
     expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /checkouts/${SESSION_ID}`]);
   });
 
+  it('verifies a 0.7.0 one-time checkout, which recorded its payment as the checkout, without a checkout session', async () => {
+    const api = dodoApi({ [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getOneTimePayment.response, status: 'failed' } });
+    const input = verifyInput(lifetimePrice, {
+      checkoutSession: checkoutSession(lifetimePrice, { providerCheckoutId: PAYMENT_ID, providerChargeId: PAYMENT_ID })
+    });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(input)).resolves.toMatchObject({
+      checkoutStatus: 'failed',
+      providerChargeId: PAYMENT_ID
+    });
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`]);
+  });
+
+  it('verifies a 0.7.0 subscription checkout whose declined payment was recorded only as the checkout', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getSubscriptionPayment.response, status: 'failed', subscription_id: null, subscription_ids: [] }
+    });
+    const input = verifyInput(monthPrice, {
+      checkoutSession: checkoutSession(monthPrice, { providerCheckoutId: PAYMENT_ID })
+    });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(input)).resolves.toMatchObject({
+      checkoutStatus: 'failed',
+      providerChargeId: PAYMENT_ID
+    });
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`]);
+  });
+
   it('rejects a payment made through another checkout session', async () => {
     const api = dodoApi({
       [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSession.response,
@@ -898,14 +926,16 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     return events![0]!;
   }
 
-  it('maps subscription.past_due to grace and names the checkout price and session from the metadata', async () => {
+  it('maps subscription.past_due to grace, names its product (not the checkout price) and the session', async () => {
     const event = await parse(recorded.webhooks.subscriptionPastDue);
 
+    // The metadata names the checkout price, which a plan change to another price of the same product leaves stale.
+    expect(recorded.webhooks.subscriptionPastDue.data.metadata.billfn_price_id).toBe('price_nucleus_month');
     expect(event).toMatchObject({
       providerEventId: 'msg_contract',
       type: 'subscription.past_due',
       occurredAt: '2026-12-17T09:05:00Z',
-      priceId: 'price_nucleus_month',
+      priceId: 'pdt_nucleus_month',
       providerSubscriptionId: SUBSCRIPTION_ID,
       checkoutReferenceId: 'chk_123',
       billingState: { subscriptionStatus: 'grace', autoRenew: true }
@@ -922,12 +952,23 @@ describe('parseWebhook with recorded Dodo payloads', () => {
   it('links the charge of a subscription payment, which Dodo charges only while it renews', async () => {
     const event = await parse(recorded.webhooks.paymentSucceededForSubscription);
 
+    expect(event.priceId).toBeUndefined();
     expect(event).toMatchObject({
       providerChargeId: PAYMENT_ID,
       providerSubscriptionId: SUBSCRIPTION_ID,
       checkoutReferenceId: SESSION_ID,
       billingState: { subscriptionStatus: 'active', providerSubscriptionId: SUBSCRIPTION_ID, providerChargeId: PAYMENT_ID, autoRenew: true }
     });
+  });
+
+  it('names only the product of a subscription payment that carries its product, never the checkout price', async () => {
+    const payment = recorded.webhooks.paymentSucceededForSubscription;
+    const event = await parse({
+      ...payment,
+      data: { ...payment.data, product_cart: [{ product_id: 'pdt_nucleus_month', quantity: 1 }] }
+    });
+
+    expect(event.priceId).toBe('pdt_nucleus_month');
   });
 
   it('leaves a declined renewal payment to the subscription events instead of failing the subscription', async () => {
