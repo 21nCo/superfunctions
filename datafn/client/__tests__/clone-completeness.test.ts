@@ -381,6 +381,47 @@ describe("pulls during a clone", () => {
   });
 });
 
+describe("pulls racing the end of a clone", () => {
+  it("pulls again when the clone ends while a pull that left it out is in flight", async () => {
+    const storage = new MemoryStorageAdapter();
+    const pullPayloads: Array<Record<string, string>> = [];
+    let releasePull: (() => void) | undefined;
+    let pullDuringClone: Promise<void> | undefined;
+    let engineRef: SyncEngine | undefined;
+    const { engine, remote } = createEngine(
+      storage,
+      async (payload) => {
+        if (payload.page?.afterId === "n2") {
+          // A pull starts (leaving notes out) and is still waiting for its
+          // response when the clone ends.
+          pullDuringClone = engineRef!.pullNow();
+          await vi.waitFor(() => expect(pullPayloads).toHaveLength(1));
+        }
+        return pageResponse(payload.page!.afterId, payload.page!.limit, "5");
+      },
+      { hydration: { bootResources: ["notes"], clonePageSize: 2 } },
+    );
+    engineRef = engine;
+    remote.pull.mockImplementation(async (payload: any) => {
+      pullPayloads.push({ ...payload.cursors });
+      if (pullPayloads.length === 1) {
+        await new Promise<void>((resolve) => {
+          releasePull = resolve;
+        });
+      }
+      return { ok: true, result: { ok: true, records: {}, deleted: {}, cursors: {} } };
+    });
+
+    await engine.cloneNow();
+    releasePull!();
+    await pullDuringClone;
+    await vi.waitFor(() => expect(pullPayloads).toHaveLength(2));
+
+    expect(pullPayloads[0]).not.toHaveProperty("notes");
+    expect(pullPayloads[1].notes).toBe("5");
+  });
+});
+
 describe("start() superseded by stop()", () => {
   it("does not clear the state of a newer start() when its initial sync fails", async () => {
     const storage = new MemoryStorageAdapter();

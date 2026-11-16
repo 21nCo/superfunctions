@@ -1453,6 +1453,11 @@ export class SyncEngine {
       });
     } finally {
       this.pullInFlight = false;
+      // Tables this pull left to a clone that has since ended: pull again.
+      if (this.pullAfterClone && this.cloningTables.size === 0) {
+        this.pullAfterClone = false;
+        this.pullAfterReconnect = true;
+      }
       if (this.pullAfterReconnect) {
         this.pullAfterReconnect = false;
         void this.pullNow();
@@ -1499,6 +1504,9 @@ export class SyncEngine {
         const requestCursors = omitKeys(iterationCursors, skippedKeys);
         let leftToClone =
           Object.keys(requestCursors).length < Object.keys(iterationCursors).length;
+        // Set before the request: the clone may end while it is out, and its
+        // completion only schedules the catch-up pull if this is already set.
+        if (leftToClone) this.pullAfterClone = true;
         const iterPayload = { ...(transformedPayload as object), cursors: requestCursors };
         const response: any = await this.remote.pull(iterPayload);
 
