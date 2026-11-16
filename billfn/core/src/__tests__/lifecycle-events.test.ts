@@ -798,7 +798,7 @@ describe('lifecycle events of a write without transactions', () => {
 
     /** Counts grant and billing event reads, and fails a grant query on neither account nor expiry while `failScan` is on. */
     function countingGrantReads(db: Adapter) {
-      const reads = { count: 0, failScan: false, failExpiry: false, maxIn: 0 };
+      const reads = { count: 0, failScan: false, failExpiry: false, hangExpiry: false, maxIn: 0, onExpiry: () => {} };
       const counting: Adapter = {
         ...db,
         async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
@@ -809,7 +809,11 @@ describe('lifecycle events of a write without transactions', () => {
           const expiry = params.where?.some((clause) => clause.field === 'expiresAt');
           const scan = !expiry && !params.where?.some((clause) => clause.field === 'billingAccountId');
           if (reads.failScan && params.model === 'entitlementGrants' && scan) throw new Error('query limit');
-          if (reads.failExpiry && params.model === 'entitlementGrants' && expiry) throw new Error('query limit');
+          if (params.model === 'entitlementGrants' && expiry && (reads.failExpiry || reads.hangExpiry)) {
+            reads.onExpiry();
+            if (reads.hangExpiry) return new Promise<T[]>(() => {});
+            throw new Error('query limit');
+          }
           return db.findMany<T>(params);
         }
       };
@@ -873,6 +877,55 @@ describe('lifecycle events of a write without transactions', () => {
       env.advance(HOUR_MS);
       await env.runLifecycleJob();
       expect(env.ofType('grant.expiring')).toHaveLength(1);
+    });
+
+    // A trial whose grant.started delivery failed once and is due again an hour later.
+    async function dueRetry(adapter: (counting: Adapter) => Adapter = (counting) => counting) {
+      const { db } = staging();
+      const { counting, reads } = countingGrantReads(db);
+      let failing = true;
+      const env = setup({
+        db: adapter(counting),
+        onEvent: (event) => {
+          if (failing) throw new Error('mail provider down');
+          env.delivered.push(event);
+        }
+      });
+      expect((await env.trial(2 * DAY)).ok).toBe(true);
+      failing = false;
+      env.advance(HOUR_MS);
+      return { env, reads };
+    }
+
+    it('a sweep whose query never settles: the run has delivered the due event before it', async () => {
+      const { env, reads } = await dueRetry();
+      reads.hangExpiry = true;
+      const sweepStarted = new Promise<void>((resolve) => {
+        reads.onExpiry = resolve;
+      });
+      void env.runLifecycleJob().catch(() => undefined);
+      await sweepStarted;
+      expect(started(env)).toHaveLength(1);
+    });
+
+    it('a sweep that uses up the query budget, failing every later call: the run has delivered the due event', async () => {
+      const budget = { exhausted: false };
+      const limited = (counting: Adapter) =>
+        new Proxy(counting, {
+          get(target, prop, receiver) {
+            const value: unknown = Reflect.get(target, prop, receiver);
+            if (typeof value !== 'function') return value;
+            return (...args: unknown[]) =>
+              budget.exhausted ? Promise.reject(new Error('too many queries')) : value.apply(target, args);
+          }
+        });
+      const { env, reads } = await dueRetry(limited);
+      reads.failExpiry = true;
+      reads.onExpiry = () => {
+        budget.exhausted = true;
+      };
+      await env.runLifecycleJob().catch(() => undefined);
+      expect(started(env)).toHaveLength(1);
     });
 
     it('a revoke whose repair cannot record the comp creation keeps the flag, so the job records it once', async () => {

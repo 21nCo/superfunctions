@@ -1916,18 +1916,29 @@ async function processReconciliationJob(
       return;
     }
     case 'lifecycle-events': {
-      // The expiry sweep, then grant changes whose events a failed write or a stop left unrecorded, without waiting
-      // for account traffic. Each is bounded per run, and a failed step is left to the next run without stopping
-      // the dispatch.
+      // Dispatch runs first, so no other step can stop or delay delivery and the 24h failed marking. The lease is
+      // renewed before each delivery and sweep page, so a job whose lease lapsed stops.
+      await deps.lifecycle.dispatch({}, assertLease);
+      // The expiry sweep (it reads the whole 10-day window each run) and the bounded repair of grant changes whose
+      // events a failed write or a stop left unrecorded. A failed step is left to the next run; a lost lease ends it.
+      let leaseError: { error: unknown } | undefined;
+      const guard = () =>
+        assertLease().catch((error: unknown) => {
+          leaseError = { error };
+          throw error;
+        });
       const steps = { expiry: deps.lifecycle.recordGrantExpiry, repair: deps.repairPendingGrantEvents };
       for (const [type, step] of Object.entries(steps)) {
         try {
-          await step?.(assertLease);
+          await step?.(guard);
         } catch {
+          if (leaseError) {
+            throw leaseError.error;
+          }
           deps.metrics.track('grant.event_deferred', { type });
         }
       }
-      // The lease is renewed before each delivery, so a job whose lease lapsed stops delivering.
+      // Delivers what the steps recorded in this run; a later run delivers it otherwise.
       await deps.lifecycle.dispatch({}, assertLease);
       return;
     }
