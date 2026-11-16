@@ -441,21 +441,17 @@ async function commitWithEvent(
     return false;
   }
   // The flag stays until every event the stored grant derives is recorded: a revoke records its creation event
-  // too (a no-op once recorded), which an earlier failed write may have left out. A creation's flag also stays
-  // until it checked the sweeps' positions, so a later repair does it.
+  // too (a no-op once recorded), which an earlier failed write may have left out. The flag also stays until the
+  // grant checked the sweeps' positions (a revoke too: its creation's check may have failed), so a later repair does it.
   const revoked = Boolean(grant.revokedAt);
   const priorRecorded = !prior || !grant.eventsPending || (await recordCommittedEvent(deps, prior, revoked));
-  if (
-    (await recordCommittedEvent(deps, event, revoked)) &&
-    priorRecorded &&
-    (!created || (await recordPassedExpiry(deps, grant)))
-  ) {
+  if ((await recordCommittedEvent(deps, event, revoked)) && priorRecorded && (await recordPassedExpiry(deps, grant))) {
     await clearEventsPending(deps, grant);
   }
   return true;
 }
 
-/** `recordPassedGrantExpiry` for a created grant; never fails the request: false (and deferred) when it fails. */
+/** `recordPassedGrantExpiry` for a written grant; never fails the request: false (and deferred) when it fails. */
 async function recordPassedExpiry(deps: GrantDeps, grant: GrantRecord) {
   try {
     await deps.recordPassedGrantExpiry(grant);

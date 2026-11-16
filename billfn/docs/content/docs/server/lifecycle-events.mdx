@@ -64,7 +64,7 @@ A handler's side effects should therefore be idempotent per `event.id`; BillFn d
 await billfn.enqueueReconciliationJob({ kind: "lifecycle-events" });
 ```
 
-Each run first dispatches due events, so no other step can delay delivery or the failed marking. It then records `entitlement.changed` (cause `grant.expired`) for grants that expired in the last 7 days and `grant.expiring` for grants that expire within 3 days, then the missing events of up to 50 grant changes flagged pending (see [Consistency](#consistency)), and then dispatches again, so events these steps record are delivered in the same run (or by the next one if that dispatch stops). A failed sweep or repair is left to the next run; a run that lost its lease ends before its next write.
+Each run first dispatches due events, so no other step can delay delivery or the failed marking. It then records `entitlement.changed` (cause `grant.expired`) for grants that expired in the last 7 days (and were not revoked before they expired) and `grant.expiring` for grants that expire within 3 days, then the missing events of up to 50 grant changes flagged pending (see [Consistency](#consistency)), and then dispatches again, so events these steps record are delivered in the same run (or by the next one if that dispatch stops). A failed sweep or repair is left to the next run; a run that lost its lease ends before its next write.
 
 The work of each run is bounded, and the next run resumes where it stopped:
 

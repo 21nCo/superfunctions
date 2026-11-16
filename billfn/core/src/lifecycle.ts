@@ -721,7 +721,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
         return;
       }
       read += grants.length;
-      await recordMissing(grants.filter((grant) => !grant.revokedAt).map((grant) => grantExpiryEvent(sweep, grant, now)));
+      await recordMissing(grants.filter((grant) => !revokedBeforeExpiry(grant)).map((grant) => grantExpiryEvent(sweep, grant, now)));
       const last = grants[grants.length - 1]!;
       // The stored position keeps the page's range until it is read again, so a stop before that leaves it to
       // the next run.
