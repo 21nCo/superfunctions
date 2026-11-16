@@ -416,6 +416,8 @@ describe("CliHarnessAdapter model reporting", () => {
   it.each([
     ["owned by a closed pattern schema", "meta", "meta.run.model", { type: "object", patternProperties: { "^run$": { type: "object", properties: { source: { type: "string" } }, additionalProperties: false } }, additionalProperties: false }, (model: string) => ({ run: { source: "s", model } })],
     ["in the items of an allOf-wrapped array", "runs", "runs.0.model", { allOf: [{ type: "array", items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+    ["in the items of an array's allOf branch", "runs", "runs.0.model", { type: "array", allOf: [{ items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+    ["in both an array's own items and its allOf branch's", "runs", "runs.0.model", { type: "array", items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false }, allOf: [{ items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
   ] as const)("shows a contract that accepts a report %s, and removes it where the slot's schema forbids it", async (_name, field, dotted, schema, value) => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [field]: schema } };
     const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
@@ -440,6 +442,8 @@ describe("CliHarnessAdapter model reporting", () => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta } };
     expect(withModelReportField(outputSchema, "json-path:meta.model")).toBe(outputSchema);
     expect(withModelReportField({ ...outputSchema, unevaluatedProperties: false, allOf: [{ properties: { x: {} } }] }, "json-path:model")).toHaveProperty("properties", outputSchema.properties);
+    const composedArray = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, runs: { type: "array", anyOf: [{ minItems: 1 }], items: { type: "object", properties: { id: { type: "string" } } } } } };
+    expect(withModelReportField(composedArray, "json-path:runs.0.model")).toBe(composedArray);
     const output = await run(profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model: "fake-model-1" } })] }), "fake-model-1", { outputSchema });
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");

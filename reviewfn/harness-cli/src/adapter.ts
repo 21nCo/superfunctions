@@ -666,14 +666,19 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
   const [key, ...rest] = keys;
   if (key === undefined) return schema;
   // A numeric step indexes an array schema, as valueAtPath reads an array; elsewhere it names a property. The items
-  // schema is shared, so every item declares the report, and every item may have it removed.
+  // schemas are shared, so every item declares the report, and every item may have it removed. They are the ones removal
+  // follows (itemSchemas): the node's own items and its allOf branches', none below an unsettled array node.
   if (isArrayStep(schema, key)) {
-    if (!isRecord(schema.items)) return schema;
-    const items = declarePath(schema.items, rest, optional);
-    return items === schema.items ? schema : { ...schema, items };
+    if (isUnsettledArray(schema)) return schema;
+    const items = isRecord(schema.items) ? declarePath(schema.items, rest, optional) : schema.items;
+    return declareBranches(schema, items === schema.items ? schema : { ...schema, items }, keys, optional);
   }
   if (ownership(schema, key).kind === "unsettled") return schema;
-  const shown = declareOwn(schema, key, rest, optional);
+  return declareBranches(schema, declareOwn(schema, key, rest, optional), keys, optional);
+}
+
+/** `shown` with the report declared along `keys` in each non-trivial `allOf` branch of `schema`. */
+function declareBranches(schema: Readonly<Record<string, unknown>>, shown: Readonly<Record<string, unknown>>, keys: readonly string[], optional: boolean): Readonly<Record<string, unknown>> {
   if (!Array.isArray(schema.allOf)) return shown;
   const branches: unknown[] = schema.allOf;
   const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys, optional) : branch);
@@ -783,12 +788,19 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
   return field;
 }
 
+/** Whether which item schemas apply to an array node is not settled: it, or a non-trivial `allOf` branch, composes. */
+function isUnsettledArray(schema: Readonly<Record<string, unknown>>): boolean {
+  const unsettled = (node: unknown) => !isRecord(node) || UNSETTLED.some(keyword => keyword in node);
+  if (unsettled(schema) || (schema.allOf !== undefined && !Array.isArray(schema.allOf))) return true;
+  const branches: unknown[] = Array.isArray(schema.allOf) ? schema.allOf : [];
+  return branches.some(branch => !isTrivial(branch) && unsettled(branch));
+}
+
 /** The item schemas that apply to an array: its own `items` and its `allOf` branches' (none below an unsettled node). */
 function itemSchemas(schema: unknown): unknown[] {
-  if (!isRecord(schema) || UNSETTLED.some(keyword => keyword in schema)) return [];
+  if (!isRecord(schema) || isUnsettledArray(schema)) return [];
   const branches: unknown[] = Array.isArray(schema.allOf) ? schema.allOf : [];
-  if (branches.some(branch => !isTrivial(branch) && (!isRecord(branch) || UNSETTLED.some(keyword => keyword in branch)))) return [];
-  return [...("items" in schema ? [schema.items] : []), ...branches.flatMap(itemSchemas)];
+  return [...("items" in schema ? [schema.items] : []), ...branches.filter(branch => !isTrivial(branch)).flatMap(itemSchemas)];
 }
 
 /**
