@@ -112,6 +112,7 @@ describe("signals pinned to ids (direct mode)", () => {
     expect(queried).toContain("folders:a");
 
     // Deleting another folder may cascade to this one.
+    queried.length = 0;
     await folders.mutate({ operation: "delete", id: "folders:root" } as any);
     await settle();
     expect(queried).toContain("folders:a");
