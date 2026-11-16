@@ -333,7 +333,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     },
     recordPassedGrantExpiry: (grant, beforeWrite) => deps.lifecycle.recordPassedGrantExpiry(grant, beforeWrite),
     isDuplicateRecordError,
-    flagsPendingEvents: deps.lifecycle.enabled && !deps.db.capabilities.transactions.supported
+    flagsPendingEvents: deps.lifecycle.enabled
   };
   deps.repairPendingGrantEvents = (beforeWrite) => repairPendingGrantEvents(grantDeps, beforeWrite);
   /**

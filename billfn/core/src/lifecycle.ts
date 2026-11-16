@@ -199,8 +199,8 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
 
   /**
    * `record` for a grant's expiry events (`grant.expiring`, `entitlement.changed` with cause `grant.expired`):
-   * the stored grant is read again through `db` right before each row is written, after `beforeWrite`, and a
-   * grant revoked by then gets no more rows, so a revoke that committed while this write was pending is never
+   * the stored grant is read again through `db` right before each row is written (then `beforeWrite` runs), and a
+   * grant revoked by then gets no more rows, so a revoke that committed while this write was pending is not
    * followed by one.
    */
   async function recordForUnrevokedGrant(
@@ -214,7 +214,6 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
     for (const event of events) {
       if (!(await findEvent(event.id, db))) {
-        await beforeWrite?.();
         const grant = await db.findOne<{ revokedAt?: string | null }>({
           model: GRANTS_TABLE,
           where: [{ field: 'id', operator: 'eq', value: grantId }],
@@ -223,6 +222,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
         if (!grant || grant.revokedAt) {
           return;
         }
+        await beforeWrite?.();
         await createEvent(event, 'pending', null, db);
       }
       callEvents.getStore()?.add(event.id);
@@ -665,18 +665,23 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       // Another run moved the position from where this one read it; it carries the sweep on.
       deps.metrics.track('grant.sweep_yielded', { sweep });
     };
+    // Reading pages again is bounded per run too; a recheck that runs out stores where it stopped.
+    const budget = { recheck: GRANT_SWEEP_RUN_LIMIT, beforePage };
     const storedPosition = parseSweepPosition(cursor);
     if (storedPosition?.recheck) {
-      // A run stopped between moving the position past a page and reading that page again: this one reads it.
-      const checked = await recheckPage(sweep, cursor!, storedPosition.recheck, storedPosition, new Set(), now);
+      // A run stopped (or ran out) while reading a page it passed again: this one finishes that first.
+      const checked = await recheckPage(sweep, cursor!, storedPosition.recheck, storedPosition, new Set(), now, budget);
       if (checked === null) {
         return yielded();
       }
-      cursor = checked;
+      if (!checked.done) {
+        return;
+      }
+      cursor = checked.cursor;
     }
     let position = laterPosition(storedPosition, toIsoString(new Date(after)));
     const end = toIsoString(new Date(until));
-    for (let read = 0; read < GRANT_SWEEP_RUN_LIMIT; ) {
+    for (let read = 0; read < GRANT_SWEEP_RUN_LIMIT && budget.recheck > 0; ) {
       await beforePage?.();
       const limit = Math.min(SWEEP_PAGE_SIZE, GRANT_SWEEP_RUN_LIMIT - read);
       const grants = await readGrantPage(position, { expiresAt: end, id: null }, limit);
@@ -692,11 +697,15 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       if (!(await moveSweepCursor(sweep, cursor, moved))) {
         return yielded();
       }
-      const checked = await recheckPage(sweep, moved, position, last, new Set(grants.map((grant) => grant.id)), now);
+      const ids = new Set(grants.map((grant) => grant.id));
+      const checked = await recheckPage(sweep, moved, position, last, ids, now, budget);
       if (checked === null) {
         return yielded();
       }
-      cursor = checked;
+      if (!checked.done) {
+        return;
+      }
+      cursor = checked.cursor;
       position = { expiresAt: last.expiresAt, id: last.id };
       if (grants.length < limit) {
         return;
@@ -707,8 +716,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   /**
    * Once the stored position (`cursor`) moved from `from` to `to`, reads that range again and records the events
    * of the grants not in `read` that became visible after the page was read (a write landing late), which a
-   * creation that read the position before it moved left to the sweep; then stores `to` alone. The new cursor, or
-   * null when another run moved it first.
+   * creation that read the position before it moved left to the sweep; then stores `to` alone (`done`). It reads
+   * at most `budget.recheck` grants, running `budget.beforePage` before each page; with more left it stores where
+   * it stopped as the position's `recheck` for the next run. Null when another run moved the position first.
    */
   async function recheckPage(
     sweep: GrantSweep,
@@ -716,22 +726,30 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     from: SweepPosition,
     to: { expiresAt: string; id: string },
     read: Set<string>,
-    now: number
-  ) {
+    now: number,
+    budget: { recheck: number; beforePage?: () => Promise<void> }
+  ): Promise<{ cursor: string; done: boolean } | null> {
     for (let position = from; ; ) {
-      const grants = await readGrantPage(position, to, SWEEP_PAGE_SIZE);
+      await budget.beforePage?.();
+      const limit = Math.min(SWEEP_PAGE_SIZE, budget.recheck);
+      const grants = await readGrantPage(position, to, limit);
+      budget.recheck -= grants.length;
       const late = grants.filter(
         (grant) => !read.has(grant.id) && !grant.revokedAt && (sweep === 'expired' || Date.parse(grant.expiresAt) > now)
       );
       await recordMissing(late.map((grant) => grantExpiryEvent(sweep, grant, now)));
       const last = grants.at(-1);
-      if (!last || grants.length < SWEEP_PAGE_SIZE || last.id === to.id) {
+      if (!last || grants.length < limit || last.id === to.id) {
         break;
       }
       position = { expiresAt: last.expiresAt, id: last.id };
+      if (budget.recheck <= 0) {
+        const paused = JSON.stringify({ expiresAt: to.expiresAt, id: to.id, recheck: position });
+        return (await moveSweepCursor(sweep, cursor, paused)) ? { cursor: paused, done: false } : null;
+      }
     }
     const checked = JSON.stringify({ expiresAt: to.expiresAt, id: to.id });
-    return (await moveSweepCursor(sweep, cursor, checked)) ? checked : null;
+    return (await moveSweepCursor(sweep, cursor, checked)) ? { cursor: checked, done: true } : null;
   }
 
   /**

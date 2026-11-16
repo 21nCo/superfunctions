@@ -1722,7 +1722,9 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
           expect((await env.runLifecycleJob()).status).toBe('succeeded');
           runs.push([...reads]);
         }
-        // A run reads its own pages again once past them (for writes landing late), never another run's.
+        // A run reads its own pages again once past them (for writes landing late), never another run's: at most
+        // twice the cap.
+        expect(runs.map((ids) => ids.length)).toEqual([2 * GRANT_SWEEP_RUN_LIMIT, 60, 0]);
         expect(runs.map((ids) => new Set(ids).size)).toEqual([GRANT_SWEEP_RUN_LIMIT, 30, 0]);
         expect(runs[1]!.filter((id) => runs[0]!.includes(id))).toEqual([]);
         expect(new Set([...runs[0]!, ...runs[1]!]).size).toBe(count);
@@ -1990,7 +1992,7 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
    * starts): the insert becomes visible only after it, as a write that lands late relative to its timestamp.
    */
   function delayedGrantDb(db: Adapter) {
-    const hooks = { beforeGrantInsert: null as (() => Promise<void>) | null };
+    const hooks = { beforeGrantInsert: null as (() => Promise<void>) | null, failPositionCheck: false };
     const delay = <A extends Pick<Adapter, 'create'>>(adapter: A): A => ({
       ...adapter,
       async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
@@ -2004,6 +2006,13 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
     });
     const wrapped: Adapter = {
       ...delay(db),
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+        if (hooks.failPositionCheck && params.model === 'reconciliationCursors') {
+          hooks.failPositionCheck = false;
+          throw new Error('process stopped');
+        }
+        return db.findMany<T>(params);
+      },
       // With transactions the grant's transaction starts only after the hook (its timestamp was taken before).
       async transaction<R>(callback: (transaction: TransactionAdapter) => Promise<R>): Promise<R> {
         const hook = hooks.beforeGrantInsert;
@@ -2078,6 +2087,32 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
       expect(expiring.sort()).toEqual(['grant_other_1', trial.data.grant.id].sort());
     });
 
+    it('a trial whose check of the sweep positions fails after it committed gets grant.expiring from the next job run', async () => {
+      const { db: base } = makeDb();
+      const { db, hooks } = delayedGrantDb(base);
+      const env = setup({ db });
+      const t0 = env.clock.current.getTime();
+      await base.create({ model: 'entitlementGrants', data: otherRow('grant_other_1', new Date(t0 + 4 * DAY + HOUR_MS).toISOString()), namespace: 'billfn' });
+      hooks.beforeGrantInsert = async () => {
+        env.advance(2 * DAY);
+        await env.runLifecycleJob();
+        hooks.failPositionCheck = true;
+      };
+      const trial = await env.trial(4 * DAY);
+      if (!trial.ok) throw new Error('expected grant');
+      expect(hooks.failPositionCheck).toBe(false);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.expiring').map((event) => event.data.grantId).sort()).toEqual(['grant_other_1', trial.data.grant.id].sort());
+      const stored = await base.findOne<{ eventsPending?: boolean }>({
+        model: 'entitlementGrants',
+        where: [{ field: 'id', operator: 'eq', value: trial.data.grant.id }],
+        namespace: 'billfn'
+      });
+      expect(stored?.eventsPending).toBe(false);
+    });
+
     it('an instance whose clock runs 2 days behind the job: its new trial still gets grant.expiring', async () => {
       const { db } = makeDb();
       const job = setup({ db, clock: { current: new Date('2026-11-12T00:00:00.000Z') } });
@@ -2138,6 +2173,49 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
       await job.runLifecycleJob();
       const expiring = [...job.ofType('grant.expiring'), ...api.ofType('grant.expiring')].map((event) => event.data.grantId);
       expect(expiring.sort()).toEqual(['grant_other_1', trialId!].sort());
+    });
+
+    it('rereads a page past which many grants landed late within the per-run bound, finishing in the next run', async () => {
+      const { db: base } = makeDb();
+      let reads = 0;
+      let beforeMove: (() => Promise<void>) | null = null;
+      const db: Adapter = {
+        ...base,
+        async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+          const rows = await base.findMany<T>(params);
+          if (params.model === 'entitlementGrants' && params.where?.some((clause) => clause.field === 'expiresAt')) reads += rows.length;
+          return rows;
+        },
+        async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+          if (params.model === 'reconciliationCursors') {
+            const hook = beforeMove;
+            beforeMove = null;
+            await hook?.();
+          }
+          return base.create<T>(params);
+        }
+      };
+      const env = setup({ db });
+      const at = (minutes: number) => new Date(env.clock.current.getTime() + DAY + minutes * MINUTE).toISOString();
+      const row = (id: string, minutes: number) => ({ ...otherRow(id, at(minutes)), billingAccountId: `ba_${id}` });
+      const rows = Array.from({ length: 50 }, (_, n) => row(`grant_page_${String(n).padStart(3, '0')}`, n % 2 === 0 ? 0 : 2));
+      for (const data of rows) await base.create({ model: 'entitlementGrants', data, namespace: 'billfn' });
+      const late = Array.from({ length: GRANT_SWEEP_RUN_LIMIT + 60 }, (_, n) => row(`grant_late_${String(n).padStart(3, '0')}`, 1));
+      beforeMove = async () => {
+        for (const data of late) await base.create({ model: 'entitlementGrants', data, namespace: 'billfn' });
+      };
+      expect((await env.runLifecycleJob()).status).toBe('succeeded');
+      // The page and at most the per-run bound read again; the rest is left to the next run.
+      expect(reads).toBe(50 + GRANT_SWEEP_RUN_LIMIT);
+      // Read again in order: the 25 page grants expiring first, then the first late ones.
+      expect(env.ofType('grant.expiring')).toHaveLength(50 + GRANT_SWEEP_RUN_LIMIT - 25);
+      reads = 0;
+      env.advance(MINUTE);
+      await env.runLifecycleJob();
+      expect(reads).toBeLessThanOrEqual(GRANT_SWEEP_RUN_LIMIT);
+      const expiring = env.ofType('grant.expiring').map((event) => event.data.grantId);
+      expect(expiring).toHaveLength(rows.length + late.length);
+      expect(new Set(expiring).size).toBe(rows.length + late.length);
     });
   });
 

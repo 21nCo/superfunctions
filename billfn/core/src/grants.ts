@@ -42,7 +42,10 @@ export interface GrantDeps {
    */
   recordPassedGrantExpiry(grant: Omit<BillFnEntitlementGrant, 'status'>, beforeWrite?: () => Promise<void>): Promise<void>;
   isDuplicateRecordError(error: unknown): boolean;
-  /** Whether grant writes set `eventsPending` for the `lifecycle-events` job: with lifecycle events, without transactions. */
+  /**
+   * Whether grant writes set `eventsPending` for the `lifecycle-events` job: with lifecycle events. Without
+   * transactions every create and revoke sets it; with transactions a create, until it checked the sweeps' positions.
+   */
   flagsPendingEvents: boolean;
 }
 
@@ -280,7 +283,7 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       revokeReason: null,
       createdAt: timestamp,
       updatedAt: timestamp,
-      ...pendingFlag(deps)
+      ...pendingFlag(deps, true)
     };
     try {
       await commitWithEvent(deps, record, grantCreatedEvent(record), undefined, async (db) => {
@@ -365,7 +368,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
     const now = deps.now();
     const revoked: GrantRecord = {
       ...existing,
-      ...pendingFlag(deps),
+      ...pendingFlag(deps, false),
       revokedAt: toIsoString(now),
       revokedBy: operator,
       revokeReason: reason,
@@ -384,7 +387,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
           revokedBy: revoked.revokedBy,
           revokeReason: revoked.revokeReason,
           updatedAt: revoked.updatedAt,
-          ...pendingFlag(deps)
+          ...pendingFlag(deps, false)
         },
         namespace: deps.namespace
       });
@@ -427,9 +430,10 @@ async function commitWithEvent(
       await deps.recordBillingEvent(event, { db });
       return true;
     });
-    // Only once committed is the grant visible to the sweeps, so only then can their positions be checked.
-    if (applied && created) {
-      await recordPassedExpiry(deps, grant);
+    // Only once committed is the grant visible to the sweeps, so only then can their positions be checked; the
+    // creation's flag stays until that succeeds, so a stop or failure before it leaves it to the job's repair.
+    if (applied && created && (await recordPassedExpiry(deps, grant))) {
+      await clearEventsPending(deps, grant);
     }
     return applied;
   }
@@ -463,8 +467,8 @@ async function recordPassedExpiry(deps: GrantDeps, grant: GrantRecord) {
 }
 
 /** The `eventsPending` a grant write sets (see `GrantDeps.flagsPendingEvents`). */
-function pendingFlag(deps: GrantDeps): Pick<GrantRecord, 'eventsPending'> {
-  return deps.flagsPendingEvents ? { eventsPending: true } : {};
+function pendingFlag(deps: GrantDeps, created: boolean): Pick<GrantRecord, 'eventsPending'> {
+  return deps.flagsPendingEvents && (created || !deps.db.capabilities.transactions.supported) ? { eventsPending: true } : {};
 }
 
 /**
