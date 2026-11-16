@@ -625,13 +625,15 @@ function resolveFieldType(
 ): { type: string; capability: boolean } | undefined {
   const resource = index.schema.resources.find((r) => r.name === resourceName);
   if (!resource) return undefined;
-  const declared = resource.fields.find((f) => f.name === field);
-  if (declared) return { type: declared.type, capability: false };
+  // Capability fields first: schema validation copies them into
+  // `resource.fields`, so finding one there doesn't make it user-declared.
   const capabilityFields = getCapabilityFields(
     resolveCapabilities(index.schema.capabilities as any, resource.capabilities as any) as any,
   ) as Array<{ name: string; type: string }>;
   const injected = capabilityFields.find((f) => f.name === field);
-  return injected ? { type: injected.type, capability: true } : undefined;
+  if (injected) return { type: injected.type, capability: true };
+  const declared = resource.fields.find((f) => f.name === field);
+  return declared ? { type: declared.type, capability: false } : undefined;
 }
 
 /** Temporal storage hints that compile to non-numeric bounds. */

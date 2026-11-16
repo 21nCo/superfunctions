@@ -21,6 +21,7 @@ import {
 } from "../../execution/query/planner.js";
 import { validateQuery } from "../../validation/query.js";
 import { buildSchemaIndex } from "../../validation/index.js";
+import { validateSchema } from "@datafn/core";
 
 const NAMESPACE = "user:alice";
 
@@ -257,6 +258,25 @@ describe("temporal storage hints", () => {
       });
       expect(result.ok).toBe(false);
       expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.path).toBe("temporal.storage");
+    }
+  });
+
+  it("rejects a mismatched hint on a capability date field in the normalized schema", () => {
+    // validateSchema copies capability fields into resource.fields, as the
+    // server does before building its schema index.
+    const normalized: any = validateSchema(schema as any);
+    expect(normalized.ok).toBe(true);
+    for (const storage of ["date", "iso", "unix-s"]) {
+      const result: any = validateQuery(
+        {
+          resource: "notes",
+          version: 1,
+          temporal: { field: "createdAt", storage, period: { scale: "day" } },
+        },
+        buildSchemaIndex(normalized.result),
+      );
+      expect(result.ok).toBe(false);
       expect(result.error.path).toBe("temporal.storage");
     }
   });

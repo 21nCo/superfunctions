@@ -93,6 +93,9 @@ export async function executeClone(
   const next: Record<string, string | null> = {};
   let joins: Record<string, Array<Record<string, unknown>>> | undefined;
   let cappedClone = false;
+  // Tables whose every row was read and filtered for this actor, so a record
+  // missing from the result is hidden from (or absent for) the actor.
+  const fullyLoadedTables = new Set<string>();
 
   // Determine which tables to clone
   const tablesToClone = request.tables || schema.resources.map((r) => r.name);
@@ -285,6 +288,7 @@ export async function executeClone(
               next[tableName] = lastRecord?.id as string ?? null;
             } else {
               next[tableName] = null;
+              fullyLoadedTables.add(tableName);
             }
           }
 
@@ -308,6 +312,7 @@ export async function executeClone(
             namespace,
           });
           data[tableName] = await filterActorVisibleRows(tableName, records);
+          fullyLoadedTables.add(tableName);
 
           const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);
@@ -344,6 +349,8 @@ export async function executeClone(
       if (actorIsOwner || !isPrivateShareableResource(schema, resource)) return true;
       if (typeof id !== "string" || !actorId) return false;
       if (returnedIds.get(resource)?.has(id)) return true;
+      // Every row of this table was already checked; a missing id isn't visible.
+      if (fullyLoadedTables.has(resource)) return false;
       const key = `${resource}\u0000${id}`;
       let visible = endpointAccess.get(key);
       if (visible === undefined) {
