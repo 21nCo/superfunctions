@@ -156,7 +156,7 @@ describe("createRateLimitMiddleware", () => {
       error: {
         code: "RATE_LIMITED",
         message: "Too many requests",
-        details: { path: "$" },
+        details: { path: "$", retryAfterMs: 60_000 },
       },
     });
   });

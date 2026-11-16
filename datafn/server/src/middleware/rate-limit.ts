@@ -172,7 +172,9 @@ export function createRateLimitMiddleware(config: RateLimitMiddlewareConfig) {
           error: {
             code: "RATE_LIMITED",
             message: "Too many requests",
-            details: { path: "$" },
+            // Also in the body: browsers hide Retry-After from cross-origin
+            // callers unless the server exposes it.
+            details: { path: "$", retryAfterMs: windowSec * 1000 },
           },
         }),
         {

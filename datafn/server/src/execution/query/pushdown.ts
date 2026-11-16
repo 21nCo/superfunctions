@@ -340,13 +340,25 @@ async function pushdownCore(
   }
 
   // 1. Convert filters and sort -------------------------------------------
-  const whereClauses: WhereClause[] = queryWithAutoFilters.filters
-    ? ((convertDfqlFilters(
-        queryWithAutoFilters.filters,
-        queryWithAutoFilters.resource,
-        schema,
-      ) ?? []) as WhereClause[])
-    : [];
+  let whereClauses: WhereClause[] = [];
+  if (queryWithAutoFilters.filters) {
+    const converted = convertDfqlFilters(
+      queryWithAutoFilters.filters,
+      queryWithAutoFilters.resource,
+      schema,
+    );
+    if (converted === null) {
+      // Never run a pushdown query without filters it could not push:
+      // dropping them would return rows the filters exclude (including
+      // the shareable access filter).
+      throw new DatafnExecutionError(
+        "INTERNAL",
+        "Query filters cannot be pushed down to the database",
+        "filters",
+      );
+    }
+    whereClauses = converted as WhereClause[];
+  }
 
   const orderBy = convertDfqlSort(queryWithAutoFilters.sort);
   const sortTerms = parseSortTerms(queryWithAutoFilters.sort);

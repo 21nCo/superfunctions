@@ -11,7 +11,11 @@ import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { SequenceStore } from "./sequence-store.js";
 import type { DatafnLogger } from "../../logger.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../../validation/authz.js";
 import { resourceIdMatches } from "./resource-id.js";
 
 function shouldIncludeJoinRowForStore(
@@ -99,6 +103,8 @@ export async function executeReconcile(
   const counts: Record<string, number> = {};
   let joinCounts: Record<string, number> | undefined;
   const actorId = request.actorId;
+  // Visible ids of private resources whose every row was checked while counting.
+  const checkedVisibleIds = new Map<string, Set<string>>();
 
   // Validate and count each requested resource
   for (const resourceName of request.resources) {
@@ -128,7 +134,12 @@ export async function executeReconcile(
     }
 
     try {
-      if (isPrivateShareableResource(schema, resourceName)) {
+      // The namespace owner sees every row, so it takes the plain count below
+      // instead of loading every row and resolving access one by one.
+      if (
+        isPrivateShareableResource(schema, resourceName) &&
+        !isNamespaceOwnerActor(actorId, namespace)
+      ) {
         if (!actorId) {
           counts[resourceName] = 0;
           continue;
@@ -139,6 +150,7 @@ export async function executeReconcile(
           namespace,
         });
         let visibleCount = 0;
+        const visibleIds = new Set<string>();
         for (const row of rows) {
           const recordId = typeof row.id === "string" ? row.id : null;
           if (!recordId) {
@@ -154,9 +166,11 @@ export async function executeReconcile(
           );
           if (level) {
             visibleCount++;
+            visibleIds.add(recordId);
           }
         }
         counts[resourceName] = visibleCount;
+        checkedVisibleIds.set(resourceName, visibleIds);
         continue;
       }
 
@@ -190,6 +204,22 @@ export async function executeReconcile(
   // Include join counts if requested (SYNC-007)
   if (request.includeJoins && schema.relations) {
     joinCounts = {};
+    const actorIsOwner = isNamespaceOwnerActor(actorId, namespace);
+    const endpointAccess = new Map<string, boolean>();
+    const isJoinEndpointVisible = async (resource: string, id: unknown): Promise<boolean> => {
+      if (!isPrivateShareableResource(schema, resource)) return true;
+      if (typeof id !== "string" || !actorId) return false;
+      // Every row of this resource was checked while counting it above.
+      const checked = checkedVisibleIds.get(resource);
+      if (checked) return checked.has(id);
+      const key = `${resource}\u0000${id}`;
+      let visible = endpointAccess.get(key);
+      if (visible === undefined) {
+        visible = !!(await resolveAccessLevel(db, schema, resource, id, actorId, namespace));
+        endpointAccess.set(key, visible);
+      }
+      return visible;
+    };
 
     for (const relation of schema.relations) {
       // Skip relations that aren't many-many (no join rows)
@@ -270,9 +300,36 @@ export async function executeReconcile(
             continue;
           }
 
-          joinCounts[joinStoreKey] = normalizedRows.filter((row) =>
+          const storeRows = normalizedRows.filter((row) =>
             shouldIncludeJoinRowForStore(row, relation, schema, fromResource, toResource),
-          ).length;
+          );
+          if (!relationTouchesPrivateResource || actorIsOwner) {
+            joinCounts[joinStoreKey] = storeRows.length;
+            continue;
+          }
+          // Count only the rows a clone returns to this actor: both private
+          // endpoints visible. Otherwise the client sees a drift it can never
+          // resolve and re-clones on every reconcile.
+          let visibleRows = 0;
+          try {
+            for (const row of storeRows) {
+              if (
+                (await isJoinEndpointVisible(fromResource, row.from)) &&
+                (await isJoinEndpointVisible(toResource, row.to))
+              ) {
+                visibleRows += 1;
+              }
+            }
+          } catch (error) {
+            // Like a failed join read above: log and count nothing for this store.
+            logger?.warn("Reconcile: join visibility check failed", {
+              error: String(error),
+              joinTable: joinTableName,
+              operation: "reconcile-join-count",
+            });
+            visibleRows = 0;
+          }
+          joinCounts[joinStoreKey] = visibleRows;
         }
       }
     }

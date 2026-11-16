@@ -43,6 +43,39 @@ export interface PushdownWhereClause {
 // Internal operator mapping
 // ---------------------------------------------------------------------------
 
+/**
+ * Largest `$in` list pushed to the adapter as one bound-parameter list. A
+ * longer list stays an in-memory filter so the SQL statement cannot exceed
+ * Postgres' 65,535 parameters per statement; the shareable access filter can
+ * appear twice in one statement, leaving room for the query's own filters.
+ */
+export const MAX_PUSHDOWN_IN_VALUES = 30_000;
+
+function isOversizedInList(adapterOp: PushdownOperator, value: unknown): boolean {
+  return adapterOp === "in" && Array.isArray(value) && value.length > MAX_PUSHDOWN_IN_VALUES;
+}
+
+/**
+ * Total `$in` values across a DFQL filter tree. Several lists in one query
+ * share one statement's parameter budget, so the planner keeps a query whose
+ * lists add up to more than MAX_PUSHDOWN_IN_VALUES in memory.
+ */
+function countInValues(filters: unknown): number {
+  if (Array.isArray(filters)) {
+    return filters.reduce((sum: number, item) => sum + countInValues(item), 0);
+  }
+  if (typeof filters !== "object" || filters === null) return 0;
+  let total = 0;
+  for (const [key, value] of Object.entries(filters as Record<string, unknown>)) {
+    if ((key === "$in" || key === "in") && Array.isArray(value)) {
+      total += value.length;
+    } else if (typeof value === "object" && value !== null) {
+      total += countInValues(value);
+    }
+  }
+  return total;
+}
+
 /** Maps DFQL operator strings (with and without $ prefix) to adapter operators. */
 const DFQL_TO_ADAPTER_OP: Record<string, PushdownOperator | null> = {
   // $-prefixed DFQL operators
@@ -161,6 +194,9 @@ export function convertDfqlFilters(
       const adapterOp = DFQL_TO_ADAPTER_OP[op];
       if (adapterOp === null) {
         // Explicitly unpushable
+        return null;
+      }
+      if (isOversizedInList(adapterOp, opVal)) {
         return null;
       }
       if (
@@ -290,8 +326,29 @@ export function extractPushableFilters(
     }
   }
 
+  // Keep the pushed $in lists within one statement's parameter budget; a list
+  // past it is evaluated in memory instead (the AND of clauses is unchanged).
+  let inBudget = MAX_PUSHDOWN_IN_VALUES;
+  const withinBudget: PushdownWhereClause[] = [];
+  const overBudget: Record<string, unknown>[] = [];
+  for (const clause of pushable) {
+    if (clause.operator === "in" && Array.isArray(clause.value)) {
+      if (clause.value.length > inBudget) {
+        overBudget.push({ [clause.field]: { $in: clause.value } });
+        continue;
+      }
+      inBudget -= clause.value.length;
+    }
+    withinBudget.push(clause);
+  }
+  if (overBudget.length > 0) {
+    const existing = Array.isArray(remaining.$and) ? (remaining.$and as Record<string, unknown>[]) : [];
+    remaining.$and = [...existing, ...overBudget];
+    hasRemaining = true;
+  }
+
   return {
-    pushable,
+    pushable: withinBudget,
     remaining: hasRemaining ? remaining : null,
   };
 }
@@ -373,6 +430,21 @@ export function classifyQuery(
     if (hasInMemoryFilterPatterns(query.filters as Record<string, unknown>)) {
       return "IN_MEMORY";
     }
+    // $in lists that together exceed one statement's parameter budget
+    if (countInValues(query.filters) > MAX_PUSHDOWN_IN_VALUES) {
+      return "IN_MEMORY";
+    }
+    // Any other filter the pushdown converter cannot express (e.g. a bare
+    // relation key) must be evaluated in memory, never dropped.
+    if (
+      convertDfqlFilters(
+        query.filters as Record<string, unknown>,
+        typeof query.resource === "string" ? query.resource : undefined,
+        schema,
+      ) === null
+    ) {
+      return "IN_MEMORY";
+    }
   }
 
   // --- Rules 4-6: select token analysis ---
@@ -435,6 +507,10 @@ function hasInMemoryFilterPatterns(
       // e.g. between, not_ilike, is_empty, is_null, before, after, etc.
       for (const op of Object.keys(ops)) {
         if (!(op in DFQL_TO_ADAPTER_OP) || DFQL_TO_ADAPTER_OP[op] === null) {
+          return true;
+        }
+        // An $in list too long to bind as one parameter list
+        if (isOversizedInList(DFQL_TO_ADAPTER_OP[op]!, ops[op])) {
           return true;
         }
       }
@@ -503,6 +579,7 @@ function convertSingleFilter(
     if (!(op in DFQL_TO_ADAPTER_OP)) return null;
     const adapterOp = DFQL_TO_ADAPTER_OP[op];
     if (adapterOp === null) return null;
+    if (isOversizedInList(adapterOp, opVal)) return null;
     if (op === "$is_null" || op === "is_null") {
       result.push({
         field: key,
