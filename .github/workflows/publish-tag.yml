@@ -231,15 +231,11 @@ jobs:
             (body) => body[distTag] === version,
           );
           if (tags[distTag] !== version) throw new Error('Published prerelease channel does not match.');
+          // Never remove latest automatically: `npm dist-tag rm` deletes the
+          // tag whatever version it points to, so a stale registry read could
+          // delete a newer stable release's latest. Stop for manual repair.
           if (tags.latest === version) {
-            execFileSync('npm', ['dist-tag', 'rm', name, 'latest'], { stdio: 'inherit' });
-          }
-          const reconciled = await registryJson(
-            `-/package/${encodedName}/dist-tags`,
-            (body) => body[distTag] === version && body.latest !== version,
-          );
-          if (reconciled[distTag] !== version || reconciled.latest === version) {
-            throw new Error('Prerelease channel reconciliation failed.');
+            throw new Error(`${name}@${version} is on latest; move latest back to the stable release by hand.`);
           }
           console.log(`${name}@${version} remains on ${distTag}, not latest.`);
           NODE
