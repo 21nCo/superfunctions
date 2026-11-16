@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn, type BillFnLifecycleEvent } from '@billfn/core';
@@ -45,6 +46,10 @@ function createDodoApi() {
   }) as typeof fetch;
   return {
     fetchMock,
+    /** The subscription as Dodo holds it now. */
+    current() {
+      return subscription!;
+    },
     /** Changes the subscription as Dodo would on its side, such as a payment hold. */
     update(patch: Record<string, unknown>) {
       subscription = { ...subscription!, ...patch };
@@ -52,7 +57,21 @@ function createDodoApi() {
   };
 }
 
-async function subscribed() {
+const webhookSecretBytes = Buffer.from('dodo-lifecycle-webhook-secret');
+
+/** A Dodo webhook delivery signed as Standard Webhooks specifies. */
+function dodoWebhook(id: string, payload: unknown) {
+  const rawBody = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = createHmac('sha256', webhookSecretBytes).update(`${id}.${timestamp}.${rawBody}`).digest('base64');
+  return {
+    provider: 'dodo' as const,
+    rawBody,
+    headers: new Headers({ 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` })
+  };
+}
+
+async function subscribed(options: { verify?: boolean } = {}) {
   const api = createDodoApi();
   const { fetchMock } = api;
   const delivered: BillFnLifecycleEvent[] = [];
@@ -80,7 +99,13 @@ async function subscribed() {
         }
       ]
     },
-    providers: { dodo: createDodoProvider({ apiKey: 'test-key', fetch: fetchMock }) },
+    providers: {
+      dodo: createDodoProvider({
+        apiKey: 'test-key',
+        fetch: fetchMock,
+        webhookSecret: `whsec_${webhookSecretBytes.toString('base64')}`
+      })
+    },
     now: () => new Date('2026-11-10T00:00:00.000Z'),
     onEvent: (event) => {
       delivered.push(event);
@@ -89,6 +114,9 @@ async function subscribed() {
   const subject = { principalId: 'user_1' };
   const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', interval: 'month' });
   if (!created.ok) throw new Error('expected checkout');
+  if (options.verify === false) {
+    return { api, billfn, subject, delivered };
+  }
   const verified = await billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
   expect(verified.ok).toBe(true);
   return { api, billfn, subject, delivered };
@@ -143,5 +171,56 @@ describe('@billfn/provider-dodo lifecycle events', () => {
     expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
     await billfn.services.events.dispatch();
     expect(cancellations()).toHaveLength(1);
+  });
+
+  it('resuming a held subscription that is scheduled to cancel clears the cancel, so it renews again', async () => {
+    const { api, billfn, subject } = await subscribed();
+    api.update({ status: 'on_hold' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    expect((await billfn.cancelSubscription({ subject })).ok).toBe(true);
+    expect(api.current()).toMatchObject({ status: 'on_hold', cancel_at_next_billing_date: true });
+
+    const resumed = await billfn.resumeSubscription({ subject });
+
+    expect(resumed.ok).toBe(true);
+    expect(api.current()).toMatchObject({ status: 'active', cancel_at_next_billing_date: false });
+    const state = await billfn.getEntitlements(subject);
+    expect(state.ok && state.data.subscription).toMatchObject({ status: 'active', autoRenew: true });
+  });
+
+  it('a subscription payment delivered before its older subscription.active event records a renewing subscription', async () => {
+    const { api, billfn, subject } = await subscribed({ verify: false });
+    const dodoSubscription = api.current();
+    const paymentSucceeded = {
+      type: 'payment.succeeded',
+      timestamp: '2026-11-10T00:01:05Z',
+      data: {
+        payload_type: 'Payment',
+        payment_id: 'pay_dodo_1',
+        status: 'succeeded',
+        checkout_session_id: 'cks_dodo_1',
+        subscription_id: 'sub_dodo_1',
+        product_cart: null,
+        metadata: dodoSubscription.metadata
+      }
+    };
+    const subscriptionActive = {
+      type: 'subscription.active',
+      timestamp: '2026-11-10T00:01:00Z',
+      data: { payload_type: 'Subscription', ...dodoSubscription }
+    };
+
+    expect((await billfn.handleWebhook(dodoWebhook('msg_payment', paymentSucceeded))).ok).toBe(true);
+    const afterPayment = await billfn.getEntitlements(subject);
+    expect(afterPayment.ok && afterPayment.data.subscription).toMatchObject({
+      status: 'active',
+      providerSubscriptionId: 'sub_dodo_1',
+      providerChargeId: 'pay_dodo_1',
+      autoRenew: true
+    });
+
+    expect((await billfn.handleWebhook(dodoWebhook('msg_subscription', subscriptionActive))).ok).toBe(true);
+    const afterBoth = await billfn.getEntitlements(subject);
+    expect(afterBoth.ok && afterBoth.data.subscription).toMatchObject({ status: 'active', autoRenew: true });
   });
 });

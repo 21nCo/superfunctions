@@ -67,7 +67,8 @@
         "billfn_checkout_session_id": "chk_123",
         "billfn_billing_account_id": "ba_user_123",
         "billfn_product_id": "pdt_nucleus_month",
-        "billfn_price_id": "price_nucleus_month"
+        "billfn_price_id": "price_nucleus_month",
+        "billfn_currency": "USD"
       }
     }
   },
@@ -102,7 +103,8 @@
         "billfn_checkout_session_id": "chk_123",
         "billfn_billing_account_id": "ba_user_123",
         "billfn_product_id": "pdt_nucleus_lifetime",
-        "billfn_price_id": "price_nucleus_lifetime"
+        "billfn_price_id": "price_nucleus_lifetime",
+        "billfn_currency": "USD"
       }
     }
   },
@@ -142,7 +144,8 @@
         "billfn_checkout_session_id": "chk_123",
         "billfn_billing_account_id": "ba_user_123",
         "billfn_product_id": "pdt_nucleus_month",
-        "billfn_price_id": "price_nucleus_month"
+        "billfn_price_id": "price_nucleus_month",
+        "billfn_currency": "USD"
       }
     }
   },
@@ -202,7 +205,8 @@
           "billfn_checkout_session_id": "chk_123",
           "billfn_billing_account_id": "ba_user_123",
           "billfn_product_id": "pdt_nucleus_month",
-          "billfn_price_id": "price_nucleus_month"
+          "billfn_price_id": "price_nucleus_month",
+          "billfn_currency": "USD"
         }
       }
     },
@@ -222,7 +226,8 @@
           "billfn_checkout_session_id": "chk_123",
           "billfn_billing_account_id": "ba_user_123",
           "billfn_product_id": "pdt_nucleus_month",
-          "billfn_price_id": "price_nucleus_month"
+          "billfn_price_id": "price_nucleus_month",
+          "billfn_currency": "USD"
         }
       }
     },
@@ -244,7 +249,8 @@
           "billfn_checkout_session_id": "chk_123",
           "billfn_billing_account_id": "ba_user_123",
           "billfn_product_id": "pdt_nucleus_month",
-          "billfn_price_id": "price_nucleus_month"
+          "billfn_price_id": "price_nucleus_month",
+          "billfn_currency": "USD"
         }
       }
     },
@@ -284,7 +290,8 @@
           "billfn_checkout_session_id": "chk_123",
           "billfn_billing_account_id": "ba_user_123",
           "billfn_product_id": "pdt_nucleus_lifetime",
-          "billfn_price_id": "price_nucleus_lifetime"
+          "billfn_price_id": "price_nucleus_lifetime",
+          "billfn_currency": "USD"
         }
       }
     },

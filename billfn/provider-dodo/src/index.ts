@@ -44,6 +44,8 @@ const DODO_CHECKOUT_SESSION_METADATA_KEY = 'billfn_checkout_session_id';
 const DODO_BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
 const DODO_PRODUCT_METADATA_KEY = 'billfn_product_id';
 const DODO_PRICE_METADATA_KEY = 'billfn_price_id';
+/** The currency of the catalog price the checkout sold, in which BillFn records the payment's refunds. */
+const DODO_CURRENCY_METADATA_KEY = 'billfn_currency';
 
 export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAdapter {
   const fetchImpl = config.fetch ?? fetch;
@@ -97,6 +99,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     },
     async verifyCheckout(input: BillFnVerifyCheckoutInput): Promise<BillFnVerifiedBillingState> {
       const isSubscription = input.price.kind === 'subscription';
+      const providerCheckoutId = input.checkoutSession.providerCheckoutId;
       let subscriptionId =
         input.checkoutSession.providerSubscriptionId ??
         readString(input.payload ?? {}, ['subscriptionId', 'subscription_id']);
@@ -106,8 +109,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       // A charge BillFn links to the subscription must be server-recorded or read from Dodo, never only client-sent.
       let chargeVerified = Boolean(input.checkoutSession.providerChargeId);
 
-      if (!chargeId && (!isSubscription || !subscriptionId)) {
-        const providerCheckoutId = input.checkoutSession.providerCheckoutId;
+      /** The payment the checkout session names now: after a declined payment, the customer's retry. */
+      const readSessionPaymentId = async (): Promise<string> => {
         if (!providerCheckoutId) {
           throw createBillFnError({
             code: 'BILLFN_VALIDATION_ERROR',
@@ -121,8 +124,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
             message: 'Dodo returned a different checkout session than the one BillFn created'
           });
         }
-        chargeId = readString(session, ['payment_id']);
-        if (!chargeId) {
+        const sessionPaymentId = readString(session, ['payment_id']);
+        if (!sessionPaymentId) {
           throw createBillFnError({
             code: 'BILLFN_CONFLICT',
             message: 'The Dodo checkout session has no payment yet; verify again after the customer pays',
@@ -131,11 +134,40 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         }
         sessionCheckoutId = providerCheckoutId;
         chargeVerified = true;
+        return sessionPaymentId;
+      };
+      /**
+       * A failed payment not read through the session may have been retried inside it; the session's
+       * current payment replaces it. Returns the payment to verify, read again only when it changed.
+       */
+      const followSessionRetry = async (payment: Record<string, unknown>) => {
+        if (
+          sessionCheckoutId ||
+          !providerCheckoutId ||
+          !chargeId ||
+          normalizeDodoPaymentStatus(readString(payment, ['status'])) !== 'failed'
+        ) {
+          return payment;
+        }
+        const latest = await readSessionPaymentId();
+        if (latest === chargeId) {
+          return payment;
+        }
+        chargeId = latest;
+        return get('payments', latest);
+      };
+
+      if (!chargeId && (!isSubscription || !subscriptionId)) {
+        chargeId = await readSessionPaymentId();
       }
 
       if (isSubscription && !subscriptionId && chargeId) {
-        const payment = await get('payments', chargeId);
-        assertDodoPaymentOwnership(input, chargeId, sessionCheckoutId, payment);
+        const first = await get('payments', chargeId);
+        assertDodoPaymentOwnership(input, chargeId, sessionCheckoutId, first);
+        const payment = await followSessionRetry(first);
+        if (payment !== first) {
+          assertDodoPaymentOwnership(input, chargeId, sessionCheckoutId, payment);
+        }
         chargeVerified = true;
         subscriptionId = readDodoPaymentSubscriptionId(payment);
         if (!subscriptionId) {
@@ -158,13 +190,17 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         });
       }
 
-      const response = await get(isSubscription ? 'subscriptions' : 'payments', resourceId);
+      let response = await get(isSubscription ? 'subscriptions' : 'payments', resourceId);
       assertDodoVerificationOwnership(input, isSubscription, resourceId, response);
-      if (!isSubscription && sessionCheckoutId) {
-        assertDodoPaymentSession(sessionCheckoutId, response);
-      }
-
       if (!isSubscription) {
+        const retried = await followSessionRetry(response);
+        if (retried !== response) {
+          response = retried;
+          assertDodoVerificationOwnership(input, false, chargeId as string, response);
+        }
+        if (sessionCheckoutId) {
+          assertDodoPaymentSession(sessionCheckoutId, response);
+        }
         return mapDodoPaymentState(response);
       }
       // A Dodo subscription does not name its payment; the payment that started it is BillFn's refundable charge.
@@ -234,11 +270,20 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
             raw: attempted.data
           } satisfies BillFnProviderOperationResult;
         }
-        const subscription = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
-          method: 'GET',
-          headers: createHeaders(config.apiKey)
-        });
-        // The change is committed at Dodo; a failed read leaves the state to the next webhook or sync.
+        // The change is committed at Dodo: no failure of this read (status, transport, body or JSON) may report it
+        // as failed, so a failed read leaves the state to the next webhook or sync.
+        let subscription: Awaited<ReturnType<typeof tryRequestJson>>;
+        try {
+          subscription = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
+            method: 'GET',
+            headers: createHeaders(config.apiKey)
+          });
+        } catch (error) {
+          subscription = {
+            ok: false,
+            error: { status: 0, body: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }
+          };
+        }
         return {
           operationStatus: 'applied',
           billingState: subscription.ok ? mapDodoSubscriptionState(subscription.data) : undefined,
@@ -286,12 +331,11 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       }
 
       // Dodo resumes a paused subscription with `status: active` sent alone, and a scheduled cancel by clearing it.
+      const paused = input.subscription.status === 'paused';
       const attempted = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
         method: 'PATCH',
         headers: createHeaders(config.apiKey),
-        body: JSON.stringify(
-          input.subscription.status === 'paused' ? { status: 'active' } : { cancel_at_next_billing_date: false }
-        )
+        body: JSON.stringify(paused ? { status: 'active' } : { cancel_at_next_billing_date: false })
       });
 
       if (!attempted.ok) {
@@ -306,6 +350,49 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
           raw: {
             resumeError: attempted.error
           }
+        } satisfies BillFnProviderOperationResult;
+      }
+
+      // A held subscription can also be scheduled to cancel: resuming it clears that too, in a second request.
+      if (
+        paused &&
+        (attempted.data.cancel_at_next_billing_date === true ||
+          (attempted.data.cancel_at_next_billing_date === undefined && !input.subscription.autoRenew))
+      ) {
+        let cleared: Awaited<ReturnType<typeof tryRequestJson>>;
+        try {
+          cleared = await tryRequestJson(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
+            method: 'PATCH',
+            headers: createHeaders(config.apiKey),
+            body: JSON.stringify({ cancel_at_next_billing_date: false })
+          });
+        } catch (error) {
+          cleared = {
+            ok: false,
+            error: { status: 0, body: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }
+          };
+        }
+        if (!cleared.ok) {
+          // The subscription is active again but still ends at its next billing date: BillFn records that state.
+          return {
+            operationStatus: 'requires_action',
+            billingState: mapDodoSubscriptionState({ cancel_at_next_billing_date: true, ...attempted.data }),
+            clientAction: {
+              type: 'redirect',
+              metadata: {
+                action: 'contact-support'
+              }
+            },
+            raw: {
+              resumed: attempted.data,
+              cancellationClearError: cleared.error
+            }
+          } satisfies BillFnProviderOperationResult;
+        }
+        return {
+          operationStatus: 'applied',
+          billingState: mapDodoSubscriptionState(cleared.data),
+          raw: { resumed: attempted.data, cancellationCleared: cleared.data }
         } satisfies BillFnProviderOperationResult;
       }
 
@@ -328,8 +415,17 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         reason: input.reason
       };
       if ((input.mode === 'custom' || input.mode === 'prorated_remaining_period') && input.amount !== undefined) {
-        // Dodo refunds part of a payment only through its line items, each up to its refundable amount.
-        Object.assign(refundBody, allocateDodoPartialRefund(input.amount, await get('payments', paymentId, 'line-items')));
+        assertDodoRefundAmount(input.amount);
+        // BillFn records the amount in the catalog price's currency; Dodo refunds it in the currency the customer
+        // paid, so the two must be the same currency before any money moves.
+        const currency = readDodoRefundCurrency(await get('payments', paymentId));
+        // Dodo refunds part of a payment only through its line items, each up to its refundable amount, read in
+        // the paid currency (without it Dodo answers in the settlement currency).
+        const lineItems = await requestJson(fetchImpl, dodoUrl(baseUrl, ['payments', paymentId, 'line-items'], { currency }), {
+          method: 'GET',
+          headers: createHeaders(config.apiKey)
+        });
+        Object.assign(refundBody, { items: allocateDodoPartialRefund(input.amount, lineItems, currency), currency });
       }
 
       const response = await requestJson(fetchImpl, dodoUrl(baseUrl, ['refunds']), {
@@ -491,8 +587,9 @@ function resolveDodoBaseUrl(config: DodoProviderConfig): string {
 }
 
 /** A Dodo API URL; each path segment is encoded, so an identifier cannot reach another endpoint. */
-function dodoUrl(baseUrl: string, segments: string[]): string {
-  return `${baseUrl}/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
+function dodoUrl(baseUrl: string, segments: string[], query?: Record<string, string>): string {
+  const path = `${baseUrl}/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
+  return query ? `${path}?${new URLSearchParams(query).toString()}` : path;
 }
 
 /** The `POST /checkouts` body (`CreateCheckoutSessionRequest`) for the catalog price checkout selected. */
@@ -550,6 +647,7 @@ function createDodoMetadata(input: BillFnCreateCheckoutInput): Record<string, st
   metadata[DODO_BILLING_ACCOUNT_METADATA_KEY] = input.billingAccount.id;
   metadata[DODO_PRODUCT_METADATA_KEY] = input.price.providerProductId;
   metadata[DODO_PRICE_METADATA_KEY] = input.price.priceId;
+  metadata[DODO_CURRENCY_METADATA_KEY] = input.price.currency.toUpperCase();
   return metadata;
 }
 
@@ -715,11 +813,14 @@ function mapDodoWebhookState(kind: DodoRecordKind, data: Record<string, unknown>
   if (normalizeDodoPaymentStatus(readString(data, ['status'])) !== 'active') {
     return undefined;
   }
+  // A subscription Dodo charged renews (a scheduled cancel stops the charges), and a payment received before its
+  // subscription's event may create BillFn's row: it starts with the renewal intent, not without it.
   return {
     subscriptionStatus: 'active',
     checkoutStatus: 'succeeded',
     providerSubscriptionId: subscriptionId,
     providerChargeId: readString(data, ['payment_id']),
+    autoRenew: true,
     raw: data
   };
 }
@@ -822,15 +923,51 @@ function readMetadataString(record: Record<string, unknown>, key: string): strin
   return metadata ? readString(metadata, [key]) : undefined;
 }
 
-/**
- * The line items of a partial refund: Dodo refunds part of a payment only per line item (`items[].item_id`), in
- * the currency the customer paid. The amount is taken from the items in order, each up to its refundable amount.
- */
-function allocateDodoPartialRefund(amount: unknown, lineItems: Record<string, unknown>) {
+function assertDodoRefundAmount(amount: unknown): asserts amount is number {
   if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
       message: 'A Dodo partial refund amount must be a positive integer in the currency minor unit'
+    });
+  }
+}
+
+/**
+ * The currency of a partial refund: the one the customer paid, which must be the catalog price's currency the
+ * checkout recorded, because BillFn records the refunded amount in that currency.
+ */
+function readDodoRefundCurrency(payment: Record<string, unknown>): string {
+  const paid = readString(payment, ['currency'])?.toUpperCase();
+  if (!paid) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Dodo returned a payment without its currency'
+    });
+  }
+  const catalog = readMetadataString(payment, DODO_CURRENCY_METADATA_KEY)?.toUpperCase();
+  if (catalog !== paid) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: catalog
+        ? 'The Dodo payment was made in a different currency than the catalog price; refund it in full or in Dodo'
+        : 'The Dodo payment does not record the catalog price currency; refund it in full or in Dodo',
+      details: { paymentCurrency: paid, catalogCurrency: catalog }
+    });
+  }
+  return paid;
+}
+
+/**
+ * The line items of a partial refund: Dodo refunds part of a payment only per line item (`items[].item_id`). The
+ * amount is taken from the items in order, each up to its refundable amount in the paid currency.
+ */
+function allocateDodoPartialRefund(amount: number, lineItems: Record<string, unknown>, currency: string) {
+  const lineItemsCurrency = readString(lineItems, ['currency'])?.toUpperCase();
+  if (lineItemsCurrency && lineItemsCurrency !== currency) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Dodo returned the payment line items in a different currency than the one requested',
+      details: { requested: currency, returned: lineItemsCurrency }
     });
   }
   if (lineItems.partial_refund_allowed === false) {
@@ -858,8 +995,7 @@ function allocateDodoPartialRefund(amount: unknown, lineItems: Record<string, un
       details: { amount, refundable: amount - remaining }
     });
   }
-  const currency = readString(lineItems, ['currency']);
-  return currency ? { items, currency } : { items };
+  return items;
 }
 
 function normalizeDodoProration(value: 'provider_default' | 'prorate' | 'none'): string {

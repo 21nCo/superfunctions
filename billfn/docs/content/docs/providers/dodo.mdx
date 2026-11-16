@@ -34,13 +34,13 @@ The default webhook signature header is `webhook-signature`.
 
 ## What the Adapter Does
 
-- creates a Dodo checkout session (`POST /checkouts`) for the catalog price checkout selected, with the price's trial and BillFn metadata (`billfn_checkout_session_id`, `billfn_billing_account_id`, `billfn_product_id`, `billfn_price_id`)
-- verifies checkouts by following the checkout session to its payment and subscription, checking the BillFn metadata on each
+- creates a Dodo checkout session (`POST /checkouts`) for the catalog price checkout selected, with the price's trial and BillFn metadata (`billfn_checkout_session_id`, `billfn_billing_account_id`, `billfn_product_id`, `billfn_price_id`, `billfn_currency`)
+- verifies checkouts by following the checkout session to its payment and subscription, checking the BillFn metadata on each; a declined payment the customer retried in the same session is replaced by the session's current payment
 - syncs subscriptions
 - cancels subscriptions
 - attempts direct subscription changes and falls back to replacement-checkout orchestration
-- resumes subscriptions when the provider allows it
-- creates refunds: a full refund by payment id, a partial one through the payment's line items
+- resumes subscriptions when the provider allows it; a held subscription that is also scheduled to cancel gets its scheduled cancel cleared in a second request
+- creates refunds: a full refund by payment id, a partial one through the payment's line items in the currency the customer paid. A partial refund is refused unless that currency is the catalog price currency the checkout recorded in `billfn_currency`, because BillFn records the refunded amount in the catalog currency
 - restores purchases
 - verifies webhook signatures and parses webhook events
 

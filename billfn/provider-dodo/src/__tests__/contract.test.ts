@@ -187,7 +187,8 @@ describe('createCheckout -> POST /checkouts', () => {
         billfn_checkout_session_id: 'chk_123',
         billfn_billing_account_id: 'ba_user_123',
         billfn_product_id: 'pdt_nucleus_month_intro',
-        billfn_price_id: 'price_nucleus_month_intro'
+        billfn_price_id: 'price_nucleus_month_intro',
+        billfn_currency: 'USD'
       },
       customer: { email: 'ada@example.com', name: 'Ada Lovelace' },
       billing_address: { country: 'US', zipcode: '94105' },
@@ -210,7 +211,7 @@ describe('createCheckout -> POST /checkouts', () => {
       checkoutSessionId: 'chk_123',
       billingAccount,
       plan,
-      price: { ...lifetimePrice, trialDays: 7 },
+      price: { ...lifetimePrice, currency: 'eur', trialDays: 7 },
       customer: { name: 'No Email', billing: { city: 'Nowhere' } }
     });
 
@@ -220,7 +221,8 @@ describe('createCheckout -> POST /checkouts', () => {
         billfn_checkout_session_id: 'chk_123',
         billfn_billing_account_id: 'ba_user_123',
         billfn_product_id: 'pdt_nucleus_lifetime',
-        billfn_price_id: 'price_nucleus_lifetime'
+        billfn_price_id: 'price_nucleus_lifetime',
+        billfn_currency: 'EUR'
       }
     });
   });
@@ -297,6 +299,57 @@ describe('verifyCheckout -> GET /checkouts/{id}, /payments/{id}, /subscriptions/
       subscriptionStatus: 'failed',
       checkoutStatus: 'failed'
     });
+  });
+
+  it('follows the session to the retry of a declined subscription payment BillFn recorded', async () => {
+    const RETRY_ID = 'pay_retry_after_decline';
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getSubscriptionPayment.response, status: 'failed', subscription_id: null, subscription_ids: [] },
+      [`GET /checkouts/${SESSION_ID}`]: { ...recorded.getCheckoutSession.response, payment_id: RETRY_ID },
+      [`GET /payments/${RETRY_ID}`]: { ...recorded.getSubscriptionPayment.response, payment_id: RETRY_ID },
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response
+    });
+    // The first verification recorded the declined payment on the checkout session.
+    const input = verifyInput(monthPrice, { checkoutSession: checkoutSession(monthPrice, { status: 'failed', providerChargeId: PAYMENT_ID }) });
+
+    const state = await provider(api.fetchMock).verifyCheckout?.(input);
+
+    expect(paths(api.calls)).toEqual([
+      `GET /payments/${PAYMENT_ID}`,
+      `GET /checkouts/${SESSION_ID}`,
+      `GET /payments/${RETRY_ID}`,
+      `GET /subscriptions/${SUBSCRIPTION_ID}`
+    ]);
+    expect(state).toMatchObject({ subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerChargeId: RETRY_ID });
+  });
+
+  it('follows the session to the retry of a declined one-time payment BillFn recorded', async () => {
+    const RETRY_ID = 'pay_retry_after_decline';
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getOneTimePayment.response, status: 'failed' },
+      [`GET /checkouts/${SESSION_ID}`]: { ...recorded.getCheckoutSession.response, payment_id: RETRY_ID },
+      [`GET /payments/${RETRY_ID}`]: { ...recorded.getOneTimePayment.response, payment_id: RETRY_ID }
+    });
+    const input = verifyInput(lifetimePrice, { checkoutSession: checkoutSession(lifetimePrice, { status: 'failed', providerChargeId: PAYMENT_ID }) });
+
+    const state = await provider(api.fetchMock).verifyCheckout?.(input);
+
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /checkouts/${SESSION_ID}`, `GET /payments/${RETRY_ID}`]);
+    expect(state).toMatchObject({ subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerChargeId: RETRY_ID });
+  });
+
+  it('keeps a declined payment failed while its session names no other payment', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getOneTimePayment.response, status: 'failed' },
+      [`GET /checkouts/${SESSION_ID}`]: { ...recorded.getCheckoutSession.response, payment_status: 'failed' }
+    });
+    const input = verifyInput(lifetimePrice, { checkoutSession: checkoutSession(lifetimePrice, { status: 'failed', providerChargeId: PAYMENT_ID }) });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(input)).resolves.toMatchObject({
+      checkoutStatus: 'failed',
+      providerChargeId: PAYMENT_ID
+    });
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /checkouts/${SESSION_ID}`]);
   });
 
   it('rejects a payment made through another checkout session', async () => {
@@ -393,6 +446,61 @@ describe('cancelSubscription and resumeSubscription -> PATCH /subscriptions/{id}
     expect(api.calls).toEqual([expect.objectContaining({ method: 'PATCH', body: { status: 'active' } })]);
     expect(result).toMatchObject({ operationStatus: 'applied', billingState: { subscriptionStatus: 'active', autoRenew: true } });
   });
+
+  it('resumes a paused subscription that is also scheduled to cancel, clearing the cancel in a second request', async () => {
+    let stored: Record<string, unknown> = { ...recorded.getSubscription.response, status: 'on_hold', cancel_at_next_billing_date: true };
+    const api = dodoApi({
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: (body: Record<string, unknown> | undefined) => {
+        stored = { ...stored, ...body };
+        return Response.json(stored);
+      }
+    });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({
+      subscription: subscription({ status: 'paused', autoRenew: false })
+    });
+
+    expect(api.calls.map((call) => call.body)).toEqual([{ status: 'active' }, { cancel_at_next_billing_date: false }]);
+    expect(result).toMatchObject({ operationStatus: 'applied', billingState: { subscriptionStatus: 'active', autoRenew: true } });
+  });
+
+  it('records a resumed subscription that still ends when clearing its scheduled cancel fails', async () => {
+    const api = dodoApi({
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: (body: Record<string, unknown> | undefined) =>
+        body?.status === 'active'
+          ? Response.json({ ...recorded.getSubscription.response, cancel_at_next_billing_date: true })
+          : new Response('unavailable', { status: 503 })
+    });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({
+      subscription: subscription({ status: 'paused', autoRenew: false })
+    });
+
+    expect(api.calls).toHaveLength(2);
+    expect(result).toMatchObject({
+      operationStatus: 'requires_action',
+      billingState: { subscriptionStatus: 'active', autoRenew: false },
+      clientAction: { metadata: { action: 'contact-support' } }
+    });
+  });
+
+  it('records the resumed state when the request clearing the scheduled cancel gets no answer', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (String(init?.body).includes('"status"')) {
+        return Response.json({ ...recorded.getSubscription.response, cancel_at_next_billing_date: true });
+      }
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+
+    const result = await provider(fetchMock).resumeSubscription?.({
+      subscription: subscription({ status: 'paused', autoRenew: false })
+    });
+
+    expect(result).toMatchObject({
+      operationStatus: 'requires_action',
+      billingState: { subscriptionStatus: 'active', autoRenew: false }
+    });
+  });
 });
 
 describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
@@ -444,6 +552,33 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
     expect(result?.billingState).toBeUndefined();
   });
 
+  it.each([
+    ['the request gets no answer', () => Promise.reject(new TypeError('fetch failed'))],
+    [
+      'the body read fails',
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.reject(new DOMException('The operation was aborted', 'AbortError'))
+        } as unknown as Response)
+    ],
+    ['the body is not JSON', () => Promise.resolve(new Response('<html>gateway</html>', { status: 200 }))]
+  ])('keeps an applied change applied when %s on the follow-up read', async (_label, answerRead) => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST' ? Response.json(recorded.changePlan.response) : answerRead()
+    ) as typeof fetch;
+
+    const result = await provider(fetchMock).changeSubscription?.(changeInput());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      operationStatus: 'applied',
+      raw: { changePlan: recorded.changePlan.response, subscriptionReadError: { status: 0 } }
+    });
+    expect(result?.billingState).toBeUndefined();
+  });
+
   it('hands the customer a plan-change payment link when Dodo returns one', async () => {
     const api = dodoApi({
       [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: {
@@ -485,14 +620,17 @@ describe('refundCharge -> POST /refunds', () => {
 
   it('refunds part of a payment through its line items in the currency the customer paid', async () => {
     const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
       [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
       'POST /refunds': recorded.createRefund.response
     });
 
     await provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }));
 
-    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}/line-items`, 'POST /refunds']);
-    expect(api.calls[1]?.body).toEqual({
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /payments/${PAYMENT_ID}/line-items`, 'POST /refunds']);
+    // Without the currency, Dodo answers the line items in the settlement currency.
+    expect(new URL(api.calls[1]!.url).searchParams.get('currency')).toBe('USD');
+    expect(api.calls[2]?.body).toEqual({
       payment_id: PAYMENT_ID,
       reason: 'requested_by_customer',
       items: [{ item_id: 'pdt_nucleus_month', amount: 600 }],
@@ -505,11 +643,48 @@ describe('refundCharge -> POST /refunds', () => {
     ['a non-integer amount', { amount: 10.5 }, recorded.getPaymentLineItems.response],
     ['a payment method without partial refunds', { amount: 600 }, { ...recorded.getPaymentLineItems.response, partial_refund_allowed: false }]
   ])('refuses %s before creating a refund', async (_label, patch, lineItems) => {
-    const api = dodoApi({ [`GET /payments/${PAYMENT_ID}/line-items`]: lineItems, 'POST /refunds': recorded.createRefund.response });
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: lineItems,
+      'POST /refunds': recorded.createRefund.response
+    });
 
     await expect(
       provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', ...patch }))
     ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).not.toContain('POST /refunds');
+  });
+
+  it.each([
+    // Adaptive pricing: the customer paid in INR for a price BillFn records in USD.
+    ['was paid in another currency than the catalog price', { ...recorded.getSubscriptionPayment.response, currency: 'INR', settlement_currency: 'USD' }],
+    [
+      'does not record the catalog price currency',
+      { ...recorded.getSubscriptionPayment.response, metadata: { ...recorded.getSubscriptionPayment.response.metadata, billfn_currency: undefined } }
+    ]
+  ])('refuses a partial refund of a payment that %s before any line items or refund', async (_label, payment) => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: payment,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`]);
+  });
+
+  it('refuses line items Dodo answers in another currency than the one requested', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: { ...recorded.getPaymentLineItems.response, currency: 'EUR' },
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }))
+    ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
     expect(paths(api.calls)).not.toContain('POST /refunds');
   });
 
@@ -587,16 +762,15 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(event.billingState).toMatchObject({ subscriptionStatus: 'active', currentPeriodEnd: '2027-12-01T12:00:00Z' });
   });
 
-  it('links the charge of a subscription payment without touching its renewal intent', async () => {
+  it('links the charge of a subscription payment, which Dodo charges only while it renews', async () => {
     const event = await parse(recorded.webhooks.paymentSucceededForSubscription);
 
     expect(event).toMatchObject({
       providerChargeId: PAYMENT_ID,
       providerSubscriptionId: SUBSCRIPTION_ID,
       checkoutReferenceId: SESSION_ID,
-      billingState: { subscriptionStatus: 'active', providerSubscriptionId: SUBSCRIPTION_ID, providerChargeId: PAYMENT_ID }
+      billingState: { subscriptionStatus: 'active', providerSubscriptionId: SUBSCRIPTION_ID, providerChargeId: PAYMENT_ID, autoRenew: true }
     });
-    expect(event.billingState?.autoRenew).toBeUndefined();
   });
 
   it('leaves a declined renewal payment to the subscription events instead of failing the subscription', async () => {
