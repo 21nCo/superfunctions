@@ -1,0 +1,29 @@
+filefn/docs/content/docs/reference/errors.md
+  s_0632d15ff4b386::t_438f4876e08969 37
+filefn/docs/content/docs/reference/routes.md
+  s_0632d15ff4b386::t_5eb5b20ff29f48 32
+filefn/docs/static/llms-full.txt
+  s_0632d15ff4b386::t_1ab61236e5f664 7923,8103
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_0632d15ff4b386::t_e52575b6734eba 795-859,861-864,867-868,880-882,884,886-888,890-891,894-899,902-904,908-920,935-936,938-939,941,944,964,966,1302,1306-1310,1312,1314-1325,1327,1331,1336-1338,1340,1346-1410
+filefn/server/src/files/service.ts
+  s_0632d15ff4b386::t_5bb8da9f16be33 1,663-670,673,803
+filefn/server/src/upload-sessions/service.ts
+  s_0632d15ff4b386::t_403cd791bb9bd7 232-242,295-304,328-355,370-372,374,948,1151-1154,1219-1221,1240-1246,1250,1270-1272,1274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdb922e489b77168cde0e97ce549e950ff7cd2ae",
+  "prompts": {},
+  "sessions": {
+    "s_0632d15ff4b386": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5bbe310-34b2-4eda-8c5b-af3a0f8f707d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
