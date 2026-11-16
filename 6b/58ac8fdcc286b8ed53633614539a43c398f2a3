@@ -1,0 +1,19 @@
+datafn/server/src/execution/sync/clone.ts
+  s_6ac91a4c99c94d::t_3f9b09456fcd90 306-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b58ac8fdcc286b8ed53633614539a43c398f2a3",
+  "prompts": {},
+  "sessions": {
+    "s_6ac91a4c99c94d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e051-7322-7aa1-be20-c259d2364d00",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
