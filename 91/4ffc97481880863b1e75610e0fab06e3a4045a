@@ -1,0 +1,21 @@
+filefn/server/src/__tests__/permissions.test.ts
+  s_29dfe538fc787d::t_d6eaa9c5a3dd5a 568,598
+filefn/server/src/__tests__/upload-proxy.test.ts
+  s_29dfe538fc787d::t_dd6511c6fca300 561,578,580
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "914ffc97481880863b1e75610e0fab06e3a4045a",
+  "prompts": {},
+  "sessions": {
+    "s_29dfe538fc787d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_29dfe538fc787d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
