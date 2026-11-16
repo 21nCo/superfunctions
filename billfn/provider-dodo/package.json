@@ -1,6 +1,6 @@
 {
   "name": "@billfn/provider-dodo",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Dodo provider adapter for billfn",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,10 +31,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@billfn/core": "^0.5.0",
+    "@billfn/core": "^0.6.0",
     "@superfunctions/webhooks": "^0.1.0"
   },
   "devDependencies": {
+    "@superfunctions/db": "0.3.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

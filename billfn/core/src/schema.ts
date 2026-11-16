@@ -39,6 +39,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       autoRenew: { type: 'boolean', required: true },
       metadata: { type: 'json', required: false },
       replacedReferencesPending: { type: 'boolean', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
@@ -65,6 +66,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       checkoutUrl: { type: 'string', required: false },
       clientAction: { type: 'json', required: false },
       metadata: { type: 'json', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
@@ -88,6 +90,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       effectiveAt: { type: 'string', required: true },
       expiresAt: { type: 'string', required: false },
       sourceEventId: { type: 'string', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
@@ -205,11 +208,38 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       reason: { type: 'string', required: false },
       revokedBy: { type: 'json', required: false },
       revokeReason: { type: 'string', required: false },
+      eventsPending: { type: 'boolean', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
     indexes: [
-      { name: 'entitlement_grants_billing_account_idx', fields: ['billingAccountId', 'createdAt'] }
+      { name: 'entitlement_grants_billing_account_idx', fields: ['billingAccountId', 'createdAt'] },
+      { name: 'entitlement_grants_expires_idx', fields: ['expiresAt'] },
+      { name: 'entitlement_grants_events_pending_idx', fields: ['eventsPending', 'updatedAt'] }
+    ]
+  };
+
+  const lifecycleEvents: TableSchema = {
+    modelName: 'lifecycleEvents',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      type: { type: 'string', required: true },
+      billingAccountId: { type: 'string', required: true },
+      occurredAt: { type: 'string', required: true },
+      data: { type: 'json', required: true },
+      status: { type: 'string', required: true },
+      attempts: { type: 'number', required: true },
+      nextAttemptAt: { type: 'string', required: true },
+      claimId: { type: 'string', required: false },
+      lastError: { type: 'string', required: false },
+      deliveredAt: { type: 'string', required: false },
+      failedAt: { type: 'string', required: false },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'lifecycle_events_status_next_attempt_idx', fields: ['status', 'nextAttemptAt'] },
+      { name: 'lifecycle_events_billing_account_idx', fields: ['billingAccountId', 'createdAt'] }
     ]
   };
 
@@ -328,11 +358,12 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     reconciliationCursors,
     unlinkedWebhookEvents,
     replacedProviderReferences,
-    entitlementGrants
+    entitlementGrants,
+    lifecycleEvents
   ];
 
   return {
-    version: 5,
+    version: 6,
     schemas
   };
 }

@@ -27,6 +27,8 @@ type BillFnConfig = {
       price: BillFnPriceDefinition;
     }) => Promise<boolean> | boolean;
   };
+  /** Receives lifecycle events at least once through the `lifecycleEvents` outbox; see Lifecycle events. */
+  onEvent?: (event: BillFnLifecycleEvent) => Promise<void> | void;
   now?: () => Date;
   generateId?: (prefix: string) => string;
 };
@@ -153,6 +155,7 @@ The instance exposes:
 - `getEntitlements()`
 - `getUsage()`
 - `handleWebhook()`
+- `services.events.dispatch()` and `services.events.list()` for the [lifecycle event](/docs/server/lifecycle-events) outbox
 - `subscriptionProvider`
 - `quotaProvider`
 

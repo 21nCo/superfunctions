@@ -9,11 +9,19 @@ import {
   listRepairedGrants,
   readCreateGrantInput,
   repairGrantEvents,
+  repairPendingGrantEvents,
   requireFutureExpiry,
   revokeGrant,
   toGrantSummary,
   type GrantDeps
 } from './grants.js';
+import {
+  createLifecycleEvents,
+  grantLifecycleEvents,
+  lifecycleEventId,
+  type LifecycleEventInput,
+  type LifecycleEvents
+} from './lifecycle.js';
 import {
   createDefaultBillingAccountResolver,
   defaultIdFactory,
@@ -32,12 +40,15 @@ import type {
   BillFnChangeSubscriptionResponse,
   BillFnCheckoutCreateRequest,
   BillFnCheckoutSession,
+  BillFnLifecycleEventType,
+  BillFnDispatchEventsRequest,
   BillFnConfig,
   BillFnCreateCheckoutResponse,
   BillFnCreateCheckoutResponseData,
   BillFnCreateGrantRequest,
   BillFnEnqueueReconciliationJobRequest,
   BillFnEntitlementSnapshot,
+  BillFnLifecycleEventRecord,
   BillFnEntitlementsResponse,
   BillFnEntitlementsResponseData,
   BillFnFetchNotificationHistoryInput,
@@ -140,6 +151,7 @@ export const BILLFN_IMPORT_PENDING_METADATA_KEY = 'billfnImportPending';
 export const BILLFN_IMPORT_REPLAY_UNFINISHED_REASON = 'import_replay_unfinished';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
 const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
+const CHECKOUT_WRITE_ATTEMPTS = 3;
 
 /**
  * `BILLFN_CONFLICT` errors raised because another runner holds, or took over,
@@ -177,11 +189,15 @@ type ServiceDeps = {
   metrics: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   isPriceEligible?: NonNullable<BillFnConfig['checkout']>['isPriceEligible'];
+  /** The lifecycle event outbox; records nothing without an `onEvent` handler. */
+  lifecycle: LifecycleEvents;
   /**
    * Reconciles an event inside a committed mutation's window with an inline
    * provider read. A failed read without a queue throws a window-read error.
    */
   reconcileProviderState?: (subscription: BillFnSubscription, event: WindowEvent) => Promise<void>;
+  /** Records the missing events of grant changes flagged pending (`repairPendingGrantEvents`), for the `lifecycle-events` job. */
+  repairPendingGrantEvents?: (beforeEach?: () => Promise<void>) => Promise<void>;
 };
 type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
 /** An event inside a committed mutation's window: its lifecycle key and the catalog price it names. */
@@ -278,14 +294,36 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     generateId,
     metrics,
     queue: config.queue,
-    isPriceEligible: config.checkout?.isPriceEligible
+    isPriceEligible: config.checkout?.isPriceEligible,
+    lifecycle: createLifecycleEvents({
+      db: config.db,
+      namespace,
+      now,
+      generateId,
+      metrics,
+      onEvent: config.onEvent,
+      isDuplicateRecordError,
+      isStagedEventApplied: (event) => isStagedEventApplied(deps, event)
+    })
   };
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
   const grantDeps: GrantDeps = {
     ...deps,
-    recordBillingEvent: (event, db) => recordBillingEvent(db ? { ...deps, db } : deps, event),
-    isDuplicateRecordError
+    // A grant's lifecycle events are stored before its billing event, so a repair that finds the billing event
+    // missing records them too (once: their ids derive from the grant). A grant change whose billing event is
+    // stored already (a refused duplicate create or a repeated revoke finding it, also one made before lifecycle
+    // events existed) records none.
+    recordBillingEvent: async (event, db) => {
+      const eventDb = db ?? deps.db;
+      if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {
+        await deps.lifecycle.record(grantLifecycleEvents(event), db);
+      }
+      await recordBillingEvent(db ? { ...deps, db } : deps, event);
+    },
+    isDuplicateRecordError,
+    flagsPendingEvents: deps.lifecycle.enabled && !deps.db.capabilities.transactions.supported
   };
+  deps.repairPendingGrantEvents = (beforeEach) => repairPendingGrantEvents(grantDeps, beforeEach);
   /**
    * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
    * grants they were derived from. The grants' missing events are repaired on every read (see
@@ -1576,10 +1614,98 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const job = await runReconciliationJobInternal(input.jobId);
       return ok({ job });
     },
+    dispatchEvents: (input?: BillFnDispatchEventsRequest) => deps.lifecycle.dispatch(input),
+    listEvents: deps.lifecycle.list,
     subscriptionProvider,
     quotaProvider
   };
-  return { service, now, runReconciliationJob: runReconciliationJobInternal };
+  return {
+    service: deliveringLifecycleEvents(deps.lifecycle, service),
+    now,
+    runReconciliationJob: (jobId: string, onLeaseRenewed?: ReconciliationLeaseGuard) =>
+      deps.lifecycle.deliverAfter(() => runReconciliationJobInternal(jobId, onLeaseRenewed))
+  };
+}
+
+/**
+ * Wraps each of the service's methods, and those of the provider objects it holds, so that once a call settles
+ * the lifecycle events it recorded are delivered (see `deliverAfter`). A delivery failure never fails the call:
+ * the event stays in the outbox for a later dispatch.
+ */
+function deliveringLifecycleEvents<T extends object>(lifecycle: LifecycleEvents, target: T): T {
+  return Object.fromEntries(Object.entries(target).map(([key, value]) => [key, deliveringMember(lifecycle, value)])) as T;
+}
+
+/** A method delivers once its call settles, a plain object of methods is wrapped in turn, and any other value is kept. */
+function deliveringMember(lifecycle: LifecycleEvents, value: unknown): unknown {
+  if (typeof value === 'function') {
+    return (...args: unknown[]) => lifecycle.deliverAfter(async () => (value as (...args: unknown[]) => unknown)(...args));
+  }
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return deliveringLifecycleEvents(lifecycle, value);
+  }
+  return value;
+}
+
+/** Thrown inside a transaction to roll back a write that lost its ordering race. */
+const LOST_WRITE = Symbol('billfn.lostWrite');
+
+/**
+ * What a write without transactions adds to its row update: the `lifecycleEventIds` marker naming the events it
+ * causes, and a condition that the marker it replaces is still the one it read.
+ */
+type LifecycleMarker = { where: WhereClause[]; data: { lifecycleEventIds?: string } };
+const NO_LIFECYCLE_MARKER: LifecycleMarker = { where: [], data: {} };
+
+/**
+ * Applies a state write together with the lifecycle events it causes, so a committed write always has its
+ * events and a write that does not apply has none. Where the adapter supports transactions both commit in one,
+ * and a write that loses its race (`write` returns false) or fails records none. Without transactions the events
+ * are first staged, so no dispatcher delivers them yet, and the write stores their ids on its row in the same
+ * single-row update; once it applied they become pending. A write that failed (perhaps after it applied), lost
+ * its race or was stopped leaves them staged: a dispatch after the stage lapsed delivers each only while its row
+ * names it. Before a write replaces a marker it makes the events that marker names pending, as the row proves
+ * their write applied, and its update applies only over the marker it read. An event's id derives from the
+ * change it reports, so a retry of the write, also after a lost race, records the same id. Returns whether
+ * `write` applied.
+ */
+async function writeWithLifecycleEvents(
+  deps: ServiceDeps,
+  events: LifecycleEventInput[],
+  previous: { lifecycleEventIds?: string | null } | null,
+  write: (db: Adapter, marker: LifecycleMarker) => Promise<boolean>
+): Promise<boolean> {
+  if (events.length === 0 || !deps.lifecycle.enabled) {
+    return write(deps.db, NO_LIFECYCLE_MARKER);
+  }
+  if (!deps.db.capabilities.transactions.supported) {
+    await deps.lifecycle.promote(previous?.lifecycleEventIds?.split(' ') ?? []);
+    await deps.lifecycle.stage(events);
+    const applied = await write(deps.db, {
+      where: [{ field: 'lifecycleEventIds', operator: 'eq', value: previous?.lifecycleEventIds ?? null }],
+      data: { lifecycleEventIds: events.map((event) => event.id).join(' ') }
+    });
+    if (applied) {
+      // Events left staged by a failure here are settled by a later dispatch.
+      await deps.lifecycle.confirm(events).catch(() => deps.metrics.track('event.stage_unsettled', {}));
+    }
+    return applied;
+  }
+  try {
+    return await deps.db.transaction(async (transaction) => {
+      const db = transaction as unknown as Adapter;
+      if (!(await write(db, NO_LIFECYCLE_MARKER))) {
+        throw LOST_WRITE;
+      }
+      await deps.lifecycle.record(events, db);
+      return true;
+    });
+  } catch (error) {
+    if (error === LOST_WRITE) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 const RECONCILIATION_QUEUE = 'billfn-reconciliation';
@@ -1789,6 +1915,33 @@ async function processReconciliationJob(
       for (const subscription of subscriptions) {
         await syncSubscriptionByIdForJob(deps, subscription.id, assertLease);
       }
+      return;
+    }
+    case 'lifecycle-events': {
+      // Dispatch runs first, so no other step can stop or delay delivery and the 24h failed marking. The lease is
+      // renewed before each delivery and sweep page, so a job whose lease lapsed stops.
+      await deps.lifecycle.dispatch({}, assertLease);
+      // The expiry sweep (it reads the whole 10-day window each run) and the bounded repair of grant changes whose
+      // events a failed write or a stop left unrecorded. A failed step is left to the next run; a lost lease ends it.
+      let leaseError: { error: unknown } | undefined;
+      const guard = () =>
+        assertLease().catch((error: unknown) => {
+          leaseError = { error };
+          throw error;
+        });
+      const steps = { expiry: deps.lifecycle.recordGrantExpiry, repair: deps.repairPendingGrantEvents };
+      for (const [type, step] of Object.entries(steps)) {
+        try {
+          await step?.(guard);
+        } catch {
+          if (leaseError) {
+            throw leaseError.error;
+          }
+          deps.metrics.track('grant.event_deferred', { type });
+        }
+      }
+      // Delivers what the steps recorded in this run; a later run delivers it otherwise.
+      await deps.lifecycle.dispatch({}, assertLease);
       return;
     }
     case 'notification-history-backfill': {
@@ -2600,6 +2753,54 @@ async function updateCheckoutSession(
   });
 }
 
+/**
+ * Writes provider state to a checkout session. `checkout.completed` commits with the write that moves the session
+ * to `succeeded` from a stored status other than `succeeded`, applied only over the status it read, so of racing
+ * writes one completes it. A rewrite of a succeeded session (a renewal webhook, a restore, a repeated
+ * verification), also of one that succeeded before lifecycle events existed, records nothing.
+ */
+async function writeCheckoutSessionState(
+  deps: ServiceDeps,
+  read: BillFnCheckoutSession,
+  state: VerifiedBillingState,
+  subscription: BillFnSubscription,
+  timestamp: string
+): Promise<BillFnCheckoutSession> {
+  let stored: BillFnCheckoutSession | null = read;
+  for (let attempt = 0; stored && attempt < CHECKOUT_WRITE_ATTEMPTS; attempt += 1) {
+    const current: BillFnCheckoutSession = stored;
+    const patch: Partial<BillFnCheckoutSession> = {
+      status: state.checkoutStatus,
+      providerSubscriptionId: state.providerSubscriptionId ?? current.providerSubscriptionId,
+      providerChargeId: state.providerChargeId ?? current.providerChargeId,
+      updatedAt: timestamp,
+      metadata: mergeJson(current.metadata, state.raw)
+    };
+    if (patch.status !== 'succeeded' || current.status === 'succeeded') {
+      return updateCheckoutSession(deps, current.checkoutSessionId, patch);
+    }
+    const events = [checkoutCompletedEvent(current, subscription)];
+    const applied = await writeWithLifecycleEvents(deps, events, current, async (db, marker) => {
+      const updated = await db.updateMany({
+        model: TABLES.checkoutSessions,
+        where: [
+          { field: 'checkoutSessionId', operator: 'eq', value: current.checkoutSessionId },
+          { field: 'status', operator: 'eq', value: current.status },
+          ...marker.where
+        ],
+        data: { ...patch, ...marker.data },
+        namespace: deps.namespace
+      });
+      return updated === 1;
+    });
+    stored = await getCheckoutSession(deps, current.checkoutSessionId);
+    if (applied) {
+      return stored ?? { ...current, ...patch };
+    }
+  }
+  throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Unable to write the checkout session after multiple retries' });
+}
+
 async function getCheckoutSession(deps: ServiceDeps, checkoutSessionId: string) {
   return deps.db.findOne<BillFnCheckoutSession>({
     model: TABLES.checkoutSessions,
@@ -3018,6 +3219,9 @@ async function applyVerificationState(
   let providerStateRaced: { priceId: string } | undefined;
   // A read is superseded by an event newer than its start; a committed mutation only by one after its commit.
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
+  // The provider change this call applies, which keys its cancellation: the same across the write's retries.
+  const providerChangeKey =
+    input.providerEventId ?? input.committedAt ?? input.liveStateObservedAt ?? input.occurredAt ?? timestamp;
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (!input.importReference && isImportPending(baseSubscription)) {
@@ -3135,8 +3339,16 @@ async function applyVerificationState(
       Object.assign(record, withPendingReplacements(record.metadata, pending));
       // Every update is ordered against the row it was computed from, so a provider-state time and the
       // pending references it clears always come from the row it replaces. A re-import of an accepted row
-      // records its audit first.
-      if (await updateSubscriptionAfterImportAudit(deps, baseSubscription, record, input.importAudit)) {
+      // records its audit first. The renewal or cancellation this write makes commits with it.
+      if (
+        await updateSubscriptionAfterImportAudit(
+          deps,
+          baseSubscription,
+          record,
+          input.importAudit,
+          subscriptionLifecycleEvents(baseSubscription, record, providerChangeKey)
+        )
+      ) {
         subscription = record;
         break;
       }
@@ -3196,15 +3408,10 @@ async function applyVerificationState(
     recordLifecycle = ownState || settled.acceptedHere;
   }
 
-  const checkoutSession = input.checkoutSession
-    ? await updateCheckoutSession(deps, input.checkoutSession.checkoutSessionId, {
-        status: input.state.checkoutStatus,
-        providerSubscriptionId: input.state.providerSubscriptionId ?? input.checkoutSession.providerSubscriptionId,
-        providerChargeId: input.state.providerChargeId ?? input.checkoutSession.providerChargeId,
-        updatedAt: timestamp,
-        metadata: mergeJson(input.checkoutSession.metadata, input.state.raw)
-      })
-    : input.checkoutSession;
+  let checkoutSession = input.checkoutSession;
+  if (input.checkoutSession) {
+    checkoutSession = await writeCheckoutSessionState(deps, input.checkoutSession, input.state, subscription, timestamp);
+  }
 
   // A superseded read leaves the subscription's state, so its entitlements stand and no lifecycle event is recorded;
   // an import that ends on another run's state publishes that state's plan.
@@ -3376,21 +3583,25 @@ async function updateSubscriptionAfterImportAudit(
   deps: ServiceDeps,
   current: BillFnSubscription,
   next: BillFnSubscription,
-  importAudit: ApplyVerificationStateInput['importAudit']
+  importAudit: ApplyVerificationStateInput['importAudit'],
+  events: LifecycleEventInput[] = []
 ) {
   if (importAudit && !isImportPending(next)) {
     await recordBillingEvent(deps, importAudit(next));
   }
-  const updated = await deps.db.updateMany({
-    model: TABLES.subscriptions,
-    where: [
-      { field: 'id', operator: 'eq', value: current.id },
-      { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
-    ],
-    data: next,
-    namespace: deps.namespace
+  return writeWithLifecycleEvents(deps, events, current, async (db, marker) => {
+    const updated = await db.updateMany({
+      model: TABLES.subscriptions,
+      where: [
+        { field: 'id', operator: 'eq', value: current.id },
+        { field: 'updatedAt', operator: 'eq', value: current.updatedAt },
+        ...marker.where
+      ],
+      data: { ...next, ...marker.data },
+      namespace: deps.namespace
+    });
+    return updated === 1;
   });
-  return updated === 1;
 }
 
 /** Writes a subscription row ordered against the row it was computed from; false when that row changed. */
@@ -3470,19 +3681,25 @@ async function upsertEntitlements(
       updatedAt: timestamp
     };
 
+    // The `entitlement.changed` this write makes commits with it.
+    const events = entitlementChangeEvents(existing, snapshot, subscription);
     if (existing) {
-      const updated = await deps.db.updateMany({
-        model: TABLES.entitlementSnapshots,
-        where: [
-          { field: 'billingAccountId', operator: 'eq', value: billingAccountId },
-          existing.sourceEventId
-            ? { field: 'sourceEventId', operator: 'eq', value: existing.sourceEventId }
-            : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
-        ],
-        data: snapshot,
-        namespace: deps.namespace
+      const updated = await writeWithLifecycleEvents(deps, events, existing, async (db, marker) => {
+        const count = await db.updateMany({
+          model: TABLES.entitlementSnapshots,
+          where: [
+            { field: 'billingAccountId', operator: 'eq', value: billingAccountId },
+            existing.sourceEventId
+              ? { field: 'sourceEventId', operator: 'eq', value: existing.sourceEventId }
+              : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt },
+            ...marker.where
+          ],
+          data: { ...snapshot, ...marker.data },
+          namespace: deps.namespace
+        });
+        return count === 1;
       });
-      if (updated === 1) {
+      if (updated) {
         return snapshot;
       }
       await Promise.resolve();
@@ -3490,11 +3707,16 @@ async function upsertEntitlements(
     }
 
     try {
-      return await deps.db.create<BillFnEntitlementSnapshot>({
-        model: TABLES.entitlementSnapshots,
-        data: snapshot,
-        namespace: deps.namespace
+      let created = snapshot;
+      await writeWithLifecycleEvents(deps, events, null, async (db, marker) => {
+        created = await db.create<BillFnEntitlementSnapshot>({
+          model: TABLES.entitlementSnapshots,
+          data: { ...snapshot, ...marker.data },
+          namespace: deps.namespace
+        });
+        return true;
       });
+      return created;
     } catch (error) {
       if (!isDuplicateRecordError(error)) {
         throw error;
@@ -3506,6 +3728,210 @@ async function upsertEntitlements(
   throw createBillFnError({
     code: 'BILLFN_CONFLICT',
     message: 'Unable to update entitlements after multiple retries'
+  });
+}
+
+/**
+ * The `entitlement.changed` of a snapshot write that changes the paid snapshot's plan, status, features or
+ * limits. Keyed by the subscription version it derives from and the entitlements it replaces and writes, so a
+ * retry of the write (also after a lost race that kept those entitlements) and a racing write of the same change
+ * share its id.
+ */
+function entitlementChangeEvents(
+  previous: BillFnEntitlementSnapshot | null,
+  next: BillFnEntitlementSnapshot,
+  subscription: BillFnSubscription
+): LifecycleEventInput[] {
+  if (
+    previous?.planKey === next.planKey &&
+    previous.status === next.status &&
+    sameJson(previous.features, next.features) &&
+    sameJson(previous.limits, next.limits)
+  ) {
+    return [];
+  }
+  const replaced = previous ? entitlementsFingerprint(previous) : 'none';
+  const data = {
+    cause: 'subscription' as const,
+    subscriptionId: subscription.id,
+    planKey: next.planKey,
+    status: next.status,
+    features: next.features,
+    limits: next.limits,
+    previousPlanKey: previous?.planKey ?? null,
+    previousStatus: previous?.status ?? null
+  };
+  return [
+    {
+      id: payloadEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${next.sourceEventId ?? ''}\n${replaced}`, data),
+      type: 'entitlement.changed',
+      billingAccountId: next.billingAccountId,
+      occurredAt: next.updatedAt,
+      data
+    }
+  ];
+}
+
+/**
+ * The id of a lifecycle event a state write records: derived from `key`, the change it reports, and from its
+ * payload, so one id names one payload. A write that loses its race to another reporting the same change with
+ * another payload stages another id, which no applied write names, and never replaces the payload the applied
+ * write's event delivers (see `lifecycle.stage`).
+ */
+function payloadEventId(type: BillFnLifecycleEventType, key: string, data: unknown) {
+  return lifecycleEventId(type, `${key}\n${JSON.stringify(canonicalJson(data))}`);
+}
+
+function entitlementsFingerprint(snapshot: Pick<BillFnEntitlementSnapshot, 'planKey' | 'status' | 'features' | 'limits'>) {
+  return JSON.stringify(canonicalJson([snapshot.planKey, snapshot.status, snapshot.features, snapshot.limits]));
+}
+
+/**
+ * Whether the row a staged lifecycle event's write targets (its subscription, snapshot or checkout session)
+ * names the event in its `lifecycleEventIds` marker, which only a write that caused it sets.
+ */
+async function isStagedEventApplied(deps: ServiceDeps, event: BillFnLifecycleEventRecord): Promise<boolean> {
+  const row = await stagedEventRow(deps, event);
+  return Boolean(row?.lifecycleEventIds?.split(' ').includes(event.id));
+}
+
+/** The row a staged lifecycle event's write targets: its checkout session, entitlement snapshot or subscription. */
+function stagedEventRow(deps: ServiceDeps, event: BillFnLifecycleEventRecord) {
+  const data = event.data as { subscriptionId?: string; checkoutSessionId?: string };
+  if (event.type === 'checkout.completed') {
+    return getCheckoutSession(deps, data.checkoutSessionId!);
+  }
+  if (event.type === 'entitlement.changed') {
+    return findEntitlementSnapshot(deps, event.billingAccountId);
+  }
+  return getSubscriptionById(deps, data.subscriptionId!);
+}
+
+/**
+ * The `checkout.completed` of a checkout session that succeeded with `subscription`: one per session, keyed by
+ * it, with a payload from the session's own purchase (and its subscription's id), so every write that completes
+ * the session reports the same one.
+ */
+function checkoutCompletedEvent(session: BillFnCheckoutSession, subscription: BillFnSubscription): LifecycleEventInput {
+  return {
+    billingAccountId: session.billingAccountId,
+    occurredAt: subscription.updatedAt,
+    id: lifecycleEventId('checkout.completed', session.checkoutSessionId),
+    type: 'checkout.completed',
+    data: {
+      subscriptionId: subscription.id,
+      provider: session.provider,
+      planKey: session.planKey,
+      priceId: session.priceId,
+      checkoutSessionId: session.checkoutSessionId
+    }
+  };
+}
+
+function subscriptionRef(subscription: BillFnSubscription) {
+  return {
+    subscriptionId: subscription.id,
+    provider: subscription.provider,
+    planKey: subscription.planKey,
+    priceId: subscription.priceId
+  };
+}
+
+/**
+ * The lifecycle events of a write of provider state over `previous`: `subscription.renewed` when an active
+ * subscription's period end moves later (once per period end), and `subscription.canceled` when a renewing
+ * subscription is canceled (`isCanceledFrom`), keyed by the provider change the call applies
+ * (`providerChangeKey`), so every retry of its write, also over a newer row after a lost race, shares its id,
+ * and by the payload (`payloadEventId`).
+ */
+function subscriptionLifecycleEvents(
+  previous: BillFnSubscription,
+  subscription: BillFnSubscription,
+  providerChangeKey: string
+): LifecycleEventInput[] {
+  // A pending import row is no one's subscription until `settleImportBinding` accepts it, which can still refuse
+  // and delete it, so a write to it reports no transition; its acceptance publishes its state.
+  if (isImportPending(previous)) {
+    return [];
+  }
+  const events: LifecycleEventInput[] = [];
+  const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
+  const ref = subscriptionRef(subscription);
+  const previousEnd = previous.currentPeriodEnd ? Date.parse(previous.currentPeriodEnd) : Number.NaN;
+  const nextEnd = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
+  if (subscription.status === 'active' && Number.isFinite(previousEnd) && Number.isFinite(nextEnd) && nextEnd > previousEnd) {
+    const data = {
+      ...ref,
+      currentPeriodStart: subscription.currentPeriodStart ?? null,
+      currentPeriodEnd: subscription.currentPeriodEnd!,
+      previousPeriodEnd: previous.currentPeriodEnd!
+    };
+    const id = payloadEventId('subscription.renewed', `${subscription.id}\n${toIsoString(new Date(nextEnd))}`, data);
+    events.push({ ...base, id, type: 'subscription.renewed', data });
+  }
+  if (isCanceledFrom(previous, subscription)) {
+    const data = {
+      ...ref,
+      status: subscription.status,
+      autoRenew: subscription.autoRenew,
+      currentPeriodEnd: subscription.currentPeriodEnd ?? null
+    };
+    const id = payloadEventId('subscription.canceled', `${subscription.id}\n${providerChangeKey}`, data);
+    events.push({ ...base, id, type: 'subscription.canceled', data });
+  }
+  return events;
+}
+
+/**
+ * Statuses of a subscription that renews unless `autoRenew` is off: live (`active`, `trialing`, `grace`) or
+ * held by a payment problem or a pause (`past_due`, `paused`), which resumes. `autoRenew` is the renewal
+ * intent in all of them, independent of a hold.
+ */
+const RENEWABLE_STATUSES = new Set<SubscriptionStatus>(['active', 'trialing', 'grace', 'past_due', 'paused']);
+
+/**
+ * Whether `next` cancels a subscription that intended to renew in `previous` (renewable with `autoRenew` on):
+ * it became `canceled`, or stays renewable with `autoRenew` turned off (a cancel at period end, also one made
+ * during a hold). Once reported, the row no longer intends to renew, so a later hold, resume, expiry or final
+ * cancellation reports nothing more. A hold alone, `pending`, an expiry or a failure is not a cancellation.
+ */
+function isCanceledFrom(previous: BillFnSubscription, next: BillFnSubscription) {
+  if (!RENEWABLE_STATUSES.has(previous.status) || !previous.autoRenew) {
+    return false;
+  }
+  return next.status === 'canceled' || (RENEWABLE_STATUSES.has(next.status) && !next.autoRenew);
+}
+
+/** Compares JSON values regardless of key order (a jsonb column reorders keys). */
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort(compareCodeUnits)
+      .map((key) => [key, canonicalJson((value as Record<string, unknown>)[key])]);
+  }
+  return value ?? null;
+}
+
+/** Orders strings by UTF-16 code units, as a comparator-free sort does, never by locale, so canonical bytes stay stable. */
+function compareCodeUnits(left: string, right: string) {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
+}
+
+function findBillingEvent(db: Adapter, namespace: string, id: string) {
+  return db.findOne<BillFnBillingEvent>({
+    model: TABLES.billingEvents,
+    where: [{ field: 'id', operator: 'eq', value: id }],
+    namespace
   });
 }
 
@@ -5004,6 +5430,8 @@ function jobToQueuePayload(job: BillFnReconciliationJob): BillFnQueuedJob {
         provider: job.provider as BillingProviderName,
         providerEventId: job.providerEventId as string
       };
+    case 'lifecycle-events':
+      return { type: 'lifecycle-events', jobId: job.id };
   }
 }
 

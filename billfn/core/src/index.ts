@@ -42,6 +42,10 @@ export function createBillFn(config: BillFnConfig): BillFnInstance {
       grants: {
         create: service.createGrant,
         revoke: service.revokeGrant
+      },
+      events: {
+        dispatch: service.dispatchEvents,
+        list: service.listEvents
       }
     },
     subscriptionProvider: service.subscriptionProvider,

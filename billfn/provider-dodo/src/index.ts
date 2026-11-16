@@ -528,7 +528,12 @@ function mapDodoState(isSubscription: boolean, payload: Record<string, unknown>)
     providerChargeId: readString(payload, ['payment_id']) ?? undefined,
     currentPeriodStart: readString(payload, ['current_period_start', 'started_at']) ?? undefined,
     currentPeriodEnd: isSubscription ? readString(payload, ['next_billing_date', 'current_period_end']) ?? undefined : undefined,
-    autoRenew: isSubscription ? normalized === 'active' || normalized === 'trialing' || normalized === 'grace' : false,
+    // The renewal intent: a live or held (on_hold, paused) subscription renews unless canceled at the next
+    // billing date, which keeps it active until then. A hold alone does not change the intent.
+    autoRenew:
+      isSubscription &&
+      (normalized === 'active' || normalized === 'trialing' || normalized === 'grace' || normalized === 'paused') &&
+      payload.cancel_at_next_billing_date !== true,
     raw: payload
   };
 }
