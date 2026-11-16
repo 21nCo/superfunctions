@@ -356,6 +356,7 @@ def get_schema() -> Dict[str, Any]:
             "reason": {"type": "string", "required": False},
             "revokedBy": {"type": "json", "required": False},
             "revokeReason": {"type": "string", "required": False},
+            "eventsPending": {"type": "boolean", "required": False},
             "createdAt": {"type": "string", "required": True},
             "updatedAt": {"type": "string", "required": True},
         },
@@ -369,8 +370,8 @@ def get_schema() -> Dict[str, Any]:
                 "fields": ["expiresAt"],
             },
             {
-                "name": "entitlement_grants_updated_idx",
-                "fields": ["updatedAt"],
+                "name": "entitlement_grants_events_pending_idx",
+                "fields": ["eventsPending", "updatedAt"],
             },
         ],
     }

@@ -63,7 +63,7 @@ The Python SDK mirrors schema version `6`. Both helpers expose the same sixteen 
 
 ### Schema 5 to 6 (`@billfn/core` 0.6.0)
 
-Version `6` adds one table, `lifecycleEvents`, one optional string field, `lifecycleEventIds`, to `subscriptions`, `checkoutSessions` and `entitlementSnapshots`, and two indexes on `entitlementGrants`, `entitlement_grants_expires_idx` on `expiresAt` and `entitlement_grants_updated_idx` on `updatedAt`. Create them before deploying `@billfn/core` 0.6.0 with an `onEvent` handler: with one, subscription, checkout and grant writes write to `lifecycleEvents`, and the `lifecycle-events` reconciliation job reads `entitlementGrants` by `expiresAt` and, without transactions, by `updatedAt`. Without transactions, a write with lifecycle events also sets `lifecycleEventIds` on its row (see [Lifecycle events](/docs/server/lifecycle-events#consistency)). Without a handler BillFn never reads or writes the table or the field. No backfill is needed (the field is null): events are recorded for changes from the deploy on, apart from the grant events of the first `lifecycle-events` runs (see [Events after a deploy](/docs/server/lifecycle-events#events-after-a-deploy)). The migration is additive, so rolling back to 0.5.x leaves the table, field and index unused (and any pending events undelivered).
+Version `6` adds one table, `lifecycleEvents`, one optional string field, `lifecycleEventIds`, to `subscriptions`, `checkoutSessions` and `entitlementSnapshots`, and, on `entitlementGrants`, one optional boolean field, `eventsPending`, and two indexes, `entitlement_grants_expires_idx` on `expiresAt` and `entitlement_grants_events_pending_idx` on `eventsPending, updatedAt`. Create them before deploying `@billfn/core` 0.6.0 with an `onEvent` handler: with one, subscription, checkout and grant writes write to `lifecycleEvents`, and the `lifecycle-events` reconciliation job reads `entitlementGrants` by `expiresAt` and, without transactions, by `eventsPending`. Without transactions, a write with lifecycle events also sets `lifecycleEventIds` on its row, and a grant write sets `eventsPending` until its billing event is recorded (see [Lifecycle events](/docs/server/lifecycle-events#consistency)). Without a handler BillFn never reads or writes the table or the fields. No backfill is needed (the fields are null): events are recorded for changes from the deploy on, apart from the few listed in [Events after a deploy](/docs/server/lifecycle-events#events-after-a-deploy). The migration is additive, so rolling back to 0.5.x leaves the table, fields and indexes unused (and any pending events undelivered).
 
 | Field | Type | Required |
 | --- | --- | --- |
@@ -101,10 +101,11 @@ Version `5` adds one table, `entitlementGrants`. Create it before deploying `@bi
 | `reason` | string | no |
 | `revokedBy` | json | no |
 | `revokeReason` | string | no |
+| `eventsPending` | boolean (schema 6) | no |
 | `createdAt` | string | yes |
 | `updatedAt` | string | yes |
 
-Indexes: `entitlement_grants_billing_account_idx` on `billingAccountId, createdAt`; `entitlement_grants_expires_idx` on `expiresAt`; `entitlement_grants_updated_idx` on `updatedAt`.
+Indexes: `entitlement_grants_billing_account_idx` on `billingAccountId, createdAt`; `entitlement_grants_expires_idx` on `expiresAt`; `entitlement_grants_events_pending_idx` on `eventsPending, updatedAt`.
 
 ### Schema 3 to 4 (`@billfn/core` 0.2.0)
 

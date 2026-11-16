@@ -62,6 +62,7 @@ def test_schema_includes_webhook_and_usage_uniqueness_indexes() -> None:
     assert ["provider", "replacedReferencesPending"] in [index["fields"] for index in subscription_indexes]
     assert ["billingAccountId", "createdAt"] in [index["fields"] for index in tables["entitlementGrants"]["indexes"]]
     assert ["expiresAt"] in [index["fields"] for index in tables["entitlementGrants"]["indexes"]]
+    assert ["eventsPending", "updatedAt"] in [index["fields"] for index in tables["entitlementGrants"]["indexes"]]
     assert ["status", "nextAttemptAt"] in [index["fields"] for index in tables["lifecycleEvents"]["indexes"]]
     assert tables["lifecycleEvents"]["fields"]["id"]["unique"] is True
 

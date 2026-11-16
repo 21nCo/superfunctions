@@ -9,7 +9,7 @@ import {
   listRepairedGrants,
   readCreateGrantInput,
   repairGrantEvents,
-  repairRecentGrantEvents,
+  repairPendingGrantEvents,
   requireFutureExpiry,
   revokeGrant,
   toGrantSummary,
@@ -196,8 +196,8 @@ type ServiceDeps = {
    * provider read. A failed read without a queue throws a window-read error.
    */
   reconcileProviderState?: (subscription: BillFnSubscription, event: WindowEvent) => Promise<void>;
-  /** Records the missing events of recent grant changes (`repairRecentGrantEvents`), for the `lifecycle-events` job. */
-  repairRecentGrantEvents?: (beforeEach?: () => Promise<void>) => Promise<void>;
+  /** Records the missing events of grant changes flagged pending (`repairPendingGrantEvents`), for the `lifecycle-events` job. */
+  repairPendingGrantEvents?: (beforeEach?: () => Promise<void>) => Promise<void>;
 };
 type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
 /** An event inside a committed mutation's window: its lifecycle key and the catalog price it names. */
@@ -320,9 +320,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       }
       await recordBillingEvent(db ? { ...deps, db } : deps, event);
     },
-    isDuplicateRecordError
+    isDuplicateRecordError,
+    flagsPendingEvents: deps.lifecycle.enabled && !deps.db.capabilities.transactions.supported
   };
-  deps.repairRecentGrantEvents = (beforeEach) => repairRecentGrantEvents(grantDeps, beforeEach);
+  deps.repairPendingGrantEvents = (beforeEach) => repairPendingGrantEvents(grantDeps, beforeEach);
   /**
    * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
    * grants they were derived from. The grants' missing events are repaired on every read (see
@@ -1915,9 +1916,14 @@ async function processReconciliationJob(
       return;
     }
     case 'lifecycle-events': {
-      // Grant changes whose events a failed write or a stop left unrecorded, without waiting for account traffic.
-      await deps.repairRecentGrantEvents?.(assertLease);
       await deps.lifecycle.recordGrantExpiry();
+      // Grant changes whose events a failed write or a stop left unrecorded, without waiting for account traffic.
+      // Bounded per run, and a failed repair is left to the next run without stopping the dispatch.
+      try {
+        await deps.repairPendingGrantEvents?.(assertLease);
+      } catch {
+        deps.metrics.track('grant.event_deferred', { type: 'repair' });
+      }
       // The lease is renewed before each delivery, so a job whose lease lapsed stops delivering.
       await deps.lifecycle.dispatch({}, assertLease);
       return;

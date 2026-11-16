@@ -208,13 +208,14 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       reason: { type: 'string', required: false },
       revokedBy: { type: 'json', required: false },
       revokeReason: { type: 'string', required: false },
+      eventsPending: { type: 'boolean', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
     indexes: [
       { name: 'entitlement_grants_billing_account_idx', fields: ['billingAccountId', 'createdAt'] },
       { name: 'entitlement_grants_expires_idx', fields: ['expiresAt'] },
-      { name: 'entitlement_grants_updated_idx', fields: ['updatedAt'] }
+      { name: 'entitlement_grants_events_pending_idx', fields: ['eventsPending', 'updatedAt'] }
     ]
   };
 

@@ -64,11 +64,11 @@ A handler's side effects should therefore be idempotent per `event.id`; BillFn d
 await billfn.enqueueReconciliationJob({ kind: "lifecycle-events" });
 ```
 
-Each run first records, without transactions, the missing events of grants created or revoked in the last 7 days (see [Consistency](#consistency)), then records `grant.expiring` for grants that expire within 3 days, records `entitlement.changed` (cause `grant.expired`) for grants that expired in the last 7 days, and then dispatches due events. Both grant events are recorded once per grant, so running the job often is safe. Run it at least daily; a grant that expired more than 7 days before any run gets no `entitlement.changed`.
+Each run records `grant.expiring` for grants that expire within 3 days and `entitlement.changed` (cause `grant.expired`) for grants that expired in the last 7 days, then, without transactions, the missing events of up to 50 grant changes flagged pending (see [Consistency](#consistency)), and then dispatches due events. A failed repair is left to the next run and does not stop the dispatch. Both grant events are recorded once per grant, so running the job often is safe. Run it at least daily; a grant that expired more than 7 days before any run gets no `entitlement.changed`.
 
 ## Consistency
 
-With an adapter that supports transactions, a grant and its lifecycle events commit together. Without transactions, a grant's events are recorded before its billing event, and the next grant call or entitlements read for the account, or the next `lifecycle-events` job run, records any that a failed write or a stopped process left out. Their ids derive from the stored grant, so each is recorded once, and a grant change that never applied records none.
+With an adapter that supports transactions, a grant and its lifecycle events commit together. Without transactions, a grant's events are recorded before its billing event, and the grant write sets its `eventsPending` field, which is cleared once the billing event is recorded. The next grant call or entitlements read for the account, or a `lifecycle-events` job run (which reads the flagged grants, so its work follows the changes that lack events, however long ago they were made), records any that a failed write or a stopped process left out. Their ids derive from the stored grant, so each is recorded once, and a grant change that never applied records none.
 
 Subscription and checkout events are recorded with the write that causes them: `subscription.renewed` and `subscription.canceled` with the subscription write, `entitlement.changed` with the entitlement snapshot write, and `checkout.completed` with the checkout session write. With transactions each write and its events commit together, so a failed event write fails the write and the call, and the retry (a webhook redelivery, sync or reconciliation job) still finds the change and records its events. A process that stops after a write committed leaves its events committed with it.
 
@@ -81,8 +81,8 @@ The retry, whether a lost race retried within the call or a webhook redelivery, 
 
 ## Events after a deploy
 
-Events describe changes, so deploying `onEvent` emits none for existing state: a session that succeeded earlier, a subscription that renewed or was canceled earlier, and a grant whose billing event was recorded earlier report nothing, also when a later write rewrites them. The only events about earlier state are from the first `lifecycle-events` job runs:
+Events describe changes, so deploying `onEvent` emits none for existing state: a session that succeeded earlier, a subscription that renewed or was canceled earlier, and a grant whose billing event was recorded earlier report nothing, also when a later write rewrites them. The only events about earlier state are these:
 
 - `grant.expiring` for each grant that is not revoked and expires within 3 days of the run.
 - `entitlement.changed` (cause `grant.expired`) for each grant that expired in the 7 days before the run, also before the deploy.
-- Without transactions, `grant.started` and its `entitlement.changed` (or a revocation's `entitlement.changed`) for a grant created or revoked in the 7 days before the run whose billing event was never recorded. An entitlements read or grant call for the account records them too, whenever the change was made.
+- Without transactions, an entitlements read or grant call for an account records `grant.started` and its `entitlement.changed` (or a revocation's `entitlement.changed`) for a grant of that account whose billing event was never recorded, whenever the change was made. The job repairs only grants written from the deploy on.

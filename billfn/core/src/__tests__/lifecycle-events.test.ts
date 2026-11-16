@@ -792,6 +792,89 @@ describe('lifecycle events of a write without transactions', () => {
       await env.runLifecycleJob();
       expect(revocations()).toHaveLength(1);
     });
+
+    /** Counts grant and billing event reads, and fails a grant query on neither account nor expiry while `failScan` is on. */
+    function countingGrantReads(db: Adapter) {
+      const reads = { count: 0, failScan: false };
+      const counting: Adapter = {
+        ...db,
+        async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+          if (params.model === 'entitlementGrants' || params.model === 'billingEvents') reads.count += 1;
+          const scan = !params.where?.some((clause) => clause.field === 'billingAccountId' || clause.field === 'expiresAt');
+          if (reads.failScan && params.model === 'entitlementGrants' && scan) throw new Error('query limit');
+          return db.findMany<T>(params);
+        }
+      };
+      return { counting, reads };
+    }
+    const signup = (env: ReturnType<typeof setup>, n: number, expiresInMs = 14 * DAY) =>
+      env.billfn.services.grants.create({
+        billingAccountId: `ba_user_signup_${n}`,
+        subject: { principalId: `signup_${n}` },
+        planKey: 'nucleus',
+        kind: 'trial',
+        expiresAt: new Date(env.clock.current.getTime() + expiresInMs).toISOString()
+      });
+    const started = (env: ReturnType<typeof setup>) => env.ofType('grant.started').map((event) => event.data.grantId);
+
+    it('reads only the grant changes that lack events, also one made more than 7 days earlier', async () => {
+      const { db, faults } = staging();
+      const { counting, reads } = countingGrantReads(db);
+      const env = setup({ db: counting });
+      faults.create = true;
+      const lost = await env.trial(14 * DAY);
+      faults.create = false;
+      if (!lost.ok) throw new Error('expected the grant to commit');
+      expect(lost.data.grant).not.toHaveProperty('eventsPending');
+      env.advance(8 * DAY);
+      for (let n = 0; n < 60; n += 1) expect((await signup(env, n)).ok).toBe(true);
+      expect(started(env)).toHaveLength(60);
+
+      reads.count = 0;
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(started(env).filter((grantId) => grantId === lost.data.grant.id)).toHaveLength(1);
+      // The pending-grant query, the expiry query and one account's repair, not a read per recent signup.
+      expect(reads.count).toBeLessThanOrEqual(5);
+      reads.count = 0;
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(started(env)).toHaveLength(61);
+      expect(reads.count).toBeLessThanOrEqual(2);
+    });
+
+    it('without onEvent, a grant write leaves eventsPending unset (a schema 5 table still takes it)', async () => {
+      const { db } = staging();
+      const env = setup({ db, onEvent: null });
+      expect((await env.trial(14 * DAY)).ok).toBe(true);
+      const [stored] = await db.findMany({ model: 'entitlementGrants', namespace: 'billfn' });
+      expect(stored).not.toHaveProperty('eventsPending');
+    });
+
+    it('repairs a bounded batch per run, and a failed repair still records grant.expiring and dispatches', async () => {
+      const { db, faults } = staging();
+      const { counting, reads } = countingGrantReads(db);
+      const env = setup({ db: counting });
+      faults.create = true;
+      for (let n = 0; n < 60; n += 1) expect((await signup(env, n, 2 * DAY)).ok).toBe(true);
+      faults.create = false;
+      expect(env.delivered).toEqual([]);
+
+      reads.failScan = true;
+      env.advance(HOUR_MS);
+      expect((await env.runLifecycleJob()).status).toBe('succeeded');
+      expect(env.ofType('grant.expiring')).toHaveLength(60);
+      expect(started(env)).toEqual([]);
+
+      reads.failScan = false;
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(started(env)).toHaveLength(50);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(new Set(started(env)).size).toBe(60);
+      expect(started(env)).toHaveLength(60);
+    });
   });
 
   it('gives an event promoted late in its stage window the full 24-hour delivery window', async () => {
