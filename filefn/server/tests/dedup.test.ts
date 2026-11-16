@@ -35,6 +35,9 @@ function createMockDb(): Adapter {
     async update() {
       return {} as any;
     },
+    async updateMany() {
+      return 0;
+    },
     async upsert() {
       return {} as any;
     },

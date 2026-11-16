@@ -14,6 +14,8 @@ import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
+import { createKeyedSerializer, parseRequestedFileId } from './file-id.js';
+import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -50,6 +52,12 @@ export interface UploadSessionServiceConfig {
   uploadSessionTtlSeconds?: number;
   signedUrlTtlSeconds?: number;
   generateId?: () => string;
+  /**
+   * The database adapter the host passed (before FileFn wraps it). On adapters
+   * with unique constraints, in-process completion serialization of a fileId is
+   * scoped to it. Defaults to `db`.
+   */
+  databaseIdentity?: object;
 }
 
 export interface CreateSessionInput {
@@ -57,14 +65,21 @@ export interface CreateSessionInput {
   fileName: string;
   size: number;
   mimeType: string;
-  fileId?: string;
+  /**
+   * File ID the client chose, matching `file_[A-Za-z0-9_-]{8,64}`. `null` or
+   * omitted lets the server generate one. Validated at runtime: the route
+   * passes the JSON body through unchanged.
+   */
+  fileId?: string | null;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
 }
 
 export interface UploadSession {
   uploadSessionId: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  // 'refused' is a completion refused at commit or admission whose own objects
+  // may still need deleting; clients see it as 'aborted'.
+  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'refused' | 'expired';
   policy: string;
   fileId: string | null;
   fileName: string;
@@ -85,6 +100,44 @@ export interface UploadSession {
   completionVersionId?: string | null;
   uploadSessionToken?: string | null;
   uploadSessionTokenHash?: string | null;
+}
+
+// Serializes, across every FileFn instance in this process (hosts may build one
+// per request), the calls completing one upload session and, per namespace and
+// fileId, the commit decisions (database steps only, never storage I/O). On
+// adapters without unique constraints, which are single-process, the fileId key
+// is the only guard and is scoped to one store, by that store's own rows (see
+// sessionsInThisStore): no adapter property reliably tells whether two adapter
+// objects (for example two wrappers) share one store. With unique constraints
+// it is scoped to the adapter object (see databaseToken). Keys: `session\0...`
+// then `file\0...`, always acquired in that order. A call that waits longer than
+// SERIALIZED_WAIT_TIMEOUT_MS for its session key fails with the retryable 409
+// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything; so does one
+// that waits that long, before its storage step, for a commit of its fileId
+// already running. A call waiting for its fileId key to commit has already
+// completed its storage upload, which a retry could not redo, so it keeps
+// waiting (unless it may take the key, see fileKeyEvictableAt); that key is
+// only held for database steps.
+const runSerialized = createKeyedSerializer();
+
+// One token per database adapter object the host passed. Used only on adapters
+// with unique constraints, where completions against different databases then
+// never wait on each other, and adapter objects that share one store but get
+// different tokens are arbitrated by the unique `files.fileId` constraint, as
+// across processes.
+const databaseTokens = new WeakMap<object, string>();
+let nextDatabaseToken = 0;
+function databaseToken(database: object): string {
+  let token = databaseTokens.get(database);
+  if (token === undefined) {
+    token = String(nextDatabaseToken++);
+    databaseTokens.set(database, token);
+  }
+  return token;
+}
+
+function isAbortedStatus(status: string): boolean {
+  return status === 'aborted' || status === 'refused';
 }
 
 function generateDefaultId(): string {
@@ -190,7 +243,44 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     uploadSessionTtlSeconds = 86400, // 24h
     signedUrlTtlSeconds = 900, // 15m
     generateId = generateDefaultId,
+    databaseIdentity = db,
   } = config;
+
+  // The per-fileId commit key. A holder stuck forever (for example a Workers
+  // request cancelled when its client disconnected) stops blocking it where an
+  // overlap is harmless: on adapters with unique constraints a call that has
+  // waited out SERIALIZED_WAIT_TIMEOUT_MS takes the key, and the unique
+  // `files.fileId` constraint arbitrates the two as it does calls in two
+  // processes. Without unique constraints the key is taken only after the
+  // holder's session has expired; a completion still running then is a session
+  // expiring during its completion, which FileFn does not guard (FILE-14).
+  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
+  const fileLockScope = uniqueConstraints
+    ? `${databaseToken(databaseIdentity)}\u0000${namespace}`
+    : namespace;
+  function fileKeyEvictableAt(expiresAt: string): number | undefined {
+    if (uniqueConstraints) return 0;
+    const expiresAtMs = Date.parse(expiresAt);
+    return Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
+  }
+  // Without unique constraints, completions wait only behind those of their
+  // own store: a busy key's group is this store's when one of its sessions is
+  // visible here. Adapter objects cannot tell (wrappers share a store).
+  async function sessionsInThisStore(uploadSessionIds: readonly string[]): Promise<boolean> {
+    const found = await Promise.all(uploadSessionIds.map((uploadSessionId) => db.findOne<UploadSession>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    })));
+    return found.some(Boolean);
+  }
+  function fileKeyOptions(session: UploadSession) {
+    return {
+      evictableAt: fileKeyEvictableAt(session.expiresAt),
+      member: session.uploadSessionId,
+      sharesKeyWith: uniqueConstraints ? undefined : sessionsInThisStore,
+    };
+  }
 
   function selectUploadMode(storageTarget: string): string {
     const capabilities = getStorageCapabilities(storage, storageTarget);
@@ -211,9 +301,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return `${storageKey}.part${partNumber}`;
   }
 
-  async function deleteProxyTempPartObjects(session: UploadSession): Promise<void> {
+  // Deletes the session's proxy part objects. Returns false if any delete
+  // failed; callers that must not lose track of the parts keep the session.
+  async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
-      return;
+      return true;
     }
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
@@ -225,16 +317,142 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
 
+    let allDeleted = true;
     for (const part of parts) {
       try {
         await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: storageTarget });
       } catch {
-        // Best-effort cleanup.
+        allDeleted = false;
       }
+    }
+    return allDeleted;
+  }
+
+  // Without a configured checker the service trusts its caller, as at init.
+  async function canWriteFileNow(fileId: string, ctx: FileProviderContext): Promise<boolean> {
+    return fileWriteChecker ? fileWriteChecker.canWriteFile(fileId, ctx) : true;
+  }
+
+  async function endSessionAborted(uploadSessionId: string): Promise<void> {
+    await db.deleteMany({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    });
+
+    // Conditional: a zero-match write (the session was refused meanwhile) is a
+    // no-op, so this uses the count-returning updateMany, never update.
+    await db.updateMany({
+      model: 'uploadSessions',
+      where: [
+        { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
+        { field: 'status', operator: 'ne', value: 'refused' },
+      ],
+      data: { status: 'aborted' },
+      namespace,
+    });
+  }
+
+  function ownObjectRef(session: UploadSession): string | undefined {
+    if (!storage.deleteObject || !session.completionVersionId) {
+      return undefined;
+    }
+    return storageRef(resolveStorageTarget(policies.get(session.policy) ?? {}), session.storageKey);
+  }
+
+  // Deletes the session's own final object unless something may still use it:
+  // any file version or artifact referencing the same storage target and key
+  // keeps it (the session's own published version, or another file's version
+  // that dedup pointed at it), and sessions from before per-session keys (no
+  // pre-allocated versionId) may share a key. Callers only pass refused
+  // sessions, which no completion can publish any more, so nothing can newly
+  // reference the object while this runs.
+  // Returns false when the delete failed. `referenced` is a reference lookup the
+  // caller already ran over this session's own ref (the expiry sweep runs one
+  // for all its sessions); without it, this runs its own.
+  async function deleteOwnUnpublishedObject(
+    session: UploadSession,
+    referenced?: ReadonlySet<string>,
+  ): Promise<boolean> {
+    const ownRef = ownObjectRef(session);
+    if (!storage.deleteObject || ownRef === undefined) {
+      return true;
+    }
+    const policy = policies.get(session.policy);
+    const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+    const references =
+      referenced ?? (await findReferencedStorageRefs({ db, namespace, policies }, new Set([ownRef])));
+    if (references.has(ownRef)) {
+      return true;
+    }
+    try {
+      await storage.deleteObject({ key: session.storageKey, target: storageTarget });
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  return {
+  // Ends a refused completion and keeps nothing it uploaded. The session is
+  // first marked 'refused', so no completion call can publish it (or let dedup
+  // share its object) any more; only then are its proxy part objects and its own
+  // final object deleted (never a key dedup pointed it at). Its part rows are
+  // dropped once every delete succeeded. The refused session row stays until the
+  // expiry sweep deletes it, which first deletes whatever is left; neither an
+  // owner abort nor deleteFile touches it.
+  async function refuseSession(session: UploadSession): Promise<void> {
+    await fenceRefusedSession(session.uploadSessionId);
+    await deleteRefusedUploads(session);
+  }
+
+  async function fenceRefusedSession(uploadSessionId: string): Promise<void> {
+    await db.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      data: { status: 'refused' },
+      namespace,
+    });
+  }
+
+  // The storage half of refuseSession, for a session already marked 'refused'.
+  async function deleteRefusedUploads(session: UploadSession): Promise<void> {
+    const partsDeleted = await deleteProxyTempPartObjects(session);
+    const objectDeleted = await deleteOwnUnpublishedObject(session);
+    if (partsDeleted && objectDeleted) {
+      await db.deleteMany({
+        model: 'uploadParts',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+        namespace,
+      });
+    }
+  }
+
+  // Aborts the session's storage upload, deletes its proxy part objects and ends
+  // it as aborted; a refused session is ended by refuseSession instead.
+  async function discardSessionUpload(session: UploadSession, options: { refused?: boolean } = {}): Promise<void> {
+    const policy = policies.get(session.policy);
+    const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+    if (
+      getStorageCapabilities(storage, storageTarget).multipart &&
+      storage.abortMultipartUpload &&
+      session.storageUploadId
+    ) {
+      try {
+        await storage.abortMultipartUpload({ key: session.storageKey, target: storageTarget, uploadId: session.storageUploadId });
+      } catch {
+        // Ignore abort errors (may already be aborted)
+      }
+    }
+
+    if (options.refused) {
+      await refuseSession(session);
+      return;
+    }
+    await deleteProxyTempPartObjects(session);
+    await endSessionAborted(session.uploadSessionId);
+  }
+
+  const service = {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
       // Legacy safety: pre-binding records may not carry ownerId.
       // Current sessions always persist ownerId, so this only preserves older fixtures.
@@ -279,6 +497,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency
       if (input.idempotencyKey) {
@@ -344,11 +563,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         throw errors.policyMaxSizeExceeded(input.policy, policy.maxSizeBytes, input.size);
       }
 
-      // Check authorization for replace-by-fileId
-      if (input.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(input.fileId, ctx);
+      // A client-chosen ID that names an existing file needs write permission on
+      // it. A new ID is accepted without reserving anything: the first completion
+      // that inserts the `files` row owns the file (see completeSession).
+      if (requestedFileId && fileWriteChecker) {
+        const canWrite = await fileWriteChecker.canWriteFile(requestedFileId, ctx);
         if (!canWrite) {
-          throw errors.forbidden({ fileId: input.fileId, operation: 'replace' });
+          throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
         }
       }
 
@@ -376,7 +597,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
-      const fileId = input.fileId || generateFileFnId('file');
+      const fileId = requestedFileId ?? generateFileFnId('file');
       // The version this session will publish is fixed here, so its storage key is
       // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
@@ -503,7 +724,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       return {
         uploadSessionId,
         fileId: session.fileId ?? undefined,
-        status: session.status,
+        status: session.status === 'refused' ? 'aborted' : session.status,
         totalParts: session.totalParts,
         recordedParts,
         uploadedParts: recordedParts,
@@ -526,7 +747,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
-      if (session.status === 'aborted') throw errors.uploadAborted();
+      if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
@@ -579,7 +800,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
-      if (session.status === 'aborted') throw errors.uploadAborted();
+      if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
@@ -645,9 +866,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (session.status === 'pending') {
-        await db.update({
+        // Conditional on 'pending': updateMany, so a session refused or moved on
+        // meanwhile is a zero-match no-op rather than a not-found error.
+        await db.updateMany({
           model: 'uploadSessions',
-          where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+          where: [
+            { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
+            { field: 'status', operator: 'eq', value: 'pending' },
+          ],
           data: { status: 'in_progress' },
           namespace,
         });
@@ -666,7 +892,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
-      if (session.status === 'aborted') throw errors.uploadAborted();
+      if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
@@ -694,9 +920,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Update status to in_progress if still pending
       if (session.status === 'pending') {
-        await db.update({
+        // Conditional on 'pending': updateMany, so a session refused or moved on
+        // meanwhile is a zero-match no-op rather than a not-found error.
+        await db.updateMany({
           model: 'uploadSessions',
-          where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+          where: [
+            { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
+            { field: 'status', operator: 'eq', value: 'pending' },
+          ],
           data: { status: 'in_progress' },
           namespace,
         });
@@ -714,7 +945,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
-      if (session.status === 'aborted') throw errors.uploadAborted();
+      if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') {
         // Idempotent: return existing result
         if (session.fileId && session.completionVersionId) {
@@ -753,12 +984,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      if (session.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(session.fileId, ctx);
-        if (!canWrite) {
-          throw errors.forbidden({ fileId: session.fileId, operation: 'replace' });
-        }
-      }
       const policy = policies.get(session.policy);
       const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
@@ -773,6 +998,54 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             namespace,
           })
         : null;
+
+      const fileId = publishedVersion?.fileId || session.fileId || generateFileFnId('file');
+      // Publish the version allocated at init, whose ID is part of the storage key.
+      // Sessions created before init allocated it have none, so mint one for them.
+      const versionId = session.completionVersionId || generateFileFnId('ver');
+
+      const findFile = () => db.findOne<{ fileId: string; currentVersionId: string }>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      const findOwnVersion = () => db.findOne({
+        model: 'fileVersions',
+        where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+        namespace,
+      });
+      // A files row pointing at this session's own versionId was written by this
+      // session (another call of it may still be committing), never by a rival.
+      const isOwnRow = (file: { currentVersionId: string } | null) => file?.currentVersionId === versionId;
+      const fileKey = `file\u0000${fileLockScope}\u0000${fileId}`;
+
+      // Refuse early, before any storage completion, when the file already exists
+      // and the caller cannot write it (for example a session whose init ran
+      // before another principal created the file). Nothing the session uploaded
+      // is kept, including a final object an interrupted attempt left. A session
+      // whose own commit is published or in flight skips this.
+      if (!publishedVersion && session.fileId) {
+        const current = await findFile();
+        if (current && !isOwnRow(current)) {
+          // Another call of this session may have published since this call
+          // read it, and a later writer may have moved the file on since.
+          if (await findOwnVersion()) {
+            return { fileId, versionId };
+          }
+          if (!(await canWriteFileNow(fileId, ctx))) {
+            await discardSessionUpload(session, { refused: true });
+            throw errors.forbidden({ fileId, operation: 'replace' });
+          }
+        }
+      }
+
+      // Before storage completion, wait for a commit of this fileId that is
+      // already running. A stuck one makes this call fail with the retryable
+      // 409 while it has changed nothing; only a commit that starts during this
+      // call's own storage step can keep it waiting below.
+      if (!publishedVersion) {
+        await runSerialized(fileKey, async () => {}, { ...fileKeyOptions(session), evictableAt: undefined });
+      }
 
       // Complete multipart upload
       if (publishedVersion) {
@@ -848,10 +1121,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       const now = new Date().toISOString();
-      const fileId = publishedVersion?.fileId || session.fileId || generateFileFnId('file');
-      // Publish the version allocated at init, whose ID is part of the storage key.
-      // Sessions created before init allocated it have none, so mint one for them.
-      const versionId = session.completionVersionId || generateFileFnId('ver');
       const metadata = session.metadata ?? {};
 
       // Check for deduplication
@@ -885,62 +1154,107 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      // Create or update file
-      const existingFile = !publishedVersion && session.fileId ? await db.findOne({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: session.fileId }], namespace }) : null;
+      // Commit section: create the file or add a version to it. The first
+      // completion to insert the `files` row owns the file; init reserves nothing.
+      // Within this process the commit decisions per fileId run one at a time
+      // (only these database steps: storage I/O above and refusal deletes below
+      // run outside the key, so a completion stuck in storage blocks no other).
+      // That is the only guard on adapters without unique constraints
+      // (single-process only). Across processes the unique `files.fileId`
+      // constraint decides the winner.
+      const commitOutcome = publishedVersion
+        ? 'resumed'
+        : await runSerialized(fileKey, async (): Promise<'published' | 'recorded' | 'refused'> => {
+            // Another completion call of this same session already published it.
+            if (await findOwnVersion()) return 'recorded';
 
-      if (publishedVersion) {
-        // The interrupted attempt already pointed the file at this version. Leave the
-        // file row alone so a later version published on it is not rolled back.
-      } else if (existingFile) {
-        await db.update({
-          model: 'files',
-          where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-          data: {
-            currentVersionId: versionId,
-            size: session.size,
-            mimeType: session.mimeType,
-            metadata,
-            updatedAt: now,
-          },
-          namespace,
-        });
-      } else {
-        await db.create({
-          model: 'files',
-          data: {
-            fileId,
-            currentVersionId: versionId,
-            ownerId: session.ownerId,
-            tenantId: session.tenantId,
-            visibility: policy?.visibility || 'private',
-            policy: session.policy,
-            mimeType: session.mimeType,
-            size: session.size,
-            name: session.fileName,
-            metadata,
-            createdAt: now,
-            updatedAt: now,
-          },
-          namespace,
-        });
+            let current = await findFile();
+            if (!current) {
+              try {
+                await db.create({
+                  model: 'files',
+                  data: {
+                    fileId,
+                    currentVersionId: versionId,
+                    ownerId: session.ownerId,
+                    tenantId: session.tenantId,
+                    visibility: policy?.visibility || 'private',
+                    policy: session.policy,
+                    mimeType: session.mimeType,
+                    size: session.size,
+                    name: session.fileName,
+                    metadata,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                  namespace,
+                });
+              } catch (err) {
+                // Lost the insert to another process: re-read the row it wrote.
+                current = await findFile();
+                if (!current) throw err;
+              }
+            }
+
+            // Someone else's row (or a later version of it). Permission is decided
+            // from the row as it is now, not from the checks at init or above.
+            // A row this session wrote itself skips straight to its version.
+            if (current && !isOwnRow(current)) {
+              if (await findOwnVersion()) return 'recorded';
+              if (!(await canWriteFileNow(fileId, ctx))) {
+                // Fenced under the key; its storage deletes run after release.
+                await fenceRefusedSession(session.uploadSessionId);
+                return 'refused';
+              }
+              await db.update({
+                model: 'files',
+                where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+                data: {
+                  currentVersionId: versionId,
+                  size: session.size,
+                  mimeType: session.mimeType,
+                  metadata,
+                  updatedAt: now,
+                },
+                namespace,
+              });
+            }
+
+            try {
+              await db.create({
+                model: 'fileVersions',
+                data: {
+                  versionId,
+                  fileId,
+                  storageKey: finalStorageKey,
+                  mimeType: session.mimeType,
+                  size: session.size,
+                  checksumSha256Base64,
+                  tenantId: session.tenantId,
+                  createdAt: now,
+                },
+                namespace,
+              });
+            } catch (err) {
+              // Another call of this session inserted the same version first.
+              if (await findOwnVersion()) return 'recorded';
+              throw err;
+            }
+            return 'published';
+          }, { ...fileKeyOptions(session), keepWaiting: true });
+
+      if (commitOutcome === 'recorded') {
+        // The recorded result belongs to the call that published it; this call
+        // deletes nothing and emits nothing.
+        return { fileId, versionId };
       }
 
-      // Create version (the interrupted attempt already created it when resuming)
-      if (!publishedVersion) {
-        await db.create({
-          model: 'fileVersions',
-          data: {
-            versionId,
-            fileId,
-            storageKey: finalStorageKey,
-            mimeType: session.mimeType,
-            size: session.size,
-            checksumSha256Base64,
-            tenantId: session.tenantId,
-            createdAt: now,
-          },
-          namespace,
-        });
+      if (commitOutcome === 'refused') {
+        // Dedup's own delete of the session's object ignores failures, and
+        // stitching's proxy part deletes too; these delete them again and check
+        // the result.
+        await deleteRefusedUploads(session);
+        throw errors.forbidden({ fileId, operation: 'replace' });
       }
 
       // Update session
@@ -1004,35 +1318,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
+      // Already ended. A refused session may still have objects to delete; its
+      // row records them for the expiry sweep, so leave it in place.
+      if (isAbortedStatus(session.status)) return;
 
-      // Abort multipart upload
-      const policy = policies.get(session.policy);
-      const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
-      if (
-        getStorageCapabilities(storage, storageTarget).multipart &&
-        storage.abortMultipartUpload &&
-        session.storageUploadId
-      ) {
-        try {
-          await storage.abortMultipartUpload({ key: session.storageKey, target: storageTarget, uploadId: session.storageUploadId });
-        } catch {
-          // Ignore abort errors (may already be aborted)
-        }
-      }
-
-      await deleteProxyTempPartObjects(session);
-      await db.deleteMany({
-        model: 'uploadParts',
-        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-        namespace,
-      });
-
-      await db.update({
-        model: 'uploadSessions',
-        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-        data: { status: 'aborted' },
-        namespace,
-      });
+      await discardSessionUpload(session);
     },
 
     async cleanupExpiredSessions(): Promise<{ deletedSessions: number; abortedMultipart: number }> {
@@ -1048,6 +1338,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
         let deletedSessions = 0;
         let abortedMultipart = 0;
+
+        // The sweep deletes a session's final object only when the session was
+        // refused: no completion can publish that object or let dedup share it.
+        // Any other expired session keeps its final object, as a completion of
+        // it may still be running and publish it.
+        // One reference lookup for the whole sweep keeps any refused session's
+        // object that a version or artifact references anyway.
+        const candidateRefs = new Set<string>();
+        for (const session of expiredSessions) {
+            const ownRef = ownObjectRef(session);
+            if (ownRef !== undefined && session.status === 'refused') candidateRefs.add(ownRef);
+        }
+        const referencedRefs = await findReferencedStorageRefs({ db, namespace, policies }, candidateRefs);
 
         for (const session of expiredSessions) {
             const policy = policies.get(session.policy);
@@ -1065,15 +1368,30 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 }
             }
 
-            await deleteProxyTempPartObjects(session);
-            await db.deleteMany({
-                model: 'uploadParts',
-                where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+            // If a part object or a refused session's final object cannot be
+            // deleted, keep the session and its part rows for the next sweep.
+            const partsDeleted = await deleteProxyTempPartObjects(session);
+            const objectDeleted = session.status === 'refused'
+                ? await deleteOwnUnpublishedObject(session, referencedRefs)
+                : true;
+            if (!partsDeleted || !objectDeleted) {
+                continue;
+            }
+            // Only while it still has the status this sweep read: a session
+            // refused meanwhile keeps its row, the record of what to delete.
+            const removed = await db.deleteMany({
+                model: 'uploadSessions',
+                where: [
+                    { field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId },
+                    { field: 'status', operator: 'eq', value: session.status },
+                ],
                 namespace
             });
-            
-            await db.delete({
-                model: 'uploadSessions',
+            if (removed === 0) {
+                continue;
+            }
+            await db.deleteMany({
+                model: 'uploadParts',
                 where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
                 namespace
             });
@@ -1083,6 +1401,34 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         return { deletedSessions, abortedMultipart };
     }
   };
+
+  // Calls completing one session run one at a time in this process, so a
+  // retried call never finalizes storage or refuses alongside another call of
+  // the same session; it reads the result the earlier call recorded. After the
+  // session has expired its key may be taken by a call that has waited out
+  // SERIALIZED_WAIT_TIMEOUT_MS: that call only reads the session and reports it
+  // expired. Sessions of one fileId run their storage steps concurrently (each
+  // has its own storage key) and only their commit decision per fileId (see the
+  // commit section) one at a time.
+  const completeSessionNow = service.completeSession;
+  service.completeSession = async (uploadSessionId, ctx, uploadSessionToken) => {
+    const complete = () => completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken);
+    // expiresAt never changes after init; status is read again inside.
+    const session = await db.findOne<UploadSession>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    });
+    if (!session) {
+      return complete();
+    }
+    const expiresAtMs = Date.parse(session.expiresAt);
+    return runSerialized(`session\u0000${namespace}\u0000${uploadSessionId}`, complete, {
+      evictableAt: Number.isNaN(expiresAtMs) ? undefined : expiresAtMs,
+    });
+  };
+
+  return service;
 }
 
 export type UploadSessionService = ReturnType<typeof createUploadSessionService>;

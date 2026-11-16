@@ -34,7 +34,7 @@ Wire-format envelope:
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
 | `FILEFN_AUTH_REQUIRED` | 401 | `auth.required: true` and no session resolved. | Sign in; ensure auth wiring forwards cookies / `Authorization`. |
-| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. | Check ownership / grants; check the principal is in the right tenant. |
+| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. On upload, the `fileId` names a file the caller cannot write: at init when the file exists, or at completion when another principal created it first (the session is then aborted, so a retry returns `FILEFN_UPLOAD_ABORTED`, and its bytes are deleted, by the expired-session cleanup if a delete fails). | Check ownership / grants; check the principal is in the right tenant. |
 | `FILEFN_NOT_FOUND` | 404 | File / artifact / share / permission not found. | Confirm the id exists; remember anti-enumeration: 404 may mask a permission denial. |
 | `FILEFN_SESSION_TOKEN_REQUIRED` | 401 | Anonymous upload missing `x-upload-session-token`. | Pass the token returned from `POST /upload/init`. |
 | `FILEFN_SESSION_TOKEN_INVALID` | 403 | Wrong token for the session. | Re-init the upload, or check storage in the client. |
@@ -63,12 +63,14 @@ Wire-format envelope:
 | `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |
+| `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | Another completion call of the same upload session, or the commit step of a completion of the same `fileId` in the same database, is still running in this FileFn process and did not finish within 30 seconds. Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` called twice. | Treat as success; the file id is in the previous response. |
 | `FILEFN_IDEMPOTENCY_CONFLICT` | 409 | Same idempotency key + different request body. | Use a new idempotency key, or replay with the same body. |
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
+| `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |
 | `FILEFN_SESSION_NOT_FOUND` | 404 | The `uploadSessionId` doesn't exist. | Use the id returned from init; sessions expire after TTL. |
 

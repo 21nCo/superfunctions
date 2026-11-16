@@ -53,6 +53,8 @@ export const ErrorCodes = {
   SESSION_TOKEN_REQUIRED: 'FILEFN_SESSION_TOKEN_REQUIRED',
   SESSION_TOKEN_INVALID: 'FILEFN_SESSION_TOKEN_INVALID',
   STORAGE_PATH_NOT_PER_VERSION: 'FILEFN_STORAGE_PATH_NOT_PER_VERSION',
+  INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
+  UPLOAD_COMPLETION_IN_PROGRESS: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -229,5 +231,22 @@ export function storagePathNotPerVersion(policy: string): FileFnError {
     'Policy storagePath must return a key that contains the full versionId',
     500,
     { policy }
+  );
+}
+
+export function invalidFileId(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.INVALID_FILE_ID,
+    'fileId must match file_[A-Za-z0-9_-]{8,64}',
+    400
+  );
+}
+
+export function uploadCompletionInProgress(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.UPLOAD_COMPLETION_IN_PROGRESS,
+    'Another completion of this upload session or file is still running; retry the completion later',
+    409,
+    { retryable: true }
   );
 }
