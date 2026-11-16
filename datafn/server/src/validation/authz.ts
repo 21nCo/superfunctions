@@ -19,6 +19,7 @@ import {
   getTemporalClauses,
   getTemporalGroupAliases,
   parseSortTerm,
+  relationFkFieldForManyOne,
   relationTargetEndpoint,
   resolveCapabilities,
 } from "@datafn/core";
@@ -177,6 +178,23 @@ function canReadField(
   return getReadFields(resolvePermissions(schema, resource)).includes(field);
 }
 
+/**
+ * A relation of `resource` whose foreign key is stored on `resource` under
+ * the relation's own name (e.g. a many-one `parent` with fkField "parent").
+ */
+function isForeignKeyNamedManyOne(schema: DatafnSchema, resource: string, name: string): boolean {
+  const match = findRelationMatch(schema as any, resource, name);
+  if (!match) return false;
+  const relation = match.relation as any;
+  if (relation.type === "many-one" && match.direction === "forward") {
+    return relationFkFieldForManyOne(relation) === name;
+  }
+  if (relation.type === "one-many" && match.direction === "inverse") {
+    return (relation.fkField || relation.foreignKey || `${relation.inverse}Id`) === name;
+  }
+  return false;
+}
+
 function resolveRelationTargetResources(
   schema: DatafnSchema,
   sourceResource: string,
@@ -249,6 +267,25 @@ export function validateQueryAuthz(
           ),
         ];
         if (relationTargets.length > 0) {
+          // A many-one relation that stores its id under its own name (e.g.
+          // node.parent) returns that field's value; it needs read access to
+          // the field as well.
+          const hidesUnreadableField = currentResourceNames.some((currentResourceName) => {
+            const currentResource = getResourceSchema(schema, currentResourceName);
+            return (
+              !!currentResource &&
+              isForeignKeyNamedManyOne(schema, currentResourceName, segment) &&
+              !canReadField(schema, currentResource, segment)
+            );
+          });
+          if (hidesUnreadableField) {
+            return {
+              ok: false,
+              code: "FORBIDDEN",
+              message: "Read access denied",
+              path: `select[${i}]`,
+            };
+          }
           currentResourceNames = relationTargets;
           continue;
         }
@@ -279,6 +316,7 @@ export function validateQueryAuthz(
       resource,
       policy,
       capabilityFields,
+      schema,
     );
     if (!filterFieldsResult.ok) {
       return filterFieldsResult;
@@ -417,6 +455,7 @@ function extractFieldsFromFilter(
   resource: DatafnResourceSchema,
   policy: DatafnPermissionsPolicy,
   capabilityFields: Set<string>,
+  schema?: DatafnSchema,
 ): { ok: true } | AuthzError {
   const readFields = policy.read?.fields || [];
 
@@ -431,6 +470,7 @@ function extractFieldsFromFilter(
               resource,
               policy,
               capabilityFields,
+              schema,
             );
             if (!result.ok) return result;
           }
@@ -447,9 +487,18 @@ function extractFieldsFromFilter(
     if (baseField === "id") continue;
     if (capabilityFields.has(baseField)) continue;
 
-    // Check if it's a direct field (not a relation)
+    // Check if it's a direct field (not a relation). A scalar filter on a
+    // relation that stores its id under its own name (e.g. node.parent)
+    // filters that field, declared or not; quantifier objects stay relation
+    // filters.
+    const isQuantifier =
+      parts.length === 1 &&
+      typeof value === "object" && value !== null && !Array.isArray(value) &&
+      ("$any" in value || "$all" in value || "$none" in value);
     const isField = resource.fields.some((f) => f.name === baseField) ||
-                    capabilityFields.has(baseField);
+                    capabilityFields.has(baseField) ||
+                    (!!schema && parts.length === 1 && !isQuantifier &&
+                      isForeignKeyNamedManyOne(schema, resource.name, baseField));
 
     if (isField && !readFields.includes(baseField)) {
       return {

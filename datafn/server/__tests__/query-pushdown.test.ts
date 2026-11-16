@@ -562,7 +562,7 @@ describe("IN_MEMORY pre-filter optimisation", () => {
 
     const findManySpy = vi.spyOn(db, "findMany");
 
-    // Query has a relation quantifier → IN_MEMORY strategy
+    // Query has an $all relation quantifier → IN_MEMORY strategy
     // But status:active is a base-field filter → should be pre-filtered
     const res = await server.router.handle(
       queryReq({
@@ -570,7 +570,7 @@ describe("IN_MEMORY pre-filter optimisation", () => {
         version: 1,
         filters: {
           status: { $eq: "active" },
-          tags:   { $any: { label: { $eq: "urgent" } } },
+          tags:   { $all: { label: { $eq: "urgent" } } },
         },
         select: ["title"],
         sort: ["id:asc"],
@@ -667,14 +667,14 @@ describe("IN_MEMORY targeted secondary loading", () => {
 
     const findManySpy = vi.spyOn(db, "findMany");
 
-    // $any filter → IN_MEMORY; status=active → pre-filter narrows primary to t1, t2
+    // $all filter → IN_MEMORY; status=active → pre-filter narrows primary to t1, t2
     const res = await server.router.handle(
       queryReq({
         resource: "task",
         version: 1,
         filters: {
           status: { $eq: "active" },
-          tags:   { $any: { label: { $eq: "urgent" } } },
+          tags:   { $all: { label: { $eq: "urgent" } } },
         },
         select: ["title"],
         sort: ["id:asc"],
@@ -710,14 +710,14 @@ describe("IN_MEMORY targeted secondary loading", () => {
     const { database: db, server } = await createTaskCategoryServer();
     const findManySpy = vi.spyOn(db, "findMany");
 
-    // $any on category forces IN_MEMORY; status=active pre-filters primary to t1, t2
+    // $all on category forces IN_MEMORY; status=active pre-filters primary to t1, t2
     const res = await server.router.handle(
       queryReq({
         resource: "task",
         version: 1,
         filters: {
           status:   { $eq: "active" },
-          category: { $any: { name: { $eq: "Alpha" } } },
+          category: { $all: { name: { $eq: "Alpha" } } },
         },
         select: ["title"],
         sort: ["id:asc"],
@@ -746,14 +746,14 @@ describe("IN_MEMORY targeted secondary loading", () => {
     const { database: db, server } = await createProjectTaskServer();
     const findManySpy = vi.spyOn(db, "findMany");
 
-    // $any on tasks forces IN_MEMORY; active=true pre-filters projects to p1, p2
+    // $all on tasks forces IN_MEMORY; active=true pre-filters projects to p1, p2
     const res = await server.router.handle(
       queryReq({
         resource: "project",
         version: 1,
         filters: {
           active: { $eq: true },
-          tasks:  { $any: { title: { $eq: "T1" } } },
+          tasks:  { $all: { title: { $in: ["T1", "T2"] } } },
         },
         select: ["name"],
         sort: ["id:asc"],
@@ -764,7 +764,7 @@ describe("IN_MEMORY targeted secondary loading", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    // p1 is active AND has a task titled "T1"
+    // p1 is active AND all its tasks are titled T1 or T2
     expect(body.result.data).toEqual([{ id: "p1", name: "Active A" }]);
 
     // Task must be fetched with projectId IN [p1, p2] — NOT p3 (inactive)
@@ -781,14 +781,14 @@ describe("IN_MEMORY targeted secondary loading", () => {
     const { database: db, server } = await createTaskTagServer();
     const findManySpy = vi.spyOn(db, "findMany");
 
-    // $any filter AND tags.* select both reference tags — must be loaded only once
+    // $all filter AND tags.* select both reference tags — must be loaded only once
     const res = await server.router.handle(
       queryReq({
         resource: "task",
         version: 1,
         filters: {
           status: { $eq: "active" },
-          tags:   { $any: { label: { $eq: "urgent" } } },
+          tags:   { $all: { label: { $eq: "urgent" } } },
         },
         select: ["title", "tags.*"],
         sort: ["id:asc"],
@@ -833,7 +833,7 @@ describe("IN_MEMORY targeted secondary loading", () => {
         version: 1,
         filters: {
           status: { $eq: "active" },        // pre-filter → empty primary
-          tags:   { $any: { label: { $eq: "urgent" } } },
+          tags:   { $all: { label: { $eq: "urgent" } } },
         },
         select: ["title"],
       }),

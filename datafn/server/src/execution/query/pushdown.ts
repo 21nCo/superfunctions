@@ -19,8 +19,9 @@ import {
 import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DFQLQuery, QueryResult } from "./dfql.js";
-import { convertDfqlFilters, convertDfqlSort } from "./planner.js";
-import { parseSortTerms, validateSortForCursor } from "./sort.js";
+import { convertDfqlFilters, convertDfqlSort, hasInMemoryFilterPatterns } from "./planner.js";
+import { FilterPushdownUnavailableError, planFilterPushdown } from "./filter-plan.js";
+import { parseSortTerms, sortRecords, validateSortForCursor } from "./sort.js";
 import { computeNextCursor, applyCursorAfter } from "./pagination.js";
 import { materializeSelect } from "./select.js";
 import { DbDataStore } from "../db-store.js";
@@ -223,12 +224,14 @@ export async function executePushdownQuery(
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
+  actorId?: string,
 ): Promise<QueryResult> {
   const { records, nextCursor, count } = await pushdownCore(
     query,
     schema,
     db,
     namespace,
+    actorId,
   );
 
   // Simple field projection (no relation expansion)
@@ -274,6 +277,7 @@ export async function executePartialPushdownQuery(
     schema,
     db,
     namespace,
+    actorId,
   );
 
   // 2. Build a targeted DataStore from the already-fetched primary records.
@@ -322,6 +326,7 @@ async function pushdownCore(
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
+  actorId?: string,
 ): Promise<{
   records: Record<string, unknown>[];
   nextCursor: Record<string, unknown> | null;
@@ -344,25 +349,46 @@ async function pushdownCore(
     assertRequiredAclIndexes(metadata.aclIndexCatalog ?? []);
   }
 
-  // 1. Convert filters and sort -------------------------------------------
-  let whereClauses: WhereClause[] = [];
-  if (queryWithAutoFilters.filters) {
-    const converted = convertDfqlFilters(
-      queryWithAutoFilters.filters,
-      queryWithAutoFilters.resource,
-      schema,
-    );
-    if (converted === null) {
-      // Never run a pushdown query without filters it could not push:
-      // dropping them would return rows the filters exclude (including
-      // the shareable access filter).
-      throw new DatafnExecutionError(
-        "INTERNAL",
-        "Query filters cannot be pushed down to the database",
-        "filters",
+  // 1. Plan filters and convert sort --------------------------------------
+  // Filters the plain clause conversion handles keep its semantics (as
+  // before DATA-18); the others are planned with in-memory semantics. A
+  // filter the adapter cannot express is never dropped: the caller
+  // evaluates the query in memory instead.
+  const filters = queryWithAutoFilters.filters;
+  const plainWhere =
+    filters && !hasInMemoryFilterPatterns(filters)
+      ? convertDfqlFilters(filters, queryWithAutoFilters.resource, schema)
+      : null;
+  // Filters planned here (not by the plain conversion) were evaluated in
+  // memory before DATA-18. If the adapter rejects one of their statements
+  // (e.g. an id list past D1's bound-parameter limit), evaluate the query in
+  // memory as before instead of failing the request.
+  const planned = plainWhere === null && !!filters && Object.keys(filters).length > 0;
+  const adapterRead = async <T>(read: () => Promise<T>): Promise<T> => {
+    if (!planned) return read();
+    try {
+      return await read();
+    } catch (error) {
+      if (error instanceof FilterPushdownUnavailableError) throw error;
+      throw new FilterPushdownUnavailableError(
+        `The database rejected a pushed-down filter: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    whereClauses = converted as WhereClause[];
+  };
+  const filterPlan = plainWhere
+    ? { kind: "where" as const, branches: [plainWhere as WhereClause[]] }
+    : await adapterRead(() =>
+        planFilterPushdown(
+          filters,
+          queryWithAutoFilters.resource,
+          schema,
+          { db, namespace, actorId },
+        ),
+      );
+  if (filterPlan === null) {
+    throw new FilterPushdownUnavailableError(
+      "Query filters cannot be pushed down to the database",
+    );
   }
 
   const orderBy = convertDfqlSort(queryWithAutoFilters.sort);
@@ -393,14 +419,54 @@ async function pushdownCore(
   const pushdownOffset = !hasCursor ? queryWithAutoFilters.offset : undefined;
 
   // 4. Fetch from adapter -------------------------------------------------
-  const rows: Record<string, unknown>[] = await db.findMany({
-    model: query.resource,
-    where: whereClauses,
-    orderBy,
-    limit: pushdownLimit,
-    offset: pushdownOffset,
-    namespace,
-  });
+  if (filterPlan.kind === "empty") {
+    return {
+      records: [],
+      nextCursor: null,
+      count: queryWithAutoFilters.count === true ? 0 : undefined,
+    };
+  }
+  const branches = filterPlan.branches as WhereClause[][];
+  let rows: Record<string, unknown>[];
+  if (branches.length === 1) {
+    rows = await adapterRead(() =>
+      db.findMany({
+        model: query.resource,
+        where: branches[0],
+        orderBy,
+        limit: pushdownLimit,
+        offset: pushdownOffset,
+        namespace,
+      }),
+    );
+  } else {
+    // Disjoint branches: read every matching row of each, merge them in the
+    // query's sort order (the in-memory comparator) and page once. A
+    // per-branch limit could cut rows the database orders differently
+    // (NULL placement, collation) from the comparator.
+    // The branches are disjoint, but they are read one by one: a record
+    // written between two reads can match both, so keep its first copy.
+    const merged: Record<string, unknown>[] = [];
+    const seenIds = new Set<unknown>();
+    for (const where of branches) {
+      const branchRows = await adapterRead(() =>
+        db.findMany({
+          model: query.resource,
+          where,
+          orderBy,
+          namespace,
+        }),
+      );
+      for (const row of branchRows) {
+        if (row.id != null && seenIds.has(row.id)) continue;
+        seenIds.add(row.id);
+        merged.push(row);
+      }
+    }
+    rows = sortRecords(merged, sortTerms);
+    if (pushdownOffset) rows = rows.slice(pushdownOffset);
+    if (pushdownLimit != null) rows = rows.slice(0, pushdownLimit);
+  }
 
   // 5. Cursor pagination (in-memory on already-sorted adapter results) ----
   let records = rows;
@@ -455,11 +521,16 @@ async function pushdownCore(
   // 7. Optional count -------------------------------------------------------
   let count: number | undefined;
   if (queryWithAutoFilters.count === true) {
-    count = await db.count({
-      model: queryWithAutoFilters.resource,
-      where: whereClauses,
-      namespace,
-    });
+    count = 0;
+    for (const where of branches) {
+      count += await adapterRead(() =>
+        db.count({
+          model: queryWithAutoFilters.resource,
+          where,
+          namespace,
+        }),
+      );
+    }
   }
 
   return { records, nextCursor, count };

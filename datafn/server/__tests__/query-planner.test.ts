@@ -200,9 +200,9 @@ describe("convertDfqlFilters", () => {
   });
 
   // Array shorthand equality (arrays treated as scalar, not operator object)
-  it("array value treated as shorthand equality", () => {
+  it("array value treated as a shorthand value list (in), as the in-memory evaluator reads it", () => {
     const result = convertDfqlFilters({ ids: ["a", "b"] });
-    expect(result).toEqual([{ field: "ids", operator: "eq", value: ["a", "b"] }]);
+    expect(result).toEqual([{ field: "ids", operator: "in", value: ["a", "b"] }]);
   });
 
   // Schema-based relation detection

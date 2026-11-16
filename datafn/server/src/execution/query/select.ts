@@ -502,7 +502,19 @@ export function materializeSelect(
     result.id = record.id;
   }
 
-  return applyOmit(result, effectiveOmit);
+  // A key the select names stays in the result even when it is also a
+  // foreign key: a many-one `parent` relation storing its id in `parent`
+  // selected as `parent` or expanded as `parent.*`. Only the user's omit
+  // list can remove it.
+  const explicitlySelected = new Set(
+    select
+      .filter((token): token is string => typeof token === "string" && token !== "*")
+      .map((token) => token.split(".")[0]),
+  );
+  return applyOmit(
+    result,
+    effectiveOmit.filter((field) => !explicitlySelected.has(field) || omit?.includes(field)),
+  );
 }
 
 /**
