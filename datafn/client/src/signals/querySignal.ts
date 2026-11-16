@@ -665,11 +665,14 @@ function createQuerySignal<T>(
       ? resolvePinnedQueryIds(fullQuery)
       : undefined;
   /**
-   * Whether a write to this signal's resource names none of its pinned
-   * records, in its ids or in an `id` its record carries.
+   * How a write to this signal's resource affects its pinned records:
+   * "skip" when it names none of them, "refresh" when its record carries an
+   * `id` other than the ids it names (a store may write under either), and
+   * null to use the general rules. A write that may carry a record but
+   * arrives without one (relayed from another tab) is never skipped.
    */
-  const writeSkipsPinnedRecords = (event: any): boolean => {
-    if (!pinnedIds) return false;
+  const pinnedWriteDecision = (event: any): "skip" | "refresh" | null => {
+    if (!pinnedIds) return null;
     const ids = event.ids;
     if (
       !Array.isArray(ids) ||
@@ -677,13 +680,14 @@ function createQuerySignal<T>(
       !ids.every((id: unknown) => typeof id === "string") ||
       ids.some((id: string) => pinnedIds.has(id))
     ) {
-      return false;
+      return null;
     }
-    if (isPlainObject(event.record) && event.record.id !== undefined) {
-      const recordId = event.record.id;
-      if (typeof recordId !== "string" || pinnedIds.has(recordId)) return false;
-    }
-    return true;
+    if (event.action === "delete") return "skip";
+    if (!isPlainObject(event.record)) return null;
+    const recordId = event.record.id;
+    if (recordId === undefined) return "skip";
+    if (typeof recordId !== "string" || pinnedIds.has(recordId)) return "refresh";
+    return "skip";
   };
   let membershipRun = 0;
   /**
@@ -846,7 +850,12 @@ function createQuerySignal<T>(
         return;
       }
       
-      if (writeSkipsPinnedRecords(event)) {
+      const pinnedDecision = pinnedWriteDecision(event);
+      if (pinnedDecision === "skip") {
+        return;
+      }
+      if (pinnedDecision === "refresh") {
+        scheduleRefresh();
         return;
       }
 

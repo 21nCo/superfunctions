@@ -184,13 +184,51 @@ describe("pinned signals on a resource without relations (direct mode)", () => {
     expect(queried).not.toContain("notes:a");
 
     // A write whose record carries a pinned id refreshes that signal.
-    queried.length = 0;
-    await notes.mutate({ operation: "insert", id: "notes:d", record: { id: "notes:a", body: "y" } } as any);
-    await settle();
-    expect(queried).toContain("notes:a");
+    for (const operation of ["insert", "merge"]) {
+      queried.length = 0;
+      await notes.mutate({ operation, id: "notes:d", record: { id: "notes:a", body: "y" } } as any);
+      await settle();
+      expect(queried).toContain("notes:a");
+    }
 
     unsubPlain();
     unsubSearch();
+  });
+});
+
+describe("pinned signals and writes relayed from another tab", () => {
+  it("does not skip a relayed write, which arrives without its record", async () => {
+    const queried = mockRemote("notes");
+    const client = createDatafnClient({
+      schema: {
+        resources: [{ name: "notes", version: 1, fields: [{ name: "body", type: "string", required: false }] }],
+      },
+      sync: { remote: "http://example.com", crossTab: true },
+      clientId: "relay-notes",
+    });
+    clients.push(client as any);
+    const unsub = client.table("notes").signal({ filters: { id: "notes:a" } }).subscribe(() => {});
+    await settle();
+
+    const otherTab = new BroadcastChannel("datafn:relay-notes");
+    const relay = (action: string) =>
+      otherTab.postMessage({
+        sourceTabId: "other-tab",
+        event: { type: "mutation_applied", resource: "notes", ids: ["notes:d"], action, timestampMs: Date.now() },
+      });
+    try {
+      queried.length = 0;
+      relay("delete");
+      await settle();
+      expect(queried).toEqual([]);
+
+      relay("merge");
+      await settle();
+      expect(queried).toContain("notes:a");
+    } finally {
+      otherTab.close();
+      unsub();
+    }
   });
 });
 
