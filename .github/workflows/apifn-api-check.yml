@@ -46,6 +46,11 @@ on:
         required: false
         default: true
         type: boolean
+      called_as_reusable_workflow:
+        description: Leave at its default; marks a workflow_call run (workflow_dispatch does not declare it), see the api-check job's if
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       spec_path:
@@ -101,9 +106,11 @@ permissions:
 
 jobs:
   api-check:
-    # A called workflow sees its caller's github context, so external callers (apifn/README.md) still run this job;
-    # only a direct workflow_dispatch run outside 21nCo/superfunctions skips (SFNS-121 D14, scripts/verify-owners.mjs).
-    if: github.repository == '21nCo/superfunctions' || github.event_name != 'workflow_dispatch' || !startsWith(github.workflow_ref, format('{0}/.github/workflows/apifn-api-check.yml@', github.repository))
+    # A called workflow sees its caller's github context (repository, event_name, workflow_ref), so only its own inputs
+    # tell a call from a direct run: called_as_reusable_workflow defaults to true under workflow_call and is not declared
+    # under workflow_dispatch. Every caller, including external repositories (apifn/README.md), runs this job; a direct
+    # workflow_dispatch run skips outside 21nCo/superfunctions (SFNS-121 D14, checked by scripts/verify-owners.mjs).
+    if: github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true
     runs-on: ubuntu-latest
 
     steps:
