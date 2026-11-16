@@ -1,0 +1,21 @@
+datafn/server/__tests__/exe-phase06.test.ts
+  s_aa5ca8838ece80::t_2a9734aac5f58c 366-417
+datafn/server/src/routes/__tests__/query-owner-access.test.ts
+  s_aa5ca8838ece80::t_bbd8d55a7b760e 503-504,508
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92cb02c7687aa5cdd4c9da77b2657b8c61fc515b",
+  "prompts": {},
+  "sessions": {
+    "s_aa5ca8838ece80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_aa5ca8838ece80",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
