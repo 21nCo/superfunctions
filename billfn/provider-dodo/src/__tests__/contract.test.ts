@@ -1,0 +1,689 @@
+import { createHmac } from 'node:crypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  BillFnBillingAccount,
+  BillFnCheckoutSession,
+  BillFnPriceDefinition,
+  BillFnSubscription,
+  BillFnVerifyCheckoutInput
+} from '@billfn/core';
+import { createDodoProvider, type DodoProviderConfig } from '../index.js';
+import recorded from './fixtures/dodo-api-v1.124.0.json';
+
+/*
+ * Contract tests: every adapter call against responses recorded from Dodo's public API reference
+ * (fixtures/dodo-api-v1.124.0.json names the source and version). Each test pins the request Dodo documents
+ * and how the adapter reads Dodo's documented answer.
+ */
+
+const TEST_HOST = 'https://test.dodopayments.com';
+const SESSION_ID = recorded.createCheckoutSession.response.session_id;
+const PAYMENT_ID = recorded.getCheckoutSession.response.payment_id;
+const SUBSCRIPTION_ID = recorded.getSubscription.response.subscription_id;
+
+type Route = unknown | ((body: Record<string, unknown> | undefined) => Response);
+
+interface RecordedCall {
+  method: string;
+  url: string;
+  body?: Record<string, unknown>;
+  authorization?: string | null;
+}
+
+/** A Dodo API double that answers `METHOD /path` with a recorded body and records every request. */
+function dodoApi(routes: Record<string, Route>) {
+  const calls: RecordedCall[] = [];
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
+    calls.push({ method, url, body, authorization: new Headers(init?.headers).get('authorization') });
+    const route = routes[`${method} ${new URL(url).pathname}`];
+    if (route === undefined) {
+      return new Response(`no recorded Dodo response for ${method} ${url}`, { status: 500 });
+    }
+    return typeof route === 'function' ? (route as (b: typeof body) => Response)(body) : Response.json(route);
+  }) as typeof fetch;
+  return { fetchMock, calls };
+}
+
+function provider(fetchMock: typeof fetch, config: Partial<DodoProviderConfig> = {}) {
+  return createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock, ...config });
+}
+
+const billingAccount: BillFnBillingAccount = {
+  id: 'ba_user_123',
+  ownerType: 'user',
+  ownerId: 'user_123',
+  createdAt: '2026-11-17T00:00:00.000Z',
+  updatedAt: '2026-11-17T00:00:00.000Z'
+};
+
+const plan = { productKey: 'nucleus', planKey: 'nucleus', displayName: 'Nucleus', features: {}, limits: {}, prices: [] };
+
+const monthPrice: BillFnPriceDefinition = {
+  priceId: 'price_nucleus_month',
+  provider: 'dodo',
+  providerProductId: 'pdt_nucleus_month',
+  currency: 'USD',
+  amount: 1200,
+  kind: 'subscription',
+  interval: 'month'
+};
+
+const lifetimePrice: BillFnPriceDefinition = {
+  priceId: 'price_nucleus_lifetime',
+  provider: 'dodo',
+  providerProductId: 'pdt_nucleus_lifetime',
+  currency: 'USD',
+  amount: 9900,
+  kind: 'one_time',
+  interval: 'lifetime'
+};
+
+function checkoutSession(price: BillFnPriceDefinition, patch: Partial<BillFnCheckoutSession> = {}): BillFnCheckoutSession {
+  return {
+    checkoutSessionId: 'chk_123',
+    billingAccountId: billingAccount.id,
+    planKey: 'nucleus',
+    priceId: price.priceId,
+    provider: 'dodo',
+    providerCheckoutId: SESSION_ID,
+    status: 'requires_action',
+    createdAt: '2026-11-17T09:00:00.000Z',
+    updatedAt: '2026-11-17T09:00:00.000Z',
+    ...patch
+  };
+}
+
+function verifyInput(price: BillFnPriceDefinition, patch: Partial<BillFnVerifyCheckoutInput> = {}): BillFnVerifyCheckoutInput {
+  return { checkoutSession: checkoutSession(price), billingAccount, plan, price, ...patch };
+}
+
+function subscription(patch: Partial<BillFnSubscription> = {}): BillFnSubscription {
+  return {
+    id: 'bsub_1',
+    billingAccountId: billingAccount.id,
+    planKey: 'nucleus',
+    priceId: monthPrice.priceId,
+    provider: 'dodo',
+    providerSubscriptionId: SUBSCRIPTION_ID,
+    providerChargeId: PAYMENT_ID,
+    status: 'active',
+    autoRenew: true,
+    createdAt: '2026-11-17T09:01:00.000Z',
+    updatedAt: '2026-11-17T09:01:00.000Z',
+    ...patch
+  };
+}
+
+const paths = (calls: RecordedCall[]) => calls.map((call) => `${call.method} ${new URL(call.url).pathname}`);
+
+describe('Dodo environment', () => {
+  it('calls the test mode host by default and the live host only when live mode is configured', async () => {
+    const testApi = dodoApi({ 'POST /checkouts': recorded.createCheckoutSession.response });
+    await provider(testApi.fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice });
+    expect(testApi.calls[0]?.url).toBe(`${TEST_HOST}/checkouts`);
+    expect(testApi.calls[0]?.authorization).toBe('Bearer dodo_test_key');
+
+    const liveApi = dodoApi({ 'POST /checkouts': recorded.createCheckoutSession.response });
+    await provider(liveApi.fetchMock, { environment: 'live_mode' }).createCheckout?.({
+      checkoutSessionId: 'chk_123',
+      billingAccount,
+      plan,
+      price: monthPrice
+    });
+    expect(liveApi.calls[0]?.url).toBe('https://live.dodopayments.com/checkouts');
+
+    const proxied = dodoApi({ 'POST /checkouts': recorded.createCheckoutSession.response });
+    await provider(proxied.fetchMock, { environment: 'live_mode', baseUrl: 'https://dodo.proxy.test/' }).createCheckout?.({
+      checkoutSessionId: 'chk_123',
+      billingAccount,
+      plan,
+      price: monthPrice
+    });
+    expect(proxied.calls[0]?.url).toBe('https://dodo.proxy.test/checkouts');
+  });
+
+  it('rejects an environment Dodo does not have instead of guessing a mode', () => {
+    expect(() => provider(vi.fn() as typeof fetch, { environment: 'live' as DodoProviderConfig['environment'] })).toThrow(
+      expect.objectContaining({ code: 'BILLFN_VALIDATION_ERROR' })
+    );
+  });
+});
+
+describe('createCheckout -> POST /checkouts', () => {
+  it('creates a checkout session for the price checkout selected, with its trial and BillFn metadata', async () => {
+    const api = dodoApi({ 'POST /checkouts': recorded.createCheckoutSession.response });
+    // A BILL-6 tagged price that checkout chose for this account: its own product and trial.
+    const discounted: BillFnPriceDefinition = {
+      ...monthPrice,
+      priceId: 'price_nucleus_month_intro',
+      providerProductId: 'pdt_nucleus_month_intro',
+      eligibility: 'first-purchase',
+      trialDays: 14
+    };
+
+    const result = await provider(api.fetchMock).createCheckout?.({
+      checkoutSessionId: 'chk_123',
+      billingAccount,
+      plan,
+      price: discounted,
+      metadata: { billfn_region: 'euwest', nested: { ignored: true } },
+      customer: {
+        email: 'ada@example.com',
+        name: 'Ada Lovelace',
+        billing: { country: 'US', zipcode: '94105', phone: 'not an address field' }
+      },
+      successUrl: 'https://app.example/billing/return',
+      cancelUrl: 'https://app.example/billing'
+    });
+
+    expect(paths(api.calls)).toEqual(['POST /checkouts']);
+    expect(api.calls[0]?.body).toEqual({
+      product_cart: [{ product_id: 'pdt_nucleus_month_intro', quantity: 1 }],
+      metadata: {
+        billfn_region: 'euwest',
+        billfn_checkout_session_id: 'chk_123',
+        billfn_billing_account_id: 'ba_user_123',
+        billfn_product_id: 'pdt_nucleus_month_intro',
+        billfn_price_id: 'price_nucleus_month_intro'
+      },
+      customer: { email: 'ada@example.com', name: 'Ada Lovelace' },
+      billing_address: { country: 'US', zipcode: '94105' },
+      return_url: 'https://app.example/billing/return',
+      cancel_url: 'https://app.example/billing',
+      subscription_data: { trial_period_days: 14 }
+    });
+    expect(result).toEqual({
+      status: 'requires_action',
+      providerCheckoutId: SESSION_ID,
+      providerChargeId: undefined,
+      checkoutUrl: recorded.createCheckoutSession.response.checkout_url,
+      raw: recorded.createCheckoutSession.response
+    });
+  });
+
+  it('sends a one-time price as a cart without subscription data and leaves unknown customer fields out', async () => {
+    const api = dodoApi({ 'POST /checkouts': recorded.createCheckoutSession.response });
+    await provider(api.fetchMock).createCheckout?.({
+      checkoutSessionId: 'chk_123',
+      billingAccount,
+      plan,
+      price: { ...lifetimePrice, trialDays: 7 },
+      customer: { name: 'No Email', billing: { city: 'Nowhere' } }
+    });
+
+    expect(api.calls[0]?.body).toEqual({
+      product_cart: [{ product_id: 'pdt_nucleus_lifetime', quantity: 1 }],
+      metadata: {
+        billfn_checkout_session_id: 'chk_123',
+        billfn_billing_account_id: 'ba_user_123',
+        billfn_product_id: 'pdt_nucleus_lifetime',
+        billfn_price_id: 'price_nucleus_lifetime'
+      }
+    });
+  });
+
+  it('fails when Dodo answers without a checkout session id', async () => {
+    const api = dodoApi({ 'POST /checkouts': { checkout_url: 'https://test.checkout.dodopayments.com/x' } });
+    await expect(
+      provider(api.fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice })
+    ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+  });
+});
+
+describe('verifyCheckout -> GET /checkouts/{id}, /payments/{id}, /subscriptions/{id}', () => {
+  it('follows a subscription checkout session to its payment and subscription', async () => {
+    const api = dodoApi({
+      [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSession.response,
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response
+    });
+
+    const state = await provider(api.fetchMock).verifyCheckout?.(verifyInput(monthPrice));
+
+    expect(paths(api.calls)).toEqual([
+      `GET /checkouts/${SESSION_ID}`,
+      `GET /payments/${PAYMENT_ID}`,
+      `GET /subscriptions/${SUBSCRIPTION_ID}`
+    ]);
+    expect(state).toMatchObject({
+      subscriptionStatus: 'active',
+      checkoutStatus: 'succeeded',
+      providerSubscriptionId: SUBSCRIPTION_ID,
+      providerChargeId: PAYMENT_ID,
+      currentPeriodStart: '2026-11-17T09:01:00Z',
+      currentPeriodEnd: '2026-12-17T09:01:00Z',
+      autoRenew: true
+    });
+  });
+
+  it('follows a one-time checkout session to its payment', async () => {
+    const api = dodoApi({
+      [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSession.response,
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getOneTimePayment.response
+    });
+
+    const state = await provider(api.fetchMock).verifyCheckout?.(verifyInput(lifetimePrice));
+
+    expect(paths(api.calls)).toEqual([`GET /checkouts/${SESSION_ID}`, `GET /payments/${PAYMENT_ID}`]);
+    expect(state).toMatchObject({
+      subscriptionStatus: 'active',
+      checkoutStatus: 'succeeded',
+      providerChargeId: PAYMENT_ID,
+      autoRenew: false
+    });
+    expect(state?.providerSubscriptionId).toBeUndefined();
+  });
+
+  it('reports a session still collecting details as not yet payable without writing a state', async () => {
+    const api = dodoApi({ [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSessionCollectingDetails.response });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(verifyInput(monthPrice))).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      details: { checkoutStatus: 'pending' }
+    });
+    expect(api.calls).toHaveLength(1);
+  });
+
+  it('maps a declined one-time payment to a failed checkout', async () => {
+    const api = dodoApi({
+      [`GET /checkouts/${SESSION_ID}`]: { ...recorded.getCheckoutSession.response, payment_status: 'failed' },
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getOneTimePayment.response, status: 'failed' }
+    });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(verifyInput(lifetimePrice))).resolves.toMatchObject({
+      subscriptionStatus: 'failed',
+      checkoutStatus: 'failed'
+    });
+  });
+
+  it('rejects a payment made through another checkout session', async () => {
+    const api = dodoApi({
+      [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSession.response,
+      [`GET /payments/${PAYMENT_ID}`]: { ...recorded.getSubscriptionPayment.response, checkout_session_id: 'cks_other' }
+    });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(verifyInput(monthPrice))).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT'
+    });
+    expect(api.calls).toHaveLength(2);
+  });
+
+  it('rejects a subscription payment whose metadata names another billing account', async () => {
+    const payment = recorded.getSubscriptionPayment.response;
+    const api = dodoApi({
+      [`GET /checkouts/${SESSION_ID}`]: recorded.getCheckoutSession.response,
+      [`GET /payments/${PAYMENT_ID}`]: {
+        ...payment,
+        metadata: { ...payment.metadata, billfn_billing_account_id: 'ba_attacker' }
+      }
+    });
+
+    await expect(provider(api.fetchMock).verifyCheckout?.(verifyInput(monthPrice))).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT'
+    });
+  });
+
+  it('does not link a client-sent payment id to the subscription it verifies', async () => {
+    const api = dodoApi({ [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response });
+
+    const state = await provider(api.fetchMock).verifyCheckout?.(
+      verifyInput(monthPrice, { payload: { subscription_id: SUBSCRIPTION_ID, payment_id: 'pay_someone_else' } })
+    );
+
+    expect(paths(api.calls)).toEqual([`GET /subscriptions/${SUBSCRIPTION_ID}`]);
+    expect(state?.providerSubscriptionId).toBe(SUBSCRIPTION_ID);
+    expect(state?.providerChargeId).toBeUndefined();
+  });
+
+  it('encodes identifiers so a client-sent id cannot address another Dodo endpoint', async () => {
+    const api = dodoApi({});
+    await expect(
+      provider(api.fetchMock).verifyCheckout?.(verifyInput(monthPrice, { payload: { subscription_id: '../refunds' } }))
+    ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+    expect(api.calls[0]?.url).toBe(`${TEST_HOST}/subscriptions/..%2Frefunds`);
+  });
+});
+
+describe('fetchSubscription -> GET /subscriptions/{id}', () => {
+  it.each([
+    ['pending', 'pending', 'pending', false],
+    ['active', 'active', 'succeeded', true],
+    ['on_hold', 'paused', 'succeeded', true],
+    ['paused', 'paused', 'succeeded', true],
+    ['past_due', 'grace', 'succeeded', true],
+    ['cancelled', 'canceled', 'succeeded', false],
+    ['failed', 'failed', 'failed', false],
+    ['expired', 'expired', 'succeeded', false]
+  ])('maps Dodo status %s to %s', async (dodoStatus, subscriptionStatus, checkoutStatus, autoRenew) => {
+    const api = dodoApi({
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: { ...recorded.getSubscription.response, status: dodoStatus }
+    });
+
+    const state = await provider(api.fetchMock).fetchSubscription?.({ subscription: subscription(), plan, price: monthPrice });
+
+    expect(state).toMatchObject({ subscriptionStatus, checkoutStatus, autoRenew, providerSubscriptionId: SUBSCRIPTION_ID });
+  });
+});
+
+describe('cancelSubscription and resumeSubscription -> PATCH /subscriptions/{id}', () => {
+  it('cancels at the next billing date, keeping the subscription active until then', async () => {
+    const api = dodoApi({
+      [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: { ...recorded.getSubscription.response, cancel_at_next_billing_date: true }
+    });
+
+    const result = await provider(api.fetchMock).cancelSubscription?.({ subscription: subscription() });
+
+    expect(api.calls).toEqual([
+      expect.objectContaining({ method: 'PATCH', body: { cancel_at_next_billing_date: true } })
+    ]);
+    expect(result).toMatchObject({
+      operationStatus: 'applied',
+      billingState: { subscriptionStatus: 'active', autoRenew: false, currentPeriodEnd: '2026-12-17T09:01:00Z' }
+    });
+  });
+
+  it('resumes a paused subscription with status active sent alone', async () => {
+    const api = dodoApi({ [`PATCH /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response });
+
+    const result = await provider(api.fetchMock).resumeSubscription?.({ subscription: subscription({ status: 'paused' }) });
+
+    expect(api.calls).toEqual([expect.objectContaining({ method: 'PATCH', body: { status: 'active' } })]);
+    expect(result).toMatchObject({ operationStatus: 'applied', billingState: { subscriptionStatus: 'active', autoRenew: true } });
+  });
+});
+
+describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
+  const changeInput = () => ({
+    subscription: subscription(),
+    currentPlan: plan,
+    currentPrice: monthPrice,
+    targetPlan: plan,
+    targetPrice: { ...monthPrice, priceId: 'price_nucleus_year', providerProductId: 'pdt_nucleus_year', interval: 'year' as const },
+    effectiveAt: 'immediate' as const,
+    prorationBehavior: 'prorate' as const
+  });
+
+  it('reads the subscription after the change, because change-plan answers with payment handles only', async () => {
+    const changed = { ...recorded.getSubscription.response, product_id: 'pdt_nucleus_year' };
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: recorded.changePlan.response,
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: changed
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+
+    expect(paths(api.calls)).toEqual([
+      `POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`,
+      `GET /subscriptions/${SUBSCRIPTION_ID}`
+    ]);
+    expect(api.calls[0]?.body).toEqual({
+      product_id: 'pdt_nucleus_year',
+      proration_billing_mode: 'prorated_immediately',
+      quantity: 1,
+      effective_at: 'immediately'
+    });
+    expect(result).toMatchObject({
+      operationStatus: 'applied',
+      billingState: { subscriptionStatus: 'active', providerSubscriptionId: SUBSCRIPTION_ID, autoRenew: true },
+      raw: { changePlan: recorded.changePlan.response, subscription: changed }
+    });
+  });
+
+  it('keeps an applied change applied when the follow-up read fails', async () => {
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: recorded.changePlan.response,
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: () => new Response('unavailable', { status: 503 })
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+
+    expect(result?.operationStatus).toBe('applied');
+    expect(result?.billingState).toBeUndefined();
+  });
+
+  it('hands the customer a plan-change payment link when Dodo returns one', async () => {
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: {
+        ...recorded.changePlan.response,
+        payment_id: 'pay_change_1',
+        payment_link: 'https://test.checkout.dodopayments.com/pay_change_1'
+      }
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+
+    expect(paths(api.calls)).toEqual([`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]);
+    expect(result).toMatchObject({
+      operationStatus: 'requires_action',
+      clientAction: { type: 'redirect', url: 'https://test.checkout.dodopayments.com/pay_change_1' }
+    });
+  });
+});
+
+describe('refundCharge -> POST /refunds', () => {
+  const refundInput = (patch: Record<string, unknown> = {}) => ({
+    billingAccount,
+    subscription: subscription(),
+    mode: 'full' as const,
+    reason: 'requested_by_customer',
+    ...patch
+  });
+
+  it('refunds a whole payment by its id', async () => {
+    const api = dodoApi({ 'POST /refunds': { ...recorded.createRefund.response, is_partial: false, amount: 1200 } });
+
+    const result = await provider(api.fetchMock).refundCharge?.(refundInput());
+
+    expect(api.calls).toEqual([
+      expect.objectContaining({ method: 'POST', body: { payment_id: PAYMENT_ID, reason: 'requested_by_customer' } })
+    ]);
+    expect(result).toMatchObject({ operationStatus: 'applied', providerRefundId: recorded.createRefund.response.refund_id });
+  });
+
+  it('refunds part of a payment through its line items in the currency the customer paid', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }));
+
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}/line-items`, 'POST /refunds']);
+    expect(api.calls[1]?.body).toEqual({
+      payment_id: PAYMENT_ID,
+      reason: 'requested_by_customer',
+      items: [{ item_id: 'pdt_nucleus_month', amount: 600 }],
+      currency: 'USD'
+    });
+  });
+
+  it.each([
+    ['more than remains refundable', { amount: 1201 }, recorded.getPaymentLineItems.response],
+    ['a non-integer amount', { amount: 10.5 }, recorded.getPaymentLineItems.response],
+    ['a payment method without partial refunds', { amount: 600 }, { ...recorded.getPaymentLineItems.response, partial_refund_allowed: false }]
+  ])('refuses %s before creating a refund', async (_label, patch, lineItems) => {
+    const api = dodoApi({ [`GET /payments/${PAYMENT_ID}/line-items`]: lineItems, 'POST /refunds': recorded.createRefund.response });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', ...patch }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).not.toContain('POST /refunds');
+  });
+
+  it('surfaces a refund Dodo reports as failed instead of recording it as applied', async () => {
+    const api = dodoApi({ 'POST /refunds': { ...recorded.createRefund.response, status: 'failed' } });
+
+    await expect(provider(api.fetchMock).refundCharge?.(refundInput())).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+});
+
+describe('restorePurchases and importSubscription', () => {
+  it('restores a one-time purchase from its payment and cart', async () => {
+    const api = dodoApi({ [`GET /payments/${PAYMENT_ID}`]: recorded.getOneTimePayment.response });
+
+    const states = await provider(api.fetchMock).restorePurchases?.({
+      billingAccount,
+      plan,
+      price: lifetimePrice,
+      purchaseReference: PAYMENT_ID
+    });
+
+    expect(states).toEqual([
+      expect.objectContaining({ subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerChargeId: PAYMENT_ID, autoRenew: false })
+    ]);
+  });
+
+  it('imports a subscription by its id', async () => {
+    const api = dodoApi({ [`GET /subscriptions/${SUBSCRIPTION_ID}`]: recorded.getSubscription.response });
+
+    const state = await provider(api.fetchMock).importSubscription?.({ providerReference: SUBSCRIPTION_ID, billingAccount, plan });
+
+    expect(state).toMatchObject({
+      subscriptionStatus: 'active',
+      providerSubscriptionId: SUBSCRIPTION_ID,
+      currentPeriodEnd: '2026-12-17T09:01:00Z'
+    });
+  });
+});
+
+describe('parseWebhook with recorded Dodo payloads', () => {
+  const secretBytes = Buffer.from('dodo-contract-webhook-secret');
+  const webhookSecret = `whsec_${secretBytes.toString('base64')}`;
+
+  async function parse(payload: unknown) {
+    const rawBody = JSON.stringify(payload);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac('sha256', secretBytes).update(`msg_contract.${timestamp}.${rawBody}`).digest('base64');
+    const events = await createDodoProvider({ apiKey: 'dodo_test_key', webhookSecret }).parseWebhook?.({
+      rawBody,
+      headers: new Headers({ 'webhook-id': 'msg_contract', 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` })
+    });
+    return events![0]!;
+  }
+
+  it('maps subscription.past_due to grace and names the checkout price and session from the metadata', async () => {
+    const event = await parse(recorded.webhooks.subscriptionPastDue);
+
+    expect(event).toMatchObject({
+      providerEventId: 'msg_contract',
+      type: 'subscription.past_due',
+      occurredAt: '2026-12-17T09:05:00Z',
+      priceId: 'price_nucleus_month',
+      providerSubscriptionId: SUBSCRIPTION_ID,
+      checkoutReferenceId: 'chk_123',
+      billingState: { subscriptionStatus: 'grace', autoRenew: true }
+    });
+  });
+
+  it('names the product, not the stale checkout price, after a plan change', async () => {
+    const event = await parse(recorded.webhooks.subscriptionPlanChanged);
+
+    expect(event.priceId).toBe('pdt_nucleus_year');
+    expect(event.billingState).toMatchObject({ subscriptionStatus: 'active', currentPeriodEnd: '2027-12-01T12:00:00Z' });
+  });
+
+  it('links the charge of a subscription payment without touching its renewal intent', async () => {
+    const event = await parse(recorded.webhooks.paymentSucceededForSubscription);
+
+    expect(event).toMatchObject({
+      providerChargeId: PAYMENT_ID,
+      providerSubscriptionId: SUBSCRIPTION_ID,
+      checkoutReferenceId: SESSION_ID,
+      billingState: { subscriptionStatus: 'active', providerSubscriptionId: SUBSCRIPTION_ID, providerChargeId: PAYMENT_ID }
+    });
+    expect(event.billingState?.autoRenew).toBeUndefined();
+  });
+
+  it('leaves a declined renewal payment to the subscription events instead of failing the subscription', async () => {
+    const event = await parse(recorded.webhooks.paymentFailedForRenewal);
+
+    expect(event.providerSubscriptionId).toBe(SUBSCRIPTION_ID);
+    expect(event.billingState).toBeUndefined();
+  });
+
+  it('maps a one-time payment and names its catalog price', async () => {
+    const event = await parse(recorded.webhooks.paymentSucceededOneTime);
+
+    expect(event).toMatchObject({
+      priceId: 'price_nucleus_lifetime',
+      providerChargeId: PAYMENT_ID,
+      billingState: { subscriptionStatus: 'active', checkoutStatus: 'succeeded', autoRenew: false }
+    });
+  });
+
+  it('records a refund without a billing state for its charge', async () => {
+    const event = await parse(recorded.webhooks.refundSucceeded);
+
+    expect(event).toMatchObject({ type: 'refund.succeeded', providerChargeId: PAYMENT_ID });
+    expect(event.billingState).toBeUndefined();
+    expect(event.priceId).toBeUndefined();
+  });
+});
+
+describe('Standard Webhooks test vectors', () => {
+  // The signing vector of the Standard Webhooks reference suite
+  // (standard-webhooks/standard-webhooks libraries/python/tests/test_webhooks.py, test_sign_function).
+  const vector = {
+    secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',
+    id: 'msg_p5jXN8AQM9LWM0D4loKWxJek',
+    timestamp: '1614265330',
+    payload: '{"test": 2432232314}',
+    signature: 'v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE='
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function parseVector(overrides: Partial<typeof vector> = {}, nowSeconds = Number(vector.timestamp)) {
+    vi.useFakeTimers();
+    vi.setSystemTime(nowSeconds * 1000);
+    const input = { ...vector, ...overrides };
+    return createDodoProvider({ apiKey: 'dodo_test_key', webhookSecret: input.secret }).parseWebhook!({
+      rawBody: input.payload,
+      headers: new Headers({
+        'webhook-id': input.id,
+        'webhook-timestamp': input.timestamp,
+        'webhook-signature': input.signature
+      })
+    });
+  }
+
+  it('accepts the reference signature, with or without the whsec_ prefix', async () => {
+    await expect(parseVector()).resolves.toEqual([
+      expect.objectContaining({ providerEventId: vector.id, signatureVerified: true, raw: { test: 2432232314 } })
+    ]);
+    await expect(parseVector({ secret: vector.secret.slice('whsec_'.length) })).resolves.toHaveLength(1);
+  });
+
+  it('accepts the reference signature among several space-separated signatures', async () => {
+    await expect(
+      parseVector({ signature: `v1,Ceo5qEr07ixe2NLpvHk3FH9bwy/WavXrAFQ/9tdO6mc= ${vector.signature}` })
+    ).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    ['a one-character signature change', { signature: 'v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OA=' }],
+    ['an unsupported signature version', { signature: vector.signature.replace('v1,', 'v2,') }],
+    ['another message id', { id: 'msg_p5jXN8AQM9LWM0D4loKWxJel' }],
+    ['a changed body', { payload: '{"test": 2432232315}' }],
+    ['another secret', { secret: 'whsec_C2FVsBQIhrscChlQIMV+b5sSYspob7oD' }]
+  ])('rejects %s', async (_label, overrides) => {
+    await expect(parseVector(overrides)).rejects.toMatchObject({ code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID' });
+  });
+
+  it('rejects the reference signature outside the five-minute tolerance', async () => {
+    await expect(parseVector({}, Number(vector.timestamp) + 301)).rejects.toMatchObject({
+      code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID'
+    });
+    await expect(parseVector({}, Number(vector.timestamp) - 301)).rejects.toMatchObject({
+      code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID'
+    });
+    await expect(parseVector({}, Number(vector.timestamp) + 300)).resolves.toHaveLength(1);
+  });
+});

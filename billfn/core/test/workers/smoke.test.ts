@@ -131,17 +131,22 @@ async function postDodoWebhook(id: string, body: string, signature?: string, pat
   });
 }
 
-const subscriptionActiveEvent = JSON.stringify({
-  type: 'subscription.active',
-  timestamp: '2026-11-13T00:00:00.000Z',
-  data: {
-    subscription_id: SMOKE_SUBSCRIPTION_ID,
-    product_id: 'pdt_pro_month',
-    status: 'active',
-    current_period_start: '2026-11-13T00:00:00.000Z',
-    next_billing_date: '2026-12-13T00:00:00.000Z'
-  }
-});
+/** Dodo's subscription.active for the subscription the checkout session started, carrying the session's metadata. */
+const subscriptionActive = (metadata?: Record<string, string>) =>
+  JSON.stringify({
+    type: 'subscription.active',
+    timestamp: '2026-11-13T00:00:00.000Z',
+    data: {
+      payload_type: 'Subscription',
+      subscription_id: SMOKE_SUBSCRIPTION_ID,
+      product_id: 'pdt_pro_month',
+      status: 'active',
+      previous_billing_date: '2026-11-13T00:00:00.000Z',
+      next_billing_date: '2026-12-13T00:00:00.000Z',
+      ...(metadata ? { metadata } : {})
+    }
+  });
+const subscriptionActiveEvent = subscriptionActive();
 
 describe('BillFn on workerd', () => {
   it('leaves non-BillFn host routes to the Hono app', async () => {
@@ -194,9 +199,10 @@ describe('BillFn on workerd', () => {
       })
     });
     expect(checkout.status).toBe(201);
-    expect(checkout.body.data.checkoutSession.providerSubscriptionId).toBe(SMOKE_SUBSCRIPTION_ID);
+    expect(checkout.body.data.checkoutSession.providerCheckoutId).toBe(`cks_${SMOKE_SUBSCRIPTION_ID}`);
+    const activated = subscriptionActive({ billfn_checkout_session_id: checkout.body.data.checkoutSession.checkoutSessionId });
 
-    const delivered = await postDodoWebhook('msg_smoke_1', subscriptionActiveEvent);
+    const delivered = await postDodoWebhook('msg_smoke_1', activated);
     expect(delivered.status).toBe(200);
     expect(delivered.body.data).toEqual({ accepted: true, processed: 1 });
 
@@ -213,7 +219,7 @@ describe('BillFn on workerd', () => {
       limits: { storage: 1000 }
     });
 
-    const redelivered = await postDodoWebhook('msg_smoke_1', subscriptionActiveEvent);
+    const redelivered = await postDodoWebhook('msg_smoke_1', activated);
     expect(redelivered.status).toBe(200);
     expect(redelivered.body.data).toEqual({ accepted: true, processed: 0 });
   });
@@ -222,19 +228,23 @@ describe('BillFn on workerd', () => {
 describe('BillFn webhook ingress on workerd', () => {
   const INGRESS_PATH = '/ingress/webhooks/dodo';
   const EU_PRINCIPAL_ID = 'smoke_eu_user';
+  let euCheckoutSessionId = '';
   const euEvent = (metadata?: Record<string, string>) =>
     JSON.stringify({
       type: 'subscription.active',
       timestamp: '2026-11-13T00:00:00.000Z',
       data: {
+        payload_type: 'Subscription',
         subscription_id: SMOKE_EU_SUBSCRIPTION_ID,
         product_id: 'pdt_pro_month',
         status: 'active',
-        current_period_start: '2026-11-13T00:00:00.000Z',
+        previous_billing_date: '2026-11-13T00:00:00.000Z',
         next_billing_date: '2026-12-13T00:00:00.000Z',
         ...(metadata ? { metadata } : {})
       }
     });
+  /** The metadata Dodo copies from the euwest checkout session onto the subscription it starts. */
+  const euCheckoutMetadata = () => ({ billfn_region: 'euwest', billfn_checkout_session_id: euCheckoutSessionId });
 
   const decisions = async () =>
     (await (await mf.dispatchFetch(`${ORIGIN}/fixture/ingress-decisions`)).json()) as Array<Record<string, unknown>>;
@@ -246,7 +256,8 @@ describe('BillFn webhook ingress on workerd', () => {
       body: JSON.stringify({ subject: { principalId: EU_PRINCIPAL_ID }, planKey: 'pro', provider: 'dodo', interval: 'month' })
     });
     expect(checkout.status).toBe(201);
-    expect(checkout.body.data.checkoutSession.providerSubscriptionId).toBe(SMOKE_EU_SUBSCRIPTION_ID);
+    expect(checkout.body.data.checkoutSession.providerCheckoutId).toBe(`cks_${SMOKE_EU_SUBSCRIPTION_ID}`);
+    euCheckoutSessionId = checkout.body.data.checkoutSession.checkoutSessionId;
   });
 
   it('writes the region into the Dodo checkout metadata', async () => {
@@ -256,19 +267,19 @@ describe('BillFn webhook ingress on workerd', () => {
   });
 
   it('answers an owner lookup only with the internal token', async () => {
-    const path = `/euwest/billfn/ops/owner?provider=dodo&ref=${SMOKE_EU_SUBSCRIPTION_ID}`;
+    const path = `/euwest/billfn/ops/owner?provider=dodo&ref=cks_${SMOKE_EU_SUBSCRIPTION_ID}`;
     expect((await call(path)).status).toBe(401);
     const owned = await call(path, { headers: { authorization: `Bearer ${SMOKE_INTERNAL_TOKEN}` } });
     expect(owned.status).toBe(200);
     expect(owned.body.data).toEqual({ owned: true });
-    const elsewhere = await call(`/billfn/ops/owner?provider=dodo&ref=${SMOKE_EU_SUBSCRIPTION_ID}`, {
+    const elsewhere = await call(`/billfn/ops/owner?provider=dodo&ref=cks_${SMOKE_EU_SUBSCRIPTION_ID}`, {
       headers: { authorization: `Bearer ${SMOKE_INTERNAL_TOKEN}` }
     });
     expect(elsewhere.body.data).toEqual({ owned: false });
   });
 
   it('forwards a forged event, which the owning region rejects', async () => {
-    const body = euEvent({ billfn_region: 'euwest' });
+    const body = euEvent(euCheckoutMetadata());
     const forged = await signDodoWebhook('msg_ingress_forged', '0', body, DODO_WEBHOOK_SECRET);
     const { status, body: response } = await postDodoWebhook('msg_ingress_forged', body, forged, INGRESS_PATH);
     expect(status).toBe(401);
@@ -278,7 +289,7 @@ describe('BillFn webhook ingress on workerd', () => {
   });
 
   it('routes a signed Dodo event by its billfn_region metadata to the owning region', async () => {
-    const delivered = await postDodoWebhook('msg_ingress_1', euEvent({ billfn_region: 'euwest' }), undefined, INGRESS_PATH);
+    const delivered = await postDodoWebhook('msg_ingress_1', euEvent(euCheckoutMetadata()), undefined, INGRESS_PATH);
     expect(delivered.status).toBe(200);
     expect(delivered.body.data).toEqual({ accepted: true, processed: 1 });
     expect((await decisions()).at(-1)).toMatchObject({ region: 'euwest', route: 'metadata' });

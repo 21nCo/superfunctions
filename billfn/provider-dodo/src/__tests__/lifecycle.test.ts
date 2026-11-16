@@ -9,16 +9,30 @@ function createDodoApi() {
   const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-    if (init?.method === 'POST' && path === '/subscriptions') {
+    if (init?.method === 'POST' && path === '/checkouts') {
+      // The customer completes the checkout session: Dodo starts the subscription with the session's metadata.
+      const [item] = body.product_cart as Array<{ product_id: string }>;
       subscription = {
         subscription_id: 'sub_dodo_1',
-        product_id: body.product_id,
+        product_id: item!.product_id,
         status: 'active',
         next_billing_date: '2026-12-10T00:00:00.000Z',
         cancel_at_next_billing_date: false,
         metadata: body.metadata
       };
-      return Response.json({ subscription_id: 'sub_dodo_1', payment_link: 'https://pay.example/sub_dodo_1' });
+      return Response.json({ session_id: 'cks_dodo_1', checkout_url: 'https://test.checkout.dodopayments.com/cks_dodo_1' });
+    }
+    if (path === '/checkouts/cks_dodo_1' && subscription) {
+      return Response.json({ id: 'cks_dodo_1', created_at: '2026-11-10T00:00:00Z', payment_id: 'pay_dodo_1', payment_status: 'succeeded' });
+    }
+    if (path === '/payments/pay_dodo_1' && subscription) {
+      return Response.json({
+        payment_id: 'pay_dodo_1',
+        status: 'succeeded',
+        checkout_session_id: 'cks_dodo_1',
+        subscription_id: 'sub_dodo_1',
+        metadata: subscription.metadata
+      });
     }
     if (path === '/subscriptions/sub_dodo_1' && subscription) {
       if (init?.method === 'PATCH') {

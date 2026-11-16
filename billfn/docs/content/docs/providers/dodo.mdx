@@ -24,23 +24,23 @@ const dodo = createDodoProvider({
 
 Optional config:
 
-- `baseUrl`
+- `environment`: `"test_mode"` (default, `https://test.dodopayments.com`) or `"live_mode"` (`https://live.dodopayments.com`)
+- `baseUrl`: overrides the environment's host
 - `fetch`
 - `webhookSignatureHeader`
 
-The default API base URL is `https://live.dodopayments.com`.
-Set `baseUrl` explicitly if you need to target Dodo's test environment.
+The adapter calls Dodo's test mode unless `environment: "live_mode"` is set; use a test mode key (`dodo_test_...`) in test mode and a live mode key in live mode.
 The default webhook signature header is `webhook-signature`.
 
 ## What the Adapter Does
 
-- creates subscription or one-time checkout requests
-- verifies checkouts by subscription or payment id
+- creates a Dodo checkout session (`POST /checkouts`) for the catalog price checkout selected, with the price's trial and BillFn metadata (`billfn_checkout_session_id`, `billfn_billing_account_id`, `billfn_product_id`, `billfn_price_id`)
+- verifies checkouts by following the checkout session to its payment and subscription, checking the BillFn metadata on each
 - syncs subscriptions
 - cancels subscriptions
 - attempts direct subscription changes and falls back to replacement-checkout orchestration
 - resumes subscriptions when the provider allows it
-- creates refunds
+- creates refunds: a full refund by payment id, a partial one through the payment's line items
 - restores purchases
 - verifies webhook signatures and parses webhook events
 
@@ -61,13 +61,14 @@ Webhook receipts are then deduped in core by provider plus provider event id.
 
 Dodo statuses are normalized into BillFn statuses such as:
 
-- `active`
-- `trialing`
-- `paused`
-- `grace`
-- `canceled`
+- `active` (`active`, or a `succeeded` payment)
+- `paused` (`on_hold`, `paused`)
+- `grace` (`past_due`)
+- `canceled` (`cancelled`)
 - `expired`
-- `failed`
-- `pending`
+- `failed` (`failed`, or a `failed` or `cancelled` payment)
+- `pending` (`pending`, or a payment still processing)
+
+Refund and dispute webhooks carry no billing state, and a declined renewal payment leaves the subscription to Dodo's subscription events.
 
 That normalization lets the rest of the system stay provider-neutral.

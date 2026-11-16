@@ -1,0 +1,307 @@
+{
+  "source": "Dodo Payments public API reference (OpenAPI 1.124.0), https://docs.dodopayments.com/api-reference, retrieved 2026-11-17. Each entry follows the response schema of the named operation, with every required field present; identifiers reuse the reference's examples.",
+  "createCheckoutSession": {
+    "operation": "POST /checkouts (create_session) -> CreateSessionResponse",
+    "response": {
+      "session_id": "cks_n010SZaY4NXc7F1ck3Tq1",
+      "checkout_url": "https://test.checkout.dodopayments.com/session/cks_n010SZaY4NXc7F1ck3Tq1",
+      "client_secret": null,
+      "payment_id": null,
+      "publishable_key": null
+    }
+  },
+  "getCheckoutSession": {
+    "operation": "GET /checkouts/{id} (get_checkout_sessions_status) -> GetCheckoutSessionsStatus",
+    "response": {
+      "id": "cks_n010SZaY4NXc7F1ck3Tq1",
+      "created_at": "2026-11-17T09:00:00Z",
+      "customer_email": "ada@example.com",
+      "customer_name": "Ada Lovelace",
+      "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+      "payment_status": "succeeded"
+    }
+  },
+  "getCheckoutSessionCollectingDetails": {
+    "operation": "GET /checkouts/{id} before the customer pays: payment_id and payment_status are null",
+    "response": {
+      "id": "cks_n010SZaY4NXc7F1ck3Tq1",
+      "created_at": "2026-11-17T09:00:00Z",
+      "customer_email": null,
+      "customer_name": null,
+      "payment_id": null,
+      "payment_status": null
+    }
+  },
+  "getSubscriptionPayment": {
+    "operation": "GET /payments/{payment_id} -> PaymentResponse (the payment that starts a subscription)",
+    "response": {
+      "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+      "business_id": "bus_H4ekzPSlcg",
+      "brand_id": "bus_H4ekzPSlcg",
+      "status": "succeeded",
+      "total_amount": 1200,
+      "currency": "USD",
+      "settlement_amount": 1200,
+      "settlement_currency": "USD",
+      "settlement_tax": 0,
+      "tax": 0,
+      "created_at": "2026-11-17T09:01:00Z",
+      "updated_at": "2026-11-17T09:01:05Z",
+      "is_update_payment_method": false,
+      "is_multi_subscription": false,
+      "includes_usage": false,
+      "digital_products_delivered": false,
+      "retry_attempt": 0,
+      "payment_provider": "dodo",
+      "checkout_session_id": "cks_n010SZaY4NXc7F1ck3Tq1",
+      "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+      "subscription_ids": ["sub_Iuaq622bbmmfOGrVTqdXv"],
+      "service_periods": [],
+      "product_cart": null,
+      "refunds": [],
+      "disputes": [],
+      "refund_status": null,
+      "customer": { "customer_id": "cus_8VbC6JDZzPEqfBPUdpj0K", "email": "ada@example.com", "name": "Ada Lovelace" },
+      "billing": { "country": "US", "city": null, "state": null, "street": null, "zipcode": "94105" },
+      "metadata": {
+        "billfn_checkout_session_id": "chk_123",
+        "billfn_billing_account_id": "ba_user_123",
+        "billfn_product_id": "pdt_nucleus_month",
+        "billfn_price_id": "price_nucleus_month"
+      }
+    }
+  },
+  "getOneTimePayment": {
+    "operation": "GET /payments/{payment_id} -> PaymentResponse (a one-time purchase)",
+    "response": {
+      "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+      "business_id": "bus_H4ekzPSlcg",
+      "brand_id": "bus_H4ekzPSlcg",
+      "status": "succeeded",
+      "total_amount": 9900,
+      "currency": "USD",
+      "settlement_amount": 9900,
+      "settlement_currency": "USD",
+      "created_at": "2026-11-17T09:01:00Z",
+      "is_update_payment_method": false,
+      "is_multi_subscription": false,
+      "includes_usage": false,
+      "digital_products_delivered": true,
+      "retry_attempt": 0,
+      "payment_provider": "dodo",
+      "checkout_session_id": "cks_n010SZaY4NXc7F1ck3Tq1",
+      "subscription_id": null,
+      "subscription_ids": [],
+      "service_periods": [],
+      "product_cart": [{ "product_id": "pdt_nucleus_lifetime", "quantity": 1 }],
+      "refunds": [],
+      "disputes": [],
+      "customer": { "customer_id": "cus_8VbC6JDZzPEqfBPUdpj0K", "email": "ada@example.com", "name": "Ada Lovelace" },
+      "billing": { "country": "US", "city": null, "state": null, "street": null, "zipcode": "94105" },
+      "metadata": {
+        "billfn_checkout_session_id": "chk_123",
+        "billfn_billing_account_id": "ba_user_123",
+        "billfn_product_id": "pdt_nucleus_lifetime",
+        "billfn_price_id": "price_nucleus_lifetime"
+      }
+    }
+  },
+  "getSubscription": {
+    "operation": "GET /subscriptions/{subscription_id} -> SubscriptionResponse",
+    "response": {
+      "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+      "brand_id": "bus_H4ekzPSlcg",
+      "status": "active",
+      "product_id": "pdt_nucleus_month",
+      "quantity": 1,
+      "recurring_pre_tax_amount": 1200,
+      "tax_inclusive": false,
+      "currency": "USD",
+      "created_at": "2026-11-17T09:01:00Z",
+      "previous_billing_date": "2026-11-17T09:01:00Z",
+      "next_billing_date": "2026-12-17T09:01:00Z",
+      "trial_period_days": 0,
+      "subscription_period_interval": "Year",
+      "subscription_period_count": 10,
+      "payment_frequency_interval": "Month",
+      "payment_frequency_count": 1,
+      "cancel_at_next_billing_date": false,
+      "cancelled_at": null,
+      "expires_at": "2036-11-17T09:01:00Z",
+      "scheduled_change": null,
+      "on_demand": false,
+      "has_payment_method": true,
+      "billing_mode": "normal",
+      "addons": [],
+      "meters": [],
+      "credit_entitlement_cart": [],
+      "meter_credit_entitlement_cart": [],
+      "customer": { "customer_id": "cus_8VbC6JDZzPEqfBPUdpj0K", "email": "ada@example.com", "name": "Ada Lovelace" },
+      "billing": { "country": "US", "city": null, "state": null, "street": null, "zipcode": "94105" },
+      "metadata": {
+        "billfn_checkout_session_id": "chk_123",
+        "billfn_billing_account_id": "ba_user_123",
+        "billfn_product_id": "pdt_nucleus_month",
+        "billfn_price_id": "price_nucleus_month"
+      }
+    }
+  },
+  "changePlan": {
+    "operation": "POST /subscriptions/{subscription_id}/change-plan -> ChangePlanResponse (a change charged to the saved payment method: no link)",
+    "response": {
+      "client_secret": null,
+      "expires_on": null,
+      "invoice_id": null,
+      "payment_id": null,
+      "payment_link": null,
+      "refund_id": null
+    }
+  },
+  "getPaymentLineItems": {
+    "operation": "GET /payments/{payment_id}/line-items -> PaymentLineItemsResponse",
+    "response": {
+      "currency": "USD",
+      "partial_refund_allowed": true,
+      "items": [
+        { "items_id": "pdt_nucleus_month", "amount": 1000, "tax": 200, "refundable_amount": 1200, "name": "Nucleus", "description": null }
+      ]
+    }
+  },
+  "createRefund": {
+    "operation": "POST /refunds -> RefundResponse",
+    "response": {
+      "refund_id": "ref_4sQ3dmhGJm1rZ1Mn2qR0x",
+      "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+      "business_id": "bus_H4ekzPSlcg",
+      "brand_id": "bus_H4ekzPSlcg",
+      "status": "pending",
+      "created_at": "2026-11-17T10:00:00Z",
+      "is_partial": true,
+      "amount": 600,
+      "currency": "USD",
+      "reason": "requested_by_customer",
+      "customer": { "customer_id": "cus_8VbC6JDZzPEqfBPUdpj0K", "email": "ada@example.com", "name": "Ada Lovelace" },
+      "metadata": {}
+    }
+  },
+  "webhooks": {
+    "source": "https://docs.dodopayments.com/developer-resources/webhooks and webhooks/intents/webhook-events-guide: {business_id, type, timestamp, data: {payload_type, ...record}}",
+    "subscriptionPastDue": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "subscription.past_due",
+      "timestamp": "2026-12-17T09:05:00Z",
+      "data": {
+        "payload_type": "Subscription",
+        "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+        "status": "past_due",
+        "product_id": "pdt_nucleus_month",
+        "previous_billing_date": "2026-11-17T09:01:00Z",
+        "next_billing_date": "2026-12-17T09:01:00Z",
+        "cancel_at_next_billing_date": false,
+        "metadata": {
+          "billfn_checkout_session_id": "chk_123",
+          "billfn_billing_account_id": "ba_user_123",
+          "billfn_product_id": "pdt_nucleus_month",
+          "billfn_price_id": "price_nucleus_month"
+        }
+      }
+    },
+    "subscriptionPlanChanged": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "subscription.plan_changed",
+      "timestamp": "2026-12-01T12:00:00Z",
+      "data": {
+        "payload_type": "Subscription",
+        "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+        "status": "active",
+        "product_id": "pdt_nucleus_year",
+        "previous_billing_date": "2026-12-01T12:00:00Z",
+        "next_billing_date": "2027-12-01T12:00:00Z",
+        "cancel_at_next_billing_date": false,
+        "metadata": {
+          "billfn_checkout_session_id": "chk_123",
+          "billfn_billing_account_id": "ba_user_123",
+          "billfn_product_id": "pdt_nucleus_month",
+          "billfn_price_id": "price_nucleus_month"
+        }
+      }
+    },
+    "paymentSucceededForSubscription": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "payment.succeeded",
+      "timestamp": "2026-11-17T09:01:05Z",
+      "data": {
+        "payload_type": "Payment",
+        "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+        "status": "succeeded",
+        "checkout_session_id": "cks_n010SZaY4NXc7F1ck3Tq1",
+        "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+        "subscription_ids": ["sub_Iuaq622bbmmfOGrVTqdXv"],
+        "product_cart": null,
+        "total_amount": 1200,
+        "currency": "USD",
+        "metadata": {
+          "billfn_checkout_session_id": "chk_123",
+          "billfn_billing_account_id": "ba_user_123",
+          "billfn_product_id": "pdt_nucleus_month",
+          "billfn_price_id": "price_nucleus_month"
+        }
+      }
+    },
+    "paymentFailedForRenewal": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "payment.failed",
+      "timestamp": "2026-12-17T09:01:30Z",
+      "data": {
+        "payload_type": "Payment",
+        "payment_id": "pay_7dkMc0pQwY2nZ4rT9vB1e",
+        "status": "failed",
+        "error_code": "INSUFFICIENT_FUNDS",
+        "checkout_session_id": null,
+        "subscription_id": "sub_Iuaq622bbmmfOGrVTqdXv",
+        "subscription_ids": ["sub_Iuaq622bbmmfOGrVTqdXv"],
+        "product_cart": null,
+        "total_amount": 1200,
+        "currency": "USD",
+        "metadata": {}
+      }
+    },
+    "paymentSucceededOneTime": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "payment.succeeded",
+      "timestamp": "2026-11-17T09:01:05Z",
+      "data": {
+        "payload_type": "Payment",
+        "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+        "status": "succeeded",
+        "checkout_session_id": "cks_n010SZaY4NXc7F1ck3Tq1",
+        "subscription_id": null,
+        "subscription_ids": [],
+        "product_cart": [{ "product_id": "pdt_nucleus_lifetime", "quantity": 1 }],
+        "total_amount": 9900,
+        "currency": "USD",
+        "metadata": {
+          "billfn_checkout_session_id": "chk_123",
+          "billfn_billing_account_id": "ba_user_123",
+          "billfn_product_id": "pdt_nucleus_lifetime",
+          "billfn_price_id": "price_nucleus_lifetime"
+        }
+      }
+    },
+    "refundSucceeded": {
+      "business_id": "bus_H4ekzPSlcg",
+      "type": "refund.succeeded",
+      "timestamp": "2026-11-18T10:00:00Z",
+      "data": {
+        "payload_type": "Refund",
+        "refund_id": "ref_4sQ3dmhGJm1rZ1Mn2qR0x",
+        "payment_id": "pay_2IjeQm4hqU6RA4Z4kwDee",
+        "status": "succeeded",
+        "is_partial": false,
+        "amount": 9900,
+        "currency": "USD",
+        "metadata": {}
+      }
+    }
+  }
+}
