@@ -1,0 +1,21 @@
+datafn/client/__tests__/cloneUp-null-columns-foreign-keys.test.ts
+  s_80c79a97ceb86d::t_62eaf80a2a42ee 1-182
+datafn/client/src/sync/cloneUp.ts
+  s_80c79a97ceb86d::t_6640b6ee0c8392 2-7,166-176,179,327-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27a04abe00a25858e04deaa7a819807aa6ff2b12",
+  "prompts": {},
+  "sessions": {
+    "s_80c79a97ceb86d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_80c79a97ceb86d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
