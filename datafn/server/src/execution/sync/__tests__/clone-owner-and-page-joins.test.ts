@@ -419,10 +419,11 @@ describe("paginated clone join rows", () => {
     expect(counter.count).toBe(1);
     expect(multi.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
 
-    // A single-table page still looks its join rows up by id.
+    // A single-table page still looks its join rows up by id: one lookup
+    // for each side of the relation.
     counter.count = 0;
     const single = await pageOf(["tags"]);
-    expect(counter.count).toBeGreaterThan(1);
+    expect(counter.count).toBe(2);
     expect(single.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
   });
 
@@ -655,5 +656,76 @@ describe("paginated clone join rows", () => {
       NAMESPACE,
     );
     expect(result.joins?.[joinKey]).toHaveLength(5);
+  });
+});
+
+describe("clone cursors", () => {
+  /** Records the order of row reads and cursor reads for one table. */
+  function orderRecorder(db: Adapter, table: string) {
+    const order: string[] = [];
+    const internal = new Proxy(db.internal, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findMany" && typeof value === "function") {
+          return (model: string, where: Array<{ field: string; value: unknown }>, ...rest: unknown[]) => {
+            if (
+              model === "__datafn_changes" &&
+              where.some((clause) => clause.field === "resource" && clause.value === table)
+            ) {
+              order.push("cursor");
+            }
+            return value.call(target, model, where, ...rest);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const wrapped = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "internal") return internal;
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findMany" && typeof value === "function") {
+          return (args: { model: string }) => {
+            if (args.model === table) order.push("rows");
+            return value.call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    return { db: wrapped, order };
+  }
+
+  it("reads each table's cursor before its rows, so a write between them is replayed", async () => {
+    const base = await seed();
+    const extrasSchema = await addExtrasTable(base);
+
+    // Paginated
+    let rec = orderRecorder(base, "tags");
+    await executeClone(
+      { clientId: "c1", tables: ["tags"], page: { table: "tags", afterId: null, limit: 10 } },
+      schema,
+      rec.db,
+      NAMESPACE,
+    );
+    expect(rec.order).toEqual(["cursor", "rows"]);
+
+    // Uncapped
+    rec = orderRecorder(base, "tags");
+    await executeClone({ clientId: "c1", tables: ["tags"] }, schema, rec.db, NAMESPACE);
+    expect(rec.order).toEqual(["cursor", "rows"]);
+
+    // Capped (SCA-002 auto-pagination)
+    rec = orderRecorder(base, "extras");
+    const capped = await executeClone(
+      { clientId: "c1", tables: ["tags", "extras"] },
+      extrasSchema,
+      rec.db,
+      NAMESPACE,
+      undefined,
+      4,
+    );
+    expect(capped.paginated).toBe(true);
+    expect(rec.order).toEqual(["cursor", "rows"]);
   });
 });

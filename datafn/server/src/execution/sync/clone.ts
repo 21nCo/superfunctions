@@ -200,6 +200,12 @@ export async function executeClone(
     const effectiveLimit = Math.min(limit, 1000);
 
     try {
+      // The cursor is read before the rows: a write landing between the two
+      // is then replayed by the next pull instead of being skipped.
+      const latestSeq = await changeTracking.getLatestServerSeq({
+        resource: table,
+      });
+
       // Build where clause for afterId pagination
       const where: WhereClause[] = afterId
         ? [{ field: "id", operator: "gt", value: afterId }]
@@ -224,10 +230,6 @@ export async function executeClone(
         next[table] = null;
       }
 
-      // Get latest serverSeq for this table as cursor
-      const latestSeq = await changeTracking.getLatestServerSeq({
-        resource: table,
-      });
       cursors[table] = String(latestSeq);
     } catch (error) {
       logger?.warn("Clone: paginated fetch failed", { error: String(error), resource: table, operation: "clone-paginate" });
@@ -276,6 +278,8 @@ export async function executeClone(
 
       for (const tableName of tablesToClone) {
         try {
+          // Cursor before rows, so a concurrent write is replayed by a pull.
+          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           if (remaining <= 0) {
             data[tableName] = [];
             // Deferred: continue later if it has rows, or may have (count failed).
@@ -309,7 +313,6 @@ export async function executeClone(
             }
           }
 
-          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);
         } catch (error) {
           logger?.warn("Clone: auto-paginate fetch failed", { error: String(error), resource: tableName, operation: "clone-paginate" });
@@ -322,6 +325,8 @@ export async function executeClone(
       // Non-paginated: get all records for each table, sorted by id
       for (const tableName of tablesToClone) {
         try {
+          // Cursor before rows, so a concurrent write is replayed by a pull.
+          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           const records = await db.findMany({
             model: tableName,
             where: [],
@@ -331,7 +336,6 @@ export async function executeClone(
           data[tableName] = await filterActorVisibleRows(tableName, records);
           fullyLoadedTables.add(tableName);
 
-          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);
         } catch (error) {
           logger?.warn("Clone: fetch failed", { error: String(error), resource: tableName, operation: "clone-fetch" });
