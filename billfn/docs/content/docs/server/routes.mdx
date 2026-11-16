@@ -45,6 +45,7 @@ Lifecycle responses can return `operationStatus: "applied"` or `operationStatus:
 | `POST` | `/billfn/ops/reconciliation/jobs` | Queue a reconciliation job |
 | `GET` | `/billfn/ops/reconciliation/jobs/:jobId` | Fetch a reconciliation job |
 | `POST` | `/billfn/ops/reconciliation/jobs/:jobId/run` | Run a reconciliation job immediately |
+| `GET` | `/billfn/ops/owner?provider=&ref=` | Whether this region owns a provider reference (internal token; see [Regions](/docs/server/regions)) |
 
 ## Webhooks
 

@@ -3,6 +3,7 @@ import { DuplicateKeyError, type Adapter, type WhereClause } from '@superfunctio
 import { ok } from '@superfunctions/envelope';
 import { createNamespacedEmitter, createMetricsEmitter, type MetricsEmitter } from '@superfunctions/metrics';
 import { createBillFnError } from './errors.js';
+import { BILLFN_REGION_METADATA_KEY } from './ingress.js';
 import {
   applyGrants,
   insertGrant,
@@ -283,6 +284,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   const generateId = config.generateId ?? defaultIdFactory;
   const resolveBillingAccount = config.billingAccountResolver ?? createDefaultBillingAccountResolver();
   const metrics = createNamespacedEmitter('billfn', config.metrics ?? createMetricsEmitter());
+  const regionId = config.region?.id;
 
   const deps: ServiceDeps = {
     db: config.db,
@@ -847,6 +849,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       await requirePriceEligible(deps, billingAccount.id, plan, price);
       const checkoutSessionId = deps.generateId('chk');
       const timestamp = toIsoString(deps.now());
+      const metadata = withRegionMetadata(input.metadata, regionId);
 
       const created = await createCheckoutSessionRecord(deps, {
         checkoutSessionId,
@@ -855,7 +858,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         priceId: price.priceId,
         provider: price.provider,
         status: 'pending',
-        metadata: input.metadata,
+        metadata,
         createdAt: timestamp,
         updatedAt: timestamp
       });
@@ -865,7 +868,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         billingAccount,
         plan,
         price,
-        metadata: input.metadata,
+        metadata,
         customer: input.customer,
         returnUrl: input.returnUrl,
         successUrl: input.successUrl,
@@ -1625,6 +1628,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     async runReconciliationJob(input: BillFnRunReconciliationJobRequest): Promise<BillFnReconciliationJobResponse> {
       const job = await runReconciliationJobInternal(input.jobId);
       return ok({ job });
+    },
+    /** Whether a subscription, checkout session or replaced-reference row here holds the provider reference. */
+    async ownsProviderReference(provider: BillingProviderName, reference: string): Promise<boolean> {
+      return ownsProviderReference(deps, provider, reference);
     },
     dispatchEvents: (input?: BillFnDispatchEventsRequest) => deps.lifecycle.dispatch(input),
     listEvents: deps.lifecycle.list,
@@ -2912,6 +2919,51 @@ async function findSubscriptionByProviderRef(
     }
   }
   return null;
+}
+
+/**
+ * Checkout metadata with the configured region as `billfn_region`. A caller
+ * value is always dropped, so only BillFn decides where the ingress routes the
+ * provider record's events.
+ */
+function withRegionMetadata(
+  metadata: Record<string, unknown> | undefined,
+  regionId: string | undefined
+): Record<string, unknown> | undefined {
+  if (!regionId && !(metadata && Object.hasOwn(metadata, BILLFN_REGION_METADATA_KEY))) {
+    return metadata;
+  }
+  const next: Record<string, unknown> = { ...metadata };
+  delete next[BILLFN_REGION_METADATA_KEY];
+  if (regionId) {
+    next[BILLFN_REGION_METADATA_KEY] = regionId;
+  }
+  return next;
+}
+
+async function ownsProviderReference(deps: ServiceDeps, provider: BillingProviderName, reference: string) {
+  const lookups: Array<{ model: string; field: string }> = [
+    { model: TABLES.subscriptions, field: 'providerSubscriptionId' },
+    { model: TABLES.subscriptions, field: 'providerChargeId' },
+    { model: TABLES.checkoutSessions, field: 'providerSubscriptionId' },
+    { model: TABLES.checkoutSessions, field: 'providerChargeId' },
+    { model: TABLES.checkoutSessions, field: 'providerCheckoutId' },
+    { model: TABLES.replacedProviderReferences, field: 'providerReference' }
+  ];
+  for (const lookup of lookups) {
+    const found = await deps.db.findOne<Record<string, unknown>>({
+      model: lookup.model,
+      where: [
+        { field: 'provider', operator: 'eq', value: provider },
+        { field: lookup.field, operator: 'eq', value: reference }
+      ],
+      namespace: deps.namespace
+    });
+    if (found) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function findCheckoutSessionByProviderRef(

@@ -651,6 +651,21 @@ export interface BillFnQueueAdapter<TPayload = BillFnQueuedJob> {
   extendLease(id: string, leaseMs: number, fence?: { attempt?: number }): Promise<void>;
 }
 
+export interface BillFnRegionConfig {
+  /**
+   * This deployment's region id. Checkout writes it to the provider record's
+   * metadata as `billfn_region` (replacing any caller value), so the webhook
+   * ingress can route the record's events here.
+   */
+  id: string;
+  /**
+   * The shared internal token the webhook ingress presents as
+   * `authorization: Bearer <token>` to `GET <basePath>/ops/owner`. Without
+   * one, that endpoint answers every call with 401.
+   */
+  internalToken?: string;
+}
+
 export interface BillFnConfig {
   db: Adapter;
   catalog: BillFnCatalog;
@@ -666,6 +681,11 @@ export interface BillFnConfig {
   operations?: {
     authorize?: (request: Request) => Promise<boolean> | boolean;
   };
+  /**
+   * The region this deployment serves when BillFn runs in several regions
+   * behind one webhook ingress per provider (`createWebhookIngress`).
+   */
+  region?: BillFnRegionConfig;
   checkout?: {
     /**
      * Decides whether a price with an `eligibility` tag may be sold to the

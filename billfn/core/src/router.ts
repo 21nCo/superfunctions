@@ -3,7 +3,40 @@ import { createBillFnError } from './errors.js';
 import { errorResponse, jsonResponse, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
 import { createBillFnService } from './service.js';
-import type { BillFnConfig, BillFnReconciliationJobKind, BillableSubject } from './types.js';
+import type { BillFnConfig, BillFnReconciliationJobKind, BillableSubject, BillingProviderName } from './types.js';
+
+const PROVIDER_NAMES: ReadonlySet<string> = new Set<BillingProviderName>([
+  'dodo',
+  'apple',
+  'stripe',
+  'polar',
+  'google-play',
+  'microsoft-store'
+]);
+/** The longest provider reference the owner lookup accepts. */
+const MAX_PROVIDER_REFERENCE_LENGTH = 512;
+
+/** Compares SHA-256 digests in constant time, so the comparison time does not reveal the token. */
+async function tokensMatch(presented: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(presented)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected))
+  ]);
+  const a = new Uint8Array(left);
+  const b = new Uint8Array(right);
+  let difference = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    difference |= a[index] ^ b[index];
+  }
+  return difference === 0;
+}
+
+function readBearerToken(request: Request): string | null {
+  const header = request.headers.get('authorization');
+  const match = header ? /^Bearer\s+(\S+)\s*$/i.exec(header) : null;
+  return match ? match[1] : null;
+}
 
 async function parseJsonBody<T>(request: Request): Promise<T> {
   let body: unknown;
@@ -34,6 +67,16 @@ export function createBillFnRouter(config: BillFnConfig) {
       throw createBillFnError({
         code: 'BILLFN_UNAUTHORIZED',
         message: 'Operations access is not authorized'
+      });
+    }
+  };
+  const ensureInternalTokenPresented = async (request: Request) => {
+    const expected = config.region?.internalToken;
+    const presented = readBearerToken(request);
+    if (!expected || !presented || !(await tokensMatch(presented, expected))) {
+      throw createBillFnError({
+        code: 'BILLFN_UNAUTHENTICATED',
+        message: 'A valid internal token is required'
       });
     }
   };
@@ -308,6 +351,23 @@ export function createBillFnRouter(config: BillFnConfig) {
           return jsonResponse(response, response.error.status);
         }
         return successResponse(response.data);
+      }
+    },
+    {
+      method: 'GET',
+      path: '/ops/owner',
+      handler: async (request, context) => {
+        await ensureInternalTokenPresented(request);
+        const provider = context.query.get('provider') ?? '';
+        const reference = context.query.get('ref') ?? '';
+        if (!PROVIDER_NAMES.has(provider) || !reference || reference.length > MAX_PROVIDER_REFERENCE_LENGTH) {
+          throw createBillFnError({
+            code: 'BILLFN_VALIDATION_ERROR',
+            message: 'provider must name a billing provider and ref a provider reference'
+          });
+        }
+        const owned = await service.ownsProviderReference(provider as BillingProviderName, reference);
+        return successResponse({ owned });
       }
     },
     {

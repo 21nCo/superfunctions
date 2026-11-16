@@ -22,6 +22,11 @@ const definitions = [
     retryable: false
   },
   {
+    code: 'BILLFN_UNAUTHENTICATED',
+    httpStatus: 401,
+    retryable: false
+  },
+  {
     code: 'BILLFN_UNAUTHORIZED',
     httpStatus: 403,
     retryable: false
@@ -65,6 +70,11 @@ const definitions = [
     code: 'BILLFN_CATALOG_PRICE_NOT_FOUND',
     httpStatus: 404,
     retryable: false
+  },
+  {
+    code: 'BILLFN_REGION_UNAVAILABLE',
+    httpStatus: 503,
+    retryable: true
   },
   {
     code: 'BILLFN_INTERNAL_ERROR',
