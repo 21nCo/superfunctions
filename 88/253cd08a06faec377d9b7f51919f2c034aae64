@@ -1,0 +1,51 @@
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_fc7911579df959::t_2bc54befa91e18 339-552
+datafn/server/__tests__/exe-phase06.test.ts
+  s_fc7911579df959::t_4414311078a00e 382-384,399,417-452
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_fc7911579df959::t_11968f28a6997b 1-1051
+datafn/server/__tests__/query-planner.test.ts
+  s_fc7911579df959::t_edb866404dba15 203,205
+datafn/server/__tests__/query-pushdown.test.ts
+  s_fc7911579df959::t_e149bc60718292 565,573,670,677,713,720,749,756,767,784,791,836
+datafn/server/package.json
+  s_fc7911579df959::t_b60e6ff37e4905 3
+datafn/server/src/execution/db-store.ts
+  s_fc7911579df959::t_a04a02678ad1a5 16,29,238,268,272,278-280,284,294,298,301-303,315,359,416,423,449,510,524-552,563,689-692,699-707,961-962,964-967,984,986,998-1000,1002-1003,1005-1060,1063-1067
+datafn/server/src/execution/query/execute.ts
+  s_fc7911579df959::t_510e261c8bb36d 17-18,278-280,292,297-307
+datafn/server/src/execution/query/filter-plan.ts
+  s_fc7911579df959::t_056b647802386d 1-882
+datafn/server/src/execution/query/planner.ts
+  s_fc7911579df959::t_a509cc0ecacd0f 13,16-17,74-76,178,182-189,238-290,373,490,495-501,513,524-532,537,540,542,558,632-637,672-675,679,685,690-716
+datafn/server/src/execution/query/pushdown.ts
+  s_fc7911579df959::t_65b2c13c3cdca5 22-24,227,234,280,329,352-374,377-391,422-469,524-533
+datafn/server/src/execution/query/select.ts
+  s_fc7911579df959::t_6f051a9465c5d5 505-517
+datafn/server/src/routes/query/execute.ts
+  s_fc7911579df959::t_c6368cd8e5247d 13-19,256-269,277-278,283-292,294-305,307
+datafn/server/src/routes/query/validate.ts
+  s_fc7911579df959::t_2611bc8e747e28 9-10,167-168,550-552,555,594-597
+datafn/server/src/validation/authz.ts
+  s_fc7911579df959::t_3757466461e690 22,181-197,270-288,319,458,473,490-497,499-501
+datafn/server/src/validation/query.ts
+  s_fc7911579df959::t_243518866afaf9 24-27,955-957,959-965
+package-lock.json
+  s_fc7911579df959::t_51580e256578e1 10992
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88253cd08a06faec377d9b7f51919f2c034aae64",
+  "prompts": {},
+  "sessions": {
+    "s_fc7911579df959": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_fc7911579df959",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
