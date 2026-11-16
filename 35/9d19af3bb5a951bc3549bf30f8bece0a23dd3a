@@ -1,0 +1,31 @@
+billfn/core/src/__tests__/ingress.test.ts
+  s_0aa31eac51a20b::t_54354a6b796e67 10,266-279,381-411,531-549
+billfn/core/src/ingress.ts
+  s_aa793b0a8d1ac8::t_759322e9359eb2 89-92,96
+billfn/core/src/service.ts
+  s_aa793b0a8d1ac8::t_1da0dc390901e2 2950,2965-2967
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "359d19af3bb5a951bc3549bf30f8bece0a23dd3a",
+  "prompts": {},
+  "sessions": {
+    "s_0aa31eac51a20b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e480-1a26-71a2-b433-71461ffe9b51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_aa793b0a8d1ac8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "027b6086-1840-4196-8460-0ca79d822514",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
