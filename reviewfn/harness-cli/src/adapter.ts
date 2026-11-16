@@ -548,6 +548,29 @@ function terminalOutcome(run: AttemptContext, attempt: number, result: CommandRe
   return state.finish(QUOTA.test(detail) ? "quota_exhausted" : "failed", state.retain(detail, MAX_DETAIL_CHARS) || `The CLI exited with ${String(result.code ?? result.signal)}.`);
 }
 
+/**
+ * The accepted answer without its `json-path` report wherever the canonical payload schema closes an object to it. The
+ * payload keeps whole sections, so a report the caller's schema allows inside one (an `uninspected` or `evidence` item,
+ * say) is not part of the payload, and is never judged as one.
+ */
+function payloadAnswer(run: AttemptContext, value: Record<string, unknown>): Record<string, unknown> {
+  if (!run.profile.modelReport.startsWith("json-path:")) return value;
+  const stripped = withoutReportField(value, run.profile.modelReport.slice("json-path:".length).split("."), payloadSchema());
+  return isRecord(stripped) ? stripped : value;
+}
+
+/** The harness payload schema with its local `#/$defs/` references inlined (a cyclic one is kept), for the ownership rule. */
+let inlinedPayloadSchema: unknown;
+const payloadSchema = (): unknown => (inlinedPayloadSchema ??= inlineDefinitions(harnessOutputSchema, harnessOutputSchema.$defs, []));
+
+function inlineDefinitions(schema: unknown, definitions: Readonly<Record<string, unknown>>, seen: readonly string[]): unknown {
+  if (Array.isArray(schema)) return schema.map(item => inlineDefinitions(item, definitions, seen));
+  if (!isRecord(schema)) return schema;
+  const name = typeof schema.$ref === "string" && schema.$ref.startsWith("#/$defs/") ? schema.$ref.slice("#/$defs/".length) : undefined;
+  if (name !== undefined && Object.keys(schema).length === 1 && Object.hasOwn(definitions, name) && !seen.includes(name)) return inlineDefinitions(definitions[name], definitions, [...seen, name]);
+  return Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$defs").map(([key, item]) => [key, inlineDefinitions(item, definitions, seen)]));
+}
+
 /** The completed run for an answer that validates and confirms its model, or the rejection that earns a repair. */
 function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotHarnessOutput | Rejection {
   if (!("value" in output)) return { errors: ["error" in output ? output.error : "The CLI produced no answer."], rejected: "text" in output ? output.text : undefined };
@@ -555,7 +578,7 @@ function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotH
   // An answer the slot's schema rejects goes to its repair attempt as it is, never through payload normalization.
   const { value, errors } = validated(run, output.value);
   if (errors.length) return rejection(errors);
-  const payload = normalizePayload(value);
+  const payload = normalizePayload(payloadAnswer(run, value));
   const payloadErrors = validateHarnessPayload(payload);
   if (payloadErrors.length) return rejection(payloadErrors);
   // Only an answer that would be accepted must confirm its model; an invalid one still gets its repair attempt.

@@ -395,6 +395,23 @@ describe("CliHarnessAdapter model reporting", () => {
     expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
   }, 30_000);
 
+  it.each([
+    ["an uninspected item", "uninspected", { scope: "review", reason: "fixture" }, { type: "object", required: ["scope", "reason"], properties: { scope: { type: "string" }, reason: { type: "string" } } }],
+    ["an evidence item", "evidence", { id: "e1", kind: "diff", description: "fixture" }, { type: "object", required: ["id", "kind", "description"], properties: { id: { type: "string" }, kind: { type: "string" }, description: { type: "string" } } }],
+  ] as const)("keeps a report the caller's schema allows inside %s out of the payload", async (_name, section, item, items) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [section]: { type: "array", items } } };
+    const answer = (model: string) => profile({ modelReport: `json-path:${section}.0.model`, extra: ["--extra-json", JSON.stringify({ [section]: [{ ...item, model }] })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(output[section]).toEqual([item]);
+    expect(await calls()).toHaveLength(1);
+    const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
   it("removes the report of a schema-invalid answer too deep to copy without walking it, then repairs and ends malformed", async () => {
     const deep = JSON.parse(`${"[".repeat(3_000)}${"]".repeat(3_000)}`) as unknown;
     const output = await run(profile({ modelReport: "json-path:model", extra: ["--model-json", "fake-model-1", "--extra-json", JSON.stringify({ findings: deep })] }), "fake-model-1");
