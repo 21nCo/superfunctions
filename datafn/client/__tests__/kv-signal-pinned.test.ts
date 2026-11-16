@@ -5,10 +5,18 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DatafnSchema } from "@datafn/core";
+
+vi.mock("../src/offline/query.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/offline/query.js")>();
+  return { ...original, executeLocalQuery: vi.fn(original.executeLocalQuery) };
+});
 import { createDatafnClient } from "../src/client.js";
 import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
 import { DefaultHttpTransport } from "../src/transport/http.js";
 import { resolvePinnedQueryIds } from "../src/signals/querySignal.js";
+import { executeLocalQuery } from "../src/offline/query.js";
+
+const executeSpy = vi.mocked(executeLocalQuery);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 
@@ -16,6 +24,7 @@ const clients: Array<{ destroy?: () => Promise<void> | void }> = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  executeSpy.mockClear();
   for (const client of clients.splice(0)) await client.destroy?.();
 });
 
@@ -91,11 +100,11 @@ describe("signals pinned to ids (direct mode)", () => {
     const unsub = folders.signal({ filters: { id: "folders:a" } }).subscribe(() => {});
     await settle();
 
-    // A plain field of another folder cannot change this one.
+    // A remote merge may create the record it names, so it still refreshes.
     queried.length = 0;
     await folders.mutate({ operation: "merge", id: "folders:b", record: { name: "b" } } as any);
     await settle();
-    expect(queried).toEqual([]);
+    expect(queried).toContain("folders:a");
 
     // Deleting another folder may cascade to this one.
     await folders.mutate({ operation: "delete", id: "folders:root" } as any);
@@ -195,6 +204,19 @@ describe("signals pinned to ids (local)", () => {
     const values: any[] = [];
     const unsub = goals.signal({ filters: { id: "goals:child" } }).subscribe((value) => values.push(value));
     await vi.waitFor(() => expect(values.at(-1)?.map((r: any) => r.id)).toEqual(["goals:child"]));
+
+    // Editing a plain field of another existing goal cannot change the child.
+    // Full reads of the child's signal (record refreshes probe with $in).
+    const childReads = () =>
+      executeSpy.mock.calls.filter(([, , query]: any[]) => JSON.stringify(query?.filters ?? {}).includes('"id":"goals:child"')).length;
+    executeSpy.mockClear();
+    await goals.mutate({ operation: "merge", id: "goals:root", record: { label: "Renamed" } } as any);
+    await settle();
+    expect(childReads()).toBe(0);
+
+    // Creating a goal can, through defaults the event does not list.
+    await goals.mutate({ operation: "insert", id: "goals:other", record: { label: "Other" } } as any);
+    await vi.waitFor(() => expect(childReads()).toBeGreaterThan(0));
 
     await goals.mutate({ operation: "merge", id: "goals:root", record: { isArchived: true } } as any);
     await vi.waitFor(() => expect(values.at(-1)).toEqual([]));

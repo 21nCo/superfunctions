@@ -695,7 +695,11 @@ function createQuerySignal<T>(
       return false;
     }
     if (pinnedResourceIsolated) return true;
-    if (event.action !== "merge" && event.action !== "insert") return false;
+    // Only a merge known to have edited an existing record: creating one
+    // (an insert, or a merge that may create) can give records that already
+    // point at its id a new ancestor, with schema defaults the event does
+    // not list.
+    if (event.action !== "merge" || event.created !== false) return false;
     if (!isPlainObject(event.record)) return false;
     return Object.keys(event.record).every((key) => !pinnedPropagatingFields!.has(key));
   };
