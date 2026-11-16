@@ -341,6 +341,8 @@ describe("merge skipping with query plugins and relation selects", () => {
     clients.push(client as any);
     const folders = client.table("folders");
     const signal = folders.signal({ filters: { id: "folders:root" }, select: ["id", "children"] });
+    // Keep a reader: a signal nobody reads doesn't re-run on writes.
+    signal.subscribe(() => {});
     await waitForValue(signal as any);
     executeSpy.mockClear();
 
@@ -384,6 +386,8 @@ describe("merge creation reported by the storage write", () => {
     });
     const notes = client.table("notes");
     const signal = notes.signal({ limit: 10 });
+    // Keep a reader: a signal nobody reads doesn't re-run on writes.
+    signal.subscribe(() => {});
     await waitForValue(signal as any);
     executeSpy.mockClear();
 

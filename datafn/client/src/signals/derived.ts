@@ -115,14 +115,21 @@ export function combineSignals<TValue>(
           };
         }
       };
+      let subscribing = true;
       const scheduleEmit = () => {
-        if (pending) return;
+        // Sources replaying their values while being subscribed are covered
+        // by the first emit below.
+        if (subscribing || pending) return;
         pending = true;
         queueMicrotask(flush);
       };
       const unsubs = sources.map((source) => source.subscribe(scheduleEmit));
+      subscribing = false;
       allUnsubs.push(...unsubs);
-      scheduleEmit();
+      // Emit now, during subscribe, like other signals replay theirs (a
+      // LiveSignal re-attaching to this one folds that into the value its
+      // returning reader gets once). compute() errors are caught in flush.
+      flush();
       return () => {
         subscriptionActive = false;
         for (const unsub of unsubs) unsub();
