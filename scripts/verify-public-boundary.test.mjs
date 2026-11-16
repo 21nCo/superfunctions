@@ -643,6 +643,58 @@ test("python importlib.import_module and __import__ calls with a literal *fn nam
   ]);
 });
 
+test("python __import__ levels, importlib wildcard imports and assignment aliases follow the closed loader set", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/python/datafn/levels.py": [
+        '__import__("flowfn", None, None, [], 1)',
+        '__import__("flowfn", level=2)',
+        '__import__("flowfn", None, None, [], 0)',
+        '__import__("flowfn", level=0)',
+        '__import__("flowfn", None, None, [], depth)',
+        '__import__("flowfn", **options)',
+        '__import__("flowfn", globals(), locals())',
+        "",
+      ].join("\n"),
+      "datafn/python/datafn/wildcard.py": ["from importlib import *", 'import_module("flowfn")', 'import_module(".flowfn", "datafn")', ""].join("\n"),
+      "datafn/python/datafn/aliases.py": [
+        "import importlib",
+        "im = importlib.import_module",
+        'im("flowfn")',
+        "f = __import__",
+        'f("flowfn")',
+        'f("flowfn", level=1)',
+        "g = h = im",
+        'h("flowfn")',
+        "k: object = g",
+        'k("flowfn")',
+        "lib = importlib",
+        'lib.import_module("flowfn")',
+        'late("flowfn")',
+        "late = f",
+        "",
+      ].join("\n"),
+      "datafn/python/datafn/unrelated.py": [
+        "def import_module(name, level=0):",
+        "    return name",
+        "im = import_module",
+        'im("flowfn")',
+        'import_module("flowfn")',
+        "other = object()",
+        "dyn = other.import_module",
+        'dyn("flowfn")',
+        'getattr(importlib, "import_module")("flowfn")',
+        "",
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual((await findings(root)).sort(), [
+    ...[3, 5, 8, 10, 12, 13].map((line) => `datafn/python/datafn/aliases.py:${line} ${RULES.fnDependency}`),
+    ...[3, 4, 7].map((line) => `datafn/python/datafn/levels.py:${line} ${RULES.fnDependency}`),
+    `datafn/python/datafn/wildcard.py:2 ${RULES.fnDependency}`,
+  ].sort());
+});
+
 test("python imports of *fn modules must name a public Python project or an allowed package", async (t) => {
   const root = fixture(t, {
     allow: { pinnedfn: { reason: "published on PyPI" } },

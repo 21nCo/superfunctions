@@ -18,9 +18,9 @@
 // not parse. Imports are read from each file's syntax tree (TypeScript for JS/TS modules, svelte/compiler for
 // .svelte, parse5 for .html, micromark's MDX extension for .mdx), so comments, strings, Markdown prose and fenced
 // code are not checked; the module loader calls read are listed under "Module loaders" below. Python files are read
-// with Python's ast module: an absolute `import <name>fn`, `from <name>fn import`, or a literal dynamic import
-// (`__import__`, or importlib's import_module through the names a file binds it to) must name a public Python
-// project or an allowed package.
+// with Python's ast module: an absolute `import <name>fn`, `from <name>fn import`, or a literal absolute dynamic import
+// (`__import__` or importlib's import_module, through the closed set of bindings listed at PYTHON_IMPORTS) must name a
+// public Python project or an allowed package.
 // Usage: node scripts/verify-public-boundary.mjs [--root <checkout>]
 
 import { execFileSync } from "node:child_process";
@@ -832,11 +832,43 @@ export function importSpecifiers(file, source, parsed) {
 
 // Reads absolute paths (NUL-separated) on stdin and prints, per file, its absolute `import x` / `from x import`
 // modules and literal dynamic imports with their lines, or the syntax error that stopped it. Relative imports name no
-// package. A dynamic import is `__import__("x")`, `<m>.import_module("x")` where m is bound by `import importlib`
-// (or `import importlib.<sub>`, or `import importlib as m`), or `f("x")` where f is bound by
-// `from importlib import import_module [as f]`; the name may also be passed as `name="x"`. Bindings are file-wide.
+// package. Dynamic imports are a closed set; bindings are file-wide and learned to a fixpoint:
+//   loaders   `__import__`; `<m>.import_module` for a namespace m; a name bound by `from importlib import
+//             import_module [as f]` or `from importlib import *` (binds import_module); and a name bound by a simple
+//             assignment (`f = <loader>`, also annotated or `:=`) to any loader, `<m>.import_module` included.
+//   namespace `import importlib`, `import importlib.<sub>`, `import importlib as m`, or `m = <namespace>`.
+//   name      the first positional argument or `name=`, a non-empty string literal; one starting with "." is relative.
+//   level     `__import__` only (5th positional or `level=`): absent or literal 0 is absolute, a literal int > 0 is
+//             relative and not checked; any other level (non-literal, negative, or possibly given by *args/**kwargs) is
+//             not read.
+// Not read: computed names, loaders passed across functions, objects or modules, `getattr(importlib, ...)`,
+// `builtins.__import__`, `importlib.__import__`, tuple-unpacking assignments and a loader rebound to something else
+// (a name once bound to a loader stays one for the whole file).
 const PYTHON_IMPORTS = String.raw`
 import ast, json, sys
+
+def literal_name(node):
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value and not node.value.startswith(".")
+
+def keyword(call, name):
+    return next((item.value for item in call.keywords if item.arg == name), None)
+
+def dunder_level_absolute(call):
+    level = call.args[4] if len(call.args) > 4 else keyword(call, "level")
+    if level is None:
+        unknown = any(isinstance(arg, ast.Starred) for arg in call.args) or any(item.arg is None for item in call.keywords)
+        return not unknown
+    return isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0
+
+def assignments(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    yield target.id, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(node.target, ast.Name) and node.value is not None:
+            yield node.target.id, node.value
+
 results = []
 for path in sys.stdin.read().split("\0"):
     if not path:
@@ -848,7 +880,7 @@ for path in sys.stdin.read().split("\0"):
         results.append({"error": getattr(error, "msg", None) or str(error), "line": getattr(error, "lineno", None)})
         continue
     found = []
-    modules, loaders = set(), {"__import__"}
+    modules, loaders = set(), {"__import__": {"__import__"}}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.extend({"module": alias.name, "line": node.lineno} for alias in node.names)
@@ -860,17 +892,40 @@ for path in sys.stdin.read().split("\0"):
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             found.append({"module": node.module, "line": node.lineno})
             if node.module == "importlib":
-                loaders.update(alias.asname or alias.name for alias in node.names if alias.name == "import_module")
+                for alias in node.names:
+                    if alias.name in ("import_module", "*"):
+                        loaders.setdefault(alias.asname or "import_module", set()).add("import_module")
+
+    def kinds_of(value):
+        if isinstance(value, ast.Name):
+            return loaders.get(value.id, set())
+        if isinstance(value, ast.Attribute) and value.attr == "import_module" and isinstance(value.value, ast.Name) and value.value.id in modules:
+            return {"import_module"}
+        return set()
+
+    pairs = list(assignments(tree))
+    changed = True
+    while changed:
+        changed = False
+        for name, value in pairs:
+            if isinstance(value, ast.Name) and value.id in modules and name not in modules:
+                modules.add(name)
+                changed = True
+            kinds = kinds_of(value) - loaders.get(name, set())
+            if kinds:
+                loaders.setdefault(name, set()).update(kinds)
+                changed = True
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        func = node.func
-        loader = (isinstance(func, ast.Name) and func.id in loaders) or (
-            isinstance(func, ast.Attribute) and func.attr == "import_module" and isinstance(func.value, ast.Name) and func.value.id in modules)
-        if not loader:
+        kinds = kinds_of(node.func)
+        if not kinds:
             continue
-        arg = node.args[0] if node.args else next((keyword.value for keyword in node.keywords if keyword.arg == "name"), None)
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value and not arg.value.startswith("."):
+        arg = node.args[0] if node.args else keyword(node, "name")
+        if not literal_name(arg):
+            continue
+        if "import_module" in kinds or dunder_level_absolute(node):
             found.append({"module": arg.value, "line": node.lineno})
     results.append({"imports": found})
 json.dump(results, sys.stdout)
