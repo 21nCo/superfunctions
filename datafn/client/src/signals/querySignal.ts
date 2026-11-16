@@ -1002,13 +1002,15 @@ function createQuerySignal<T>(
           // Initial fetch errors are handled internally
         });
       } else if (currentValue !== undefined) {
-        // Immediately deliver current value to new subscriber
-        fn(currentValue);
-        if (subscribers.size === 1 && staleWhileIdle && !disposed) {
+        // A write arrived while no one subscribed: re-read once. Decided
+        // before delivering, since the handler may subscribe others. Queues
+        // behind a read already in flight, which may predate the write.
+        if (staleWhileIdle && !disposed) {
           staleWhileIdle = false;
-          // Queues behind a read already in flight, which may predate the write.
           fetchQuery(true).catch(() => {});
         }
+        // Immediately deliver current value to new subscriber
+        fn(currentValue);
       }
 
       // Return unsubscribe function

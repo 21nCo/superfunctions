@@ -26,6 +26,8 @@ export class LiveSignal<T> implements DatafnSignal<T> {
   private currentError: DatafnError | null = null;
   private subscribers = new Set<(value: T) => void>();
   private lastAccessedAt = Date.now();
+  // Set when the last reader unsubscribes; cleared when one subscribes.
+  private readersLeft = false;
 
   /**
    * Set by the Proxy layer (Phase 2) to unsubscribe from the client lifecycle.
@@ -39,13 +41,13 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     private cacheOptions?: DatafnSignalCacheOptions,
     private onSubscriberChange?: LiveSignalChangeHandler<T>,
   ) {
-    this.bindRaw(true);
+    this.bindRaw();
   }
 
-  private bindRaw(follow: boolean): void {
+  private bindRaw(): void {
     try {
       this.raw = this.factory();
-      if (follow) this.attachRaw();
+      this.attachRaw();
     } catch (err: any) {
       this.currentError = {
         code: "INTERNAL",
@@ -58,25 +60,47 @@ export class LiveSignal<T> implements DatafnSignal<T> {
   }
 
   /**
-   * Follows the raw signal. While no one subscribes the raw signal is left
-   * unfollowed, so writes don't re-run its query (it re-reads on return).
+   * Follows the raw signal. Once every reader has left, it is followed only
+   * until it settles on a value, so writes don't re-run its query while no
+   * one reads it (the raw signal re-reads when it is followed again).
    */
   private attachRaw(): void {
     if (!this.raw || this.rawUnsub) return;
     let attaching = true;
-    this.rawUnsub = this.raw.subscribe((value) => {
+    let detachOnceAttached = false;
+    const unsub = this.raw.subscribe((value) => {
       // The raw signal delivers its cached value on subscribe; subscribers
       // already have it when it is the value they last saw.
-      if (attaching && value === this.lastValue) return;
-      this.lastValue = value;
-      this.subscribers.forEach((fn) => fn(value));
+      if (!(attaching && value === this.lastValue)) {
+        this.lastValue = value;
+        this.subscribers.forEach((fn) => fn(value));
+      }
+      if (this.canDetachIdle()) {
+        if (attaching) detachOnceAttached = true;
+        else this.detachRaw();
+      }
     });
     attaching = false;
+    this.rawUnsub = unsub;
+    if (detachOnceAttached && this.canDetachIdle()) this.detachRaw();
   }
 
-  /** Idle with a cached value: the raw signal is not followed. */
-  private get detachedWhileIdle(): boolean {
-    return this.subscribers.size === 0 && this.lastValue !== undefined;
+  private detachRaw(): void {
+    this.rawUnsub?.();
+    this.rawUnsub = null;
+  }
+
+  /**
+   * Every reader has left and the raw signal holds a settled value, so it
+   * can stop being followed.
+   */
+  private canDetachIdle(): boolean {
+    return (
+      this.readersLeft &&
+      this.subscribers.size === 0 &&
+      this.lastValue !== undefined &&
+      !(this.raw as any)?.loading
+    );
   }
 
   private unbindRaw(): void {
@@ -96,12 +120,11 @@ export class LiveSignal<T> implements DatafnSignal<T> {
    */
   rebind(): void {
     if (this.disposed) return;
-    // An idle signal stays unfollowed: its new raw signal loads when someone
-    // subscribes again.
-    const follow = !this.detachedWhileIdle;
     this.unbindRaw();
     this.currentError = null;
-    this.bindRaw(follow);
+    // The new raw signal loads now, even while idle, so get() moves to the
+    // new context; an idle signal stops following it once it settles.
+    this.bindRaw();
     // If the new raw signal already has a value (e.g. cached), emit to subscribers.
     // Note: bindRaw's internal handler also emits when raw.subscribe() delivers synchronously.
     if (this.raw !== null) {
@@ -122,6 +145,7 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     if (this.disposed) return () => {};
     const wasIdle = this.subscribers.size === 0;
     this.touch();
+    this.readersLeft = false;
     this.subscribers.add(handler);
     this.onSubscriberChange?.(this);
     if (this.lastValue !== undefined) {
@@ -141,10 +165,11 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     return () => {
       if (this.subscribers.delete(handler)) {
         this.touch();
-        if (this.detachedWhileIdle) {
-          // Keep the raw signal (and its cached result) but stop following it.
-          this.rawUnsub?.();
-          this.rawUnsub = null;
+        if (this.subscribers.size === 0) {
+          this.readersLeft = true;
+          // Keep the raw signal (and its cached result) but stop following
+          // it; a read still loading detaches when it settles.
+          if (this.canDetachIdle()) this.detachRaw();
         }
         this.onSubscriberChange?.(this);
       }

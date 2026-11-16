@@ -67,6 +67,30 @@ describe("idle live queries", () => {
     again();
   });
 
+  it("re-read once when the returning reader subscribes another during delivery", async () => {
+    const queried = mockRemote();
+    const client = createClient();
+    const list = client.table("note").signal({ sort: ["label"] } as any);
+    list.subscribe(() => {})();
+    await settle();
+    queried.length = 0;
+    await client.table("note").mutate({ operation: "insert", id: "note:a", record: { label: "a" } } as any);
+    await settle();
+    expect(queried.filter((resource) => resource === "note")).toEqual([]);
+
+    // Reach the raw query signal directly: its first handler subscribes a
+    // second reader while the cached value is delivered.
+    const raw = (list as any).raw;
+    let nested: (() => void) | undefined;
+    const outer = raw.subscribe(() => {
+      nested ??= raw.subscribe(() => {});
+    });
+    await settle();
+    expect(queried.filter((resource) => resource === "note")).toHaveLength(1);
+    outer();
+    nested?.();
+  });
+
   it("still re-run on writes while subscribed", async () => {
     const queried = mockRemote();
     const client = createClient();
@@ -120,24 +144,67 @@ describe("idle LiveSignal", () => {
     expect(raw.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves a raw signal rebound while idle unfollowed until someone subscribes", () => {
-    const raws: Array<ReturnType<typeof rawSignal>> = [];
+  it("loads a raw signal rebound while idle, then stops following it", () => {
+    const raws: Array<ReturnType<typeof pendingRawSignal>> = [];
     const signal = new LiveSignal(
       () => {
-        const raw = rawSignal({ n: raws.length + 1 });
+        const raw = pendingRawSignal();
         raws.push(raw);
         return raw as any;
       },
       () => {},
     );
+    raws[0].deliver({ n: 1 });
     signal.subscribe(() => {})();
-    signal.rebind();
-    expect(raws).toHaveLength(2);
-    expect(raws[1].subs.size).toBe(0);
+    expect(raws[0].subs.size).toBe(0);
 
-    const received: unknown[] = [];
-    signal.subscribe((v) => received.push(v));
+    signal.rebind();
+    // The new context's read runs now, so get() moves off the old context.
     expect(raws[1].subs.size).toBe(1);
-    expect(received.at(-1)).toEqual({ n: 2 });
+    raws[1].deliver({ n: 2 });
+    expect(signal.get()).toEqual({ n: 2 });
+    expect(raws[1].subs.size).toBe(0);
+  });
+
+  it("stops following once settled when its readers left before the first result", () => {
+    const raw = pendingRawSignal();
+    const signal = new LiveSignal(() => raw as any, () => {});
+    signal.subscribe(() => {})();
+    expect(raw.subs.size).toBe(1);
+    raw.deliver({ n: 1 });
+    expect(raw.subs.size).toBe(0);
+    expect(signal.get()).toEqual({ n: 1 });
+  });
+
+  it("keeps following a signal no one has subscribed to yet", () => {
+    const raw = pendingRawSignal();
+    new LiveSignal(() => raw as any, () => {});
+    raw.deliver({ n: 1 });
+    expect(raw.subs.size).toBe(1);
   });
 });
+
+function pendingRawSignal() {
+  let value: unknown;
+  const subs = new Set<(v: any) => void>();
+  const raw = {
+    subs,
+    loading: true,
+    get: () => value,
+    subscribe(handler: (v: any) => void) {
+      subs.add(handler);
+      if (value !== undefined) handler(value);
+      return () => subs.delete(handler);
+    },
+    deliver(next: unknown) {
+      value = next;
+      raw.loading = false;
+      subs.forEach((fn) => fn(next));
+    },
+    error: null,
+    refreshing: false,
+    refresh: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  };
+  return raw;
+}
