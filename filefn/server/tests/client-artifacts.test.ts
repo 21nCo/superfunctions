@@ -179,11 +179,13 @@ function controlledDatabase(database: ReturnType<typeof memoryAdapter>) {
     down: boolean;
     zeroUpdateCounts: boolean;
     beforeUpdate: (() => Promise<void>) | null;
+    beforeCreate: ((data: Record<string, unknown>) => Promise<void>) | null;
     onCreate: ((data: Record<string, unknown>) => DatabaseFault | undefined) | null;
   } = {
     down: false,
     zeroUpdateCounts: false,
     beforeUpdate: null,
+    beforeCreate: null,
     onCreate: null,
   };
   const proxy = new Proxy(database, {
@@ -193,6 +195,7 @@ function controlledDatabase(database: ReturnType<typeof memoryAdapter>) {
       return async (params: { model: string; data?: Record<string, unknown> }) => {
         if (params.model === 'fileArtifacts') {
           if (control.down) throw new Error('database unavailable');
+          if (property === 'create') await control.beforeCreate?.(params.data!);
           const fault = property === 'create' ? control.onCreate?.(params.data!) : undefined;
           if (fault === 'throw') throw new Error('artifact row write failed');
           if (fault === 'commit-then-throw') {
@@ -1169,6 +1172,25 @@ describe('client-supplied processing artifacts', () => {
       expect(await app.displacedRecords()).toEqual([]);
     });
 
+    it('withdraws the row of an upload whose commit a sweep overtook past its lifetime', async () => {
+      const app = await createApp();
+      // The row create starts before the deadline and lands only after a
+      // sweep, hours later, retired the upload's record and deleted its object.
+      let swept: Awaited<ReturnType<FileFn['cleanupOrphanedArtifacts']>> | undefined;
+      app.databaseControl.beforeCreate = async (data) => {
+        if (data.kind !== 'thumbnail-small' || swept) return;
+        muchLater();
+        swept = await app.fileFn.cleanupOrphanedArtifacts();
+      };
+      await expect(app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner)).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
+      expect(swept).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await app.artifacts()).toEqual([]);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
     it('deletes the object of an upload that died on a live version once its lifetime is over', async () => {
       const app = await createApp();
       app.databaseControl.onCreate = (data) => {
@@ -1263,7 +1285,8 @@ describe('client-supplied processing artifacts', () => {
       }
       expect(during.fired).toBe(false);
       await expectServerSmallReadable(app, other.fileId);
-      expect(await app.displacedRecords()).toEqual([]);
+      // The record stays for file and version cleanup, which can retry a delete.
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).toEqual([sharedKey]);
     });
 
     it("leaves a live version's records and an object another row still names", async () => {
@@ -1292,7 +1315,7 @@ describe('client-supplied processing artifacts', () => {
         },
       });
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
-      expect((await app.displacedRecords()).map((record) => record.storageKey)).not.toContain(medium.storageKey);
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).toContain(medium.storageKey);
       expect((await storedObjects(app.root)).some((path) => path.endsWith(medium.storageKey))).toBe(true);
     });
   });
