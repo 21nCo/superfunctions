@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Adapter, TransactionAdapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn } from '../index.js';
-import { LIFECYCLE_INLINE_DELIVERY_MS } from '../lifecycle.js';
+import { LIFECYCLE_CLAIM_LEASE_MS, LIFECYCLE_INLINE_DELIVERY_MS } from '../lifecycle.js';
 import type {
   BillFnCatalog,
   BillFnLifecycleEvent,
@@ -1166,6 +1166,113 @@ describe('lifecycle events: delivery', () => {
     clock.current = new Date(clock.current.getTime() + 2 * MINUTE);
     await expect(restarted.billfn.services.events.dispatch()).resolves.toEqual({ delivered: 2, retrying: 0, failed: 0 });
     expect(restarted.delivered.map((event) => [event.id, event.attempt])).toEqual(firstIds.map((id) => [id, 2]));
+  });
+
+  it('marks an event failed once its delivery never completed for 24 hours, without calling the handler again', async () => {
+    const { db, faults } = faultyLifecycleDb();
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const calls: { id: string; at: number }[] = [];
+    const env = setup({
+      db,
+      clock,
+      onEvent: (event) => {
+        calls.push({ id: event.id, at: clock.current.getTime() });
+      }
+    });
+    // Every dispatcher stops after calling the handler and before settling, so each claim lapses.
+    faults.settle = true;
+    await env.trial(14 * DAY);
+    const recorded = await env.rows();
+    expect(recorded).toHaveLength(2);
+    const deadline = Date.parse(recorded[0]!.createdAt) + DAY;
+    for (let pass = 0; pass < 320; pass += 1) {
+      env.advance(LIFECYCLE_CLAIM_LEASE_MS);
+      await env.billfn.services.events.dispatch().catch(() => undefined);
+      if (clock.current.getTime() < deadline) {
+        expect((await env.rows()).map((row) => row.status)).toEqual(['pending', 'pending']);
+      }
+    }
+    const failed = await env.billfn.services.events.list({ status: 'failed' });
+    expect(failed).toHaveLength(2);
+    for (const row of failed) {
+      expect(row.lastError).toBe('delivery did not complete');
+      expect(Date.parse(row.failedAt!)).toBeGreaterThanOrEqual(deadline);
+      // The last retry is due at the deadline; its claim lapses a lease later and the next dispatch marks it failed.
+      expect(Date.parse(row.failedAt!)).toBeLessThanOrEqual(deadline + 3 * LIFECYCLE_CLAIM_LEASE_MS);
+      const own = calls.filter((call) => call.id === row.id);
+      expect(own.filter((call) => call.at > deadline).length).toBeLessThanOrEqual(1);
+      // A lapsed claim is a failed attempt, so retries back off instead of running every lease.
+      expect(own.length).toBeLessThan(40);
+    }
+  });
+
+  it('bounds a handler that never settles by the claim lease, so a job run completes and the event ends failed', async () => {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const writer = setup({
+      db,
+      clock,
+      onEvent: () => {
+        throw new Error('not yet');
+      }
+    });
+    await writer.trial(14 * DAY);
+    const deadline = Date.parse((await writer.rows())[0]!.createdAt) + DAY;
+    const calls: number[] = [];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const hanging = setup({
+        db,
+        clock,
+        onEvent: () => {
+          calls.push(clock.current.getTime());
+          return new Promise<void>(() => undefined);
+        }
+      });
+      hanging.advance(MINUTE);
+      const job = hanging.runLifecycleJob();
+      await vi.advanceTimersByTimeAsync(3 * LIFECYCLE_CLAIM_LEASE_MS);
+      expect((await job).status).toBe('succeeded');
+      expect(calls).toHaveLength(2);
+      for (let pass = 0; pass < 300; pass += 1) {
+        hanging.advance(LIFECYCLE_CLAIM_LEASE_MS);
+        const run = hanging.billfn.services.events.dispatch();
+        await vi.advanceTimersByTimeAsync(3 * LIFECYCLE_CLAIM_LEASE_MS);
+        await run;
+      }
+      const failed = await hanging.billfn.services.events.list({ status: 'failed' });
+      expect(failed).toHaveLength(2);
+      for (const row of failed) {
+        expect(row.lastError).toBe('handler did not settle within the claim lease');
+        expect(Date.parse(row.failedAt!) - deadline).toBeLessThanOrEqual(LIFECYCLE_CLAIM_LEASE_MS);
+      }
+      expect(calls.filter((at) => at > deadline).length).toBeLessThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks an event whose claim lapsed after the delivery window failed once when two dispatchers race on it', async () => {
+    const { db, faults } = faultyLifecycleDb();
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const stopped = setup({ db, clock });
+    faults.settle = true;
+    await stopped.trial(14 * DAY);
+    expect(stopped.delivered).toHaveLength(2);
+    faults.settle = false;
+
+    clock.current = new Date(clock.current.getTime() + DAY + MINUTE);
+    const first = setup({ db, clock });
+    const second = setup({ db, clock });
+    const [left, right] = await Promise.all([first.billfn.services.events.dispatch(), second.billfn.services.events.dispatch()]);
+    expect(left.failed + right.failed).toBe(2);
+    expect(left.delivered + right.delivered).toBe(0);
+    expect([...first.delivered, ...second.delivered]).toEqual([]);
+    const rows = await first.rows();
+    expect(rows.map((row) => [row.status, row.lastError, row.attempts, row.claimId])).toEqual([
+      ['failed', 'delivery did not complete', 1, null],
+      ['failed', 'delivery did not complete', 1, null]
+    ]);
   });
 
   it.each([

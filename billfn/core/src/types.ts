@@ -683,8 +683,10 @@ export interface BillFnConfig {
    * once: right after the call that recorded it (which waits for that
    * delivery at most 10 seconds), and otherwise by
    * `services.events.dispatch` or the `lifecycle-events` reconciliation job. A
-   * handler that throws is retried with backoff for 24 hours after the event
-   * was recorded; then the event is `failed`. Deduplicate by `event.id`.
+   * handler that throws, or does not settle within 5 minutes, is retried with
+   * backoff for 24 hours after the event was recorded; then the event is
+   * `failed`, as is one whose delivery never completed by then (its dispatcher
+   * stopped mid-delivery). Deduplicate by `event.id`.
    * Without a handler no event is recorded, so set it in every process that
    * writes billing state.
    */
@@ -810,6 +812,7 @@ export interface BillFnLifecycleEventRecord {
    * lapses. A `staged` event is checked against its row's marker then.
    */
   nextAttemptAt: string;
+  /** The claim of the dispatcher delivering a `pending` event; one still set once it lapsed marks a delivery that did not complete. */
   claimId?: string | null;
   lastError?: string | null;
   deliveredAt?: string | null;

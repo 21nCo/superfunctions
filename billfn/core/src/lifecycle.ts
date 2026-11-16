@@ -122,9 +122,10 @@ function grantEntitlementChange(
  * claims a due event with a compare-and-set on its due time and attempt count,
  * so of two racing dispatchers one delivers it; the claim moves the due time a
  * lease ahead, so an event whose dispatcher crashed is due again once the lease
- * lapses. A handler failure schedules the next attempt with exponential backoff
- * until 24 hours after the event was recorded; a failure after that marks it
- * `failed`, where `list({ status: 'failed' })` shows it.
+ * lapses. A handler failure, or a delivery that did not complete, schedules the
+ * next attempt with exponential backoff until 24 hours after the event was
+ * recorded; one after that marks it `failed`, where `list({ status: 'failed' })`
+ * shows it.
  */
 export function createLifecycleEvents(deps: LifecycleDeps) {
   const handler = deps.onEvent;
@@ -347,27 +348,57 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     return result;
   }
 
-  /** Claims the event and calls the handler once; null when the event is not due or another dispatcher claimed it. */
+  /**
+   * Claims the event and calls the handler once; null when the event is not due
+   * or another dispatcher claimed it. A pending event that still holds a claim
+   * is due only once that claim lapsed, so its delivery did not complete (the
+   * handler hung or the dispatcher stopped); that counts as a failed attempt. It
+   * is retried after the backoff of that attempt, counted from the lapsed claim,
+   * and once the 24-hour window passed it is marked `failed` without calling the
+   * handler again. The handler call is bounded by the claim lease, and a handler
+   * that does not settle within it is a failed attempt too.
+   */
   async function deliver(row: BillFnLifecycleEventRecord): Promise<keyof BillFnDispatchEventsResult | null> {
     const claimedAt = deps.now();
     if (!handler || row.status !== 'pending' || Date.parse(row.nextAttemptAt) > claimedAt.getTime()) {
       return null;
     }
+    const due = [
+      { field: 'id', operator: 'eq', value: row.id },
+      { field: 'status', operator: 'eq', value: 'pending' },
+      { field: 'nextAttemptAt', operator: 'eq', value: row.nextAttemptAt },
+      { field: 'attempts', operator: 'eq', value: row.attempts }
+    ] satisfies WhereClause[];
+    const deadline = Date.parse(row.createdAt) + LIFECYCLE_DELIVERY_WINDOW_MS;
+    const timestamp = toIsoString(claimedAt);
+    if (row.claimId) {
+      const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
+      const retryAt = Math.min(Date.parse(row.nextAttemptAt) - LIFECYCLE_CLAIM_LEASE_MS + retryDelay(row.attempts), deadline);
+      if (expired || retryAt > claimedAt.getTime()) {
+        const data = expired ? { status: 'failed' as const, failedAt: timestamp } : { nextAttemptAt: toIsoString(new Date(retryAt)) };
+        const ended = await deps.db.updateMany({
+          model: EVENTS_TABLE,
+          where: due,
+          data: { ...data, lastError: 'delivery did not complete', claimId: null, updatedAt: timestamp },
+          namespace: deps.namespace
+        });
+        if (ended !== 1) {
+          return null;
+        }
+        deps.metrics.track(expired ? 'event.failed' : 'event.retry_scheduled', { type: row.type });
+        return expired ? 'failed' : 'retrying';
+      }
+    }
     const claimId = deps.generateId('lcc');
     const attempt = row.attempts + 1;
     const claimed = await deps.db.updateMany({
       model: EVENTS_TABLE,
-      where: [
-        { field: 'id', operator: 'eq', value: row.id },
-        { field: 'status', operator: 'eq', value: 'pending' },
-        { field: 'nextAttemptAt', operator: 'eq', value: row.nextAttemptAt },
-        { field: 'attempts', operator: 'eq', value: row.attempts }
-      ],
+      where: due,
       data: {
         claimId,
         attempts: attempt,
         nextAttemptAt: toIsoString(new Date(claimedAt.getTime() + LIFECYCLE_CLAIM_LEASE_MS)),
-        updatedAt: toIsoString(claimedAt)
+        updatedAt: timestamp
       },
       namespace: deps.namespace
     });
@@ -376,35 +407,42 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
 
     let failure: { error: unknown } | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await handler({
-        id: row.id,
-        type: row.type,
-        billingAccountId: row.billingAccountId,
-        occurredAt: row.occurredAt,
-        data: row.data,
-        attempt
-      } as BillFnLifecycleEvent);
+      await Promise.race([
+        handler({
+          id: row.id,
+          type: row.type,
+          billingAccountId: row.billingAccountId,
+          occurredAt: row.occurredAt,
+          data: row.data,
+          attempt
+        } as BillFnLifecycleEvent),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('handler did not settle within the claim lease')), LIFECYCLE_CLAIM_LEASE_MS);
+        })
+      ]);
     } catch (error) {
       failure = { error };
+    } finally {
+      clearTimeout(timer);
     }
 
     const finishedAt = deps.now();
-    const timestamp = toIsoString(finishedAt);
+    const settledAt = toIsoString(finishedAt);
     if (!failure) {
-      await settle(row.id, claimId, { status: 'delivered', deliveredAt: timestamp, lastError: null, updatedAt: timestamp });
+      await settle(row.id, claimId, { status: 'delivered', deliveredAt: settledAt, lastError: null, updatedAt: settledAt });
       deps.metrics.track('event.delivered', { type: row.type });
       return 'delivered';
     }
     const lastError = errorMessage(failure.error);
-    const deadline = Date.parse(row.createdAt) + LIFECYCLE_DELIVERY_WINDOW_MS;
     if (!Number.isFinite(deadline) || finishedAt.getTime() >= deadline) {
-      await settle(row.id, claimId, { status: 'failed', failedAt: timestamp, lastError, updatedAt: timestamp });
+      await settle(row.id, claimId, { status: 'failed', failedAt: settledAt, lastError, updatedAt: settledAt });
       deps.metrics.track('event.failed', { type: row.type });
       return 'failed';
     }
     const retryAt = Math.min(finishedAt.getTime() + retryDelay(attempt), deadline);
-    await settle(row.id, claimId, { nextAttemptAt: toIsoString(new Date(retryAt)), lastError, updatedAt: timestamp });
+    await settle(row.id, claimId, { nextAttemptAt: toIsoString(new Date(retryAt)), lastError, updatedAt: settledAt });
     deps.metrics.track('event.retry_scheduled', { type: row.type });
     return 'retrying';
   }
