@@ -234,7 +234,10 @@ jobs:
           if (tags.latest === version) {
             execFileSync('npm', ['dist-tag', 'rm', name, 'latest'], { stdio: 'inherit' });
           }
-          const reconciled = await registryJson(`-/package/${encodedName}/dist-tags`);
+          const reconciled = await registryJson(
+            `-/package/${encodedName}/dist-tags`,
+            (body) => body[distTag] === version && body.latest !== version,
+          );
           if (reconciled[distTag] !== version || reconciled.latest === version) {
             throw new Error('Prerelease channel reconciliation failed.');
           }
