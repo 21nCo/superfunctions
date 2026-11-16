@@ -303,11 +303,9 @@ export async function executeClone(
               next[tableName] = lastRecord?.id as string ?? null;
             } else {
               next[tableName] = null;
-              // Only when the read wasn't cut short by the cap (the count may
-              // have failed and read as 0).
-              if (!countFailedTables.has(tableName) || records.length < readLimit) {
-                fullyLoadedTables.add(tableName);
-              }
+              // Every row was read: a read cut short by the cap (including one
+              // whose count failed) takes the branch above instead.
+              fullyLoadedTables.add(tableName);
             }
           }
 
