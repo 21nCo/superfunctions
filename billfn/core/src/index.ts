@@ -6,6 +6,16 @@ import type { BillFnConfig, BillFnInstance } from './types.js';
 export type * from './types.js';
 export { getSchema, getSchemaMap } from './schema.js';
 export { createBillFnError, billFnErrorRegistry } from './errors.js';
+export { BILLFN_REGION_METADATA_KEY, createWebhookIngress, readRoutingKeys } from './ingress.js';
+export type {
+  BillFnIngressRegion,
+  BillFnIngressResolveRegionInput,
+  BillFnIngressRoute,
+  BillFnIngressRouteDecision,
+  BillFnIngressRoutingKeys,
+  BillFnWebhookIngress,
+  BillFnWebhookIngressConfig
+} from './ingress.js';
 export {
   BILLFN_IMPORTED_AT_METADATA_KEY,
   BILLFN_IMPORT_PENDING_METADATA_KEY,

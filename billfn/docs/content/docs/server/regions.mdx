@@ -1,0 +1,51 @@
+---
+title: Regions and webhook ingress
+description: Run BillFn in several regions behind one public webhook URL per provider.
+---
+
+When BillFn runs inside each regional service, each provider still calls one public webhook URL. `createWebhookIngress` serves that URL and forwards every delivery to the region that owns it.
+
+## Region configuration
+
+Give every regional BillFn its region id and the shared internal token:
+
+```ts
+const billfn = createBillFn({
+  // ...
+  region: { id: 'euwest', internalToken: env.BILLFN_INTERNAL_TOKEN }
+});
+```
+
+Checkout then writes `billfn_region: 'euwest'` into the provider record's metadata (a caller value for that key is always replaced, or dropped when no region is configured).
+
+## Owner lookup
+
+`GET /billfn/ops/owner?provider=<provider>&ref=<reference>` answers `{ owned: boolean }`: whether a subscription, checkout session or replaced reference in this region holds the provider reference. It requires `authorization: Bearer <internalToken>` and answers `401 BILLFN_UNAUTHENTICATED` otherwise, including when the region has no `internalToken`.
+
+## Ingress
+
+```ts
+import { createWebhookIngress } from '@billfn/core';
+
+const ingress = createWebhookIngress({
+  regions: [
+    { id: 'insouth', url: 'https://insouth.example.com/billfn' },
+    { id: 'useast', url: 'https://useast.example.com/billfn' },
+    { id: 'euwest', url: 'https://euwest.example.com/billfn' }
+  ],
+  defaultRegion: 'useast',
+  internalToken: env.BILLFN_INTERNAL_TOKEN
+});
+
+// One public route per provider:
+app.post('/webhooks/:provider', (c) => ingress.handle(c.req.param('provider'), c.req.raw));
+```
+
+For each delivery the ingress reads only routing keys and never verifies or parses the event further:
+
+1. A Dodo payload's `data.metadata.billfn_region`, when it names a configured region.
+2. The optional `resolveRegion` hook. If it throws or rejects, the ingress answers `503 BILLFN_REGION_UNAVAILABLE` and forwards nothing, so the provider retries.
+3. Otherwise every region's owner lookup, in parallel, for the event's references (Dodo subscription and payment ids; the original and current transaction ids of an Apple notification). The first region in configured order that owns the most specific reference wins. A region whose lookup fails, answers non-200 or exceeds `lookupTimeoutMs` (default 3000 ms) does not stop another region from claiming the event, but if no region claims it the ownership is inconclusive: the ingress answers `503 BILLFN_REGION_UNAVAILABLE`, forwards nothing, and the provider's retry reaches the owner once it answers again.
+4. Otherwise (no references, or every region answered that it does not own them) the `defaultRegion`, which stores the verified event as unlinked until its reference is linked.
+
+The request is forwarded to `<region url>/webhooks/<provider>` with its body bytes and signature headers unchanged, so the destination verifies the signature, and the destination's response is returned to the provider: a forged event is rejected there. When the chosen region cannot be reached within `forwardTimeoutMs` (default 30000 ms), the ingress answers `503 BILLFN_REGION_UNAVAILABLE` so the provider retries. Pass `forward` or `fetch` to change the transport, and `onRoute` to observe routing decisions.
