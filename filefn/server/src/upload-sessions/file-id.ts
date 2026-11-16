@@ -80,7 +80,8 @@ interface KeyState {
  *
  * A call runs only while it holds its key, and holds it until it settles or a
  * waiter takes the key past its `evictableAt`. A call that cannot get the key
- * within `waitTimeoutMs` fails with the retryable
+ * within `waitTimeoutMs` of asking for it (group probes and queueing count
+ * against one bound) fails with the retryable
  * `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` without running, leaving no trace on
  * the key, unless the holder's `evictableAt` has passed: then it takes the key
  * and runs. A `keepWaiting` call keeps waiting instead of failing. Memory per
@@ -100,8 +101,12 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
     return created;
   }
 
-  function wait(state: KeyState, turn: Turn, keepWaiting: boolean): Promise<KeyState> {
+  // A call that is not `keepWaiting` fails at `deadline` (epoch ms), one bound
+  // for its whole acquisition, probes included; joining a group at or past it
+  // decides at once. A `keepWaiting` call re-checks every `waitTimeoutMs`.
+  function wait(state: KeyState, turn: Turn, keepWaiting: boolean, deadline: number): Promise<KeyState> {
     return new Promise<KeyState>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const waiter = {
         turn,
         grant: () => {
@@ -128,7 +133,9 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
         state.waiters.splice(index, 1);
         reject(errors.uploadCompletionInProgress());
       };
-      let timer = setTimeout(onTimeout, waitTimeoutMs);
+      const delay = keepWaiting ? waitTimeoutMs : deadline - Date.now();
+      if (delay <= 0) onTimeout();
+      else timer = setTimeout(onTimeout, delay);
     });
   }
 
@@ -143,18 +150,20 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
   // started meanwhile, or starts its own group once none is left unprobed. So
   // two calls of one group never both start a group while either is live.
   // Probing counts as waiting: a call that is not `keepWaiting` fails with the
-  // retryable error, without running, when its probes outlast `waitTimeoutMs`.
+  // retryable error, without running, at its `deadline`, whether still probing
+  // or already waiting in the group it joined.
   async function acquireAmong(
     key: string,
     turn: Turn,
     keepWaiting: boolean,
+    deadline: number,
     sharesKeyWith: (members: readonly string[]) => Promise<boolean>,
   ): Promise<KeyState> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = keepWaiting
       ? undefined
       : new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(errors.uploadCompletionInProgress()), waitTimeoutMs);
+          timer = setTimeout(() => reject(errors.uploadCompletionInProgress()), Math.max(0, deadline - Date.now()));
         });
     const probed = new Set<KeyState>();
     try {
@@ -166,7 +175,7 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
         const shared = await (timedOut ? Promise.race([probes, timedOut]) : probes);
         const live = keys.get(key) ?? [];
         const match = unprobed.find((state, index) => shared[index] && live.includes(state));
-        if (match) return wait(match, turn, keepWaiting);
+        if (match) return wait(match, turn, keepWaiting, deadline);
       }
     } finally {
       clearTimeout(timer);
@@ -177,8 +186,9 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
     const groups = keys.get(key);
     if (!groups) return start(key, turn);
     const keepWaiting = runOptions.keepWaiting ?? false;
-    if (runOptions.sharesKeyWith) return acquireAmong(key, turn, keepWaiting, runOptions.sharesKeyWith);
-    return wait(groups[0], turn, keepWaiting);
+    const deadline = Date.now() + waitTimeoutMs;
+    if (runOptions.sharesKeyWith) return acquireAmong(key, turn, keepWaiting, deadline, runOptions.sharesKeyWith);
+    return wait(groups[0], turn, keepWaiting, deadline);
   }
 
   function release(key: string, state: KeyState, turn: Turn): void {

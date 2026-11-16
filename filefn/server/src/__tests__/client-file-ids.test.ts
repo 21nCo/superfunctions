@@ -1242,6 +1242,53 @@ describe('in-process completion serialization bound', () => {
     expect(run.activeKeys()).toBe(0);
   });
 
+  it('a call whose group probe succeeds late fails at its original wait bound, without running or staying queued', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const run = createKeyedSerializer({ waitTimeoutMs: 30_000 });
+    let releaseX!: () => void;
+    const x = run('k', () => new Promise<void>((resolve) => { releaseX = resolve; }), { member: 'x1' });
+    let ran = false;
+    let outcome: string | undefined;
+    void run('k', async () => { ran = true; }, {
+      member: 'x2',
+      sharesKeyWith: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 29_000)),
+    }).then(() => { outcome = 'ran'; }, (error: { code?: string }) => { outcome = error.code; });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+    releaseX();
+    await x;
+    await flushPromises();
+    expect(ran).toBe(false);
+    expect(run.activeKeys()).toBe(0);
+  });
+
+  for (const handover of ['release', 'eviction'] as const) {
+    it(`a keepWaiting call whose group probe succeeds late keeps waiting past the bound and runs on ${handover}`, async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const run = createKeyedSerializer({ waitTimeoutMs: 30_000 });
+      let releaseX!: () => void;
+      const evictableAt = handover === 'eviction' ? Date.now() + 75_000 : undefined;
+      const x = run('k', () => new Promise<void>((resolve) => { releaseX = resolve; }), { member: 'x1', evictableAt });
+      let ran = false;
+      const late = run('k', async () => { ran = true; }, {
+        member: 'x2',
+        keepWaiting: true,
+        sharesKeyWith: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 29_000)),
+      });
+      await vi.advanceTimersByTimeAsync(70_000);
+      expect(ran).toBe(false);
+      if (handover === 'release') releaseX();
+      else await vi.advanceTimersByTimeAsync(30_000);
+      await late;
+      expect(ran).toBe(true);
+      releaseX();
+      await x;
+      expect(run.activeKeys()).toBe(0);
+    });
+  }
+
   for (const mode of ['multipart', 'proxy'] as const) {
     it(`${mode}: a retried completion while the first call is still running past the wait bound gets 409 and storage is finalized once`, async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
