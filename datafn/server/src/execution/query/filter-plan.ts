@@ -38,7 +38,11 @@ import {
   resourceNameFromId,
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../../validation/authz.js";
 import { MAX_PUSHDOWN_IN_VALUES } from "./planner.js";
 
 /** Most disjoint WHERE lists one filter may expand to (one per OR-group combination). */
@@ -522,6 +526,9 @@ async function filterVisibleRows(
 ): Promise<Record<string, unknown>[]> {
   if (!isPrivateShareableResource(schema, resource)) return rows;
   if (!ctx.actorId) return [];
+  // The namespace owner sees every row (as DbDataStore's visibility filter
+  // assumes); skip the per-row access lookups.
+  if (isNamespaceOwnerActor(ctx.actorId, ctx.namespace)) return rows;
   const visible: Record<string, unknown>[] = [];
   for (const row of rows) {
     if (typeof row.id !== "string") continue;

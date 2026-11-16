@@ -14,7 +14,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { DatafnSchema } from "@datafn/core";
 import { createDatafnServer } from "../src/server.js";
 import { classifyQuery, MAX_PUSHDOWN_IN_VALUES } from "../src/execution/query/planner.js";
-import { buildPrefilterWhere, canPushDownFilters } from "../src/execution/query/filter-plan.js";
+import { buildPrefilterWhere, canPushDownFilters, planFilterPushdown } from "../src/execution/query/filter-plan.js";
 
 /** Relations mirror Nucleum's schema (features.ts) for node, collection, objective and task. */
 const SCHEMA: DatafnSchema = {
@@ -598,6 +598,29 @@ describe("$any / $none relation filter push-down", () => {
     expect(pushed.status).toBe(200);
     expect(pushed.body.result).toEqual(inMemory.body.result);
     expect(pushed.body.result.data).toEqual([]);
+  });
+
+  it("the namespace owner sees every related record without per-record access lookups", async () => {
+    const schema: DatafnSchema = {
+      ...SCHEMA,
+      resources: SCHEMA.resources.map((resource) =>
+        resource.name === "collection"
+          ? {
+              ...resource,
+              capabilities: ["audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+            }
+          : resource,
+      ) as DatafnSchema["resources"],
+    };
+    const { db } = await createServer({ schema });
+    const findOne = vi.spyOn(db as Adapter, "findOne");
+    const filters = { collections: { $any: { label: ["Work", "Home"] } } };
+    const owner = await planFilterPushdown(filters, "node", schema, { db: db as Adapter, namespace: "user:owner", actorId: "user:owner" });
+    expect(findOne).not.toHaveBeenCalled();
+    expect(owner).toMatchObject({ kind: "where" });
+    // Another actor still has every related record checked.
+    await planFilterPushdown(filters, "node", schema, { db: db as Adapter, namespace: "user:owner", actorId: "user:other" });
+    expect(findOne).toHaveBeenCalled();
   });
 
   it("range operators and fields some polymorphic targets lack stay in memory in relation sub-filters", async () => {
