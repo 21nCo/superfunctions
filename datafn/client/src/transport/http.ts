@@ -47,13 +47,15 @@ function attachRetryAfter(result: unknown, header: string | null): void {
   target.details = { ...details, retryAfterMs };
 }
 
-function isErrorBody(result: unknown): boolean {
-  return (
-    !!result &&
-    typeof result === "object" &&
-    !!(result as { error?: unknown }).error &&
-    typeof (result as { error?: unknown }).error === "object"
-  );
+/** Error codes a DataFn server or route sends with a 429 rate-limit response. */
+const RATE_LIMIT_CODES = new Set(["RATE_LIMITED", "DATAFN_ROUTE_RATE_LIMITED"]);
+
+/** True when the body is a DataFn error carrying a rate-limit code. */
+function isRateLimitErrorBody(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return false;
+  return RATE_LIMIT_CODES.has(String((error as { code?: unknown }).code));
 }
 
 /**
@@ -159,12 +161,18 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
 
       if (!response.ok) {
         if (response.status === 429) {
-          // A 429 without a DataFn error body (e.g. from a gateway) is still
-          // a rate limit: report it as one so callers can wait and retry.
-          if (!isErrorBody(result)) {
+          // A 429 without a DataFn rate-limit body (e.g. from a gateway, with
+          // no body or its own error shape) is still a rate limit: report it
+          // as one so callers can wait and retry.
+          if (!isRateLimitErrorBody(result)) {
+            const message = (result as { error?: { message?: unknown } } | null)?.error?.message;
             result = {
               ok: false,
-              error: { code: "RATE_LIMITED", message: "Too many requests", details: { path: "$" } },
+              error: {
+                code: "RATE_LIMITED",
+                message: typeof message === "string" && message ? message : "Too many requests",
+                details: { path: "$" },
+              },
             };
           }
           attachRetryAfter(result, response.headers.get("Retry-After"));

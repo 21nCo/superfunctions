@@ -334,6 +334,74 @@ describe("paginated clone completeness", () => {
   });
 });
 
+describe("pulls during a clone", () => {
+  it("leaves a table being cloned to the clone, then pulls it afterwards", async () => {
+    const storage = new MemoryStorageAdapter();
+    const pullPayloads: Array<Record<string, string>> = [];
+    let engineRef: SyncEngine | undefined;
+    const { engine, remote } = createEngine(
+      storage,
+      async (payload) => {
+        if (payload.page?.afterId === "n2") {
+          // A pull runs between two pages and sees a newer change to n4.
+          await engineRef!.pullNow();
+          return pageResponse(payload.page!.afterId, payload.page!.limit, "6");
+        }
+        return pageResponse(payload.page!.afterId, payload.page!.limit, "5");
+      },
+      { hydration: { bootResources: ["notes"], clonePageSize: 2 } },
+    );
+    engineRef = engine;
+    remote.pull.mockImplementation(async (payload: any) => {
+      pullPayloads.push({ ...payload.cursors });
+      return {
+        ok: true,
+        result: {
+          ok: true,
+          records: { notes: [{ id: "n4", title: "from pull" }] },
+          deleted: { notes: [] },
+          cursors: { notes: "8" },
+        },
+      };
+    });
+
+    await engine.cloneNow();
+    // The pull scheduled once the clone ends.
+    await vi.waitFor(() => expect(pullPayloads).toHaveLength(2));
+
+    // During the clone the pull neither asked for nor wrote the table.
+    expect(pullPayloads[0]).not.toHaveProperty("notes");
+    // Afterwards it pulls from the earliest cursor the clone stored.
+    expect(pullPayloads[1].notes).toBe("5");
+  });
+});
+
+describe("start() superseded by stop()", () => {
+  it("does not clear the state of a newer start() when its initial sync fails", async () => {
+    const storage = new MemoryStorageAdapter();
+    const pending: Array<{ resolve: (v: unknown) => void; reject: (e: unknown) => void }> = [];
+    const { engine } = createEngine(
+      storage,
+      () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    );
+
+    const first = engine.start();
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    engine.stop();
+    const second = engine.start();
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[0].reject(new Error("network down"));
+    await expect(first).rejects.toThrow("network down");
+    // The newer start still owns the engine: a third start() is a no-op.
+    expect((engine as any).started).toBe(true);
+
+    pending[1].resolve(pageResponse(null, 10));
+    await second;
+    engine.stop();
+  });
+});
+
 describe("rate-limited clone requests", () => {
   const rateLimited = (retryAfterMs?: number) => ({
     ok: false,
@@ -451,6 +519,56 @@ describe("rate-limited clone requests", () => {
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe("RATE_LIMITED");
     expect(result.error.details.retryAfterMs).toBe(2000);
+  });
+
+  it("reports a 429 whose error body has no rate-limit code as rate limited", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: "busy" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "1" },
+      }),
+    );
+    const transport = new DefaultHttpTransport("http://localhost/datafn", {
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    const result: any = await transport.clone({ clientId: "c1" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("RATE_LIMITED");
+    expect(result.error.message).toBe("busy");
+    expect(result.error.details.retryAfterMs).toBe(1000);
+  });
+
+  it("bounds the backoff when the configured delays are not finite", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new MemoryStorageAdapter();
+      let calls = 0;
+      const { engine, remote } = createEngine(
+        storage,
+        async () => {
+          calls += 1;
+          return calls === 1 ? rateLimited() : pageResponse(null, 10);
+        },
+        {
+          cloneRateLimitRetry: {
+            baseDelayMs: Number.POSITIVE_INFINITY,
+            maxDelayMs: Number.POSITIVE_INFINITY,
+            jitterMs: 0,
+          },
+        },
+      );
+
+      const done = engine.cloneNow();
+      // Defaults apply: the first retry waits baseDelayMs (1000 ms).
+      await vi.advanceTimersByTimeAsync(1_000);
+      await done;
+      expect(remote.clone).toHaveBeenCalledTimes(2);
+      expect(await storage.getHydrationState("notes")).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the Retry-After header of a 429 response as retryAfterMs", async () => {

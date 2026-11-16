@@ -72,6 +72,33 @@ async function sleepLong(ms: number): Promise<void> {
   } while (remaining > 0);
 }
 
+/** A copy of a keyed map without the given keys (undefined stays undefined). */
+function omitKeys<T>(map: Record<string, T>, keys: Set<string>): Record<string, T>;
+function omitKeys<T>(map: Record<string, T> | undefined, keys: Set<string>): Record<string, T> | undefined;
+function omitKeys<T>(map: Record<string, T> | undefined, keys: Set<string>) {
+  if (!map || keys.size === 0) return map;
+  const kept: Record<string, T> = Object.create(null);
+  for (const [key, value] of Object.entries(map)) {
+    if (!keys.has(key)) kept[key] = value;
+  }
+  return kept;
+}
+
+/** A canonical pull result without the changes and cursors of the given keys. */
+function omitPullResultKeys(result: any, keys: Set<string>): any {
+  if (!result || typeof result !== "object" || !result.cursors || Array.isArray(result.changes)) {
+    return result;
+  }
+  return {
+    ...result,
+    records: omitKeys(result.records, keys) ?? {},
+    merged: omitKeys(result.merged, keys),
+    deleted: omitKeys(result.deleted, keys) ?? {},
+    joins: omitKeys(result.joins, keys),
+    cursors: omitKeys(result.cursors, keys),
+  };
+}
+
 /**
  * Helper: Compute exponential backoff delay with jitter (PHASE_08)
  */
@@ -376,6 +403,15 @@ function hasTerminalMutationError(result: PushSyncResult): boolean {
 export class SyncEngine {
   private inFlight = false;
   private pullInFlight = false;
+  /**
+   * Tables a clone pass is writing (with the number of passes writing each).
+   * Pulls leave these tables, and the join stores that touch them, to the
+   * clone: a pull applied between two clone batches could otherwise advance
+   * the table's cursor past a change that a later batch overwrites.
+   */
+  private cloningTables = new Map<string, number>();
+  /** A pull skipped cloning tables; pull again once no clone is running. */
+  private pullAfterClone = false;
   private pullAfterReconnect = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pushBatchSize = 100;
@@ -391,6 +427,8 @@ export class SyncEngine {
   private wsUrl: string | undefined;
   private wsGeneration = 0;
   private started = false;
+  /** Advanced by every start() and stop(); identifies the start that owns `started`. */
+  private startSession = 0;
   private wsRouteUnsubscribe?: () => void;
   private wsExpiryTimer?: ReturnType<typeof setTimeout>;
   private hydrationPlan?: {
@@ -473,10 +511,16 @@ export class SyncEngine {
     this.started = true;
     this.wsReconnectEnabled = true;
     const generation = this.wsGeneration;
+    const session = ++this.startSession;
 
     // 1. Initial sync
     try { await this.initializeSync(); }
-    catch (error) { this.started = false; throw error; }
+    catch (error) {
+      // Only the start that still owns `started` may clear it: a start that
+      // stop() superseded must not reset a newer start's state.
+      if (session === this.startSession) this.started = false;
+      throw error;
+    }
     if (!this.started || generation !== this.wsGeneration) return;
 
     // 2. Start push loop
@@ -512,6 +556,8 @@ export class SyncEngine {
     // Disable reconnection
     this.wsReconnectEnabled = false;
     this.started = false;
+    // Supersede any start() still running its initial sync.
+    this.startSession++;
     this.pullAfterReconnect = false;
     this.wsGeneration++;
     this.wsRouteUnsubscribe?.();
@@ -867,6 +913,48 @@ export class SyncEngine {
    * Implements HOOK-001 and EVT-003
    */
   private async cloneResources(tables: string[]) {
+    for (const table of tables) {
+      this.cloningTables.set(table, (this.cloningTables.get(table) ?? 0) + 1);
+    }
+    try {
+      await this.runCloneResources(tables);
+    } finally {
+      for (const table of tables) {
+        const passes = (this.cloningTables.get(table) ?? 1) - 1;
+        if (passes > 0) this.cloningTables.set(table, passes);
+        else this.cloningTables.delete(table);
+      }
+      // Changes a pull left to the clone are replayed from the cursor the
+      // clone stored.
+      if (this.cloningTables.size === 0 && this.pullAfterClone) {
+        this.pullAfterClone = false;
+        void this.pullNow(true);
+      }
+    }
+  }
+
+  /**
+   * Sync keys (tables and join stores) that pulls leave to a running clone.
+   */
+  private cloningSyncKeys(): Set<string> {
+    const keys = new Set<string>(this.cloningTables.keys());
+    if (keys.size === 0) return keys;
+    for (const relation of this.schema.relations ?? []) {
+      if (relation.type !== "many-many") continue;
+      const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
+      const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
+      for (const from of froms as string[]) {
+        for (const to of tos as string[]) {
+          if (this.cloningTables.has(from) || this.cloningTables.has(to)) {
+            keys.add(getJoinStoreKey(from, relation.relation!, to));
+          }
+        }
+      }
+    }
+    return keys;
+  }
+
+  private async runCloneResources(tables: string[]) {
     try {
       const sortedResources = [...tables].sort((left, right) => left.localeCompare(right));
       this.emitSyncStarted("clone", { resources: sortedResources });
@@ -1063,11 +1151,15 @@ export class SyncEngine {
       typeof configuredRetries === "number" && Number.isFinite(configuredRetries)
         ? Math.max(0, Math.floor(configuredRetries))
         : 6;
+    // A missing, negative or non-finite setting takes its default, so the
+    // computed delay is always finite (an infinite one would never fire).
+    const setting = (value: unknown, fallback: number): number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
     const backoff = {
-      baseDelayMs: policy?.baseDelayMs ?? 1000,
-      multiplier: policy?.multiplier ?? 2,
-      maxDelayMs: policy?.maxDelayMs ?? 60000,
-      jitterMs: policy?.jitterMs ?? 500,
+      baseDelayMs: setting(policy?.baseDelayMs, 1000),
+      multiplier: setting(policy?.multiplier, 2),
+      maxDelayMs: setting(policy?.maxDelayMs, 60000),
+      jitterMs: setting(policy?.jitterMs, 500),
     };
     for (let attempt = 0; ; attempt++) {
       const response: any = await this.remote.clone(payload);
@@ -1402,7 +1494,13 @@ export class SyncEngine {
       while (hasMore && iterations < maxIterations) {
         iterations++;
 
-        const iterPayload = { ...(transformedPayload as object), cursors: iterationCursors };
+        // Tables a clone is writing are left to it (see cloningTables).
+        const skippedKeys = this.cloningSyncKeys();
+        const requestCursors = omitKeys(iterationCursors, skippedKeys);
+        if (Object.keys(requestCursors).length < Object.keys(iterationCursors).length) {
+          this.pullAfterClone = true;
+        }
+        const iterPayload = { ...(transformedPayload as object), cursors: requestCursors };
         const response: any = await this.remote.pull(iterPayload);
 
         if (response.ok && response.result?.ok) {
@@ -1411,6 +1509,12 @@ export class SyncEngine {
             this.e2ee,
             response.result,
           );
+          // Recomputed: a clone may have started while the request was out.
+          const keysAtApply = this.cloningSyncKeys();
+          if (keysAtApply.size > 0) {
+            lastResult = omitPullResultKeys(lastResult, keysAtApply);
+            this.pullAfterClone = true;
+          }
           await applyPullResult(this.storage, lastResult);
           if (this.searchProvider && !isNativeBackedSearchProvider(this.searchProvider) && lastResult) {
             if (lastResult.records) {
