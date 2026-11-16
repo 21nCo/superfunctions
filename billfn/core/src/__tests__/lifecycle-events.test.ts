@@ -2349,5 +2349,26 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
       expect((await env.rows()).filter((event) => event.type === 'grant.expiring')).toEqual([]);
       expect(env.ofType('entitlement.changed').map((event) => event.data.cause).sort()).toEqual(['grant.revoked', 'grant.started']);
     });
+
+    it('still delivers the grant.expired change of a comp revoked only after it expired, when its first attempt failed', async () => {
+      const expired: string[] = [];
+      let failures = 1;
+      const env = setup({
+        onEvent: (event) => {
+          if (event.type !== 'entitlement.changed' || event.data.cause !== 'grant.expired') return;
+          if (failures-- > 0) throw new Error('handler down');
+          expired.push(event.data.grantId);
+        }
+      });
+      const comp = await createComp(env);
+      if (!comp.ok) throw new Error('expected grant');
+      env.advance(3 * DAY);
+      await env.runLifecycleJob();
+      expect(expired).toEqual([]);
+      expect((await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id })).ok).toBe(true);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(expired).toEqual([comp.data.grant.id]);
+    });
   });
 });

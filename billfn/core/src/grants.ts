@@ -53,7 +53,8 @@ export type RecordGrantEventOptions = { db?: Adapter; revoked?: boolean; beforeW
 
 /**
  * A grant as stored: its status is derived on every read. Without transactions `eventsPending` is set by the
- * write of a create or revoke and cleared once that change's billing event is recorded (see `repairGrantEvents`).
+ * write of a create or revoke and cleared once that change's billing event is recorded (see `repairGrantEvents`);
+ * a create's (also with transactions) only once it checked the expiry sweeps' positions (see `commitWithEvent`).
  */
 type GrantRecord = Omit<BillFnEntitlementGrant, 'status'> & { eventsPending?: boolean | null };
 

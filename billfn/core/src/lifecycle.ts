@@ -491,18 +491,23 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     return settleAttempt(row, claimId, attempt, deadline, failure);
   }
 
-  /** Whether the event is a grant's `grant.expiring` or its `entitlement.changed` (cause `grant.expired`) and that grant is revoked now. */
+  /**
+   * Whether the event is a grant's `grant.expiring` or its `entitlement.changed` (cause `grant.expired`), never
+   * attempted, and that grant was revoked before it expired, so the event no longer holds (one recorded before a
+   * revoke of an expired grant, or already attempted, is delivered as usual).
+   */
   async function isRevokedGrantExpiry(row: BillFnLifecycleEventRecord) {
     const data = row.data as { grantId?: string; cause?: string };
-    if (!data.grantId || !(row.type === 'grant.expiring' || (row.type === 'entitlement.changed' && data.cause === 'grant.expired'))) {
+    const expiry = row.type === 'grant.expiring' || (row.type === 'entitlement.changed' && data.cause === 'grant.expired');
+    if (!expiry || !data.grantId || row.attempts > 0) {
       return false;
     }
-    const grant = await deps.db.findOne<{ revokedAt?: string | null }>({
+    const grant = await deps.db.findOne<{ revokedAt?: string | null; expiresAt: string }>({
       model: GRANTS_TABLE,
       where: [{ field: 'id', operator: 'eq', value: data.grantId }],
       namespace: deps.namespace
     });
-    return Boolean(grant?.revokedAt);
+    return Boolean(grant?.revokedAt) && Date.parse(grant!.revokedAt!) < Date.parse(grant!.expiresAt);
   }
 
   /**
@@ -761,9 +766,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       const limit = Math.min(SWEEP_PAGE_SIZE, budget.recheck);
       const grants = await readGrantPage(position, to, limit);
       budget.recheck -= grants.length;
-      const late = grants.filter(
-        (grant) => !read.has(grant.id) && !grant.revokedAt && (sweep === 'expired' || Date.parse(grant.expiresAt) > now)
-      );
+      // A recheck resumed by a later run keeps to that run's windows (the 7-day lookback, or not expired yet).
+      const inWindow = (expiresAt: number) => (sweep === 'expired' ? expiresAt > now - GRANT_EXPIRED_LOOKBACK_MS : expiresAt > now);
+      const late = grants.filter((grant) => !read.has(grant.id) && !grant.revokedAt && inWindow(Date.parse(grant.expiresAt)));
       await recordMissing(late.map((grant) => grantExpiryEvent(sweep, grant, now)));
       const last = grants.at(-1);
       if (!last || grants.length < limit || last.id === to.id) {
