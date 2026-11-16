@@ -179,7 +179,7 @@ export interface ClientArtifactUpload {
   /** Content-Type of the body. */
   mimeType: string;
   body: ReadableStream<Uint8Array> | Uint8Array | Blob | null | undefined;
-  /** Declared body length, checked before any byte is stored. */
+  /** Declared body length, checked before any byte is stored; a stream body needs it on storage that only signs upload URLs. */
   contentLength?: number;
   /** Time the client spent producing the artifact, in milliseconds. */
   durationMs?: number;
@@ -504,16 +504,6 @@ function isGrantExpired(expiresAt: string | null | undefined): boolean {
 }
 
 /** The chunks of a client artifact body; a stream left early is cancelled. */
-function concatChunks(chunks: Uint8Array[], size: number): Uint8Array {
-  const data = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    data.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return data;
-}
-
 async function* bodyChunks(body: ReadableStream<Uint8Array> | Uint8Array | Blob): AsyncGenerator<Uint8Array> {
   if (body instanceof Uint8Array) {
     yield body;
@@ -757,54 +747,104 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     throw errors.storageUploadUnsupported(target);
   }
 
-  /** Writes `data` through a signed upload URL; a refused PUT throws. */
-  async function putSigned(object: StoredObject, data: Uint8Array): Promise<void> {
+  /**
+   * Writes `body` of exactly `length` bytes through a signed upload URL; a
+   * refused PUT throws. A stream is sent as it arrives, with the length it
+   * was signed for, so it is never held in memory whole.
+   */
+  async function putSigned(object: StoredObject, body: Uint8Array | Blob | ReadableStream<Uint8Array>, length: number): Promise<void> {
     const signed = await storage.signUploadUrl!({
       key: object.key,
       target: object.target,
       expiresInSeconds: SIGNED_SERVER_UPLOAD_TTL_SECONDS,
-      constraints: { contentType: object.contentType, contentLength: data.byteLength },
+      constraints: { contentType: object.contentType, contentLength: length },
     });
     const headers = new Headers(signed.headers);
     if (!headers.has('content-type')) headers.set('content-type', object.contentType);
+    let requestBody = body;
+    const init: RequestInit & { duplex?: 'half' } = { method: 'PUT', headers };
+    if (body instanceof ReadableStream) {
+      // Workers sends a stream with a Content-Length only through a
+      // FixedLengthStream; Node's fetch takes the header itself.
+      const FixedLength = (globalThis as { FixedLengthStream?: new (length: number) => TransformStream<Uint8Array, Uint8Array> })
+        .FixedLengthStream;
+      if (FixedLength) {
+        requestBody = body.pipeThrough(new FixedLength(length));
+      } else {
+        headers.set('content-length', String(length));
+      }
+      init.duplex = 'half';
+    }
+    init.body = requestBody as RequestInit['body'];
     // Resolved per call, so a test or runtime may replace the global.
-    const response = await globalThis.fetch(signed.url, { method: 'PUT', headers, body: data as Uint8Array<ArrayBuffer> });
+    const response = await globalThis.fetch(signed.url, init);
     await response.body?.cancel().catch(() => undefined);
     if (!response.ok) {
       throw new Error(`Storage refused the artifact upload with HTTP ${response.status}`);
     }
   }
 
+  /**
+   * Sends a client body to a signed upload URL without buffering it: a byte
+   * array or Blob goes as it is, and a stream is piped through as it arrives.
+   * A signed PUT is signed for an exact size, so a stream needs its declared
+   * length and is refused when it turns out longer or shorter.
+   */
+  async function putSignedBounded(
+    body: NonNullable<ClientArtifactUpload['body']>,
+    object: StoredObject,
+    kind: string,
+    maxBytes: number,
+    declaredLength: number | undefined,
+  ): Promise<number> {
+    if (!(body instanceof ReadableStream)) {
+      const size = body instanceof Uint8Array ? body.byteLength : body.size;
+      if (size > maxBytes) throw errors.artifactTooLarge(kind, maxBytes);
+      if (size === 0) throw errors.invalidRequest('Artifact body is empty');
+      await putSigned(object, body, size);
+      return size;
+    }
+    if (declaredLength === undefined) {
+      throw errors.invalidRequest('Content-Length is required to upload an artifact to this storage', { target: object.target });
+    }
+    if (declaredLength > maxBytes) throw errors.artifactTooLarge(kind, maxBytes);
+    if (declaredLength === 0) throw errors.invalidRequest('Artifact body is empty');
+    let refusal: errors.FileFnError | undefined;
+    let seen = 0;
+    const lengthMismatch = (relation: 'longer' | 'shorter') => {
+      refusal = errors.invalidRequest(`Artifact body is ${relation} than its Content-Length`, { contentLength: declaredLength });
+      return refusal;
+    };
+    const counted = body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          seen += chunk.byteLength;
+          if (seen > declaredLength) throw lengthMismatch('longer');
+          controller.enqueue(chunk);
+        },
+        flush() {
+          if (seen < declaredLength) throw lengthMismatch('shorter');
+        },
+      }),
+    );
+    try {
+      await putSigned(object, counted, declaredLength);
+    } catch (error) {
+      throw refusal ?? error;
+    }
+    if (refusal) throw refusal;
+    return declaredLength;
+  }
+
   /** Writes `data` to a new or replaced object. */
   async function writeObject(object: StoredObject, data: Uint8Array): Promise<void> {
     if (serverUploadMode(object.target) === 'signed') {
-      await putSigned(object, data);
+      await putSigned(object, data, data.byteLength);
       return;
     }
     const writer = (await storage.openUploadStream!(object)).getWriter();
     await writer.write(data);
     await writer.close();
-  }
-
-  /**
-   * The key one server write stores an artifact under. The processor's own key
-   * is used for the row's first write and to rewrite a row that already names
-   * it, unforced, so a redelivery overwrites in place as it always has. Any
-   * other write (forced, or replacing another object) derives a key from the
-   * key it replaces and the job, so a key the row has moved away from is never
-   * written to the row again and can be deleted without racing a later write;
-   * a redelivery of the same job still derives the same key.
-   */
-  function serverArtifactKey(
-    processorKey: string,
-    current: FileArtifactRecord | null,
-    force: boolean,
-    idempotencyKey: string,
-  ): string {
-    if (!force && (!current || current.storageKey === processorKey)) {
-      return processorKey;
-    }
-    return `${processorKey}.${derivedId('w', [processorKey, current?.storageKey ?? '', idempotencyKey])}`;
   }
 
   /** The artifact row for one (file, version, kind), if any. */
@@ -830,10 +870,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
   /**
    * Writes `fields` over `row` only while the row still names the object it
-   * named when read, and reports whether it did. A row never returns to a
-   * key it moved away from (a client object's key is unique to one upload
-   * attempt, and see `serverArtifactKey` for server objects), so an unchanged
-   * key means no other write landed in between.
+   * named when read, and reports whether it did. A client object's key is
+   * unique to one upload attempt, so a row naming the same client key was
+   * not written in between; a row naming the same server key may have been
+   * rewritten, but only to that same object, which replacement never deletes
+   * (see `discardReplacedObject`), so the object a writer discards is still
+   * the one it replaced.
    */
   async function replaceIfUnchanged(row: FileArtifactRecord, fields: Record<string, unknown>): Promise<boolean> {
     const updated = await db.updateMany({
@@ -849,33 +891,31 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
-   * Streams a client body into a new object, refusing it once it passes
-   * `maxBytes` or when it is empty. A refused or failed upload deletes what
-   * it wrote, best effort, and nothing records the object.
+   * Stores a client body in a new object, refusing it once it passes
+   * `maxBytes` or when it is empty, without holding it in memory whole. A
+   * refused or failed upload deletes what it wrote, best effort, and nothing
+   * records the object.
    */
   async function storeBounded(
     body: NonNullable<ClientArtifactUpload['body']>,
     object: StoredObject,
     kind: string,
     maxBytes: number,
+    declaredLength: number | undefined,
   ): Promise<number> {
     const mode = serverUploadMode(object.target);
-    // A signed PUT needs the whole body and its size up front, so the bounded
-    // body is collected first; a stream takes it chunk by chunk, and is opened
-    // only for a first chunk within the limit, so a body refused at once
-    // leaves no object half-created behind.
+    // The stream is opened only for a first chunk within the limit, so a body
+    // refused at once leaves no object half-created behind.
     let writer: WritableStreamDefaultWriter | null = null;
-    const chunks: Uint8Array[] = [];
-    let size = 0;
     try {
+      if (mode === 'signed') {
+        return await putSignedBounded(body, object, kind, maxBytes, declaredLength);
+      }
+      let size = 0;
       for await (const chunk of bodyChunks(body)) {
         size += chunk.byteLength;
         if (size > maxBytes) {
           throw errors.artifactTooLarge(kind, maxBytes);
-        }
-        if (mode === 'signed') {
-          chunks.push(chunk);
-          continue;
         }
         writer ??= (await storage.openUploadStream!(object)).getWriter();
         await writer.write(chunk);
@@ -883,11 +923,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       if (size === 0) {
         throw errors.invalidRequest('Artifact body is empty');
       }
-      if (writer) {
-        await writer.close();
-      } else {
-        await putSigned(object, concatChunks(chunks, size));
-      }
+      await writer!.close();
       return size;
     } catch (error) {
       await writer?.abort(error).catch(() => undefined);
@@ -901,23 +937,24 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
-   * Deletes an artifact object no row needs any more, best effort: a failure
-   * is logged and leaves the object behind. Callers pass only an object whose
-   * key no write of this row can name again. A client-supplied object's key
-   * is unique to its row, so only a server object needs the reference scan
-   * (deduplicated files can share a processor's storage keys).
+   * Deletes the object of a replaced client-supplied artifact, best effort: a
+   * failure is logged and leaves the object behind. A client object's key is
+   * unique to one upload attempt, so no row can name it again once its row
+   * moved away. A server object is never deleted here: its key is the
+   * processor's own, which another row (a deduplicated file sharing the
+   * version's storage key, say) may claim at any moment, so a reference scan
+   * followed by a delete could remove an object a concurrent first write has
+   * just committed. Such an object is left for version and file cleanup, as
+   * before client artifacts existed.
    */
   async function discardReplacedObject(
     replaced: Pick<FileArtifactRecord, 'fileId' | 'versionId' | 'storageKey' | 'metadata'>,
     fallbackTarget: string,
   ): Promise<void> {
-    const ref = storageRef(recordedStorageTarget(replaced as FileArtifactRecord) ?? fallbackTarget, replaced.storageKey);
+    if (artifactSourceOf(replaced) !== 'client') return;
+    const target = recordedStorageTarget(replaced as FileArtifactRecord) ?? fallbackTarget;
     try {
-      if (artifactSourceOf(replaced) !== 'client') {
-        const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ref]));
-        if (referenced.has(ref)) return;
-      }
-      await storage.deleteObject(parseStorageRef(ref));
+      await storage.deleteObject({ key: replaced.storageKey, target });
     } catch (error) {
       logger?.warn('replaced artifact object not deleted', {
         fileId: replaced.fileId,
@@ -933,11 +970,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * a kind the client supplied keeps the client's artifact and nothing is
    * uploaded for it.
    *
-   * Each write is conditional on the row it read (see `replaceIfUnchanged`),
-   * and the object goes to the key `serverArtifactKey` derives from that row.
-   * When the row changed in between, the row is read again and the decision,
-   * the key and, if the key changed, the upload are made afresh, so the row
-   * never names an object a concurrent writer has discarded.
+   * The object goes to the processor's own key, as it always has. Each row
+   * write is conditional on the row it read (see `replaceIfUnchanged`); when
+   * the row changed in between, it is read again and the decision is made
+   * afresh. A server object this run stored but did not record stays, since
+   * its key may be shared (see `discardReplacedObject`).
    */
   async function recordArtifact(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
@@ -949,32 +986,25 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   ): Promise<void> {
     const keepsClientArtifact = (row: FileArtifactRecord) => !force && artifactSourceOf(row) === 'client';
     const artifactId = artifactIdFor(input.fileId, input.versionId, artifact.kind);
-    // An object this run stored that no row of its own names.
-    const discardOwn = async (key: string) => {
-      writes.uploadedKeys.delete(key);
-      await discardReplacedObject({ ...input, storageKey: key, metadata: { processing } }, target);
+    const { storageKey } = artifact;
+    const fields = {
+      storageKey,
+      mimeType: artifact.mimeType,
+      size: artifact.data.length,
+      metadata: { ...(artifact.metadata ?? {}), processing },
     };
-    let uploadedKey: string | null = null;
+    let uploaded = false;
     let current = await findKindRow(input.fileId, input.versionId, artifact.kind);
     for (let attempt = 1; ; attempt += 1) {
       if (current && keepsClientArtifact(current)) {
         // The client's artifact stays; nothing of this run is recorded for it.
-        if (uploadedKey) await discardOwn(uploadedKey);
         return;
       }
-      const storageKey = serverArtifactKey(artifact.storageKey, current, force, processing.idempotencyKey);
-      if (uploadedKey !== storageKey) {
-        if (uploadedKey) await discardOwn(uploadedKey);
+      if (!uploaded) {
         writes.uploadedKeys.add(storageKey);
-        uploadedKey = storageKey;
         await writeObject({ key: storageKey, target, contentType: artifact.mimeType }, artifact.data);
+        uploaded = true;
       }
-      const fields = {
-        storageKey,
-        mimeType: artifact.mimeType,
-        size: artifact.data.length,
-        metadata: { ...(artifact.metadata ?? {}), processing },
-      };
       if (!current) {
         try {
           await db.create({
@@ -1008,7 +1038,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return;
       }
       if (attempt >= MAX_ARTIFACT_WRITE_ATTEMPTS) {
-        if (uploadedKey) await discardOwn(uploadedKey);
         throw errors.artifactWriteConflict(artifact.kind);
       }
       current = await findArtifactRow(current.artifactId);
@@ -1556,7 +1585,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
      * file's policy allows. The body goes to a key of its own for each
      * attempt and the row is switched to it only once fully stored, so a
      * retried or interrupted upload never leaves the row naming a partial
-     * object; the object the row named before is then deleted.
+     * object; a client object the row named before is then deleted (a server
+     * one is kept, see `discardReplacedObject`). On storage that only signs
+     * upload URLs a streamed body needs its Content-Length.
      */
     async attachClientArtifact(upload: ClientArtifactUpload, ctx: FileProviderContext): Promise<FileArtifactRecord> {
       const file = await requireWritableFile(upload.fileId, ctx);
@@ -1588,7 +1619,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       const target = getArtifactStorageTarget(file);
       const storageKey = `${version.storageKey}.client-artifacts/${upload.kind}/${randomUUID()}`;
-      const size = await storeBounded(upload.body, { key: storageKey, target, contentType: mimeType }, upload.kind, rule.maxSizeBytes);
+      const size = await storeBounded(
+        upload.body,
+        { key: storageKey, target, contentType: mimeType },
+        upload.kind,
+        rule.maxSizeBytes,
+        upload.contentLength,
+      );
       const ownObject = { fileId: file.fileId, versionId: version.versionId, storageKey, metadata: { processing: { source: 'client' } } };
 
       const processing: ClientArtifactProcessingMetadata = {

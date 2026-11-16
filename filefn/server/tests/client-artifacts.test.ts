@@ -34,7 +34,7 @@ async function storedObjects(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1));
 }
 
-type Gate = { op: 'upload' | 'delete'; match: (key: string) => boolean; reached: () => void; released: Promise<void> };
+type Gate = { op: 'upload' | 'delete'; match: (key: string) => boolean; run: () => Promise<void> };
 
 /**
  * Storage whose server-side uploads can be switched off, or whose next upload
@@ -47,8 +47,7 @@ function controlledStorage(local: StorageAdapter) {
     const held = gate;
     if (held?.op === op && held.match(key)) {
       gate = null;
-      held.reached();
-      await held.released;
+      await held.run();
     }
   };
   const control = {
@@ -58,8 +57,18 @@ function controlledStorage(local: StorageAdapter) {
       let reached!: () => void;
       let release!: () => void;
       const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
-      gate = { op, match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      gate = { op, match, run: async () => { reached(); await released; } };
       return { reached: reachedPromise, release };
+    },
+    /**
+     * Runs `during` when the next upload (or delete) of a matching key starts,
+     * then lets it go on; `fired` tells whether it ever started.
+     */
+    intercept(match: (key: string) => boolean, op: Gate['op'], during: () => Promise<void>) {
+      const state = { fired: false };
+      gate = { op, match, run: async () => { state.fired = true; await during(); } };
+      return state;
     },
   };
   const storage = new Proxy(local, {
@@ -166,16 +175,24 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
   const fetchAs = (user?: string): typeof fetch => async (input, init) => {
     const request = new Request(input instanceof Request ? input : new URL(String(input), BASE), init);
     if (user) request.headers.set('x-test-user', user);
+    // An HTTP server sees the length of a sized body, as a Worker does.
+    const body = init?.body;
+    const size = body instanceof Blob ? body.size : body instanceof Uint8Array ? body.byteLength : undefined;
+    if (size !== undefined && !request.headers.has('content-length')) request.headers.set('content-length', String(size));
     return (await fileFn.router.handle(request)) ?? new Response('no route', { status: 404 });
   };
   const clientFor = (user?: string) =>
     createFileFnClient({ baseUrl: BASE, fetch: fetchAs(user), retryOptions: { maxRetries: 0 } });
 
   const owner = { principalId: 'owner' };
-  const session = await fileFn.createUploadSession({ policy: 'photo', fileName: 'photo.png', size: PNG.length, mimeType: 'image/png' }, owner);
-  const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, Buffer.from(PNG), PNG.length, owner);
-  await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
-  const { fileId, versionId } = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+  /** Uploads a photo as the owner; its processing job is queued. */
+  async function uploadPhoto() {
+    const session = await fileFn.createUploadSession({ policy: 'photo', fileName: 'photo.png', size: PNG.length, mimeType: 'image/png' }, owner);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, Buffer.from(PNG), PNG.length, owner);
+    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
+    return fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+  }
+  const { fileId, versionId } = await uploadPhoto();
   await fileFn.services.grants.createGrant({ fileId, userId: 'writer', canRead: true, canWrite: true }, owner);
   await fileFn.services.grants.createGrant({ fileId, userId: 'reader', canRead: true }, owner);
 
@@ -206,7 +223,7 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  return { fileFn, root, fileId, versionId, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl, bucket };
+  return { fileFn, root, fileId, versionId, uploadPhoto, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl, bucket };
 }
 
 function thumbnailProcessor(calls: string[], options: { declareKinds?: boolean } = {}): Processor {
@@ -480,6 +497,65 @@ describe('client-supplied processing artifacts', () => {
       expect(await app.artifacts()).toEqual([]);
     });
 
+    const streamOf = (...parts: string[]) => new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(bytes(part));
+        controller.close();
+      },
+    });
+
+    it('streams a client upload into its signed PUT instead of buffering it', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      let putStarted!: () => void;
+      const started = new Promise<void>((resolve) => { putStarted = resolve; });
+      const putLengths: (string | null)[] = [];
+      vi.stubGlobal('fetch', (input: string | URL | Request, init: RequestInit = {}) => {
+        if (init.method === 'PUT') {
+          putLengths.push(new Headers(init.headers).get('content-length'));
+          putStarted();
+        }
+        return app.bucket.fetch(input, init);
+      });
+      // The body's second half comes only once the PUT to R2 has begun, so an
+      // upload that collected the body first would never finish.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(bytes('first-')); },
+        async pull(controller) {
+          await started;
+          controller.enqueue(bytes('second'));
+          controller.close();
+        },
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('the upload waited for the whole body before its PUT')), 2_000);
+      });
+      const response = await Promise.race([
+        app.put('owner', 'thumbnail-small', body, 'image/png', { 'content-length': '12' }),
+        stalled,
+      ]).finally(() => clearTimeout(timer));
+
+      expect(response.status).toBe(200);
+      expect(response.json.data.artifact).toMatchObject({ size: 12, source: 'client' });
+      expect(putLengths).toEqual(['12']);
+      expect(new TextDecoder().decode(app.bucket.objects.get(r2Keys(app)[0])!.data)).toBe('first-second');
+    });
+
+    it('refuses a streamed upload whose length is missing or not what it declared, writing nothing to R2', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      const missing = await app.put('owner', 'thumbnail-small', streamOf('abc'), 'image/png');
+      expect(missing.status).toBe(400);
+      expect(missing.json.error.code).toBe('FILEFN_INVALID_REQUEST');
+      const longer = await app.put('owner', 'thumbnail-small', streamOf('ab', 'cd'), 'image/png', { 'content-length': '3' });
+      expect(longer.status).toBe(400);
+      expect(longer.json.error.message).toContain('longer');
+      const shorter = await app.put('owner', 'thumbnail-small', streamOf('ab'), 'image/png', { 'content-length': '3' });
+      expect(shorter.status).toBe(400);
+      expect(shorter.json.error.message).toContain('shorter');
+      expect(r2Keys(app)).toEqual([]);
+      expect(await app.artifacts()).toEqual([]);
+    });
+
     it('server processing writes its artifacts to R2 and keeps a client-supplied kind', async () => {
       const app = await createApp({ artifactsOnR2: true, processors: [thumbnailProcessor([])] });
       await app.clientFor('owner').uploadArtifact({
@@ -517,9 +593,8 @@ describe('client-supplied processing artifacts', () => {
     expect(small).toMatchObject({ artifactId: serverSmall.artifactId, source: 'client' });
     const url = await client.downloadArtifact(app.fileId, clientSmall.artifactId);
     expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('client-small');
-    // The run's own object was discarded and the replaced server object is gone.
+    // Only the recorded client object is left of the client's uploads.
     const objects = await storedObjects(app.root);
-    expect(objects.some((path) => path.endsWith('-thumb-small.jpg'))).toBe(false);
     expect(objects.filter((path) => path.includes('.client-artifacts/'))).toHaveLength(1);
   });
 
@@ -531,8 +606,8 @@ describe('client-supplied processing artifacts', () => {
     await app.drainJobs();
 
     await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
-    // A forced write goes to a key derived from the row it replaces.
-    const held = app.storageControl.hold((key) => key.includes('-thumb-small.jpg.'));
+    // The forced run's upload of its small thumbnail is held.
+    const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
     const forced = app.drainJobs();
     await held.reached;
     // A second client upload replaces the row the forced run read.
@@ -544,7 +619,7 @@ describe('client-supplied processing artifacts', () => {
     expect(small.source).toBe('server');
     const url = await client.downloadArtifact(app.fileId, small.artifactId);
     expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('server-small');
-    // Neither client object is left behind, nor the object derived from the row it first read.
+    // Neither client object is left behind.
     const objects = await storedObjects(app.root);
     expect(objects.some((path) => path.includes('.client-artifacts/'))).toBe(false);
     const row = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!;
@@ -582,39 +657,45 @@ describe('client-supplied processing artifacts', () => {
     expect(missing.status).toBe(404);
   });
 
-  /** Forces a run and drains it while `paused` holds a delete of a replaced server object. */
-  async function forceDuring(app: Awaited<ReturnType<typeof createApp>>, paused: { reached: Promise<void>; release: () => void }) {
-    await paused.reached;
-    await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
-    expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
-    paused.release();
+  /**
+   * Forces a run and drains it the moment a delete of `key` starts, if one
+   * ever does; the delete then goes on.
+   */
+  function forceOnDelete(app: Awaited<ReturnType<typeof createApp>>, key: string) {
+    return app.storageControl.intercept((candidate) => candidate === key, 'delete', () => forceNow(app));
   }
 
-  async function expectServerSmallReadable(app: Awaited<ReturnType<typeof createApp>>) {
+  async function forceNow(app: Awaited<ReturnType<typeof createApp>>) {
+    await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
+    expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+  }
+
+  async function expectServerSmallReadable(app: Awaited<ReturnType<typeof createApp>>, fileId = app.fileId) {
     const client = app.clientFor('owner');
-    const small = (await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small')!;
+    const small = (await client.listArtifacts(fileId)).find((a) => a.kind === 'thumbnail-small')!;
     expect(small.source).toBe('server');
-    const url = await client.downloadArtifact(app.fileId, small.artifactId);
+    const url = await client.downloadArtifact(fileId, small.artifactId);
     expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('server-small');
   }
 
-  it('keeps the object of a forced run that commits while an upload deletes the server object it replaced', async () => {
+  it('keeps the object of a forced run that commits while an upload replaces the server row', async () => {
     const app = await createApp({ processors: [thumbnailProcessor([])] });
     await app.drainJobs();
     const serverKey = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!.storageKey;
 
-    // The upload has replaced the server row and scanned its object as unreferenced.
-    const paused = app.storageControl.hold((key) => key === serverKey, 'delete');
-    const uploading = app.clientFor('owner').uploadArtifact({
+    // A forced run writing the processor's key again commits the moment the
+    // upload deletes the server object it replaced, should it ever do so.
+    const during = forceOnDelete(app, serverKey);
+    await app.clientFor('owner').uploadArtifact({
       fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
     });
-    await forceDuring(app, paused);
-    await uploading;
+    expect(during.fired).toBe(false);
+    await forceNow(app);
 
     await expectServerSmallReadable(app);
   });
 
-  it('keeps the object of a forced run that commits while an unforced run discards the object it lost', async () => {
+  it('keeps the object of a forced run that commits while an unforced run loses its row to a client upload', async () => {
     const app = await createApp({ processors: [thumbnailProcessor([])] });
     const [job] = app.jobs;
     await app.drainJobs();
@@ -627,13 +708,50 @@ describe('client-supplied processing artifacts', () => {
     await app.clientFor('owner').uploadArtifact({
       fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
     });
-    // The redelivery keeps the client row and is about to delete the object it stored.
-    const paused = app.storageControl.hold((key) => key === serverKey, 'delete');
+    // The redelivery keeps the client row; a forced run commits should it
+    // delete the object it stored.
+    const during = forceOnDelete(app, serverKey);
     heldUpload.release();
-    await forceDuring(app, paused);
     expect(await rerun).toMatchObject({ status: 'completed' });
+    expect(during.fired).toBe(false);
+    await forceNow(app);
 
     await expectServerSmallReadable(app);
+  });
+
+  it("never deletes a server object another file's first run commits under the same key", async () => {
+    // Deduplicated files share a version's storage key, and so the keys a
+    // processor derives from it; here every file's thumbnail has one key.
+    const sharedKey = 'shared/thumb-small.jpg';
+    const shared: Processor = {
+      name: 'shared-thumbnail',
+      supportedMimeTypes: ['image/png'],
+      async process() {
+        return {
+          success: true,
+          artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey: sharedKey }],
+        };
+      },
+    };
+    const app = await createApp({ processors: [shared] });
+    await app.drainJobs();
+    const other = await app.uploadPhoto();
+
+    // A client upload replaces the first file's server row. The other file's
+    // first run uploads the shared key and commits its row the moment the
+    // upload deletes that key, after any reference scan it made.
+    const during = app.storageControl.intercept((key) => key === sharedKey, 'delete', async () => {
+      expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+    });
+    await app.clientFor('owner').uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+    });
+    if (!during.fired) {
+      expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+    }
+
+    await expectServerSmallReadable(app, other.fileId);
+    expect(during.fired).toBe(false);
   });
 
   it('refuses a version of another file and reports client errors as FileFnHttpError', async () => {
