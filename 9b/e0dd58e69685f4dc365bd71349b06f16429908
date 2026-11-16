@@ -1,0 +1,21 @@
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_ccabc9355cc828::t_949dd51dc0d4de 1245-1291
+filefn/server/src/upload-sessions/file-id.ts
+  s_ccabc9355cc828::t_19428aaac3d847 83-84,104-107,109,136-138,153-154,159,166,178,189-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9be0dd58e69685f4dc365bd71349b06f16429908",
+  "prompts": {},
+  "sessions": {
+    "s_ccabc9355cc828": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ccabc9355cc828",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

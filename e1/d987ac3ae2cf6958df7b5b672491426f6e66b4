@@ -1,0 +1,32 @@
+datafn/client/__tests__/signal-refresh-coalescing.test.ts
+  s_f058f999ab46b7::t_1a6a547843104b 1-229
+  s_f058f999ab46b7::t_6ff6209a9fc853 230-243
+datafn/client/__tests__/signal-invalidation.test.ts
+  s_f058f999ab46b7::t_451dd5d70c2fca 67,78,89,128,138,177,193,231,239,275,282,345
+datafn/client/__tests__/signals.test.ts
+  s_f058f999ab46b7::t_dd9cfd20a2bf28 6,28-33,84,106,162,179,249,272,299,328,368,425,445,489,505,548,563,613,628,671,685,726,742,786,817,855,911,925,967,980,1030,1042,1082,1096,1165,1180,1212,1251,1263,1291,1323
+datafn/client/src/client.ts
+  s_f058f999ab46b7::t_bb3d559f36fa2e 2130-2141,2143-2145,2147-2148,2151,2157-2158
+datafn/client/src/mutate.ts
+  s_f058f999ab46b7::t_717317c57d78fa 16,976-978,990
+datafn/client/src/offline/mutate.ts
+  s_f058f999ab46b7::t_e5e979b3133b1b 748-772,810-813
+datafn/client/src/signals/querySignal.ts
+  s_f058f999ab46b7::t_b9c8dc51ba7a12 17-45,61-68,84,260-406,418,420,463-478,483,516-517,520,528-536,538-543,545-572,574-607,609-612,635-639,667-710
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1d987ac3ae2cf6958df7b5b672491426f6e66b4",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

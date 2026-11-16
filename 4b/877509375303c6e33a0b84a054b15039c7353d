@@ -1,0 +1,25 @@
+filefn/server/src/upload-sessions/service.ts
+  s_6ac91a4c99c94d::t_6120fd63b68c9f 268-294,296-297,314-316,883-892,1094-1097,1198-1203
+filefn/docs/content/docs/reference/routes.md
+  s_6ac91a4c99c94d::t_91e8eef07c491e 32
+filefn/docs/static/llms-full.txt
+  s_6ac91a4c99c94d::t_9df4bc355f690f 8102
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_6ac91a4c99c94d::t_23286d01505b98 6,23-26,53,68-72,76,103-112,131,137-141,169,177,679-798
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b877509375303c6e33a0b84a054b15039c7353d",
+  "prompts": {},
+  "sessions": {
+    "s_6ac91a4c99c94d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e051-7322-7aa1-be20-c259d2364d00",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

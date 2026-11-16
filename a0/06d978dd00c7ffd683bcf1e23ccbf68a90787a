@@ -1,0 +1,29 @@
+datafn/server/src/execution/sync/__tests__/clone-owner-and-page-joins.test.ts
+  s_0b0647615a23f7::t_d2714d0aab0203 445-449,452-453,489-526,536-539,541,548-549,620-621
+datafn/server/src/execution/sync/clone.ts
+  s_f058f999ab46b7::t_57a471989fa2dc 99-104,141,266,294-299,367-368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a006d978dd00c7ffd683bcf1e23ccbf68a90787a",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
