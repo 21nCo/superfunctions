@@ -71,6 +71,9 @@ function countInValues(filters: unknown): number {
   for (const [key, value] of Object.entries(filters as Record<string, unknown>)) {
     if ((key === "$in" || key === "in") && Array.isArray(value)) {
       total += value.length;
+    } else if (Array.isArray(value) && !key.startsWith("$") && value.every((v) => typeof v !== "object" || v === null)) {
+      // Field shorthand value list ({ status: ["a", "b"] }), pushed as `in`
+      total += value.length;
     } else if (typeof value === "object" && value !== null) {
       total += countInValues(value);
     }
@@ -176,12 +179,14 @@ export function convertDfqlFilters(
       return null;
     }
 
-    // Shorthand equality: { status: "active" } → eq
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value)
-    ) {
+    // Shorthand: { status: ["a", "b"] } → in (as the in-memory evaluator
+    // reads it); { status: "active" } → eq
+    if (Array.isArray(value)) {
+      if (isOversizedInList("in", value)) return null;
+      result.push({ field: key, operator: "in", value });
+      continue;
+    }
+    if (typeof value !== "object" || value === null) {
       result.push({ field: key, operator: "eq", value });
       continue;
     }
@@ -624,12 +629,12 @@ function convertSingleFilter(
   key: string,
   value: unknown,
 ): PushdownWhereClause[] | null {
-  // Shorthand equality
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
+  // Shorthand: a value list → in, any other value → eq
+  if (Array.isArray(value)) {
+    if (isOversizedInList("in", value)) return null;
+    return [{ field: key, operator: "in", value }];
+  }
+  if (typeof value !== "object" || value === null) {
     return [{ field: key, operator: "eq", value }];
   }
 

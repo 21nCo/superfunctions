@@ -294,6 +294,38 @@ describe("$is_empty / $is_not_empty push-down", () => {
     expect(ids(result)).toEqual(["node:2", "node:4", "node:8"]);
   });
 
+  it("boolean fields: empty means null or missing, false is not empty", async () => {
+    const schema: DatafnSchema = {
+      ...SCHEMA,
+      resources: SCHEMA.resources.map((resource) =>
+        resource.name === "node"
+          ? { ...resource, fields: [...resource.fields, { name: "pinned", type: "boolean", required: false, nullable: true }] }
+          : resource,
+      ) as DatafnSchema["resources"],
+    };
+    expect(classifyQuery({ resource: "node", filters: { pinned: { $is_empty: true } } }, schema)).toBe("FULL_PUSHDOWN");
+    const { db, server } = await createServer({ schema });
+    for (const [id, pinned] of [["node:b1", true], ["node:b2", false], ["node:b3", null]] as const) {
+      await db.create({ model: "node", data: { id, label: id, pinned }, namespace: "datafn" });
+    }
+    const spy = vi.spyOn(db as Adapter, "findMany");
+    for (const [filters, expected] of [
+      [{ pinned: { $is_empty: true } }, (all: string[]) => all.filter((id) => id !== "node:b1" && id !== "node:b2")],
+      [{ pinned: { $is_not_empty: true } }, () => ["node:b1", "node:b2"]],
+      [{ pinned: { $is_empty: false } }, () => ["node:b1", "node:b2"]],
+    ] as const) {
+      const body = { resource: "node", filters, select: ["id", "pinned"], sort: ["id:asc"] };
+      spy.mockClear();
+      const pushed = await query(server, body);
+      expect(pushed.status, JSON.stringify(pushed.body)).toBe(200);
+      expect(pushdownReads(spy, "node").length).toBeGreaterThan(0);
+      const inMemory = await query(server, withForcedInMemory(body));
+      expect(pushed.body.result).toEqual(inMemory.body.result);
+      const all = ids((await query(server, { resource: "node", select: ["id"], sort: ["id:asc"] })).body.result);
+      expect(ids(pushed.body.result)).toEqual(expected(all));
+    }
+  });
+
   it("two emptiness filters (two OR groups) run as disjoint branches", async () => {
     const { db, server } = await createServer();
     const spy = vi.spyOn(db as Adapter, "findMany");
@@ -324,6 +356,30 @@ describe("$is_empty / $is_not_empty push-down", () => {
     expect(pushed.body.result).toEqual(inMemory.body.result);
     expect(ids(pushed.body.result).sort()).toEqual(["node:1", "node:4", "node:5", "node:7", "node:8"]);
     expect(pushed.body.result.count).toBe(5);
+  });
+
+  it("a record read by two branches (written between the reads) fills one page position", async () => {
+    const { db, server } = await createServer();
+    const original = db.findMany.bind(db);
+    let branchReads = 0;
+    vi.spyOn(db as Adapter, "findMany").mockImplementation(async (params: any) => {
+      const rows = (await original(params)) as Json[];
+      if (params.model !== "node" || !Array.isArray(params.orderBy)) return rows;
+      branchReads += 1;
+      // The second branch also returns node:1, as if it changed in between.
+      if (branchReads === 2) return [...rows, (await original({ model: "node", where: [{ field: "id", operator: "eq", value: "node:1" }], namespace: "datafn" }))[0]];
+      return rows;
+    });
+    const res = await query(server, {
+      resource: "node",
+      filters: { metaType: { $is_empty: true }, creationContext: { $is_empty: true } },
+      select: ["id"],
+      sort: ["id:asc"],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(branchReads).toBeGreaterThan(1);
+    const resultIds = ids(res.body.result);
+    expect(new Set(resultIds).size).toBe(resultIds.length);
   });
 
   it("limit, offset and count match in-memory evaluation across branches", async () => {
@@ -637,6 +693,17 @@ describe("filter on a field named like its many-one relation (node.parent)", () 
       filters: { parent: { $is_empty: true } },
       sort: ["id:asc"],
     }))).toEqual(["node:1", "node:4", "node:6", "node:8"]);
+  });
+
+  it("treats array shorthand on the field as a value list", async () => {
+    const { db, server } = await createServer();
+    const spy = vi.spyOn(db as Adapter, "findMany");
+    const res = await query(server, { resource: "node", filters: { parent: ["node:1", "node:2"] }, sort: ["id:asc"] });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(ids(res.body.result)).toEqual(["node:2", "node:3", "node:5"]);
+    expect(pushdownReads(spy, "node")[0].where).toEqual([{ field: "parent", operator: "in", value: ["node:1", "node:2"] }]);
+    expect(ids(await expectParity({ resource: "node", filters: { parent: ["node:1", "node:2"] }, sort: ["id:asc"] })))
+      .toEqual(["node:2", "node:3", "node:5"]);
   });
 
   it("keeps quantifier objects as relation filters", async () => {

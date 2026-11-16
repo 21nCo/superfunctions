@@ -444,7 +444,10 @@ async function pushdownCore(
     // query's sort order (the in-memory comparator) and page once. A
     // per-branch limit could cut rows the database orders differently
     // (NULL placement, collation) from the comparator.
+    // The branches are disjoint, but they are read one by one: a record
+    // written between two reads can match both, so keep its first copy.
     const merged: Record<string, unknown>[] = [];
+    const seenIds = new Set<unknown>();
     for (const where of branches) {
       const branchRows = await adapterRead(() =>
         db.findMany({
@@ -454,7 +457,11 @@ async function pushdownCore(
           namespace,
         }),
       );
-      for (const row of branchRows) merged.push(row);
+      for (const row of branchRows) {
+        if (row.id != null && seenIds.has(row.id)) continue;
+        seenIds.add(row.id);
+        merged.push(row);
+      }
     }
     rows = sortRecords(merged, sortTerms);
     if (pushdownOffset) rows = rows.slice(pushdownOffset);
