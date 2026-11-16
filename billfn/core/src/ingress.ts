@@ -37,27 +37,36 @@ export interface BillFnIngressResolveRegionInput {
 /**
  * How the region was chosen: the payload's `billfn_region` metadata, the
  * host's `resolveRegion`, a region's owner lookup, or the default region.
+ * `unavailable` means ownership could not be established (a region's owner
+ * lookup did not answer and none claimed the event, or `resolveRegion` threw):
+ * the event is forwarded nowhere and the provider is asked to retry (503).
  */
-export type BillFnIngressRoute = 'metadata' | 'resolver' | 'owner-lookup' | 'default';
+export type BillFnIngressRoute = 'metadata' | 'resolver' | 'owner-lookup' | 'default' | 'unavailable';
 
-export interface BillFnIngressRouteDecision {
+export type BillFnIngressRouteDecision = {
   provider: BillingProviderName;
-  region: string;
-  route: BillFnIngressRoute;
   /** Regions whose owner lookup failed, timed out or answered without a valid `{ owned }`. */
   unreachableRegions: string[];
-}
+} & (
+  | { region: string; route: Exclude<BillFnIngressRoute, 'unavailable'> }
+  | { region: null; route: 'unavailable' }
+);
 
 export interface BillFnWebhookIngressConfig {
   regions: BillFnIngressRegion[];
-  /** The region that receives events no region claims; it stores them as unlinked. */
+  /**
+   * The region that receives events no region claims: deliveries without
+   * routing references, or whose references every region answered it does not
+   * own. It stores them as unlinked.
+   */
   defaultRegion: string;
   /** The shared internal token every region's `region.internalToken` is set to. */
   internalToken: string;
   /**
    * Chooses the region for an event the `billfn_region` metadata does not
    * route, before the regions are asked. Return a configured region id, or
-   * null or undefined to ask the regions' owner lookups.
+   * null or undefined to ask the regions' owner lookups. If it throws or
+   * rejects, the delivery is forwarded nowhere and answered with a retryable 503.
    */
   resolveRegion?: (
     input: BillFnIngressResolveRegionInput
@@ -66,7 +75,12 @@ export interface BillFnWebhookIngressConfig {
   forward?: (request: Request, region: BillFnIngressRegion) => Promise<Response>;
   /** The `fetch` owner lookups (and the default `forward`) use. Defaults to the global `fetch`. */
   fetch?: typeof fetch;
-  /** How long one region's owner lookup may take before it counts as unreachable. Default 3000 ms. */
+  /**
+   * How long one region's owner lookup may take before it counts as
+   * unreachable. Default 3000 ms. When a region is unreachable and no region
+   * claims the event, the provider is asked to retry (503) rather than the
+   * event going to the default region.
+   */
   lookupTimeoutMs?: number;
   /** How long a forwarded delivery may take before the provider is asked to retry (503). Default 30000 ms. */
   forwardTimeoutMs?: number;
@@ -169,7 +183,12 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
       return { provider, region: keys.region, route: 'metadata', unreachableRegions: [] };
     }
     if (config.resolveRegion) {
-      const resolved = await config.resolveRegion({ provider, keys, headers, rawBody });
+      let resolved: string | null | undefined;
+      try {
+        resolved = await config.resolveRegion({ provider, keys, headers, rawBody });
+      } catch {
+        return { provider, region: null, route: 'unavailable', unreachableRegions: [] };
+      }
       if (resolved && regionsById.has(resolved)) {
         return { provider, region: resolved, route: 'resolver', unreachableRegions: [] };
       }
@@ -178,6 +197,11 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
       const { owner, unreachableRegions } = await lookUpOwner(provider, keys.references);
       if (owner) {
         return { provider, region: owner, route: 'owner-lookup', unreachableRegions };
+      }
+      if (unreachableRegions.length > 0) {
+        // An unanswered region may own the event: the default region would
+        // acknowledge it as unlinked and the provider would stop retrying.
+        return { provider, region: null, route: 'unavailable', unreachableRegions };
       }
       return { provider, region: config.defaultRegion, route: 'default', unreachableRegions };
     }
@@ -208,12 +232,7 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
     try {
       return await withTimeout(forwardTimeoutMs, controller, () => forward(forwarded, region));
     } catch {
-      return errorResponse(
-        createBillFnError({
-          code: 'BILLFN_REGION_UNAVAILABLE',
-          message: 'The owning region did not answer; retry the delivery'
-        })
-      );
+      return regionUnavailable('The owning region did not answer; retry the delivery');
     }
   }
 
@@ -232,6 +251,9 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
         config.onRoute?.(decision);
       } catch {
         // Observation never changes routing.
+      }
+      if (decision.region === null) {
+        return regionUnavailable('The owning region could not be determined; retry the delivery');
       }
       return forwardTo(regionsById.get(decision.region) as BillFnIngressRegion, provider, request, body);
     }
@@ -292,7 +314,7 @@ function validateRegions(config: BillFnWebhookIngressConfig): BillFnIngressRegio
     if (url.search || url.hash) {
       throw invalid(`Ingress region ${region.id} url must not carry a query or fragment`);
     }
-    return { id: region.id, url: region.url.replace(/\/+$/, '') };
+    return { id: region.id, url: trimTrailingSlashes(region.url) };
   });
   if (!seen.has(config.defaultRegion)) {
     throw invalid('createWebhookIngress defaultRegion must name a configured region');
@@ -301,6 +323,19 @@ function validateRegions(config: BillFnWebhookIngressConfig): BillFnIngressRegio
     throw invalid('createWebhookIngress requires the shared internal token');
   }
   return regions;
+}
+
+function regionUnavailable(message: string): Response {
+  return errorResponse(createBillFnError({ code: 'BILLFN_REGION_UNAVAILABLE', message }));
+}
+
+/** Drops trailing `/` characters in one linear pass (no backtracking regex). */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 async function withTimeout<T>(ms: number, controller: AbortController, run: () => Promise<T>): Promise<T> {

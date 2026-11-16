@@ -445,14 +445,61 @@ describe('createWebhookIngress', () => {
     expect(await entitlementStatus(harness.regions.euwest, 'user_slow')).toBe('active');
   });
 
-  it('routes to the default region when the only unanswered region times out and no other owns the event', async () => {
-    const harness = createHarness({ hangingLookups: ['euwest'] });
+  it('asks the provider to retry when an unanswered region may own the event, then routes the retry to the owner', async () => {
+    const hangingLookups: RegionId[] = ['euwest'];
+    const harness = createHarness({ hangingLookups });
+    const session = await checkout(harness.regions.euwest, 'dodo', 'user_outage');
+    const delivery = dodoDelivery(dodoEvent(session.providerSubscriptionId as string));
+
+    const during = await harness.ingress.handle('dodo', delivery.clone());
+
+    expect(during.status).toBe(503);
+    expect(((await during.json()) as { error: unknown }).error).toMatchObject({
+      code: 'BILLFN_REGION_UNAVAILABLE',
+      retryable: true
+    });
+    expect(harness.decisions[0]).toEqual({ provider: 'dodo', region: null, route: 'unavailable', unreachableRegions: ['euwest'] });
+    for (const id of REGION_IDS) {
+      expect(harness.regions[id].forwarded).toHaveLength(0);
+      expect(await unlinkedEvents(harness.regions[id])).toEqual([]);
+    }
+
+    hangingLookups.length = 0;
+    const after = await harness.ingress.handle('dodo', delivery.clone());
+
+    expect(after.status).toBe(200);
+    expect(harness.decisions[1]).toMatchObject({ region: 'euwest', route: 'owner-lookup', unreachableRegions: [] });
+    expect(await entitlementStatus(harness.regions.euwest, 'user_outage')).toBe('active');
+    expect(await unlinkedEvents(harness.regions.useast)).toEqual([]);
+  });
+
+  it('counts a non-200 owner lookup answer as inconclusive, not as unowned', async () => {
+    const harness = createHarness({ ingress: { internalToken: 'not-the-shared-token' } });
 
     const response = await harness.ingress.handle('dodo', dodoDelivery(dodoEvent('sub_unknown')));
 
-    expect(response.status).toBe(200);
-    expect(harness.decisions[0]).toMatchObject({ region: 'useast', route: 'default', unreachableRegions: ['euwest'] });
-    expect(await unlinkedEvents(harness.regions.useast)).toHaveLength(1);
+    expect(response.status).toBe(503);
+    expect(harness.decisions[0]).toMatchObject({ region: null, route: 'unavailable', unreachableRegions: [...REGION_IDS] });
+    expect(harness.regions.useast.forwarded).toHaveLength(0);
+  });
+
+  it.each([
+    ['throws', () => {
+      throw new Error('mapping store down');
+    }],
+    ['rejects', () => Promise.reject(new Error('mapping store down'))]
+  ])('asks the provider to retry when resolveRegion %s, forwarding nothing', async (_, resolveRegion) => {
+    const harness = createHarness({ ingress: { resolveRegion } });
+
+    const response = await harness.ingress.handle('dodo', dodoDelivery(dodoEvent('sub_any')));
+
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as { error: unknown }).error).toMatchObject({ code: 'BILLFN_REGION_UNAVAILABLE' });
+    expect(harness.decisions).toEqual([{ provider: 'dodo', region: null, route: 'unavailable', unreachableRegions: [] }]);
+    expect(harness.lookups).toEqual([]);
+    for (const id of REGION_IDS) {
+      expect(harness.regions[id].forwarded).toHaveLength(0);
+    }
   });
 
   it('asks the provider to retry when the owning region cannot be reached', async () => {
@@ -477,6 +524,23 @@ describe('createWebhookIngress', () => {
       ['useast', 'default']
     ]);
     expect(harness.lookups).toHaveLength(REGION_IDS.length);
+  });
+
+  it('trims any run of trailing slashes from a region url, keeping inner slashes', async () => {
+    const forwardedUrls: string[] = [];
+    const ingress = createWebhookIngress({
+      regions: [{ id: 'useast', url: `https://useast.billfn.test/a//billfn${'/'.repeat(50_000)}` }],
+      defaultRegion: 'useast',
+      internalToken: TOKEN,
+      forward: async (request) => {
+        forwardedUrls.push(request.url);
+        return new Response(null, { status: 204 });
+      }
+    });
+
+    await ingress.handle('dodo', dodoDelivery('not json'));
+
+    expect(forwardedUrls).toEqual(['https://useast.billfn.test/a//billfn/webhooks/dodo?attempt=2']);
   });
 
   it('rejects a configuration whose default region is not one of its regions', () => {

@@ -44,8 +44,8 @@ app.post('/webhooks/:provider', (c) => ingress.handle(c.req.param('provider'), c
 For each delivery the ingress reads only routing keys and never verifies or parses the event further:
 
 1. A Dodo payload's `data.metadata.billfn_region`, when it names a configured region.
-2. The optional `resolveRegion` hook.
-3. Otherwise every region's owner lookup, in parallel, for the event's references (Dodo subscription and payment ids; the original and current transaction ids of an Apple notification). The first region in configured order that owns the most specific reference wins. A region that fails or exceeds `lookupTimeoutMs` (default 3000 ms) is skipped.
-4. Otherwise the `defaultRegion`, which stores the verified event as unlinked until its reference is linked.
+2. The optional `resolveRegion` hook. If it throws or rejects, the ingress answers `503 BILLFN_REGION_UNAVAILABLE` and forwards nothing, so the provider retries.
+3. Otherwise every region's owner lookup, in parallel, for the event's references (Dodo subscription and payment ids; the original and current transaction ids of an Apple notification). The first region in configured order that owns the most specific reference wins. A region whose lookup fails, answers non-200 or exceeds `lookupTimeoutMs` (default 3000 ms) does not stop another region from claiming the event, but if no region claims it the ownership is inconclusive: the ingress answers `503 BILLFN_REGION_UNAVAILABLE`, forwards nothing, and the provider's retry reaches the owner once it answers again.
+4. Otherwise (no references, or every region answered that it does not own them) the `defaultRegion`, which stores the verified event as unlinked until its reference is linked.
 
 The request is forwarded to `<region url>/webhooks/<provider>` with its body bytes and signature headers unchanged, so the destination verifies the signature, and the destination's response is returned to the provider: a forged event is rejected there. When the chosen region cannot be reached within `forwardTimeoutMs` (default 30000 ms), the ingress answers `503 BILLFN_REGION_UNAVAILABLE` so the provider retries. Pass `forward` or `fetch` to change the transport, and `onRoute` to observe routing decisions.
