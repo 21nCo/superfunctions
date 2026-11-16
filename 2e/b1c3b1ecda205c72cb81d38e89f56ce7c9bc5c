@@ -1,0 +1,35 @@
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_29f5e5a1c711bd::t_fa22f1029735ef 425-428,465-481,506-522
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_29f5e5a1c711bd::t_a982142014a26d 400-401,473-481,483-506,694-729,769-770,779-802
+datafn/server/src/execution/db-store.ts
+  s_29f5e5a1c711bd::t_7fb669975aece1 297-299,484-486
+datafn/server/src/execution/query/execute.ts
+  s_29f5e5a1c711bd::t_87133d2489bfdb 17,278-280,302-306
+datafn/server/src/execution/query/filter-plan.ts
+  s_29f5e5a1c711bd::t_eaa511d05f13bb 220-238,245-246,253,258-259,263,266,283-287,294
+datafn/server/src/execution/query/planner.ts
+  s_29f5e5a1c711bd::t_bbbf1532595e65 198,201-202,204,208-211,214,230,234,448-452
+datafn/server/src/execution/query/pushdown.ts
+  s_29f5e5a1c711bd::t_882e7f026331ca 362-377,380-386,432-441,449-456,519-525
+datafn/server/src/routes/query/validate.ts
+  s_29f5e5a1c711bd::t_66d9f8c080567c 9,594-597
+datafn/server/src/validation/authz.ts
+  s_29f5e5a1c711bd::t_a20ae21a1b6d93 22,181-197,270-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2eb1c3b1ecda205c72cb81d38e89f56ce7c9bc5c",
+  "prompts": {},
+  "sessions": {
+    "s_29f5e5a1c711bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b5ed634-0030-40a8-a18f-c3c393f12965",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
