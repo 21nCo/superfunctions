@@ -101,7 +101,9 @@ permissions:
 
 jobs:
   api-check:
-    if: github.repository == '21nCo/superfunctions'
+    # A called workflow sees its caller's github context, so external callers (apifn/README.md) still run this job;
+    # only a direct workflow_dispatch run outside 21nCo/superfunctions skips (SFNS-121 D14, scripts/verify-owners.mjs).
+    if: github.repository == '21nCo/superfunctions' || github.event_name != 'workflow_dispatch' || !startsWith(github.workflow_ref, format('{0}/.github/workflows/apifn-api-check.yml@', github.repository))
     runs-on: ubuntu-latest
 
     steps:

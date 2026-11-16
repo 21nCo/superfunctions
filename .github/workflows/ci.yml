@@ -74,13 +74,13 @@ jobs:
           node --test scripts/verify-package-lockfiles.test.mjs
           node scripts/verify-package-lockfiles.mjs
 
-      # Ownership manifests (SFNS-122). Public semantics (21nCo/superfunctions and forks): superfunctions.owners.json
-      # must list every top-level path, root file, release slug and Python project. Next semantics
-      # (21nCo/super-functions.next): unlisted paths are public-owned, and every release slug and Python project must be
-      # listed in superfunctions.owners.json or superfunctions.owners.next.json.
+      # Ownership manifests (SFNS-122) with public semantics: superfunctions.owners.json must list every top-level path,
+      # root file, release slug and Python project, and every workflow outside the shared list carries the repository
+      # guard (SFNS-123). This job is guarded, so it never runs on 21nCo/super-functions.next; next runs
+      # `node scripts/verify-owners.mjs --repo next` from its own CI (live next check deferred to SFNS-160).
       - name: Ownership manifest matches the tree
         env:
-          OWNERS_REPO: ${{ github.repository == '21nCo/super-functions.next' && 'next' || 'public' }}
+          OWNERS_REPO: public
         run: |
           node --test scripts/owners.test.mjs scripts/verify-owners.test.mjs
           node scripts/verify-owners.mjs --repo "$OWNERS_REPO"
