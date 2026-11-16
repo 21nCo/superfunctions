@@ -1,0 +1,132 @@
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_f058f999ab46b7::t_13555804ee3626 1-129,131-144,146-291,294-390,395-398,402-459,586-650,837-852
+  s_f058f999ab46b7::t_4d4227f480b5d8 853-874
+  s_f058f999ab46b7::t_0cf4f94dbd14d3 130,145,292-293,391-394,549-570
+  s_5f47874c4b3245::t_68a42ea53b62f3 399,460-472,571-585
+  s_5f47874c4b3245::t_a7a50682eb6f6f 482,507-548,651-664
+  s_5f47874c4b3245::t_c806cfe4c644d0 665-693,730-751
+  s_5f47874c4b3245::t_931edf4e07e901 762-765,790-797
+  s_5f47874c4b3245::t_30bcad282740c8 766-768
+  s_7886090bf0f75e::t_02b559609ffcfa 752-761
+  s_29f5e5a1c711bd::t_a982142014a26d 400-401,473-481,483-506,694-729,798-815,831-836
+  s_29f5e5a1c711bd::t_499f6f2db622a5 769-773,816-830
+  s_29f5e5a1c711bd::t_2c54138064db88 774-776
+  s_609c396cb81508::t_1beabee501f38f 777-789
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_f058f999ab46b7::t_cbf626508d7f8e 339-424,429-452,546-548
+  s_f058f999ab46b7::t_536efd695b14c7 453-464,494-503
+  s_69b47c58e5654b::t_6959a803deac44 505,523-524,527-529,534-536,539,543-544,546
+  s_5f47874c4b3245::t_7834455b7bdf15 482-493,525-526,530-533,537-538,540-542,545
+  s_29f5e5a1c711bd::t_fa22f1029735ef 425-428,465-481,506-522
+datafn/server/__tests__/query-pushdown.test.ts
+  s_f058f999ab46b7::t_67005ad4dd12bd 565,573,670,677,713,720,749,756,767,784,791,836
+datafn/server/src/execution/db-store.ts
+  s_f058f999ab46b7::t_c11f357a95ace8 25,226,379,641-644,651-659,913-914,916-919,936,938,950-952,954-955,957-1026,1028,1031-1035
+  s_5f47874c4b3245::t_817c8b5b612eed 270-272,276,290,294
+  s_5f47874c4b3245::t_7276e10a2914b2 16,214,256,260,311,359,444,462-483,487-494,505
+  s_29f5e5a1c711bd::t_7fb669975aece1 297-299,484-486
+datafn/server/src/execution/query/execute.ts
+  s_f058f999ab46b7::t_15b89d4f328da5 18,297,299-301,307
+  s_0b0647615a23f7::t_86db64b562cf8e 292,298
+  s_29f5e5a1c711bd::t_87133d2489bfdb 17,278-280,302-306
+datafn/server/src/execution/query/filter-plan.ts
+  s_f058f999ab46b7::t_362cae57515a86 1-62,69-88,95,96-99,100-101,115-194,198-215,217,239-244,247-252,254-256,281-282,288-293,295-329,331-341,343-350,352-366,368-373,381,385-389,391-392,394-395,402,404,407-429,432-452,456,458-521,523-539,541-617,621-628,630-644,646-649,664-695
+  s_0b0647615a23f7::t_508a983560abd1 63-68,89,93-94,195-197,262,264-265,268-282,374-380,382-384,390,393,396-401,403,405-406,430-431,453-455,457,522,540,618-620,629,645,650-652,658-663,696,756-757,761-768,809,814-815,819
+  s_5f47874c4b3245::t_0f25e050f89508 90-92,102-114,216,218-219,257,260-261,267,330,342,351,367,755-756,777-783,809-810,819
+  s_5f47874c4b3245::t_057979c8586ffb 653-657,698-700,702-726,728-729,734-736,739-750,757-776,784-788
+  s_5f47874c4b3245::t_0885defb7761d5 790-807,809-819
+  s_7886090bf0f75e::t_b5dc606e4b0f4a 808
+  s_29f5e5a1c711bd::t_eaa511d05f13bb 220-238,245-246,253,258-259,263,266,283-287,294
+datafn/server/src/execution/query/planner.ts
+  s_f058f999ab46b7::t_4e74a3ee7bec3b 16-17,142,332,428-435,458,601-604,608,614,619-645
+  s_f058f999ab46b7::t_7b27515dd5d60e 492
+  s_5f47874c4b3245::t_08224921109cab 13,206-208,216,221,226-227,236-238,242,248-249,447,460,467,471,474,476
+  s_5f47874c4b3245::t_3eac67cacaf4bc 197,199-200,204,217,223,229-232,239
+  s_29f5e5a1c711bd::t_bbbf1532595e65 198,205,210,212,465
+  s_29f5e5a1c711bd::t_19c48549726039 209,211,461-464,466
+  s_29f5e5a1c711bd::t_745ef72cf0c5d9 201-203,213-215,222,225,233-235,241
+  s_609c396cb81508::t_39f950b95b866d 218-220,224,228,240,243-247
+datafn/server/src/execution/query/pushdown.ts
+  s_f058f999ab46b7::t_a0b3e30482b1d4 23-24,227,234,280,329,352,356,388-392,422-431,434,436,439,457-460,462,517-518,526
+  s_0b0647615a23f7::t_9603d8305a1cb6 22,353-355,357-361,378-379,387,443-446,461
+  s_29f5e5a1c711bd::t_882e7f026331ca 362-377,380-386,432-441,449-456,519-525
+datafn/server/src/execution/query/select.ts
+  s_f058f999ab46b7::t_b1f7dfe54e0ed4 505-517
+datafn/server/src/routes/query/execute.ts
+  s_f058f999ab46b7::t_232e9abdee3a9d 13-14,16,19,256-269,277-278,295-305,307
+  s_0b0647615a23f7::t_639ed53bf46bdb 15,283-284,287,289,294
+  s_5f47874c4b3245::t_d31f4c9a5b4563 18,288,290
+  s_5f47874c4b3245::t_9023eb2c3ff008 17,285-286,291-292
+datafn/server/src/routes/query/validate.ts
+  s_f058f999ab46b7::t_13fe9b7431a607 10,167-168,550-552,555
+  s_29f5e5a1c711bd::t_66d9f8c080567c 9,594-597
+datafn/server/src/validation/query.ts
+  s_f058f999ab46b7::t_38a263e861bbac 22-25,905-907,909-915
+datafn/server/src/validation/authz.ts
+  s_29f5e5a1c711bd::t_a20ae21a1b6d93 22,181-197,270-288
+  s_29f5e5a1c711bd::t_7788a66fd0a778 319,458,473,490-497,499-501
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24031931bf405d5425ee5f150f000f42763f5e52",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_29f5e5a1c711bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b5ed634-0030-40a8-a18f-c3c393f12965",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_5f47874c4b3245": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae9c5a9d-550a-4e30-82ab-8eb4c07431f5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_609c396cb81508": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_609c396cb81508",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_69b47c58e5654b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e2cc-eeeb-70f1-8cfc-7ad1471ed1dd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7886090bf0f75e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79076168-639e-4a03-ab7b-07d62e2bea40",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

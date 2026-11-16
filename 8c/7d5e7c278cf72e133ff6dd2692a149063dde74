@@ -1,0 +1,21 @@
+datafn/client/__tests__/signal-idle.test.ts
+  s_f058f999ab46b7::t_a226d303a565ec 179-189,215-220
+datafn/client/src/signals/liveSignal.ts
+  s_f058f999ab46b7::t_ba272acfcfab4a 94-96,99,103-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c7d5e7c278cf72e133ff6dd2692a149063dde74",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

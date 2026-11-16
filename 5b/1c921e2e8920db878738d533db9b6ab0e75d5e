@@ -1,0 +1,65 @@
+billfn/admin/package.json
+  s_3f9cd48c41ce52::t_d0d7499255ff8d 3,41
+billfn/client/package.json
+  s_3f9cd48c41ce52::t_135f8a3777ff3f 3,34
+billfn/core/package.json
+  s_3f9cd48c41ce52::t_8f8060489ae34d 3
+billfn/core/src/__tests__/billfn.test.ts
+  s_3f9cd48c41ce52::t_1026d98a664189 207
+billfn/core/src/__tests__/lifecycle-events.test.ts
+  s_3f9cd48c41ce52::t_dc09af31d3e684 1-503
+billfn/core/src/index.ts
+  s_3f9cd48c41ce52::t_8a10ed176925ce 45-48
+billfn/core/src/lifecycle.ts
+  s_3f9cd48c41ce52::t_b58f5f5a3acedc 1-380
+billfn/core/src/router.ts
+  s_3f9cd48c41ce52::t_67bd2aa21637c2 6,319
+billfn/core/src/schema.ts
+  s_3f9cd48c41ce52::t_7fbb62d4ce525b 212-237,356-357,361
+billfn/core/src/service.ts
+  s_3f9cd48c41ce52::t_6c9b087b3f4700 17-23,187-188,290-299,304-309,1602-1603,1607-1638,1850-1855,3280-3284,3553,3561,3566-3567,3582-3703,5199-5200
+billfn/core/src/types.ts
+  s_3f9cd48c41ce52::t_2e7baafcf0511e 48-49,609-614,620-621,670-680,685-816,1162-1171
+billfn/docs/content/docs/reference/schema.mdx
+  s_3f9cd48c41ce52::t_237e5c3836eb72 6,27,47-48,60,64-86
+billfn/docs/content/docs/server/lifecycle-events.mdx
+  s_3f9cd48c41ce52::t_64fa218cee79de 1-73
+billfn/docs/content/docs/server/meta.json
+  s_3f9cd48c41ce52::t_e9b51fa21edb6b 3
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_3f9cd48c41ce52::t_d567f94ac4bd7d 25
+billfn/docs/content/docs/server/setup.mdx
+  s_3f9cd48c41ce52::t_3e1acadae7d21b 30-31,158
+billfn/provider-apple/package.json
+  s_3f9cd48c41ce52::t_c3121a09feafab 3,34
+billfn/provider-dodo/package.json
+  s_3f9cd48c41ce52::t_930ade4ad74953 3,34
+billfn/python/billfn/__init__.py
+  s_3f9cd48c41ce52::t_0e26bb5a9efdfa 3
+billfn/python/billfn/schema.py
+  s_3f9cd48c41ce52::t_2cd1928c36e46b 7,364-397,417
+billfn/python/pyproject.toml
+  s_3f9cd48c41ce52::t_1b37f02d461e56 7
+billfn/python/tests/test_schema.py
+  s_3f9cd48c41ce52::t_6969425b8aaa1b 7,25,64-66
+billfn/svelte/package.json
+  s_3f9cd48c41ce52::t_c7042214c62721 3,32-33,37-38
+package-lock.json
+  s_3f9cd48c41ce52::t_bbdfc3f28f66e4 4959,4962,4976,4979,5000,6034,6037,6057,6060,6081,6084-6085,6092-6093
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b1c921e2e8920db878738d533db9b6ab0e75d5e",
+  "prompts": {},
+  "sessions": {
+    "s_3f9cd48c41ce52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3f9cd48c41ce52",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
