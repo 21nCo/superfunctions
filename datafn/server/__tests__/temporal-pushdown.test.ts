@@ -508,6 +508,8 @@ describe("lowerTemporalRanges", () => {
       { ...q(temporal), filters: { "project.previous.label": "x" } },
       { resource: "session", version: 1, temporal, groupBy: ["project.previous.label"], aggregations: { n: { op: "count", field: "id" } } },
       { ...q(temporal), select: ["id", "project.previous.*"] },
+      { ...q(temporal), sort: [{ field: "project.label", direction: "asc" }, "id:asc"] },
+      { ...q(temporal), sort: ["+project.label", "id:asc"] },
     ]) {
       expect(lowerTemporalRanges(query, schema, config).query).toBe(query);
     }

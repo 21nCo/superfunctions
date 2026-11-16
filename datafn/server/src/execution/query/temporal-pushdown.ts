@@ -144,7 +144,9 @@ function queryPaths(query: Record<string, unknown>): string[][] {
   if (Array.isArray(query.groupBy)) query.groupBy.forEach(addPath);
   if (Array.isArray(query.sort)) {
     for (const term of query.sort) {
-      if (typeof term === "string") addPath(term.replace(/^-/, "").replace(/:(asc|desc)$/i, ""));
+      // Sort terms are "field", "-field", "+field", "field:desc" or { field, direction }.
+      if (typeof term === "string") addPath(term.replace(/^[-+]/, "").replace(/:(asc|desc)$/i, ""));
+      else if (term && typeof term === "object") addPath((term as { field?: unknown }).field);
     }
   }
   if (query.aggregations && typeof query.aggregations === "object") {
