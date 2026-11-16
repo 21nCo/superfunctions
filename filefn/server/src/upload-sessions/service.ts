@@ -103,15 +103,19 @@ export interface UploadSession {
 }
 
 // Serializes, across every FileFn instance in this process (hosts may build one
-// per request), the calls completing one upload session and the completions per
-// namespace and fileId. On adapters without unique constraints, which are
-// single-process, it is the only guard and covers every adapter object in the
-// process: no adapter property reliably tells whether two adapter objects (for
-// example two wrappers) share one store. With unique constraints it is scoped
-// to the adapter object (see databaseToken). Keys: `session\0...` then `file\0...`,
+// per request), the calls completing one upload session and, per namespace and
+// fileId, the commit decisions (database steps only, never storage I/O). On
+// adapters without unique constraints, which are single-process, the fileId key
+// is the only guard and covers every adapter object in the process: no adapter
+// property reliably tells whether two adapter objects (for example two
+// wrappers) share one store. With unique constraints it is scoped to the
+// adapter object (see databaseToken). Keys: `session\0...` then `file\0...`,
 // always acquired in that order. A call that waits longer than
-// SERIALIZED_WAIT_TIMEOUT_MS fails with the retryable 409
-// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything.
+// SERIALIZED_WAIT_TIMEOUT_MS for its session key fails with the retryable 409
+// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything. A call waiting
+// for its fileId key has already completed its storage upload, which a retry
+// could not redo, so it keeps waiting (unless it may take the key, see
+// fileKeyEvictableAt); that key is only held for database steps.
 const runSerialized = createKeyedSerializer();
 
 // One token per database adapter object the host passed. Used only on adapters
@@ -240,6 +244,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     databaseIdentity = db,
   } = config;
 
+  // The per-fileId commit key. A holder stuck forever (for example a Workers
+  // request cancelled when its client disconnected) stops blocking it where an
+  // overlap is harmless: on adapters with unique constraints a call that has
+  // waited out SERIALIZED_WAIT_TIMEOUT_MS takes the key, and the unique
+  // `files.fileId` constraint arbitrates the two as it does calls in two
+  // processes. Without unique constraints the key is taken only after the
+  // holder's session has expired; a completion still running then is a session
+  // expiring during its completion, which FileFn does not guard (FILE-14).
+  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
+  const fileLockScope = uniqueConstraints
+    ? `${databaseToken(databaseIdentity)}\u0000${namespace}`
+    : namespace;
+  function fileKeyEvictableAt(expiresAt: string): number | undefined {
+    if (uniqueConstraints) return 0;
+    const expiresAtMs = Date.parse(expiresAt);
+    return Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
+  }
+
   function selectUploadMode(storageTarget: string): string {
     const capabilities = getStorageCapabilities(storage, storageTarget);
     if (capabilities.signedUploadUrls && capabilities.multipart) {
@@ -298,7 +320,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
 
-    await db.update({
+    // Conditional: a zero-match write (the session was refused meanwhile) is a
+    // no-op, so this uses the count-returning updateMany, never update.
+    await db.updateMany({
       model: 'uploadSessions',
       where: [
         { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
@@ -357,12 +381,21 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // expiry sweep deletes it, which first deletes whatever is left; neither an
   // owner abort nor deleteFile touches it.
   async function refuseSession(session: UploadSession): Promise<void> {
+    await fenceRefusedSession(session.uploadSessionId);
+    await deleteRefusedUploads(session);
+  }
+
+  async function fenceRefusedSession(uploadSessionId: string): Promise<void> {
     await db.update({
       model: 'uploadSessions',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
       data: { status: 'refused' },
       namespace,
     });
+  }
+
+  // The storage half of refuseSession, for a session already marked 'refused'.
+  async function deleteRefusedUploads(session: UploadSession): Promise<void> {
     const partsDeleted = await deleteProxyTempPartObjects(session);
     const objectDeleted = await deleteOwnUnpublishedObject(session);
     if (partsDeleted && objectDeleted) {
@@ -813,7 +846,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (session.status === 'pending') {
-        await db.update({
+        // Conditional on 'pending': updateMany, so a session refused or moved on
+        // meanwhile is a zero-match no-op rather than a not-found error.
+        await db.updateMany({
           model: 'uploadSessions',
           where: [
             { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
@@ -865,7 +900,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Update status to in_progress if still pending
       if (session.status === 'pending') {
-        await db.update({
+        // Conditional on 'pending': updateMany, so a session refused or moved on
+        // meanwhile is a zero-match no-op rather than a not-found error.
+        await db.updateMany({
           model: 'uploadSessions',
           where: [
             { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
@@ -1090,13 +1127,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Commit section: create the file or add a version to it. The first
       // completion to insert the `files` row owns the file; init reserves nothing.
-      // Within this process completions are serialized per fileId (see the
-      // completeSession wrapper below), which is the only guard on adapters
-      // without unique constraints (single-process only). Across processes the
-      // unique `files.fileId` constraint decides the winner.
+      // Within this process the commit decisions per fileId run one at a time
+      // (only these database steps: storage I/O above and refusal deletes below
+      // run outside the key, so a completion stuck in storage blocks no other).
+      // That is the only guard on adapters without unique constraints
+      // (single-process only). Across processes the unique `files.fileId`
+      // constraint decides the winner.
       const commitOutcome = publishedVersion
         ? 'resumed'
-        : await (async (): Promise<'published' | 'recorded' | 'refused'> => {
+        : await runSerialized(`file\u0000${fileLockScope}\u0000${fileId}`, async (): Promise<'published' | 'recorded' | 'refused'> => {
             // Another completion call of this same session already published it.
             if (await findOwnVersion()) return 'recorded';
 
@@ -1133,7 +1172,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // A row this session wrote itself skips straight to its version.
             if (current && !isOwnRow(current)) {
               if (await findOwnVersion()) return 'recorded';
-              if (!(await canWriteFileNow(fileId, ctx))) return 'refused';
+              if (!(await canWriteFileNow(fileId, ctx))) {
+                // Fenced under the key; its storage deletes run after release.
+                await fenceRefusedSession(session.uploadSessionId);
+                return 'refused';
+              }
               await db.update({
                 model: 'files',
                 where: [{ field: 'fileId', operator: 'eq', value: fileId }],
@@ -1169,7 +1212,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               throw err;
             }
             return 'published';
-          })();
+          }, { evictableAt: fileKeyEvictableAt(session.expiresAt), keepWaiting: true });
 
       if (commitOutcome === 'recorded') {
         // The recorded result belongs to the call that published it; this call
@@ -1179,9 +1222,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       if (commitOutcome === 'refused') {
         // Dedup's own delete of the session's object ignores failures, and
-        // stitching's proxy part deletes too; refuseSession deletes them again
-        // and checks the result.
-        await refuseSession(session);
+        // stitching's proxy part deletes too; these delete them again and check
+        // the result.
+        await deleteRefusedUploads(session);
         throw errors.forbidden({ fileId, operation: 'replace' });
       }
 
@@ -1332,32 +1375,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Calls completing one session run one at a time in this process, so a
   // retried call never finalizes storage or refuses alongside another call of
-  // the same session; it reads the result the earlier call recorded. Open
-  // sessions of one fileId also complete one at a time, from their first storage
-  // step to their commit, so a waiting call that gives up (409
-  // FILEFN_UPLOAD_COMPLETION_IN_PROGRESS) has changed nothing and a retry starts
-  // cleanly.
-  //
-  // A holder never overlaps a later call except where that is harmless, which
-  // lets a call stuck forever (for example a Workers request cancelled when its
-  // client disconnected) stop blocking its keys:
-  // - After the holder's session has expired, its session key may be taken: the
-  //   later call only reads the session and reports it expired.
-  // - On adapters with unique constraints, a fileId key may be taken by a call
-  //   that has waited out SERIALIZED_WAIT_TIMEOUT_MS. The two calls belong to
-  //   different sessions with their own storage keys, and the unique
-  //   `files.fileId` constraint arbitrates them as it does calls in two
-  //   processes. Without unique constraints a fileId key is taken only after the
-  //   holder's session has expired; a completion still running then is a session
-  //   expiring during its completion, which FileFn does not guard (FILE-14).
+  // the same session; it reads the result the earlier call recorded. After the
+  // session has expired its key may be taken by a call that has waited out
+  // SERIALIZED_WAIT_TIMEOUT_MS: that call only reads the session and reports it
+  // expired. Sessions of one fileId run their storage steps concurrently (each
+  // has its own storage key) and only their commit decision per fileId (see the
+  // commit section) one at a time.
   const completeSessionNow = service.completeSession;
-  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
-  const fileLockScope = uniqueConstraints
-    ? `${databaseToken(databaseIdentity)}\u0000${namespace}`
-    : namespace;
   service.completeSession = async (uploadSessionId, ctx, uploadSessionToken) => {
     const complete = () => completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken);
-    // expiresAt and fileId never change after init; status is read again inside.
+    // expiresAt never changes after init; status is read again inside.
     const session = await db.findOne<UploadSession>({
       model: 'uploadSessions',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -1367,21 +1394,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       return complete();
     }
     const expiresAtMs = Date.parse(session.expiresAt);
-    const sessionEvictableAt = Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
-    // A settled or expired session only reports its result or error.
-    const commits = Boolean(session.fileId) &&
-      session.status !== 'completed' &&
-      !isAbortedStatus(session.status) &&
-      !isExpiredAt(session.expiresAt);
-    return runSerialized(
-      `session\u0000${namespace}\u0000${uploadSessionId}`,
-      () => commits
-        ? runSerialized(`file\u0000${fileLockScope}\u0000${session.fileId}`, complete, {
-            evictableAt: uniqueConstraints ? 0 : sessionEvictableAt,
-          })
-        : complete(),
-      { evictableAt: sessionEvictableAt },
-    );
+    return runSerialized(`session\u0000${namespace}\u0000${uploadSessionId}`, complete, {
+      evictableAt: Number.isNaN(expiresAtMs) ? undefined : expiresAtMs,
+    });
   };
 
   return service;

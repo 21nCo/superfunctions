@@ -42,6 +42,13 @@ export interface SerializedRunOptions {
    * overlap is harmless. Omitted: this call holds the key until it settles.
    */
   evictableAt?: number;
+  /**
+   * This call never gives up: each time its wait times out without being able
+   * to take the key, it keeps waiting. For a call that has already done work a
+   * retry could not redo (FileFn's commit step, which runs after storage
+   * completion and holds its key only for database steps).
+   */
+  keepWaiting?: boolean;
 }
 
 interface Turn {
@@ -63,16 +70,18 @@ interface KeyState {
  * call that cannot get the key within `waitTimeoutMs` fails with the retryable
  * `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` without running, leaving no trace on
  * the key, unless the holder's `evictableAt` has passed: then it takes the key
- * and runs. Memory per key is one holder entry plus the calls still waiting; a
- * key's entry is dropped when its last call settles. A holder that never
- * settles and is never evictable keeps its key's entry, and later calls of that
- * key fail with the retryable error after waiting, until the process restarts.
+ * and runs. A `keepWaiting` call keeps waiting instead of failing. Memory per
+ * key is one holder entry plus the calls still waiting; a key's entry is
+ * dropped when its last call settles. A holder that never settles and is never
+ * evictable keeps its key's entry, and later calls of that key fail with the
+ * retryable error after waiting (`keepWaiting` calls wait), until the process
+ * restarts.
  */
 export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) {
   const waitTimeoutMs = options.waitTimeoutMs ?? SERIALIZED_WAIT_TIMEOUT_MS;
   const keys = new Map<string, KeyState>();
 
-  function acquire(key: string, turn: Turn): Promise<KeyState> | KeyState {
+  function acquire(key: string, turn: Turn, keepWaiting = false): Promise<KeyState> | KeyState {
     const state = keys.get(key);
     if (!state) {
       const created: KeyState = { holder: turn, waiters: [] };
@@ -88,19 +97,25 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
         },
       };
       state.waiters.push(waiter);
-      const timer = setTimeout(() => {
+      const onTimeout = () => {
         const index = state.waiters.indexOf(waiter);
         if (index < 0) return;
-        state.waiters.splice(index, 1);
         const { evictableAt } = state.holder;
         if (evictableAt !== undefined && Date.now() >= evictableAt) {
+          state.waiters.splice(index, 1);
           // The evicted call's release no longer touches the key.
           state.holder = turn;
           resolve(state);
           return;
         }
+        if (keepWaiting) {
+          timer = setTimeout(onTimeout, waitTimeoutMs);
+          return;
+        }
+        state.waiters.splice(index, 1);
         reject(errors.uploadCompletionInProgress());
-      }, waitTimeoutMs);
+      };
+      let timer = setTimeout(onTimeout, waitTimeoutMs);
     });
   }
 
@@ -117,7 +132,7 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
 
   async function runSerialized<T>(key: string, fn: () => Promise<T>, runOptions: SerializedRunOptions = {}): Promise<T> {
     const turn: Turn = { evictableAt: runOptions.evictableAt };
-    const state = await acquire(key, turn);
+    const state = await acquire(key, turn, runOptions.keepWaiting);
     try {
       return await fn();
     } finally {

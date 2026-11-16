@@ -95,7 +95,17 @@ function createMemoryDb(): MemoryDb {
       }
     },
     async createMany() { return []; },
-    async updateMany() { return 0; },
+    async updateMany(params) {
+      const t = table(params.model);
+      let count = 0;
+      for (const [id, row] of t.entries()) {
+        if (match(row, params.where)) {
+          t.set(id, { ...row, ...params.data });
+          count++;
+        }
+      }
+      return count;
+    },
     async deleteMany(params) {
       const t = table(params.model);
       let deleted = 0;

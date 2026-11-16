@@ -83,7 +83,17 @@ function createFakeDbAdapter(): Adapter {
       }
     },
     async createMany(params) { return []; },
-    async updateMany(params) { return 0; },
+    async updateMany(params) {
+      const table = getTable(params.model);
+      let count = 0;
+      for (const [id, record] of table.entries()) {
+        if (matchesWhere(record, params.where)) {
+          table.set(id, { ...record, ...params.data });
+          count++;
+        }
+      }
+      return count;
+    },
     async deleteMany(params) { return 0; },
     async upsert(params) {
       const existing = await this.findOne({ model: params.model, where: params.where, namespace: params.namespace });

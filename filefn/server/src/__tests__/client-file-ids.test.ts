@@ -1238,10 +1238,11 @@ describe('in-process completion serialization bound', () => {
   }
 
   for (const granted of [false, true]) {
-    it(`memory adapter: a completion of the same new ID behind a commit held past the wait bound gets 409, never a second files row, then ${granted ? 'adds a version' : '403'}`, async () => {
+    it(`memory adapter: a completion of the same new ID behind a commit held past the wait bound keeps waiting, never a second files row, then ${granted ? 'adds a version' : '403'}`, async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const base = memoryAdapter();
       let holdFilesInsert: Promise<void> | undefined;
+      let afterFilesInsert: (() => Promise<void>) | undefined;
       const database = {
         ...base,
         async create(params: Parameters<Adapter['create']>[0]) {
@@ -1250,6 +1251,9 @@ describe('in-process completion serialization bound', () => {
             const hold = holdFilesInsert;
             holdFilesInsert = undefined;
             await hold;
+            const created = await base.create(params);
+            await afterFilesInsert?.();
+            return created;
           }
           return base.create(params);
         },
@@ -1258,38 +1262,98 @@ describe('in-process completion serialization bound', () => {
       const app = createApp({ mode: 'multipart', database, grants: true });
       const a = await app.stage('user_a', CLIENT_ID, 'holder bytes');
       const b = await app.stage('user_b', CLIENT_ID, 'waiter bytes');
+      const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+      if (granted) {
+        // Still inside the holder's commit, so before the waiter's commit runs.
+        afterFilesInsert = async () => {
+          await app.fileFn.services.grants.createGrant({ fileId: CLIENT_ID, userId: 'user_b', canWrite: true }, { principalId: 'user_a' });
+        };
+      }
       let releaseInsert!: () => void;
       holdFilesInsert = new Promise<void>((resolve) => { releaseInsert = resolve; });
       const first = a.complete();
       await flushPromises();
 
-      const waiting = b.complete();
+      let settled = false;
+      const waiting = b.complete().finally(() => { settled = true; });
       await flushPromises();
-      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
-      const busy = await waiting;
-      expect(busy.status).toBe(409);
-      expect(busy.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+      // Its storage upload is already complete, so it never gives up with a 409.
+      await vi.advanceTimersByTimeAsync(3 * SERIALIZED_WAIT_TIMEOUT_MS);
+      expect(settled).toBe(false);
       expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
+      expect(app.fixture.finalizeCount(keyB)).toBe(1);
 
       releaseInsert();
       expect((await first).status).toBe(200);
-      if (granted) {
-        await app.fileFn.services.grants.createGrant({ fileId: CLIENT_ID, userId: 'user_b', canWrite: true }, { principalId: 'user_a' });
-      }
-      const retried = await b.complete();
+      const done = await waiting;
       const rows = await fileRows(database, CLIENT_ID);
       expect(rows).toHaveLength(1);
       expect(rows[0].ownerId).toBe('user_a');
       if (granted) {
-        expect(retried.status).toBe(200);
-        expect(rows[0].currentVersionId).toBe(retried.json.data.versionId);
+        expect(done.status).toBe(200);
+        expect(rows[0].currentVersionId).toBe(done.json.data.versionId);
         expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('waiter bytes');
       } else {
-        expect(retried.status).toBe(403);
+        expect(done.status).toBe(403);
+        expect(app.fixture.objects.has(keyB)).toBe(false);
         expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('holder bytes');
       }
     });
   }
+
+  it('memory adapter: a completion held in storage does not block another session of the same new ID, and the first commit wins', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'multipart', database });
+    const a = await app.stage('user_a', CLIENT_ID, 'held in storage');
+    const b = await app.stage('user_b', CLIENT_ID, 'prompt bytes');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+    const resume = app.fixture.holdStat(keyA);
+    const held = a.complete();
+    await flushPromises();
+
+    let settled = false;
+    const other = b.complete().finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS - 1);
+    expect(settled).toBe(true);
+    expect((await other).status).toBe(200);
+
+    resume();
+    const lost = await held;
+    expect(lost.status).toBe(403);
+    const rows = await fileRows(database, CLIENT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ownerId).toBe('user_b');
+    expect(app.fixture.objects.has(keyA)).toBe(false);
+    expect(app.fixture.objects.has(keyB)).toBe(true);
+    expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('prompt bytes');
+  });
+
+  it('memory adapters: a completion held in storage on one store does not make a completion of the same ID on another store wait', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const databaseOne = memoryAdapter();
+    const one = createApp({ mode: 'multipart', database: databaseOne });
+    const two = createApp({ mode: 'multipart', database: memoryAdapter() });
+    const a = await one.stage('user_a', CLIENT_ID, 'bytes in one');
+    const b = await two.stage('user_b', CLIENT_ID, 'bytes in two');
+    const keyA = (await rawSession(databaseOne, a.uploadSessionId))!.storageKey;
+    const resume = one.fixture.holdStat(keyA);
+    const held = a.complete();
+    await flushPromises();
+    try {
+      let settled = false;
+      const other = b.complete().finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS - 1);
+      expect(settled).toBe(true);
+      expect((await other).status).toBe(200);
+      expect(await two.readBytes(CLIENT_ID, 'user_b')).toBe('bytes in two');
+    } finally {
+      resume();
+    }
+    expect((await held).status).toBe(200);
+    expect(await one.readBytes(CLIENT_ID, 'user_a')).toBe('bytes in one');
+  });
 
   it('unique-enforcing adapter: a completion that waited out a stalled one on the same ID proceeds, and the unique insert arbitrates them', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -1560,5 +1624,59 @@ describe('expiry cleanup while a completion of the expired session is running', 
     resume();
     await expect(completion).rejects.toThrow('Record not found');
     expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('shared bytes');
+  });
+});
+
+/**
+ * The shipped Prisma adapter's update runs updateMany, then finds the row with
+ * the same predicate, and throws ADAPTER_NOT_FOUND when either matches nothing.
+ */
+function prismaStyleUpdate(base: Adapter): Adapter {
+  return {
+    ...base,
+    async update(params: Parameters<Adapter['update']>[0]) {
+      const notFound = () => Object.assign(new Error('ADAPTER_NOT_FOUND'), { code: 'ADAPTER_NOT_FOUND' });
+      const count = await base.updateMany(params);
+      if (!count) throw notFound();
+      const row = await base.findOne({ model: params.model, where: params.where, namespace: params.namespace });
+      if (!row) throw notFound();
+      return row as any;
+    },
+  } as Adapter;
+}
+
+describe('conditional session status writes on Prisma-style update semantics', () => {
+  for (const mode of ['multipart', 'proxy'] as const) {
+    it(`${mode}: the first part moves the session to in_progress and the completion succeeds`, async () => {
+      const database = prismaStyleUpdate(memoryAdapter());
+      const app = createApp({ mode, database });
+      const staged = await app.stage('user_a', CLIENT_ID, 'hello prisma');
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('in_progress');
+      const done = await staged.complete();
+      expect(done.status).toBe(200);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('hello prisma');
+    });
+  }
+
+  it('an owner abort that read an open session refused before its write succeeds and leaves it refused', async () => {
+    const base = memoryAdapter();
+    let refuseOnRead: string | undefined;
+    const database = prismaStyleUpdate({
+      ...base,
+      async findOne(params: Parameters<Adapter['findOne']>[0]) {
+        const row = await base.findOne<{ uploadSessionId: string }>(params);
+        if (params.model === 'uploadSessions' && row && row.uploadSessionId === refuseOnRead) {
+          refuseOnRead = undefined;
+          // A refusal lands between the abort's read and its write.
+          await base.updateMany({ model: 'uploadSessions', where: params.where, data: { status: 'refused' }, namespace: params.namespace });
+        }
+        return row as any;
+      },
+    } as Adapter);
+    const app = createApp({ mode: 'proxy', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'aborted late');
+    refuseOnRead = staged.uploadSessionId;
+    await app.fileFn.services.uploads.abortSession(staged.uploadSessionId, { principalId: 'user_a' }, staged.token);
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('refused');
   });
 });
