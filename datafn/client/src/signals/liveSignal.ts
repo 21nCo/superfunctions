@@ -26,6 +26,8 @@ export class LiveSignal<T> implements DatafnSignal<T> {
   private currentError: DatafnError | null = null;
   private subscribers = new Set<(value: T) => void>();
   private lastAccessedAt = Date.now();
+  // Set when the last reader unsubscribes; cleared when one subscribes.
+  private readersLeft = false;
 
   /**
    * Set by the Proxy layer (Phase 2) to unsubscribe from the client lifecycle.
@@ -45,10 +47,7 @@ export class LiveSignal<T> implements DatafnSignal<T> {
   private bindRaw(): void {
     try {
       this.raw = this.factory();
-      this.rawUnsub = this.raw.subscribe((value) => {
-        this.lastValue = value;
-        this.subscribers.forEach((fn) => fn(value));
-      });
+      this.attachRaw();
     } catch (err: any) {
       this.currentError = {
         code: "INTERNAL",
@@ -58,6 +57,60 @@ export class LiveSignal<T> implements DatafnSignal<T> {
       this.raw = null;
       this.rawUnsub = null;
     }
+  }
+
+  /**
+   * Follows the raw signal. Once every reader has left, it is followed only
+   * until it settles on a value, so writes don't re-run its query while no
+   * one reads it (the raw signal re-reads when it is followed again).
+   *
+   * With `absorbReplay`, a value the raw signal delivers while being
+   * subscribed only updates the last value: the caller hands it to the
+   * reader that is returning (derived signals build a new, equal object on
+   * every subscribe, so an identity check would deliver it twice).
+   */
+  private attachRaw(absorbReplay = false): void {
+    if (!this.raw || this.rawUnsub) return;
+    let attaching = true;
+    let detachOnceAttached = false;
+    const unsub = this.raw.subscribe((value) => {
+      if (attaching && absorbReplay) {
+        this.lastValue = value;
+      } else if (!(attaching && value === this.lastValue)) {
+        // The raw signal delivers its cached value on subscribe; subscribers
+        // already have it when it is the value they last saw.
+        this.lastValue = value;
+        this.subscribers.forEach((fn) => fn(value));
+      }
+      if (this.canDetachIdle()) {
+        if (attaching) detachOnceAttached = true;
+        else this.detachRaw();
+      }
+    });
+    attaching = false;
+    this.rawUnsub = unsub;
+    if (detachOnceAttached && this.canDetachIdle()) this.detachRaw();
+  }
+
+  private detachRaw(): void {
+    this.rawUnsub?.();
+    this.rawUnsub = null;
+  }
+
+  /**
+   * Every reader has left and the raw signal has settled on a value or an
+   * error, so it can stop being followed. A failed first read is retried
+   * when someone subscribes again.
+   */
+  private canDetachIdle(): boolean {
+    const raw = this.raw as any;
+    return (
+      this.readersLeft &&
+      this.subscribers.size === 0 &&
+      !!raw &&
+      !raw.loading &&
+      (this.lastValue !== undefined || raw.error != null)
+    );
   }
 
   private unbindRaw(): void {
@@ -79,6 +132,8 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     if (this.disposed) return;
     this.unbindRaw();
     this.currentError = null;
+    // The new raw signal loads now, even while idle, so get() moves to the
+    // new context; an idle signal stops following it once it settles.
     this.bindRaw();
     // If the new raw signal already has a value (e.g. cached), emit to subscribers.
     // Note: bindRaw's internal handler also emits when raw.subscribe() delivers synchronously.
@@ -100,21 +155,35 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     if (this.disposed) return () => {};
     const wasIdle = this.subscribers.size === 0;
     this.touch();
+    this.readersLeft = false;
+    const hadValue = this.lastValue !== undefined;
     this.subscribers.add(handler);
     this.onSubscriberChange?.(this);
+    // Follow the raw signal again before delivering, so its replay on
+    // subscribe and the cached value reach this reader once.
+    if (wasIdle) this.attachRaw(true);
     if (this.lastValue !== undefined) {
       handler(this.lastValue);
     }
-    if (wasIdle && this.lastValue !== undefined) {
+    if (wasIdle && hadValue) {
       queueMicrotask(() => {
-        if (!this.disposed && this.subscribers.size > 0) {
-          void (this.raw as any)?.refresh?.();
+        // Skip when returning already started a re-read (a write arrived
+        // while idle).
+        const raw = this.raw as any;
+        if (!this.disposed && this.subscribers.size > 0 && !raw?.refreshing && !raw?.loading) {
+          void raw?.refresh?.();
         }
       });
     }
     return () => {
       if (this.subscribers.delete(handler)) {
         this.touch();
+        if (this.subscribers.size === 0) {
+          this.readersLeft = true;
+          // Keep the raw signal (and its cached result) but stop following
+          // it; a read still loading detaches when it settles.
+          if (this.canDetachIdle()) this.detachRaw();
+        }
         this.onSubscriberChange?.(this);
       }
     };

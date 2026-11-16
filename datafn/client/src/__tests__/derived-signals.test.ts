@@ -118,6 +118,37 @@ describe("combineSignals", () => {
     unsubscribeSecond();
   });
 
+  it("emits during subscribe even while a source has no value", () => {
+    const ready = createImmediateSignal(1);
+    const pending = createImmediateSignal<number | undefined>(undefined);
+    const values: number[] = [];
+    const combined = combineSignals(
+      [ready.signal, pending.signal],
+      () => ready.signal.get() + (pending.signal.get() ?? 0),
+    );
+    const unsub = combined.subscribe((value) => values.push(value));
+    expect(values).toEqual([1]);
+    unsub();
+  });
+
+  it("returns an unsubscribe and keeps the error when compute throws during subscribe", async () => {
+    const source = createImmediateSignal(1);
+    const combined = combineSignals([source.signal], () => {
+      if (source.signal.get() === 1) throw new Error("boom");
+      return source.signal.get();
+    });
+    const values: number[] = [];
+    const unsub = combined.subscribe((value) => values.push(value));
+    expect(combined.error?.message).toBe("boom");
+    source.emit(2);
+    await Promise.resolve();
+    expect(values).toEqual([2]);
+    unsub();
+    source.emit(3);
+    await Promise.resolve();
+    expect(values).toEqual([2]);
+  });
+
   it("does not dispose registry-owned source signals", async () => {
     const source = createImmediateSignal(1);
     const disposeSource = vi.spyOn(source.signal, "dispose");
