@@ -176,6 +176,17 @@ describe("idle LiveSignal", () => {
     expect(signal.get()).toEqual({ n: 1 });
   });
 
+  it("stops following when its readers left and the first read failed", () => {
+    const raw = pendingRawSignal();
+    const signal = new LiveSignal(() => raw as any, () => {});
+    signal.subscribe(() => {})();
+    raw.fail();
+    expect(raw.subs.size).toBe(0);
+    // The next reader follows it again, which retries the read.
+    signal.subscribe(() => {});
+    expect(raw.subs.size).toBe(1);
+  });
+
   it("keeps following a signal no one has subscribed to yet", () => {
     const raw = pendingRawSignal();
     new LiveSignal(() => raw as any, () => {});
@@ -201,7 +212,12 @@ function pendingRawSignal() {
       raw.loading = false;
       subs.forEach((fn) => fn(next));
     },
-    error: null,
+    fail() {
+      raw.loading = false;
+      raw.error = { code: "INTERNAL", message: "failed" };
+      subs.forEach((fn) => fn(undefined));
+    },
+    error: null as unknown,
     refreshing: false,
     refresh: vi.fn(async () => {}),
     dispose: vi.fn(),

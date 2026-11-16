@@ -91,15 +91,18 @@ export class LiveSignal<T> implements DatafnSignal<T> {
   }
 
   /**
-   * Every reader has left and the raw signal holds a settled value, so it
-   * can stop being followed.
+   * Every reader has left and the raw signal has settled on a value or an
+   * error, so it can stop being followed. A failed first read is retried
+   * when someone subscribes again.
    */
   private canDetachIdle(): boolean {
+    const raw = this.raw as any;
     return (
       this.readersLeft &&
       this.subscribers.size === 0 &&
-      this.lastValue !== undefined &&
-      !(this.raw as any)?.loading
+      !!raw &&
+      !raw.loading &&
+      (this.lastValue !== undefined || raw.error != null)
     );
   }
 
