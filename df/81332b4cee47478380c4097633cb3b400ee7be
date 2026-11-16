@@ -1,0 +1,25 @@
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_5f47874c4b3245::t_7834455b7bdf15 461-485,500-501,505-508,512-513,515-517,520
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_5f47874c4b3245::t_68a42ea53b62f3 399-403,462-474,497-511
+datafn/server/src/execution/query/filter-plan.ts
+  s_5f47874c4b3245::t_0f25e050f89508 90-92,102-114,216,218-220,226-239,241,249,253-257,261-262,326,338,347,363,719-742
+datafn/server/src/routes/query/execute.ts
+  s_5f47874c4b3245::t_d31f4c9a5b4563 17,284,286,288-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df81332b4cee47478380c4097633cb3b400ee7be",
+  "prompts": {},
+  "sessions": {
+    "s_5f47874c4b3245": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae9c5a9d-550a-4e30-82ab-8eb4c07431f5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

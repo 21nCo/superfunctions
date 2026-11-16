@@ -1,0 +1,42 @@
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_f058f999ab46b7::t_13555804ee3626 1-530
+  s_f058f999ab46b7::t_4d4227f480b5d8 531-552
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_f058f999ab46b7::t_cbf626508d7f8e 339-451
+datafn/server/__tests__/query-pushdown.test.ts
+  s_f058f999ab46b7::t_67005ad4dd12bd 565,573,670,677,713,720,749,756,767,784,791,836
+datafn/server/src/execution/db-store.ts
+  s_f058f999ab46b7::t_c11f357a95ace8 24,225,375,605-608,615-623,877-878,880-883,900,902,914-916,918-919,921-990,992,995-999
+datafn/server/src/execution/query/execute.ts
+  s_f058f999ab46b7::t_15b89d4f328da5 18,294-300
+datafn/server/src/execution/query/filter-plan.ts
+  s_f058f999ab46b7::t_362cae57515a86 1-601
+datafn/server/src/execution/query/planner.ts
+  s_f058f999ab46b7::t_4e74a3ee7bec3b 13,16-17,142,279,375-382,404,538-541,545,551,556-582
+datafn/server/src/execution/query/pushdown.ts
+  s_f058f999ab46b7::t_a0b3e30482b1d4 22-24,227,234,280,329,352-365,395-431,486-493
+datafn/server/src/execution/query/select.ts
+  s_f058f999ab46b7::t_b1f7dfe54e0ed4 505-517
+datafn/server/src/routes/query/execute.ts
+  s_f058f999ab46b7::t_232e9abdee3a9d 13-16,253-266,274-275,282-292,294
+datafn/server/src/routes/query/validate.ts
+  s_f058f999ab46b7::t_13fe9b7431a607 9-10,167-168,550-552,555
+datafn/server/src/validation/query.ts
+  s_f058f999ab46b7::t_38a263e861bbac 22-25,905-907,909-915
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5feb1a276868c09a4845b5cd33bf753a6c466cb6",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
