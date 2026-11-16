@@ -81,6 +81,10 @@ const billfn = createBillFn({
 });
 ```
 
+This example targets Dodo's test mode, the adapter's default: use a test mode
+key (`dodo_test_...`). Production sets `environment: "live_mode"` with a live
+key; see [Setup](/docs/server/setup#recommended-production-wiring).
+
 `createBillFn()` returns a service instance with:
 
 - `router`
