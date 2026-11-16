@@ -1,0 +1,21 @@
+datafn/client/src/__tests__/derived-signals.test.ts
+  s_f058f999ab46b7::t_00725258180ed3 121-151
+datafn/client/src/signals/derived.ts
+  s_f058f999ab46b7::t_86d00ccffb8023 129-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ab4aeb1e179059a48c60162faf241ba0b8e7dea",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
