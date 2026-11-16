@@ -1,5 +1,5 @@
 import { createHttpClient, FileFnHttpError } from './client.js';
-import { UploadManager, generateFileId, prepareUploadInput } from './upload-manager.js';
+import { UploadManager, assertValidExplicitFileId, generateFileId, prepareUploadInput } from './upload-manager.js';
 import type {
   ArtifactDescriptor,
   FileFnClientConfig,
@@ -265,6 +265,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
 
   return {
     uploadFile(input: UploadInput): UploadHandleWithFileId {
+      // Fail before any staging or network work, online or offline.
+      assertValidExplicitFileId(input.fileId);
       const normalizedInput: UploadInput = {
         ...input,
         fileId: input.fileId ?? generateFileId(),

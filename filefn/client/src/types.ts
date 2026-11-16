@@ -50,6 +50,19 @@ export interface UploadInput {
   file: File | Blob;
   fileName?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * File ID to create, matching `file_[A-Za-z0-9_-]{8,64}`. Omit it (or pass
+   * `null`) and the client generates one with `generateFileId()`. Any other
+   * value makes `uploadFile` throw `FILEFN_INVALID_FILE_ID` at once, online or
+   * offline, before anything is staged or sent. The ID is kept unchanged through
+   * offline staging, reload and replay.
+   *
+   * The server reserves nothing at `upload/init`: concurrent uploads may name the
+   * same new ID, and the first one to complete creates the file. Any other upload
+   * naming that ID is then refused at completion with 403 (`FILEFN_FORBIDDEN`)
+   * unless the caller may write to the existing file. An ID that names an existing
+   * file the caller may not write to is refused with 403 at `upload/init`.
+   */
   fileId?: string;
   idempotencyKey?: string;
   preprocessors?: UploadPreprocessor[];

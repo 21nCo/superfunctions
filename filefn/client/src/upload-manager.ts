@@ -103,6 +103,32 @@ function derivePendingLocalSource(
   };
 }
 
+/**
+ * Grammar the FileFn server accepts for a client-chosen file ID. Duplicated from
+ * `@filefn/server` on purpose: the client does not depend on the server package.
+ */
+const FILE_ID_PATTERN = /^file_[A-Za-z0-9_-]{8,64}$/;
+const INVALID_FILE_ID_ERROR = 'FILEFN_INVALID_FILE_ID';
+
+/** Whether `value` is a file ID the server accepts in `upload/init`. */
+export function isValidFileId(value: unknown): value is string {
+  return typeof value === 'string' && FILE_ID_PATTERN.test(value);
+}
+
+export function createInvalidFileIdError(fileId: unknown): Error & {
+  code: string;
+  details?: Record<string, unknown>;
+} {
+  return createClientError(INVALID_FILE_ID_ERROR, 'fileId must match file_[A-Za-z0-9_-]{8,64}', { fileId });
+}
+
+/** Throws `FILEFN_INVALID_FILE_ID` unless an explicit `fileId` matches the server grammar. */
+export function assertValidExplicitFileId(fileId: unknown): void {
+  if (fileId !== undefined && fileId !== null && !isValidFileId(fileId)) {
+    throw createInvalidFileIdError(fileId);
+  }
+}
+
 export function generateFileId(): string {
   const cryptoApi = globalThis.crypto;
   if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
@@ -116,6 +142,9 @@ export async function prepareUploadInput(
   input: UploadInput,
   preprocessors: UploadPreprocessor[] = [],
 ): Promise<PreparedUploadInput> {
+  // Covers every path that reaches upload/init, including offline replay of a
+  // stored record whose fileId is not grammar-valid.
+  assertValidExplicitFileId(input.fileId);
   const fileId = input.fileId ?? generateFileId();
   let prepared: PreparedUploadInput = {
     fileId,

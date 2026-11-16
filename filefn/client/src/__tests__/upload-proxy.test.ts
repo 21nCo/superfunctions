@@ -57,7 +57,7 @@ describe('PHASE_02 client proxy upload', () => {
       ok: true,
       json: async () => ({
         ok: true,
-        data: { fileId: 'f1', versionId: 'v1' },
+        data: { fileId: 'file_proxy001', versionId: 'v1' },
       }),
     });
 
@@ -67,20 +67,20 @@ describe('PHASE_02 client proxy upload', () => {
         policy: 'p1',
         file: file as any,
         fileName: 'test.txt',
-        fileId: 'f1',
+        fileId: 'file_proxy001',
       },
       () =>
         manager.startUpload({
           policy: 'p1',
           file: file as any,
           fileName: 'test.txt',
-          fileId: 'f1',
+          fileId: 'file_proxy001',
         }),
     );
 
     const result = await handle.done();
 
-    expect(result).toEqual({ fileId: 'f1', versionId: 'v1' });
+    expect(result).toEqual({ fileId: 'file_proxy001', versionId: 'v1' });
     expect(handle.uploadSessionId).toBe('sess_1');
     expect(handle.uploadSessionToken).toBe('upls_live_0001');
     expect(mockFetch).toHaveBeenCalledTimes(4);
