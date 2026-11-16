@@ -197,7 +197,7 @@ type ServiceDeps = {
    */
   reconcileProviderState?: (subscription: BillFnSubscription, event: WindowEvent) => Promise<void>;
   /** Records the missing events of grant changes flagged pending (`repairPendingGrantEvents`), for the `lifecycle-events` job. */
-  repairPendingGrantEvents?: (beforeEach?: () => Promise<void>) => Promise<void>;
+  repairPendingGrantEvents?: (beforeWrite?: () => Promise<void>) => Promise<void>;
 };
 type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
 /** An event inside a committed mutation's window: its lifecycle key and the catalog price it names. */
@@ -316,14 +316,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     recordBillingEvent: async (event, db) => {
       const eventDb = db ?? deps.db;
       if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {
-        await deps.lifecycle.record(grantLifecycleEvents(event), db);
+        await deps.lifecycle.record(grantLifecycleEvents(event, deps.now()), db);
       }
       await recordBillingEvent(db ? { ...deps, db } : deps, event);
     },
     isDuplicateRecordError,
     flagsPendingEvents: deps.lifecycle.enabled && !deps.db.capabilities.transactions.supported
   };
-  deps.repairPendingGrantEvents = (beforeEach) => repairPendingGrantEvents(grantDeps, beforeEach);
+  deps.repairPendingGrantEvents = (beforeWrite) => repairPendingGrantEvents(grantDeps, beforeWrite);
   /**
    * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
    * grants they were derived from. The grants' missing events are repaired on every read (see
@@ -1919,10 +1919,11 @@ async function processReconciliationJob(
     }
     case 'lifecycle-events': {
       // Dispatch runs first, so no other step can stop or delay delivery and the 24h failed marking. The lease is
-      // renewed before each delivery and sweep page, so a job whose lease lapsed stops.
+      // renewed before each delivery, sweep page and repair write, so a job whose lease lapsed stops.
       await deps.lifecycle.dispatch({}, assertLease);
-      // The expiry sweep (it reads the whole 10-day window each run) and the bounded repair of grant changes whose
-      // events a failed write or a stop left unrecorded. A failed step is left to the next run; a lost lease ends it.
+      // The expiry sweeps, each resuming after the grants earlier runs finished and reading a bounded number per run,
+      // and the bounded repair of grant changes whose events a failed write or a stop left unrecorded, which reads
+      // only those flagged grants. A failed step is left to the next run; a lost lease ends the run.
       let leaseError: { error: unknown } | undefined;
       const guard = () =>
         assertLease().catch((error: unknown) => {

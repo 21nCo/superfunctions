@@ -100,10 +100,24 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
   if (deps.db.capabilities.transactions.supported) {
     return;
   }
-  let missing: BillFnBillingEvent[];
   let grantList: GrantRecord[];
   try {
     grantList = grants ?? (await listGrantRecords(deps, billingAccountId));
+  } catch {
+    deps.metrics.track('grant.event_deferred', { type: 'repair' });
+    return;
+  }
+  await recordMissingGrantEvents(deps, grantList);
+}
+
+/**
+ * Records the missing billing events (and through them the lifecycle events) that these stored grants derive, then
+ * clears the `eventsPending` of each whose events are all recorded. `beforeWrite` runs before each of those writes
+ * (the job's lease check): when it throws, the repair stops there and writes nothing more.
+ */
+async function recordMissingGrantEvents(deps: GrantDeps, grantList: GrantRecord[], beforeWrite?: () => Promise<void>) {
+  let missing: BillFnBillingEvent[];
+  try {
     const events = grantList.flatMap((grant) =>
       grant.revokedAt ? [grantCreatedEvent(grant), grantRevokedEvent(grant)] : [grantCreatedEvent(grant)]
     );
@@ -127,6 +141,7 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
   }
   const unrecorded = new Set<string>();
   for (const event of missing) {
+    await beforeWrite?.();
     try {
       await deps.recordBillingEvent(event);
     } catch {
@@ -135,21 +150,23 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
     }
   }
   for (const grant of grantList) {
-    if (!unrecorded.has(grant.id)) {
+    if (grant.eventsPending && !unrecorded.has(grant.id)) {
+      await beforeWrite?.();
       await clearEventsPending(deps, grant);
     }
   }
 }
 
 /**
- * Runs `repairGrantEvents` for the accounts of the oldest `GRANT_REPAIR_BATCH_SIZE` grants whose `eventsPending`
- * is set, so a committed grant change whose event write failed or was interrupted has its events recorded without
- * later traffic of that account, however long ago it was made. A change's flag is cleared once its events are
- * recorded, so the work of a run follows the changes that lack events, not all grants. It records only what
- * stored grants derive, under the same ids, so a change that never applied records nothing and a second run adds
- * nothing. `beforeEach` runs before each account (the job's lease check).
+ * Records the missing events of the oldest `GRANT_REPAIR_BATCH_SIZE` grants whose `eventsPending` is set, so a
+ * committed grant change whose event write failed or was interrupted has its events recorded without later
+ * traffic of that account, however long ago it was made. It reads only those flagged grants, never an account's
+ * other grants, and a change's flag is cleared once its events are recorded, so the next run takes the next
+ * flagged grants. It records only what stored grants derive, under the same ids, so a change that never applied
+ * records nothing and a second run adds nothing. `beforeWrite` runs before each write (the job's lease check):
+ * a run that lost its lease stops before its next write and leaves the rest to a later run.
  */
-export async function repairPendingGrantEvents(deps: GrantDeps, beforeEach?: () => Promise<void>) {
+export async function repairPendingGrantEvents(deps: GrantDeps, beforeWrite?: () => Promise<void>) {
   if (!deps.flagsPendingEvents) {
     return;
   }
@@ -160,10 +177,7 @@ export async function repairPendingGrantEvents(deps: GrantDeps, beforeEach?: () 
     limit: GRANT_REPAIR_BATCH_SIZE,
     namespace: deps.namespace
   });
-  for (const billingAccountId of new Set(grants.map((grant) => grant.billingAccountId))) {
-    await beforeEach?.();
-    await repairGrantEvents(deps, billingAccountId);
-  }
+  await recordMissingGrantEvents(deps, grants, beforeWrite);
 }
 
 /**

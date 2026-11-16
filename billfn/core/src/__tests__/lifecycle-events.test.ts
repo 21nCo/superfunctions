@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Adapter, TransactionAdapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn } from '../index.js';
-import { LIFECYCLE_CLAIM_LEASE_MS, LIFECYCLE_INLINE_DELIVERY_MS } from '../lifecycle.js';
+import { GRANT_SWEEP_RUN_LIMIT, LIFECYCLE_CLAIM_LEASE_MS, LIFECYCLE_INLINE_DELIVERY_MS } from '../lifecycle.js';
 import type {
   BillFnCatalog,
   BillFnLifecycleEvent,
@@ -852,7 +852,8 @@ describe('lifecycle events of a write without transactions', () => {
       env.advance(HOUR_MS);
       await env.runLifecycleJob();
       expect(started(env)).toHaveLength(61);
-      expect(reads.count).toBeLessThanOrEqual(2);
+      // The pending-grant query and one query per expiry sweep (expired, expiring), each finding nothing.
+      expect(reads.count).toBeLessThanOrEqual(3);
     });
 
     it('a failed expiry sweep still lets the run deliver a due event, and a later run records grant.expiring', async () => {
@@ -866,7 +867,8 @@ describe('lifecycle events of a write without transactions', () => {
           env.delivered.push(event);
         }
       });
-      expect((await env.trial(2 * DAY)).ok).toBe(true);
+      // Not within 3 days at creation (that grant gets grant.expiring with it), but within the first run's sweep.
+      expect((await env.trial(3 * DAY + 30 * MINUTE)).ok).toBe(true);
       failing = false;
       reads.failExpiry = true;
       env.advance(HOUR_MS);
@@ -1644,3 +1646,260 @@ describe('lifecycle events: delivery', () => {
   });
 });
 
+
+describe('the lifecycle-events job does bounded work that resumes where the previous run stopped', () => {
+  const T0 = '2026-11-10T00:00:00.000Z';
+
+  /** A comp stored directly (as an earlier BillFn write left it), one per account. */
+  function grantRow(n: number, expiresAt: string, extra: Record<string, unknown> = {}) {
+    return {
+      id: `grant_comp_ba_bulk_${String(n).padStart(5, '0')}_1`,
+      billingAccountId: `ba_bulk_${n}`,
+      planKey: 'nucleus',
+      kind: 'comp',
+      startsAt: T0,
+      expiresAt,
+      revokedAt: null,
+      operator: null,
+      reason: null,
+      revokedBy: null,
+      revokeReason: null,
+      createdAt: T0,
+      updatedAt: T0,
+      ...extra
+    };
+  }
+
+  async function insertGrants(db: Adapter, rows: Record<string, unknown>[]) {
+    for (const data of rows) await db.create({ model: 'entitlementGrants', data, namespace: 'billfn' });
+  }
+
+  /** Records the ids of the grants each expiry query returns. */
+  function trackingSweepReads(db: Adapter) {
+    const reads: string[] = [];
+    const tracking: Adapter = {
+      ...db,
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+        const rows = await db.findMany<T>(params);
+        if (params.model === 'entitlementGrants' && params.where?.some((clause) => clause.field === 'expiresAt')) {
+          reads.push(...rows.map((row) => (row as { id: string }).id));
+        }
+        return rows;
+      }
+    };
+    return { tracking, reads };
+  }
+
+  const adapters = [
+    ['with transactions', () => faultyLifecycleDb()],
+    ['without transactions', () => faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false })]
+  ] as const;
+
+  describe.each(adapters)('%s', (_name, makeDb) => {
+    // Ties on expiresAt cross page boundaries, so the position must hold the id as well as the time.
+    it.each([
+      ['grant.expiring', DAY, (event: BillFnLifecycleEvent) => event.type === 'grant.expiring'],
+      [
+        'entitlement.changed (grant.expired)',
+        -DAY,
+        (event: BillFnLifecycleEvent) => event.type === 'entitlement.changed' && event.data.cause === 'grant.expired'
+      ]
+    ] as const)(
+      '%s: consecutive runs each read new grants past the per-run cap, never one a run finished, and dispatch every run',
+      async (_type, offset, matches) => {
+        const { db } = makeDb();
+        const { tracking, reads } = trackingSweepReads(db);
+        const env = setup({ db: tracking });
+        const count = GRANT_SWEEP_RUN_LIMIT + 30;
+        const at = (n: number) => new Date(env.clock.current.getTime() + offset + (n % 7) * MINUTE).toISOString();
+        await insertGrants(db, Array.from({ length: count }, (_, n) => grantRow(n, at(n))));
+        const deliveredGrants = () => env.delivered.filter(matches).map((event) => event.data.grantId);
+
+        const runs: string[][] = [];
+        for (let run = 0; run < 3; run += 1) {
+          reads.length = 0;
+          env.advance(MINUTE);
+          expect((await env.runLifecycleJob()).status).toBe('succeeded');
+          runs.push([...reads]);
+        }
+        expect(runs.map((ids) => ids.length)).toEqual([GRANT_SWEEP_RUN_LIMIT, 30, 0]);
+        expect(new Set([...runs[0]!, ...runs[1]!]).size).toBe(count);
+        // Each run's events were delivered by that run's dispatch, each grant's once.
+        expect(deliveredGrants()).toHaveLength(count);
+        expect(new Set(deliveredGrants()).size).toBe(count);
+      }
+    );
+
+    it('a run that stops mid-sweep: the next resumes after the last page it finished, recording each event once', async () => {
+      const { db, faults } = makeDb();
+      const { tracking, reads } = trackingSweepReads(db);
+      const env = setup({ db: tracking });
+      const at = (n: number) => new Date(env.clock.current.getTime() + DAY + (n % 3) * MINUTE).toISOString();
+      const rows = Array.from({ length: 120 }, (_, n) => grantRow(n, at(n)));
+      await insertGrants(db, rows);
+      let created = 0;
+      // The outbox write of the 60th event fails: the second page stops after 9 of its events.
+      faults.failCreate = (model) => model === 'lifecycleEvents' && ++created === 60;
+      expect((await env.runLifecycleJob()).status).toBe('succeeded');
+      faults.failCreate = null;
+      const firstPage = reads.slice(0, 50);
+      expect(env.ofType('grant.expiring')).toHaveLength(59);
+
+      reads.length = 0;
+      env.advance(MINUTE);
+      await env.runLifecycleJob();
+      expect(reads.filter((id) => firstPage.includes(id))).toEqual([]);
+      const expiring = env.ofType('grant.expiring').map((event) => event.data.grantId);
+      expect(expiring).toHaveLength(120);
+      expect(new Set(expiring)).toEqual(new Set(rows.map((row) => row.id)));
+    });
+
+    it('two runs racing over the same position record each event once, and a later run resumes after both', async () => {
+      const { db } = makeDb();
+      const { tracking, reads } = trackingSweepReads(db);
+      const env = setup({ db: tracking });
+      const at = (n: number) => new Date(env.clock.current.getTime() + DAY + (n % 5) * MINUTE).toISOString();
+      await insertGrants(db, Array.from({ length: 120 }, (_, n) => grantRow(n, at(n))));
+      const enqueue = async () => {
+        const enqueued = await env.billfn.enqueueReconciliationJob({ kind: 'lifecycle-events' });
+        if (!enqueued.ok) throw new Error('expected job');
+        return env.billfn.runReconciliationJob({ jobId: enqueued.data.job.id });
+      };
+      await Promise.all([enqueue(), enqueue()]);
+      reads.length = 0;
+      env.advance(MINUTE);
+      await env.runLifecycleJob();
+      const expiring = env.ofType('grant.expiring').map((event) => event.data.grantId);
+      expect(expiring).toHaveLength(120);
+      expect(new Set(expiring).size).toBe(120);
+      expect(reads).toEqual([]);
+    });
+
+    it('a grant created already within 3 days of expiry gets grant.expiring with its creation, behind the sweep', async () => {
+      const { db } = makeDb();
+      const env = setup({ db });
+      await insertGrants(db, [grantRow(1, new Date(env.clock.current.getTime() + 2 * DAY).toISOString())]);
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.expiring')).toHaveLength(1);
+
+      // Expires before the sweep's stored position, so no later run reads it.
+      const trial = await env.trial(DAY);
+      if (!trial.ok) throw new Error('expected grant');
+      expect(env.ofType('grant.expiring').map((event) => event.data.grantId)).toEqual([
+        'grant_comp_ba_bulk_00001_1',
+        trial.data.grant.id
+      ]);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.expiring')).toHaveLength(2);
+    });
+  });
+
+  describe('grant event repair without transactions', () => {
+    function flaggedAccount(env: ReturnType<typeof setup>, pending: number, history: number) {
+      const far = (days: number) => new Date(env.clock.current.getTime() + days * DAY).toISOString();
+      return [
+        // Ended long ago, outside both sweep windows, with nothing pending.
+        ...Array.from({ length: history }, (_, n) => ({ ...grantRow(n, far(-30)), billingAccountId: ACCOUNT, eventsPending: false })),
+        ...Array.from({ length: pending }, (_, n) => ({
+          ...grantRow(history + n, far(60)),
+          billingAccountId: ACCOUNT,
+          eventsPending: true
+        }))
+      ];
+    }
+
+    it('with one account holding 5,000 grants and 3 pending, the job reads only the 3 pending grants', async () => {
+      const { db } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
+      let grantRows = 0;
+      const counting: Adapter = {
+        ...db,
+        async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+          const rows = await db.findMany<T>(params);
+          if (params.model === 'entitlementGrants') grantRows += rows.length;
+          return rows;
+        }
+      };
+      const env = setup({ db: counting });
+      const rows = flaggedAccount(env, 3, 5000);
+      await insertGrants(db, rows);
+      await env.runLifecycleJob();
+      expect(grantRows).toBe(3);
+      expect(env.ofType('grant.started').map((event) => event.data.grantId).sort()).toEqual(
+        rows.slice(5000).map((row) => row.id)
+      );
+      const flagged = await db.findMany({
+        model: 'entitlementGrants',
+        where: [{ field: 'eventsPending', operator: 'eq', value: true }],
+        namespace: 'billfn'
+      });
+      expect(flagged).toEqual([]);
+    });
+
+    it('a short grant whose events a repair records only after it expired gets no grant.expiring', async () => {
+      const { db, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
+      const env = setup({ db });
+      faults.create = true;
+      const trial = await env.trial(DAY);
+      faults.create = false;
+      if (!trial.ok) throw new Error('expected the grant to commit');
+      env.advance(2 * DAY);
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.started').map((event) => event.data.grantId)).toEqual([trial.data.grant.id]);
+      expect(env.ofType('grant.expiring')).toEqual([]);
+      expect(env.ofType('entitlement.changed').map((event) => event.data.cause)).toEqual(['grant.expired', 'grant.started']);
+    });
+
+    it('of two concurrent repair runs, the one that lost its lease writes nothing after the loss', async () => {
+      const { db } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
+      const hooks = { afterFirstBillingEvent: null as (() => Promise<void>) | null, lost: false };
+      const writesAfterLoss: string[] = [];
+      const note = (kind: string, model: string) => {
+        if (hooks.lost && model !== 'reconciliationJobs') writesAfterLoss.push(`${kind} ${model}`);
+      };
+      const watched: Adapter = {
+        ...db,
+        async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+          note('create', params.model);
+          const created = await db.create<T>(params);
+          if (params.model === 'billingEvents') {
+            const hook = hooks.afterFirstBillingEvent;
+            hooks.afterFirstBillingEvent = null;
+            await hook?.();
+          }
+          return created;
+        },
+        async updateMany(params: Parameters<Adapter['updateMany']>[0]) {
+          note('update', params.model);
+          return db.updateMany(params);
+        },
+        async deleteMany(params: Parameters<Adapter['deleteMany']>[0]) {
+          note('delete', params.model);
+          return db.deleteMany(params);
+        }
+      };
+      const env = setup({ db: watched });
+      const rows = flaggedAccount(env, 3, 0);
+      await insertGrants(db, rows);
+      const enqueued = await env.billfn.enqueueReconciliationJob({ kind: 'lifecycle-events' });
+      if (!enqueued.ok) throw new Error('expected job');
+      const jobId = enqueued.data.job.id;
+      // Run A stalls after its first repair write until its lease lapsed; run B takes the job over and completes it.
+      let runB: Awaited<ReturnType<typeof env.billfn.runReconciliationJob>> | undefined;
+      hooks.afterFirstBillingEvent = async () => {
+        env.advance(16 * MINUTE);
+        runB = await env.billfn.runReconciliationJob({ jobId });
+        hooks.lost = true;
+      };
+      const runA = await env.billfn.runReconciliationJob({ jobId }).catch((error: unknown) => error);
+      expect(runB).toMatchObject({ ok: true, data: { job: { status: 'succeeded' } } });
+      expect(runA).not.toMatchObject({ ok: true });
+      expect(writesAfterLoss).toEqual([]);
+      // B recorded what A left: each grant's events once.
+      const started = env.ofType('grant.started').map((event) => event.data.grantId).sort();
+      expect(started).toEqual(rows.map((row) => row.id));
+      const billing = await db.findMany<{ type: string }>({ model: 'billingEvents', namespace: 'billfn' });
+      expect(billing.filter((event) => event.type === 'billfn.grant.created')).toHaveLength(3);
+    });
+  });
+});

@@ -39,6 +39,15 @@ export const LIFECYCLE_INLINE_DELIVERY_MS = 10 * 1000;
 const DEFAULT_LIMIT = 100;
 /** At most 50 ids per `in` query, within D1's 100 bound parameters. */
 const SWEEP_PAGE_SIZE = 50;
+/** The most grants each expiry sweep (`expired`, `expiring`) reads in one job run; the next run resumes after them. */
+export const GRANT_SWEEP_RUN_LIMIT = 200;
+/**
+ * How far behind now each sweep's window ends: a grant write that becomes visible up to this long after its
+ * timestamp (a slow request or commit, or a small clock skew between instances) is still ahead of the stored
+ * position when it lands.
+ */
+export const GRANT_SWEEP_SETTLE_MS = 60 * 1000;
+const CURSORS_TABLE = 'reconciliationCursors';
 
 /** An event to record: its id derives from what it describes, so recording it again is a no-op. */
 export type LifecycleEventInput = {
@@ -76,13 +85,19 @@ export function lifecycleEventId(type: BillFnLifecycleEventType, key: string) {
   return `lce_${digest.slice(0, 32)}`;
 }
 
-/** The lifecycle events a grant billing event stands for, derived from it alone so a repair records the same ones. */
-export function grantLifecycleEvents(event: {
-  billingAccountId: string;
-  type: string;
-  payload: Record<string, unknown>;
-  createdAt: string;
-}): LifecycleEventInput[] {
+/**
+ * The lifecycle events a grant billing event stands for, derived from it alone so a repair records the same ones;
+ * a `grant.expiring` only while the grant has not expired at `now` (a repair after its expiry records none).
+ */
+export function grantLifecycleEvents(
+  event: {
+    billingAccountId: string;
+    type: string;
+    payload: Record<string, unknown>;
+    createdAt: string;
+  },
+  now: Date
+): LifecycleEventInput[] {
   const { grantId, kind, planKey, startsAt, expiresAt } = event.payload as Record<string, string>;
   const base = { billingAccountId: event.billingAccountId, occurredAt: event.createdAt };
   if (event.type === 'billfn.grant.created') {
@@ -93,13 +108,35 @@ export function grantLifecycleEvents(event: {
         type: 'grant.started',
         data: { grantId: grantId!, kind: kind as 'trial' | 'comp', planKey: planKey!, startsAt: startsAt!, expiresAt: expiresAt! }
       },
-      grantEntitlementChange(base, 'grant.started', grantId!, planKey!, kind === 'trial' ? 'trialing' : 'active')
+      grantEntitlementChange(base, 'grant.started', grantId!, planKey!, kind === 'trial' ? 'trialing' : 'active'),
+      // A grant that already expires within the lead time gets its `grant.expiring` with its creation: the
+      // expiry sweep resumes after the grants it read, so it never returns to an expiry that is already behind it.
+      ...(Date.parse(expiresAt!) - Date.parse(event.createdAt) <= GRANT_EXPIRING_LEAD_MS && Date.parse(expiresAt!) > now.getTime()
+        ? [grantExpiringEvent({ ...base, grantId: grantId!, kind: kind as 'trial' | 'comp', planKey: planKey!, expiresAt: expiresAt! })]
+        : [])
     ];
   }
   if (event.type === 'billfn.grant.revoked') {
     return [grantEntitlementChange(base, 'grant.revoked', grantId!, planKey!, 'inactive')];
   }
   return [];
+}
+
+function grantExpiringEvent(input: {
+  billingAccountId: string;
+  occurredAt: string;
+  grantId: string;
+  kind: 'trial' | 'comp';
+  planKey: string;
+  expiresAt: string;
+}): LifecycleEventInput {
+  return {
+    id: lifecycleEventId('grant.expiring', input.grantId),
+    type: 'grant.expiring',
+    billingAccountId: input.billingAccountId,
+    occurredAt: input.occurredAt,
+    data: { grantId: input.grantId, kind: input.kind, planKey: input.planKey, expiresAt: input.expiresAt }
+  };
 }
 
 function grantEntitlementChange(
@@ -550,46 +587,155 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   }
 
   /**
-   * Records `grant.expiring` for each grant that is not revoked and expires
-   * within 3 days, and `entitlement.changed` (cause `grant.expired`) for each
-   * that expired in the last 7 days. Both are recorded once per grant. `beforePage` runs before each page (the
-   * job's lease check).
+   * Records `entitlement.changed` (cause `grant.expired`) for each grant that is not revoked and expired in the
+   * last 7 days, then `grant.expiring` for each that expires within 3 days. Each is one sweep keyed by
+   * (`expiresAt`, `id`) that stores the position after the grants it finished in `reconciliationCursors`, so a
+   * run reads at most `GRANT_SWEEP_RUN_LIMIT` grants per sweep and the next run resumes after them, never
+   * rereading a grant a run finished. Grants only enter a window by time passing (a new grant expires in the
+   * future, and one created already within 3 days records `grant.expiring` with its creation), so a grant behind
+   * the position needs nothing more. A page's events are recorded before the position moves past it, so a run
+   * that stops mid-page leaves that page to the next run, which records only what is missing. Of two runs that
+   * read the same position, the one that moves it first goes on and the other stops that sweep. `beforePage`
+   * runs before each page (the job's lease check).
    */
   async function recordGrantExpiry(beforePage?: () => Promise<void>) {
     if (!handler) {
       return;
     }
     const now = deps.now().getTime();
-    const where: WhereClause[] = [
-      { field: 'expiresAt', operator: 'gt', value: toIsoString(new Date(now - GRANT_EXPIRED_LOOKBACK_MS)) },
-      { field: 'expiresAt', operator: 'lte', value: toIsoString(new Date(now + GRANT_EXPIRING_LEAD_MS)) }
-    ];
-    for (let offset = 0; ; offset += SWEEP_PAGE_SIZE) {
+    await sweepGrants('expired', now - GRANT_EXPIRED_LOOKBACK_MS, now - GRANT_SWEEP_SETTLE_MS, now, beforePage);
+    await sweepGrants('expiring', now, now + GRANT_EXPIRING_LEAD_MS - GRANT_SWEEP_SETTLE_MS, now, beforePage);
+  }
+
+  /** One expiry sweep over the grants that expire after `after` and at or before `until`, resuming at its position. */
+  async function sweepGrants(
+    sweep: GrantSweep,
+    after: number,
+    until: number,
+    now: number,
+    beforePage?: () => Promise<void>
+  ) {
+    const stored = await findSweepCursor(sweep);
+    let cursor = stored ? (stored.cursor ?? null) : undefined;
+    let position = laterPosition(parseSweepPosition(cursor), toIsoString(new Date(after)));
+    const end = toIsoString(new Date(until));
+    for (let read = 0; read < GRANT_SWEEP_RUN_LIMIT; ) {
       await beforePage?.();
-      const grants = await deps.db.findMany<BillFnEntitlementGrant>({
-        model: GRANTS_TABLE,
-        where,
-        orderBy: [
-          { field: 'expiresAt', direction: 'asc' },
-          { field: 'id', direction: 'asc' }
-        ],
-        limit: SWEEP_PAGE_SIZE,
-        offset,
-        namespace: deps.namespace
-      });
-      const events = grants.filter((grant) => !grant.revokedAt).map((grant) => grantExpiryEvent(grant, now));
-      if (events.length > 0) {
-        const stored = await deps.db.findMany<{ id: string }>({
-          model: EVENTS_TABLE,
-          where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
-          namespace: deps.namespace
-        });
-        const storedIds = new Set(stored.map((event) => event.id));
-        await record(events.filter((event) => !storedIds.has(event.id)));
-      }
-      if (grants.length < SWEEP_PAGE_SIZE) {
+      const limit = Math.min(SWEEP_PAGE_SIZE, GRANT_SWEEP_RUN_LIMIT - read);
+      const grants = await readGrantPage(position, end, limit);
+      if (grants.length === 0) {
         return;
       }
+      read += grants.length;
+      await recordMissing(grants.filter((grant) => !grant.revokedAt).map((grant) => grantExpiryEvent(sweep, grant, now)));
+      const last = grants[grants.length - 1]!;
+      const next = JSON.stringify({ expiresAt: last.expiresAt, id: last.id });
+      if (!(await moveSweepCursor(sweep, cursor, next))) {
+        // Another run moved the position from where this one read it; it carries the sweep on.
+        deps.metrics.track('grant.sweep_yielded', { sweep });
+        return;
+      }
+      cursor = next;
+      position = { expiresAt: last.expiresAt, id: last.id };
+      if (grants.length < limit) {
+        return;
+      }
+    }
+  }
+
+  /**
+   * The next grants after `position`, at most `until`, in (`expiresAt`, `id`) order: the rest of the grants
+   * expiring at the position's time, then the later ones (two queries, each one range of the expiry index).
+   */
+  async function readGrantPage(position: SweepPosition, until: string, limit: number) {
+    const grants: BillFnEntitlementGrant[] = [];
+    if (position.id !== null) {
+      grants.push(
+        ...(await deps.db.findMany<BillFnEntitlementGrant>({
+          model: GRANTS_TABLE,
+          where: [
+            { field: 'expiresAt', operator: 'eq', value: position.expiresAt },
+            { field: 'expiresAt', operator: 'lte', value: until },
+            { field: 'id', operator: 'gt', value: position.id }
+          ],
+          orderBy: [{ field: 'id', direction: 'asc' }],
+          limit,
+          namespace: deps.namespace
+        }))
+      );
+    }
+    if (grants.length < limit) {
+      grants.push(
+        ...(await deps.db.findMany<BillFnEntitlementGrant>({
+          model: GRANTS_TABLE,
+          where: [
+            { field: 'expiresAt', operator: 'gt', value: position.expiresAt },
+            { field: 'expiresAt', operator: 'lte', value: until }
+          ],
+          orderBy: [
+            { field: 'expiresAt', direction: 'asc' },
+            { field: 'id', direction: 'asc' }
+          ],
+          limit: limit - grants.length,
+          namespace: deps.namespace
+        }))
+      );
+    }
+    return grants;
+  }
+
+  /** Records the events that are not stored yet, checking them with one query (at most `SWEEP_PAGE_SIZE` ids). */
+  async function recordMissing(events: LifecycleEventInput[]) {
+    if (events.length === 0) {
+      return;
+    }
+    const stored = await deps.db.findMany<{ id: string }>({
+      model: EVENTS_TABLE,
+      where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
+      namespace: deps.namespace
+    });
+    const storedIds = new Set(stored.map((event) => event.id));
+    await record(events.filter((event) => !storedIds.has(event.id)));
+  }
+
+  function findSweepCursor(sweep: GrantSweep) {
+    return deps.db.findOne<{ id: string; cursor?: string | null }>({
+      model: CURSORS_TABLE,
+      where: [{ field: 'id', operator: 'eq', value: sweepCursorId(sweep) }],
+      namespace: deps.namespace
+    });
+  }
+
+  /**
+   * Moves the sweep's stored position from `previous` (undefined: none stored) to `next`, a compare-and-set;
+   * false when another run moved or created it first.
+   */
+  async function moveSweepCursor(sweep: GrantSweep, previous: string | null | undefined, next: string) {
+    const updatedAt = toIsoString(deps.now());
+    if (previous !== undefined) {
+      const moved = await deps.db.updateMany({
+        model: CURSORS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: sweepCursorId(sweep) },
+          { field: 'cursor', operator: 'eq', value: previous }
+        ],
+        data: { cursor: next, updatedAt },
+        namespace: deps.namespace
+      });
+      return moved === 1;
+    }
+    try {
+      await deps.db.create({
+        model: CURSORS_TABLE,
+        data: { id: sweepCursorId(sweep), provider: 'billfn', cursorKey: `lifecycle.grant-${sweep}`, cursor: next, updatedAt },
+        namespace: deps.namespace
+      });
+      return true;
+    } catch (error) {
+      if (!deps.isDuplicateRecordError(error)) {
+        throw error;
+      }
+      return false;
     }
   }
 
@@ -632,16 +778,46 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   };
 }
 
-function grantExpiryEvent(grant: BillFnEntitlementGrant, now: number): LifecycleEventInput {
+type GrantSweep = 'expired' | 'expiring';
+
+/** A sweep position: after the grants that expire before `expiresAt`, and those at it up to `id` (null: all). */
+type SweepPosition = { expiresAt: string; id: string | null };
+
+function sweepCursorId(sweep: GrantSweep) {
+  return `rcc_billfn_lifecycle_grant_${sweep}`;
+}
+
+/** A stored position, or null when none is stored or it cannot be read (the sweep then starts at its window). */
+function parseSweepPosition(cursor: string | null | undefined): SweepPosition | null {
+  if (!cursor) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(cursor) as { expiresAt?: unknown; id?: unknown };
+    return typeof parsed.expiresAt === 'string' && typeof parsed.id === 'string'
+      ? { expiresAt: parsed.expiresAt, id: parsed.id }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The stored position, or the window's start (after every grant that expires at or before `after`) when later. */
+function laterPosition(stored: SweepPosition | null, after: string): SweepPosition {
+  return stored && stored.expiresAt > after ? stored : { expiresAt: after, id: null };
+}
+
+function grantExpiryEvent(sweep: GrantSweep, grant: BillFnEntitlementGrant, now: number): LifecycleEventInput {
   const base = { billingAccountId: grant.billingAccountId };
-  if (Date.parse(grant.expiresAt) > now) {
-    return {
+  if (sweep === 'expiring') {
+    return grantExpiringEvent({
       ...base,
-      id: lifecycleEventId('grant.expiring', grant.id),
-      type: 'grant.expiring',
       occurredAt: toIsoString(new Date(now)),
-      data: { grantId: grant.id, kind: grant.kind, planKey: grant.planKey, expiresAt: grant.expiresAt }
-    };
+      grantId: grant.id,
+      kind: grant.kind,
+      planKey: grant.planKey,
+      expiresAt: grant.expiresAt
+    });
   }
   return grantEntitlementChange({ ...base, occurredAt: grant.expiresAt }, 'grant.expired', grant.id, grant.planKey, 'inactive');
 }
