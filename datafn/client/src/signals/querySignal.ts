@@ -301,23 +301,8 @@ const CAPABILITY_STATE_FIELDS = [
 export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
   const fromClause = (clause: unknown): Set<string> | undefined => {
     if (!isPlainObject(clause)) return undefined;
-    const idFilter = clause.id;
-    if (typeof idFilter === "string") return new Set([idFilter]);
-    // Exactly one operator: aliases given together (`eq` and `$eq`) are
-    // resolved by the executor, not here.
-    if (isPlainObject(idFilter) && Object.keys(idFilter).length === 1) {
-      const [operator, operand] = Object.entries(idFilter)[0];
-      if ((operator === "eq" || operator === "$eq") && typeof operand === "string") {
-        return new Set([operand]);
-      }
-      if (
-        (operator === "in" || operator === "$in") &&
-        Array.isArray(operand) &&
-        operand.every((value: unknown) => typeof value === "string")
-      ) {
-        return new Set(operand as string[]);
-      }
-    }
+    const pinned = idsFromIdFilter(clause.id);
+    if (pinned) return pinned;
     if (Array.isArray(clause.$and)) {
       for (const sub of clause.$and) {
         const pinned = fromClause(sub);
@@ -330,6 +315,36 @@ export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
 }
 
 /**
+ * The ids one `id` filter value restricts a query to: a string, or a single
+ * `eq`/`$eq` string or `in`/`$in` list of strings.
+ */
+function idsFromIdFilter(idFilter: unknown): Set<string> | undefined {
+  if (typeof idFilter === "string") return new Set([idFilter]);
+  // Exactly one operator: aliases given together (`eq` and `$eq`) are
+  // resolved by the executor, not here.
+  if (!isPlainObject(idFilter) || Object.keys(idFilter).length !== 1) return undefined;
+  const [operator, operand] = Object.entries(idFilter)[0];
+  if ((operator === "eq" || operator === "$eq") && typeof operand === "string") {
+    return new Set([operand]);
+  }
+  if (
+    (operator === "in" || operator === "$in") &&
+    Array.isArray(operand) &&
+    operand.every((value: unknown) => typeof value === "string")
+  ) {
+    return new Set(operand as string[]);
+  }
+  return undefined;
+}
+
+/** The field a sort term names: `"-field"`, `"field:dir"` or `{ field }`. */
+function sortTermField(term: unknown): unknown {
+  if (typeof term !== "string") return (term as { field?: unknown } | null | undefined)?.field;
+  if (term.startsWith("-")) return term.slice(1);
+  return term.split(":")[0];
+}
+
+/**
  * Whether a query reads only its records' own fields: deriveMembershipFields
  * rejects relations and dotted paths in select and filters and every
  * field-independent shape (search, temporal, aggregates); sort terms must
@@ -338,10 +353,7 @@ export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
 function readsOwnFieldsOnly(schema: DatafnSchema, query: any): boolean {
   if (!deriveMembershipFields(query, schema)) return false;
   for (const term of Array.isArray(query.sort) ? query.sort : []) {
-    const field =
-      typeof term === "string"
-        ? term.startsWith("-") ? term.slice(1) : term.split(":")[0]
-        : term?.field;
+    const field = sortTermField(term);
     if (
       typeof field !== "string" ||
       field.includes(".") ||

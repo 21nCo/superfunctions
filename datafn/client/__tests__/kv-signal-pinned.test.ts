@@ -46,6 +46,28 @@ function mockRemote(schemaResource = "kv") {
   return queried;
 }
 
+/** A direct-mode client over a folder tree (a resource with a relation). */
+function folderTreeTable() {
+  const schema: DatafnSchema = {
+    resources: [
+      {
+        name: "folders",
+        version: 1,
+        fields: [
+          { name: "name", type: "string", required: false },
+          { name: "parentId", type: "string", required: false },
+        ],
+      },
+    ],
+    relations: [
+      { from: "folders", to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" } as any,
+    ],
+  };
+  const client = createDatafnClient({ schema, sync: { remote: "http://example.com" }, clientId: "tree" });
+  clients.push(client as any);
+  return client.table("folders");
+}
+
 describe("signals pinned to ids (direct mode)", () => {
   it("a KV signal re-fetches only for writes to its own key", async () => {
     const queriedKeys = mockRemote();
@@ -79,24 +101,7 @@ describe("signals pinned to ids (direct mode)", () => {
 
   it("still re-fetches a pinned record when another record of a related resource changes", async () => {
     const queried = mockRemote("folders");
-    const schema: DatafnSchema = {
-      resources: [
-        {
-          name: "folders",
-          version: 1,
-          fields: [
-            { name: "name", type: "string", required: false },
-            { name: "parentId", type: "string", required: false },
-          ],
-        },
-      ],
-      relations: [
-        { from: "folders", to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" } as any,
-      ],
-    };
-    const client = createDatafnClient({ schema, sync: { remote: "http://example.com" }, clientId: "tree" });
-    clients.push(client as any);
-    const folders = client.table("folders");
+    const folders = folderTreeTable();
     const unsub = folders.signal({ filters: { id: "folders:a" } }).subscribe(() => {});
     await settle();
 
@@ -122,24 +127,7 @@ describe("signals pinned to ids (direct mode)", () => {
 
   it("is not pinned when it filters through a relation or searches", async () => {
     const queried = mockRemote("folders");
-    const schema: DatafnSchema = {
-      resources: [
-        {
-          name: "folders",
-          version: 1,
-          fields: [
-            { name: "name", type: "string", required: false },
-            { name: "parentId", type: "string", required: false },
-          ],
-        },
-      ],
-      relations: [
-        { from: "folders", to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" } as any,
-      ],
-    };
-    const client = createDatafnClient({ schema, sync: { remote: "http://example.com" }, clientId: "tree" });
-    clients.push(client as any);
-    const folders = client.table("folders");
+    const folders = folderTreeTable();
     const unsubPath = folders.signal({ filters: { id: "folders:a", "parent.name": "x" } }).subscribe(() => {});
     const unsubSorted = folders.signal({ filters: { id: { $in: ["folders:a", "folders:c"] } }, sort: ["parent.name"] }).subscribe(() => {});
     const unsubSearch = folders.signal({ filters: { id: "folders:d" }, search: { query: "x", topK: 1 } } as any).subscribe(() => {});
