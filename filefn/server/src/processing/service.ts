@@ -961,8 +961,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * declared length, without holding it in memory whole. No write or close
    * is started past `deadline`, and none is waited for past it: the writer
    * is aborted and the store refused as expired. A close that was already
-   * under way may still publish the object after that, so `onAbandon` gets a
-   * promise that settles once the stream has. The caller has recorded the
+   * under way, or a stream opened late (aborted once it is returned), may
+   * still publish the object after that, so `onAbandon` gets a promise that
+   * settles once the stream has. The caller has recorded the
    * object before (see `attachClientArtifact`) and deletes whatever a refused
    * or failed upload wrote.
    */
@@ -983,7 +984,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     // refused at once leaves no object half-created behind.
     let writer: WritableStreamDefaultWriter | null = null;
     let abandoned = false;
-    const untilDeadline = async <T>(operation: Promise<T>): Promise<T> => {
+    const untilDeadline = async <T>(operation: Promise<T>, releaseLate?: (late: T) => Promise<unknown>): Promise<T> => {
       const expired = Symbol('expired');
       let timer: ReturnType<typeof setTimeout> | undefined;
       const outcome = await Promise.race([
@@ -994,8 +995,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ]).finally(() => clearTimeout(timer));
       if (outcome !== expired) return outcome as T;
       abandoned = true;
-      const settled = (writer ? writer.closed : operation).then(() => undefined, () => undefined);
-      operation.catch(() => undefined);
+      const settled = (writer ? writer.closed : operation.then(releaseLate)).then(() => undefined, () => undefined);
       onAbandon(settled);
       throw errors.uploadExpired();
     };
@@ -1013,7 +1013,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           throw errors.artifactTooLarge(kind, maxBytes);
         }
         beforeDeadline();
-        writer ??= (await untilDeadline(storage.openUploadStream!(object))).getWriter();
+        writer ??= (await untilDeadline(
+          storage.openUploadStream!(object),
+          (late) => late.abort(errors.uploadExpired()),
+        )).getWriter();
         beforeDeadline();
         await untilDeadline(writer.write(chunk));
       }
@@ -1133,11 +1136,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   /**
    * Keeps an upload's own record of `object` while a store it gave up on is
    * still under way, renewing it (see `CLIENT_ARTIFACT_HOLD_RENEW_MS`) until
-   * `settled`, and then deletes the object as `discardDisplacedObject` does.
-   * Until then the store may publish the object at any moment, so the record
-   * stays whatever else fails; if this process dies, its store dies with it,
-   * and the sweep retires the record once the grace period after its last
-   * renewal is over.
+   * `settled`, and then deletes the object. Until then the store may publish
+   * the object at any moment, so the record stays whatever else fails. Storage
+   * may still finish work it reported settled (a stream's initialization or
+   * abort), so the record is renewed once more and kept, and the sweep
+   * deletes the object again before it retires the record, once the version
+   * is gone and the grace period after that renewal is over. If this process
+   * dies, its store dies with it, and the same applies from the last renewal.
    */
   async function holdUntilSettled(object: DisplacedObject, target: string, settled: Promise<unknown>): Promise<void> {
     const renew = async () => {
@@ -1158,7 +1163,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     (timer as { unref?: () => void }).unref?.();
     void settled.then(async () => {
       clearInterval(timer);
-      await discardDisplacedObject(object, target, 'intent');
+      await renew();
+      await storage.deleteObject({ key: object.storageKey, target }).catch((error: unknown) => {
+        logger?.warn('displaced artifact object not deleted', { fileId: object.fileId, versionId: object.versionId, error: errorMessage(error) });
+      });
     });
   }
 

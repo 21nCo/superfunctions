@@ -52,6 +52,8 @@ function controlledStorage(local: StorageAdapter) {
   };
   const control = {
     proxyUploads: true,
+    /** Opens matching uploads with a stream whose initialization publishes the object a moment after it is returned. */
+    lateInitialization: null as ((key: string) => boolean) | null,
     /** Fails every delete of a matching key while set. */
     failDeletes: null as ((key: string) => boolean) | null,
     /** Holds the next server-side upload (or its close, or a delete) whose key matches until `release` is called. */
@@ -82,6 +84,16 @@ function controlledStorage(local: StorageAdapter) {
         if (!control.proxyUploads) return undefined;
         return async (input: { key: string; target?: string; contentType?: string }) => {
           await pass('upload', input.key);
+          if (control.lateInitialization?.(input.key)) {
+            return new WritableStream<Uint8Array>({
+              async start() {
+                await new Promise((resolve) => setImmediate(resolve));
+                const inner = (await target.openUploadStream!(input)).getWriter();
+                await inner.write(bytes('initialized'));
+                await inner.close();
+              },
+            });
+          }
           if (gate?.op !== 'close' || !gate.match(input.key)) return target.openUploadStream!(input);
           // Held at its close, the object is published only then, as on R2.
           const chunks: Uint8Array[] = [];
@@ -1283,7 +1295,39 @@ describe('client-supplied processing artifacts', () => {
       expect(await app.displacedRecords()).toEqual([]);
     });
 
+    it('keeps the record of an upload whose late-opened stream publishes after the deadline, until a sweep deletes the object', async () => {
+      const app = await createApp();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'), 'upload');
+      app.storageControl.lateInitialization = (key) => key.includes('.client-artifacts/');
+      const outcome = app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner).then(() => 'attached', (error: unknown) => error);
+      await held.reached;
+      // The open is still pending at the deadline, so the upload gives up on it.
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 1);
+      expect(await Promise.race([outcome, Promise.resolve('still opening')])).toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
+      await app.clientFor('owner').deleteFile(app.fileId);
+      // The open then returns a stream whose initialization publishes the object.
+      held.release();
+      await vi.waitFor(async () => expect(await clientObjectsOf(app.root)).toEqual([]));
+      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+
+      await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
+      expect((await app.fileFn.cleanupOrphanedArtifacts()).keptRecords).toBe(0);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
     describe('a server object a client upload displaced, after the policy target changed', () => {
+      const sharedProcessor = (storageKey: string): Processor => ({
+        name: 'shared-thumbnail',
+        supportedMimeTypes: ['image/png'],
+        async process() {
+          return { success: true, artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey }] };
+        },
+      });
+
       /** A file on R2 artifact storage whose server thumbnail a client upload displaced. */
       async function displacedOnR2(processor: Processor) {
         const app = await createApp({ processors: [processor], artifactsOnR2: true });
@@ -1315,15 +1359,24 @@ describe('client-supplied processing artifacts', () => {
         }));
       });
 
+      it("never keeps another file's cleanup from deleting the same key once its record outlived a failed delete", async () => {
+        const sharedKey = 'shared/thumb-small.jpg';
+        const { app } = await displacedOnR2(sharedProcessor(sharedKey));
+        app.storageControl.failDeletes = (key) => key === sharedKey;
+        await app.clientFor('owner').deleteFile(app.fileId);
+        expect((await app.displacedRecords()).map((record) => record.storageKey)).toContain(sharedKey);
+        app.storageControl.failDeletes = null;
+        // Another file's processing stores the same key on R2; deleting that file deletes it.
+        app.photoPolicy.artifactStorageTarget = 'r2';
+        const other = await app.uploadPhoto();
+        await app.drainJobs();
+        await app.clientFor('owner').deleteFile(other.fileId);
+        expect(app.bucket.objects.has(sharedKey)).toBe(false);
+      });
+
       it("is kept while another file's row names the same key there", async () => {
         const sharedKey = 'shared/thumb-small.jpg';
-        const { app } = await displacedOnR2({
-          name: 'shared-thumbnail',
-          supportedMimeTypes: ['image/png'],
-          async process() {
-            return { success: true, artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey: sharedKey }] };
-          },
-        });
+        const { app } = await displacedOnR2(sharedProcessor(sharedKey));
         // Another file's processing stored the same key on R2 before the policy changed.
         app.photoPolicy.artifactStorageTarget = 'r2';
         const other = await app.uploadPhoto();
