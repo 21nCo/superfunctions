@@ -314,14 +314,24 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     // stored already (a refused duplicate create or a repeated revoke finding it, also one made before lifecycle
     // events existed) records none.
     // A repair passes the job's lease check, which runs before each lifecycle row and before the billing event.
+    // A creation's `grant.expiring` is written only while the stored grant, read again right before that row, is
+    // not revoked, so a revoke that committed while this write was pending is never followed by one.
     recordBillingEvent: async (event, { db, revoked, beforeWrite } = {}) => {
       const eventDb = db ?? deps.db;
       if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {
-        await deps.lifecycle.record(grantLifecycleEvents(event, deps.now(), revoked), db, beforeWrite);
+        const events = grantLifecycleEvents(event, deps.now(), revoked);
+        const expiring = events.filter((lifecycleEvent) => lifecycleEvent.type === 'grant.expiring');
+        await deps.lifecycle.record(
+          events.filter((lifecycleEvent) => lifecycleEvent.type !== 'grant.expiring'),
+          db,
+          beforeWrite
+        );
+        await deps.lifecycle.recordForUnrevokedGrant(expiring, event.payload.grantId as string, eventDb, beforeWrite);
       }
       await beforeWrite?.();
       await recordBillingEvent(db ? { ...deps, db } : deps, event);
     },
+    recordPassedGrantExpiry: (grant, beforeWrite) => deps.lifecycle.recordPassedGrantExpiry(grant, beforeWrite),
     isDuplicateRecordError,
     flagsPendingEvents: deps.lifecycle.enabled && !deps.db.capabilities.transactions.supported
   };

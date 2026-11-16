@@ -36,6 +36,11 @@ export interface GrantDeps {
    * further row is written.
    */
   recordBillingEvent(event: BillFnBillingEvent, options?: RecordGrantEventOptions): Promise<void>;
+  /**
+   * Records the expiry events of a created grant that an expiry sweep's stored position already passed (a write
+   * that became visible late); run only once the grant is visible. `beforeWrite` runs before each row it writes.
+   */
+  recordPassedGrantExpiry(grant: Omit<BillFnEntitlementGrant, 'status'>, beforeWrite?: () => Promise<void>): Promise<void>;
   isDuplicateRecordError(error: unknown): boolean;
   /** Whether grant writes set `eventsPending` for the `lifecycle-events` job: with lifecycle events, without transactions. */
   flagsPendingEvents: boolean;
@@ -171,6 +176,18 @@ async function recordMissingGrantEvents(deps: GrantDeps, grantList: GrantRecord[
   }
   for (const grant of grantList) {
     if (grant.eventsPending && !unrecorded.has(grant.id)) {
+      // A flagged creation may not have checked the sweeps' positions yet (see `commitWithEvent`).
+      if (!grant.revokedAt) {
+        try {
+          await deps.recordPassedGrantExpiry(grant, guard);
+        } catch (error) {
+          if (leaseError) {
+            throw error;
+          }
+          deps.metrics.track('grant.event_deferred', { type: 'expiry' });
+          continue;
+        }
+      }
       await guard?.();
       await clearEventsPending(deps, grant);
     }
@@ -400,8 +417,9 @@ async function commitWithEvent(
   prior: BillFnBillingEvent | undefined,
   write: (db: Adapter) => Promise<boolean>
 ) {
+  const created = event.type === 'billfn.grant.created';
   if (deps.db.capabilities.transactions.supported) {
-    return deps.db.transaction(async (transaction) => {
+    const applied = await deps.db.transaction(async (transaction) => {
       const db = transaction as unknown as Adapter;
       if (!(await write(db))) {
         return false;
@@ -409,18 +427,39 @@ async function commitWithEvent(
       await deps.recordBillingEvent(event, { db });
       return true;
     });
+    // Only once committed is the grant visible to the sweeps, so only then can their positions be checked.
+    if (applied && created) {
+      await recordPassedExpiry(deps, grant);
+    }
+    return applied;
   }
   if (!(await write(deps.db))) {
     return false;
   }
   // The flag stays until every event the stored grant derives is recorded: a revoke records its creation event
-  // too (a no-op once recorded), which an earlier failed write may have left out.
+  // too (a no-op once recorded), which an earlier failed write may have left out. A creation's flag also stays
+  // until it checked the sweeps' positions, so a later repair does it.
   const revoked = Boolean(grant.revokedAt);
   const priorRecorded = !prior || !grant.eventsPending || (await recordCommittedEvent(deps, prior, revoked));
-  if ((await recordCommittedEvent(deps, event, revoked)) && priorRecorded) {
+  if (
+    (await recordCommittedEvent(deps, event, revoked)) &&
+    priorRecorded &&
+    (!created || (await recordPassedExpiry(deps, grant)))
+  ) {
     await clearEventsPending(deps, grant);
   }
   return true;
+}
+
+/** `recordPassedGrantExpiry` for a created grant; never fails the request: false (and deferred) when it fails. */
+async function recordPassedExpiry(deps: GrantDeps, grant: GrantRecord) {
+  try {
+    await deps.recordPassedGrantExpiry(grant);
+    return true;
+  } catch {
+    deps.metrics.track('grant.event_deferred', { type: 'expiry' });
+    return false;
+  }
 }
 
 /** The `eventsPending` a grant write sets (see `GrantDeps.flagsPendingEvents`). */

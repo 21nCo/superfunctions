@@ -1722,7 +1722,9 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
           expect((await env.runLifecycleJob()).status).toBe('succeeded');
           runs.push([...reads]);
         }
-        expect(runs.map((ids) => ids.length)).toEqual([GRANT_SWEEP_RUN_LIMIT, 30, 0]);
+        // A run reads its own pages again once past them (for writes landing late), never another run's.
+        expect(runs.map((ids) => new Set(ids).size)).toEqual([GRANT_SWEEP_RUN_LIMIT, 30, 0]);
+        expect(runs[1]!.filter((id) => runs[0]!.includes(id))).toEqual([]);
         expect(new Set([...runs[0]!, ...runs[1]!]).size).toBe(count);
         // Each run's events were delivered by that run's dispatch, each grant's once.
         expect(deliveredGrants()).toHaveLength(count);
@@ -1963,6 +1965,261 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
       expect((await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId })).ok).toBe(true);
       faults.failCreate = null;
       await repair(env);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+
+      const rows = await env.rows();
+      const summary = rows
+        .filter((event) => event.billingAccountId === ACCOUNT)
+        .map((event) => [event.type, (event.data as { cause?: string }).cause ?? null])
+        .sort();
+      expect(summary).toEqual([
+        ['entitlement.changed', 'grant.revoked'],
+        ['entitlement.changed', 'grant.started'],
+        ['grant.started', null]
+      ]);
+      const [stored] = await db.findMany<{ eventsPending?: boolean }>({ model: 'entitlementGrants', namespace: 'billfn' });
+      expect(stored?.eventsPending).toBe(false);
+    });
+  });
+});
+
+describe('a grant write landing after an expiry sweep passed it, or racing a revoke', () => {
+  /**
+   * Runs `beforeGrantInsert` before the next grant row is inserted (with transactions: before the next transaction
+   * starts): the insert becomes visible only after it, as a write that lands late relative to its timestamp.
+   */
+  function delayedGrantDb(db: Adapter) {
+    const hooks = { beforeGrantInsert: null as (() => Promise<void>) | null };
+    const delay = <A extends Pick<Adapter, 'create'>>(adapter: A): A => ({
+      ...adapter,
+      async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+        if (params.model === 'entitlementGrants') {
+          const hook = hooks.beforeGrantInsert;
+          hooks.beforeGrantInsert = null;
+          await hook?.();
+        }
+        return adapter.create<T>(params);
+      }
+    });
+    const wrapped: Adapter = {
+      ...delay(db),
+      // With transactions the grant's transaction starts only after the hook (its timestamp was taken before).
+      async transaction<R>(callback: (transaction: TransactionAdapter) => Promise<R>): Promise<R> {
+        const hook = hooks.beforeGrantInsert;
+        hooks.beforeGrantInsert = null;
+        await hook?.();
+        return db.transaction((transaction) => callback(delay(transaction)));
+      }
+    };
+    return { db: wrapped, hooks };
+  }
+
+  const otherRow = (id: string, expiresAt: string) => ({
+    id,
+    billingAccountId: 'ba_other',
+    planKey: 'nucleus',
+    kind: 'comp',
+    startsAt: '2026-11-10T00:00:00.000Z',
+    expiresAt,
+    revokedAt: null,
+    operator: null,
+    reason: null,
+    revokedBy: null,
+    revokeReason: null,
+    createdAt: '2026-11-10T00:00:00.000Z',
+    updatedAt: '2026-11-10T00:00:00.000Z'
+  });
+
+  const adapters = [
+    ['with transactions', () => faultyLifecycleDb()],
+    ['without transactions', () => faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false })]
+  ] as const;
+
+  describe.each(adapters)('%s', (_name, makeDb) => {
+    it('a trial whose insert lands after the expired sweep passed its expiry gets entitlement.changed (grant.expired)', async () => {
+      const { db: base } = makeDb();
+      const { db, hooks } = delayedGrantDb(base);
+      const env = setup({ db });
+      const t0 = env.clock.current.getTime();
+      await base.create({ model: 'entitlementGrants', data: otherRow('grant_other_1', new Date(t0 + 5 * MINUTE).toISOString()), namespace: 'billfn' });
+      hooks.beforeGrantInsert = async () => {
+        env.advance(10 * MINUTE);
+        await env.runLifecycleJob();
+      };
+      const trial = await env.trial(2 * MINUTE);
+      if (!trial.ok) throw new Error('expected grant');
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      const expired = env
+        .ofType('entitlement.changed')
+        .filter((event) => event.data.cause === 'grant.expired')
+        .map((event) => event.data.grantId);
+      expect(expired.sort()).toEqual(['grant_other_1', trial.data.grant.id].sort());
+    });
+
+    it('a trial whose insert lands after the expiring sweep passed its expiry gets grant.expiring once', async () => {
+      const { db: base } = makeDb();
+      const { db, hooks } = delayedGrantDb(base);
+      const env = setup({ db });
+      const t0 = env.clock.current.getTime();
+      await base.create({ model: 'entitlementGrants', data: otherRow('grant_other_1', new Date(t0 + 4 * DAY + HOUR_MS).toISOString()), namespace: 'billfn' });
+      hooks.beforeGrantInsert = async () => {
+        env.advance(2 * DAY);
+        await env.runLifecycleJob();
+      };
+      const trial = await env.trial(4 * DAY);
+      if (!trial.ok) throw new Error('expected grant');
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      const expiring = env.ofType('grant.expiring').map((event) => event.data.grantId);
+      expect(expiring.sort()).toEqual(['grant_other_1', trial.data.grant.id].sort());
+    });
+
+    it('an instance whose clock runs 2 days behind the job: its new trial still gets grant.expiring', async () => {
+      const { db } = makeDb();
+      const job = setup({ db, clock: { current: new Date('2026-11-12T00:00:00.000Z') } });
+      const api = setup({ db, clock: { current: new Date('2026-11-10T00:00:00.000Z') } });
+      await db.create({ model: 'entitlementGrants', data: otherRow('grant_other_1', '2026-11-14T01:00:00.000Z'), namespace: 'billfn' });
+      await job.runLifecycleJob();
+      const trial = await api.trial(4 * DAY);
+      if (!trial.ok) throw new Error('expected grant');
+      job.advance(HOUR_MS);
+      await job.runLifecycleJob();
+      const expiring = [...job.ofType('grant.expiring'), ...api.ofType('grant.expiring')].map((event) => event.data.grantId);
+      expect(expiring.sort()).toEqual(['grant_other_1', trial.data.grant.id].sort());
+    });
+
+    it.each([
+      ['', false],
+      [', also when that run stops before reading the page again', true]
+    ])('a trial written while a sweep that read its page before it moves the position past it gets grant.expiring once%s', async (_, stop) => {
+      const { db: base } = makeDb();
+      const hooks = { beforeMove: null as (() => Promise<void>) | null, failSweepRead: false };
+      const runHook = async () => {
+        const hook = hooks.beforeMove;
+        hooks.beforeMove = null;
+        await hook?.();
+      };
+      // The hook runs after the sweep read its page and before it stores the position past it.
+      const db: Adapter = {
+        ...base,
+        async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+          if (hooks.failSweepRead && params.model === 'entitlementGrants' && params.where?.some((clause) => clause.field === 'expiresAt')) {
+            hooks.failSweepRead = false;
+            throw new Error('process stopped');
+          }
+          return base.findMany<T>(params);
+        },
+        async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+          if (params.model === 'reconciliationCursors') await runHook();
+          return base.create<T>(params);
+        },
+        async updateMany(params: Parameters<Adapter['updateMany']>[0]) {
+          if (params.model === 'reconciliationCursors') await runHook();
+          return base.updateMany(params);
+        }
+      };
+      const job = setup({ db, clock: { current: new Date('2026-11-12T00:00:00.000Z') } });
+      const api = setup({ db, clock: { current: new Date('2026-11-10T00:00:00.000Z') } });
+      await base.create({ model: 'entitlementGrants', data: otherRow('grant_other_1', '2026-11-14T01:00:00.000Z'), namespace: 'billfn' });
+      let trialId: string | undefined;
+      hooks.beforeMove = async () => {
+        // Its creation reads the positions before this sweep stores its own, so it leaves the grant to the sweep.
+        const trial = await api.trial(4 * DAY);
+        if (!trial.ok) throw new Error('expected grant');
+        trialId = trial.data.grant.id;
+        hooks.failSweepRead = stop;
+      };
+      await job.runLifecycleJob();
+      job.advance(HOUR_MS);
+      await job.runLifecycleJob();
+      const expiring = [...job.ofType('grant.expiring'), ...api.ofType('grant.expiring')].map((event) => event.data.grantId);
+      expect(expiring.sort()).toEqual(['grant_other_1', trialId!].sort());
+    });
+  });
+
+  describe('without transactions, a revoke that commits while a creation event is being recorded', () => {
+    /**
+     * Runs `afterGrantStarted` once, right after the next `grant.started` row is written; `failSweep` fails the
+     * expiry sweeps' grant reads (so only the repair can record a creation's events).
+     */
+    function pausingDb() {
+      const { db: base, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
+      const hooks = { afterGrantStarted: null as ((grantId: string) => Promise<void>) | null, failSweep: false };
+      const db: Adapter = {
+        ...base,
+        async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
+          const sweep = params.model === 'entitlementGrants' && params.where?.some((clause) => clause.field === 'expiresAt');
+          if (hooks.failSweep && sweep) throw new Error('sweep read failed');
+          return base.findMany<T>(params);
+        },
+        async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+          const created = await base.create<T>(params);
+          const data = params.data as { type?: string; data?: { grantId?: string } };
+          if (params.model === 'lifecycleEvents' && data.type === 'grant.started' && hooks.afterGrantStarted) {
+            const hook = hooks.afterGrantStarted;
+            hooks.afterGrantStarted = null;
+            await hook(data.data!.grantId!);
+          }
+          return created;
+        }
+      };
+      return { db, faults, hooks };
+    }
+
+    const createComp = (env: ReturnType<typeof setup>) =>
+      env.billfn.services.grants.create({
+        billingAccountId: ACCOUNT,
+        subject: env.subject,
+        planKey: 'nucleus',
+        kind: 'comp',
+        expiresAt: new Date(env.clock.current.getTime() + 2 * DAY).toISOString()
+      });
+
+    it.each([
+      ['the creation itself', false, async () => undefined],
+      [
+        'the job',
+        true,
+        async (env: ReturnType<typeof setup>, hooks: ReturnType<typeof pausingDb>['hooks']) => {
+          // Its sweep fails, so the repair records the creation (a working sweep would warn before the revoke).
+          hooks.failSweep = true;
+          await env.runLifecycleJob();
+          hooks.failSweep = false;
+        }
+      ],
+      ['an entitlements read', true, async (env: ReturnType<typeof setup>) => void (await env.billfn.getEntitlements(env.subject))]
+    ] as const)('records no grant.expiring after the revoke when %s records it', async (_, repaired, record) => {
+      const { db, faults, hooks } = pausingDb();
+      const env = setup({ db });
+      const arm = () => {
+        hooks.afterGrantStarted = async (grantId) => {
+          env.advance(MINUTE);
+          // The revoke's own repair cannot write the warning (it would be before the revoke, so allowed), so
+          // only the paused write could add one.
+          faults.failCreate = (model, data) => model === 'lifecycleEvents' && data.type === 'grant.expiring';
+          const revoked = await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId });
+          faults.failCreate = null;
+          if (!revoked.ok) throw new Error('expected the revoke');
+        };
+      };
+      if (repaired) {
+        // The creation's events fail, so a later repair records them.
+        faults.create = true;
+        faults.billingEvent = true;
+        expect((await createComp(env)).ok).toBe(true);
+        faults.create = false;
+        faults.billingEvent = false;
+        arm();
+        await record(env, hooks);
+      } else {
+        arm();
+        expect((await createComp(env)).ok).toBe(true);
+      }
+      expect(hooks.afterGrantStarted).toBeNull();
       env.advance(HOUR_MS);
       await env.runLifecycleJob();
 
