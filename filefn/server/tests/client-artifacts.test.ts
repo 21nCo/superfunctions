@@ -307,11 +307,11 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  /** Records of objects no artifact row names (see the processing service). */
+  /** Records of objects no artifact row names, displaced or an upload's own (see the processing service). */
   async function displacedRecords() {
-    return database.findMany<{ storageKey: string }>({
+    return database.findMany<{ storageKey: string; kind: string }>({
       model: 'fileArtifacts',
-      where: [{ field: 'kind', operator: 'eq', value: 'filefn.displaced-object' }],
+      where: [{ field: 'kind', operator: 'in', value: ['filefn.displaced-object', 'filefn.upload-intent'] }],
     });
   }
 
@@ -1058,6 +1058,41 @@ describe('client-supplied processing artifacts', () => {
   });
 
   describe('cleanupOrphanedArtifacts', () => {
+    /** Moves the clock past the time an upload may still be writing its object. */
+    const pastUploadGrace = () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
+    };
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('deletes the object of an upload interrupted once stored, after its file was deleted meanwhile', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
+      const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
+      const attach = app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner);
+      await held.reached;
+      // The file is deleted, and its queued job then cleans up the deleted version.
+      await app.clientFor('owner').deleteFile(app.fileId);
+      expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'dropped' })]);
+      // The upload stores its object, and nothing it writes after that lands,
+      // as when its worker is evicted.
+      app.databaseControl.down = true;
+      held.release();
+      await expect(attach).rejects.toThrow('database unavailable');
+      app.databaseControl.down = false;
+      expect(await clientObjects()).toHaveLength(1);
+      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+
+      pastUploadGrace();
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await clientObjects()).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
     it('deletes an upload that finished after its file was deleted and could not delete its own object', async () => {
       const app = await createApp();
       const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
@@ -1083,6 +1118,10 @@ describe('client-supplied processing artifacts', () => {
       expect(records).toHaveLength(1);
       expect(leftover.endsWith(records[0].storageKey)).toBe(true);
 
+      // The upload may still be writing for a while; a sweep leaves it alone till then.
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect(await clientObjects()).toHaveLength(1);
+      pastUploadGrace();
       // A sweep whose delete fails keeps the record; the next one deletes the object.
       failDeletes();
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 1 });

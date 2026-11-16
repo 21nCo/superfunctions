@@ -7,7 +7,7 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
-import { PROCESSING_RUN_KIND } from '../processing/service.js';
+import { PROCESSING_RUN_KIND, UPLOAD_INTENT_KIND } from '../processing/service.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 
 export interface FileRecord {
@@ -792,9 +792,14 @@ export function createFileService(config: FileServiceConfig) {
         { fileId },
       );
 
+      // An upload still writing its object keeps the row recording it, so
+      // `cleanupOrphanedArtifacts` deletes the object even if the upload dies.
       await db.deleteMany({
         model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
+        ],
         namespace,
       });
 

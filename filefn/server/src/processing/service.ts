@@ -152,9 +152,21 @@ export const PROCESSING_RUN_KIND = 'filefn.processing-run';
  */
 const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
 
+/**
+ * Kind of the `fileArtifacts` rows that record a client upload's own object
+ * from before it is written until a row names it or it is deleted. File and
+ * version cleanup leave them in place, since the upload may still be
+ * writing; `cleanupOrphanedArtifacts` deletes the object once its version
+ * is gone and the upload is past `UPLOAD_INTENT_GRACE_MS`.
+ */
+export const UPLOAD_INTENT_KIND = 'filefn.upload-intent';
+
+/** How long an upload may still be writing an object its intent row records. */
+const UPLOAD_INTENT_GRACE_MS = 60 * 60 * 1000;
+
 /** True for a row kind FileFn keeps for itself rather than an artifact. */
 function isInternalKind(kind: string): boolean {
-  return kind === PROCESSING_RUN_KIND || kind === DISPLACED_OBJECT_KIND;
+  return kind === PROCESSING_RUN_KIND || kind === DISPLACED_OBJECT_KIND || kind === UPLOAD_INTENT_KIND;
 }
 
 export interface FlowFnQueue {
@@ -987,7 +999,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           artifactId,
           fileId: object.fileId,
           versionId: object.versionId,
-          kind: DISPLACED_OBJECT_KIND,
+          kind: purpose === 'intent' ? UPLOAD_INTENT_KIND : DISPLACED_OBJECT_KIND,
           storageKey: object.storageKey,
           mimeType: 'application/octet-stream',
           size: 0,
@@ -1246,6 +1258,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [
           { field: 'fileId', operator: 'eq', value: input.fileId },
           { field: 'versionId', operator: 'eq', value: input.versionId },
+          // An upload may still be writing the object its intent row records.
+          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
         ],
         namespace,
       });
@@ -1760,8 +1774,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       let replaced: FileArtifactRecord | null = null;
       let rowId = artifactId;
       try {
-        // A file deleted while the body was stored took this record with it;
-        // the object now exists, so it is recorded again before anything else.
+        // Recorded again now the object exists, in case a sweep removed the
+        // record of an upload that outlasted its grace period.
         await journalDisplaced(ownObject, target, 'intent');
         let current = await findKindRow(file.fileId, version.versionId, upload.kind);
         if (!current) {
@@ -1843,10 +1857,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     },
 
     /**
-     * Deletes the objects recorded as displaced (see `DISPLACED_OBJECT_KIND`)
-     * for versions that no longer exist, and then their records: an upload
-     * that finished, or a delete that failed, after its file was deleted. An
-     * object another row still names is kept and only its record goes. A
+     * Deletes the objects recorded as displaced or as an upload's own (see
+     * `DISPLACED_OBJECT_KIND`, `UPLOAD_INTENT_KIND`) for versions that no
+     * longer exist, and then their records: an upload that finished, failed
+     * or was interrupted after its file was deleted, or a delete that failed.
+     * An upload's record is left alone while the upload may still be writing.
+     * An object another row still names is kept and only its record goes. A
      * failed delete keeps its record for the next sweep. Call it from a
      * scheduled job; FileFn does not run it on its own.
      */
@@ -1859,14 +1875,16 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       for (;;) {
         const records = await db.findMany<FileArtifactRecord>({
           model: 'fileArtifacts',
-          where: [{ field: 'kind', operator: 'eq', value: DISPLACED_OBJECT_KIND }],
+          where: [{ field: 'kind', operator: 'in', value: [DISPLACED_OBJECT_KIND, UPLOAD_INTENT_KIND] }],
           orderBy: [{ field: 'artifactId', direction: 'asc' }],
           limit: pageSize,
           offset,
           namespace,
         });
+        const writingSince = Date.now() - UPLOAD_INTENT_GRACE_MS;
         for (const record of records) {
-          if (await findVersion(record.fileId, record.versionId)) {
+          const writing = record.kind === UPLOAD_INTENT_KIND && Date.parse(record.createdAt) > writingSince;
+          if (writing || await findVersion(record.fileId, record.versionId)) {
             offset += 1;
             continue;
           }
@@ -1921,6 +1939,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           { field: 'fileId', operator: 'eq', value: fileId },
           { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
           { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
+          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
         ],
         orderBy: [
           { field: 'createdAt', direction: 'desc' },
