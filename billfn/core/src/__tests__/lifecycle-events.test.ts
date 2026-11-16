@@ -1522,6 +1522,41 @@ describe('lifecycle events: delivery', () => {
     await expect(env.billfn.services.events.dispatch()).resolves.toEqual({ delivered: 0, retrying: 0, failed: 0 });
   });
 
+  it.each([
+    ['delivers', false, { delivered: 2, retrying: 0, failed: 0 }, 'delivered'],
+    ['marks failed after one failed attempt', true, { delivered: 0, retrying: 0, failed: 2 }, 'failed']
+  ])('%s an event never attempted (a crash before its dispatch) first dispatched after its delivery deadline', async (_label, failing, outcome, status) => {
+    const { db, faults } = faultyLifecycleDb();
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const crashed = setup({ db, clock });
+    faults.update = true;
+    await crashed.trial(14 * DAY);
+    expect((await crashed.rows()).map((row) => [row.status, row.attempts])).toEqual([
+      ['pending', 0],
+      ['pending', 0]
+    ]);
+    faults.update = false;
+    clock.current = new Date(clock.current.getTime() + DAY + MINUTE);
+    const calls: string[] = [];
+    const restarted = setup({
+      db,
+      clock,
+      onEvent: (event) => {
+        calls.push(event.id);
+        if (failing) {
+          throw new Error('handler down');
+        }
+      }
+    });
+    await expect(restarted.billfn.services.events.dispatch()).resolves.toEqual(outcome);
+    expect(calls).toHaveLength(2);
+    expect(new Set(calls).size).toBe(2);
+    expect((await restarted.rows()).map((row) => [row.status, row.attempts])).toEqual([
+      [status, 1],
+      [status, 1]
+    ]);
+  });
+
   it('marks an unclaimed event past its delivery deadline failed once when two dispatchers race on it', async () => {
     const db = memoryAdapter({ debug: false });
     const clock = { current: new Date('2026-11-10T00:00:00.000Z') };

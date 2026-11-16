@@ -126,8 +126,8 @@ function grantEntitlementChange(
  * lease ahead, so an event whose dispatcher crashed is due again once the lease
  * lapses. A handler failure, or a delivery that did not complete, schedules the
  * next attempt with exponential backoff until 24 hours after the event was
- * recorded; a dispatch at or after that marks it `failed` without calling the
- * handler, and `list({ status: 'failed' })` shows it.
+ * recorded; a dispatch after that marks it `failed` without calling the handler
+ * (one never attempted gets one attempt), and `list({ status: 'failed' })` shows it.
  */
 export function createLifecycleEvents(deps: LifecycleDeps) {
   const handler = deps.onEvent;
@@ -356,8 +356,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
    * is due only once that claim lapsed, so its delivery did not complete (the
    * handler hung or the dispatcher stopped); that counts as a failed attempt. It
    * is retried after the backoff of that attempt, counted from the lapsed claim.
-   * Once the 24-hour window passed, a due event (its last retry slot is that
-   * deadline) is marked `failed` without calling the handler. The handler call is
+   * Once the 24-hour window passed, a due event already attempted (its last retry
+   * slot is that deadline) is marked `failed` without calling the handler; one never
+   * attempted is delivered once, and fails if that attempt fails. The handler call is
    * bounded by the claim lease; one that does not settle within it failed too.
    */
   async function deliver(row: BillFnLifecycleEventRecord): Promise<DeliveryOutcome | null> {
@@ -372,7 +373,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       { field: 'attempts', operator: 'eq', value: row.attempts }
     ] satisfies WhereClause[];
     const deadline = Date.parse(row.createdAt) + LIFECYCLE_DELIVERY_WINDOW_MS;
-    const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
+    const expired = row.attempts > 0 && (!Number.isFinite(deadline) || claimedAt.getTime() >= deadline);
     if (row.claimId || expired) {
       const ended = await endUndelivered(row, due, deadline, expired, claimedAt);
       if (ended !== undefined) {
@@ -400,7 +401,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   }
 
   /**
-   * A due event whose 24-hour window passed, or that still holds a claim (its delivery did not complete):
+   * A due event attempted before whose 24-hour window passed, or that still holds a claim (a lapsed delivery):
    * marks it `failed` once the window passed, keeping the last error of an unclaimed one, or schedules the
    * retry of a lapsed claim after the backoff of that attempt, counted from the lapsed claim. Returns that
    * outcome, null when another dispatcher ended or claimed it first, or undefined when the retry is due now,
