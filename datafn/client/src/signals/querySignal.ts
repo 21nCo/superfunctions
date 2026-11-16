@@ -664,16 +664,26 @@ function createQuerySignal<T>(
     readsOwnFieldsOnly(schema, fullQuery)
       ? resolvePinnedQueryIds(fullQuery)
       : undefined;
-  /** Whether a write to this signal's resource names none of its pinned records. */
+  /**
+   * Whether a write to this signal's resource names none of its pinned
+   * records, in its ids or in an `id` its record carries.
+   */
   const writeSkipsPinnedRecords = (event: any): boolean => {
     if (!pinnedIds) return false;
     const ids = event.ids;
-    return (
-      Array.isArray(ids) &&
-      ids.length > 0 &&
-      ids.every((id: unknown) => typeof id === "string") &&
-      !ids.some((id: string) => pinnedIds.has(id))
-    );
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      !ids.every((id: unknown) => typeof id === "string") ||
+      ids.some((id: string) => pinnedIds.has(id))
+    ) {
+      return false;
+    }
+    if (isPlainObject(event.record) && event.record.id !== undefined) {
+      const recordId = event.record.id;
+      if (typeof recordId !== "string" || pinnedIds.has(recordId)) return false;
+    }
+    return true;
   };
   let membershipRun = 0;
   /**

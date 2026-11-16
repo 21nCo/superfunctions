@@ -183,6 +183,12 @@ describe("pinned signals on a resource without relations (direct mode)", () => {
     expect(queried).toContain("notes:b");
     expect(queried).not.toContain("notes:a");
 
+    // A write whose record carries a pinned id refreshes that signal.
+    queried.length = 0;
+    await notes.mutate({ operation: "insert", id: "notes:d", record: { id: "notes:a", body: "y" } } as any);
+    await settle();
+    expect(queried).toContain("notes:a");
+
     unsubPlain();
     unsubSearch();
   });
