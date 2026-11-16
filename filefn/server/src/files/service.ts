@@ -48,7 +48,7 @@ interface FileArtifactRecord {
 
 interface UploadSessionRecord {
   uploadSessionId: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'refused' | 'expired';
   policy: string;
   uploadMode: string;
   storageKey: string;
@@ -660,13 +660,13 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
-      // Aborted sessions already discarded their upload. A refused one may still
-      // have objects to delete, recorded by its part rows, so aborted sessions
-      // are left to the expiry sweep, which finishes that cleanup.
+      // A refused session may still have objects to delete; its row is that
+      // record, so refused sessions are left to the expiry sweep, which finishes
+      // the cleanup.
       const openSessionsWhere: WhereClause[] = [
         { field: 'fileId', operator: 'eq', value: fileId },
         { field: 'status', operator: 'ne', value: 'completed' },
-        { field: 'status', operator: 'ne', value: 'aborted' },
+        { field: 'status', operator: 'ne', value: 'refused' },
       ];
       const pendingSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',

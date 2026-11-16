@@ -254,6 +254,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
     signedUrlTtlSeconds,
+    databaseIdentity: inputDatabase,
   });
 
   const uploadRoutes = createUploadSessionRoutes({
