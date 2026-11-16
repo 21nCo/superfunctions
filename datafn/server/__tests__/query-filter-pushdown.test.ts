@@ -13,7 +13,8 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import type { DatafnSchema } from "@datafn/core";
 import { createDatafnServer } from "../src/server.js";
-import { classifyQuery } from "../src/execution/query/planner.js";
+import { classifyQuery, MAX_PUSHDOWN_IN_VALUES } from "../src/execution/query/planner.js";
+import { buildPrefilterWhere, canPushDownFilters } from "../src/execution/query/filter-plan.js";
 
 /** Relations mirror Nucleum's schema (features.ts) for node, collection, objective and task. */
 const SCHEMA: DatafnSchema = {
@@ -223,6 +224,29 @@ describe("$is_empty / $is_not_empty push-down", () => {
     expect(classifyQuery({ resource: "node", filters: { mdParent: { $is_empty: true } } }, SCHEMA)).toBe("IN_MEMORY");
     // Without a schema the planner keeps its legacy classification.
     expect(classifyQuery({ resource: "node", filters: { metaType: { $is_empty: true } } })).toBe("IN_MEMORY");
+  });
+
+  it("keeps $in lists past one statement's parameter budget out of planned and pre-filter clauses", () => {
+    const ids = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => `node:${prefix}${i}`);
+    const oversized = ids(MAX_PUSHDOWN_IN_VALUES + 1, "a");
+    // Beside an emptiness filter, an oversized list is not planned.
+    expect(canPushDownFilters({ metaType: { $is_empty: true }, id: { $in: oversized } }, "node", SCHEMA)).toBe(false);
+    expect(canPushDownFilters({ metaType: { $is_empty: true }, id: oversized }, "node", SCHEMA)).toBe(false);
+    expect(
+      classifyQuery({ resource: "node", filters: { metaType: { $is_empty: true }, id: { $in: oversized } } }, SCHEMA),
+    ).toBe("IN_MEMORY");
+    // The pre-filter drops the lists past the budget (a wider pre-filter);
+    // the full filter is still evaluated in memory.
+    const half = Math.floor(MAX_PUSHDOWN_IN_VALUES / 2) + 1;
+    const where = buildPrefilterWhere(
+      { metaType: { $is_empty: true }, id: { $in: ids(half, "b") }, label: { $in: ids(half, "c") } },
+      "node",
+      SCHEMA,
+    );
+    const inLists = where.filter((c) => c.operator === "in");
+    expect(inLists).toHaveLength(1);
+    expect((inLists[0].value as unknown[]).length).toBe(half);
+    expect(where.some((c) => c.field === "metaType")).toBe(true);
   });
 
   it("$is_empty on a string matches null, missing and empty string", async () => {

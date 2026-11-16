@@ -482,29 +482,18 @@ export function classifyQuery(
 
   // --- Rule 3: IN_MEMORY filter patterns ---
   if (query.filters != null && typeof query.filters === "object") {
-    if (
-      hasInMemoryFilterPatterns(query.filters as Record<string, unknown>) &&
-      !canPushDownFilters(
-        query.filters,
-        typeof query.resource === "string" ? query.resource : undefined,
-        schema as DatafnSchema | undefined,
-      )
-    ) {
-      return "IN_MEMORY";
-    }
+    const resourceName = typeof query.resource === "string" ? query.resource : undefined;
     // $in lists that together exceed one statement's parameter budget
     if (countInValues(query.filters) > MAX_PUSHDOWN_IN_VALUES) {
       return "IN_MEMORY";
     }
-    // Any other filter the pushdown converter cannot express (e.g. a bare
-    // relation key) must be evaluated in memory, never dropped.
-    if (
-      convertDfqlFilters(
-        query.filters as Record<string, unknown>,
-        typeof query.resource === "string" ? query.resource : undefined,
-        schema,
-      ) === null
-    ) {
+    // A filter neither the plain converter nor the filter planner can
+    // express (e.g. a bare relation key) must be evaluated in memory, never
+    // dropped.
+    const plain =
+      !hasInMemoryFilterPatterns(query.filters as Record<string, unknown>) &&
+      convertDfqlFilters(query.filters as Record<string, unknown>, resourceName, schema) !== null;
+    if (!plain && !canPushDownFilters(query.filters, resourceName, schema as DatafnSchema | undefined)) {
       return "IN_MEMORY";
     }
   }

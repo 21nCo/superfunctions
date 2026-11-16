@@ -37,6 +37,7 @@ import {
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import { MAX_PUSHDOWN_IN_VALUES } from "./planner.js";
 
 /** Most disjoint WHERE lists one filter may expand to (one per OR-group combination). */
 export const MAX_FILTER_BRANCHES = 16;
@@ -242,7 +243,11 @@ function compileFieldFilter(
   });
 
   // Shorthand forms, normalised the way the in-memory evaluator does.
-  if (Array.isArray(value)) return unsafeOperand(value, true) ? null : [clause("in", value)];
+  // A value list longer than one bound-parameter list stays in memory.
+  const oversized = (list: unknown[]) => list.length > MAX_PUSHDOWN_IN_VALUES;
+  if (Array.isArray(value)) {
+    return unsafeOperand(value, true) || oversized(value) ? null : [clause("in", value)];
+  }
   if (!isPlainObject(value)) return unsafeOperand(value) ? null : [clause("eq", value)];
 
   const out: Conjunct[] = [];
@@ -255,7 +260,7 @@ function compileFieldFilter(
       continue;
     }
     if (op === "$in" || op === "in") {
-      if (!Array.isArray(operand) || unsafeOperand(operand, true)) return null;
+      if (!Array.isArray(operand) || unsafeOperand(operand, true) || oversized(operand)) return null;
       out.push(clause("in", operand));
       continue;
     }
@@ -453,7 +458,16 @@ export function buildPrefilterWhere(
   // One group can lead through the OR connector; other groups are left to
   // the in-memory evaluation (dropping a conjunct only widens the set).
   const lead = conjuncts.find((c) => c.kind === "either" && canLead(c.alternatives));
-  const clauses = conjuncts.filter((c) => c.kind === "clause");
+  // Keep the pushed `in` lists within one statement's parameter budget; a
+  // list past it is left to the in-memory evaluation.
+  let inBudget = MAX_PUSHDOWN_IN_VALUES;
+  const clauses = conjuncts.filter((c) => {
+    if (c.kind !== "clause") return false;
+    if (c.clause.operator !== "in" || !Array.isArray(c.clause.value)) return true;
+    if (c.clause.value.length > inBudget) return false;
+    inBudget -= c.clause.value.length;
+    return true;
+  });
   return expandBranches(lead ? [lead, ...clauses] : clauses)![0];
 }
 
