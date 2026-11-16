@@ -1237,53 +1237,104 @@ describe('in-process completion serialization bound', () => {
     });
   }
 
+  /** A memory adapter whose first files insert, once armed, waits for release() and then runs afterInsert. */
+  function holdFirstFilesInsert() {
+    const base = memoryAdapter();
+    let hold: Promise<void> | undefined;
+    let release!: () => void;
+    const control = {
+      afterInsert: undefined as (() => Promise<void>) | undefined,
+      arm() { hold = new Promise<void>((resolve) => { release = resolve; }); },
+      release: () => release(),
+    };
+    const database = {
+      ...base,
+      async create(params: Parameters<Adapter['create']>[0]) {
+        if (params.model === 'files' && hold) {
+          const waitFor = hold;
+          hold = undefined;
+          await waitFor;
+          const created = await base.create(params);
+          await control.afterInsert?.();
+          return created;
+        }
+        return base.create(params);
+      },
+    } as Adapter;
+    expect(database.capabilities.schema.constraints).toBe(false);
+    return { database, control };
+  }
+
   for (const granted of [false, true]) {
-    it(`memory adapter: a completion of the same new ID behind a commit held past the wait bound keeps waiting, never a second files row, then ${granted ? 'adds a version' : '403'}`, async () => {
+    it(`memory adapter: a completion of the same new ID behind a commit held past the wait bound gets 409 before its storage step, then ${granted ? 'adds a version' : '403'}`, async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-      const base = memoryAdapter();
-      let holdFilesInsert: Promise<void> | undefined;
-      let afterFilesInsert: (() => Promise<void>) | undefined;
-      const database = {
-        ...base,
-        async create(params: Parameters<Adapter['create']>[0]) {
-          // Holds only the first files insert, the holder's.
-          if (params.model === 'files' && holdFilesInsert) {
-            const hold = holdFilesInsert;
-            holdFilesInsert = undefined;
-            await hold;
-            const created = await base.create(params);
-            await afterFilesInsert?.();
-            return created;
-          }
-          return base.create(params);
-        },
-      } as Adapter;
-      expect(database.capabilities.schema.constraints).toBe(false);
+      const { database, control } = holdFirstFilesInsert();
+      const app = createApp({ mode: 'multipart', database, grants: true });
+      const a = await app.stage('user_a', CLIENT_ID, 'holder bytes');
+      const b = await app.stage('user_b', CLIENT_ID, 'waiter bytes');
+      const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+      control.arm();
+      const first = a.complete();
+      await flushPromises();
+
+      const waiting = b.complete();
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+      const busy = await waiting;
+      expect(busy.status).toBe(409);
+      expect(busy.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+      expect(app.fixture.finalizeCount(keyB)).toBe(0);
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
+
+      control.release();
+      expect((await first).status).toBe(200);
+      if (granted) {
+        await app.fileFn.services.grants.createGrant({ fileId: CLIENT_ID, userId: 'user_b', canWrite: true }, { principalId: 'user_a' });
+      }
+      const retried = await b.complete();
+      const rows = await fileRows(database, CLIENT_ID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].ownerId).toBe('user_a');
+      if (granted) {
+        expect(retried.status).toBe(200);
+        expect(rows[0].currentVersionId).toBe(retried.json.data.versionId);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('waiter bytes');
+      } else {
+        expect(retried.status).toBe(403);
+        expect(app.fixture.objects.has(keyB)).toBe(false);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('holder bytes');
+      }
+    });
+
+    it(`memory adapter: a completion whose storage step finished behind a commit of the same new ID keeps waiting past the bound, never a 409, then ${granted ? 'adds a version' : '403'}`, async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const { database, control } = holdFirstFilesInsert();
       const app = createApp({ mode: 'multipart', database, grants: true });
       const a = await app.stage('user_a', CLIENT_ID, 'holder bytes');
       const b = await app.stage('user_b', CLIENT_ID, 'waiter bytes');
       const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
       if (granted) {
         // Still inside the holder's commit, so before the waiter's commit runs.
-        afterFilesInsert = async () => {
+        control.afterInsert = async () => {
           await app.fileFn.services.grants.createGrant({ fileId: CLIENT_ID, userId: 'user_b', canWrite: true }, { principalId: 'user_a' });
         };
       }
-      let releaseInsert!: () => void;
-      holdFilesInsert = new Promise<void>((resolve) => { releaseInsert = resolve; });
-      const first = a.complete();
-      await flushPromises();
-
+      // B passes its pre-storage wait, then A's commit starts while B is in storage.
+      const resumeB = app.fixture.holdStat(keyB);
       let settled = false;
       const waiting = b.complete().finally(() => { settled = true; });
       await flushPromises();
-      // Its storage upload is already complete, so it never gives up with a 409.
+      expect(app.fixture.finalizeCount(keyB)).toBe(1);
+      control.arm();
+      const first = a.complete();
+      await flushPromises();
+      resumeB();
+      await flushPromises();
       await vi.advanceTimersByTimeAsync(3 * SERIALIZED_WAIT_TIMEOUT_MS);
       expect(settled).toBe(false);
       expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
-      expect(app.fixture.finalizeCount(keyB)).toBe(1);
 
-      releaseInsert();
+      control.release();
       expect((await first).status).toBe(200);
       const done = await waiting;
       const rows = await fileRows(database, CLIENT_ID);

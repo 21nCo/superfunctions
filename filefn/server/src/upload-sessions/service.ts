@@ -112,10 +112,12 @@ export interface UploadSession {
 // adapter object (see databaseToken). Keys: `session\0...` then `file\0...`,
 // always acquired in that order. A call that waits longer than
 // SERIALIZED_WAIT_TIMEOUT_MS for its session key fails with the retryable 409
-// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything. A call waiting
-// for its fileId key has already completed its storage upload, which a retry
-// could not redo, so it keeps waiting (unless it may take the key, see
-// fileKeyEvictableAt); that key is only held for database steps.
+// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything; so does one
+// that waits that long, before its storage step, for a commit of its fileId
+// already running. A call waiting for its fileId key to commit has already
+// completed its storage upload, which a retry could not redo, so it keeps
+// waiting (unless it may take the key, see fileKeyEvictableAt); that key is
+// only held for database steps.
 const runSerialized = createKeyedSerializer();
 
 // One token per database adapter object the host passed. Used only on adapters
@@ -997,6 +999,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // A files row pointing at this session's own versionId was written by this
       // session (another call of it may still be committing), never by a rival.
       const isOwnRow = (file: { currentVersionId: string } | null) => file?.currentVersionId === versionId;
+      const fileKey = `file\u0000${fileLockScope}\u0000${fileId}`;
 
       // Refuse early, before any storage completion, when the file already exists
       // and the caller cannot write it (for example a session whose init ran
@@ -1016,6 +1019,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             throw errors.forbidden({ fileId, operation: 'replace' });
           }
         }
+      }
+
+      // Before storage completion, wait for a commit of this fileId that is
+      // already running. A stuck one makes this call fail with the retryable
+      // 409 while it has changed nothing; only a commit that starts during this
+      // call's own storage step can keep it waiting below.
+      if (!publishedVersion) {
+        await runSerialized(fileKey, async () => {});
       }
 
       // Complete multipart upload
@@ -1135,7 +1146,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // constraint decides the winner.
       const commitOutcome = publishedVersion
         ? 'resumed'
-        : await runSerialized(`file\u0000${fileLockScope}\u0000${fileId}`, async (): Promise<'published' | 'recorded' | 'refused'> => {
+        : await runSerialized(fileKey, async (): Promise<'published' | 'recorded' | 'refused'> => {
             // Another completion call of this same session already published it.
             if (await findOwnVersion()) return 'recorded';
 
