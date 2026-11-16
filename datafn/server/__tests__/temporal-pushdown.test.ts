@@ -438,22 +438,18 @@ describe("lowerTemporalRanges", () => {
   });
 
   it("keeps existing filters at the top level so the pre-filter still pushes them key by key", () => {
-    const schema = {
-      ...SCHEMA,
-      resources: [...SCHEMA.resources, { name: "tag", version: 1, fields: [{ name: "label", type: "string", required: true }] }],
-      relations: [{ from: "session", to: "tag", type: "many-many", relation: "tags", inverse: "sessions" }],
-    } as unknown as DatafnSchema;
     const query = q(time.day("startUnix", "2026-05-18T12:00:00.000Z"), {
-      filters: { kind: "focus", tags: { $any: { label: "x" } }, $and: [{ minutes: { $gte: 3 } }] },
+      filters: { kind: "focus", minutes: { $between: [1, 9] }, $and: [{ minutes: { $gte: 3 } }] },
     });
-    const { query: lowered } = lowerTemporalRanges(query, schema, config);
+    const { query: lowered } = lowerTemporalRanges(query, SCHEMA, config);
     const { start, end } = resolveTemporalPeriodRange({ scale: "day", at: "2026-05-18T12:00:00.000Z" });
     expect(lowered.filters).toEqual({
       kind: "focus",
-      tags: { $any: { label: "x" } },
+      minutes: { $between: [1, 9] },
       $and: [{ minutes: { $gte: 3 } }, { startUnix: { $gte: start, $lte: end } }],
     });
-    const { pushable } = extractPushableFilters(lowered.filters as Record<string, unknown>, "session", schema);
+    // `$between` is not pushable; the keys next to it still are.
+    const { pushable } = extractPushableFilters(lowered.filters as Record<string, unknown>, "session", SCHEMA);
     expect(pushable).toEqual(
       expect.arrayContaining([
         { field: "kind", operator: "eq", value: "focus" },
@@ -488,7 +484,7 @@ describe("lowerTemporalRanges", () => {
     expect(lowerTemporalRanges(query, SCHEMA, config).query).toBe(query);
   });
 
-  it("does not lower when a relation path repeats a secondary resource", () => {
+  it("does not lower when the query reads any relation", () => {
     const schema = {
       resources: [
         ...SCHEMA.resources,
@@ -515,9 +511,10 @@ describe("lowerTemporalRanges", () => {
     ]) {
       expect(lowerTemporalRanges(query, schema, config).query).toBe(query);
     }
-    // A path that never repeats a resource is still lowered.
-    const lowered = lowerTemporalRanges({ ...q(temporal), select: ["id", "project.*"] }, schema, config);
-    expect(lowered.lowered).toEqual(["startUnix"]);
+    // Any relation read keeps the full load; plain field reads are lowered.
+    const withRelation = { ...q(temporal), select: ["id", "project.*"] };
+    expect(lowerTemporalRanges(withRelation, schema, config).query).toBe(withRelation);
+    expect(lowerTemporalRanges({ ...q(temporal), select: ["id", "projectId"] }, schema, config).lowered).toEqual(["startUnix"]);
   });
 
   it("keeps only the grouping of a clause whose period was lowered", () => {

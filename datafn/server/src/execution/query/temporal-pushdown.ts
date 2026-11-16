@@ -17,19 +17,19 @@
  * capability `date` field such as `createdAt`, which DataFn writes as epoch
  * milliseconds). Any other clause stays in `temporal` and is evaluated in
  * memory, unchanged. Temporal `groupBy` always runs in memory, over the rows
- * the lowered range bounds already narrowed.
+ * the lowered range bounds already narrowed. A query that reads any relation
+ * is not lowered: the in-memory store derives related records from the
+ * primary rows it loads, so it keeps loading every row.
  */
 
 import type { Adapter } from "@superfunctions/db";
 import {
   TIMEZONE_CHANGE_RESOURCE_NAME,
   createTimezoneResolver,
-  endpointList,
   findRelationMatch,
   getCapabilityFields,
   getTemporalClauses,
   normalizeTemporalQuery,
-  relationTargetEndpoint,
   resolveCapabilities,
   type DatafnTemporalClause,
   type DatafnTemporalConfig,
@@ -177,39 +177,23 @@ function queryPaths(query: Record<string, unknown>): string[][] {
 }
 
 /**
- * Whether any relation path in the query reaches a resource it already passed
- * through: back to the queried resource (a self relation, or a chain such as
- * `project.tasks` from `task`), or a repeat further along (e.g.
- * `project.previous` with a self relation on `project`). The in-memory store
- * loads each resource once, from the ids the rows before it reference, and
- * resolves a repeat against those rows; narrowing the primary load to a time
- * range would drop related records the full load contained.
+ * Whether the query reads any relation (select expansion, relation or dot-path
+ * filter, having, groupBy, sort or aggregation path). The in-memory store
+ * loads related records from the primary rows it loaded (and, for some
+ * relations, through a different relation to the same resource), so
+ * narrowing that load to a time range could drop related records the full
+ * load contained. Such queries keep loading every row.
  */
-function readsPrimaryThroughRelation(
+function readsRelations(
   query: Record<string, unknown>,
   resource: string,
   schema: DatafnSchema,
 ): boolean {
-  if (!schema.relations || schema.relations.length === 0) return false;
   for (const path of queryPaths(query)) {
-    let current = [resource];
-    const visited = new Set<string>(current);
-    for (const segment of path) {
-      const next = new Set<string>();
-      for (const name of current) {
-        const match = findRelationMatch(schema as any, name, segment);
-        if (!match) continue;
-        for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
-          next.add(target);
-        }
-      }
-      if (next.size === 0) break;
-      for (const target of next) {
-        if (visited.has(target)) return true;
-      }
-      for (const target of next) visited.add(target);
-      current = [...next];
-    }
+    const first = path[0];
+    // HTREE tokens expand through the same resource.
+    if (path.length > 1 && (first === "parent" || first === "children")) return true;
+    if (schema.relations && findRelationMatch(schema as any, resource, first)) return true;
   }
   return false;
 }
@@ -242,7 +226,7 @@ export function lowerTemporalRanges(
   config: DatafnTemporalConfig,
 ): { query: Record<string, unknown>; lowered: string[] } {
   const resource = query.resource;
-  if (typeof resource !== "string" || readsPrimaryThroughRelation(query, resource, schema)) {
+  if (typeof resource !== "string" || readsRelations(query, resource, schema)) {
     return { query, lowered: [] };
   }
   // Resolve an omitted (or null) `at` once, so lowered clauses (resolved now) and
