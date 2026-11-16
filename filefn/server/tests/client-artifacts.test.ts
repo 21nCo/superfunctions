@@ -101,6 +101,11 @@ function controlledStorage(local: StorageAdapter) {
  */
 function fakeR2Bucket() {
   const objects = new Map<string, { data: Uint8Array; contentType?: string }>();
+  /**
+   * Fails a matching request: `lost` stores a PUT and then loses its
+   * response; `down` fails it before anything happens.
+   */
+  const control: { fault: ((method: string, key: string) => 'lost' | 'down' | undefined) | null } = { fault: null };
   const fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const headers = new Headers(init.headers);
@@ -111,9 +116,12 @@ function fakeR2Bucket() {
     const key = decodeURIComponent(url.pathname.slice('/files/'.length));
     const method = init.method ?? 'GET';
     const object = objects.get(key);
+    const fault = control.fault?.(method, key);
+    if (fault === 'down') throw new TypeError('fetch failed: storage unavailable');
     if (method === 'PUT') {
       const data = new Uint8Array(await new Response(init.body).arrayBuffer());
       objects.set(key, { data, contentType: headers.get('content-type') ?? undefined });
+      if (fault === 'lost') throw new TypeError('fetch failed: response lost');
       return new Response(null, { status: 200, headers: { etag: '"e"' } });
     }
     if (method === 'DELETE') {
@@ -124,7 +132,7 @@ function fakeR2Bucket() {
     const objectHeaders = { 'content-length': String(object.data.length), 'content-type': object.contentType ?? '' };
     return new Response(method === 'HEAD' ? null : (object.data as Uint8Array<ArrayBuffer>), { status: 200, headers: objectHeaders });
   };
-  return { objects, fetch };
+  return { objects, fetch, control };
 }
 
 type AuthorizerFactory = (database: ReturnType<typeof memoryAdapter>) => Parameters<typeof createFileFn>[0]['authorizer'];
@@ -153,10 +161,42 @@ function withUniqueArtifactIds(database: ReturnType<typeof memoryAdapter>): Retu
   });
 }
 
+type DatabaseFault = 'throw' | 'commit-then-throw';
+
+/**
+ * Lets a test fail the next create of an artifact row, before or after it
+ * commits, or make every artifact row operation fail while `down` is set.
+ */
+function controlledDatabase(database: ReturnType<typeof memoryAdapter>) {
+  const control: { down: boolean; onCreate: ((data: Record<string, unknown>) => DatabaseFault | undefined) | null } = {
+    down: false,
+    onCreate: null,
+  };
+  const proxy = new Proxy(database, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return async (params: { model: string; data?: Record<string, unknown> }) => {
+        if (params.model === 'fileArtifacts') {
+          if (control.down) throw new Error('database unavailable');
+          const fault = property === 'create' ? control.onCreate?.(params.data!) : undefined;
+          if (fault === 'throw') throw new Error('artifact row write failed');
+          if (fault === 'commit-then-throw') {
+            await value.call(target, params);
+            throw new Error('connection reset after commit');
+          }
+        }
+        return value.call(target, params);
+      };
+    },
+  });
+  return { database: proxy, control };
+}
+
 async function createApp(options: { processors?: Processor[]; artifactsOnR2?: boolean; authorizer?: AuthorizerFactory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-client-artifacts-'));
   roots.push(root);
-  const database = withUniqueArtifactIds(memoryAdapter());
+  const { database, control: databaseControl } = controlledDatabase(withUniqueArtifactIds(memoryAdapter()));
   const local = createLocalStorageAdapter({ rootDir: root });
   const bucket = fakeR2Bucket();
   let backing: StorageAdapter = local;
@@ -247,7 +287,18 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  return { fileFn, root, fileId, versionId, uploadPhoto, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl, bucket };
+  /** Records of objects no artifact row names (see the processing service). */
+  async function displacedRecords() {
+    return database.findMany<{ storageKey: string }>({
+      model: 'fileArtifacts',
+      where: [{ field: 'kind', operator: 'eq', value: 'filefn.displaced-object' }],
+    });
+  }
+
+  return {
+    fileFn, root, fileId, versionId, owner, uploadPhoto, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes,
+    storageControl, bucket, databaseControl, displacedRecords,
+  };
 }
 
 function thumbnailProcessor(calls: string[], options: { declareKinds?: boolean } = {}): Processor {
@@ -841,6 +892,65 @@ describe('client-supplied processing artifacts', () => {
       await client.deleteFile(app.fileId);
       expect(await artifactObjects(app.root)).toEqual([]);
     });
+
+    it('are deleted with the file when an upload stored its object, failed, and could not delete it', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      const r2Keys = () => [...app.bucket.objects.keys()];
+      // The signed PUT stores the object and loses its response; the delete
+      // that follows fails too.
+      app.bucket.control.fault = (method, key) =>
+        !key.includes('.client-artifacts/') ? undefined : method === 'PUT' ? 'lost' : method === 'DELETE' ? 'down' : undefined;
+      const upload = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png' };
+      await expect(app.fileFn.services.processing.attachClientArtifact({ ...upload, body: bytes('lost') }, app.owner))
+        .rejects.toThrow('response lost');
+      expect(r2Keys()).toHaveLength(1);
+      expect(await app.artifacts()).toEqual([]);
+
+      // A retry succeeds and leaves only its own upload record behind.
+      app.bucket.control.fault = null;
+      const retried = await app.fileFn.services.processing.attachClientArtifact({ ...upload, body: bytes('retried') }, app.owner);
+      expect(r2Keys()).toHaveLength(2);
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).not.toContain(retried.storageKey);
+
+      await app.clientFor('owner').deleteFile(app.fileId);
+      expect(r2Keys()).toEqual([]);
+    });
+
+    it('keep an upload findable and report the row write error when the database fails', async () => {
+      const app = await createApp();
+      // The row write fails and the database stays down for the cleanup that follows.
+      app.databaseControl.onCreate = (data) => {
+        if (data.kind !== 'thumbnail-small') return undefined;
+        app.databaseControl.down = true;
+        return 'throw';
+      };
+      await expect(app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner)).rejects.toThrow('artifact row write failed');
+      app.databaseControl.down = false;
+      app.databaseControl.onCreate = null;
+      expect(await artifactObjects(app.root)).toHaveLength(1);
+
+      await app.clientFor('owner').deleteFile(app.fileId);
+      expect(await artifactObjects(app.root)).toEqual([]);
+    });
+  });
+
+  it('returns an artifact whose row write committed and then failed, keeping its object', async () => {
+    const app = await createApp();
+    app.databaseControl.onCreate = (data) => {
+      if (data.kind !== 'thumbnail-small') return undefined;
+      app.databaseControl.onCreate = null;
+      return 'commit-then-throw';
+    };
+    const client = app.clientFor('owner');
+    const attached = await client.uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('committed'), mimeType: 'image/png',
+    });
+    expect(attached).toMatchObject({ kind: 'thumbnail-small', size: 9, source: 'client' });
+    expect(new TextDecoder().decode(await app.artifactBytes('owner', await client.downloadArtifact(app.fileId, attached.artifactId)))).toBe('committed');
+    expect(await app.displacedRecords()).toEqual([]);
+    expect(await app.artifacts()).toHaveLength(1);
   });
 
   it('refuses a version of another file and reports client errors as FileFnHttpError', async () => {
