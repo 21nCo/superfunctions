@@ -183,7 +183,7 @@ describe('OPFSStore', () => {
       expect(retrieved!.size).toBe(testData.length);
       expect(retrieved!.mimeType).toBe('text/plain');
       expect(new Uint8Array(retrieved!.fileData)).toEqual(testData);
-      expect(retrieved!.fileId).toBe('offline_001');
+      expect(retrieved!.fileId).toBe('file_offline_001');
       expect(retrieved!.localSource).toMatchObject({
         mode: 'local-object-url',
         previewBehavior: 'download-only',
@@ -229,7 +229,7 @@ describe('OPFSStore', () => {
 
       await store.stagePendingUpload({
         uploadSessionId: 'offline_old_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused01',
         policy: 'images',
         fileName: 'older.jpg',
         size: 12,
@@ -240,7 +240,7 @@ describe('OPFSStore', () => {
       });
       await store.stagePendingUpload({
         uploadSessionId: 'offline_new_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused01',
         policy: 'images',
         fileName: 'newer.jpg',
         size: 12,
@@ -250,7 +250,7 @@ describe('OPFSStore', () => {
         retryCount: 0,
       });
 
-      const descriptor = await store.getPendingLocalDescriptor('file_reused');
+      const descriptor = await store.getPendingLocalDescriptor('file_reused01');
 
       expect(descriptor?.uploadSessionId).toBe('offline_new_001');
       expect(descriptor?.source.fileName).toBe('newer.jpg');
@@ -460,7 +460,7 @@ describe('OfflineSync', () => {
     mockStore = new OPFSStore();
 
     mockClient = {
-      uploadFile: vi.fn().mockResolvedValue({ fileId: 'file_001', versionId: 'ver_001' }),
+      uploadFile: vi.fn().mockResolvedValue({ fileId: 'file_00000001', versionId: 'ver_001' }),
     };
 
     mockConnectivityChecker = {

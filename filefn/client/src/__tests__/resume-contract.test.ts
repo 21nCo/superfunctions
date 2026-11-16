@@ -69,7 +69,7 @@ describe('PHASE_00 CLIENT-001 resume contract conformance', () => {
         createResponse({
           ok: true,
           data: {
-            fileId: 'file_0001',
+            fileId: 'file_00000001',
             versionId: 'ver_0001',
           },
         })
@@ -79,12 +79,12 @@ describe('PHASE_00 CLIENT-001 resume contract conformance', () => {
       policy: 'user-avatar',
       file: new Blob(['abc'], { type: 'application/octet-stream' }),
       fileName: 'a.bin',
-      fileId: 'file_0001',
+      fileId: 'file_00000001',
     });
 
     const result = await handle.done();
 
-    expect(result).toEqual({ fileId: 'file_0001', versionId: 'ver_0001' });
+    expect(result).toEqual({ fileId: 'file_00000001', versionId: 'ver_0001' });
 
     const signCall = mockFetch.mock.calls[1];
     const signRequestInit = signCall[1] as RequestInit;

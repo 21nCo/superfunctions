@@ -72,7 +72,7 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"abc123"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({
-        fileId: 'file_0001',
+        fileId: 'file_00000001',
         versionId: 'ver_0001',
       }));
 
@@ -80,12 +80,12 @@ describe('uploadFile', () => {
       policy: 'user-avatar',
       file,
       fileName: 'avatar.png',
-      fileId: 'file_0001',
+      fileId: 'file_00000001',
     });
 
     const result = await handle.done();
 
-    expect(result).toEqual({ fileId: 'file_0001', versionId: 'ver_0001' });
+    expect(result).toEqual({ fileId: 'file_00000001', versionId: 'ver_0001' });
     expect(mockFetch).toHaveBeenCalledTimes(5);
 
     expect(mockFetch.mock.calls[0][0]).toBe('https://api.test/files/upload/init');
@@ -116,12 +116,12 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part3', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag3"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0002', versionId: 'ver_0002' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_00000002', versionId: 'ver_0002' }));
 
-    const handle = client.uploadFile({ policy: 'attachments', file, fileId: 'file_0002' });
+    const handle = client.uploadFile({ policy: 'attachments', file, fileId: 'file_00000002' });
     const result = await handle.done();
 
-    expect(result).toEqual({ fileId: 'file_0002', versionId: 'ver_0002' });
+    expect(result).toEqual({ fileId: 'file_00000002', versionId: 'ver_0002' });
     expect(mockFetch).toHaveBeenCalledTimes(11);
   });
 
@@ -144,9 +144,9 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part2', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag2"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0003', versionId: 'ver_0003' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_00000003', versionId: 'ver_0003' }));
 
-    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_0003' });
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_00000003' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
 
     await handle.done();
@@ -189,7 +189,7 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockImplementationOnce(() => pendingUpload);
 
-    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_abort' });
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_abort001' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
     const donePromise = handle.done();
     const rejectedUpload = expect(donePromise).rejects.toThrow('Aborted');
@@ -218,9 +218,9 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0005', versionId: 'ver_0005' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_00000005', versionId: 'ver_0005' }));
 
-    await client.uploadFile({ policy: 'test', file, fileId: 'file_0005' }).done();
+    await client.uploadFile({ policy: 'test', file, fileId: 'file_00000005' }).done();
 
     const initCall = mockFetch.mock.calls[0];
     expect(initCall[1].headers.Authorization).toBe('Bearer token123');
@@ -249,18 +249,18 @@ describe('uploadFile', () => {
       })
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_early', versionId: 'ver_early' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_early001', versionId: 'ver_early' }));
 
-    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_early' });
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_early001' });
     const donePromise = handle.done();
     await vi.waitFor(() => {
       expect(handle.uploadSessionId).toBe('session_early');
       expect(handle.uploadSessionToken).toBe('upls_early');
-      expect(handle.fileId).toBe('file_early');
+      expect(handle.fileId).toBe('file_early001');
     });
 
     releaseSign();
-    await expect(donePromise).resolves.toEqual({ fileId: 'file_early', versionId: 'ver_early' });
+    await expect(donePromise).resolves.toEqual({ fileId: 'file_early001', versionId: 'ver_early' });
   });
 });
 
@@ -272,7 +272,7 @@ describe('resumeUpload', () => {
 
     mockFetch
       .mockResolvedValueOnce(createMockResponse({
-        fileId: 'file_resume',
+        fileId: 'file_resume001',
         status: 'in_progress',
         recordedParts: [1, 2],
         totalParts: 3,
@@ -282,7 +282,7 @@ describe('resumeUpload', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part3', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag3"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_resume', versionId: 'ver_resume' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_resume001', versionId: 'ver_resume' }));
 
     const handle = client.resumeUpload('session_resume', file, {
       uploadSessionToken: 'upls_resume',
@@ -295,8 +295,8 @@ describe('resumeUpload', () => {
 
     const result = await handle.done();
 
-    expect(result).toEqual({ fileId: 'file_resume', versionId: 'ver_resume' });
-    expect(handle.fileId).toBe('file_resume');
+    expect(result).toEqual({ fileId: 'file_resume001', versionId: 'ver_resume' });
+    expect(handle.fileId).toBe('file_resume001');
     expect(mockFetch).toHaveBeenCalledTimes(5);
     expect(mockFetch.mock.calls[0][0]).toBe('https://api.test/files/upload/session_resume/status');
     expect(mockFetch.mock.calls[1][0]).toBe('https://api.test/files/upload/session_resume/parts/3/sign');
@@ -330,14 +330,14 @@ describe('resumeUpload', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_known', versionId: 'ver_known' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_known001', versionId: 'ver_known' }));
 
-    const handle = client.resumeUpload('session_known', file, { fileId: 'file_known' });
-    expect(handle.fileId).toBe('file_known');
+    const handle = client.resumeUpload('session_known', file, { fileId: 'file_known001' });
+    expect(handle.fileId).toBe('file_known001');
 
     const result = await handle.done();
-    expect(result.fileId).toBe('file_known');
-    expect(handle.fileId).toBe('file_known');
+    expect(result.fileId).toBe('file_known001');
+    expect(handle.fileId).toBe('file_known001');
   });
 });
 
@@ -361,11 +361,11 @@ describe('retry behavior', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_retry', versionId: 'ver_retry' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_retry001', versionId: 'ver_retry' }));
 
-    const result = await client.uploadFile({ policy: 'test', file, fileId: 'file_retry' }).done();
+    const result = await client.uploadFile({ policy: 'test', file, fileId: 'file_retry001' }).done();
 
-    expect(result).toEqual({ fileId: 'file_retry', versionId: 'ver_retry' });
+    expect(result).toEqual({ fileId: 'file_retry001', versionId: 'ver_retry' });
     expect(mockFetch).toHaveBeenCalledTimes(6);
   });
 
@@ -388,7 +388,7 @@ describe('retry behavior', () => {
       }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_other', versionId: 'ver_other' }));
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_other001', versionId: 'ver_other' }));
 
     const handle = client.uploadFile({
       policy: 'test',
@@ -400,7 +400,7 @@ describe('retry behavior', () => {
       code: 'FILEFN_CLIENT_FILE_ID_MISMATCH',
       details: {
         expectedFileId: 'file_expected',
-        actualFileId: 'file_other',
+        actualFileId: 'file_other001',
       },
     });
   });

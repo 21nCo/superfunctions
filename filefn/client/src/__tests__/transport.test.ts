@@ -48,17 +48,17 @@ function createFakeServer(partUrl: (partNumber: number) => string) {
       case 'GET /upload/sess_1/status':
         return envelope({ status: 'in_progress', recordedParts: [1], totalParts: 2, chunkSizeBytes: 5, fileSize: 10 });
       case 'POST /upload/sess_1/complete':
-        return envelope({ fileId: 'file_1', versionId: 'ver_1' });
-      case 'GET /file_1':
-        return envelope({ fileId: 'file_1' });
-      case 'GET /file_1/artifacts':
+        return envelope({ fileId: 'file_00000001', versionId: 'ver_1' });
+      case 'GET /file_00000001':
+        return envelope({ fileId: 'file_00000001' });
+      case 'GET /file_00000001/artifacts':
         return envelope({ artifacts: [] });
-      case 'GET /file_1/download':
-      case 'GET /file_1/artifacts/art_1/download':
+      case 'GET /file_00000001/download':
+      case 'GET /file_00000001/artifacts/art_1/download':
         return envelope({ url: 'https://cdn.example.net/signed' });
-      case 'GET /file_1/render':
-        return envelope({ fileId: 'file_1', state: 'ready' });
-      case 'DELETE /file_1':
+      case 'GET /file_00000001/render':
+        return envelope({ fileId: 'file_00000001', state: 'ready' });
+      case 'DELETE /file_00000001':
         return new Response(null, { status: 204 });
       default:
         return new Response('not found', { status: 404 });
@@ -146,25 +146,25 @@ describe('client transport options', () => {
     });
 
     await expect(
-      client.uploadFile({ policy: 'p', file: tenBytes(), fileName: 'a.txt', fileId: 'file_1' }).done(),
-    ).resolves.toEqual({ fileId: 'file_1', versionId: 'ver_1' });
-    await client.resumeUpload('sess_1', tenBytes(), { uploadSessionToken: 'upls_1', fileId: 'file_1' }).done();
-    await client.getFile('file_1');
-    await client.listArtifacts('file_1');
-    await client.downloadUrl('file_1');
-    await client.downloadArtifact('file_1', 'art_1');
-    await client.resolveRenderable({ fileId: 'file_1', intent: 'preview' });
-    await client.deleteFile('file_1');
+      client.uploadFile({ policy: 'p', file: tenBytes(), fileName: 'a.txt', fileId: 'file_00000001' }).done(),
+    ).resolves.toEqual({ fileId: 'file_00000001', versionId: 'ver_1' });
+    await client.resumeUpload('sess_1', tenBytes(), { uploadSessionToken: 'upls_1', fileId: 'file_00000001' }).done();
+    await client.getFile('file_00000001');
+    await client.listArtifacts('file_00000001');
+    await client.downloadUrl('file_00000001');
+    await client.downloadArtifact('file_00000001', 'art_1');
+    await client.resolveRenderable({ fileId: 'file_00000001', intent: 'preview' });
+    await client.deleteFile('file_00000001');
 
     expect(globalFetch).not.toHaveBeenCalled();
     const seen = new Set(server.calls.map((c) => `${c.method} ${c.url.slice(BASE.length).split('?')[0]}`));
     expect([...seen].sort()).toEqual([
-      'DELETE /file_1',
-      'GET /file_1',
-      'GET /file_1/artifacts',
-      'GET /file_1/artifacts/art_1/download',
-      'GET /file_1/download',
-      'GET /file_1/render',
+      'DELETE /file_00000001',
+      'GET /file_00000001',
+      'GET /file_00000001/artifacts',
+      'GET /file_00000001/artifacts/art_1/download',
+      'GET /file_00000001/download',
+      'GET /file_00000001/render',
       'GET /upload/sess_1/status',
       'POST /upload/init',
       'POST /upload/sess_1/complete',
@@ -199,7 +199,7 @@ describe('client transport options', () => {
       getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
     });
 
-    await client.uploadFile({ policy: 'p', file: tenBytes(), fileName: 'a.txt', fileId: 'file_1' }).done();
+    await client.uploadFile({ policy: 'p', file: tenBytes(), fileName: 'a.txt', fileId: 'file_00000001' }).done();
 
     expect(globalFetch).not.toHaveBeenCalled();
     const storagePuts = server.calls.filter((c) => c.url === PRESIGNED);
@@ -362,14 +362,14 @@ describe('client transport options', () => {
 
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });
-    const lateFetch = vi.fn(async () => envelope({ fileId: 'file_1' }));
+    const lateFetch = vi.fn(async () => envelope({ fileId: 'file_00000001' }));
     vi.stubGlobal('fetch', lateFetch);
 
-    await client.getFile('file_1');
+    await client.getFile('file_00000001');
 
     expect(lateFetch).toHaveBeenCalledTimes(1);
     expect(lateFetch.mock.calls[0]).toEqual([
-      `${BASE}/file_1`,
+      `${BASE}/file_00000001`,
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     ]);
   });
@@ -379,7 +379,7 @@ describe('client transport options', () => {
     let attempt = 0;
     const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       tokens.push(new Headers(init?.headers).get('x-csrf-token')!);
-      return ++attempt === 1 ? new Response('busy', { status: 503 }) : envelope({ fileId: 'file_1' });
+      return ++attempt === 1 ? new Response('busy', { status: 503 }) : envelope({ fileId: 'file_00000001' });
     });
     let csrf = 0;
     const client = createFileFnClient({
@@ -389,7 +389,7 @@ describe('client transport options', () => {
       retryOptions: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
     });
 
-    await expect(client.getFile('file_1')).resolves.toEqual({ fileId: 'file_1' });
+    await expect(client.getFile('file_00000001')).resolves.toEqual({ fileId: 'file_00000001' });
     expect(tokens).toEqual(['csrf-1', 'csrf-2']);
   });
 
@@ -399,11 +399,11 @@ describe('client transport options', () => {
       baseUrl: BASE,
       fetch: function (this: unknown) {
         receivers.push(this);
-        return Promise.resolve(envelope({ fileId: 'file_1' }));
+        return Promise.resolve(envelope({ fileId: 'file_00000001' }));
       } as typeof fetch,
     };
 
-    await createFileFnClient(config).getFile('file_1');
+    await createFileFnClient(config).getFile('file_00000001');
 
     expect(receivers).toEqual([undefined]);
   });

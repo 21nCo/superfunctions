@@ -29,10 +29,10 @@ describe('@filefn/client envelope unwrapping', () => {
         baseUrl: 'https://api.test/files',
       });
 
-      // Mock server response for GET /file_0001
+      // Mock server response for GET /file_00000001
       const serverResponse = {
         ok: true,
-        data: { fileId: 'file_0001', fileName: 'test.png', mimeType: 'image/png' },
+        data: { fileId: 'file_00000001', fileName: 'test.png', mimeType: 'image/png' },
         requestId: 'req_013',
       };
 
@@ -44,9 +44,9 @@ describe('@filefn/client envelope unwrapping', () => {
 
       // The client should have a getFile method that returns unwrapped data
       // This will fail until the client implements getFile and envelope unwrapping
-      const file = await (client as any).getFile('file_0001');
+      const file = await (client as any).getFile('file_00000001');
 
-      expect(file.fileId).toBe('file_0001');
+      expect(file.fileId).toBe('file_00000001');
       expect(file.fileName).toBe('test.png');
       // Should NOT have ok, data wrapper
       expect(file.ok).toBeUndefined();
@@ -71,7 +71,7 @@ describe('@filefn/client envelope unwrapping', () => {
               artifacts: [
                 {
                   artifactId: 'art_pdf_001',
-                  fileId: 'file_0001',
+                  fileId: 'file_00000001',
                   versionId: 'ver_0001',
                   kind: 'pdf-preview-page-1-large',
                   mimeType: 'image/png',
@@ -89,14 +89,14 @@ describe('@filefn/client envelope unwrapping', () => {
           json: async () => ({
             ok: true,
             data: {
-              url: '/proxy/files/file_0001/artifacts/art_pdf_001/download',
+              url: '/proxy/files/file_00000001/artifacts/art_pdf_001/download',
             },
             requestId: 'req_artifact_download',
           }),
         });
 
-      const artifacts = await client.listArtifacts('file_0001');
-      const artifactUrl = await client.downloadArtifact('file_0001', 'art_pdf_001');
+      const artifacts = await client.listArtifacts('file_00000001');
+      const artifactUrl = await client.downloadArtifact('file_00000001', 'art_pdf_001');
 
       expect(artifacts).toEqual([
         expect.objectContaining({
@@ -104,7 +104,7 @@ describe('@filefn/client envelope unwrapping', () => {
           kind: 'pdf-preview-page-1-large',
         }),
       ]);
-      expect(artifactUrl).toBe('/proxy/files/file_0001/artifacts/art_pdf_001/download');
+      expect(artifactUrl).toBe('/proxy/files/file_00000001/artifacts/art_pdf_001/download');
     });
 
     it('should unwrap render descriptor envelopes for resolveRenderable', async () => {
@@ -118,7 +118,7 @@ describe('@filefn/client envelope unwrapping', () => {
         json: async () => ({
           ok: true,
           data: {
-            fileId: 'file_pdf_1',
+            fileId: 'file_pdf_0001',
             versionId: 'ver_pdf_1',
             intent: 'preview',
             state: 'ready',
@@ -129,7 +129,7 @@ describe('@filefn/client envelope unwrapping', () => {
               mode: 'artifact',
               artifactId: 'art_pdf_1',
               artifactKind: 'pdf-preview-page-1-large',
-              url: '/proxy/files/file_pdf_1/artifacts/art_pdf_1/download',
+              url: '/proxy/files/file_pdf_0001/artifacts/art_pdf_1/download',
             },
           },
           requestId: 'req_render',
@@ -137,19 +137,19 @@ describe('@filefn/client envelope unwrapping', () => {
       });
 
       const descriptor = await client.resolveRenderable({
-        fileId: 'file_pdf_1',
+        fileId: 'file_pdf_0001',
         intent: 'preview',
       });
 
       expect(descriptor).toMatchObject({
-        fileId: 'file_pdf_1',
+        fileId: 'file_pdf_0001',
         versionId: 'ver_pdf_1',
         intent: 'preview',
         state: 'ready',
         source: {
           mode: 'artifact',
           artifactKind: 'pdf-preview-page-1-large',
-          url: '/proxy/files/file_pdf_1/artifacts/art_pdf_1/download',
+          url: '/proxy/files/file_pdf_0001/artifacts/art_pdf_1/download',
         },
       });
     });
@@ -216,7 +216,7 @@ describe('@filefn/client envelope unwrapping', () => {
         status: 200,
         json: async () => ({
           ok: true,
-          data: { fileId: 'file_0001', versionId: 'ver_0001' },
+          data: { fileId: 'file_00000001', versionId: 'ver_0001' },
           requestId: 'req_010',
         }),
       });
@@ -226,7 +226,7 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
-        fileId: 'file_0001',
+        fileId: 'file_00000001',
       });
 
       // The uploadSessionId should be set after the upload completes
@@ -299,7 +299,7 @@ describe('@filefn/client envelope unwrapping', () => {
         status: 200,
         json: async () => ({
           ok: true,
-          data: { fileId: 'file_0001', versionId: 'ver_0001' },
+          data: { fileId: 'file_00000001', versionId: 'ver_0001' },
           requestId: 'req_010',
         }),
       });
@@ -308,12 +308,12 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
-        fileId: 'file_0001',
+        fileId: 'file_00000001',
       });
 
       const result = await handle.done();
 
-      expect(result.fileId).toBe('file_0001');
+      expect(result.fileId).toBe('file_00000001');
       expect(result.versionId).toBe('ver_0001');
     });
   });
@@ -415,7 +415,7 @@ describe('@filefn/client envelope unwrapping', () => {
             status: 200,
             json: async () => ({
               ok: true,
-              data: { recorded: true, fileId: 'file_0001', versionId: 'ver_0001' },
+              data: { recorded: true, fileId: 'file_00000001', versionId: 'ver_0001' },
             }),
           };
         }
@@ -432,7 +432,7 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
-        fileId: 'file_0001',
+        fileId: 'file_00000001',
       });
 
       // Actually complete the upload to ensure init is called

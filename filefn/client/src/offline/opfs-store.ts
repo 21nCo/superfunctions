@@ -1,5 +1,61 @@
 import type { PendingLocalDescriptor } from '../types.js';
 import type { PendingLocalSourceMetadata } from '../preprocessing/types.js';
+import { createInvalidFileIdError, generateFileId, isValidFileId } from '../upload-manager.js';
+
+/**
+ * `metadata.json` layout version. Version 2 records always hold the file ID that
+ * replay sends, validated at staging. Records without it come from
+ * `@filefn/client` 0.2.0 or earlier, which wrote the session ID as the file ID
+ * when none was given.
+ */
+const PENDING_METADATA_VERSION = 2;
+
+/**
+ * File ID of a pending upload staged without one: `file_<uploadSessionId>`.
+ * Directory names are unique, so distinct sessions get distinct IDs, and every
+ * `offline_<ms>_<base36>` session ID makes a grammar-valid result.
+ */
+function sessionFileId(uploadSessionId: string): string {
+  return `file_${uploadSessionId}`;
+}
+
+/**
+ * The file ID a stored record replays with. A legacy record whose fileId is
+ * missing or equals its session ID maps to `file_<uploadSessionId>` without a
+ * write. Any other stored value is returned unchanged; if it is not
+ * grammar-valid, replay reports `FILEFN_INVALID_FILE_ID` and the record is kept.
+ */
+function resolveStoredFileId(
+  stored: { fileId?: unknown; metadataVersion?: unknown },
+  uploadSessionId: string,
+): string {
+  const fileId = stored.fileId;
+  if (typeof fileId !== 'string' || fileId === '') {
+    return sessionFileId(uploadSessionId);
+  }
+  if (stored.metadataVersion !== PENDING_METADATA_VERSION && fileId === uploadSessionId) {
+    return sessionFileId(uploadSessionId);
+  }
+  return fileId;
+}
+
+/**
+ * Whether a record is an unrewritten legacy record whose file ID comes from the
+ * `file_<uploadSessionId>` mapping. Its stored retries were spent sending the
+ * old ID, so it reads with `retryCount: 0` and replays with a fresh budget. The
+ * first metadata write (a failed replay counts a retry) stamps the current
+ * version, so the reset happens once and a later reload does not replenish it.
+ */
+function isMigratedLegacyRecord(
+  stored: { fileId?: unknown; metadataVersion?: unknown },
+  uploadSessionId: string,
+): boolean {
+  if (stored.metadataVersion === PENDING_METADATA_VERSION) {
+    return false;
+  }
+  const fileId = stored.fileId;
+  return typeof fileId !== 'string' || fileId === '' || fileId === uploadSessionId;
+}
 
 export interface PendingUpload {
   uploadSessionId: string;
@@ -102,8 +158,14 @@ export class OPFSStore {
 
   /**
    * Stage a pending upload to OPFS.
+   *
+   * An explicit `fileId` must match `file_[A-Za-z0-9_-]{8,64}`; otherwise this
+   * rejects with `FILEFN_INVALID_FILE_ID` and stages nothing. Without one, the
+   * upload gets `file_<uploadSessionId>`, or a generated ID when that is not
+   * grammar-valid.
    */
   async stagePendingUpload(upload: PendingUpload): Promise<void> {
+    const fileId = this.resolveStagedFileId(upload);
     await this.ensureInitialized();
 
     const uploadDir = await this.rootDir!.getDirectoryHandle(upload.uploadSessionId, {
@@ -116,9 +178,9 @@ export class OPFSStore {
       await dataWritable.write(upload.fileData);
       await dataWritable.close();
 
-      const metadata = {
+      const metadata: Omit<PendingUpload, 'fileData'> = {
         uploadSessionId: upload.uploadSessionId,
-        fileId: upload.fileId || upload.uploadSessionId,
+        fileId,
         policy: upload.policy,
         idempotencyKey: upload.idempotencyKey,
         fileName: upload.fileName,
@@ -130,10 +192,7 @@ export class OPFSStore {
         retryCount: upload.retryCount,
       };
 
-      const metaFileHandle = await uploadDir.getFileHandle('metadata.json', { create: true });
-      const metaWritable = await metaFileHandle.createWritable();
-      await metaWritable.write(JSON.stringify(metadata, null, 2));
-      await metaWritable.close();
+      await this.writePendingMetadata(upload.uploadSessionId, metadata);
     } catch (error) {
       await this.rootDir!.removeEntry(upload.uploadSessionId, { recursive: true }).catch(() => {});
       throw error;
@@ -160,8 +219,6 @@ export class OPFSStore {
 
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
-        localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
         fileData,
       };
     } catch (error) {
@@ -224,7 +281,7 @@ export class OPFSStore {
       url = URL.createObjectURL(blob);
       this.localObjectUrls.set(upload.uploadSessionId, url);
     }
-    const resolvedFileId = upload.fileId ?? upload.uploadSessionId;
+    const resolvedFileId = upload.fileId ?? sessionFileId(upload.uploadSessionId);
     const resolvedLocalSource = upload.localSource ?? deriveFallbackLocalSource(upload);
 
     return {
@@ -311,10 +368,12 @@ export class OPFSStore {
       const metaFileHandle = await uploadDir.getFileHandle('metadata.json');
       const metaFile = await metaFileHandle.getFile();
       const metaText = await metaFile.text();
-      const metadata = JSON.parse(metaText);
+      const { metadataVersion, ...metadata } = JSON.parse(metaText);
+      const stored = { fileId: metadata.fileId, metadataVersion };
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
+        fileId: resolveStoredFileId(stored, uploadSessionId),
+        retryCount: isMigratedLegacyRecord(stored, uploadSessionId) ? 0 : metadata.retryCount,
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
       };
     } catch {
@@ -333,8 +392,23 @@ export class OPFSStore {
     });
     const metaFileHandle = await uploadDir.getFileHandle('metadata.json', { create: true });
     const metaWritable = await metaFileHandle.createWritable();
-    await metaWritable.write(JSON.stringify(metadata, null, 2));
+    // Written fileIds are already resolved, so a legacy record rewritten here
+    // (for example by incrementRetryCount) keeps the ID it replays with.
+    await metaWritable.write(
+      JSON.stringify({ ...metadata, metadataVersion: PENDING_METADATA_VERSION }, null, 2),
+    );
     await metaWritable.close();
+  }
+
+  private resolveStagedFileId(upload: PendingUpload): string {
+    if (upload.fileId !== undefined && upload.fileId !== null) {
+      if (!isValidFileId(upload.fileId)) {
+        throw createInvalidFileIdError(upload.fileId);
+      }
+      return upload.fileId;
+    }
+    const derived = sessionFileId(upload.uploadSessionId);
+    return isValidFileId(derived) ? derived : generateFileId();
   }
 
   private revokeLocalObjectUrl(uploadSessionId: string): void {
