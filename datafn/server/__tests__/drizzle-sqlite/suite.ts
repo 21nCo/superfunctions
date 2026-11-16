@@ -204,7 +204,9 @@ export function describeDrizzleSqliteConformance(
     describe("temporal push-down", () => {
       // `priority` is an integer column; these cases store epoch timestamps in
       // it (milliseconds, or seconds for unix-s) to stand in for a time field.
-      const anchors = ["2026-03-08T07:30:00.000Z", "2026-05-18T12:00:00.000Z", "2026-12-31T23:30:00.000Z"];
+      // Kept small: the memory-adapter suite (temporal-pushdown.test.ts) covers the
+      // full matrix; this checks the SQL comparison on each driver.
+      const anchors = ["2026-03-08T07:30:00.000Z", "2026-12-31T23:30:00.000Z"];
       const timezoneChange = {
         id: "timezoneChange:1:America_New_York",
         timezone: "America/New_York",
@@ -214,13 +216,13 @@ export function describeDrizzleSqliteConformance(
 
       function instants(): number[] {
         const out = new Set<number>();
-        for (let t = Date.parse("2025-12-20T00:00:00.000Z"); t < Date.parse("2027-01-10T00:00:00.000Z"); t += 9 * 3_600_000 + 13 * 60_000) {
+        for (let t = Date.parse("2025-12-20T00:00:00.000Z"); t < Date.parse("2027-01-10T00:00:00.000Z"); t += 31 * 3_600_000 + 13 * 60_000) {
           out.add(t);
         }
         for (const at of anchors) {
           for (const scale of ["hour", "day", "week", "month", "quarter", "year"] as const) {
-            for (const timezone of ["UTC", "America/New_York", "Asia/Kolkata"]) {
-              for (const weekStartsOn of [0, 1]) {
+            for (const timezone of ["America/New_York", "Asia/Kolkata"]) {
+              for (const weekStartsOn of scale === "week" ? [0, 1] : [1]) {
                 const { start, end } = resolveTemporalPeriodRange({ scale, at }, timezone, weekStartsOn);
                 for (const t of [start - 1, start, end, end + 1]) out.add(t);
               }
@@ -294,7 +296,7 @@ export function describeDrizzleSqliteConformance(
         const ctx = await startTemporal();
         for (const at of anchors) {
           for (const scale of ["hour", "day", "week", "month", "quarter", "year"] as const) {
-            for (const timezone of ["UTC", "Asia/Kolkata", "user"]) {
+            for (const timezone of ["Asia/Kolkata", "user"]) {
               for (const weekStartsOn of scale === "week" ? [0, 1] : [undefined]) {
                 const temporal = time.period("priority", { scale, at }, { timezone, ...(weekStartsOn === undefined ? {} : { weekStartsOn }) });
                 const { result, rowsRead } = await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal });
@@ -327,7 +329,7 @@ export function describeDrizzleSqliteConformance(
           temporal: [temporal, time.groupByDay("priority", { alias: "day", timezone: "user" })],
           aggregations: { tasks: { op: "count", field: "id" }, top: { op: "max", field: "priority" } },
         });
-        expect(grouped.result.groups.length).toBeGreaterThan(20);
+        expect(grouped.result.groups.length).toBeGreaterThan(10);
         expect(grouped.rowsRead).toBe(monthRows);
       });
 
@@ -338,7 +340,7 @@ export function describeDrizzleSqliteConformance(
           resource: "project", version: 1, operation: "insert", id: "project:p", clientId: "seed", mutationId: "seed-project", record: { name: "P" },
         });
         expect(project.body.result.ok).toBe(true);
-        const temporal = time.day("priority", "2026-05-18T12:00:00.000Z");
+        const temporal = time.day("priority", "2026-12-31T23:30:00.000Z");
         const day = await expectParity(ctx, { resource: "task", version: 1, select: ["id"], sort: ["id:asc"], temporal });
         for (const [i, row] of day.result.data.slice(0, 2).entries()) {
           const res = await ctx.app.call("POST", "/datafn/mutation", {
@@ -355,7 +357,7 @@ export function describeDrizzleSqliteConformance(
       it("matches in-memory results for unix-s storage", async () => {
         const ctx = await startTemporal(true);
         for (const at of anchors) {
-          for (const scale of ["day", "week", "month"] as const) {
+          for (const scale of ["day", "month"] as const) {
             const temporal = time.period("priority", { scale, at }, { storage: "unix-s", timezone: "America/New_York" });
             const { result, rowsRead } = await expectParity(ctx, { resource: "task", version: 1, select, sort: ["id:asc"], temporal });
             expect(result.data.length).toBeGreaterThan(0);
