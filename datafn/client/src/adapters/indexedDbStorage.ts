@@ -545,6 +545,54 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     });
   }
 
+  /**
+   * Write many records in one readwrite transaction. Either every record is
+   * stored or, if any put fails, the transaction aborts and none are.
+   */
+  async upsertRecords(
+    resource: string,
+    records: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    this.validateTableName(resource);
+    if (records.length === 0) return;
+    const storageRecords = records.map((record) => cloneForStorage(record));
+    // getStore repairs a missing object store, as upsertRecord does.
+    const store = await this.getStore(resource, "readwrite");
+    const tx = store.transaction;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error ?? new Error("Transaction aborted"));
+      };
+      tx.oncomplete = () => {
+        settled = true;
+        resolve();
+      };
+      // A failed put's error event reaches the transaction before the abort
+      // sets tx.error, so take the error from the failing request.
+      tx.onerror = (event) => fail((event.target as IDBRequest | null)?.error ?? tx.error);
+      tx.onabort = () => fail(tx.error);
+      try {
+        for (const record of storageRecords) {
+          store.put(record);
+        }
+      } catch (error) {
+        // A put that throws synchronously (e.g. a record without a key) must
+        // not let the records queued before it commit.
+        tx.onabort = null;
+        tx.onerror = null;
+        try {
+          tx.abort();
+        } catch {
+          // Already finished or aborting.
+        }
+        fail(error);
+      }
+    });
+  }
+
   async deleteRecord(resource: string, id: string): Promise<void> {
     this.validateTableName(resource);
     const store = await this.getStore(resource, "readwrite");

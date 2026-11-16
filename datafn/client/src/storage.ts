@@ -60,6 +60,14 @@ export interface DatafnStorageAdapter {
     resource: string,
     record: Record<string, unknown>,
   ): Promise<void>;
+  /**
+   * Optional bulk upsert. Adapters that implement it write all records in one
+   * backend transaction; callers fall back to `upsertRecord` per record.
+   */
+  upsertRecords?(
+    resource: string,
+    records: Array<Record<string, unknown>>,
+  ): Promise<void>;
   deleteRecord(resource: string, id: string): Promise<void>;
   
   /**

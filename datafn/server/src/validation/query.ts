@@ -17,6 +17,8 @@ import {
   checkPrototypePollution,
   getTemporalGroupAliases,
   parseSortTerm,
+  resolveCapabilities,
+  getCapabilityFields,
 } from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
 
@@ -283,7 +285,9 @@ export function validateQuery(
   }
 
   if (q.temporal !== undefined) {
-    const temporalResult = validateTemporal(q, fieldNames);
+    const temporalResult = validateTemporal(q, fieldNames, (field) =>
+      resolveFieldType(index, resourceName, field),
+    );
     if (!temporalResult.ok) {
       return temporalResult;
     }
@@ -608,9 +612,37 @@ function validateGroupBy(
   return vOk(undefined);
 }
 
+/**
+ * Declared type of a resource field, and whether DataFn itself injects it
+ * through a capability (e.g. createdAt). Capability date fields are always
+ * written by the server as epoch milliseconds; user-declared date fields may
+ * hold ISO strings or epoch numbers.
+ */
+function resolveFieldType(
+  index: SchemaIndex,
+  resourceName: string,
+  field: string,
+): { type: string; capability: boolean } | undefined {
+  const resource = index.schema.resources.find((r) => r.name === resourceName);
+  if (!resource) return undefined;
+  // Capability fields first: schema validation copies them into
+  // `resource.fields`, so finding one there doesn't make it user-declared.
+  const capabilityFields = getCapabilityFields(
+    resolveCapabilities(index.schema.capabilities as any, resource.capabilities as any) as any,
+  ) as Array<{ name: string; type: string }>;
+  const injected = capabilityFields.find((f) => f.name === field);
+  if (injected) return { type: injected.type, capability: true };
+  const declared = resource.fields.find((f) => f.name === field);
+  return declared ? { type: declared.type, capability: false } : undefined;
+}
+
+/** Temporal storage hints that compile to non-numeric bounds. */
+const NON_NUMERIC_TEMPORAL_STORAGE = new Set(["date", "iso"]);
+
 function validateTemporal(
   q: Record<string, unknown>,
   fieldNames: Set<string>,
+  fieldType: (field: string) => { type: string; capability: boolean } | undefined = () => undefined,
 ): ValidationResult<void> {
   const clauses = Array.isArray(q.temporal) ? q.temporal : [q.temporal];
   const validScales = new Set(["hour", "day", "week", "month", "quarter", "year"]);
@@ -631,6 +663,24 @@ function validateTemporal(
     }
     if (temporal.storage !== undefined && !validStorage.has(String(temporal.storage))) {
       return vErr("DFQL_INVALID", "Invalid temporal storage", `${path}.storage`);
+    }
+    // Reject hints that can never match how the field is stored: number
+    // fields hold numbers (no Date/ISO bounds), and capability date fields
+    // such as createdAt hold epoch milliseconds (only unix-ms matches).
+    const target = fieldType(temporal.field);
+    const storage = temporal.storage === undefined ? undefined : String(temporal.storage);
+    const mismatched =
+      storage !== undefined &&
+      ((target?.type === "number" && NON_NUMERIC_TEMPORAL_STORAGE.has(storage)) ||
+        (target?.type === "date" && target.capability && storage !== "unix-ms"));
+    if (mismatched) {
+      return vErr(
+        "DFQL_INVALID",
+        target!.type === "date"
+          ? `Invalid DFQL: temporal storage "${storage}" does not match ${temporal.field}, which DataFn stores as epoch milliseconds; use "unix-ms" (the default)`
+          : `Invalid DFQL: temporal storage "${storage}" does not match number field ${temporal.field}`,
+        `${path}.storage`,
+      );
     }
     if (temporal.period !== undefined) {
       if (typeof temporal.period !== "object" || temporal.period === null || Array.isArray(temporal.period)) {

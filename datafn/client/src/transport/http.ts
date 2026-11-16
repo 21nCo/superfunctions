@@ -22,6 +22,43 @@ export interface DatafnHttpTransportOptions {
 }
 
 /**
+ * Copy a 429 response's Retry-After header (delta seconds or an HTTP date)
+ * into the error body as `error.details.retryAfterMs`, so callers that only
+ * see the parsed body can wait as long as the server asked.
+ */
+function attachRetryAfter(result: unknown, header: string | null): void {
+  if (!header || !result || typeof result !== "object") return;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return;
+  const trimmed = header.trim();
+  let retryAfterMs: number | undefined;
+  if (/^\d+$/.test(trimmed)) {
+    retryAfterMs = Number(trimmed) * 1000;
+  } else {
+    const at = Date.parse(trimmed);
+    if (!Number.isNaN(at)) retryAfterMs = Math.max(0, at - Date.now());
+  }
+  if (retryAfterMs === undefined) return;
+  const target = error as { details?: unknown };
+  const details =
+    target.details && typeof target.details === "object"
+      ? (target.details as Record<string, unknown>)
+      : {};
+  target.details = { ...details, retryAfterMs };
+}
+
+/** Error codes a DataFn server or route sends with a 429 rate-limit response. */
+const RATE_LIMIT_CODES = new Set(["RATE_LIMITED", "DATAFN_ROUTE_RATE_LIMITED"]);
+
+/** True when the body is a DataFn error carrying a rate-limit code. */
+function isRateLimitErrorBody(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return false;
+  return RATE_LIMIT_CODES.has(String((error as { code?: unknown }).code));
+}
+
+/**
  * Default HTTP Transport for DataFn
  * Uses global fetch() to communicate with a remote DataFn server.
  */
@@ -120,9 +157,26 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
         if (route && error?.name !== "AbortError") throw new DatafnRegionalTransportError("DATAFN_REGIONAL_ENDPOINT_UNAVAILABLE");
         throw error;
       });
-      const result = await response.json().catch(() => null);
+      let result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (response.status === 429) {
+          // A 429 without a DataFn rate-limit body (e.g. from a gateway, with
+          // no body or its own error shape) is still a rate limit: report it
+          // as one so callers can wait and retry.
+          if (!isRateLimitErrorBody(result)) {
+            const message = (result as { error?: { message?: unknown } } | null)?.error?.message;
+            result = {
+              ok: false,
+              error: {
+                code: "RATE_LIMITED",
+                message: typeof message === "string" && message ? message : "Too many requests",
+                details: { path: "$" },
+              },
+            };
+          }
+          attachRetryAfter(result, response.headers.get("Retry-After"));
+        }
         const event = { endpoint, url, status: response.status, result };
         const routingCode = result?.error?.code;
         if (route && ["DATAFN_ROUTE_TICKET_EXPIRED", "DATAFN_REGION_MISMATCH", "DATAFN_NAMESPACE_MOVING"].includes(routingCode)) {

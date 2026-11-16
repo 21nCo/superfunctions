@@ -20,13 +20,20 @@ import {
 } from "@datafn/core";
 import type { DatafnLogger } from "../logger.js";
 import type { DatafnSchema } from "../core-types.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../validation/authz.js";
 
 function relationNameFor(relation: { relation?: string; inverse?: string; to: string | readonly string[] }): string {
   if (relation.relation) return relation.relation;
   if (relation.inverse) return relation.inverse;
   return typeof relation.to === "string" ? relation.to : relation.to[0];
 }
+
+/** Ids per `in` lookup when loading rows for every record of a table. */
+const FIND_BY_IDS_CHUNK = 30_000;
 
 export class DbDataStore implements DataStore {
   private recordsCache: Map<string, Record<string, unknown>[]> = new Map();
@@ -52,6 +59,31 @@ export class DbDataStore implements DataStore {
     );
   }
 
+  /**
+   * `field IN ids` in chunks, so a lookup over every record of a large table
+   * stays under a driver's bound-parameter limit (Postgres: 65,535).
+   */
+  private static async findManyByIds(
+    db: Adapter,
+    model: string,
+    field: string,
+    ids: readonly unknown[],
+    namespace: string,
+  ): Promise<Record<string, unknown>[]> {
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < ids.length; i += FIND_BY_IDS_CHUNK) {
+      const chunk = await db.findMany({
+        model,
+        where: [{ field, operator: "in", value: ids.slice(i, i + FIND_BY_IDS_CHUNK) }],
+        namespace,
+      });
+      // Append one by one: spreading a very large chunk into push() can
+      // exceed the engine's argument limit.
+      for (const row of chunk as Record<string, unknown>[]) rows.push(row);
+    }
+    return rows;
+  }
+
   private static async applyActorVisibilityFilter(
     store: DbDataStore,
     db: Adapter,
@@ -60,6 +92,10 @@ export class DbDataStore implements DataStore {
     actorId: string | undefined,
     logger?: DatafnLogger,
   ): Promise<void> {
+    // The namespace owner sees every row; skip the per-row access lookups.
+    if (isNamespaceOwnerActor(actorId, namespace)) {
+      return;
+    }
     for (const [resourceName, rows] of store.recordsCache.entries()) {
       if (!isPrivateShareableResource(schema, resourceName)) {
         continue;
@@ -186,32 +222,8 @@ export class DbDataStore implements DataStore {
 
     // Track which relations we've already loaded to avoid duplicates
     const loaded = new Set<string>();
-    const loadRecordsByIds = async (
-      endpoint: string | readonly string[],
-      ids: string[],
-    ): Promise<void> => {
-      const idsByResource = new Map<string, string[]>();
-      for (const id of ids) {
-        const resource = DbDataStore.resolveEndpointResourceForId(schema, endpoint, id);
-        if (!resource) continue;
-        const current = idsByResource.get(resource) ?? [];
-        current.push(id);
-        idsByResource.set(resource, current);
-      }
-      for (const [resource, resourceIds] of idsByResource.entries()) {
-        const rows = resourceIds.length > 0
-          ? await db.findMany({
-              model: resource,
-              where: [{ field: "id", operator: "in", value: resourceIds }],
-              namespace,
-            })
-          : [];
-        store.mergeRecords(resource, rows);
-      }
-      for (const resource of endpointList(endpoint)) {
-        if (!store.recordsCache.has(resource)) store.recordsCache.set(resource, []);
-      }
-    };
+    const loadRecordsByIds = (endpoint: string | readonly string[], ids: string[]) =>
+      DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, endpoint, ids);
 
     // 2. Process each select token (first pass: load first-level related resources)
     for (const token of query.select) {
@@ -259,11 +271,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const fromResource of endpointList(rel.from)) {
               const rows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: fromResource,
-                    where: [{ field: fkField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, fromResource, fkField, primaryIds, namespace)
                 : [];
               store.recordsCache.set(fromResource, rows);
             }
@@ -277,11 +285,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const toResource of endpointList(rel.to)) {
               const rows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: toResource,
-                    where: [{ field: fkField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, toResource, fkField, primaryIds, namespace)
                 : [];
               store.recordsCache.set(toResource, rows);
             }
@@ -316,11 +320,7 @@ export class DbDataStore implements DataStore {
             try {
               const filterField = isForward ? fromCol : toCol;
               joinRows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: tableName,
-                    where: [{ field: filterField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, tableName, filterField, primaryIds, namespace)
                 : [];
             } catch (error) {
               logger?.warn("forPushdownResult: many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
@@ -360,10 +360,83 @@ export class DbDataStore implements DataStore {
     }
 
     // 3. Second pass: handle nested tokens (e.g. "tasks.tags.*")
-    //    After loading first-level records, load second-level relations for each
-    //    intermediate resource that was populated above.
+    await DbDataStore.loadNestedSelectRelations(
+      store,
+      db,
+      primaryResource,
+      query.select,
+      schema,
+      namespace,
+      logger,
+    );
+
+    await DbDataStore.applyActorVisibilityFilter(
+      store,
+      db,
+      schema,
+      namespace,
+      actorId,
+      logger,
+    );
+    return store;
+  }
+
+  /**
+   * Load the endpoint records with the given ids into the store, grouped by
+   * the resource each id belongs to.
+   */
+  private static async loadEndpointRecordsByIds(
+    store: DbDataStore,
+    db: Adapter,
+    schema: any,
+    namespace: string,
+    endpoint: string | readonly string[],
+    ids: string[],
+  ): Promise<void> {
+    const idsByResource = new Map<string, string[]>();
+    for (const id of ids) {
+      const resource = DbDataStore.resolveEndpointResourceForId(schema, endpoint, id);
+      if (!resource) continue;
+      const current = idsByResource.get(resource) ?? [];
+      current.push(id);
+      idsByResource.set(resource, current);
+    }
+    for (const [resource, resourceIds] of idsByResource.entries()) {
+      const rows = resourceIds.length > 0
+        ? await DbDataStore.findManyByIds(db, resource, "id", resourceIds, namespace)
+        : [];
+      store.mergeRecords(resource, rows);
+    }
+    for (const resource of endpointList(endpoint)) {
+      if (!store.recordsCache.has(resource)) store.recordsCache.set(resource, []);
+    }
+  }
+
+  /** Whether loadNestedSelectRelations loads this second-level relation. */
+  private static nestedPassLoads(match: { relation: any; direction: string }): boolean {
+    const type = match.relation.type;
+    return (
+      type === "many-many" ||
+      (match.direction === "forward" && (type === "one-many" || type === "many-one"))
+    );
+  }
+
+  /**
+   * Second-level relations of nested select tokens (e.g. "tasks.tags.*"):
+   * after the first-level records are in the store, load each nested
+   * relation from those intermediate records with targeted lookups.
+   */
+  private static async loadNestedSelectRelations(
+    store: DbDataStore,
+    db: Adapter,
+    primaryResource: string,
+    select: readonly unknown[],
+    schema: any,
+    namespace: string,
+    logger?: DatafnLogger,
+  ): Promise<void> {
     const loadedNested = new Set<string>();
-    for (const token of query.select) {
+    for (const token of select) {
       if (typeof token !== "string") continue;
       const parts = token.split(".");
       if (parts.length < 3) continue; // only nested tokens
@@ -405,11 +478,7 @@ export class DbDataStore implements DataStore {
             let joinRows2: Record<string, unknown>[] = [];
             try {
               joinRows2 = intermediateIds.length > 0
-                ? await db.findMany({
-                    model: tableName2,
-                    where: [{ field: isF2 ? fromCol2 : toCol2, operator: "in", value: intermediateIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, tableName2, isF2 ? fromCol2 : toCol2, intermediateIds, namespace)
                 : [];
             } catch (error) {
               logger?.warn("forPushdownResult: nested many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
@@ -430,7 +499,7 @@ export class DbDataStore implements DataStore {
               ),
             ];
             try {
-              await loadRecordsByIds(
+              await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, 
                 relationTargetEndpoint(rel2, secondMatch.direction),
                 relatedIds2,
               );
@@ -444,11 +513,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const targetResource of endpointList(rel2.to)) {
               const rows2 = intermediateIds.length > 0
-                ? await db.findMany({
-                    model: targetResource,
-                    where: [{ field: fkField2, operator: "in", value: intermediateIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, targetResource, fkField2, intermediateIds, namespace)
                 : [];
               store.mergeRecords(targetResource, rows2);
             }
@@ -462,7 +527,7 @@ export class DbDataStore implements DataStore {
             intermediateRecords.map((r) => r[fkField2] as string).filter((v) => v != null && v !== ""),
           )];
           try {
-            await loadRecordsByIds(rel2.to, fkIds2);
+            await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, rel2.to, fkIds2);
           } catch (error) {
             logger?.warn("forPushdownResult: nested many-one forward load failed", { error: String(error), operation: "db-store-pushdown" });
             endpointList(rel2.to).forEach((resource) => store.recordsCache.set(resource, []));
@@ -470,16 +535,6 @@ export class DbDataStore implements DataStore {
         }
       }
     }
-
-    await DbDataStore.applyActorVisibilityFilter(
-      store,
-      db,
-      schema,
-      namespace,
-      actorId,
-      logger,
-    );
-    return store;
   }
 
   /**
@@ -648,9 +703,12 @@ export class DbDataStore implements DataStore {
 
                 for (const nestedRel of schema.relations) {
                   const nestedMatch = findRelationMatch(schema, targetResource, nestedRelation);
-                  if (nestedMatch?.relation === nestedRel) {
-                    addRelationLoad(nestedRel, targetResource, nestedRelation);
-                  }
+                  if (!nestedMatch || nestedMatch.relation !== nestedRel) continue;
+                  // A nested projection the nested pass loads from the
+                  // first-level records (see loadNestedSelectRelations below)
+                  // is left to it; any other is discovered here.
+                  if (parts.length >= 3 && DbDataStore.nestedPassLoads(nestedMatch)) continue;
+                  addRelationLoad(nestedRel, targetResource, nestedRelation);
                 }
               }
             }
@@ -798,14 +856,13 @@ export class DbDataStore implements DataStore {
       const secondaryEndpoint = primaryIsFrom ? (rel as any).to : (rel as any).from;
 
       try {
-        let joinRows: Record<string, unknown>[] = [];
-        if (primaryIds.length > 0) {
-          joinRows = await db.findMany({
-            model: tableName,
-            where: [{ field: filterField, operator: "in", value: primaryIds }],
-            namespace,
-          });
-        }
+        const joinRows = await DbDataStore.findManyByIds(
+          db,
+          tableName,
+          filterField,
+          primaryIds,
+          namespace,
+        );
 
         const normalizedRows = DbDataStore.normalizeJoinRows(joinRows, fromCol, toCol);
         const rowsForRelation = DbDataStore.filterJoinRowsForResource(
@@ -835,15 +892,13 @@ export class DbDataStore implements DataStore {
         }
 
         for (const [secondaryModel, ids] of idsByResource.entries()) {
-          const records = ids.length > 0
-            ? await db.findMany({
-                model: secondaryModel,
-                where: [
-                  { field: "id", operator: "in", value: ids },
-                ],
-                namespace,
-              })
-              : [];
+          const records = await DbDataStore.findManyByIds(
+            db,
+            secondaryModel,
+            "id",
+            ids,
+            namespace,
+          );
           store.mergeRecords(secondaryModel, records);
           manyManySecondaries.add(secondaryModel);
         }
@@ -911,22 +966,14 @@ export class DbDataStore implements DataStore {
             ),
           ];
           if (fkValues.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: "id", operator: "in", value: fkValues }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, "id", fkValues, namespace);
           }
         } else if ((rel as any).type === "many-one" && !isForward) {
           // Inverse many-one: secondary records have FK pointing to primary
           const fkField =
             (rel as any).fkField || (rel as any).foreignKey || `${(rel as any).relation}Id`;
           if (primaryIds.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: fkField, operator: "in", value: primaryIds }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
           }
         } else if ((rel as any).type === "one-many" && isForward) {
           // FK on secondary records pointing to primary
@@ -936,11 +983,7 @@ export class DbDataStore implements DataStore {
             (rel as any).inverse ||
             `${query.resource}Id`;
           if (primaryIds.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: fkField, operator: "in", value: primaryIds }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
           }
         } else if ((rel as any).type === "one-many" && !isForward) {
           // Inverse one-many: primary has FK pointing to secondary (one side)
@@ -957,11 +1000,7 @@ export class DbDataStore implements DataStore {
             ),
           ];
           if (fkValues.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: "id", operator: "in", value: fkValues }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, "id", fkValues, namespace);
           }
         } else {
           // EXE-022: unhandled relation type → empty result with warning (no full-table scan)
@@ -978,6 +1017,20 @@ export class DbDataStore implements DataStore {
         logger?.warn("forQuery: secondary resource load failed", { error: String(error), resource: secondaryResource, operation: "db-store-forQuery" });
         store.recordsCache.set(secondaryResource, []);
       }
+    }
+
+    // Step 5: second-level relations of nested select tokens, loaded from the
+    // first-level records (as for a pushdown result).
+    if (Array.isArray(query.select) && schema?.relations) {
+      await DbDataStore.loadNestedSelectRelations(
+        store,
+        db,
+        query.resource,
+        query.select,
+        schema,
+        namespace,
+        logger,
+      );
     }
 
     await DbDataStore.applyActorVisibilityFilter(

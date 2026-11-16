@@ -62,7 +62,26 @@ export type PullResult = PullResultGlobalCursor | PullResultCanonical;
 export async function applyCloneResult(
   storage: DatafnStorageAdapter,
   result: CloneResult,
+  options: {
+    /**
+     * Mark each resource "ready" once its records are written (default true).
+     * A paginated clone passes false for every page, so a resource stays
+     * "hydrating" (and is cloned again after an interruption) until the
+     * caller has applied its last page.
+     */
+    markReady?: boolean;
+    /**
+     * Keep a resource's stored cursor when it is older than the result's
+     * (default false). A paginated or capped clone reads its batches at
+     * different server sequences, and may resume an interrupted pass; keeping
+     * the earliest cursor durably lets the next pull replay every change,
+     * including deletions, to records an earlier batch or pass stored.
+     */
+    keepEarliestCursor?: boolean;
+  } = {},
 ): Promise<void> {
+  const markReady = options.markReady ?? true;
+  const keepEarliestCursor = options.keepEarliestCursor ?? false;
   if (!result.ok) {
     return; // Don't apply failed results
   }
@@ -74,19 +93,26 @@ export async function applyCloneResult(
     // Transition to hydrating state before applying
     await storage.setHydrationState(resource, "hydrating");
 
-    // Upsert all records by id
-    for (const record of records) {
-      await storage.upsertRecord(resource, record);
+    // Upsert all records by id, in one transaction when the adapter can
+    if (storage.upsertRecords) {
+      await storage.upsertRecords(resource, records);
+    } else {
+      for (const record of records) {
+        await storage.upsertRecord(resource, record);
+      }
     }
 
     // Set cursor per resource
     const cursor = cursors[resource];
     if (cursor !== undefined) {
-      await storage.setCursor(resource, cursor);
+      const stored = keepEarliestCursor ? await storage.getCursor(resource) : null;
+      await storage.setCursor(resource, earlierCursor(stored, cursor));
     }
 
     // Transition to ready after applying
-    await storage.setHydrationState(resource, "ready");
+    if (markReady) {
+      await storage.setHydrationState(resource, "ready");
+    }
   }
 
   // Apply join rows if present (TV-SYNC-006, TV-REL-002)
@@ -104,6 +130,13 @@ export async function applyCloneResult(
         }
       }
     }
+  }
+
+  // A clone that keeps its earliest per-resource cursor must not advance the
+  // global cursor past it either: push and WebSocket paths compare against
+  // the global cursor to decide whether a pull is still needed.
+  if (keepEarliestCursor) {
+    return;
   }
 
   // Calculate and set global cursor
@@ -313,4 +346,16 @@ async function assertCursorNonRegressing(
     error.details = { path };
     throw error;
   }
+}
+
+/**
+ * The older of two per-resource sequence cursors. A missing or non-numeric
+ * stored cursor yields the candidate.
+ */
+export function earlierCursor(stored: string | null, candidate: string): string {
+  if (stored === null) return candidate;
+  const a = Number(stored);
+  const b = Number(candidate);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return candidate;
+  return a < b ? stored : candidate;
 }

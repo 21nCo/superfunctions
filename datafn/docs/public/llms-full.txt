@@ -24470,6 +24470,9 @@ interface DatafnStorageAdapter {
   getRecord(resource: string, id: string): Promise<Record<string, unknown> | null>;
   listRecords(resource: string): Promise<Record<string, unknown>[]>;
   upsertRecord(resource: string, record: Record<string, unknown>): Promise<void>;
+  // Optional: write many records in one transaction (used by clone pages).
+  // When absent, callers fall back to upsertRecord per record.
+  upsertRecords?(resource: string, records: Array<Record<string, unknown>>): Promise<void>;
   deleteRecord(resource: string, id: string): Promise<void>;
   mergeRecord(
     resource: string,
