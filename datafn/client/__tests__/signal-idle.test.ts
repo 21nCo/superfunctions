@@ -120,6 +120,24 @@ describe("idle live queries", () => {
     again();
   });
 
+  it("deliver a combined signal's value once to a returning reader", async () => {
+    mockRemote();
+    const client = createClient();
+    const counts = (client as any).resourceCountsSignal({ resources: ["note"] });
+    const first: unknown[] = [];
+    const unsubscribe = counts.subscribe((value: unknown) => first.push(value));
+    await settle();
+    expect(first.length).toBeGreaterThan(0);
+    unsubscribe();
+    await settle();
+
+    const returning: unknown[] = [];
+    const again = counts.subscribe((value: unknown) => returning.push(value));
+    await settle();
+    expect(returning).toEqual([{ note: 0 }]);
+    again();
+  });
+
   it("still re-run on writes while subscribed", async () => {
     const queried = mockRemote();
     const client = createClient();
