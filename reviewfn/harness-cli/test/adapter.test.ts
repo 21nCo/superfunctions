@@ -256,10 +256,12 @@ describe("CliHarnessAdapter model reporting", () => {
   }, 30_000);
 
   it("bounds a stderr-regex reporter by the run's own deadline, with no caller signal, keeping its earlier mismatch", async () => {
+    // The CLI returns at once, so only the stalled reporter can use up the 1.2 s harness timeout.
+    const runner: CommandRunner = async (_command, args) => ({ code: 0, signal: null, stdout: args.includes("--version") ? "fake-cli version 1.2.3\n" : "", stderr: args.includes("--version") ? "" : `served model: other-model\n${"a".repeat(40)}!`, timedOut: false, canceled: false });
     const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_200 } };
-    const reporter = String.raw`stderr-regex:served model: (\S+)|(?:a+)+$`;
+    const config = configuration(profile({ modelReport: String.raw`stderr-regex:served model: (\S+)|(?:a+)+$` }), "fake-model-1");
     const started = Date.now();
-    const output = await run(profile({ modelReport: reporter, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1", { policy });
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config, { policy }));
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toContain("model reporter did not finish");
     expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
@@ -369,8 +371,7 @@ describe("CliHarnessAdapter model reporting", () => {
     ["additionalProperties: true", { type: "object", additionalProperties: true, minProperties: 1 }],
   ])("keeps a nested report field the schema allows through %s, completing in one call", async (_name, meta) => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta }, required: [...lensOutputSchema.required, "meta"] };
-    const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
-    expect(structuredOutputValidator(withModelReportField(outputSchema, "json-path:meta.model"))({ ...valid, meta: { model: "m" } })).toEqual([]);
+    expect(withModelReportField(outputSchema, "json-path:meta.model").properties).toHaveProperty("meta", expect.objectContaining({ properties: expect.objectContaining({ model: expect.objectContaining({ type: "string" }) }), required: ["model"] }));
     const answer = (model: string) => profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model } })] });
     const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
     expect(output.error).toBeUndefined();
@@ -421,13 +422,27 @@ describe("CliHarnessAdapter model reporting", () => {
   ] as const)("shows a contract that accepts a report %s, and removes it where the slot's schema forbids it", async (_name, field, dotted, schema, value) => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [field]: schema } };
     const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
-    expect(structuredOutputValidator(withModelReportField(outputSchema, `json-path:${dotted}`))({ ...valid, [field]: value("m") })).toEqual([]);
+    const shown = withModelReportField(outputSchema, `json-path:${dotted}`);
+    // Strict Ajv refuses a property that a pattern also matches, so a pattern-owned report is checked by its shape.
+    if (field === "meta") expect(shown.properties).toHaveProperty("meta", expect.objectContaining({ properties: { run: expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }), required: ["model"] }) }, required: ["run"], patternProperties: { "^run$": expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }) }) } }));
+    else expect(structuredOutputValidator(shown)({ ...valid, [field]: value("m") })).toEqual([]);
     const answer = (model: string) => profile({ modelReport: `json-path:${dotted}`, extra: ["--extra-json", JSON.stringify({ [field]: value(model) })] });
     const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
     expect(await calls()).toHaveLength(1);
     expect((await run(answer("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
+  }, 30_000);
+
+  it("declares and requires a top-level report a pattern owns to a CLI that emits only declared properties", async () => {
+    const outputSchema = { ...lensOutputSchema, patternProperties: { "^model$": { type: "string" } } };
+    expect(withModelReportField(outputSchema, "json-path:model")).toMatchObject({ properties: { model: { type: "string" } }, required: expect.arrayContaining(["model"]) });
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
   }, 30_000);
 
   it("removes the report of a schema-invalid answer too deep to copy without walking it, then repairs and ends malformed", async () => {

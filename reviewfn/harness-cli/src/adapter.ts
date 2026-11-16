@@ -686,10 +686,11 @@ function declareBranches(schema: Readonly<Record<string, unknown>>, shown: Reado
 }
 
 /**
- * The node itself, its `allOf` aside: below the key's declared schema; for a key that patterns own, allowed (never
- * required, since other keys share the pattern) below each matching pattern schema, with no property beside them; or,
- * on an object schema that does not declare the key, the key declared as its additional-properties schema or, on a
- * closed object, as a new report field.
+ * The node itself, its `allOf` aside: below the key's declared schema; or, on an object schema that does not declare
+ * the key, the key declared, and required, as the one pattern or additional-properties schema that owns it or, on a
+ * closed object or with several owners, as a new report field. Each pattern schema that also applies to the key allows
+ * the rest of the report (never requires it, since other keys share the pattern), so it cannot forbid what the
+ * declared property requires.
  */
 function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[], optional: boolean): Readonly<Record<string, unknown>> {
   const owned = ownOwnership(schema, key);
@@ -698,7 +699,7 @@ function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest
     const [declared] = owned.children;
     const next = isRecord(declared) ? declarePath(declared, rest, optional) : declared;
     if (next !== declared) child = next;
-  } else if (isObjectSchema(schema) && !(owned.kind === "open" && owned.via === "pattern")) {
+  } else if (isObjectSchema(schema)) {
     const [owner] = owned.kind === "open" ? owned.children : [];
     child = owned.kind === "open" && owned.children.length === 1 && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest, optional) : reportField(rest);
   }
