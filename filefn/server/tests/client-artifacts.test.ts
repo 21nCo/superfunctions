@@ -978,7 +978,9 @@ describe('client-supplied processing artifacts', () => {
       (await storedObjects(root)).filter((path) => path.includes('-thumb-') || path.includes('.client-artifacts/'));
     /**
      * What a deleted file leaves of a server object a client upload displaced:
-     * the object, never deleted since its key may be published again, and its record.
+     * the object and its record. Its key may be published again by another
+     * file at any moment, so it is not deleted until a reclamation coordinated
+     * with publishers exists (deferred to FILE-14).
      */
     const expectOnlyDisplacedServerSmall = (objects: string[], records: { storageKey: string; kind: string }[]) => {
       expect(objects).toEqual([expect.stringMatching(/-thumb-small\.jpg$/)]);
@@ -1462,7 +1464,7 @@ describe('client-supplied processing artifacts', () => {
         return { app, serverSmall };
       }
 
-      it('is never deleted with the file, and keeps its record of the target it was stored in', async () => {
+      it('is not deleted with the file (reclamation deferred to FILE-14), and keeps its record of the target it was stored in', async () => {
         const { app, serverSmall } = await displacedOnR2(thumbnailProcessor([]));
         let deletes = 0;
         app.storageControl.failDeletes = (key) => { if (key === serverSmall) deletes += 1; return false; };
