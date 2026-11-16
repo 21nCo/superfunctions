@@ -154,15 +154,14 @@ const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
 
 /**
  * Kind of the `fileArtifacts` rows that record a client upload's own object
- * from before it is written until a row names it or it is deleted. File and
- * version cleanup leave them in place, since the upload may still be
- * writing; `cleanupOrphanedArtifacts` deletes the object once its version
- * is gone and the upload is past `UPLOAD_INTENT_GRACE_MS`.
+ * from before it is written until a row names it or it is deleted. Only the
+ * upload removes one, since only it knows it will write no more: file and
+ * version cleanup leave them in place, and `cleanupOrphanedArtifacts`
+ * deletes the object of a version that is gone on every run but keeps the
+ * row, so an object an upload stores later, or an upload that died, is
+ * still found.
  */
 export const UPLOAD_INTENT_KIND = 'filefn.upload-intent';
-
-/** How long an upload may still be writing an object its intent row records. */
-const UPLOAD_INTENT_GRACE_MS = 60 * 60 * 1000;
 
 /** True for a row kind FileFn keeps for itself rather than an artifact. */
 function isInternalKind(kind: string): boolean {
@@ -1034,8 +1033,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, purpose?: 'intent'): Promise<void> {
     if (artifactSourceOf(object) !== 'client') return;
     const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
+    let id: string | undefined;
     try {
-      const id = await journalDisplaced(object, fallbackTarget, purpose);
+      id = await journalDisplaced(object, fallbackTarget, purpose);
       await storage.deleteObject({ key: object.storageKey, target });
       await removeDisplacedRecord(id);
     } catch (error) {
@@ -1044,6 +1044,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         versionId: object.versionId,
         error: errorMessage(error),
       });
+      // An upload discarding its object writes no more, so its record becomes
+      // one that cleanup may remove once it deletes the object.
+      if (purpose === 'intent' && id !== undefined) {
+        const recordId = id;
+        await journalDisplaced(object, fallbackTarget)
+          .then(() => removeDisplacedRecord(recordId))
+          .catch(() => undefined);
+      }
     }
   }
 
@@ -1774,8 +1782,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       let replaced: FileArtifactRecord | null = null;
       let rowId = artifactId;
       try {
-        // Recorded again now the object exists, in case a sweep removed the
-        // record of an upload that outlasted its grace period.
+        // Recorded again now the object exists, should the record be gone.
         await journalDisplaced(ownObject, target, 'intent');
         let current = await findKindRow(file.fileId, version.versionId, upload.kind);
         if (!current) {
@@ -1859,18 +1866,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     /**
      * Deletes the objects recorded as displaced or as an upload's own (see
      * `DISPLACED_OBJECT_KIND`, `UPLOAD_INTENT_KIND`) for versions that no
-     * longer exist, and then their records: an upload that finished, failed
-     * or was interrupted after its file was deleted, or a delete that failed.
-     * An upload's record is left alone while the upload may still be writing.
-     * An object another row still names is kept and only its record goes. A
-     * failed delete keeps its record for the next sweep. Call it from a
-     * scheduled job; FileFn does not run it on its own.
+     * longer exist, and then their displaced records: an upload that
+     * finished, failed or was interrupted after its file was deleted, or a
+     * delete that failed. An upload's own record stays, since the upload may
+     * still store its object (see `UPLOAD_INTENT_KIND`), so its object is
+     * deleted again on each run. An object another row still names is kept
+     * and only its displaced record goes. A failed delete keeps its record
+     * for the next run. Call it from a scheduled job; FileFn does not run it
+     * on its own.
      */
     async cleanupOrphanedArtifacts(): Promise<{ deletedObjects: number; keptRecords: number }> {
       const pageSize = 100;
       const result = { deletedObjects: 0, keptRecords: 0 };
-      // Records still in place (a live version's, or a failed delete's) are
-      // skipped by the offset; removed ones shift the next page up.
+      // Records still in place (a live version's, an upload's, or a failed
+      // delete's) are skipped by the offset; removed ones shift the next page up.
       let offset = 0;
       for (;;) {
         const records = await db.findMany<FileArtifactRecord>({
@@ -1881,10 +1890,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           offset,
           namespace,
         });
-        const writingSince = Date.now() - UPLOAD_INTENT_GRACE_MS;
         for (const record of records) {
-          const writing = record.kind === UPLOAD_INTENT_KIND && Date.parse(record.createdAt) > writingSince;
-          if (writing || await findVersion(record.fileId, record.versionId)) {
+          if (await findVersion(record.fileId, record.versionId)) {
             offset += 1;
             continue;
           }
@@ -1896,7 +1903,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               await storage.deleteObject({ key: record.storageKey, target });
               result.deletedObjects += 1;
             }
-            await removeDisplacedRecord(record.artifactId);
+            if (record.kind === UPLOAD_INTENT_KIND) {
+              offset += 1;
+            } else {
+              await removeDisplacedRecord(record.artifactId);
+            }
           } catch (error) {
             offset += 1;
             result.keptRecords += 1;

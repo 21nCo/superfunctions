@@ -1058,8 +1058,8 @@ describe('client-supplied processing artifacts', () => {
   });
 
   describe('cleanupOrphanedArtifacts', () => {
-    /** Moves the clock past the time an upload may still be writing its object. */
-    const pastUploadGrace = () => {
+    /** Moves the clock hours ahead: however long an upload takes, its record must hold. */
+    const muchLater = () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
     };
@@ -1087,10 +1087,33 @@ describe('client-supplied processing artifacts', () => {
       expect(await clientObjects()).toHaveLength(1);
       expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
 
-      pastUploadGrace();
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
       expect(await clientObjects()).toEqual([]);
-      expect(await app.displacedRecords()).toEqual([]);
+      // Only the upload may remove its own record.
+      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+    });
+
+    it('deletes the object of an upload that a sweep overtook and that was then interrupted once stored', async () => {
+      const app = await createApp();
+      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
+      const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
+      const attach = app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner);
+      await held.reached;
+      await app.clientFor('owner').deleteFile(app.fileId);
+      // Hours later, with the upload still writing, a sweep runs.
+      muchLater();
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      // The upload then stores its object and nothing it writes after that lands.
+      app.databaseControl.down = true;
+      held.release();
+      await expect(attach).rejects.toThrow('database unavailable');
+      app.databaseControl.down = false;
+      expect(await clientObjects()).toHaveLength(1);
+
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await clientObjects()).toEqual([]);
     });
 
     it('deletes an upload that finished after its file was deleted and could not delete its own object', async () => {
@@ -1111,17 +1134,13 @@ describe('client-supplied processing artifacts', () => {
       await expect(attach).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
       expect(failed.fired).toBe(true);
 
-      // The object is left, and recorded although deleteFile removed the first record.
+      // The object is left, and recorded for cleanup now the upload is done with it.
       const [leftover] = await clientObjects();
       expect(await clientObjects()).toHaveLength(1);
       const records = await app.displacedRecords();
-      expect(records).toHaveLength(1);
+      expect(records).toEqual([expect.objectContaining({ kind: 'filefn.displaced-object' })]);
       expect(leftover.endsWith(records[0].storageKey)).toBe(true);
 
-      // The upload may still be writing for a while; a sweep leaves it alone till then.
-      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
-      expect(await clientObjects()).toHaveLength(1);
-      pastUploadGrace();
       // A sweep whose delete fails keeps the record; the next one deletes the object.
       failDeletes();
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 1 });
