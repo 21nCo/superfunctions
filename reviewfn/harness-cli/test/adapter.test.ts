@@ -1,17 +1,13 @@
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, runProcessGroup, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
+import { AGENT, LAUNCH } from "./launcher.js";
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
-const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
-// The CLI runs through /usr/bin/env, a trusted installed executable, since the test's own Node may live in a
-// world-writable tool cache or a Git checkout, which the adapter refuses as an executable.
-const AGENT = "/usr/bin/env";
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
 const ALLOWED_SECRET = "allowlisted-secret-value-9034";
 const MODEL = "fake model; rm -rf ~";
@@ -36,9 +32,9 @@ function profile(overrides: Partial<HarnessProfile> & { extra?: string[] } = {})
   const promptVia = rest.promptVia ?? "stdin";
   const outputVia = rest.outputVia ?? "stdout-last-json";
   return {
-    argv: [process.execPath, FIXTURE, "--state", state, ...(promptVia === "file" ? ["--prompt", "{promptFile}"] : []), ...(outputVia === "file" ? ["--out", "{outputFile}"] : []), ...extra],
+    argv: [...LAUNCH, "--state", state, ...(promptVia === "file" ? ["--prompt", "{promptFile}"] : []), ...(outputVia === "file" ? ["--out", "{outputFile}"] : []), ...extra],
     promptVia, outputVia, envAllowlist: ["ALLOWED_ONE"], modelReport: "none",
-    capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [process.execPath, FIXTURE, "--version"],
+    capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [...LAUNCH, "--version"],
     ...rest,
   };
 }
@@ -114,7 +110,7 @@ describe("CliHarnessAdapter process boundary", () => {
     const definition = profile({ extra: ["--schema", "{schemaFile}", "--workspace", "{workspace}", "--model", "{model}", "--literal", "a b; c"] });
     expect((await run(definition)).terminal).toBe("completed");
     const [call] = await calls();
-    expect(call.argv).toHaveLength(definition.argv.length - 2);
+    expect(call.argv).toHaveLength(definition.argv.length - LAUNCH.length);
     expect(call.argv.slice(2)).toEqual(["--schema", expect.stringMatching(/schema\.json$/), "--workspace", workspace, "--model", MODEL, "--literal", "a b; c"]);
     expect(cliArguments(["{model}", "x{model}", "{workspace}", "{unknown}"], { promptFile: "p", schemaFile: "s", outputFile: "o", workspace: "/w s;x", model: "m; n" })).toEqual(["m; n", "x{model}", "/w s;x", "{unknown}"]);
   }, 20_000);
@@ -259,6 +255,17 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(Date.now() - started).toBeLessThan(1_900);
   }, 30_000);
 
+  it("bounds a stderr-regex reporter by the run's own deadline, with no caller signal, keeping its earlier mismatch", async () => {
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_200 } };
+    const reporter = String.raw`stderr-regex:served model: (\S+)|(?:a+)+$`;
+    const started = Date.now();
+    const output = await run(profile({ modelReport: reporter, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1", { policy });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("model reporter did not finish");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+    expect(Date.now() - started).toBeLessThan(1_200 + 500);
+  }, 30_000);
+
   it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
     const repaired = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid-once", "--model-json", "fake-model-1"] }), "fake-model-1");
     expect(repaired.terminal).toBe("completed");
@@ -337,6 +344,51 @@ describe("CliHarnessAdapter model reporting", () => {
     const referencedRun = await run(profile({ modelReport: "json-path:meta.model", extra: answer }), "fake-model-1", { outputSchema: referenced });
     expect(referencedRun.error).toBeUndefined();
     expect(referencedRun.terminal).toBe("completed");
+  }, 30_000);
+
+  it("declares the report on a closed schema whose allOf entries are trivial, and in a closing allOf branch", async () => {
+    const wrapped = { ...lensOutputSchema, allOf: [{}, true] };
+    expect(withModelReportField(wrapped, "json-path:model").properties).toHaveProperty("model", { type: "string" });
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema: wrapped });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+    expect((await calls())[0].prompt).toContain('"model":{"type":"string"}');
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema: wrapped })).error).toMatch(/^model_mismatch/);
+    const branch = { type: "object", additionalProperties: false, properties: { source: { type: "string" } } };
+    const composed = { type: "object", properties: { meta: { type: "object", allOf: [branch] } } };
+    expect(withModelReportField(composed, "json-path:meta.model")).toEqual({ ...composed, properties: { meta: { type: "object", allOf: [{ ...branch, properties: { source: { type: "string" }, model: { type: "string" } }, required: ["model"] }] } }, required: ["meta"] });
+  }, 30_000);
+
+  it.each([
+    ["schema-valued additionalProperties", { type: "object", additionalProperties: { type: "string" }, minProperties: 1 }],
+    ["patternProperties", { type: "object", patternProperties: { "^model$": { type: "string" } }, additionalProperties: false, minProperties: 1 }],
+    ["additionalProperties: true", { type: "object", additionalProperties: true, minProperties: 1 }],
+  ])("keeps a nested report field the schema allows through %s, completing in one call", async (_name, meta) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta }, required: [...lensOutputSchema.required, "meta"] };
+    expect(withModelReportField(outputSchema, "json-path:meta.model")).toBe(outputSchema);
+    const answer = (model: string) => profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model } })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+    const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it("shows a node whose ownership is not settled unchanged, and removes nothing from it", async () => {
+    const meta = { anyOf: [{ type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] }] };
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta } };
+    expect(withModelReportField(outputSchema, "json-path:meta.model")).toBe(outputSchema);
+    expect(withModelReportField({ ...outputSchema, unevaluatedProperties: false, allOf: [{ properties: { x: {} } }] }, "json-path:model")).toHaveProperty("properties", outputSchema.properties);
+    const output = await run(profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model: "fake-model-1" } })] }), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
   }, 30_000);
 
   it("reads dotted json paths of own properties only", () => {

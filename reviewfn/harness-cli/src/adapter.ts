@@ -267,8 +267,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   private async attempts(prepared: Prepared & { executable: string; directory: string }): Promise<SlotHarnessOutput> {
     const { state, input, profile } = prepared;
     // The CLI is shown (in the prompt and {schemaFile}) a schema that also declares its json-path model report, so a CLI
-    // that enforces the schema can still emit it; its answer is validated against the slot's own schema once that
-    // report field is removed.
+    // that enforces the schema can still emit it; its answer is validated against the slot's own schema as written, and
+    // only without that field where the slot's schema closes an object to it.
     const cliSchema = withModelReportField(prepared.schema, profile.modelReport);
     const basePrompt = `${input.prompt}\n\n${outputContract(cliSchema, profile)}`;
     const run: AttemptContext = { ...prepared, promptFile: path.join(prepared.directory, "prompt.md"), schemaFile: path.join(prepared.directory, "schema.json") };
@@ -423,11 +423,15 @@ function profileDiagnostics(config: ReviewFnConfig, error: (code: string, text: 
 }
 
 /**
- * Read a `stderr-regex` model report, bounded in time. The models it matched before it stopped are reported models, so a
- * mismatch it already found still voids the run; a reporter that cannot finish ends the run timed_out (or canceled).
+ * Read a `stderr-regex` model report, bounded in time by `MODEL_REPORT_TIMEOUT_MS` and by what is left of the run's own
+ * deadline, whichever is nearer, so a reporter holds a run at most `MODEL_REPORT_ABORT_GRACE_MS` past its harness
+ * timeout: the same grace an aborted run gives, so the report of a CLI stopped at its deadline is still read. The models
+ * it matched before it stopped are reported models, so a mismatch it already found still voids the run; a reporter that
+ * cannot finish ends the run timed_out (or canceled).
  */
 async function reportStderrModel(run: AttemptContext, reporter: Reporter, stderr: string): Promise<SlotHarnessOutput | undefined> {
-  const matched = await reporter.match(stderr, MODEL_REPORT_TIMEOUT_MS, run.input.signal);
+  const timeoutMs = Math.max(MODEL_REPORT_ABORT_GRACE_MS, Math.min(MODEL_REPORT_TIMEOUT_MS, run.deadline - Date.now()));
+  const matched = await reporter.match(stderr, timeoutMs, run.input.signal);
   for (const value of [matched.first, matched.mismatch, matched.last]) run.state.note(value);
   return matched.terminal ? run.state.finish(matched.terminal, matched.reason ?? "The model reporter stopped.") : undefined;
 }
@@ -503,16 +507,25 @@ parentPort.once("message", text => {
   parentPort.postMessage({ done: true, last });
 });`)}`);
 
-/** The attempt's answer, with its `json-path` model report read and, unless the slot's schema declares it, removed. */
+/** The attempt's answer as the CLI wrote it, with its `json-path` model report read. */
 async function readAnswer(run: AttemptContext, outputFile: string, stdout: string): Promise<OutputRead> {
   const output = run.profile.outputVia === "file" ? await readOutputFile(outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
   if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text);
-  if ("value" in output && run.profile.modelReport.startsWith("json-path:")) {
-    const dotted = run.profile.modelReport.slice("json-path:".length);
-    run.state.note(valueAtPath(output.value, dotted));
-    stripReportField(output.value, dotted.split("."), run.schema);
-  }
+  if ("value" in output && run.profile.modelReport.startsWith("json-path:")) run.state.note(valueAtPath(output.value, run.profile.modelReport.slice("json-path:".length)));
   return output;
+}
+
+/**
+ * The answer the slot's schema accepts and its errors. An answer that validates as written is taken unchanged, so a
+ * report field the schema allows is never removed. Only an answer that fails is tried again without its `json-path`
+ * report where the schema closes an object to it, and then that copy's errors are the ones its repair attempt sees.
+ */
+function validated(run: AttemptContext, value: Record<string, unknown>): { value: Record<string, unknown>; errors: string[] } {
+  const errors = run.validate(value);
+  if (!errors.length || !run.profile.modelReport.startsWith("json-path:")) return { value, errors };
+  const stripped = structuredClone(value);
+  if (!stripReportField(stripped, run.profile.modelReport.slice("json-path:".length).split("."), run.schema)) return { value, errors };
+  return { value: stripped, errors: run.validate(stripped) };
 }
 
 /**
@@ -540,9 +553,9 @@ function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotH
   if (!("value" in output)) return { errors: ["error" in output ? output.error : "The CLI produced no answer."], rejected: "text" in output ? output.text : undefined };
   const rejection = (errors: string[]): Rejection => ({ errors, rejected: JSON.stringify(output.value) });
   // An answer the slot's schema rejects goes to its repair attempt as it is, never through payload normalization.
-  const errors = run.validate(output.value);
+  const { value, errors } = validated(run, output.value);
   if (errors.length) return rejection(errors);
-  const payload = normalizePayload(output.value);
+  const payload = normalizePayload(value);
   const payloadErrors = validateHarnessPayload(payload);
   if (payloadErrors.length) return rejection(payloadErrors);
   // Only an answer that would be accepted must confirm its model; an invalid one still gets its repair attempt.
@@ -609,11 +622,15 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
 }
 
 /**
- * The schema shown to the CLI: the slot's schema with the path a `json-path` model report reads declared, as a required
- * string, wherever the schema leaves it undeclared. It descends through the object and array schemas the slot already
- * declares on that path (making each step required), so a CLI that enforces a closed schema, even a closed nested
- * object, can still report its model. Declared siblings are kept, the caller's schema is never changed, and a step with
- * no declared properties or items is shown unchanged.
+ * The schema shown to the CLI for a `json-path` model report: the slot's schema with the report declared, as a required
+ * string at the rest of the path, on every object node that closes itself to the path's key (`additionalProperties:
+ * false`, or `unevaluatedProperties: false`, with no `properties` or `patternProperties` entry for it), including a
+ * closing `allOf` branch, so a CLI that enforces the schema can still report its model. It descends through the
+ * property, additional-property and array `items` schemas on the path, making each changed step required. A key the
+ * schema already allows is left as it is, and so is a key that only `patternProperties` owns. An `allOf` entry that is
+ * `{}` or `true` is ignored. A node whose ownership of the key cannot be settled statically (`$ref`, `anyOf`, `oneOf`,
+ * `not`, a conditional or `dependentSchemas`) is shown unchanged, so the slot's schema must declare the report there
+ * itself. The caller's schema is never changed.
  */
 export function withModelReportField(schema: Readonly<Record<string, unknown>>, modelReport: string): Readonly<Record<string, unknown>> {
   if (!modelReport.startsWith("json-path:")) return schema;
@@ -624,34 +641,80 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
   const [key, ...rest] = keys;
   if (key === undefined) return schema;
   // A numeric step indexes an array schema, as valueAtPath reads an array; elsewhere it names a property. The items
-  // schema is shared, so every item declares the report, and every item has it removed.
-  if (/^\d+$/.test(key) && (schema.type === "array" || "items" in schema)) {
+  // schema is shared, so every item declares the report, and every item may have it removed.
+  if (isArrayStep(schema, key)) {
     if (!isRecord(schema.items)) return schema;
     const items = declarePath(schema.items, rest);
     return items === schema.items ? schema : { ...schema, items };
   }
-  const properties = declaredProperties(schema);
-  if (!properties) return schema;
-  const required = Array.isArray(schema.required) ? schema.required : [];
-  const withKey = required.includes(key) ? required : [...required, key];
-  if (!Object.hasOwn(properties, key)) return { ...schema, properties: { ...properties, [key]: reportField(rest) }, required: withKey };
-  const declared = properties[key];
-  if (!isRecord(declared)) return schema;
-  const child = declarePath(declared, rest);
-  return child === declared ? schema : { ...schema, properties: { ...properties, [key]: child }, required: withKey };
+  if (ownership(schema, key).kind === "unsettled") return schema;
+  const shown = declareOwn(schema, key, rest);
+  if (!Array.isArray(schema.allOf)) return shown;
+  const branches: unknown[] = schema.allOf;
+  const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys) : branch);
+  return allOf.every((branch, index) => branch === branches[index]) ? shown : { ...shown, allOf };
 }
 
-/** Keywords that make a schema node's properties depend on other schemas; such a node is never changed or stripped. */
-const COMPOSED = ["$ref", "$dynamicRef", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"];
+/** The node itself, its `allOf` aside: the report declared where it closes the key, or below the key's own schema. */
+function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): Readonly<Record<string, unknown>> {
+  const owned = ownOwnership(schema, key);
+  let child: unknown;
+  if (owned.kind === "closed") child = reportField(rest);
+  else if (owned.kind === "open" && owned.via !== "pattern") {
+    // A key that additionalProperties owns becomes a declared property with that schema, which validates it the same.
+    const source = isRecord(owned.children[0]) ? owned.children[0] : {};
+    const next = declarePath(source, rest);
+    if (next !== source) child = next;
+  }
+  if (child === undefined) return schema;
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  return { ...schema, properties: { ...properties, [key]: child }, required: required.includes(key) ? required : [...required, key] };
+}
 
 /**
- * The properties an object schema node declares (none for a closed object without `properties`), or undefined when the
- * node does not settle it: a composed node, or one that is not an object schema.
+ * Who owns a key of an object schema node: the child schemas that validate its value (`via` says which keyword, for the
+ * node itself), a node closed to it, or a node whose ownership is not settled statically.
  */
-function declaredProperties(schema: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | undefined {
-  if (COMPOSED.some(keyword => keyword in schema)) return undefined;
-  if (isRecord(schema.properties)) return schema.properties;
-  return schema.type === "object" || "additionalProperties" in schema ? {} : undefined;
+type Ownership = { kind: "open"; children: unknown[]; via?: "declared" | "pattern" | "additional" } | { kind: "closed" } | { kind: "unsettled" };
+
+/** Keywords that make which schema owns a property depend on the value or another document. */
+const UNSETTLED = ["$ref", "$dynamicRef", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"];
+
+const isTrivial = (schema: unknown): boolean => schema === true || (isRecord(schema) && Object.keys(schema).length === 0);
+const isArrayStep = (schema: unknown, key: string): boolean => /^\d+$/.test(key) && isRecord(schema) && (schema.type === "array" || "items" in schema);
+
+/** The node's ownership of `key`, with its non-trivial `allOf` branches: closed when any of them closes it. */
+function ownership(schema: unknown, key: string): Ownership {
+  if (schema === undefined || schema === true) return { kind: "open", children: [] };
+  if (!isRecord(schema) || UNSETTLED.some(keyword => keyword in schema)) return { kind: "unsettled" };
+  if (schema.allOf !== undefined && !Array.isArray(schema.allOf)) return { kind: "unsettled" };
+  const branches: unknown[] = Array.isArray(schema.allOf) ? schema.allOf.filter(branch => !isTrivial(branch)) : [];
+  // unevaluatedProperties also sees what the allOf branches evaluate, which this static rule does not follow.
+  if (branches.length && "unevaluatedProperties" in schema) return { kind: "unsettled" };
+  let owned = ownOwnership(schema, key);
+  for (const branch of branches) {
+    const next = ownership(branch, key);
+    if (owned.kind === "unsettled" || next.kind === "unsettled") return { kind: "unsettled" };
+    owned = owned.kind === "closed" || next.kind === "closed" ? { kind: "closed" } : { kind: "open", children: [...owned.children, ...next.children] };
+  }
+  return owned;
+}
+
+/** The node's own ownership of `key`: its declared property and matching patterns, else its additional properties. */
+function ownOwnership(schema: Readonly<Record<string, unknown>>, key: string): Ownership {
+  const children: unknown[] = [];
+  let via: "declared" | "pattern" = "pattern";
+  if (isRecord(schema.properties) && Object.hasOwn(schema.properties, key)) { children.push(schema.properties[key]); via = "declared"; }
+  if (isRecord(schema.patternProperties)) {
+    for (const [pattern, child] of Object.entries(schema.patternProperties)) {
+      try { if (new RegExp(pattern, "u").test(key)) children.push(child); }
+      catch { return { kind: "unsettled" }; }
+    }
+  }
+  if (children.length) return { kind: "open", children, via };
+  const additional = "additionalProperties" in schema ? schema.additionalProperties : schema.unevaluatedProperties;
+  return additional === false ? { kind: "closed" } : { kind: "open", children: [additional], via: "additional" };
 }
 
 /** A required string at the remaining dotted path, through new objects and arrays. */
@@ -664,25 +727,23 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
 }
 
 /**
- * Remove the part of a `json-path` model report the output schema does not declare: the first key on the dotted path
- * that its object schema leaves undeclared, at whatever depth, so a CLI may report its model inside a closed answer
- * without failing the slot's schema. Through an array index the removal applies to every item, as the declaration does.
- * A report field the schema declares is kept and validated like any other, and nothing is removed below a node whose
- * properties the schema does not settle (a `$ref`, a union or another composition), since it may declare the field.
+ * Remove a `json-path` model report from an answer only where the output schema closes an object to it, the nodes
+ * `withModelReportField` declares it on, following the same ownership through properties, patterns, additional
+ * properties, `allOf` branches and, through a numeric step, every array item. Nothing is removed at or below a node whose
+ * ownership is not settled. Whether anything was removed.
  */
-function stripReportField(value: unknown, keys: readonly string[], schema: unknown): void {
+function stripReportField(value: unknown, keys: readonly string[], schema: unknown): boolean {
   const [key, ...rest] = keys;
-  if (key === undefined) return;
-  const declared = isRecord(schema) ? schema : {};
-  if (Array.isArray(value) && /^\d+$/.test(key)) {
-    for (const item of value) stripReportField(item, rest, declared.items);
-    return;
+  if (key === undefined) return false;
+  if (Array.isArray(value) && isArrayStep(schema, key)) {
+    const items = (schema as Record<string, unknown>).items;
+    return value.map(item => stripReportField(item, rest, items)).includes(true);
   }
-  if (!isRecord(value) || !Object.hasOwn(value, key)) return;
-  const properties = declaredProperties(declared);
-  if (!properties) return;
-  if (Object.hasOwn(properties, key)) stripReportField(value[key], rest, properties[key]);
-  else delete value[key];
+  if (!isRecord(value) || !Object.hasOwn(value, key)) return false;
+  const owned = ownership(schema, key);
+  if (owned.kind === "closed") return delete value[key];
+  if (owned.kind === "unsettled") return false;
+  return owned.children.map(child => stripReportField(value[key], rest, child)).includes(true);
 }
 
 function outputContract(schema: Readonly<Record<string, unknown>>, profile: HarnessProfile): string {

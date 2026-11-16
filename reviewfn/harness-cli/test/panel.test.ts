@@ -2,18 +2,14 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type HarnessOutput, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessInput, type SlotHarnessOutput } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakeSourceControlAdapter, MemoryArtifactStore } from "@superfunctions/reviewfn-testing";
 
+import { AGENT, LAUNCH } from "./launcher.js";
 import { CliHarnessAdapter } from "../src/index.js";
 
-const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
-// The CLI runs through /usr/bin/env, a trusted installed executable, since the test's own Node may live in a
-// world-writable tool cache or a Git checkout, which the adapter refuses as an executable.
-const AGENT = "/usr/bin/env";
 const environment = { PATH: process.env.PATH, FIXTURE_KEY: "panel-fixture-credential" };
 const manifest = { version: 1 as const, sources: [], selection: { candidates: [], selected: [], rule: "none" }, limits: { maxSources: 10, maxBytes: 1000, maxDepth: 2 }, incompleteReasons: [] };
 const config = { ...DEFAULT_CONFIG, harness: { adapter: "codex", version: "1" }, context: [{ adapter: "fixture" }], execution: { ...DEFAULT_CONFIG.execution, adapter: "fake-execution" } };
@@ -41,7 +37,7 @@ afterAll(async () => { for (const directory of [repo, workspaceRoot, states]) aw
 async function profile(name: string, modelReport: string, extra: string[] = []): Promise<HarnessProfile> {
   const state = path.join(states, name);
   await mkdir(state, { recursive: true });
-  return { argv: [process.execPath, FIXTURE, "--state", state, ...extra], promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [process.execPath, FIXTURE, "--version"] };
+  return { argv: [...LAUNCH, "--state", state, ...extra], promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [...LAUNCH, "--version"] };
 }
 
 function slot(id: string, profileName: string, model: string, provider = "fixture"): PanelSlot {
