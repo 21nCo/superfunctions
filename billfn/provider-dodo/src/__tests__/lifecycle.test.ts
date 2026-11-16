@@ -7,6 +7,8 @@ import { createDodoProvider } from '../index.js';
 /** A Dodo API double holding one subscription, answering in Dodo's response shape. */
 function createDodoApi() {
   let subscription: Record<string, unknown> | null = null;
+  /** Answers for the next subscription reads, taking the place of Dodo's (a failed or unusable read). */
+  const readAnswers: Array<() => Response> = [];
   const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
@@ -41,6 +43,10 @@ function createDodoApi() {
       return Response.json({ subscription_id: 'sub_dodo_1', payment_id: null, payment_link: null });
     }
     if (path === '/subscriptions/sub_dodo_1' && subscription) {
+      const answerRead = init?.method === 'PATCH' ? undefined : readAnswers.shift();
+      if (answerRead) {
+        return answerRead();
+      }
       if (init?.method === 'PATCH') {
         // Dodo keeps a subscription canceled at its next billing date active until then.
         subscription = { ...subscription, ...body };
@@ -54,6 +60,10 @@ function createDodoApi() {
     /** The subscription as Dodo holds it now. */
     current() {
       return subscription!;
+    },
+    /** Answers the next subscription read with this response instead of the subscription. */
+    answerNextRead(answer: () => Response) {
+      readAnswers.push(answer);
     },
     /** Changes the subscription as Dodo would on its side, such as a payment hold. */
     update(patch: Record<string, unknown>) {
@@ -242,9 +252,10 @@ describe('@billfn/provider-dodo lifecycle events', () => {
     expect(afterBoth.ok && afterBoth.data.subscription).toMatchObject({ status: 'active', autoRenew: true });
   });
   describe('webhooks after a plan change keep the price BillFn recorded, not the checkout price in the metadata', () => {
-    async function webhooksAfterChanges(targetPriceIds: string[]) {
+    async function webhooksAfterChanges(targetPriceIds: string[], beforeChange?: (api: ReturnType<typeof createDodoApi>) => void) {
       const { api, billfn, subject } = await subscribed({ prices: sharedProductPrices });
       for (const targetPriceId of targetPriceIds) {
+        beforeChange?.(api);
         const changed = await billfn.changeSubscription({ subject, targetPriceId, effectiveAt: 'immediate' });
         expect(changed.ok).toBe(true);
       }
@@ -287,6 +298,14 @@ describe('@billfn/provider-dodo lifecycle events', () => {
 
     it('a change to another price of the checkout product', async () => {
       await webhooksAfterChanges(['price_nucleus_month_loyal']);
+    });
+
+    it.each([
+      ['fails with 503', () => new Response('unavailable', { status: 503 })],
+      ['answers JSON null', () => Response.json(null)],
+      ['answers an empty object', () => Response.json({})]
+    ])('a change to another price of the checkout product whose follow-up read %s', async (_label, answer) => {
+      await webhooksAfterChanges(['price_nucleus_month_loyal'], (api) => api.answerNextRead(answer));
     });
   });
 });

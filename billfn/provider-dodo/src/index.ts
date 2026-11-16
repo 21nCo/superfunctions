@@ -298,15 +298,20 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
           } satisfies BillFnProviderOperationResult;
         }
         // The change is committed at Dodo: no failure of this read (status, transport, body, JSON or an answer that
-        // is not this subscription) may report it as failed, so an unusable read leaves the state to the next
-        // webhook or sync.
+        // is not this subscription) may report it as failed. An unusable read of an immediate change still gives
+        // BillFn a state so it records the target price: the stored subscription's own, with no Dodo fact added.
+        // Without one BillFn keeps the old price, and a target sharing its Dodo product would never be recorded,
+        // since later webhooks name only the product. The next webhook or sync brings Dodo's state.
         const subscription = await sendDodoFollowUp(fetchImpl, dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]), {
           method: 'GET',
           headers: createHeaders(config.apiKey)
         });
+        const readState = subscription.ok ? mapCommittedDodoSubscription(providerSubscriptionId, subscription) : undefined;
         return {
           operationStatus: 'applied',
-          billingState: subscription.ok ? mapCommittedDodoSubscription(providerSubscriptionId, subscription) : undefined,
+          billingState:
+            readState ??
+            (input.effectiveAt === 'immediate' ? storedDodoSubscriptionState(input.subscription, providerSubscriptionId) : undefined),
           raw: subscription.ok
             ? { changePlan: committedRaw(attempted), subscription: committedRaw(subscription) }
             : { changePlan: committedRaw(attempted), subscriptionReadError: subscription.error }
@@ -881,6 +886,27 @@ function mapCommittedDodoSubscription(
     return undefined;
   }
   return { ...mapDodoSubscriptionState(record), providerSubscriptionId };
+}
+
+/**
+ * The stored subscription's state, for a committed change whose Dodo state could not be read: only what BillFn
+ * already recorded, so applying it changes nothing but the price and plan the change selected. It carries no raw
+ * record, so BillFn reads no product from it and adds nothing to the subscription's metadata.
+ */
+function storedDodoSubscriptionState(
+  subscription: BillFnChangeSubscriptionInput['subscription'],
+  providerSubscriptionId: string
+): BillFnVerifiedBillingState {
+  return {
+    subscriptionStatus: subscription.status,
+    checkoutStatus:
+      subscription.status === 'failed' ? 'failed' : subscription.status === 'pending' ? 'pending' : 'succeeded',
+    providerSubscriptionId,
+    ...(subscription.providerChargeId ? { providerChargeId: subscription.providerChargeId } : {}),
+    ...(subscription.currentPeriodStart ? { currentPeriodStart: subscription.currentPeriodStart } : {}),
+    ...(subscription.currentPeriodEnd ? { currentPeriodEnd: subscription.currentPeriodEnd } : {}),
+    autoRenew: subscription.autoRenew
+  };
 }
 
 /** Dodo's `SubscriptionStatus` values (and `paused`, which older answers report for a held subscription). */

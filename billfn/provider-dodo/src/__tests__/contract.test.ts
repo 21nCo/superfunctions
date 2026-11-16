@@ -626,13 +626,38 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
     });
   });
 
-  it('keeps an applied change applied when the follow-up read fails', async () => {
+  /** The stored subscription's own state, which lets BillFn record the target price and changes nothing else. */
+  const storedState = {
+    subscriptionStatus: 'active',
+    checkoutStatus: 'succeeded',
+    providerSubscriptionId: SUBSCRIPTION_ID,
+    providerChargeId: PAYMENT_ID,
+    currentPeriodStart: '2026-11-10T00:00:00.000Z',
+    currentPeriodEnd: '2026-12-10T00:00:00.000Z',
+    autoRenew: false
+  };
+  const storedSubscription = () =>
+    subscription({ currentPeriodStart: storedState.currentPeriodStart, currentPeriodEnd: storedState.currentPeriodEnd, autoRenew: false });
+
+  it('keeps an applied change applied with the stored state when the follow-up read fails', async () => {
     const api = dodoApi({
       [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: recorded.changePlan.response,
       [`GET /subscriptions/${SUBSCRIPTION_ID}`]: () => new Response('unavailable', { status: 503 })
     });
 
-    const result = await provider(api.fetchMock).changeSubscription?.(changeInput());
+    const result = await provider(api.fetchMock).changeSubscription?.({ ...changeInput(), subscription: storedSubscription() });
+
+    expect(result?.operationStatus).toBe('applied');
+    expect(result?.billingState).toStrictEqual(storedState);
+  });
+
+  it('gives no state for a next-renewal change whose follow-up read fails, since nothing changes now', async () => {
+    const api = dodoApi({
+      [`POST /subscriptions/${SUBSCRIPTION_ID}/change-plan`]: recorded.changePlan.response,
+      [`GET /subscriptions/${SUBSCRIPTION_ID}`]: () => new Response('unavailable', { status: 503 })
+    });
+
+    const result = await provider(api.fetchMock).changeSubscription?.({ ...changeInput(), effectiveAt: 'next_renewal' });
 
     expect(result?.operationStatus).toBe('applied');
     expect(result?.billingState).toBeUndefined();
@@ -672,16 +697,16 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
       () => Promise.resolve(Response.json({ ...recorded.getSubscription.response, subscription_id: 'sub_other' })),
       { subscription: { subscription_id: 'sub_other' } }
     ]
-  ])('keeps an applied change applied, recording no state, when %s on the follow-up read', async (_label, answerRead, raw) => {
+  ])('keeps an applied change applied with the stored state, not the answer, when %s on the follow-up read', async (_label, answerRead, raw) => {
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
       init?.method === 'POST' ? Response.json(recorded.changePlan.response) : answerRead()
     ) as typeof fetch;
 
-    const result = await provider(fetchMock).changeSubscription?.(changeInput());
+    const result = await provider(fetchMock).changeSubscription?.({ ...changeInput(), subscription: storedSubscription() });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ operationStatus: 'applied', raw: { changePlan: recorded.changePlan.response, ...raw } });
-    expect(result?.billingState).toBeUndefined();
+    expect(result?.billingState).toStrictEqual(storedState);
   });
 
   it('reads the subscription after a change Dodo accepted with an unreadable answer', async () => {
