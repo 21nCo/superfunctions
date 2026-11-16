@@ -500,10 +500,12 @@ describe("relation loading for an in-memory query", () => {
     });
     try {
       const ids = ["p1", ...Array.from({ length: MAX_PUSHDOWN_IN_VALUES }, (_, i) => `missing${i}`)];
+      const filters = { id: { $in: ids } };
+      expect(classifyQuery({ resource: "projects", filters }, relSchema)).toBe("IN_MEMORY");
       const { status, body } = await query(server, {
         resource: "projects",
         version: 1,
-        filters: { id: { $in: ids } },
+        filters,
         select: ["id", "owner.*", "owner.tasks.*"],
       });
       expect(status).toBe(200);
