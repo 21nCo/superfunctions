@@ -39,16 +39,13 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     private cacheOptions?: DatafnSignalCacheOptions,
     private onSubscriberChange?: LiveSignalChangeHandler<T>,
   ) {
-    this.bindRaw();
+    this.bindRaw(true);
   }
 
-  private bindRaw(): void {
+  private bindRaw(follow: boolean): void {
     try {
       this.raw = this.factory();
-      this.rawUnsub = this.raw.subscribe((value) => {
-        this.lastValue = value;
-        this.subscribers.forEach((fn) => fn(value));
-      });
+      if (follow) this.attachRaw();
     } catch (err: any) {
       this.currentError = {
         code: "INTERNAL",
@@ -58,6 +55,28 @@ export class LiveSignal<T> implements DatafnSignal<T> {
       this.raw = null;
       this.rawUnsub = null;
     }
+  }
+
+  /**
+   * Follows the raw signal. While no one subscribes the raw signal is left
+   * unfollowed, so writes don't re-run its query (it re-reads on return).
+   */
+  private attachRaw(): void {
+    if (!this.raw || this.rawUnsub) return;
+    let attaching = true;
+    this.rawUnsub = this.raw.subscribe((value) => {
+      // The raw signal delivers its cached value on subscribe; subscribers
+      // already have it when it is the value they last saw.
+      if (attaching && value === this.lastValue) return;
+      this.lastValue = value;
+      this.subscribers.forEach((fn) => fn(value));
+    });
+    attaching = false;
+  }
+
+  /** Idle with a cached value: the raw signal is not followed. */
+  private get detachedWhileIdle(): boolean {
+    return this.subscribers.size === 0 && this.lastValue !== undefined;
   }
 
   private unbindRaw(): void {
@@ -77,9 +96,12 @@ export class LiveSignal<T> implements DatafnSignal<T> {
    */
   rebind(): void {
     if (this.disposed) return;
+    // An idle signal stays unfollowed: its new raw signal loads when someone
+    // subscribes again.
+    const follow = !this.detachedWhileIdle;
     this.unbindRaw();
     this.currentError = null;
-    this.bindRaw();
+    this.bindRaw(follow);
     // If the new raw signal already has a value (e.g. cached), emit to subscribers.
     // Note: bindRaw's internal handler also emits when raw.subscribe() delivers synchronously.
     if (this.raw !== null) {
@@ -107,14 +129,23 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     }
     if (wasIdle && this.lastValue !== undefined) {
       queueMicrotask(() => {
-        if (!this.disposed && this.subscribers.size > 0) {
-          void (this.raw as any)?.refresh?.();
+        // Skip when returning already started a re-read (a write arrived
+        // while idle).
+        const raw = this.raw as any;
+        if (!this.disposed && this.subscribers.size > 0 && !raw?.refreshing && !raw?.loading) {
+          void raw?.refresh?.();
         }
       });
     }
+    if (wasIdle) this.attachRaw();
     return () => {
       if (this.subscribers.delete(handler)) {
         this.touch();
+        if (this.detachedWhileIdle) {
+          // Keep the raw signal (and its cached result) but stop following it.
+          this.rawUnsub?.();
+          this.rawUnsub = null;
+        }
         this.onSubscriberChange?.(this);
       }
     };

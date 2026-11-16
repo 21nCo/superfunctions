@@ -730,6 +730,8 @@ function createQuerySignal<T>(
   // a full read that starts while one runs makes its result stale.
   let recordsInFlight = false;
   let flushAfterRecords = false;
+  // A write that could change the result arrived while no one subscribed.
+  let staleWhileIdle = false;
 
   const flushScheduled = () => {
     refreshTimerPending = false;
@@ -741,6 +743,14 @@ function createQuerySignal<T>(
     if (recordsInFlight) {
       // Keep what is pending and flush once the re-read settles.
       flushAfterRecords = true;
+      return;
+    }
+    if (subscribers.size === 0 && currentValue !== undefined) {
+      // Nobody is reading this result: re-read once someone subscribes
+      // again instead of on every write while it sits idle.
+      pendingFullRefresh = false;
+      pendingRecordIds.clear();
+      staleWhileIdle = true;
       return;
     }
     if (pendingFullRefresh || inFlight) {
@@ -994,6 +1004,11 @@ function createQuerySignal<T>(
       } else if (currentValue !== undefined) {
         // Immediately deliver current value to new subscriber
         fn(currentValue);
+        if (subscribers.size === 1 && staleWhileIdle && !disposed) {
+          staleWhileIdle = false;
+          // Queues behind a read already in flight, which may predate the write.
+          fetchQuery(true).catch(() => {});
+        }
       }
 
       // Return unsubscribe function
