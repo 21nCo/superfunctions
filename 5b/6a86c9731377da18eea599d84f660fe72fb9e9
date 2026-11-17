@@ -1,0 +1,21 @@
+billfn/swift/Sources/BillFnClient/BillFnClient.swift
+  s_ace82070dcb8c7::t_1b21ce480da003 98-105,107-108,110,113-115,117-118,120
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_ace82070dcb8c7::t_9ad0186f7fdfe9 154,171-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b6a86c9731377da18eea599d84f660fe72fb9e9",
+  "prompts": {},
+  "sessions": {
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
