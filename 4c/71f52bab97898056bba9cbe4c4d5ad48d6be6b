@@ -1,0 +1,21 @@
+datafn/server/__tests__/temporal-pushdown.test.ts
+  s_f058f999ab46b7::t_c9a24776d3be70 442,444,448,451-452,487,514-517
+datafn/server/src/execution/query/temporal-pushdown.ts
+  s_f058f999ab46b7::t_d7eed1c3d64970 20-22,180-185,187,193-196,229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c71f52bab97898056bba9cbe4c4d5ad48d6be6b",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

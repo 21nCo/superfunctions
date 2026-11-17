@@ -1,0 +1,21 @@
+filefn/server/src/processing/service.ts
+  s_e2286e60361b8d::t_95026765a12e83 157-162,1036,1038,1047-1054,1785,1869-1876,1881-1882,1894,1906-1910
+filefn/server/tests/client-artifacts.test.ts
+  s_e2286e60361b8d::t_ed4b23cfee69be 1061-1062,1092-1116,1137,1141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d25e4103bb612a657f15dbe77fcbec107c190f3b",
+  "prompts": {},
+  "sessions": {
+    "s_e2286e60361b8d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70601ba-7a63-48ba-a063-8b5684586d65",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

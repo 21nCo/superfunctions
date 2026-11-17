@@ -1,0 +1,75 @@
+billfn/admin/package.json
+  s_2409648105d207::t_67fde39383fbc1 3,41
+billfn/client/package.json
+  s_2409648105d207::t_5ea31a2e9a1a4c 3,34
+billfn/core/package.json
+  s_2409648105d207::t_6cf2f42fd4b395 3
+billfn/core/src/__tests__/ingress.test.ts
+  s_2409648105d207::t_7bc56757ad2d0b 1-497
+billfn/core/src/errors.ts
+  s_aa793b0a8d1ac8::t_cb5ba088b135b1 24-28,74-78
+billfn/core/src/index.ts
+  s_aa793b0a8d1ac8::t_d2f75ffd59e8f9 9-18
+billfn/core/src/ingress.ts
+  s_aa793b0a8d1ac8::t_8faf832c9581a2 1-358
+billfn/core/src/service.ts
+  s_aa793b0a8d1ac8::t_fad1a05cff50f2 6,287,852,861,871,1632-1635,2924-2968
+billfn/core/test/workers/fixtures.ts
+  s_ace82070dcb8c7::t_a24ed21f843f39 6-9
+billfn/core/test/workers/smoke.test.ts
+  s_2409648105d207::t_aa02a1e5390058 17-23,90,120,122,221-305
+billfn/core/test/workers/worker.ts
+  s_2409648105d207::t_46f7210aebf9e4 3-10,14-21,23,27,53-80,83-100,104-125,127,129
+billfn/docs/content/docs/server/routes.mdx
+  s_2409648105d207::t_ce8691a3c0d92d 48
+billfn/provider-apple/package.json
+  s_2409648105d207::t_f1b67fe72bf830 3,34
+billfn/provider-dodo/package.json
+  s_2409648105d207::t_e1676ffad6c81e 3,34
+billfn/svelte/package.json
+  s_2409648105d207::t_eeb14526e38924 3,32-33,37-38
+package-lock.json
+  s_2409648105d207::t_7ed0d347971cf4 4960,4963,4977,4980,5001,6035,6038,6058,6061,6083,6086-6087,6094-6095,59468
+billfn/core/src/router.ts
+  s_2409648105d207::t_624a34865c7961 6-39,73-82,356-372
+billfn/core/src/types.ts
+  s_2409648105d207::t_1fa39ff861e072 654-668,684-688
+billfn/docs/content/docs/reference/errors-and-defaults.mdx
+  s_2409648105d207::t_c4f8444d243c8b 41,51
+billfn/docs/content/docs/server/meta.json
+  s_2409648105d207::t_182e5520ce8272 3
+billfn/docs/content/docs/server/regions.mdx
+  s_2409648105d207::t_d941ca45f1841b 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67803f84a6389244a8dfdf3df94b8182b8882779",
+  "prompts": {},
+  "sessions": {
+    "s_2409648105d207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70d3597-81a1-4d05-8bd3-05ad69afb585",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_aa793b0a8d1ac8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "027b6086-1840-4196-8460-0ca79d822514",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

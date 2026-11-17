@@ -1,0 +1,25 @@
+hostfn/cli/src/__tests__/core/workspace.test.ts
+  s_4e440a6c69be9e::t_65908804269f8a 181-233
+hostfn/cli/src/core/workspace.ts
+  s_4e440a6c69be9e::t_4fe9d052f8693c 55-58,60
+scripts/verify-owners.mjs
+  s_4e440a6c69be9e::t_29c3ddad62b065 232-236,240-241,248-249,256-259
+scripts/verify-owners.test.mjs
+  s_4e440a6c69be9e::t_b2594d16b1f280 656-676
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd78aa08203955bd3faca68c2948ea65dc20ad5d",
+  "prompts": {},
+  "sessions": {
+    "s_4e440a6c69be9e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f841f2bb-5f58-40ee-bd03-cdf23f58e637",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

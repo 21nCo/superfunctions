@@ -1,0 +1,39 @@
+reviewfn/core/src/panel/types.ts
+  s_cfd46c619d3f5e::t_6ad71f0a3918b8 18
+reviewfn/core/src/panel/validate.ts
+  s_cfd46c619d3f5e::t_43a959db3df8c8 248-250,305,438,454-463,629-631
+reviewfn/core/test/panel.test.ts
+  s_cfd46c619d3f5e::t_b142ce496c84ee 652,684,691-721
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_cfd46c619d3f5e::t_ba8025ad196f80 18,32
+reviewfn/docs/panel-report-schema.md
+  s_cfd46c619d3f5e::t_c1ff7dcefd56bf 15,29
+reviewfn/docs/static/llms-full.txt
+  s_cfd46c619d3f5e::t_d5995136c0c705 224,238
+reviewfn/harness-cli/README.md
+  s_cfd46c619d3f5e::t_83e7ddf4564900 66
+reviewfn/harness-cli/src/adapter.ts
+  s_cfd46c619d3f5e::t_024a7b77ef6139 196-205,226-232
+reviewfn/harness-cli/test/adapter.test.ts
+  s_cfd46c619d3f5e::t_defe7fb4952172 166-186
+reviewfn/harness-cli/test/fixtures/fake-cli.mjs
+  s_cfd46c619d3f5e::t_af0fe4e46434d2 19-22
+reviewfn/harness-cli/test/panel.test.ts
+  s_cfd46c619d3f5e::t_3d05824d9f0425 77-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c20c18d8176e9857e67b3ab9ced788881f37f057",
+  "prompts": {},
+  "sessions": {
+    "s_cfd46c619d3f5e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_cfd46c619d3f5e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

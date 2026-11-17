@@ -1,0 +1,43 @@
+filefn/docs/content/docs/reference/errors.md
+  s_0df9ebfb299b93::t_1167c4e9df9da2 66
+filefn/docs/content/docs/reference/routes.md
+  s_0df9ebfb299b93::t_e3f5ba10876616 36
+filefn/docs/static/llms-full.txt
+  s_0df9ebfb299b93::t_6ee21916d3b76c 7952,8107
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_0df9ebfb299b93::t_bda942fb70777e 1241,1245,1254-1256,1265-1271,1277-1278,1280-1282,1284,1288,1293-1294,1297-1298,1304-1357,1629-1682
+filefn/server/src/__tests__/upload-gc.test.ts
+  s_f058f999ab46b7::t_edd15fe7c50fdd 98-108
+filefn/server/src/__tests__/upload-sessions.test.ts
+  s_f058f999ab46b7::t_3fae8359e9c292 86-96
+filefn/server/src/upload-sessions/file-id.ts
+  s_0df9ebfb299b93::t_c8a630baaf5e59 45-51,73-78,84,100,105,111-115,117-118,135
+filefn/server/src/upload-sessions/service.ts
+  s_0df9ebfb299b93::t_fc7cd99f8d1057 106-112,114-118,247-264,323-325,384-388,391,395-398,849-851,903-905,1130-1135,1138,1175-1179,1215,1225-1227,1378-1383,1387,1397-1399
+filefn/server/tests/dedup.test.ts
+  s_f058f999ab46b7::t_a7215c4c92572b 38-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6a66601b6bb0f0b47eee4a06110ea4afa4e7522",
+  "prompts": {},
+  "sessions": {
+    "s_0df9ebfb299b93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13a563b3-b0d8-4c80-ac82-f9d99e3aa54b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

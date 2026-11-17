@@ -1,0 +1,21 @@
+datafn/client/package.json
+  s_f058f999ab46b7::t_24abe6576b05cb 3
+package-lock.json
+  s_f058f999ab46b7::t_5fb1cfab37ddc5 9910
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a983c5e76580e78d60a06061cf444cca82ac9968",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+package-lock.json
+  s_fdcb415222e9a7::t_eb6ffad61af8b6 72-74,77,79,47198-47199,47311-47312,47761-47762,59479
+package.json
+  s_fdcb415222e9a7::t_9312d2f00f8b10 157-159,162,164
+scripts/verify-public-boundary.mjs
+  s_fdcb415222e9a7::t_4e6176be891cee 66-67,72-77,88-99,183,217-218,301-313,328-329,331,382-431,436-438,444,446,455-459,466-491,523,527-529,787-790
+scripts/verify-public-boundary.test.mjs
+  s_fdcb415222e9a7::t_94f3fdca2ac291 19,243-341,463-468,497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89c43d2f7d21522aed0b68571a6c4c97c92c60fc",
+  "prompts": {},
+  "sessions": {
+    "s_fdcb415222e9a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "881ba96a-1eb1-4481-8bd2-9f6e48aab96a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

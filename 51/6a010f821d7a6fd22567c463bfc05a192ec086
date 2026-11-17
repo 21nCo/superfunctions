@@ -1,0 +1,27 @@
+billfn/core/src/__tests__/lifecycle-events.test.ts
+  s_3ee9618c821292::t_a828c4547e7727 1,5,129-139,156-164,167-168,176-177,179-194,198,355-404,543-550,558,562-581
+billfn/core/src/lifecycle.ts
+  s_3ee9618c821292::t_5b841d7401f32c 1,32-33,119-120,161,166-172,174-176,178-195,208-216,232,383-391
+billfn/core/src/service.ts
+  s_3ee9618c821292::t_c2bd93c8e3d028 42,1603,1609,1611-1612,1617-1619,1621,1623,1626-1629,1634-1673,1885-1886,3233-3242,3302-3321,3493-3494,3499-3509,3590-3591,3593-3605,3607,3615-3622,3640-3642,3644,3648,3656,3658-3660,3662,3675,3678-3690,3696-3707,3726
+billfn/core/src/types.ts
+  s_3ee9618c821292::t_7b37a060d6277c 673-674,1165-1169
+billfn/docs/content/docs/server/lifecycle-events.mdx
+  s_3ee9618c821292::t_fb76ba67c36f3e 49,52,73-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "516a010f821d7a6fd22567c463bfc05a192ec086",
+  "prompts": {},
+  "sessions": {
+    "s_3ee9618c821292": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3ee9618c821292",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

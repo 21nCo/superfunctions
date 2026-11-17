@@ -1,0 +1,31 @@
+datafn/client/__tests__/signal-refresh-coalescing.test.ts
+  s_f058f999ab46b7::t_032db58aa4ef48 347-390
+datafn/client/__tests__/storage-idb.test.ts
+  s_f058f999ab46b7::t_7ed3302aaf5aea 44-51
+datafn/client/__tests__/storage-mem.test.ts
+  s_f058f999ab46b7::t_d25340c7b12a07 81-88
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_f058f999ab46b7::t_5ac14490c5299b 566-569,593
+datafn/client/src/adapters/memoryStorage.ts
+  s_f058f999ab46b7::t_a521bcc2abae11 109-112,130
+datafn/client/src/offline/mutate.ts
+  s_f058f999ab46b7::t_f93e61bb9932ea 832-834,837
+datafn/client/src/storage.ts
+  s_f058f999ab46b7::t_5ebd052e6dfe6e 70-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcbfd5aca8e941beacd266785befe209365fedf2",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+datafn/client/package.json
+  s_0b0647615a23f7::t_038e51deada997 3
+datafn/client/__tests__/cloneUp-server.test.ts
+  s_0b0647615a23f7::t_2d2de93120ea39 1-335
+datafn/client/src/sync/cloneUp.ts
+  s_0b0647615a23f7::t_76057643f74736 2,137,469-491,567-568,571,575-616,633
+package-lock.json
+  s_0b0647615a23f7::t_1526c4a2201432 8886-8911,9099,10206-10234,10504-10529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77e0b56af2d9fa605cef95a6b27c02931cda4871",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

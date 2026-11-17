@@ -1,0 +1,33 @@
+scripts/verify-public-boundary.mjs
+  s_b97e61fc439b91::t_442b0168b2ba93 1-524
+scripts/verify-public-boundary.test.mjs
+  s_b97e61fc439b91::t_87ef2a18b353d3 1-254
+.github/workflows/ci.yml
+  s_4c63fe05bf716f::t_9690136184a272 246-274
+scripts/public-boundary.allow.json
+  s_4c63fe05bf716f::t_8c2d7433bfc7bd 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfedd78b0d7c5800aadd6616724fedebcf5dd2b7",
+  "prompts": {},
+  "sessions": {
+    "s_4c63fe05bf716f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "36890e17-6e0f-4229-bf8f-fd745e856bf3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b97e61fc439b91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93421e50-17f9-4347-8ced-8c7e6e83bd31",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

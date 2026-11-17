@@ -1,0 +1,33 @@
+datafn/client/src/sync/cloneUp.ts
+  s_f058f999ab46b7::t_307f4a11145281 313-320
+datafn/client/package.json
+  s_bd4b2926198234::t_6c8dc3e2c3ae29 3
+package-lock.json
+  s_bd4b2926198234::t_2c1238cd28d53d 9910
+datafn/client/__tests__/cloneUp-null-columns.test.ts
+  s_f058f999ab46b7::t_8a9ad4f57775c8 1-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3180c6696ad7d90b671d7d58f16d70f1ac964048",
+  "prompts": {},
+  "sessions": {
+    "s_bd4b2926198234": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e2c7-0263-7850-aacf-6976173baa5e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
