@@ -1,0 +1,27 @@
+billfn/swift/README.md
+  s_7d85c7a9a116a1::t_912e928f46005a 54-57
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_7d85c7a9a116a1::t_101ed8625a5d1a 140-142,165-167
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_7d85c7a9a116a1::t_a0b330843161c5 136-137,155-158,160,168-170,183-185,237-245,254,258
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_7d85c7a9a116a1::t_b419cf09ef907a 593-621
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_7d85c7a9a116a1::t_7336e0da74d4ca 217,220-222,226,230-260,278-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e41e3f35c75f7490c4141caafce67c8649c89da",
+  "prompts": {},
+  "sessions": {
+    "s_7d85c7a9a116a1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc2ed4ad-1910-43eb-8a5c-03849692e9b6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
