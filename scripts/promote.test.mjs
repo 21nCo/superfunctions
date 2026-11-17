@@ -745,10 +745,13 @@ historyTest("every non-text or image version in the imported history is listed w
     "widgetfn/assets/logo.xml": '<s:svg xmlns:s="http://www.w3.org/2000/svg"/>\n',
     "widgetfn/assets/figure.dat": "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 1 1\n",
     "widgetfn/assets/doc": "%PDF-1.4\n1 0 obj << >> endobj\n",
+    "widgetfn/assets/ctrl.bin": Buffer.from([1, 2, 3, 4]),
+    "widgetfn/assets/notes.md": "![logo](data:image/png;base64,iVBORw0KGgo=)\n",
+    "widgetfn/assets/demo.ipynb": '{"cells": [{"outputs": [{"data": {"image/png": "iVBORw0KGgo="}}]}]}\n',
     "widgetfn/assets/drawing.h": "/* diagram */\n#define drawing_width 8\n#define drawing_height 1\nstatic unsigned char drawing_bits[] = { 0x3c };\n",
   });
   git(next, "mv", "widgetfn/assets/logo.png", "widgetfn/assets/brand.png");
-  git(next, "rm", "-q", "widgetfn/assets/pic.ppm");
+  git(next, "rm", "-q", "widgetfn/assets/pic.ppm", "widgetfn/assets/notes.md");
   const second = commit(next, "rename and change the logo, delete the PPM", { "widgetfn/assets/brand.png": png(2) });
   git(next, "switch", "-q", "-c", "side");
   const side = commit(next, "side data", { "widgetfn/data.bin": binary(2) });
@@ -762,14 +765,15 @@ historyTest("every non-text or image version in the imported history is listed w
     { oid: oid(first, "widgetfn/assets/icon.svg"), kind: "image", paths: ["widgetfn/assets/icon.svg"] },
     { oid: oid(first, "widgetfn/assets/logo.png"), kind: "image", paths: ["widgetfn/assets/logo.png"] },
     { oid: oid(first, "widgetfn/assets/pic.ppm"), kind: "image", paths: ["widgetfn/assets/pic.ppm"] },
-    ...["icon", "logo.xml", "figure.dat", "doc", "drawing.h"].map((file) => ({ oid: oid(first, `widgetfn/assets/${file}`), kind: "image", paths: [`widgetfn/assets/${file}`] })),
+    ...["icon", "logo.xml", "figure.dat", "doc", "drawing.h", "notes.md", "demo.ipynb"].map((file) => ({ oid: oid(first, `widgetfn/assets/${file}`), kind: "image", paths: [`widgetfn/assets/${file}`] })),
     { oid: oid(first, odd), kind: "binary", paths: [odd] },
+    { oid: oid(first, "widgetfn/assets/ctrl.bin"), kind: "binary", paths: ["widgetfn/assets/ctrl.bin"] },
     ...[side, main].map((rev) => ({ oid: oid(rev, "widgetfn/data.bin"), kind: "binary", paths: ["widgetfn/data.bin"] })),
   ].sort((a, b) => (a.paths[0] < b.paths[0] ? -1 : a.paths[0] > b.paths[0] ? 1 : a.oid < b.oid ? -1 : 1));
   const run = promoteCli(dev, ["widgetfn", "--pin", pin, "--source", next]);
   assert.equal(run.status, 0, run.stderr);
   for (const { oid: id, kind, paths } of expected) assert.ok(run.stdout.includes(`  ${id} ${kind} ${paths.map((file) => JSON.stringify(file)).join(" ")}`), `${id}\n${run.stdout}`);
-  assert.match(run.stdout, /^Historical non-text and image versions to inspect before the PR .*\(12\):$/m);
+  assert.match(run.stdout, /^Historical non-text and image versions to inspect before the PR .*\(15\):$/m);
   // The same set as the imported branch tip's blobs that are not plain text.
   const blobs = git(dev, "rev-list", "--objects", "--no-object-names", "HEAD^^2").split("\n");
   const types = spawnSync(gitBinary(), ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { cwd: dev, input: `${blobs.join("\n")}\n`, encoding: "utf8" }).stdout;

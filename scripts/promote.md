@@ -26,8 +26,8 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    git log -p -m --text --full-history <pin> -- <path>...
    ```
 
-   The script then lists every non-text or image file version it imports (see "After the script"); you inspect
-   those there.
+   Decode and render any base64 image data you meet there. The script then lists every non-text or image file
+   version it imports (see "After the script"); you inspect those there.
 
    If any version holds something private, do not promote with history: import the content without history instead
    (D9).
@@ -94,8 +94,8 @@ retry or a partial cutover leaves no duplicates on `next`.
 1. Check the result: `git log --follow -- <path>/<file>` shows the `next` history, and
    `git diff <next-sha> HEAD -- <path>` is empty (the script already checks this unless `--reconcile` was used).
 2. Inspect every version under "Historical non-text and image versions" in the script's output: the object id, the
-   kind (`image` for anything to render, also when stored as text: SVG, PNM, XPM, XBM, PostScript/EPS, PDF; or
-   `binary`) and every path it was imported under, as JSON strings. The script reads these from the
+   kind (`image` for anything to render, also when stored as text: SVG, PNM, XPM, XBM, PostScript/EPS, PDF, or text
+   embedding image data such as a `data:image/...` URI or a notebook output; or `binary`) and every path it was imported under, as JSON strings. The script reads these from the
    exact filtered history it imports, deleted and side-branch versions included, and stops if any object cannot be
    read. Save each one with `git cat-file blob <id> > <file>` and open it; render every `image` version, also those
    stored as text (an ASCII PPM, an SVG), which the patch review above shows only as numbers or markup. If any
