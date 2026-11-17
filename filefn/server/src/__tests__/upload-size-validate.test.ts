@@ -7,7 +7,8 @@ describe('Completion Size Validation', () => {
     findOne: vi.fn(),
     findMany: vi.fn(),
     create: vi.fn(),
-    update: vi.fn(),
+    // Resolves as a write that matched the row (the completion's claim).
+    update: vi.fn(async () => ({})),
     upsert: vi.fn(),
   };
 

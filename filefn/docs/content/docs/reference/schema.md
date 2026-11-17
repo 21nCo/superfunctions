@@ -12,7 +12,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | Column | Type | Notes |
 | --- | --- | --- |
 | `uploadSessionId` | string (PK) | |
-| `status` | string | `"open" | "completed" | "aborted" | "expired"` |
+| `status` | string | `"pending" | "in_progress" | "completing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `refused` is a completion refused for permission. The status route reports them as `in_progress` and `aborted`. |
 | `policy` | string | |
 | `fileId` | string? | Set on completion. |
 | `fileName` | string | |
@@ -27,6 +27,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
+| `completionClaim` | string? | `<ISO time> <random>`: the claim of the completion call holding the session (`completing`) or of the call that completed it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 

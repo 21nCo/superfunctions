@@ -14,7 +14,9 @@ stateDiagram-v2
   [*] --> initialized: POST /upload/init
   initialized --> in_progress: PUT /upload/:id/parts/:n (proxy)\nor signed PUT to storage
   in_progress --> in_progress: POST /upload/:id/parts/:n/complete
-  in_progress --> completed: POST /upload/:id/complete
+  in_progress --> completing: POST /upload/:id/complete
+  completing --> completed
+  completing --> in_progress: completion failed before publishing
   initialized --> aborted: POST /upload/:id/abort
   in_progress --> aborted: POST /upload/:id/abort
   initialized --> expired: TTL elapsed
@@ -28,6 +30,7 @@ States:
 
 - **initialized** — session row exists, no parts recorded yet.
 - **in_progress** — at least one part has been recorded.
+- **completing** — one `complete` call holds the session. Another `complete` waits for its result; `abort` returns 409. Reported as `in_progress` by the status route.
 - **completed** — `complete` succeeded, `fileVersions` row written, session is read-only.
 - **aborted** — explicit abort or implicit cleanup. The session is gone.
 - **expired** — TTL hit. The cleanup job evicts the row and any orphaned storage objects.

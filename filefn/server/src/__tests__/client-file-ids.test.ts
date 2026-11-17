@@ -22,10 +22,9 @@ type Mode = 'multipart' | 'proxy';
  * PUT to a signed part URL with `putSignedPart`; completion concatenates the
  * parts into the object. In proxy mode FileFn streams the bytes itself.
  */
-function createStorage(mode: Mode, options: { lenientRecompletion?: boolean } = {}) {
+function createStorage(mode: Mode) {
   const objects = new Map<string, Uint8Array>();
   const uploads = new Map<string, { key: string; parts: Map<number, Uint8Array> }>();
-  const completedUploads = new Map<string, string>();
   /** Keys whose next deleteObject calls fail (count per key). */
   const deleteFailures = new Map<string, number>();
   /** Storage completion of these final keys waits for the promise. */
@@ -63,16 +62,13 @@ function createStorage(mode: Mode, options: { lenientRecompletion?: boolean } = 
       noteFinalize(input.key);
       const upload = uploads.get(input.uploadId);
       if (!upload) {
-        // S3 and R2 answer NoSuchUpload; the lenient mode models a store that
-        // treats re-completing a finished upload as a no-op.
-        if (options.lenientRecompletion && completedUploads.get(input.uploadId) === input.key) return;
+        // S3 and R2 answer NoSuchUpload.
         throw new Error(`NoSuchUpload: ${input.uploadId}`);
       }
       await gates.get(upload.key);
       const chunks = input.parts.map((part) => upload.parts.get(part.partNumber)!);
       objects.set(upload.key, Buffer.concat(chunks));
       uploads.delete(input.uploadId);
-      completedUploads.set(input.uploadId, upload.key);
     },
     async abortMultipartUpload(input) {
       uploads.delete(input.uploadId);
@@ -215,6 +211,7 @@ function createApp(options: {
   /** `createFileFn` of a separately loaded module graph, to model another process. */
   createFileFn?: typeof createFileFn;
   dedup?: boolean;
+  completionTimeoutSeconds?: number;
 }) {
   const fixture = options.storageFixture ?? createStorage(options.mode);
   const database = options.database ?? memoryAdapter();
@@ -225,6 +222,7 @@ function createApp(options: {
     policies: [{ name: 'doc', contentTypes: ['text/plain'], visibility: 'private' }],
     quota: options.quota,
     dedup: options.dedup ? { enabled: true } : undefined,
+    completionTimeoutSeconds: options.completionTimeoutSeconds,
     auth: {
       required: false,
       resolveSession: async (request) => {
@@ -611,7 +609,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
    * unique constraint, not the in-process lock, decides the winner. The second
    * insert is released only once the winner's version row exists.
    */
-  async function createTwoProcesses(mode: Mode, storageOptions: { lenientRecompletion?: boolean } = {}) {
+  async function createTwoProcesses(mode: Mode) {
     let filesInserts = 0;
     let firstArrived!: () => void;
     const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
@@ -636,7 +634,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
         if (model === 'fileVersions') winnerVersionWritten();
       },
     });
-    const storageFixture = createStorage(mode, storageOptions);
+    const storageFixture = createStorage(mode);
     const one = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
     const two = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
     return { database, storageFixture, one, two, firstArrival, filesInserts: () => filesInserts };
@@ -692,9 +690,9 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
   });
 
   for (const user of ['user_a', undefined] as const) {
-    it(`a second completion of the same ${user ? 'named' : 'anonymous'} session while the first is between its files and version inserts returns the same result and deletes nothing`, async () => {
+    it(`a second completion of the same ${user ? 'named' : 'anonymous'} session while the first is between its files and version inserts waits for it, returns the same result and finalizes storage once`, async () => {
       // Process one inserts the files row, then is held before its version insert
-      // while process two completes the same session.
+      // while process two completes the same session: two waits for one's claim.
       let versionInserts = 0;
       let heldAtVersion!: () => void;
       const firstHeld = new Promise<void>((resolve) => { heldAtVersion = resolve; });
@@ -710,8 +708,8 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
           }
         },
       });
-      // Cross-process duplicates both finalize storage; see the lenient fixture.
-      const storageFixture = createStorage('multipart', { lenientRecompletion: true });
+      // Strict fixture: a second storage finalization would fail (NoSuchUpload).
+      const storageFixture = createStorage('multipart');
       const one = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
       const two = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
       const staged = await one.stage(user, CLIENT_ID, 'same session bytes');
@@ -721,9 +719,12 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       const first = completeIn(one);
       await firstHeld;
       expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
-      const second = await completeIn(two);
+      const pendingSecond = completeIn(two);
+      await new Promise((resolve) => setTimeout(resolve, 50));
       releaseFirst();
-      const firstResult = await first;
+      const [firstResult, second] = await Promise.all([first, pendingSecond]);
+      expect(storageFixture.finalizeCount(key)).toBe(1);
+      expect(versionInserts).toBe(1);
 
       expect(second.status).toBe(200);
       expect(firstResult.status).toBe(200);
@@ -738,18 +739,36 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     });
   }
 
-  it('a concurrent second completion call of the same session returns the recorded result and deletes nothing', async () => {
-    const { database, storageFixture, one, two, firstArrival, filesInserts } = await createTwoProcesses('multipart', { lenientRecompletion: true });
+  it('a concurrent second completion call of the same session in another process returns the recorded result and inserts nothing', async () => {
+    // Process one is held at its files insert (it has finalized storage); the
+    // duplicate in process two waits for its claim instead of racing it.
+    let filesInserts = 0;
+    let firstArrived!: () => void;
+    const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
+    let releaseFirst!: () => void;
+    const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const database = createUniqueEnforcingDb({
+      async before(model) {
+        if (model !== 'files') return;
+        filesInserts += 1;
+        firstArrived();
+        await firstReleased;
+      },
+    });
+    const storageFixture = createStorage('multipart');
+    const one = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+    const two = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
     const staged = await one.stage('user_a', CLIENT_ID, 'same session');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
 
     const first = staged.complete();
     await firstArrival;
-    const [firstResult, second] = await Promise.all([
-      first,
-      two.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }),
-    ]);
-    expect(filesInserts()).toBe(2);
+    const pendingSecond = two.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    releaseFirst();
+    const [firstResult, second] = await Promise.all([first, pendingSecond]);
+    expect(filesInserts).toBe(1);
+    expect(storageFixture.finalizeCount(key)).toBe(1);
     expect(firstResult.status).toBe(200);
     expect(second.status).toBe(200);
     expect(second.json.data).toEqual(firstResult.json.data);
@@ -789,9 +808,10 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('created by b');
   });
 
-  it('a stalled duplicate completion resuming after a later writer moved the file on returns the recorded result', async () => {
-    // The anonymous session's second call reads "not published", stalls, and
-    // resumes after the first call published and an editor added a later version.
+  it('a stalled completion resuming after a takeover and a later writer moved the file on returns the recorded result', async () => {
+    // The anonymous session's first call claims it, reads "not published" and
+    // stalls past the completion timeout. A second call takes the session over
+    // and publishes it, an editor adds a later version, and the first resumes.
     let holdNextVersionMiss = false;
     let stalled!: () => void;
     const duplicateStalled = new Promise<void>((resolve) => { stalled = resolve; });
@@ -812,14 +832,17 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       async canDelete(file, ctx) { return file.ownerId === ctx.principalId; },
     };
     const storageFixture = createStorage('multipart');
-    const app = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, createFileFn: await loadProcess() });
-    const other = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, createFileFn: await loadProcess() });
+    const completionTimeoutSeconds = 0.05;
+    const app = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, completionTimeoutSeconds, createFileFn: await loadProcess() });
+    const other = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, completionTimeoutSeconds, createFileFn: await loadProcess() });
     const staged = await app.stage(undefined, CLIENT_ID, 'anonymous capture');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
 
     holdNextVersionMiss = true;
     const duplicate = other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { token: staged.token });
     await duplicateStalled;
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+    await new Promise((resolve) => setTimeout(resolve, 60));
     const first = await staged.complete();
     expect(first.status).toBe(200);
     const edit = await app.stage('editor', CLIENT_ID, 'edited later');
@@ -830,6 +853,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
 
     expect(second.status).toBe(200);
     expect(second.json.data).toEqual(first.json.data);
+    expect(storageFixture.finalizeCount(key)).toBe(1);
     expect(app.fixture.objects.has(key)).toBe(true);
     expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
     expect((await fileRows(database, CLIENT_ID))[0].currentVersionId).toBe(edited.json.data.versionId);
@@ -1906,12 +1930,15 @@ describe('expiry cleanup while a completion of the expired session is running', 
     expect(result.deletedSessions).toBe(1);
     expect(storageFixture.objects.has(keyA)).toBe(true);
 
-    // The completion resumes and publishes its bytes. Marking the session it
-    // outlived completed then fails (a session expiring during its completion
-    // is FILE-14), but nothing it published is lost.
+    // The completion resumes. Its claim went with the session row, so it
+    // publishes nothing and reports the session gone; its object is kept (a
+    // session expiring during its completion is FILE-14).
     resume();
-    await expect(completion).rejects.toThrow('Record not found');
-    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('shared bytes');
+    const ended = await completion;
+    expect(ended.status).toBe(404);
+    expect(ended.json.error.code).toBe('FILEFN_SESSION_NOT_FOUND');
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+    await expect(app.readBytes(CLIENT_ID, 'user_a')).rejects.toThrow('File not found');
   });
 });
 
@@ -1966,5 +1993,160 @@ describe('conditional session status writes on Prisma-style update semantics', (
     refuseOnRead = staged.uploadSessionId;
     await app.fileFn.services.uploads.abortSession(staged.uploadSessionId, { principalId: 'user_a' }, staged.token);
     expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('refused');
+  });
+});
+
+describe('upload completion fencing (FILE-19)', () => {
+  async function setSession(database: Adapter, uploadSessionId: string, data: Record<string, unknown>) {
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      data,
+      namespace: 'filefn',
+    });
+  }
+
+  for (const mode of ['multipart', 'proxy'] as const) {
+    it(`${mode}: an abort during completion gets 409 and the file is published once`, async () => {
+      const database = memoryAdapter();
+      const app = createApp({ mode, database });
+      const uploaded: string[] = [];
+      app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+      const staged = await app.stage('user_a', CLIENT_ID, 'kept bytes');
+      const auth = { user: 'user_a', token: staged.token };
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      const release = app.fixture.gate(key);
+      const completion = staged.complete();
+      await flushPromises();
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+
+      const abort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, auth);
+      expect(abort.status).toBe(409);
+      expect(abort.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+      const part = await app.call('POST', `/upload/${staged.uploadSessionId}/parts/1/complete`, { ...auth, body: { etag: '"other"', size: 1 } });
+      expect(part.status).toBe(409);
+      expect(part.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+      const status = await app.call('GET', `/upload/${staged.uploadSessionId}/status`, auth);
+      expect(status.json.data.status).toBe('in_progress');
+
+      release();
+      const done = await completion;
+      expect(done.status).toBe(200);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept bytes');
+      expect(app.fixture.finalizeCount(key)).toBe(1);
+      expect(uploaded).toEqual([done.json.data.versionId]);
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+      const lateAbort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, auth);
+      expect(lateAbort.json.error.code).toBe('FILEFN_UPLOAD_ALREADY_COMPLETED');
+    });
+
+    it(`${mode}: two concurrent completion calls in two processes return the same result and publish once`, async () => {
+      const database = createUniqueEnforcingDb({});
+      const storageFixture = createStorage(mode);
+      const one = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
+      const two = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
+      const uploaded: string[] = [];
+      for (const app of [one, two]) app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+      const staged = await one.stage('user_a', CLIENT_ID, 'published once');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      const release = storageFixture.gate(key);
+
+      const first = staged.complete();
+      await flushPromises();
+      const second = two.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      release();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult.status).toBe(200);
+      expect(secondResult.status).toBe(200);
+      expect(secondResult.json.data).toEqual(firstResult.json.data);
+      expect(storageFixture.finalizeCount(key)).toBe(1);
+      expect(uploaded).toEqual([firstResult.json.data.versionId]);
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
+      expect(await one.readBytes(CLIENT_ID, 'user_a')).toBe('published once');
+    });
+  }
+
+  it('an abort whose write races a completion claim gets 409 and leaves the session to the completion', async () => {
+    const base = memoryAdapter();
+    let claimBeforeAbortWrite: string | undefined;
+    const database = {
+      ...base,
+      async update(params: Parameters<Adapter['update']>[0]) {
+        const sessionId = claimBeforeAbortWrite;
+        if (params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'aborted' && sessionId) {
+          // Another process claims the session between the abort's read and write.
+          claimBeforeAbortWrite = undefined;
+          await setSession(base, sessionId, { status: 'completing', completionClaim: `${new Date().toISOString()} other` });
+        }
+        return base.update(params);
+      },
+    } as Adapter;
+    const app = createApp({ mode: 'multipart', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'claimed first');
+    claimBeforeAbortWrite = staged.uploadSessionId;
+
+    const abort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token });
+    expect(abort.status).toBe(409);
+    expect(abort.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+    // The storage upload the completion needs was left alone.
+    expect(app.fixture.uploads.size).toBe(1);
+  });
+
+  it('a stale completing session left by a crashed completer is taken over and completes', async () => {
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'multipart', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'taken over');
+    // Claimed past the default 900 s completion timeout by a process that crashed.
+    const crashedClaim = `${new Date(Date.now() - 901_000).toISOString()} crashed`;
+    await setSession(database, staged.uploadSessionId, { status: 'completing', completionClaim: crashedClaim });
+
+    const abort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token });
+    expect(abort.status).toBe(409);
+    const done = await staged.complete();
+    expect(done.status).toBe(200);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('taken over');
+    const row = (await rawSession(database, staged.uploadSessionId)) as { status: string; completionClaim: string };
+    expect(row.status).toBe('completed');
+    expect(row.completionClaim).not.toBe(crashedClaim);
+  });
+
+  it('a completion behind a live claim of another process gets the retryable 409 after the wait bound, changing nothing', async () => {
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'multipart', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'still held');
+    const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+    const liveClaim = `${new Date().toISOString()} live`;
+    await setSession(database, staged.uploadSessionId, { status: 'completing', completionClaim: liveClaim });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const pending = staged.complete();
+    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS + 1_000);
+    const res = await pending;
+    expect(res.status).toBe(409);
+    expect(res.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+    expect(res.json.error.details).toEqual({ retryable: true });
+    expect(app.fixture.finalizeCount(key)).toBe(0);
+    const row = (await rawSession(database, staged.uploadSessionId)) as { status: string; completionClaim: string };
+    expect(row).toMatchObject({ status: 'completing', completionClaim: liveClaim });
+  });
+
+  it('a completion that fails before publishing releases its claim, so a retry completes at once', async () => {
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'multipart', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'retried');
+    const finalize = app.fixture.storage.completeMultipartUpload!.bind(app.fixture.storage);
+    app.fixture.storage.completeMultipartUpload = async () => {
+      throw new Error('storage unavailable');
+    };
+    await expect(staged.complete()).rejects.toThrow('storage unavailable');
+    expect(await rawSession(database, staged.uploadSessionId)).toMatchObject({ status: 'in_progress', completionClaim: null });
+
+    app.fixture.storage.completeMultipartUpload = finalize;
+    const done = await within(staged.complete(), 1_000);
+    expect(done.status).toBe(200);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('retried');
   });
 });
