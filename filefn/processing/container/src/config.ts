@@ -31,7 +31,7 @@ export class ContainerConfigError extends Error {
 
 function text(env: ContainerEnv, key: string): string | undefined {
   const value = env[key]?.trim();
-  return value ? value : undefined;
+  return value || undefined;
 }
 
 function required(env: ContainerEnv, key: string): string {
@@ -78,7 +78,7 @@ function jurisdiction(env: ContainerEnv): R2StorageConfig['jurisdiction'] {
 export function readContainerConfig(env: ContainerEnv): ContainerConfig {
   const endpoint = text(env, 'FILEFN_R2_ENDPOINT');
   const ocrLanguage = text(env, 'FILEFN_OCR_LANGUAGE') ?? 'eng';
-  if (!/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/.test(ocrLanguage)) {
+  if (!/^\w+(\+\w+)*$/.test(ocrLanguage)) {
     throw new ContainerConfigError('FILEFN_OCR_LANGUAGE must be tesseract language codes joined by +');
   }
   const storage: R2StorageConfig = {

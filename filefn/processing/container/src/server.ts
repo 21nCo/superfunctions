@@ -186,12 +186,11 @@ export function createJobServer(options: JobServerOptions): JobServer {
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0];
-    const route = path === '/health' ? 'health' : path === '/jobs' ? 'jobs' : null;
-    if (route === null) {
+    if (path !== '/health' && path !== '/jobs') {
       sendError(res, new RequestError(404, 'FILEFN_CONTAINER_NOT_FOUND', 'not found'));
       return;
     }
-    if (route === 'health') {
+    if (path === '/health') {
       if (req.method === 'GET' || req.method === 'HEAD') send(res, 200, { status: 'ok' });
       else sendError(res, new RequestError(405, 'FILEFN_CONTAINER_METHOD_NOT_ALLOWED', 'use GET'), { allow: 'GET, HEAD' });
       return;
@@ -200,7 +199,7 @@ export function createJobServer(options: JobServerOptions): JobServer {
       sendError(res, new RequestError(405, 'FILEFN_CONTAINER_METHOD_NOT_ALLOWED', 'use POST'), { allow: 'POST' });
       return;
     }
-    track(runJob(req, res).catch((error: unknown) => {
+    void track(runJob(req, res).catch((error: unknown) => {
       if (res.headersSent || res.destroyed) {
         if (!(error instanceof RequestError)) onError?.(error);
         res.destroy();
@@ -218,7 +217,7 @@ export function createJobServer(options: JobServerOptions): JobServer {
 
   return Object.assign(server, {
     async drainJobs() {
-      while (accepted.size > 0) await Promise.allSettled([...accepted]);
+      while (accepted.size > 0) await Promise.allSettled(accepted);
     },
   });
 }

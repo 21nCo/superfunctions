@@ -10,7 +10,7 @@ FROM ${NODE_IMAGE} AS base
 # call. libvips is Debian's build, which reads PDFs through poppler; sharp is
 # compiled against it below because sharp's prebuilt libvips has no PDF loader.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates ffmpeg tesseract-ocr tesseract-ocr-eng libvips42t64 \
+  && apt-get install -y --no-install-recommends ca-certificates ffmpeg libvips42t64 tesseract-ocr tesseract-ocr-eng \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -33,15 +33,17 @@ RUN npm ci --omit=dev --ignore-scripts --include-workspace-root=false \
 FROM deps AS sharp-native
 ARG NODE_ADDON_API_VERSION=8.1.0
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential python3 pkg-config libvips-dev \
+  && apt-get install -y --no-install-recommends build-essential libvips-dev pkg-config python3 \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install --prefix /opt/sharp-build --no-save --no-package-lock "node-addon-api@${NODE_ADDON_API_VERSION}" \
+RUN npm install --prefix /opt/sharp-build --ignore-scripts --no-save --no-package-lock "node-addon-api@${NODE_ADDON_API_VERSION}" \
   && cd node_modules/sharp/src \
   && NODE_PATH=/opt/sharp-build/node_modules \
     node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --nodedir=/usr/local \
   && rm -rf build/Release/obj.target build/Release/.deps \
   && cd /app \
-  && node -e "const s=require('sharp');if(!s.format.pdf.input.buffer){console.error('sharp has no PDF loader');process.exit(1)}console.log('sharp',s.versions.sharp,'libvips',s.versions.vips,'pdf input')"
+  && node -e "const s=require('sharp'); \
+      if (!s.format.pdf.input.buffer) { console.error('sharp has no PDF loader'); process.exit(1); } \
+      console.log('sharp', s.versions.sharp, 'libvips', s.versions.vips, 'pdf input');"
 
 FROM base AS build
 COPY . .

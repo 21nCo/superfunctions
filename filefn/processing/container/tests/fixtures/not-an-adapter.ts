@@ -1,1 +1,3 @@
-export default () => ({ nope: true });
+export default function createNotAnAdapter() {
+  return { nope: true };
+}

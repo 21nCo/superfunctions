@@ -142,8 +142,10 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error: unknown) {
     console.error('[filefn-container] failed to start:', error instanceof Error ? error.message : error);
     process.exit(1);
-  });
+  }
 }

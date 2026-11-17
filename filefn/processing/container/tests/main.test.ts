@@ -90,7 +90,7 @@ describe('startContainer', () => {
   it('rejects an invalid configuration before loading the database', async () => {
     const before = received.length;
     await expect(startContainer({ ...env, FILEFN_PROCESSORS: 'video' })).rejects.toThrow(/FILEFN_CONTAINER_CONFIG_INVALID/);
-    expect(received.length).toBe(before);
+    expect(received).toHaveLength(before);
   });
 
   it('closes the database when the port cannot be bound', async () => {
