@@ -171,17 +171,42 @@ struct BillFnStoreKitBackendTests {
         #expect(BillFnStoreKitFailure(error: BillFnStoreKitError.productNotFound("apple.pro.month")).code == "BILLFN_STOREKIT_ERROR")
     }
 
-    @Test("Keeps a checkout per product until it is removed")
+    @Test("Keeps each checkout by its session until that session is removed")
     func storesCheckouts() throws {
         let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
         let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
-        let checkout = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: UUID(uuidString: token)!)
+        let account = UUID(uuidString: token)!
+        let first = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
+        let second = BillFnStoreKitCheckout(checkoutSessionId: "chk_2", productId: "apple.pro.month", appAccountToken: account)
+        let yearly = BillFnStoreKitCheckout(checkoutSessionId: "chk_3", productId: "apple.pro.year", appAccountToken: account)
 
-        store.save(checkout)
+        store.save(first)
+        store.save(second)
+        store.save(yearly)
 
-        #expect(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkout(forProductId: "apple.pro.month") == checkout)
-        #expect(store.checkout(forProductId: "apple.pro.year") == nil)
-        store.removeCheckout(forProductId: "apple.pro.month")
-        #expect(store.checkout(forProductId: "apple.pro.month") == nil)
+        // A second attempt on the same product does not replace the first one's checkout.
+        #expect(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkouts(forProductId: "apple.pro.month") == [first, second])
+        #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
+        // Removing (cancelling or confirming) the second attempt keeps the first.
+        store.removeCheckout(checkoutSessionId: "chk_2")
+        #expect(store.checkouts(forProductId: "apple.pro.month") == [first])
+        store.removeCheckout(checkoutSessionId: "chk_1")
+        #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
+        #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
+    }
+
+    @Test("Drops the oldest checkout beyond its capacity")
+    func boundsCheckouts() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
+        let capacity = BillFnUserDefaultsCheckoutStore.capacity
+        for index in 0...capacity {
+            store.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: UUID(uuidString: token)!))
+        }
+
+        let kept = store.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
+        #expect(kept.count == capacity)
+        #expect(kept.first == "chk_1")
+        #expect(kept.last == "chk_\(capacity)")
     }
 }

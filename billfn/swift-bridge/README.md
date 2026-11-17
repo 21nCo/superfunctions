@@ -30,6 +30,12 @@ billing.subscribe((event) => {
 A transaction is finished only once BillFn confirms it (`status: 'confirmed'`); a `failed` or
 `skipped` one stays unfinished and is retried on the app's next launch.
 
+`checkout` and `restore` last as long as the App Store purchase sheet or sign-in is open, so they
+do not use the 30-second `timeoutMs`: they wait up to `interactiveTimeoutMs` (10 minutes by
+default; `0` waits without a timeout). When that runs out, the call rejects with
+`BRIDGE_INTERACTIVE_TIMEOUT`. The purchase may still complete in the native app; its outcome then
+arrives as a `transaction.updated` event, so keep listening rather than treating it as a failure.
+
 ## Build and test
 
 ```bash

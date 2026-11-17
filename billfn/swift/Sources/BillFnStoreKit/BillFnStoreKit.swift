@@ -71,6 +71,8 @@ public actor BillFnStoreKit {
     private let plans: [String: BillFnStoreKitPlan]
     private let checkouts: any BillFnStoreKitCheckoutStore
     private var inFlight: [UInt64: Task<BillFnStoreKitTransactionOutcome, Never>] = [:]
+    /// Checkouts a transaction is being verified against, so a concurrent one does not use the same checkout.
+    private var claimedCheckouts: Set<String> = []
     private var listener: Task<Void, Never>?
     private let outcomeContinuation: AsyncStream<BillFnStoreKitTransactionOutcome>.Continuation
 
@@ -106,11 +108,24 @@ public actor BillFnStoreKit {
     /// Call it once at launch, before any purchase.
     @discardableResult
     public func start() async -> [BillFnStoreKitTransactionOutcome] {
+        await start(updates: Transaction.updates)
+    }
+
+    /// `start()` with the transaction updates to listen to; `start()` passes `Transaction.updates`.
+    /// Each element is confirmed by `process(_:)`. Only the first call's listener runs until `stop()`.
+    @discardableResult
+    public func start<Updates: AsyncSequence & Sendable>(
+        updates: Updates
+    ) async -> [BillFnStoreKitTransactionOutcome] where Updates.Element == VerificationResult<Transaction> {
         if listener == nil {
             listener = Task.detached { [weak self] in
-                for await update in Transaction.updates {
-                    guard let self else { return }
-                    await self.process(update)
+                do {
+                    for try await update in updates {
+                        guard let self else { return }
+                        await self.process(update)
+                    }
+                } catch {
+                    // The sequence ended with an error; `Transaction.updates` never throws.
                 }
             }
         }
@@ -146,16 +161,16 @@ public actor BillFnStoreKit {
             result = try await product.purchase(options: [.appAccountToken(checkout.appAccountToken)])
         } catch StoreKitError.userCancelled {
             // StoreKit reports some cancellations as an error rather than as `.userCancelled`.
-            checkouts.removeCheckout(forProductId: checkout.productId)
+            checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
             return .cancelled(checkout)
         }
         switch result {
         case .success(let verification):
-            return .purchased(checkout, await process(verification))
+            return .purchased(checkout, await process(verification, checkout: checkout))
         case .pending:
             return .pending(checkout)
         case .userCancelled:
-            checkouts.removeCheckout(forProductId: checkout.productId)
+            checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
             return .cancelled(checkout)
         @unknown default:
             throw BillFnStoreKitError.unknownPurchaseResult
@@ -175,19 +190,28 @@ public actor BillFnStoreKit {
     }
 
     /// Confirms one transaction with BillFn and finishes it if BillFn confirms it; `start()` passes each
-    /// `Transaction.updates` element here. A transaction with a kept checkout is verified against that checkout;
-    /// any other one (a renewal, a restored or approved purchase) is restored onto the plan its product maps to.
+    /// `Transaction.updates` element here. A transaction with a kept checkout for its product and `appAccountToken`
+    /// (the oldest one, when an earlier attempt is still pending) is verified against that checkout; any other one
+    /// (a renewal, a restored purchase) is restored onto the plan its product maps to.
     ///
     /// StoreKit's own signature check is not the trust boundary: BillFn reads the transaction from the App Store
     /// Server API and checks its `appAccountToken`, so a transaction StoreKit could not verify is still sent to
     /// BillFn, and finished only when BillFn confirms it.
     @discardableResult
     public func process(_ verification: VerificationResult<Transaction>) async -> BillFnStoreKitTransactionOutcome {
+        await process(verification, checkout: nil)
+    }
+
+    /// `checkout` is the one the purchase that produced this transaction opened, when known.
+    private func process(
+        _ verification: VerificationResult<Transaction>,
+        checkout: BillFnStoreKitCheckout?
+    ) async -> BillFnStoreKitTransactionOutcome {
         let transaction = verification.unsafePayloadValue
         if let running = inFlight[transaction.id] {
             return await running.value
         }
-        let task = Task { await self.confirmNow(transaction) }
+        let task = Task { await self.confirmNow(transaction, purchasedWith: checkout) }
         inFlight[transaction.id] = task
         let outcome = await task.value
         inFlight[transaction.id] = nil
@@ -195,7 +219,7 @@ public actor BillFnStoreKit {
         return outcome
     }
 
-    private func confirmNow(_ transaction: Transaction) async -> BillFnStoreKitTransactionOutcome {
+    private func confirmNow(_ transaction: Transaction, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) async -> BillFnStoreKitTransactionOutcome {
         let reference = BillFnStoreKitTransactionReference(
             transactionId: String(transaction.id),
             originalTransactionId: String(transaction.originalID),
@@ -203,12 +227,16 @@ public actor BillFnStoreKit {
             appAccountToken: transaction.appAccountToken,
             revoked: transaction.revocationDate != nil
         )
+        let checkout = claimCheckout(for: transaction, purchasedWith: purchaseCheckout)
+        defer {
+            if let checkout { claimedCheckouts.remove(checkout.checkoutSessionId) }
+        }
         do {
             let billing: BillFnJSONValue
-            if let checkout = checkouts.checkout(forProductId: transaction.productID),
-               checkout.appAccountToken == transaction.appAccountToken {
+            if let checkout {
                 billing = try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
-                checkouts.removeCheckout(forProductId: transaction.productID)
+                // Only this checkout: another attempt on the product may have saved its own meanwhile.
+                checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
             } else if let plan = plans[transaction.productID] {
                 billing = try await backend.restorePurchase(plan: plan, transaction: reference)
             } else {
@@ -222,6 +250,19 @@ public actor BillFnStoreKit {
         } catch {
             return BillFnStoreKitTransactionOutcome(transaction: reference, status: .failed(BillFnStoreKitFailure(error: error)))
         }
+    }
+
+    /// The checkout to verify the transaction against: the purchase's own one, else the oldest kept checkout for
+    /// its product and `appAccountToken` that no other transaction is being verified against.
+    private func claimCheckout(for transaction: Transaction, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) -> BillFnStoreKitCheckout? {
+        let matches: (BillFnStoreKitCheckout) -> Bool = {
+            $0.productId == transaction.productID && $0.appAccountToken == transaction.appAccountToken
+                && !self.claimedCheckouts.contains($0.checkoutSessionId)
+        }
+        let candidate = purchaseCheckout.flatMap { matches($0) ? $0 : nil }
+            ?? checkouts.checkouts(forProductId: transaction.productID).first(where: matches)
+        if let candidate { claimedCheckouts.insert(candidate.checkoutSessionId) }
+        return candidate
     }
 
     public static func manageSubscriptionsURL() -> URL {

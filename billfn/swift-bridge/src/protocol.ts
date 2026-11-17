@@ -47,6 +47,8 @@ export type BillFnBridgeErrorCode =
   | 'BRIDGE_PROTOCOL_MISMATCH'
   | 'BRIDGE_METHOD_UNSUPPORTED'
   | 'BRIDGE_UNAVAILABLE'
+  /** An interactive StoreKit request timed out; the purchase may still complete and arrive as `transaction.updated`. */
+  | 'BRIDGE_INTERACTIVE_TIMEOUT'
   | 'BRIDGE_HANDSHAKE_REQUIRED'
   | 'BRIDGE_INVALID_REQUEST'
   | 'BILLFN_CLIENT_ERROR'
@@ -88,8 +90,17 @@ export interface BillFnBridgeEventEnvelope {
 
 export interface CreateWKWebViewBridgeBusOptions {
   handlerName?: string;
+  /** How long a request waits for the native host. Defaults to 30 seconds. */
   timeoutMs?: number;
+  /**
+   * How long `storekit.checkout` and `storekit.restore` wait: they last as long as the App Store purchase
+   * sheet or sign-in is open. Defaults to 10 minutes; `0` waits without a timeout.
+   */
+  interactiveTimeoutMs?: number;
 }
+
+/** The bridge methods that wait on the user in the App Store purchase sheet or sign-in. */
+export const BILLFN_BRIDGE_INTERACTIVE_METHODS: readonly BillFnBridgeMethod[] = ['storekit.checkout', 'storekit.restore'];
 
 export interface BillFnBridgeHandshakePayload {
   clientId: string;

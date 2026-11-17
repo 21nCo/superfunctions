@@ -20,6 +20,12 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
     private(set) var restores: [(plan: BillFnStoreKitPlan, transaction: BillFnStoreKitTransactionReference)] = []
     var verifyError: (any Error)?
     var restoreError: (any Error)?
+    /// While set, each verification waits here before answering.
+    var verifyGate: (@Sendable () async -> Void)?
+
+    func holdVerifications(_ gate: (@Sendable () async -> Void)?) {
+        verifyGate = gate
+    }
 
     func failVerification(with error: (any Error)?) {
         verifyError = error
@@ -38,6 +44,7 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
 
     func verifyCheckout(checkoutSessionId: String, transaction: BillFnStoreKitTransactionReference) async throws -> BillFnJSONValue {
         verifications.append((checkoutSessionId, transaction))
+        if let verifyGate { await verifyGate() }
         if let verifyError { throw verifyError }
         return .object(["checkoutSession": .object(["checkoutSessionId": .string(checkoutSessionId), "status": "succeeded"])])
     }
@@ -46,6 +53,25 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
         restores.append((plan, transaction))
         if let restoreError { throw restoreError }
         return .object(["subscription": .object(["status": "active"])])
+    }
+}
+
+/// A gate a test opens once; everything waiting on it resumes then.
+actor Gate {
+    private var open = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var arrivals = 0
+
+    func wait() async {
+        arrivals += 1
+        if open { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        open = true
+        waiters.forEach { $0.resume() }
+        waiters = []
     }
 }
 
@@ -62,8 +88,8 @@ actor OutcomeRecorder {
 }
 
 /// Sets up StoreKit testing and the fake BillFn server for each test; launches share one checkout store.
-/// StoreKit testing keeps transaction state in the test process between tests, so `run-tests.sh` runs
-/// each test in its own host process.
+/// StoreKit testing keeps some state in the test process between tests, so `run-tests.sh` runs the tests
+/// that simulate a purchase error or Ask to Buy in their own host processes.
 class BillFnStoreKitTestCase: XCTestCase {
     var session: SKTestSession!
     var defaults: UserDefaults!
@@ -91,9 +117,27 @@ class BillFnStoreKitTestCase: XCTestCase {
 
     /// A `BillFnStoreKit` as one app launch makes it; launches share the checkout store, as they share UserDefaults.
     func launch(_ backend: FakeBillFnBackend) -> BillFnStoreKit {
-        let kit = BillFnStoreKit(backend: backend, plans: plans, checkouts: BillFnUserDefaultsCheckoutStore(defaults: defaults))
+        let kit = BillFnStoreKit(backend: backend, plans: plans, checkouts: checkoutStore)
         kits.append(kit)
         return kit
+    }
+
+    /// The checkout store as the next launch reads it.
+    var checkoutStore: BillFnUserDefaultsCheckoutStore {
+        BillFnUserDefaultsCheckoutStore(defaults: defaults)
+    }
+
+    func keptCheckoutIds(_ productId: String) -> [String] {
+        checkoutStore.checkouts(forProductId: productId).map(\.checkoutSessionId)
+    }
+
+    func waitUntil(_ what: String, _ condition: @escaping () async -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw TimedOut(waitingFor: what)
     }
 
     func unfinishedTransactionIds() async -> [UInt64] {
@@ -176,7 +220,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         let restores = await backend.restores
         XCTAssertTrue(restores.isEmpty)
         try await assertFinished(outcome)
-        XCTAssertNil(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkout(forProductId: proMonthly))
+        XCTAssertEqual(keptCheckoutIds(proMonthly), [])
     }
 
     func testTransactionBillFnRejectsStaysUnfinishedAndIsVerifiedOnTheNextLaunch() async throws {
@@ -225,7 +269,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertTrue(verifications.isEmpty)
         let restores = await backend.restores
         XCTAssertTrue(restores.isEmpty)
-        XCTAssertEqual(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkout(forProductId: proLifetime), checkout)
+        XCTAssertEqual(checkoutStore.checkouts(forProductId: proLifetime), [checkout])
         let unfinished = await unfinishedTransactionIds()
         XCTAssertEqual(unfinished, unfinishedBefore)
     }
@@ -293,6 +337,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertTrue(unfinished.contains(renewal.unsafePayloadValue.id))
     }
 
+    /// Additional coverage of the real `Transaction.updates`; StoreKit testing delivers them only to an active app.
     func testListenerConfirmsTransactionUpdates() async throws {
         let active = await MainActor.run { NSApplication.shared.isActive }
         // In local runs where the host app could not become active, StoreKit testing delivered no updates at all.
@@ -325,8 +370,109 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkout.checkoutSessionId, "chk_1")
         let verifications = await backend.verifications
         XCTAssertTrue(verifications.isEmpty)
-        XCTAssertNil(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkout(forProductId: proMonthly))
+        XCTAssertEqual(keptCheckoutIds(proMonthly), [])
         let unfinished = await unfinishedTransactionIds()
         XCTAssertEqual(unfinished, unfinishedBefore)
+    }
+
+    /// A pending purchase's checkout survives a second attempt on the same product that the user cancels, so
+    /// the first purchase, approved later, is verified against its own checkout on the next launch.
+    /// `proLifetime` maps to no plan, so without its kept checkout the approved purchase would be skipped.
+    func testCancelledSecondAttemptKeepsThePendingAttemptsCheckout() async throws {
+        let backend = FakeBillFnBackend()
+        // The first attempt, left pending by an earlier launch, keeps its checkout.
+        let pending = BillFnStoreKitCheckout(checkoutSessionId: "chk_pending", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(pending)
+        let kit = launch(backend)
+
+        try await session.setSimulatedError(.generic(.userCancelled), forAPI: .purchase)
+        let second = try await kit.purchase(planKey: "pro-lifetime")
+        try await session.setSimulatedError(nil, forAPI: .purchase)
+
+        guard case .cancelled(let cancelled) = second else {
+            return XCTFail("Expected the second attempt to be cancelled, got \(second)")
+        }
+        XCTAssertEqual(cancelled.checkoutSessionId, "chk_1")
+        XCTAssertEqual(keptCheckoutIds(proLifetime), ["chk_pending"])
+
+        // The first attempt is approved: its transaction, bought with the billing account's token, waits
+        // unfinished for the next launch.
+        let approved = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let nextLaunch = launch(backend)
+        let retried = await nextLaunch.start()
+
+        let outcome = try XCTUnwrap(retried.first { $0.transaction.transactionId == String(approved.id) })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_pending"])
+        let restores = await backend.restores
+        XCTAssertTrue(restores.isEmpty)
+        XCTAssertEqual(keptCheckoutIds(proLifetime), [])
+    }
+}
+
+/// Transaction updates and checkout bookkeeping. This class runs after `BillFnStoreKitTests` in the same host process:
+/// StoreKit testing showed a forced renewal to the app only once earlier tests had purchased in that process.
+final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
+    /// A checkout another attempt saves while BillFn verifies a purchase is kept once that purchase is confirmed.
+    func testConfirmedPurchaseRemovesOnlyItsOwnCheckout() async throws {
+        let backend = FakeBillFnBackend()
+        let gate = Gate()
+        await backend.holdVerifications { await gate.wait() }
+        let kit = launch(backend)
+
+        let purchase = Task { try await kit.purchase(planKey: "pro") }
+        try await waitUntil("BillFn's verify call") { await gate.arrivals == 1 }
+        let newer = BillFnStoreKitCheckout(checkoutSessionId: "chk_newer", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(newer)
+        await gate.release()
+        let result = try await purchase.value
+
+        guard case .purchased(let checkout, let outcome) = result else {
+            return XCTFail("Expected a purchase, got \(result)")
+        }
+        XCTAssertEqual(checkout.checkoutSessionId, "chk_1")
+        XCTAssertTrue(outcome.finished)
+        XCTAssertEqual(keptCheckoutIds(proMonthly), ["chk_newer"])
+    }
+
+    /// `start(updates:)` confirms each update it is given, here StoreKit testing transactions fed through a stream
+    /// because StoreKit testing delivers `Transaction.updates` only to an active app: a renewal is restored onto
+    /// its plan and an approved purchase is verified against its kept checkout; both are finished.
+    func testListenerConfirmsEachUpdate() async throws {
+        let backend = FakeBillFnBackend()
+        let kit = launch(backend)
+        let recorder = record(kit)
+        let (updates, feed) = AsyncStream.makeStream(of: VerificationResult<Transaction>.self)
+        await kit.start(updates: updates)
+        guard case .purchased(_, let purchase) = try await kit.purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+
+        try session.forceRenewalOfSubscription(productIdentifier: proMonthly)
+        let renewal = try await latestTransaction(after: purchase)
+        feed.yield(renewal)
+        let renewalOutcomes = try await waitForOutcomes(recorder, count: 2)
+
+        checkoutStore.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_pending", productId: proLifetime, appAccountToken: backend.appAccountToken))
+        let approved = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let latestApproved = await Transaction.latest(for: proLifetime)
+        let approvedResult = try XCTUnwrap(latestApproved)
+        XCTAssertEqual(approvedResult.unsafePayloadValue.id, approved.id)
+        feed.yield(approvedResult)
+        let outcomes = try await waitForOutcomes(recorder, count: 3)
+        feed.finish()
+
+        XCTAssertEqual(renewalOutcomes.last?.transaction.transactionId, String(renewal.unsafePayloadValue.id))
+        XCTAssertEqual(outcomes.last?.transaction.transactionId, String(approved.id))
+        XCTAssertEqual(outcomes.map(\.finished), [true, true, true])
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), [String(renewal.unsafePayloadValue.id)])
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1", "chk_pending"])
+        XCTAssertEqual(keptCheckoutIds(proLifetime), [])
+        for outcome in outcomes {
+            try await assertFinished(outcome)
+        }
     }
 }

@@ -3,6 +3,7 @@ export {
   BILLFN_BRIDGE_CAPABILITIES,
   BILLFN_BRIDGE_METHODS,
   BILLFN_BRIDGE_EVENT_NAMES,
+  BILLFN_BRIDGE_INTERACTIVE_METHODS,
   createBridgeErrorResponse,
   isBridgeEventEnvelope,
   isBridgeHandshakeResult,

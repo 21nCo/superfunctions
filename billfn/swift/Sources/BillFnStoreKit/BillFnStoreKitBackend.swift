@@ -130,15 +130,22 @@ public struct BillFnHTTPStoreKitBackend: BillFnStoreKitBackend {
     }
 }
 
-/// Keeps the checkout a purchase started until BillFn confirms its transaction, so a purchase
+/// Keeps each checkout a purchase started until BillFn confirms its transaction, so a purchase
 /// that finishes later (Ask to Buy, an interrupted app) is still verified against its checkout.
+/// Checkouts are kept by `checkoutSessionId`: two attempts on one product are kept separately,
+/// and a cancelled or confirmed attempt removes only its own checkout.
 public protocol BillFnStoreKitCheckoutStore: Sendable {
-    func checkout(forProductId productId: String) -> BillFnStoreKitCheckout?
+    /// The kept checkouts for the product, oldest first.
+    func checkouts(forProductId productId: String) -> [BillFnStoreKitCheckout]
     func save(_ checkout: BillFnStoreKitCheckout)
-    func removeCheckout(forProductId productId: String)
+    func removeCheckout(checkoutSessionId: String)
 }
 
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
+    /// At most this many checkouts are kept; saving another drops the oldest. A checkout whose purchase is
+    /// never completed (a declined Ask to Buy request) would otherwise be kept forever.
+    public static let capacity = 32
+
     private let defaults: UserDefaults
     private let key: String
     private let lock = NSLock()
@@ -148,32 +155,30 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         self.key = key
     }
 
-    public func checkout(forProductId productId: String) -> BillFnStoreKitCheckout? {
-        lock.withLock { load()[productId] }
+    public func checkouts(forProductId productId: String) -> [BillFnStoreKitCheckout] {
+        lock.withLock { load().filter { $0.productId == productId } }
     }
 
     public func save(_ checkout: BillFnStoreKitCheckout) {
         lock.withLock {
-            var checkouts = load()
-            checkouts[checkout.productId] = checkout
-            store(checkouts)
+            var checkouts = load().filter { $0.checkoutSessionId != checkout.checkoutSessionId }
+            checkouts.append(checkout)
+            store(Array(checkouts.suffix(Self.capacity)))
         }
     }
 
-    public func removeCheckout(forProductId productId: String) {
+    public func removeCheckout(checkoutSessionId: String) {
         lock.withLock {
-            var checkouts = load()
-            checkouts[productId] = nil
-            store(checkouts)
+            store(load().filter { $0.checkoutSessionId != checkoutSessionId })
         }
     }
 
-    private func load() -> [String: BillFnStoreKitCheckout] {
-        guard let data = defaults.data(forKey: key) else { return [:] }
-        return (try? JSONDecoder().decode([String: BillFnStoreKitCheckout].self, from: data)) ?? [:]
+    private func load() -> [BillFnStoreKitCheckout] {
+        guard let data = defaults.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([BillFnStoreKitCheckout].self, from: data)) ?? []
     }
 
-    private func store(_ checkouts: [String: BillFnStoreKitCheckout]) {
+    private func store(_ checkouts: [BillFnStoreKitCheckout]) {
         defaults.set(try? JSONEncoder().encode(checkouts), forKey: key)
     }
 }

@@ -38,8 +38,12 @@ let restored = try await storeKit.restore()
   purchase is restored onto the plan its product maps to (`POST /purchases/restore`). A transaction
   BillFn does not confirm stays unfinished, so StoreKit offers it again and `start()` retries it
   on the next launch.
-- The checkout a purchase opened is kept (in `UserDefaults` by default) until BillFn confirms its
-  transaction, so a purchase that completes after the app quits still verifies against it.
+- The checkout each purchase attempt opened is kept (in `UserDefaults` by default, by its
+  `checkoutSessionId`) until BillFn confirms its transaction, so a purchase that completes after the
+  app quits still verifies against it. A second attempt on the same product does not replace a
+  pending one's checkout, and a cancelled or confirmed attempt removes only its own checkout.
+- `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
+  for example in tests.
 - `outcomes` streams every transaction outcome, for example to refresh entitlements.
 
 ## Test

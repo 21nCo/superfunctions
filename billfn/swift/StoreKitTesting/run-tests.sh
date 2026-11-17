@@ -2,8 +2,8 @@
 # Runs the BillFnStoreKit tests against StoreKit testing in the macOS host app.
 #
 # StoreKit testing keeps state in the test process. After a simulated purchase error or an
-# Ask to Buy request, a later purchase's finish() does not reach the test store, so those two
-# tests run in their own host processes. The other tests share one process: in a fresh one,
+# Ask to Buy request, a later purchase's finish() does not reach the test store, so the tests
+# that simulate one run in their own host processes. The other tests share one process: in a fresh one,
 # StoreKit testing did not show a forced renewal to the app in local runs.
 set -euo pipefail
 
@@ -14,6 +14,7 @@ common=(-project BillFnStoreKitTesting.xcodeproj -scheme BillFnStoreKitTesting
 isolated=(
   BillFnStoreKitTests/BillFnStoreKitTests/testPendingPurchaseIsNotVerifiedAndKeepsItsCheckout
   BillFnStoreKitTests/BillFnStoreKitTests/testCancelledPurchaseIsNeitherVerifiedNorKept
+  BillFnStoreKitTests/BillFnStoreKitTests/testCancelledSecondAttemptKeepsThePendingAttemptsCheckout
 )
 
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet
