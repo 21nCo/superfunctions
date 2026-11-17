@@ -230,9 +230,17 @@ function matchesAny(patterns, value) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+// Code-unit order, the same order a bare sort() gives strings; localeCompare would reorder them.
+function compareStrings(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
+}
+
 function buildTurboFilters(packageDirs) {
   return [...packageDirs]
-    .sort()
+    .sort(compareStrings)
     .map((packageDir) => `--filter=..../${packageDir}`)
     .join(" ");
 }
@@ -240,14 +248,14 @@ function buildTurboFilters(packageDirs) {
 // Turbo filters for exactly these package directories, without their dependents or dependencies.
 function buildExactTurboFilters(packageDirs) {
   return [...packageDirs]
-    .sort()
+    .sort(compareStrings)
     .map((packageDir) => `--filter=./${packageDir}`)
     .join(" ");
 }
 
 function buildExcludeTurboFilters(packageDirs) {
   return [...packageDirs]
-    .sort()
+    .sort(compareStrings)
     .map((packageDir) => `--filter=!./${packageDir}`)
     .join(" ");
 }
@@ -473,7 +481,7 @@ const summary = {
   runMcpfn,
   mcpfnOnly,
   jsPackages: selectedJsPackages.map((manifest) => manifest.name).sort(),
-  devfnTestPackages: [...devfnTestPackages].map((dir) => jsByDir.get(dir).name).sort(),
+  devfnTestPackages: [...devfnTestPackages].map((dir) => jsByDir.get(dir).name).sort(compareStrings),
   pythonPackages: pythonMatrix,
 };
 
