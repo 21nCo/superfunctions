@@ -462,6 +462,37 @@ describe('in-scope actors (AUTH-8)', () => {
     }
   });
 
+  it('redirect-URI mismatch: a backslash or an @ in the authority is refused by registration and by document (AUTH-21)', async () => {
+    const provider = await setupProvider({ registration: { dynamic: true } });
+    const refused = [
+      'https://app.example\\cb',
+      'https://app.example/a\\b',
+      'https://app.example@app.example/cb',
+      'https://user@app.example/cb',
+      'http://127.0.0.1@127.0.0.1/cb',
+      'http://127.0.0.1\\cb'
+    ];
+    for (const redirectUri of refused) {
+      const response = await provider.register({ redirect_uris: [redirectUri] });
+      expect(response.status, redirectUri).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_redirect_uri' });
+    }
+    // An @ after the authority is not userinfo.
+    expect((await provider.register({ redirect_uris: ['https://app.example/cb?x=@', 'https://app.example/p@th'] })).status).toBe(201);
+
+    // A document listing one such URI next to a valid one makes the client unknown.
+    for (const redirectUri of refused) {
+      const documents = documentFetch({ [DOCUMENT_URL]: documentFor({ redirect_uris: ['https://mcp.example.com/cb', redirectUri] }) });
+      const viaDocument = await setupProvider({ registration: { metadataDocuments: true, fetch: documents.impl } });
+      await expectRefusedClient(viaDocument, await viaDocument.getAuthorize(viaDocument.authorizeQuery({}, DOCUMENT_CLIENT)));
+    }
+    const allowed = documentFetch({
+      [DOCUMENT_URL]: documentFor({ redirect_uris: ['https://mcp.example.com/cb', 'https://app.example/p@th'] })
+    });
+    const viaAllowed = await setupProvider({ registration: { metadataDocuments: true, fetch: allowed.impl } });
+    expect((await viaAllowed.getAuthorize(viaAllowed.authorizeQuery({}, DOCUMENT_CLIENT))).status).toBe(200);
+  });
+
   it('oversized metadata document: a declared length over 64 KB is refused at once, a streamed one is cut off', async () => {
     const declared = await documentServer((_, response) => {
       // Promises more than the cap and then stalls: the headers alone decide.
