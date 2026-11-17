@@ -1,0 +1,124 @@
+name: FileFn Processing Container
+
+on:
+  push:
+    branches: [dev, next, main]
+    paths:
+      - "filefn/processing/**"
+      - "filefn/server/**"
+      - "packages/storage-r2/**"
+      - "packages/storage/**"
+      - "packages/files/**"
+      - "packages/observability/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ci-install-rollup-native.mjs"
+      - ".github/workflows/filefn-processing-container.yml"
+  pull_request:
+    branches: [dev, next, main]
+    paths:
+      - "filefn/processing/**"
+      - "filefn/server/**"
+      - "packages/storage-r2/**"
+      - "packages/storage/**"
+      - "packages/files/**"
+      - "packages/observability/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ci-install-rollup-native.mjs"
+      - ".github/workflows/filefn-processing-container.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build the processing image and run it against MinIO
+    if: github.repository == '21nCo/superfunctions'
+    runs-on: ubuntu-24.04
+    services:
+      minio:
+        # The upstream minio/minio image needs a `server` argument, which service containers cannot pass; this one starts the server itself.
+        image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+        env:
+          # Disposable per-run credentials for the throwaway service container; the job env repeats the same expressions.
+          MINIO_ROOT_USER: ${{ format('filefn-ct-{0}-{1}', github.run_id, github.run_attempt) }}
+          MINIO_ROOT_PASSWORD: ${{ format('filefn-ct-key-{0}-{1}', github.run_id, github.run_attempt) }}
+          MINIO_DEFAULT_BUCKETS: filefn-container-test
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      STORAGE_R2_S3_ENDPOINT: http://127.0.0.1:9000
+      STORAGE_R2_S3_BUCKET: filefn-container-test
+      STORAGE_R2_S3_ACCESS_KEY_ID: ${{ format('filefn-ct-{0}-{1}', github.run_id, github.run_attempt) }}
+      STORAGE_R2_S3_SECRET_ACCESS_KEY: ${{ format('filefn-ct-key-{0}-{1}', github.run_id, github.run_attempt) }}
+      SMOKE_TOKEN: ${{ format('smoke-{0}-{1}', github.run_id, github.run_attempt) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # MinIO answers anonymous requests 403 whether or not the bucket exists, so readiness is a signed HeadBucket.
+      - name: Wait for the test bucket
+        run: |
+          for attempt in $(seq 1 30); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' --head --connect-timeout 2 --max-time 5 \
+              -H "x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+              --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "$STORAGE_R2_S3_ACCESS_KEY_ID:$STORAGE_R2_S3_SECRET_ACCESS_KEY" \
+              "$STORAGE_R2_S3_ENDPOINT/$STORAGE_R2_S3_BUCKET" || true)"
+            if [ "$status" = "200" ]; then
+              echo "bucket $STORAGE_R2_S3_BUCKET is ready (attempt $attempt)"
+              exit 0
+            fi
+            echo "attempt $attempt: HeadBucket returned HTTP ${status:-none}"
+            sleep 2
+          done
+          echo "::error::bucket $STORAGE_R2_S3_BUCKET was not ready after 30 attempts (last HTTP ${status:-none})"
+          exit 1
+
+      - name: Build the image's build stage
+        run: docker build --target build -f filefn/processing/container/Dockerfile -t filefn-processing-container:build .
+
+      - name: Run the container suite in the image against MinIO (thumbnail, PDF preview and native OCR)
+        run: >-
+          docker run --rm --network host
+          -e STORAGE_R2_S3_ENDPOINT -e STORAGE_R2_S3_BUCKET
+          -e STORAGE_R2_S3_ACCESS_KEY_ID -e STORAGE_R2_S3_SECRET_ACCESS_KEY
+          -e FILEFN_CONTAINER_IT_REQUIRED=1 -e FILEFN_CONTAINER_IT_OCR=1
+          filefn-processing-container:build
+          npm test --workspace @filefn/processing-container
+
+      - name: Build the runtime image
+        run: docker build -f filefn/processing/container/Dockerfile -t filefn-processing-container:ci .
+
+      - name: Smoke-test the runtime image
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh filefn-processing-container:ci -c \
+            'ffmpeg -version | head -n 1 && tesseract --list-langs 2>&1 | grep -qx eng && node -e "import(\"sharp\").then((m) => console.log(\"sharp\", m.default.versions.vips))"'
+          docker run -d --name filefn-ct --network host \
+            -e PORT=18080 -e FILEFN_DATABASE=memory -e FILEFN_CONTAINER_TOKEN="$SMOKE_TOKEN" \
+            -e FILEFN_R2_ENDPOINT="$STORAGE_R2_S3_ENDPOINT" -e FILEFN_R2_BUCKET="$STORAGE_R2_S3_BUCKET" \
+            -e FILEFN_R2_ACCESS_KEY_ID="$STORAGE_R2_S3_ACCESS_KEY_ID" -e FILEFN_R2_SECRET_ACCESS_KEY="$STORAGE_R2_S3_SECRET_ACCESS_KEY" \
+            filefn-processing-container:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18080/health && break
+            [ "$attempt" = 30 ] && { docker logs filefn-ct; exit 1; }
+            sleep 1
+          done
+          job='{"job":{"fileId":"file_missing","versionId":"ver_missing","storageKey":"x/a.png","mimeType":"image/png","size":3,"fileName":"a.png"},"attempts":1}'
+          outcome="$(curl -fsS -X POST -H "authorization: Bearer $SMOKE_TOKEN" -H 'content-type: application/json' -d "$job" http://127.0.0.1:18080/jobs)"
+          echo "$outcome"
+          [ "$outcome" = '{"outcome":{"status":"dropped","reason":"version-deleted"}}' ]
+          [ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "$job" http://127.0.0.1:18080/jobs)" = 401 ]
+          [ "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/metrics)" = 404 ]
+          docker stop -t 30 filefn-ct
+          docker logs filefn-ct
+          [ "$(docker inspect -f '{{.State.ExitCode}}' filefn-ct)" = 0 ]

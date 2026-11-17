@@ -39,6 +39,7 @@
     "mdfn/examples/*",
     "billfn/*",
     "filefn/*",
+    "filefn/processing/container",
     "clifn/*",
     "devfn/*",
     "superconsole",
