@@ -295,8 +295,10 @@ export async function verifyOtpChallenge(
   let pendingSignUp: OtpSignUpUserInput | undefined;
   // The code matched, so this attempt was not a wrong guess. When the request
   // ends before consuming the challenge (missing user, conflict, hook
-  // rejection), hand the reserved attempt back unless another request has
-  // reserved one since; only wrong codes then count towards maxAttempts.
+  // rejection), the reserved attempt is handed back only if no other request
+  // has reserved an attempt or consumed the challenge since and the
+  // conditional write succeeds; otherwise it stays counted, which errs
+  // towards the limit. A consumed correct code keeps its attempt.
   try {
     user = await findUserByPrimaryEmail(config, email);
 
