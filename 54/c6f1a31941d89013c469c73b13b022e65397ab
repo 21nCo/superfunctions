@@ -1,0 +1,33 @@
+filefn/docs/content/docs/reference/routes.md
+  s_ace82070dcb8c7::t_a69417066854de 44
+filefn/docs/static/llms-full.txt
+  s_ace82070dcb8c7::t_faace30c38bcd1 8189
+filefn/processing/container/package.json
+  s_ace82070dcb8c7::t_db5949c7b5ccd4 3,18
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_ace82070dcb8c7::t_52d2da14a20353 951-953,2137-2312
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_ace82070dcb8c7::t_95c2e0b2488c10 6-7,9,12-13,38,47
+filefn/server/src/upload-sessions/service.ts
+  s_ace82070dcb8c7::t_01493bdb2d0d2c 2,340-343,436-500,1159-1164,1169-1180,1182,1197-1203,1209-1213,1216-1219,1295-1301,1310-1321,1329-1340,1342-1376,1411-1414,1525-1526,1554-1563
+filefn/server/tests/import-object.test.ts
+  s_ace82070dcb8c7::t_fd0ee7bbe031d3 42-46
+package-lock.json
+  s_ace82070dcb8c7::t_77ef10af3f6d70 13363,13367,36020-36023
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54c6f1a31941d89013c469c73b13b022e65397ab",
+  "prompts": {},
+  "sessions": {
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
