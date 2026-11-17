@@ -419,10 +419,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // of the row (its status and the claim it last had); an abort, which leaves
   // those states the same way, excludes it. A claim is "<claimedAt> <nonce>";
   // one of a session claimed before (taken over, or after a released claim)
-  // ends in " retake", so its proxy stitch uses a key of its own.
+  // ends in " retake", so its proxy stitch uses a key of its own, followed by
+  // the nonces of the earlier retakes whose stitched objects may remain
+  // (comma-separated), so every one of them stays known until deleted.
   async function claimCompletion(session: UploadSession): Promise<{ claim: string } | { current: UploadSession | null }> {
-    const retake = session.completionClaim ? ' retake' : '';
-    const claim = `${new Date().toISOString()} ${randomBytes(6).toString('hex')}${retake}`;
+    const nonce = randomBytes(6).toString('hex');
+    let claim = `${new Date().toISOString()} ${nonce}`;
+    if (session.completionClaim) {
+      const [, previousNonce, previousRetake, history] = session.completionClaim.split(' ');
+      const nonces = [...(history ? history.split(',') : []), ...(previousRetake === 'retake' && previousNonce ? [previousNonce] : [])];
+      claim += nonces.length > 0 ? ` retake ${nonces.join(',')}` : ' retake';
+    }
     const outcome = await updateSessionIf(
       session.uploadSessionId,
       { status: session.status, completionClaim: session.completionClaim ?? null },
@@ -507,6 +514,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return session.uploadMode === 'proxy' && retake === 'retake' && nonce
       ? `${session.storageKey}.c${nonce}`
       : session.storageKey;
+  }
+
+  // Every object a claim and the earlier retakes it records may have stitched.
+  function claimStitchKeys(session: UploadSession, claim: string): string[] {
+    const history = session.uploadMode === 'proxy' ? (claim.split(' ')[3] ?? '') : '';
+    return [
+      attemptStorageKey(session, claim),
+      ...history.split(',').filter(Boolean).map((nonce) => `${session.storageKey}.c${nonce}`),
+    ];
   }
 
   // Deletes a proxy object a completion stitched that the session's version
@@ -677,7 +693,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) return true;
     const publication = session.completionPublication;
     const keys = new Set([
-      ...(session.completionClaim ? [attemptStorageKey(session, session.completionClaim)] : []),
+      ...(session.completionClaim ? claimStitchKeys(session, session.completionClaim) : []),
       ...(publication ? [publication.storageKey, ...publication.unusedKeys] : []),
     ]);
     const target = resolveStorageTarget(policies.get(session.policy) ?? {});
@@ -739,7 +755,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   async function deleteClaimStitch(session: UploadSession): Promise<void> {
     if (!session.completionClaim) return;
     const target = resolveStorageTarget(policies.get(session.policy) ?? {});
-    await deleteAttemptObject(session, attemptStorageKey(session, session.completionClaim), target);
+    for (const key of claimStitchKeys(session, session.completionClaim)) {
+      await deleteAttemptObject(session, key, target);
+    }
   }
 
   // Finishes a 'publishing' session, whichever completion call runs it (the
@@ -828,14 +846,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           return false;
         }
       };
-      // A call that resumes late (another call completed the session, and the
-      // file was deleted since) may create a row the delete already removed.
-      // deleteFile marks the completed session first, so a row this call
-      // created is checked against the mark and removed again.
+      // A call that resumes late may create a row nothing may keep: after
+      // another call completed the session and the file was deleted since
+      // (deleteFile marks the completed session first), or after another call
+      // refused the publication (a rival's file, deleted since, was in the
+      // way). A row this call created is checked against the session and
+      // removed again; the expiry sweep removes a refused publication's rows
+      // left by a call that stopped in between.
       const undoAfterDelete = async (created: boolean): Promise<UploadSession | null | undefined> => {
         if (!created) return undefined;
         const now = await readSession(uploadSessionId);
-        if (!now?.completionPublication?.fileDeleted) return undefined;
+        if (now?.status !== 'refused' && !now?.completionPublication?.fileDeleted) return undefined;
         await db.deleteMany({
           model: 'files',
           where: [
@@ -1801,7 +1822,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // claim, so a call taken over (it ran past the completion timeout)
         // writes nothing. From it on, the session is never released, aborted or
         // expired, and any completion call finishes it (publishSession).
-        const unused = new Set([attemptKey]);
+        // This claim's history names the earlier retakes' objects.
+        const unused = new Set([attemptKey, ...claimStitchKeys(session, claim).slice(1)]);
         if (session.completionVersionId) {
           // Sessions from before per-session keys may share their key.
           unused.add(session.storageKey);
@@ -1894,14 +1916,27 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // 'completing' one whose claim is live is still running: the sweep
         // leaves both. A stale claim's holder writes nothing once the sweep
         // deleted its row (see the conditional delete below).
-        const expiredSessions = (await db.findMany<UploadSession>({
+        const unfinished = await db.findMany<UploadSession>({
             model: 'uploadSessions',
             where: [
                 { field: 'expiresAt', operator: 'lt', value: now },
                 { field: 'status', operator: 'ne', value: 'completed' }
             ],
             namespace
-        })).filter((session) => session.status !== 'publishing' && !(session.status === 'completing' && !isStaleClaim(session)));
+        });
+        const expiredSessions = unfinished.filter((session) => session.status !== 'publishing' && !(session.status === 'completing' && !isStaleClaim(session)));
+        // Nobody finished it: the sweep finishes it, as its owner's completion
+        // call would (a failure leaves it for the next sweep).
+        for (const session of unfinished) {
+            if (session.status !== 'publishing') continue;
+            const ownerCtx = { principalId: isAnonymousSession(session) ? undefined : session.ownerId, tenantId: session.tenantId ?? undefined };
+            await publishSession(session, ownerCtx).catch((err: unknown) => {
+                logger?.warn('Expired upload session publication not finished; the next sweep retries it', {
+                    uploadSessionId: session.uploadSessionId,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            });
+        }
 
         let deletedSessions = 0;
         let abortedMultipart = 0;
@@ -1933,6 +1968,21 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 } catch {
                     // ignore
                 }
+            }
+
+            // A refused publication's rows a completion call created and did
+            // not remove again (see rollForward).
+            const refusedVersionId = session.status === 'refused' ? session.completionPublication?.versionId : undefined;
+            if (refusedVersionId && session.fileId) {
+                await db.deleteMany({
+                    model: 'files',
+                    where: [
+                        { field: 'fileId', operator: 'eq', value: session.fileId },
+                        { field: 'currentVersionId', operator: 'eq', value: refusedVersionId },
+                    ],
+                    namespace
+                });
+                await db.deleteMany({ model: 'fileVersions', where: [{ field: 'versionId', operator: 'eq', value: refusedVersionId }], namespace });
             }
 
             // If a part object or a refused session's final object cannot be

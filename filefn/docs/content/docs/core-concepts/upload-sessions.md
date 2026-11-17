@@ -32,7 +32,7 @@ States:
 - **initialized** — session row exists, no parts recorded yet.
 - **in_progress** — at least one part has been recorded.
 - **completing** — one `complete` call holds the session. Another `complete` waits for its result; `abort` returns 409. Reported as `in_progress` by the status route.
-- **publishing** — the completion recorded what it publishes; any `complete` call finishes it, even past expiry. `abort` and deleting the file return 409. Reported as `in_progress`.
+- **publishing** — the completion recorded what it publishes; any `complete` call finishes it, even past expiry, and otherwise the expiry sweep does. `abort` and deleting the file return 409. Reported as `in_progress`.
 - **completed** — `complete` succeeded, `fileVersions` row written, session is read-only.
 - **aborted** — explicit abort or implicit cleanup. The session is gone.
 - **expired** — TTL hit. The cleanup job evicts the row and any orphaned storage objects.

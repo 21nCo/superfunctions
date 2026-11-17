@@ -2703,21 +2703,27 @@ describe('upload completion fencing (FILE-19)', () => {
     expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('legacy bytes');
   });
 
-  it('the expiry sweep leaves a publishing session, which a completion call then finishes past its expiry', async () => {
-    const { database, app, uploaded, failNextVersionInsert } = failingVersionInsert('proxy');
-    const staged = await app.stage('user_a', CLIENT_ID, 'kept past expiry');
-    failNextVersionInsert();
-    await expect(staged.complete()).rejects.toThrow('version insert failed');
-    await setSession(database, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+  it('a publishing session past its expiry is finished by a completion call, or by the expiry sweep when no call comes', async () => {
+    for (const finisher of ['completion', 'sweep'] as const) {
+      const { database, app, uploaded, failNextVersionInsert } = failingVersionInsert('proxy');
+      const staged = await app.stage('user_a', CLIENT_ID, 'kept past expiry');
+      const versionId = ((await rawSession(database, staged.uploadSessionId)) as unknown as { completionVersionId: string }).completionVersionId;
+      failNextVersionInsert();
+      await expect(staged.complete()).rejects.toThrow('version insert failed');
+      await setSession(database, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
 
-    const swept = await app.fileFn.services.uploads.cleanupExpiredSessions();
-    expect(swept.deletedSessions).toBe(0);
-    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
-
-    const done = await staged.complete();
-    expect(done.status).toBe(200);
-    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept past expiry');
-    expect(uploaded).toEqual([done.json.data.versionId]);
+      if (finisher === 'completion') {
+        const done = await staged.complete();
+        expect(done.status).toBe(200);
+      }
+      const swept = await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(swept.deletedSessions).toBe(0);
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept past expiry');
+      expect(uploaded).toEqual([versionId]);
+      expect((await staged.complete()).json.data).toEqual({ fileId: CLIENT_ID, versionId });
+      expect((await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+    }
   });
 
   it('deleting a file while a session of it is publishing gets 409 and keeps the file; the delete succeeds once it completes', async () => {
@@ -2990,5 +2996,67 @@ describe('upload completion fencing (FILE-19)', () => {
     expect(storageFixture.objects.has(retakeKey)).toBe(false);
     expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
     expect(await rival.readBytes(CLIENT_ID, 'user_b')).toBe('rival bytes');
+  });
+
+  for (const next of ['abort', 'complete'] as const) {
+    it(`proxy: the objects of two consecutive crashed retakes stay known, and ${next === 'abort' ? 'an abort' : 'the completion'} deletes both`, async () => {
+      const database = memoryAdapter();
+      let allowed = true;
+      const quota: QuotaProvider = {
+        async checkQuota() { return { allowed, current: 10, limit: 10 }; },
+        async recordUsage() {},
+      };
+      const app = createApp({ mode: 'proxy', database, quota });
+      const staged = await app.stage('user_a', CLIENT_ID, 'retaken twice');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      // Retake nA stitched and crashed; retake nB took it over, stitched and crashed.
+      app.fixture.objects.set(`${key}.cnA`, Buffer.from('retaken twice'));
+      app.fixture.objects.set(`${key}.cnB`, Buffer.from('retaken twice'));
+      await setSession(database, staged.uploadSessionId, {
+        status: 'completing',
+        completionClaim: `${new Date(Date.now() - 901_000).toISOString()} nB retake nA`,
+      });
+
+      if (next === 'abort') {
+        allowed = false;
+        expect((await staged.complete()).status).toBe(402);
+        expect((await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token })).status).toBe(200);
+      } else {
+        expect((await staged.complete()).status).toBe(200);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('retaken twice');
+      }
+      expect(app.fixture.objects.has(`${key}.cnA`)).toBe(false);
+      expect(app.fixture.objects.has(`${key}.cnB`)).toBe(false);
+    });
+  }
+
+  it('a refused publication\'s insert that resumes after the rival file was deleted leaves no file or version', async () => {
+    const shared = createUniqueEnforcingDb({});
+    const gate = stallGate();
+    const holderDb = {
+      ...shared,
+      async create(params: Parameters<Adapter['create']>[0]) {
+        await gate.at(params.model === 'files');
+        return shared.create(params);
+      },
+    } as Adapter;
+    const storageFixture = createStorage('multipart');
+    const holder = createApp({ mode: 'multipart', database: holderDb, storageFixture, createFileFn: await loadProcess() });
+    const other = createApp({ mode: 'multipart', database: shared, storageFixture, createFileFn: await loadProcess() });
+    const staged = await holder.stage('user_a', CLIENT_ID, 'refused bytes');
+    gate.arm();
+    const holderDone = staged.complete();
+    await gate.reached;
+
+    expect((await (await other.stage('user_b', CLIENT_ID, 'rival bytes')).complete()).status).toBe(200);
+    const refused = await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+    expect(refused.status).toBe(403);
+    expect((await other.call('DELETE', `/${CLIENT_ID}`, { user: 'user_b' })).status).toBe(200);
+    gate.resume();
+    const resumed = await holderDone;
+
+    expect(resumed.status).toBe(410);
+    expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
+    expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
   });
 });

@@ -93,8 +93,9 @@ const result = await fileFn.completeUploadSession({ uploadSessionId: session.upl
 
 `fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before
 completing, aborting their multipart uploads and proxy part objects (it leaves
-sessions that are `publishing` or held by a running completion), deletes part
-rows a completed session's cleanup left, and returns
+sessions held by a running completion, and finishes expired `publishing` ones as
+their owner's completion call would), deletes part rows a completed session's
+cleanup left, and returns
 `{ deletedSessions, abortedMultipart }`. Call it from a scheduled job such as a
 Workers cron trigger; filefn does not schedule it.
 
