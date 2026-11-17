@@ -1,0 +1,21 @@
+datafn/server/package.json
+  s_c3dbefa62eea74::t_653324b9fbef7f 3
+package-lock.json
+  s_c3dbefa62eea74::t_80672755212eef 11001
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be6f872fc0301700296e18322e2c1358d27836f9",
+  "prompts": {},
+  "sessions": {
+    "s_c3dbefa62eea74": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6cbe49a-029f-417d-a642-098077098378",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
