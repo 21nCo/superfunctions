@@ -27,11 +27,14 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    ```
 
    Then list the binary files the history ever held, and inspect each historical version of each one separately
-   (`git cat-file -p <blob> > <file>`, then open it):
+   (`git cat-file -p <blob> > <file>`, then open it). `--no-renames` lists a renamed file under its old and its new
+   path, so a binary changed while it was renamed is not hidden behind an `{old => new}` entry:
 
    ```sh
-   git log -m --full-history --numstat --format= <pin> -- <path>... | awk -F'\t' '$1 == "-" { print $3 }' | sort -u
-   git log -m --full-history --raw --no-abbrev --format= <pin> -- <binary path> | awk '$4 !~ /^0+$/ { print $4 }' | sort -u
+   git -c core.quotePath=false log -m --full-history --no-renames --numstat --format= <pin> -- <path>... |
+     awk -F'\t' '$1 == "-" { print $3 }' | sort -u
+   git log -m --full-history --no-renames --raw --no-abbrev --format= <pin> -- <binary path> |
+     awk '$4 !~ /^0+$/ { print $4 }' | sort -u
    ```
 
    If any version holds something private, do not promote with history: import the content without history instead
