@@ -225,25 +225,26 @@ struct BillFnStoreKitBackendTests {
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
     }
 
-    @Test("Keeps a confirmed checkout past its retention until it is removed")
-    func keepsConfirmedCheckouts() throws {
+    @Test("Keeps a checkout matched to a transaction past its retention until it is removed")
+    func keepsMatchedCheckouts() throws {
         let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
         let clock = TestClock()
         let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
         let account = UUID(uuidString: token)!
-        let confirmed = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
+        let matched = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
         let outstanding = BillFnStoreKitCheckout(checkoutSessionId: "chk_2", productId: "apple.pro.month", appAccountToken: account)
-        // A checkout another store dropped is kept again once BillFn confirms a transaction against it.
+        // A checkout another store dropped is kept again once a transaction is matched to it.
         let unkept = BillFnStoreKitCheckout(checkoutSessionId: "chk_3", productId: "apple.pro.year", appAccountToken: account)
-        store.save(confirmed)
+        store.save(matched)
         store.save(outstanding)
-        store.markConfirmed(confirmed, transactionId: "2000000001")
-        store.markConfirmed(unkept, transactionId: "2000000002")
+        // Recorded before BillFn verifies the transaction, so a verify call that fails leaves the checkout kept.
+        store.markMatched(matched, transactionId: "2000000001")
+        store.markMatched(unkept, transactionId: "2000000002")
 
         clock.advance(by: 30 * day)
         let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now }).keptCheckouts()
-        #expect(kept.map(\.checkout) == [confirmed, unkept])
-        #expect(kept.map(\.confirmedTransactionId) == ["2000000001", "2000000002"])
+        #expect(kept.map(\.checkout) == [matched, unkept])
+        #expect(kept.map(\.transactionId) == ["2000000001", "2000000002"])
         #expect(kept.first?.savedAt == Date(timeIntervalSince1970: 1_800_000_000))
         store.removeCheckout(checkoutSessionId: "chk_1")
         #expect(store.keptCheckouts().map(\.checkout) == [unkept])

@@ -42,10 +42,14 @@ let restored = try await storeKit.restore()
   `checkoutSessionId`) until its transaction is finished, so a purchase that completes after the
   app quits still verifies against it. A second attempt on the same product does not replace a
   pending one's checkout, and a cancelled or finished attempt removes only its own checkout.
-- Once BillFn confirms a transaction, its checkout is marked confirmed before the transaction is
-  finished and removed after, so a transaction the app stopped before finishing is verified against
-  the same checkout on the next launch.
-- An outstanding checkout is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
+- As soon as a transaction is matched to a checkout, before BillFn is asked to verify it, the
+  checkout records the transaction id; it is removed only after the transaction is finished. So a
+  transaction whose verify call failed, or that the app stopped before finishing, is verified
+  against the same checkout on a later launch however late, and no other transaction can take it.
+- An outstanding checkout is claimed only by a transaction purchased after its attempt started
+  (allowing 15 minutes of clock difference), so restoring or renewing an older purchase never takes
+  a pending attempt's checkout.
+- An outstanding checkout (no transaction yet) is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
   however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
   or an interrupted purchase waiting. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error

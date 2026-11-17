@@ -135,30 +135,33 @@ public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
     public let checkout: BillFnStoreKitCheckout
     /// When the purchase attempt saved it; an outstanding checkout expires a retention period later.
     public let savedAt: Date
-    /// The transaction BillFn confirmed against this checkout. It is recorded before that transaction is finished,
-    /// so the transaction still finds its checkout if the app stops before finishing it. A confirmed checkout does
-    /// not expire: it is removed once its transaction is finished.
-    public let confirmedTransactionId: String?
+    /// The transaction StoreKit produced for this checkout's attempt. It is recorded as soon as the transaction is
+    /// matched to the checkout, before BillFn is asked to verify it, so a transaction BillFn has not confirmed yet
+    /// (a failed verify call, an app that stopped before finishing it) still finds its checkout on a later launch.
+    /// A checkout with a transaction does not expire: it is removed once that transaction is finished.
+    public let transactionId: String?
 
-    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, confirmedTransactionId: String? = nil) {
+    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, transactionId: String? = nil) {
         self.checkout = checkout
         self.savedAt = savedAt
-        self.confirmedTransactionId = confirmedTransactionId
+        self.transactionId = transactionId
     }
 }
 
 /// Keeps each checkout a purchase started until its transaction is finished, so a purchase that completes later
 /// (Ask to Buy, an interrupted app) is still verified against its checkout. Checkouts are kept by
 /// `checkoutSessionId`: two attempts on one product are kept separately, and a cancelled or finished attempt
-/// removes only its own checkout. A store drops an outstanding (unconfirmed) checkout only once its attempt can no
-/// longer produce a transaction, never to make room for another.
+/// removes only its own checkout. A store drops an outstanding checkout (one with no transaction yet) only once its
+/// attempt can no longer produce a transaction, never to make room for another, and never drops a checkout a
+/// transaction has been matched to.
 public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// Every kept checkout, oldest first.
     func keptCheckouts() -> [BillFnStoreKitKeptCheckout]
     /// Keeps the checkout of a purchase attempt that is starting.
     func save(_ checkout: BillFnStoreKitCheckout)
-    /// Records that BillFn confirmed `transactionId` against the checkout, keeping the checkout if it was not kept.
-    func markConfirmed(_ checkout: BillFnStoreKitCheckout, transactionId: String)
+    /// Records that `transactionId` was matched to the checkout, before BillFn verifies it, keeping the checkout if
+    /// it was not kept. The checkout then stays kept until it is removed, however long verifying takes.
+    func markMatched(_ checkout: BillFnStoreKitCheckout, transactionId: String)
     func removeCheckout(checkoutSessionId: String)
 }
 
@@ -172,7 +175,8 @@ extension BillFnStoreKitCheckoutStore {
 /// Keeps checkouts in `UserDefaults`. An outstanding checkout is kept for `retention` after its attempt started,
 /// however many other attempts are saved or cancelled meanwhile: longer than the App Store keeps an Ask to Buy
 /// request or an interrupted purchase waiting, so an attempt that has not produced a transaction by then never
-/// will. A transaction that still arrives later is restored onto the plan its product maps to, if any.
+/// will. A transaction that still arrives later is restored onto the plan its product maps to, if any. A checkout a
+/// transaction has been matched to never expires.
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
     public static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
 
@@ -205,15 +209,15 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         }
     }
 
-    public func markConfirmed(_ checkout: BillFnStoreKitCheckout, transactionId: String) {
+    public func markMatched(_ checkout: BillFnStoreKitCheckout, transactionId: String) {
         update { kept in
-            let confirmed = { (savedAt: Date) in
-                BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, confirmedTransactionId: transactionId)
+            let matched = { (savedAt: Date) in
+                BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, transactionId: transactionId)
             }
             if let index = kept.firstIndex(where: { $0.checkout.checkoutSessionId == checkout.checkoutSessionId }) {
-                kept[index] = confirmed(kept[index].savedAt)
+                kept[index] = matched(kept[index].savedAt)
             } else {
-                kept.append(confirmed(now()))
+                kept.append(matched(now()))
             }
         }
     }
@@ -232,11 +236,11 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         }
     }
 
-    /// The kept checkouts without the outstanding ones past their retention.
+    /// The kept checkouts without the outstanding ones past their retention; one matched to a transaction stays.
     private func load() -> [BillFnStoreKitKeptCheckout] {
         guard let data = defaults.data(forKey: key),
               let kept = try? JSONDecoder().decode([BillFnStoreKitKeptCheckout].self, from: data) else { return [] }
         let expiry = now().addingTimeInterval(-retention)
-        return kept.filter { $0.confirmedTransactionId != nil || $0.savedAt > expiry }
+        return kept.filter { $0.transactionId != nil || $0.savedAt > expiry }
     }
 }

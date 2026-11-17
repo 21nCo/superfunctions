@@ -261,6 +261,58 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         try await assertFinished(outcome)
     }
 
+    /// BillFn could not verify a purchase that maps to no plan. Its checkout records the transaction before the verify
+    /// call, so it does not expire: the next launch, a retention period later, still verifies the transaction against
+    /// it and finishes it. Without that checkout the transaction would be skipped for good.
+    func testTransactionWhoseVerifyFailedKeepsItsCheckoutPastRetention() async throws {
+        let backend = FakeBillFnBackend()
+        await backend.failVerification(with: URLError(.notConnectedToInternet))
+        let firstLaunch = launch(backend, plans: [])
+
+        guard case .purchased(_, let failed) = try await firstLaunch.purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+        XCTAssertFalse(failed.finished)
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
+
+        await backend.failVerification(with: nil)
+        let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
+        let nextLaunch = launch(backend, plans: [], now: later)
+        let outcomes = await nextLaunch.start()
+
+        let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == failed.transaction.transactionId })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1", "chk_1"])
+        let restores = await backend.restores
+        XCTAssertTrue(restores.isEmpty)
+        try await assertFinished(outcome)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
+    }
+
+    /// Restoring a purchase bought before a pending attempt on the same product started restores it onto its plan;
+    /// it does not take (and BillFn does not complete) the pending attempt's checkout, which stays outstanding.
+    func testRestoredOlderPurchaseLeavesAPendingAttemptsCheckout() async throws {
+        let backend = FakeBillFnBackend()
+        let older = try await buyOutsideBillFn(proMonthly, appAccountToken: backend.appAccountToken)
+        let attemptStarted = Date().addingTimeInterval(60 * 60)
+        let pending = BillFnStoreKitCheckout(checkoutSessionId: "chk_pending", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        checkoutStore(now: attemptStarted).save(pending)
+        let kit = launch(backend, now: attemptStarted)
+
+        let outcomes = try await kit.restore(syncWithAppStore: false)
+
+        let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == String(older.id) })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertTrue(verifications.isEmpty)
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), [String(older.id)])
+        XCTAssertEqual(checkoutStore(now: attemptStarted).keptCheckouts(), [
+            BillFnStoreKitKeptCheckout(checkout: pending, savedAt: attemptStarted),
+        ])
+    }
+
     /// StoreKit testing on macOS does not deliver an approved Ask to Buy request, so this test stops at the
     /// pending state. The approved transaction arrives through `Transaction.updates` (covered by the renewal tests)
     /// and is verified against the kept checkout, as the next-launch test shows.
@@ -510,10 +562,10 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         }
     }
 
-    /// BillFn confirmed a transaction but the app stopped before finishing it. The next launch, a retention period
-    /// later, still verifies it against the checkout it was confirmed against and finishes it, with no plans, so
-    /// without that checkout it would be skipped for good. A confirmed checkout whose transaction is finished and an
-    /// expired outstanding one are dropped.
+    /// BillFn confirmed a transaction matched to a checkout but the app stopped before finishing it. The next launch,
+    /// a retention period later, still verifies it against that checkout and finishes it, with no plans, so without
+    /// that checkout it would be skipped for good. A matched checkout whose transaction is finished and an expired
+    /// outstanding one are dropped.
     func testConfirmedTransactionLeftUnfinishedIsVerifiedAndFinishedOnTheNextLaunch() async throws {
         let backend = FakeBillFnBackend()
         let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
@@ -522,8 +574,8 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let finished = BillFnStoreKitCheckout(checkoutSessionId: "chk_finished", productId: proMonthly, appAccountToken: backend.appAccountToken)
         checkoutStore.save(outstanding)
         checkoutStore.save(confirmed)
-        checkoutStore.markConfirmed(confirmed, transactionId: String(bought.id))
-        checkoutStore.markConfirmed(finished, transactionId: "987654321")
+        checkoutStore.markMatched(confirmed, transactionId: String(bought.id))
+        checkoutStore.markMatched(finished, transactionId: "987654321")
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
         let nextLaunch = launch(backend, plans: [], now: later)

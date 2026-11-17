@@ -140,18 +140,25 @@ public actor BillFnStoreKit {
     /// Confirms every unfinished transaction with BillFn and finishes those it confirms.
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
+        // Only checkouts matched before reading the unfinished transactions are swept: a transaction matched while
+        // they are read (a purchase completing meanwhile) may be missing from what was read.
+        let matchedBefore = checkouts.keptCheckouts().filter { $0.transactionId != nil }
         var results: [BillFnStoreKitTransactionOutcome] = []
         var unfinished: Set<String> = []
         for await transaction in Transaction.unfinished {
             unfinished.insert(String(transaction.unsafePayloadValue.id))
             results.append(await process(transaction))
         }
-        // A confirmed checkout whose transaction is no longer unfinished was left by a launch that stopped between
-        // finishing the transaction and removing the checkout. One being confirmed right now is claimed.
-        for kept in checkouts.keptCheckouts() {
-            guard let transactionId = kept.confirmedTransactionId, !unfinished.contains(transactionId),
-                  !claimedCheckouts.contains(kept.checkout.checkoutSessionId) else { continue }
-            checkouts.removeCheckout(checkoutSessionId: kept.checkout.checkoutSessionId)
+        // A matched checkout whose transaction is no longer unfinished was left by a launch that stopped between
+        // finishing the transaction and removing the checkout. One being verified right now is claimed.
+        let keptNow = checkouts.keptCheckouts()
+        for kept in matchedBefore {
+            let checkoutSessionId = kept.checkout.checkoutSessionId
+            guard let transactionId = kept.transactionId, !unfinished.contains(transactionId),
+                  !claimedCheckouts.contains(checkoutSessionId),
+                  keptNow.contains(where: { $0.checkout.checkoutSessionId == checkoutSessionId && $0.transactionId == transactionId })
+            else { continue }
+            checkouts.removeCheckout(checkoutSessionId: checkoutSessionId)
         }
         return results
     }
@@ -206,8 +213,9 @@ public actor BillFnStoreKit {
 
     /// Confirms one transaction with BillFn and finishes it if BillFn confirms it; `start()` passes each
     /// `Transaction.updates` element here. A transaction with a kept checkout for its product and `appAccountToken`
-    /// (the one BillFn already confirmed it against, else the oldest outstanding one) is verified against that checkout; any other one
-    /// (a renewal, a restored purchase) is restored onto the plan its product maps to.
+    /// (the one it was already matched to, else the oldest outstanding one saved before it was purchased) is
+    /// verified against that checkout; any other one (a renewal, a restored purchase) is restored onto the plan its
+    /// product maps to.
     ///
     /// StoreKit's own signature check is not the trust boundary: BillFn reads the transaction from the App Store
     /// Server API and checks its `appAccountToken`, so a transaction StoreKit could not verify is still sent to
@@ -249,9 +257,10 @@ public actor BillFnStoreKit {
         do {
             let billing: BillFnJSONValue
             if let checkout {
+                // Recorded before BillFn is asked: if the verify call fails or the app stops before `finish()`, the
+                // checkout stays kept (it no longer expires) and the next launch verifies against it again.
+                checkouts.markMatched(checkout, transactionId: reference.transactionId)
                 billing = try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
-                // Before finishing: if the app stops before `finish()`, the next launch verifies against it again.
-                checkouts.markConfirmed(checkout, transactionId: reference.transactionId)
             } else if let plan = plans[transaction.productID] {
                 billing = try await backend.restorePurchase(plan: plan, transaction: reference)
             } else {
@@ -271,19 +280,28 @@ public actor BillFnStoreKit {
         }
     }
 
-    /// The checkout to verify the transaction against: the purchase's own one, else the kept checkout BillFn already
-    /// confirmed this transaction against, else the oldest outstanding kept checkout for its product and
-    /// `appAccountToken`; never one another transaction is being verified against or was confirmed against.
+    /// How much earlier than a checkout was saved a transaction's purchase date may be and still claim it, for a
+    /// device clock ahead of the App Store's.
+    static let checkoutClockTolerance: TimeInterval = 15 * 60
+
+    /// The checkout to verify the transaction against: the purchase's own one, else the kept checkout this transaction
+    /// was already matched to, else the oldest outstanding kept checkout for its product and `appAccountToken` saved
+    /// before the transaction was purchased. Never one matched to another transaction or one another transaction is
+    /// being verified against, and never an outstanding one for a transaction bought before its attempt started (a
+    /// restored or renewed purchase), which would take a pending attempt's checkout.
     private func claimCheckout(for transaction: Transaction, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) -> BillFnStoreKitCheckout? {
         let transactionId = String(transaction.id)
-        let matches: (BillFnStoreKitCheckout) -> Bool = {
-            $0.productId == transaction.productID && $0.appAccountToken == transaction.appAccountToken
-                && !self.claimedCheckouts.contains($0.checkoutSessionId)
+        let kept = checkouts.keptCheckouts()
+        let available: (BillFnStoreKitCheckout) -> Bool = { checkout in
+            guard checkout.productId == transaction.productID, checkout.appAccountToken == transaction.appAccountToken,
+                  !self.claimedCheckouts.contains(checkout.checkoutSessionId) else { return false }
+            let matchedTo = kept.first(where: { $0.checkout.checkoutSessionId == checkout.checkoutSessionId })?.transactionId
+            return matchedTo == nil || matchedTo == transactionId
         }
-        let kept = checkouts.keptCheckouts().filter { matches($0.checkout) }
-        let candidate = purchaseCheckout.flatMap { matches($0) ? $0 : nil }
-            ?? kept.first(where: { $0.confirmedTransactionId == transactionId })?.checkout
-            ?? kept.first(where: { $0.confirmedTransactionId == nil })?.checkout
+        let latestSave = transaction.purchaseDate.addingTimeInterval(Self.checkoutClockTolerance)
+        let candidate = purchaseCheckout.flatMap { available($0) ? $0 : nil }
+            ?? kept.first(where: { $0.transactionId == transactionId && available($0.checkout) })?.checkout
+            ?? kept.first(where: { $0.transactionId == nil && $0.savedAt <= latestSave && available($0.checkout) })?.checkout
         if let candidate { claimedCheckouts.insert(candidate.checkoutSessionId) }
         return candidate
     }
