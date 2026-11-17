@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BILLFN_BRIDGE_CAPABILITIES,
   BILLFN_BRIDGE_EVENT_NAMES,
   BILLFN_BRIDGE_METHODS,
   BILLFN_BRIDGE_PROTOCOL,
@@ -71,6 +72,20 @@ describe('StoreKit bridge methods', () => {
       'storekit.restore',
       'storekit.transactions'
     ]);
+  });
+
+  it('declares each StoreKit capability the Swift handshake advertises', () => {
+    const swift = readFileSync(
+      new URL('../../../swift/Sources/BillFnWebViewBridgeHost/BillFnBridgeProtocol.swift', import.meta.url),
+      'utf8'
+    );
+    const capabilities: readonly string[] = BILLFN_BRIDGE_CAPABILITIES;
+
+    // BillFnBridgeDispatcher adds BILLFN_BRIDGE_STOREKIT_METHODS to the handshake's capabilities.
+    for (const capability of swiftStringList(swift, 'BILLFN_BRIDGE_STOREKIT_METHODS')) {
+      expect(capabilities).toContain(capability);
+    }
+    expect(capabilities).not.toContain('storekit');
   });
 
   it('checkout sends storekit.checkout and returns the native purchase result', async () => {

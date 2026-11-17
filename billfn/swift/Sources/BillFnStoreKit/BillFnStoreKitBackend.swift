@@ -168,6 +168,10 @@ public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// Removes each outstanding checkout (no transaction matched to it) past the store's retention, except those in
     /// `checkoutSessionIds` (ones a transaction is being verified against). A checkout matched to a transaction stays.
     func removeExpiredOutstandingCheckouts(excluding checkoutSessionIds: Set<String>)
+    /// Records that BillFn confirmed the transaction, so when StoreKit offers it again (a redelivered update, a
+    /// restored entitlement) it never claims an outstanding checkout. A store keeps a bounded number of the newest ones.
+    func recordConfirmed(transactionId: String)
+    func isConfirmed(transactionId: String) -> Bool
 }
 
 extension BillFnStoreKitCheckoutStore {
@@ -185,6 +189,9 @@ extension BillFnStoreKitCheckoutStore {
 /// running is matched to it first. A checkout a transaction has been matched to never expires.
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
     public static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
+    /// How many confirmed transaction ids the store keeps: far more than a billing account confirms while a checkout
+    /// saved after one of them (the only kind it could claim, within the clock tolerance) is kept.
+    public static let confirmedTransactionLimit = 256
 
     private let defaults: UserDefaults
     private let key: String
@@ -241,6 +248,24 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
                 $0.transactionId == nil && $0.savedAt <= expiry && !checkoutSessionIds.contains($0.checkout.checkoutSessionId)
             }
         }
+    }
+
+    public func recordConfirmed(transactionId: String) {
+        lock.withLock {
+            var confirmed = loadConfirmed().filter { $0 != transactionId }
+            confirmed.append(transactionId)
+            defaults.set(Array(confirmed.suffix(Self.confirmedTransactionLimit)), forKey: confirmedKey)
+        }
+    }
+
+    public func isConfirmed(transactionId: String) -> Bool {
+        lock.withLock { loadConfirmed().contains(transactionId) }
+    }
+
+    private var confirmedKey: String { "\(key).confirmed" }
+
+    private func loadConfirmed() -> [String] {
+        defaults.stringArray(forKey: confirmedKey) ?? []
     }
 
     private func update(_ change: (inout [BillFnStoreKitKeptCheckout]) -> Void) {

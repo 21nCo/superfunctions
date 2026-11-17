@@ -161,6 +161,26 @@ struct BillFnStoreKitBackendTests {
         }
     }
 
+    @Test("Keeps the HTTP status of an error response that is not a BillFn envelope", arguments: [
+        (502, "<html>Bad Gateway</html>", true),
+        (503, "", true),
+        (504, "upstream timed out", true),
+        (408, "", true),
+        (429, "Too Many Requests", true),
+        (404, "<html>Not Found</html>", false),
+    ])
+    func classifiesNonEnvelopeErrors(status: Int, body: String, retryable: Bool) async throws {
+        let backend = backend(status: status, body: body)
+        let expected = BillFnClientError.server(
+            code: "BILLFN_HTTP_ERROR", message: "BillFn request failed with HTTP \(status)", status: status, retryable: retryable
+        )
+
+        await #expect(throws: expected) {
+            _ = try await backend.verifyCheckout(checkoutSessionId: "chk_1", transaction: transaction)
+        }
+        #expect(BillFnStoreKitFailure(error: expected).retryable == retryable)
+    }
+
     @Test("Maps errors to the failure a transaction outcome reports")
     func mapsFailures() {
         #expect(BillFnStoreKitFailure(error: BillFnClientError.server(code: "BILLFN_PROVIDER_ERROR", message: "Apple unavailable", status: 502, retryable: true))
@@ -256,6 +276,30 @@ struct BillFnStoreKitBackendTests {
         let kept = reread.keptCheckouts()
         #expect(kept.map(\.checkout) == [claimed, matched, young])
         #expect(kept.map(\.transactionId) == [nil, "2000000001", nil])
+    }
+
+    @Test("Records the newest confirmed transactions across stores")
+    func recordsConfirmedTransactions() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
+        store.recordConfirmed(transactionId: "2000000001")
+        store.recordConfirmed(transactionId: "2000000002")
+        store.recordConfirmed(transactionId: "2000000001")
+
+        let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults)
+        #expect(reread.isConfirmed(transactionId: "2000000001"))
+        #expect(reread.isConfirmed(transactionId: "2000000002"))
+        #expect(!reread.isConfirmed(transactionId: "2000000003"))
+        // A separate key: confirmed transactions are not kept checkouts.
+        #expect(reread.keptCheckouts().isEmpty)
+
+        for index in 1..<BillFnUserDefaultsCheckoutStore.confirmedTransactionLimit {
+            store.recordConfirmed(transactionId: "3\(index)")
+        }
+        // The re-recorded 2000000001 is newer than 2000000002, so only 2000000002 is forgotten.
+        #expect(!reread.isConfirmed(transactionId: "2000000002"))
+        #expect(reread.isConfirmed(transactionId: "2000000001"))
+        #expect(reread.isConfirmed(transactionId: "31"))
     }
 
     @Test("Keeps a checkout matched to a transaction past its retention until it is removed")

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Runs the BillFnStoreKit tests against StoreKit testing in the macOS host app.
 #
-# StoreKit testing keeps state in the test process. After a simulated purchase error or an
-# Ask to Buy request, a later purchase's finish() does not reach the test store, so the tests
-# that simulate one run in their own host processes. The other tests share one process: in a fresh one,
+# StoreKit testing keeps state in the test process. After a simulated purchase error, an
+# Ask to Buy request or a finished transaction offered again, a later purchase's finish() does
+# not reach the test store, so the tests that do one run in their own host processes. The other tests share one process: in a fresh one,
 # StoreKit testing did not show a forced renewal to the app in local runs.
 set -euo pipefail
 
@@ -16,7 +16,13 @@ isolated=(
   BillFnStoreKitTests/BillFnStoreKitTests/testCancelledPurchaseIsNeitherVerifiedNorKept
   BillFnStoreKitTests/BillFnStoreKitTests/testCancelledSecondAttemptKeepsThePendingAttemptsCheckout
   BillFnStoreKitTests/BillFnStoreKitTests/testRefusedPurchaseDropsItsCheckoutAndAFailedOneKeepsIt
+  BillFnStoreKitTests/BillFnStoreKitTests/testConfirmedPurchaseOfferedAgainLeavesALeftoverCheckoutOutstanding
 )
+
+# In CI the host app can become active, so the real Transaction.updates test must run rather than skip.
+if [[ -n "${CI:-}" ]]; then
+  export TEST_RUNNER_BILLFN_STOREKIT_REQUIRE_UPDATES=1
+fi
 
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet
 

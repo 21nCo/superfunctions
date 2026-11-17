@@ -97,7 +97,15 @@ public final class BillFnClient: @unchecked Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard case .object(let envelope)? = try? JSONDecoder().decode(BillFnJSONValue.self, from: data),
               case .bool(let ok)? = envelope["ok"] else {
-            throw BillFnClientError.invalidResponse
+            // No BillFn envelope: an error status came from something in front of BillFn (a gateway, a proxy), and
+            // keeps its status so a timeout, rate limit or 5xx is reported as retryable.
+            guard status >= 400 else { throw BillFnClientError.invalidResponse }
+            throw BillFnClientError.server(
+                code: "BILLFN_HTTP_ERROR",
+                message: "BillFn request failed with HTTP \(status)",
+                status: status,
+                retryable: Self.isRetryable(status: status)
+            )
         }
         if ok, (200..<300).contains(status), let payload = envelope["data"] {
             return payload
@@ -109,7 +117,12 @@ public final class BillFnClient: @unchecked Sendable {
             code: error["code"]?.stringValue ?? "BILLFN_ERROR",
             message: error["message"]?.stringValue ?? "BillFn request failed",
             status: status,
-            retryable: error["retryable"]?.boolValue ?? (status >= 500)
+            retryable: error["retryable"]?.boolValue ?? Self.isRetryable(status: status)
         )
+    }
+
+    /// A request timeout, a rate limit or a server error may succeed when retried.
+    static func isRetryable(status: Int) -> Bool {
+        status == 408 || status == 429 || status >= 500
     }
 }

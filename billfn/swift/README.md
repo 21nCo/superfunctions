@@ -51,9 +51,15 @@ let restored = try await storeKit.restore()
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
   leftover checkout (a purchase that failed on the network, a declined Ask to Buy request) would
   otherwise be verified with a renewal. From iOS 17 and macOS 14 `Transaction.reason` tells a renewal
-  from a purchase, so an upgrade, crossgrade or resubscription bought through its own checkout still
-  claims it; on iOS 16 and macOS 13 only a first purchase (transaction id equal to its original id)
-  claims one, and any other transaction is restored onto its plan (or skipped if none maps).
+  from a purchase. On iOS 16 and macOS 13 the transaction's history (`Transaction.all`) decides: it is
+  a renewal when an earlier transaction of the same product in its subscription, not revoked or
+  upgraded, was still active when the attempt started or was bought after it. On every system a first
+  purchase, an upgrade, a crossgrade or a resubscription bought through its own checkout claims it,
+  and a renewal is restored onto its plan (or skipped if none maps). On iOS 16 and macOS 13 a renewal
+  that recovers from billing retry after the subscription lapsed before the attempt started looks
+  like a resubscription.
+- Each transaction BillFn confirms is recorded (the newest 256) before it is finished, so when
+  StoreKit offers it again (a redelivered update, `restore()`) it never claims an outstanding checkout.
 - When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error,
   such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is restored onto that plan
   instead and finished. With no plan, it stays unfinished with its checkout and every launch reports

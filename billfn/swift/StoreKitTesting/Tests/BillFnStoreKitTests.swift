@@ -426,6 +426,35 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkoutStore.keptCheckouts(), [BillFnStoreKitKeptCheckout(checkout: leftover, savedAt: savedAt)])
     }
 
+    /// A purchase BillFn confirmed and the app finished is offered again on later launches (a redelivered update,
+    /// `restore()`) after another attempt on the product left a checkout outstanding, within the clock tolerance of
+    /// the purchase. It claims nothing: it is restored onto its plan, and the leftover stays outstanding and unmatched.
+    func testConfirmedPurchaseOfferedAgainLeavesALeftoverCheckoutOutstanding() async throws {
+        let backend = FakeBillFnBackend()
+        guard case .purchased(_, let purchase) = try await launch(backend).purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+        XCTAssertTrue(purchase.finished)
+        let leftover = BillFnStoreKitCheckout(checkoutSessionId: "chk_leftover", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        let savedAt = Date()
+        checkoutStore(now: savedAt).save(leftover)
+        let latest = await Transaction.latest(for: proMonthly)
+        let offeredAgain = try XCTUnwrap(latest)
+        XCTAssertEqual(String(offeredAgain.unsafePayloadValue.id), purchase.transaction.transactionId)
+
+        let redelivered = await launch(backend).process(offeredAgain)
+        let restored = try await launch(backend).restore(syncWithAppStore: false)
+
+        XCTAssertTrue(redelivered.finished)
+        XCTAssertEqual(restored.map(\.transaction.transactionId), [purchase.transaction.transactionId])
+        XCTAssertEqual(restored.map(\.finished), [true])
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1"])
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), [purchase.transaction.transactionId, purchase.transaction.transactionId])
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [BillFnStoreKitKeptCheckout(checkout: leftover, savedAt: savedAt)])
+    }
+
     /// BillFn rejects verifying a transaction against its checkout for good. With no plan for the product that is the
     /// outcome: the transaction stays unfinished and its checkout stays matched to it. A later launch whose plans map
     /// the product verifies once more, is rejected again and restores the transaction onto the plan instead, so it is
@@ -460,11 +489,21 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkoutStore.keptCheckouts(), [])
     }
 
-    /// Additional coverage of the real `Transaction.updates`; StoreKit testing delivers them only to an active app.
+    /// The real `Transaction.updates`; StoreKit testing delivers them only to an active app. `run-tests.sh` requires
+    /// this test in CI (`BILLFN_STOREKIT_REQUIRE_UPDATES`), where nothing else holds the focus; elsewhere a host that
+    /// cannot become active (another app has the focus) skips it.
     func testListenerConfirmsTransactionUpdates() async throws {
-        let active = await MainActor.run { NSApplication.shared.isActive }
-        // In local runs where the host app could not become active, StoreKit testing delivered no updates at all.
-        try XCTSkipUnless(active, "The host app is not active, so StoreKit testing does not deliver Transaction.updates")
+        await MainActor.run { NSApplication.shared.activate(ignoringOtherApps: true) }
+        var active = false
+        for _ in 0..<100 where !active {
+            active = await MainActor.run { NSApplication.shared.isActive }
+            if !active { try await Task.sleep(nanoseconds: 50_000_000) }
+        }
+        let reason = "The host app is not active, so StoreKit testing does not deliver Transaction.updates"
+        if ProcessInfo.processInfo.environment["BILLFN_STOREKIT_REQUIRE_UPDATES"] == "1" {
+            guard active else { return XCTFail(reason) }
+        }
+        try XCTSkipUnless(active, reason)
         let backend = FakeBillFnBackend()
         let kit = launch(backend)
         let recorder = record(kit)

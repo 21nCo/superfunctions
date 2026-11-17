@@ -9,7 +9,10 @@ export const BILLFN_BRIDGE_CAPABILITIES = [
   'purchases',
   'health',
   'events',
-  'storekit'
+  // The Swift host advertises each StoreKit method it answers as a capability of the same name.
+  'storekit.checkout',
+  'storekit.restore',
+  'storekit.transactions'
 ] as const;
 
 export const BILLFN_BRIDGE_METHODS = [
