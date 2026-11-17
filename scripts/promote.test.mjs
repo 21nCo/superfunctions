@@ -625,6 +625,13 @@ historyTest("ignored hooks beside tracked ones in a relative hooks directory, an
     process.env.GIT_CONFIG_GLOBAL = global;
   }
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  // A file included everywhere and again only for this checkout, after a setting it then overrides only here.
+  const config = path.join(dev, ".git", "config");
+  write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
+  const gitdir = realpathSync(path.join(dev, ".git"));
+  writeFileSync(config, `${readFileSync(config, "utf8")}[include]\n\tpath = signed.conf\n[merge]\n\tverifySignatures = false\n[includeIf "gitdir:${gitdir}"]\n\tpath = signed.conf\n`);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
 });
 
 historyTest("an exported GIT_DIR and GIT_WORK_TREE do not redirect the temporary repository to this one", () => {

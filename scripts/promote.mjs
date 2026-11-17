@@ -792,7 +792,8 @@ function refuseCheckoutOnlyConfig(root, worktree) {
       // As git resolves it: relative to the including file as it was opened (a symlinked ~/.gitconfig included).
       const expanded = value.startsWith("~/") ? path.join(homedir(), value.slice(2)) : value;
       const included = realPath(path.resolve(path.dirname(opened), expanded));
-      if (here.has(included) && !there.has(included)) {
+      // Loaded more often here than there: also a file included unconditionally and again only for this checkout.
+      if ((here.get(included)?.entries.length ?? 0) > (there.get(included)?.entries.length ?? 0)) {
         throw new PromoteError("checkout-policy", `${key} (in ${opened}) applies to this checkout but not to the linked worktree promotion builds the branch in; end its gitdir pattern with "/" so it also covers linked worktrees, or remove it, then retry`);
       }
     }
