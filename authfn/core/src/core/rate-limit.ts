@@ -50,13 +50,20 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
     const policy = policyForScope(config, scope);
     const identifier = await readIdentifier(request.clone());
     const ip = (await rateLimit.resolveClientIp?.(request))?.trim() || 'unknown';
-    // One clock reading per request, so every check and the local counters
-    // agree on which window the request belongs to.
+    const identifierHash = identifier && policy.identifierLimit ? await hashIdentifier(identifier) : null;
+    // One clock reading per request, taken after every asynchronous step, so
+    // every check and the local counters agree on which window the request
+    // belongs to, and that window is the one current when it is counted.
     const now = Date.now();
-    const checks = await buildChecks(config, scope, policy, ip, identifier, now);
+    const checks = buildChecks(config, scope, policy, ip, identifierHash, now);
 
     for (const check of checks) {
-      const count = await incrementCheck(config, mode, check, localState, now);
+      // Local counters are read and updated without yielding, so no other
+      // request can sweep this window's counters between the clock reading
+      // and the increment.
+      const count = usesLocalCounters(mode, config)
+        ? incrementLocal(localState, check.key, check.windowEndsAt, now)
+        : await incrementStore(config, mode, check);
       if (count > check.limit) {
         throw new AuthFnRateLimitedError(undefined, {
           path,
@@ -71,6 +78,10 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
 
     return next();
   };
+}
+
+function usesLocalCounters(mode: AuthFnRateLimitMode, config: AuthFnRuntimeConfig): boolean {
+  return mode === 'local' || (mode === 'best-effort' && !config.stores?.kv);
 }
 
 function resolveMode(
@@ -150,14 +161,14 @@ function scopeForPath(path: string): AuthFnRateLimitScope {
  * never extend a window: the next window always starts from a new key. All
  * modes (`strict`, `best-effort`, `local`) use this key shape.
  */
-async function buildChecks(
+function buildChecks(
   config: AuthFnRuntimeConfig,
   scope: AuthFnRateLimitScope,
   policy: AuthFnRateLimitCategory,
   ip: string,
-  identifier: string | null,
+  identifierHash: string | null,
   now: number
-): Promise<RateLimitCheck[]> {
+): RateLimitCheck[] {
   const windowMs = policy.windowSeconds * 1000;
   const windowIndex = Math.floor(now / windowMs);
   const windowEndsAt = (windowIndex + 1) * windowMs;
@@ -175,9 +186,9 @@ async function buildChecks(
     }
   ];
 
-  if (identifier && policy.identifierLimit) {
+  if (identifierHash && policy.identifierLimit) {
     checks.push({
-      key: counterKey('identifier', await hashIdentifier(identifier)),
+      key: counterKey('identifier', identifierHash),
       limit: policy.identifierLimit,
       windowSeconds: policy.windowSeconds,
       windowEndsAt,
@@ -189,12 +200,10 @@ async function buildChecks(
   return checks;
 }
 
-async function incrementCheck(
+async function incrementStore(
   config: AuthFnRuntimeConfig,
   mode: AuthFnRateLimitMode,
   check: RateLimitCheck,
-  localState: LocalRateLimitState,
-  now: number,
 ): Promise<number> {
   // Store TTLs only bound how long a counter is kept. They may be refreshed by
   // later writes, but the key belongs to one window, so that cannot move the
@@ -202,10 +211,7 @@ async function incrementCheck(
   if (mode === 'strict') {
     return incrementAtomic(config.stores!.atomicKv!, check.key, check.windowSeconds);
   }
-  if (mode === 'best-effort' && config.stores?.kv) {
-    return incrementCache(config.stores.kv, check.key, check.windowSeconds);
-  }
-  return incrementLocal(localState, check.key, check.windowEndsAt, now);
+  return incrementCache(config.stores!.kv!, check.key, check.windowSeconds);
 }
 
 async function incrementAtomic(

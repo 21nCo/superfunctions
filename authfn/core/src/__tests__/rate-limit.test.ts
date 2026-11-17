@@ -52,6 +52,7 @@ const WINDOW_START = Date.UTC(2026, 0, 1, 0, 0, 0);
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function freezeClock(at: number): void {
@@ -189,6 +190,68 @@ describe('authfn rate limiting', () => {
       await expect(postRateLimitedRoute(config, '/auth/otp/send', client)).resolves.toHaveProperty('status', 200);
       await expect(postRateLimitedRoute(config, '/auth/otp/send', client)).rejects.toMatchObject({
         details: { scope: 'otp-send', resetAt: new Date(windowEndsAt + 60_000).toISOString() }
+      });
+    });
+
+    it.each([
+      // Same IP, a new email per request: only the IP counter is exhausted.
+      { dimension: 'ip', client: (i: number) => ({ ip: '203.0.113.21', email: `slow${i}@example.com` }) },
+      // Same email, a new IP per request: only the identifier counter is exhausted.
+      { dimension: 'identifier', client: (i: number) => ({ ip: `198.51.100.${100 + i}`, email: 'slow@example.com' }) }
+    ])('counts a request whose hashing crosses the window end in the next window by $dimension', async ({
+      dimension,
+      client
+    }) => {
+      const windowEndsAt = WINDOW_START + 60_000;
+      freezeClock(windowEndsAt - 20);
+      const { config } = createModeConfig(mode, `rate-limit-${mode}-${dimension}-suspended-hash`, {
+        'otp-send': { ipLimit: 2, identifierLimit: 2, windowSeconds: 60 }
+      });
+      let request = 0;
+
+      for (let i = 0; i < 2; i += 1) {
+        await expect(postRateLimitedRoute(config, '/auth/otp/send', client(request++)))
+          .resolves.toHaveProperty('status', 200);
+      }
+      await expect(postRateLimitedRoute(config, '/auth/otp/send', client(request++))).rejects.toMatchObject({
+        name: 'AuthFnRateLimitedError',
+        details: { scope: 'otp-send', dimension, resetAt: new Date(windowEndsAt).toISOString() }
+      });
+
+      // The next request starts just before the window ends and is suspended
+      // while its identifier is hashed.
+      vi.setSystemTime(windowEndsAt - 1);
+      const digest = crypto.subtle.digest.bind(crypto.subtle);
+      let hashStarted!: () => void;
+      const started = new Promise<void>((resolve) => { hashStarted = resolve; });
+      let releaseHash!: () => void;
+      const released = new Promise<void>((resolve) => { releaseHash = resolve; });
+      vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(async (algorithm, data) => {
+        hashStarted();
+        await released;
+        return digest(algorithm, data);
+      });
+      const suspended = postRateLimitedRoute(config, '/auth/otp/send', client(request++));
+      await started;
+
+      // After the window ends, other clients' requests run the local sweep
+      // (every 128 counter increments), which drops the exhausted counters.
+      vi.setSystemTime(windowEndsAt + 1_000);
+      for (let i = 0; i < 128; i += 1) {
+        await expect(postRateLimitedRoute(config, '/auth/otp/send', { ip: `192.0.2.${i}`, email: `other${i}@example.com` }))
+          .resolves.toHaveProperty('status', 200);
+      }
+      releaseHash();
+
+      // The suspended request is counted in the window its checks run in, the
+      // next one, so it uses one of that window's two requests: it does not
+      // recreate the exhausted window's counter.
+      await expect(suspended).resolves.toHaveProperty('status', 200);
+      await expect(postRateLimitedRoute(config, '/auth/otp/send', client(request++)))
+        .resolves.toHaveProperty('status', 200);
+      await expect(postRateLimitedRoute(config, '/auth/otp/send', client(request++))).rejects.toMatchObject({
+        name: 'AuthFnRateLimitedError',
+        details: { scope: 'otp-send', dimension, resetAt: new Date(windowEndsAt + 60_000).toISOString() }
       });
     });
 
