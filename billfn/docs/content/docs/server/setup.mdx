@@ -77,10 +77,15 @@ const billfn = createBillFn({
     dodo: createDodoProvider({
       apiKey: process.env.DODO_API_KEY!,
       webhookSecret: process.env.DODO_WEBHOOK_SECRET!,
+      environment: "live_mode",
     }),
   },
 });
 ```
+
+Production must set `environment: "live_mode"` with a live mode Dodo key. The
+Dodo adapter calls Dodo's test mode (`https://test.dodopayments.com`) when
+`environment` is not set, where a live key is rejected.
 
 ## Discounted Prices
 

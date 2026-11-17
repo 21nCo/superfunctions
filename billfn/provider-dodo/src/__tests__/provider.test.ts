@@ -103,12 +103,12 @@ function standardWebhookHeaders(rawBody: string, id = 'evt_dodo_123') {
 }
 
 describe('@billfn/provider-dodo', () => {
-  it('creates a checkout request against the correct endpoint', async () => {
+  it('creates a Dodo checkout session in test mode by default for the selected price', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          payment_link: 'https://checkout.example.test',
-          subscription_id: 'sub_123'
+          session_id: 'cks_123',
+          checkout_url: 'https://test.checkout.dodopayments.com/session/cks_123'
         }),
         {
           status: 200,
@@ -157,21 +157,27 @@ describe('@billfn/provider-dodo', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://live.dodopayments.com/subscriptions',
+      'https://test.dodopayments.com/checkouts',
       expect.objectContaining({
         method: 'POST'
       })
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      product_id: 'pdt_123',
+      product_cart: [{ product_id: 'pdt_123', quantity: 1 }],
       metadata: {
         campaign: 'launch',
         billfn_checkout_session_id: 'chk_123',
         billfn_billing_account_id: 'ba_user_123',
-        billfn_product_id: 'pdt_123'
+        billfn_product_id: 'pdt_123',
+        billfn_price_id: 'price_123'
       }
     });
-    expect(response?.providerSubscriptionId).toBe('sub_123');
+    expect(response).toMatchObject({
+      status: 'requires_action',
+      providerCheckoutId: 'cks_123',
+      checkoutUrl: 'https://test.checkout.dodopayments.com/session/cks_123'
+    });
+    expect(response?.providerSubscriptionId).toBeUndefined();
   });
 
   it('uses a server-recorded Dodo reference and verifies its checkout ownership', async () => {
@@ -324,7 +330,7 @@ describe('@billfn/provider-dodo', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://live.dodopayments.com/refunds',
+      'https://test.dodopayments.com/refunds',
       expect.objectContaining({
         method: 'POST'
       })
@@ -538,7 +544,7 @@ describe('@billfn/provider-dodo', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://live.dodopayments.com/subscriptions/sub_123/change-plan',
+      'https://test.dodopayments.com/subscriptions/sub_123/change-plan',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -668,7 +674,7 @@ describe('@billfn/provider-dodo', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://live.dodopayments.com/subscriptions/sub_123',
+      'https://test.dodopayments.com/subscriptions/sub_123',
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({

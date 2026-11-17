@@ -64,12 +64,12 @@ function dodoApiFixture(subscriptionId: string): typeof fetch {
     } else {
       url = input.url;
     }
-    if (init?.method === 'POST' && url === 'https://dodo.fixture.test/subscriptions') {
+    if (init?.method === 'POST' && url === 'https://dodo.fixture.test/checkouts') {
       dodoCheckoutMetadata.push((JSON.parse(String(init.body)) as { metadata?: unknown }).metadata);
+      // A Dodo checkout session; the subscription it starts reaches BillFn in a webhook with the session's metadata.
       return Response.json({
-        subscription_id: subscriptionId,
-        payment_id: `pay_${subscriptionId}`,
-        payment_link: `https://dodo.fixture.test/checkout/${subscriptionId}`
+        session_id: `cks_${subscriptionId}`,
+        checkout_url: `https://dodo.fixture.test/checkout/cks_${subscriptionId}`
       });
     }
     return new Response('unexpected Dodo fixture request', { status: 500 });
