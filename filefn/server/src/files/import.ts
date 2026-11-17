@@ -245,7 +245,9 @@ export function createImportObject(deps: ImportObjectDeps) {
     }
     const file = await findFile(version.fileId);
     if (!file) {
-      // Only a delete of the file in progress leaves its version without it.
+      // A delete of the file in progress leaves its version without it, and so
+      // does a delete that interleaved an import of this object (a known gap,
+      // FILE-14): imports of the object then fail until that row is removed.
       throw errors.notFound('File');
     }
     if (file.ownerId !== request.principalId || (file.tenantId ?? null) !== request.tenantId) {
@@ -409,7 +411,7 @@ export function createImportObject(deps: ImportObjectDeps) {
       () => runFileFnSerialized(
         lock.fileKey(fileId),
         () => claimAndPublish(request, fileId, versionId, createdAt, visibility),
-        { evictableAt, keepWaiting: true, member: lock.importMember, sharesKeyWith: lock.sharesKeyWith },
+        lock.importOptions(evictableAt),
       ),
       { evictableAt, keepWaiting: true },
     );

@@ -7,6 +7,7 @@ import type { StorageAdapter } from '@superfunctions/storage';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { describe, expect, it, vi } from 'vitest';
 import { createFileFn, type QuotaProvider } from '../src/index.js';
+import { createKeyedSerializer } from '../src/upload-sessions/file-id.js';
 
 const NAMESPACE = 'filefn';
 const owner = { principalId: 'owner', tenantId: 'tenant' };
@@ -150,6 +151,10 @@ async function rows(database: Adapter, model: 'files' | 'fileVersions') {
 async function loadIsolatedCreateFileFn(): Promise<typeof createFileFn> {
   vi.resetModules();
   return (await import('../src/index.js')).createFileFn;
+}
+
+async function flushPromises() {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
 }
 
 function deferred() {
@@ -547,6 +552,87 @@ describe('services.files.importObject', () => {
     expect(await rows(store, 'fileVersions')).toEqual([expect.objectContaining({ storageKey: baseInput.storageKey })]);
   });
 
+  it('keeps imports of one fileId into separate memory stores of one namespace behind each store\'s upload completion', async () => {
+    const uploader = { principalId: 'uploader', tenantId: 'tenant' };
+    async function storeWithHeldUpload(name: string) {
+      const release = deferred();
+      const held = deferred();
+      let fileRows = 0;
+      const database = createHookedDb(async (model) => {
+        if (model === 'files' && ++fileRows === 1) {
+          held.resolve();
+          await release.promise;
+        }
+      });
+      const { storage } = createStorage({ [`legacy/${name}.txt`]: 12 });
+      const fileFn = build({ database, storage });
+      const session = await fileFn.services.uploads.createSession(
+        { policy: 'doc', fileName: `${name}.txt`, size: 5, mimeType: 'text/plain', fileId: 'file_claimedONCE' },
+        uploader,
+      );
+      await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, Buffer.from('hello'), 5, uploader, session.uploadSessionToken);
+      const upload = fileFn.services.uploads.completeSession(session.uploadSessionId, uploader, session.uploadSessionToken);
+      await held.promise;
+      return { database, fileFn, upload, release: release.resolve };
+    }
+    // Each store's upload completion is held before its files insert: two groups of the key.
+    const a = await storeWithHeldUpload('a');
+    const b = await storeWithHeldUpload('b');
+    const importA = a.fileFn.services.files.importObject({ ...baseInput, storageKey: 'legacy/a.txt', fileId: 'file_claimedONCE' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const importB = b.fileFn.services.files.importObject({ ...baseInput, storageKey: 'legacy/b.txt', fileId: 'file_claimedONCE' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    a.release();
+    await a.upload;
+    // Store B's upload completion is still before its files insert.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    b.release();
+    await b.upload;
+
+    for (const imported of [importA, importB]) {
+      await expect(imported).rejects.toMatchObject({
+        code: 'FILEFN_IMPORT_CONFLICT',
+        details: expect.objectContaining({ reason: 'fileId' }),
+      });
+    }
+    for (const { database } of [a, b]) {
+      expect(await rows(database, 'files')).toEqual([expect.objectContaining({ fileId: 'file_claimedONCE', ownerId: 'uploader' })]);
+      expect(await rows(database, 'fileVersions')).toEqual([expect.not.objectContaining({ storageKey: expect.stringMatching(/^legacy\//) })]);
+    }
+  });
+
+  it('runs a spanning turn only after every group of its key, and queues later calls of any group behind it', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 60_000 });
+    const sameGroup = (group: string) => async (members: readonly string[]) => members.some((member) => member.startsWith(group));
+    const order: string[] = [];
+    const hold = (name: string, member: string) => {
+      const release = deferred();
+      const done = run('k', async () => {
+        order.push(name);
+        await release.promise;
+      }, { member, sharesKeyWith: sameGroup(member[0]) });
+      return { release: release.resolve, done };
+    };
+    const x1 = hold('x1', 'x1');
+    const y1 = hold('y1', 'y1');
+    await flushPromises();
+    const spanning = (name: string) => run('k', async () => { order.push(name); }, { member: `import ${name}`, spansGroups: true, keepWaiting: true });
+    const s1 = spanning('s1');
+    const s2 = spanning('s2');
+    // Probes group y only; must still queue behind both spanning turns.
+    const y2 = run('k', async () => { order.push('y2'); }, { member: 'y2', sharesKeyWith: sameGroup('y') });
+    await flushPromises();
+    expect(order).toEqual(['x1', 'y1']);
+    x1.release();
+    await x1.done;
+    await flushPromises();
+    expect(order).toEqual(['x1', 'y1']);
+    y1.release();
+    await Promise.all([y1.done, s1, s2, y2]);
+    expect(order).toEqual(['x1', 'y1', 's1', 's2', 'y2']);
+    expect(run.activeKeys()).toBe(0);
+  });
+
   it('keeps the usage of a version insert that wrote its row but lost its response', async () => {
     let loseResponse = true;
     const database = createUniqueDb(memoryAdapter(), {
@@ -607,6 +693,41 @@ describe('services.files.importObject', () => {
     expect(rerun).toMatchObject({ created: false, file: { fileId: winner.file.fileId } });
     expect(net()).toBe(afterRace);
     expect((await rows(database, 'files')).map((row) => row.fileId)).toEqual([winner.file.fileId]);
+  });
+
+  it('returns created for both same-fileId importers across processes when the loser\'s insert fails with a non-duplicate error (documented double count)', async () => {
+    const bothAtVersion = barrier(2);
+    const firstVersionWritten = deferred();
+    let versionInserts = 0;
+    const database = createUniqueDb(memoryAdapter(), {
+      async beforeCreate(model) {
+        if (model !== 'fileVersions') return;
+        await bothAtVersion();
+        if (++versionInserts === 2) {
+          await firstVersionWritten.promise;
+          throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' });
+        }
+      },
+      async afterCreate(model) {
+        if (model === 'fileVersions') firstVersionWritten.resolve();
+      },
+    });
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const { quota, net } = createQuota();
+    const otherProcess = await loadIsolatedCreateFileFn();
+    const input = { ...baseInput, fileId: 'file_sharedIDXXXX' };
+
+    const results = await Promise.all([
+      build({ database, storage, quota }).services.files.importObject(input),
+      build({ database, storage, quota, factory: otherProcess }).services.files.importObject(input),
+    ]);
+    expect(results.map((result) => [result.created, result.file.fileId])).toEqual([
+      [true, 'file_sharedIDXXXX'],
+      [true, 'file_sharedIDXXXX'],
+    ]);
+    expect(net()).toBe(24);
+    expect(await rows(database, 'files')).toHaveLength(1);
+    expect(await rows(database, 'fileVersions')).toHaveLength(1);
   });
 
   it('reports the insert error, not the quota error, when taking back a failed insert\'s usage fails', async () => {

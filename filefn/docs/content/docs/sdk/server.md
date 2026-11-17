@@ -164,7 +164,9 @@ const { file, version, created } = await fileFn.services.files.importObject({
   constraints (Postgres) the database decides across processes; on adapters
   without them, imports and upload completions claiming one file ID, and imports
   of one object, run one at a time in the process, whichever FileFn instance or
-  adapter wrapper they come through.
+  adapter wrapper they come through. There an import also waits for upload
+  completions of its file ID in separate stores that share the namespace, and
+  they for it; this only orders them.
 - **Failures.** No object at the key: `404 FILEFN_IMPORT_OBJECT_NOT_FOUND`. A stored
   size other than `size`: `409 FILEFN_IMPORT_SIZE_MISMATCH`. Neither writes any row.
   The object already imported for another owner or tenant, or a `fileId` that names
@@ -172,7 +174,9 @@ const { file, version, created } = await fileFn.services.files.importObject({
   `fileId`). Invalid input: `400 FILEFN_INVALID_REQUEST` or
   `FILEFN_INVALID_FILE_ID`; an unregistered `policy`: `FILEFN_POLICY_NOT_FOUND`.
   Other storage errors (for example a transient HEAD failure) are thrown as they
-  are; retry the import.
+  are; retry the import. Known gap: a file deleted while an import of its object
+  is still writing can leave the version row behind without its file; imports of
+  that object then fail with `404 FILEFN_NOT_FOUND` until that row is removed.
 - **Side effects.** The call that creates the file records `size` bytes of quota
   usage (so deleting the file balances it). Usage is recorded just before the
   version insert, so a rerun after a failed record records it once. A failed
@@ -180,9 +184,15 @@ const { file, version, created } = await fileFn.services.files.importObject({
   version: no version row exists afterwards, the row belongs to another file, or
   the database refused the insert as a duplicate key. An insert that wrote its
   row but lost its response keeps the record and creates the file. Accounting
-  errs only toward counting the bytes twice, in two cases: a process stopped
-  between the record and the insert, and a failed take-back (the insert's error
-  is thrown; a rerun after an insert that wrote nothing records again). It emits no `file:uploaded` event and
+  errs only toward counting the bytes more than once, in these cases: a usage
+  record that was stored but whose response was lost (the call fails and a rerun
+  records again); a process stopped between the record and the insert; a failed
+  take-back (the insert's error is thrown; a rerun after an insert that wrote
+  nothing records again); and, across processes, two imports of one object with
+  the same `fileId` where the losing insert fails with an error other than a
+  duplicate key: the loser cannot tell the winner's row from its own, so both
+  calls return `created: true` and the bytes are counted twice. Exactly-once
+  accounting needs an idempotent quota provider. It emits no `file:uploaded` event and
   schedules no processing; call `services.processing.triggerProcessingForFile` for
   previews.
 - **Trust.** The import trusts that the object at the key is the one meant; an

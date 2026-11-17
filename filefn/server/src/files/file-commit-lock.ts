@@ -38,14 +38,15 @@ export interface FileCommitLockConfig {
  * The per-fileId commit key of one FileFn store, shared by upload completion
  * and import. With unique constraints the key is scoped to the adapter object;
  * without them (single-process adapters) it is scoped to the namespace, and
- * calls of one key form one group per store (`sharesKeyWith`): a busy key's
- * group is this store's when one of its upload sessions is visible here, or
- * when it holds an import. No adapter property reliably tells whether two
- * adapter objects (for example two wrappers) share one store, and an import
- * leaves no session row to find, so every import's turn counts as this
- * store's: calls through any adapter object of the namespace wait for it.
- * Calls of separate stores that share a namespace may then wait for each
- * other's imports, which only orders them.
+ * upload completions of one key form one group per store (`sharesKeyWith`): a
+ * busy key's group is this store's when one of its upload sessions is visible
+ * here. No adapter property reliably tells whether two adapter objects (for
+ * example two wrappers) share one store, and an import leaves no session row
+ * to find, so an import's turn spans every group of the key (`spansGroups`):
+ * it waits for every upload completion and import of the file ID in the
+ * namespace, whichever store or adapter object it came through, and every
+ * later one waits for it. Calls of separate stores that share a namespace may
+ * then wait for each other through an import, which only orders them.
  */
 export function createFileCommitLock(config: FileCommitLockConfig) {
   const { db, namespace, databaseIdentity = db } = config;
@@ -54,8 +55,7 @@ export function createFileCommitLock(config: FileCommitLockConfig) {
   const importMember = `${IMPORT_MEMBER_PREFIX}${namespace}`;
 
   async function inThisStore(members: readonly string[]): Promise<boolean> {
-    // The key is this namespace's, so any import holding or awaiting it is.
-    if (members.some((member) => member.startsWith(IMPORT_MEMBER_PREFIX))) return true;
+    // Groups with an import are joined without a probe (`spansGroups`).
     const uploadSessionIds = members.filter((member) => !member.startsWith(IMPORT_MEMBER_PREFIX));
     const found = await Promise.all(uploadSessionIds.map((uploadSessionId) => db.findOne({
       model: 'uploadSessions',
@@ -71,9 +71,14 @@ export function createFileCommitLock(config: FileCommitLockConfig) {
     scope,
     /** Key of the commit decisions for one file ID. */
     fileKey: (fileId: string) => `file\u0000${scope}\u0000${fileId}`,
-    /** `member` of an import's turn on a file key. */
-    importMember,
-    /** `sharesKeyWith` for file keys: only without unique constraints. */
+    /** `sharesKeyWith` for upload completions' file keys: only without unique constraints. */
     sharesKeyWith: uniqueConstraints ? undefined : inThisStore,
+    /** Run options of an import's turn on a file key. */
+    importOptions: (evictableAt: number | undefined) => ({
+      evictableAt,
+      keepWaiting: true,
+      member: importMember,
+      spansGroups: true,
+    }),
   };
 }
