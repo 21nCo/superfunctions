@@ -2,7 +2,7 @@
 // skip without it unless PROMOTE_REQUIRE_FILTER_REPO=1 (set in CI, where the job installs it), which makes them fail.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -570,12 +570,17 @@ historyTest("a conflicting --reconcile merge does not overwrite an ignored file 
 historyTest("merge policies still apply: a rejecting pre-merge-commit hook or merge.verifySignatures refuses the promotion", () => {
   const { dev } = fixture("merge-policy");
   const head = git(dev, "rev-parse", "HEAD");
+  // An unrelated linked worktree whose directory is missing (an unmounted volume) is left registered.
+  const away = path.join(scratch, "merge-policy-away");
+  git(dev, "worktree", "add", "-q", "--detach", away, "HEAD");
+  rmSync(away, { recursive: true, force: true });
+  const worktrees = git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length;
   const unchanged = () => {
     assert.equal(git(dev, "rev-parse", "HEAD"), head);
     assert.equal(git(dev, "branch", "--show-current"), "dev");
     assert.equal(git(dev, "branch", "--list", "promote/*"), "");
     assert.equal(git(dev, "status", "--porcelain"), "");
-    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, worktrees);
   };
   useHook(dev, "pre-merge-commit", "exit 1");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
@@ -608,10 +613,17 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   git(dev, "config", "--worktree", "include.path", "merge-policy.conf");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
-  write(dev, { ".git/merge-policy.conf": "[merge]\n\tverifySignatures = false\n" });
+  git(dev, "config", "--worktree", "--unset", "include.path");
+  // ... and through an includeIf on this checkout's git directory, which the scratch worktree's does not match.
+  write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
+  git(dev, "config", `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}.path`, "signed.conf");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  write(dev, { ".git/signed.conf": "" });
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
   assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), head, "ORIG_HEAD is the commit before the merge, as git merge leaves it");
+  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, worktrees);
 });
 
 historyTest("a rejecting post-checkout hook on the new branch restores the original checkout and branch list", () => {

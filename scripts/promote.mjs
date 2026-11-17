@@ -733,19 +733,28 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
   return conflicts;
 }
 
+/** The settings that make up this checkout's merge policy (signature checks, signing, identity). */
+const MERGE_POLICY_KEY = /^(?:merge|gpg|user)\.|^commit\.gpgsign$/;
+
 /**
- * The environment for git merge in the scratch worktree: this worktree's own settings (its config.worktree under
- * extensions.worktreeConfig, such as merge.verifySignatures), which a new linked worktree need not inherit, included
- * by absolute path so that relative includes inside it still resolve against that file. GIT_WORK_TREE keeps the merge in
- * the scratch worktree even when that configuration sets core.worktree (to this checkout).
+ * The environment for git merge in the scratch worktree: this checkout's effective merge-policy settings as
+ * command-scope configuration, already resolved here through config.worktree and every include (also an includeIf
+ * on this checkout's git directory, which does not match the scratch worktree's). GIT_WORK_TREE keeps the merge in
+ * the scratch worktree.
  */
-function worktreeConfigEnv(root, worktree) {
+function mergePolicyEnv(root, worktree) {
   const env = { ...process.env, GIT_WORK_TREE: worktree };
-  if (git(root, ["config", "--type=bool", "--get", "extensions.worktreeConfig"], { allowFailure: true }).stdout.trim() !== "true") return env;
-  const file = path.resolve(root, git(root, ["rev-parse", "--git-path", "config.worktree"]).trim());
-  if (!existsSync(file)) return env;
-  const count = Number(env.GIT_CONFIG_COUNT ?? 0);
-  return { ...env, [`GIT_CONFIG_KEY_${count}`]: "include.path", [`GIT_CONFIG_VALUE_${count}`]: file, GIT_CONFIG_COUNT: String(count + 1) };
+  let count = Number(env.GIT_CONFIG_COUNT ?? 0);
+  for (const entry of git(root, ["config", "--list", "-z"]).split("\0").filter(Boolean)) {
+    const split = entry.indexOf("\n");
+    const key = split === -1 ? entry : entry.slice(0, split);
+    if (!MERGE_POLICY_KEY.test(key)) continue;
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = split === -1 ? "true" : entry.slice(split + 1);
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  return env;
 }
 
 /**
@@ -762,9 +771,14 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
   const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
   const worktree = path.join(scratch, "worktree");
   const original = git(root, ["rev-parse", "HEAD"]).trim();
+  // Removes only the scratch worktree (never a repository-wide prune, which would drop other missing worktrees).
   const removeWorktree = () => {
-    git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true });
-    git(root, ["worktree", "prune"], { allowFailure: true });
+    if (!existsSync(worktree)) return;
+    const admin = git(worktree, ["rev-parse", "--absolute-git-dir"], { allowFailure: true }).stdout.trim();
+    if (git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true }).status !== 0 && admin.includes(`${path.sep}worktrees${path.sep}`)) {
+      rmSync(admin, { recursive: true, force: true });
+      rmSync(worktree, { recursive: true, force: true });
+    }
   };
   // Leaves the scratch worktree and checks out `branch` (at `commit`) here.
   const checkout = (commit) => {
@@ -778,7 +792,7 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
   try {
     git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
     const mergeArgs = ["-c", `core.hooksPath=${hooks}`, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported];
-    const merged = git(worktree, mergeArgs, { allowFailure: true, env: worktreeConfigEnv(root, worktree) });
+    const merged = git(worktree, mergeArgs, { allowFailure: true, env: mergePolicyEnv(root, worktree) });
     if (merged.status === 0) {
       checkout(git(worktree, ["rev-parse", "HEAD"]).trim());
       git(root, ["update-ref", "ORIG_HEAD", original]); // as git merge leaves it, for git reset --merge ORIG_HEAD
