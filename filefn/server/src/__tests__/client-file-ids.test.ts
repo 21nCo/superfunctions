@@ -2507,6 +2507,121 @@ describe('upload completion fencing (FILE-19)', () => {
     expect(storageFixture.finalizeCount(key)).toBe(1);
   });
 
+  // Process one (the holder) claims the session and stalls past the completion
+  // timeout. Process two (the refused taker) finds the stale claim, is refused
+  // admission by its quota, and pauses right before ending that claim, while
+  // the holder resumes.
+  async function refusedTakerAgainstResumingHolder(holderStallsAt: 'version-lookup' | 'version-insert') {
+    const shared = createUniqueEnforcingDb({});
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => { open = resolve; });
+      return { open, opened };
+    };
+    const holderStalled = gate();
+    const holderResumes = gate();
+    const holderAtCompletedWrite = gate();
+    const holderFinishes = gate();
+    let holderArmed = false;
+    let holdCompletedWrite = holderStallsAt === 'version-insert';
+    const holderDb = {
+      ...shared,
+      async findOne(params: Parameters<Adapter['findOne']>[0]) {
+        const result = await shared.findOne(params);
+        if (holderStallsAt === 'version-lookup' && holderArmed && params.model === 'fileVersions' && result === null) {
+          holderArmed = false;
+          holderStalled.open();
+          await holderResumes.opened;
+        }
+        return result;
+      },
+      async create(params: Parameters<Adapter['create']>[0]) {
+        if (holderStallsAt === 'version-insert' && holderArmed && params.model === 'fileVersions') {
+          holderArmed = false;
+          holderStalled.open();
+          await holderResumes.opened;
+        }
+        return shared.create(params);
+      },
+      async update(params: Parameters<Adapter['update']>[0]) {
+        if (holdCompletedWrite && params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'completed') {
+          holdCompletedWrite = false;
+          holderAtCompletedWrite.open();
+          await holderFinishes.opened;
+        }
+        return shared.update(params);
+      },
+    } as Adapter;
+    const takerAtEndClaim = gate();
+    const takerEndsClaim = gate();
+    let takerArmed = false;
+    const takerDb = {
+      ...shared,
+      async update(params: Parameters<Adapter['update']>[0]) {
+        if (takerArmed && params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'completing') {
+          takerArmed = false;
+          takerAtEndClaim.open();
+          await takerEndsClaim.opened;
+        }
+        return shared.update(params);
+      },
+    } as Adapter;
+    const refusing: QuotaProvider = {
+      async checkQuota() { return { allowed: false, current: 10, limit: 10 }; },
+      async recordUsage() {},
+    };
+    const storageFixture = createStorage('multipart');
+    const completionTimeoutSeconds = 0.05;
+    const holder = createApp({ mode: 'multipart', database: holderDb, storageFixture, completionTimeoutSeconds, createFileFn: await loadProcess() });
+    const taker = createApp({ mode: 'multipart', database: takerDb, storageFixture, completionTimeoutSeconds, quota: refusing, createFileFn: await loadProcess() });
+    const uploaded: string[] = [];
+    for (const app of [holder, taker]) app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+    const staged = await holder.stage('user_a', CLIENT_ID, 'finished once');
+    const key = (await rawSession(shared, staged.uploadSessionId))!.storageKey;
+
+    holderArmed = true;
+    const holderDone = staged.complete();
+    await holderStalled.opened;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    takerArmed = true;
+    const takerDone = taker.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+    await takerAtEndClaim.opened;
+    return { shared, storageFixture, uploaded, staged, key, holderDone, takerDone, holderResumes, holderAtCompletedWrite, holderFinishes, takerEndsClaim };
+  }
+
+  it('a taker refused by its quota whose stale holder completes before it ends the claim returns the recorded result', async () => {
+    const run = await refusedTakerAgainstResumingHolder('version-lookup');
+    run.holderResumes.open();
+    const first = await run.holderDone;
+    expect(first.status).toBe(200);
+    run.takerEndsClaim.open();
+    const second = await run.takerDone;
+
+    expect(second.status).toBe(200);
+    expect(second.json.data).toEqual(first.json.data);
+    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
+    expect(run.uploaded).toEqual([first.json.data.versionId]);
+    expect(run.storageFixture.finalizeCount(run.key)).toBe(1);
+  });
+
+  it('a taker refused by its quota whose stale holder publishes before it ends the claim completes that version, never releasing it', async () => {
+    const run = await refusedTakerAgainstResumingHolder('version-insert');
+    run.holderResumes.open();
+    await run.holderAtCompletedWrite.opened;
+    run.takerEndsClaim.open();
+    const second = await run.takerDone;
+    expect(second.status).toBe(200);
+    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
+    run.holderFinishes.open();
+    const first = await run.holderDone;
+
+    expect(first.status).toBe(200);
+    expect(first.json.data).toEqual(second.json.data);
+    expect(run.uploaded).toEqual([second.json.data.versionId]);
+    expect(run.storageFixture.finalizeCount(run.key)).toBe(1);
+    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
+  });
+
   it('a completion that fails before publishing releases its claim, so a retry completes at once', async () => {
     const database = memoryAdapter();
     const app = createApp({ mode: 'multipart', database });

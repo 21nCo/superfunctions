@@ -1219,10 +1219,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               if (fresh.status === session.status && fresh.completionClaim === session.completionClaim) {
                 // A stale claim this call cannot take over is ended (claimed
                 // and released at once), so the owner can abort the session
-                // instead of waiting for it to expire.
+                // instead of waiting for it to expire. The stale holder may
+                // have moved on meanwhile: a lost end-claim decides again from
+                // the session as it is now (its recorded result once
+                // completed), and a won one whose version was published in
+                // between finishes that version instead of releasing it.
                 if (session.status === 'completing') {
                   const ended = await claimCompletion(session);
-                  if ('claim' in ended) await releaseClaim(uploadSessionId, ended.claim, 'in_progress');
+                  if (!('claim' in ended)) {
+                    if (!ended.current) throw errors.sessionNotFound();
+                    session = ended.current;
+                    continue;
+                  }
+                  // Kept on a failed check: the claim lapses, never released
+                  // over a version that may be published.
+                  if (await isOwnVersionPublished(session)) {
+                    claim = ended.claim;
+                    parts = [];
+                    break;
+                  }
+                  await releaseClaim(uploadSessionId, ended.claim, 'in_progress');
                 }
                 throw admission.error;
               }

@@ -49,7 +49,7 @@ interface FileFn extends FileProvider {
 | `defaultChunkSizeBytes` | `number` | `5 MiB` | Multipart chunk floor. |
 | `uploadSessionTtlSeconds` | `number` | `86400` | Session TTL. |
 | `signedUrlTtlSeconds` | `number` | `900` | Per-part signed URL TTL. |
-| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing). |
+| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing) and above your database statement and request timeouts: a completion stalled past it inside a single database write can still publish after a takeover released the session. |
 | `dedup` | `{ enabled: boolean }` | `{ enabled: false }` | Content-addressable storage. |
 | `processing` | `{ enabled, processors?, flowFn? }` | `{ enabled: false }` | Processing pipeline. |
 
