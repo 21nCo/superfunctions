@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTestServer } from './test-server.js';
+import Database from 'better-sqlite3';
+import { Kysely, SqliteDialect } from 'kysely';
+import { NotFoundError } from '@superfunctions/db';
+import { kyselyAdapter } from '@superfunctions/db/adapters';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnEmailOtpPlugin } from '@authfn/email-otp';
 import { authFnPasswordPlugin } from '@authfn/password';
@@ -12,6 +16,200 @@ import type {
 import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
 import { getLatestOtpChallenge } from '../core/verifications.js';
+import { getSchema } from '../schema.js';
+
+// Counts constant-time comparisons: in the verify-email flow the only caller
+// is the OTP code check, so this is the number of codes compared.
+const codeComparisons = vi.hoisted(() => ({ count: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    timingSafeEqual: (left: NodeJS.ArrayBufferView, right: NodeJS.ArrayBufferView) => {
+      codeComparisons.count += 1;
+      return actual.timingSafeEqual(left, right);
+    }
+  };
+});
+
+type AuthFnDatabase = AuthFnRuntimeConfig['database'];
+
+/**
+ * Wraps an adapter so the next `count` OTP challenge lookups all return before
+ * any of them continues: every request reads the same stored attempt count
+ * and then races on the write, the interleaving the attempt cap must survive.
+ */
+function holdOtpChallengeReads(adapter: AuthFnDatabase) {
+  let expected = 0;
+  let waiting: Array<() => void> = [];
+  const held = new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== 'function') {
+        return value;
+      }
+      if (property !== 'findMany') {
+        return value.bind(target);
+      }
+      return async (params: { model: string }) => {
+        const rows = await value.call(target, params);
+        if (expected > 0 && params.model === 'otp_challenges') {
+          await new Promise<void>((resolve) => {
+            waiting.push(resolve);
+            if (waiting.length === expected) {
+              const release = waiting;
+              expected = 0;
+              waiting = [];
+              release.forEach((resume) => resume());
+            }
+          });
+        }
+        return rows;
+      };
+    }
+  });
+  return {
+    adapter: held,
+    holdNextReads(count: number) {
+      expected = count;
+    }
+  };
+}
+
+/** Reports the adapter's `update` as unable to return rows from the statement. */
+function withoutReturning(capabilities: AuthFnDatabase['capabilities']): AuthFnDatabase['capabilities'] {
+  return { ...capabilities, operations: { ...capabilities.operations, returning: false } };
+}
+
+/**
+ * Wraps an adapter so `update` behaves like the Prisma adapter and the MySQL
+ * drizzle and kysely adapters: it writes, then re-selects with the original
+ * where and reports NotFound when that where no longer matches the written row.
+ * Like them, it reports no RETURNING support.
+ */
+function reselectUpdatesWithOriginalWhere(adapter: AuthFnDatabase): AuthFnDatabase {
+  return new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'capabilities') {
+        return withoutReturning(value);
+      }
+      if (property === 'update') {
+        return async (params: Parameters<AuthFnDatabase['update']>[0]) => {
+          await target.updateMany({
+            model: params.model,
+            where: params.where,
+            data: params.data,
+            namespace: params.namespace
+          });
+          const row = await target.findOne({
+            model: params.model,
+            where: params.where,
+            namespace: params.namespace
+          });
+          if (!row) {
+            throw new NotFoundError(params.model, params.where);
+          }
+          return row;
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+}
+
+/**
+ * Wraps an adapter so `updateMany` writes but reports no affected rows, as the
+ * shipped Kysely adapter does on every dialect: it reads the count from the
+ * array that Kysely's `execute()` returns.
+ */
+function updateManyReportsNoRows(adapter: AuthFnDatabase): AuthFnDatabase {
+  return new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'updateMany') {
+        return async (params: Parameters<AuthFnDatabase['updateMany']>[0]) => {
+          await target.updateMany(params);
+          return 0;
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+}
+
+/**
+ * Wraps an adapter so it reports no RETURNING support and its `updateMany`
+ * writes nothing and returns a count the driver could not report (NaN), as
+ * the drizzle adapter's count normalisation can for an unknown driver.
+ */
+function updateManyWithoutCount(adapter: AuthFnDatabase): AuthFnDatabase {
+  return new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'capabilities') {
+        return withoutReturning(value);
+      }
+      if (property === 'updateMany') {
+        return async () => Number.NaN;
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+}
+
+/**
+ * The shipped Kysely adapter on an in-memory SQLite database, one column per
+ * schema field. better-sqlite3 binds neither dates, booleans nor objects, so
+ * they are written as ISO text, 0/1 and JSON text. The adapter's `create`
+ * and its `update` without a selection fail on SQLite (`selectAll` on an
+ * insert, `RETURNING "*"`), packages/db defects outside this issue, so inserts
+ * go through Kysely and `update` on other models (the user the code verifies)
+ * runs as `updateMany` and `findOne`. Every OTP challenge write and read is the
+ * adapter's own.
+ */
+function kyselySqliteAdapter(config: AuthFnRuntimeConfig): AuthFnDatabase {
+  const sqlite = new Database(':memory:');
+  for (const table of getSchema(config).schemas) {
+    const columns = Object.keys(table.fields).map((field) => `"${field}"${field === 'id' ? ' PRIMARY KEY' : ''}`);
+    sqlite.exec(`CREATE TABLE "${table.modelName}" (${columns.join(', ')})`);
+  }
+  const db = new Kysely<Record<string, Record<string, unknown>>>({ dialect: new SqliteDialect({ database: sqlite }) });
+  const kysely = kyselyAdapter({
+    db,
+    dialect: 'sqlite',
+    schema: new Proxy({}, { get: (_, model) => model }) as Record<string, string>
+  }) as AuthFnDatabase;
+  const encode = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).map(([name, value]) => [
+    name,
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'boolean'
+        ? Number(value)
+        : value !== null && typeof value === 'object' ? JSON.stringify(value) : value
+  ]));
+  const decode = <T>(row: T): T => (row && Object.fromEntries(Object.entries(row).map(([name, value]) => [
+    name,
+    typeof value === 'string' && /^[[{]/.test(value) ? JSON.parse(value) : value
+  ]))) as T;
+  return {
+    ...kysely,
+    create: async (params) => {
+      await db.insertInto(params.model).values(encode(params.data)).execute();
+      return params.data;
+    },
+    findOne: async (params) => decode(await kysely.findOne(params)),
+    findMany: async (params) => (await kysely.findMany(params)).map(decode),
+    update: async (params) => {
+      if (params.model === 'otp_challenges') {
+        return decode(await kysely.update({ ...params, data: encode(params.data) }));
+      }
+      await kysely.updateMany({ ...params, data: encode(params.data) });
+      return decode(await kysely.findOne(params));
+    },
+    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) })
+  } as AuthFnDatabase;
+}
 
 function createClock(start: Date = new Date('2026-03-22T00:00:00.000Z')) {
   let current = start;
@@ -673,5 +871,173 @@ describe('authfn otp plugin', () => {
         baseUrl: 'https://account.example.com'
       }
     ]);
+  });
+  it('compares at most maxAttempts codes when wrong codes for one challenge arrive concurrently', async () => {
+    const reads = holdOtpChallengeReads(memoryAdapter({ debug: false }));
+    const config = createConfig({ database: reads.adapter }) as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { maxAttempts: 5 });
+    const auth = createTestServer(config);
+    const verify = (code: string) => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    );
+
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    const sendResponse = await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    expect(sendResponse.status).toBe(200);
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+    const wrongCode = code === '000000' ? '111111' : '000000';
+
+    reads.holdNextReads(20);
+    codeComparisons.count = 0;
+    const responses = await Promise.all(Array.from({ length: 20 }, () => verify(wrongCode)));
+
+    expect(codeComparisons.count).toBe(5);
+    expect(responses.map((response) => response.status)).toEqual(Array(20).fill(400));
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+    expect(bodies.map((body) => body.error.code)).toEqual(Array(20).fill('AUTHFN_OTP_INVALID'));
+    const afterBurst = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterBurst?.attemptCount).toBeGreaterThanOrEqual(5);
+
+    codeComparisons.count = 0;
+    const correct = await verify(code);
+    expect(correct.status).toBe(400);
+    expect((await correct.json()).error.code).toBe('AUTHFN_OTP_INVALID');
+    expect(codeComparisons.count).toBe(0);
+    const afterCorrect = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterCorrect?.consumedAt).toBeNull();
+  });
+  it('verifies a correct code once when the same request is retried concurrently', async () => {
+    const reads = holdOtpChallengeReads(memoryAdapter({ debug: false }));
+    const config = createConfig({ database: reads.adapter }) as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    const auth = createTestServer(config);
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+
+    reads.holdNextReads(3);
+    const responses = await Promise.all(Array.from({ length: 3 }, () => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    )));
+
+    const outcomes = await Promise.all(responses.map(async (response) => {
+      const body = await response.json();
+      return response.status === 200 ? 'verified' : body.error.code;
+    }));
+    expect(outcomes.sort()).toEqual(['AUTHFN_OTP_REPLAYED', 'AUTHFN_OTP_REPLAYED', 'verified']);
+    const stored = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(stored?.consumedAt).not.toBeNull();
+  });
+  it.each([
+    [
+      'update re-selects with the original where (Prisma, MySQL)',
+      () => reselectUpdatesWithOriginalWhere(memoryAdapter({ debug: false }))
+    ],
+    [
+      'updateMany writes but reports no rows (Kysely)',
+      () => updateManyReportsNoRows(memoryAdapter({ debug: false }))
+    ],
+    ['the database is the shipped Kysely adapter on SQLite', kyselySqliteAdapter]
+  ] as Array<[string, (config: AuthFnRuntimeConfig) => AuthFnDatabase]>)(
+    'counts each verification once when %s',
+    async (_adapter, createDatabase) => {
+    const config = createConfig() as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    config.database = createDatabase(config);
+    const auth = createTestServer(config);
+    const verify = (code: string) => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    );
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+    const wrongCode = code === '000000' ? '111111' : '000000';
+
+    codeComparisons.count = 0;
+    const wrong = await verify(wrongCode);
+    expect(wrong.status).toBe(400);
+    expect((await wrong.json()).error.code).toBe('AUTHFN_OTP_INVALID');
+    expect(codeComparisons.count).toBe(1);
+    const afterWrong = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterWrong?.attemptCount).toBe(1);
+
+    codeComparisons.count = 0;
+    const correct = await verify(code);
+    expect(correct.status).toBe(200);
+    const body = await correct.json();
+    expect(body.data.verified).toBe(true);
+    expect(codeComparisons.count).toBe(1);
+    const afterCorrect = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterCorrect?.attemptCount).toBe(2);
+    expect(afterCorrect?.consumedAt).not.toBeNull();
+    }
+  );
+
+  it('does not compare a code when the reservation write cannot be acknowledged', async () => {
+    const config = createConfig() as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    const auth = createTestServer(config);
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+    // The server was created first, so it keeps the plain adapter for sending;
+    // verifying goes through a server on the wrapped adapter.
+    const verifier = createTestServer({ ...config, database: updateManyWithoutCount(config.database) });
+
+    codeComparisons.count = 0;
+    const response = await verifier.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe('AUTHFN_OTP_INVALID');
+    expect(codeComparisons.count).toBe(0);
+    const stored = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(stored?.attemptCount).toBe(0);
+    expect(stored?.consumedAt).toBeNull();
   });
 });
