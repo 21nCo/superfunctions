@@ -550,9 +550,9 @@ historyTest("an ignored file created after the preflight is not overwritten, and
 
 historyTest("a conflicting --reconcile merge stays in a kept worktree with the edits staged; this checkout is not written", () => {
   const { dev } = fixture("late-reconcile");
-  const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n" });
+  const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n", "local-hooks/README": "hooks\n" });
   git(dev, "update-ref", "refs/remotes/origin/dev", head);
-  // A core.hooksPath relative to the checkout, holding an ignored rejecting pre-commit hook.
+  // A core.hooksPath relative to the checkout, holding a tracked file and an ignored rejecting pre-commit hook.
   write(dev, { ".git/info/exclude": "widgetfn/core/package.json\nlocal-hooks/\n", "local-hooks/pre-commit": "#!/bin/sh\nexit 1\n" });
   chmodSync(path.join(dev, "local-hooks/pre-commit"), 0o755);
   git(dev, "config", "core.hooksPath", "local-hooks");
@@ -599,6 +599,32 @@ historyTest("the destination branch's policy (includeIf onbranch:promote/**) ref
   git(dev, "config", "includeIf.onbranch:promote/**.path", "promote-signed.conf");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
+});
+
+historyTest("ignored hooks beside tracked ones in a relative hooks directory, and a symlinked config's checkout-only include, still apply", () => {
+  const { dev } = fixture("mixed-hooks");
+  const head = commit(dev, "tracked hooks readme", { "local-hooks/README": "hooks\n" });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  write(dev, { ".git/info/exclude": "local-hooks/pre-merge-commit\n", "local-hooks/pre-merge-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(dev, "local-hooks/pre-merge-commit"), 0o755);
+  git(dev, "config", "core.hooksPath", "local-hooks");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  git(dev, "config", "--unset", "core.hooksPath");
+  // A global config reached through a symlink: git resolves its relative include beside the symlink.
+  const linked = path.join(scratch, "mixed-hooks", "gitconfig");
+  write(scratch, { "mixed-hooks/dotfiles/gitconfig": `[includeIf "gitdir:${realpathSync(path.join(dev, ".git"))}"]\n\tpath = work.inc\n`, "mixed-hooks/work.inc": "[merge]\n\tverifySignatures = true\n" });
+  spawnSync("ln", ["-s", path.join(scratch, "mixed-hooks/dotfiles/gitconfig"), linked]);
+  const global = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = linked;
+  try {
+    throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
+  } finally {
+    process.env.GIT_CONFIG_GLOBAL = global;
+  }
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
 });
 
 historyTest("an exported GIT_DIR and GIT_WORK_TREE do not redirect the temporary repository to this one", () => {

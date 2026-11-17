@@ -762,16 +762,18 @@ function shareWorktreeConfig(root, worktree) {
   writeFileSync(copy, `[include]\n\tpath = ${JSON.stringify(own)}\n[core]\n\tworktree = ${JSON.stringify(worktree)}\n`);
 }
 
-/** The configuration files git loads in `cwd` (realpaths), from git config --list --show-origin. */
+/** The configuration files git loads in `cwd`, by realpath: the path as git opened it and its entries. */
 function configOrigins(cwd) {
   const records = git(cwd, ["config", "--list", "--show-origin", "-z"]).split("\0");
   const origins = new Map();
   for (let index = 0; index + 1 < records.length; index += 2) {
     if (!records[index].startsWith("file:")) continue;
-    const file = realPath(path.resolve(cwd, records[index].slice(5)));
+    const opened = path.resolve(cwd, records[index].slice(5));
+    const origin = origins.get(realPath(opened)) ?? { opened, entries: [] };
     const entry = records[index + 1];
     const split = entry.indexOf("\n");
-    origins.set(file, [...(origins.get(file) ?? []), [split === -1 ? entry : entry.slice(0, split), entry.slice(split + 1)]]);
+    origin.entries.push([split === -1 ? entry : entry.slice(0, split), entry.slice(split + 1)]);
+    origins.set(realPath(opened), origin);
   }
   return origins;
 }
@@ -784,31 +786,33 @@ function configOrigins(cwd) {
 function refuseCheckoutOnlyConfig(root, worktree) {
   const here = configOrigins(root);
   const there = configOrigins(worktree);
-  for (const [origin, entries] of here) {
+  for (const { opened, entries } of here.values()) {
     for (const [key, value] of entries) {
       if (!/^includeif\.gitdir(?:\/i)?:.*\.path$/.test(key)) continue;
+      // As git resolves it: relative to the including file as it was opened (a symlinked ~/.gitconfig included).
       const expanded = value.startsWith("~/") ? path.join(homedir(), value.slice(2)) : value;
-      const included = realPath(path.resolve(path.dirname(origin), expanded));
+      const included = realPath(path.resolve(path.dirname(opened), expanded));
       if (here.has(included) && !there.has(included)) {
-        throw new PromoteError("checkout-policy", `${key} (in ${origin}) applies to this checkout but not to the linked worktree promotion builds the branch in; end its gitdir pattern with "/" so it also covers linked worktrees, or remove it, then retry`);
+        throw new PromoteError("checkout-policy", `${key} (in ${opened}) applies to this checkout but not to the linked worktree promotion builds the branch in; end its gitdir pattern with "/" so it also covers linked worktrees, or remove it, then retry`);
       }
     }
   }
 }
 
 /**
- * A relative core.hooksPath (as git resolves it on the branch) names a directory relative to the worktree. When the
- * scratch worktree lacks it (untracked, ignored hooks here), it gets a copy, so the merge, the ownership commit and an
- * operator's commit in a kept worktree run this checkout's hooks. The copy is ignored there as it is here.
+ * A relative core.hooksPath (as git resolves it on the branch) names a directory relative to the worktree. The scratch
+ * worktree gets every hook it lacks from this checkout's directory (ignored hooks, also beside tracked ones), so the
+ * merge, the ownership commit and an operator's commit in a kept worktree run this checkout's hooks. The copies are
+ * ignored there as they are here; tracked files are not replaced.
  */
 function copyLocalHooks(root, worktree) {
   const hooksPath = inWorktree(worktree, ["config", "--path", "--get", "core.hooksPath"], { allowFailure: true }).stdout.trim();
   if (!hooksPath || path.isAbsolute(hooksPath)) return;
   const local = path.resolve(root, hooksPath);
+  if (!existsSync(local)) return;
   const copy = path.resolve(worktree, hooksPath);
-  if (existsSync(copy) || !existsSync(local)) return;
   mkdirSync(path.dirname(copy), { recursive: true });
-  cpSync(local, copy, { recursive: true });
+  cpSync(local, copy, { recursive: true, force: false });
 }
 
 /**
