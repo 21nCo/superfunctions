@@ -734,49 +734,48 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
 }
 
 /**
- * The environment for a git command in the scratch worktree, carrying this worktree's own settings (its config.worktree
- * under extensions.worktreeConfig, such as merge.verifySignatures), which a new linked worktree does not inherit.
+ * The environment for git merge in the scratch worktree: this worktree's own settings (its config.worktree under
+ * extensions.worktreeConfig, such as merge.verifySignatures), which a new linked worktree need not inherit, included
+ * by absolute path so that relative includes inside it still resolve against that file.
  */
 function worktreeConfigEnv(root) {
   const env = { ...process.env };
   if (git(root, ["config", "--type=bool", "--get", "extensions.worktreeConfig"], { allowFailure: true }).stdout.trim() !== "true") return env;
   const file = path.resolve(root, git(root, ["rev-parse", "--git-path", "config.worktree"]).trim());
   if (!existsSync(file)) return env;
-  const entries = git(root, ["config", "--file", file, "--list", "-z"]).split("\0").filter(Boolean);
-  let count = Number(env.GIT_CONFIG_COUNT ?? 0);
-  for (const entry of entries) {
-    const split = entry.indexOf("\n");
-    const key = split === -1 ? entry : entry.slice(0, split);
-    if (key === "core.hookspath") continue; // passed resolved against this checkout
-    env[`GIT_CONFIG_KEY_${count}`] = key;
-    env[`GIT_CONFIG_VALUE_${count}`] = split === -1 ? "true" : entry.slice(split + 1);
-    count += 1;
-  }
-  env.GIT_CONFIG_COUNT = String(count);
-  return env;
+  const count = Number(env.GIT_CONFIG_COUNT ?? 0);
+  return { ...env, [`GIT_CONFIG_KEY_${count}`]: "include.path", [`GIT_CONFIG_VALUE_${count}`]: file, GIT_CONFIG_COUNT: String(count + 1) };
 }
 
 /**
  * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
- * attempt cannot bring them back. So git merge runs in a scratch worktree of this repository, with its configuration
- * and hooks (pre-merge-commit, commit-msg, merge.verifySignatures, signing), and its result reaches this working tree
- * only through checkout --no-overwrite-ignore, which refuses, atomically and before any change, to replace an
- * untracked or ignored file, including one that appeared after refuseLocalFiles. A conflicting --reconcile merge
- * arrives as a temporary commit of its files (conflict markers included) that then gives way to the merge state git
- * merge leaves (conflict stages, MERGE_HEAD). Returns the conflicting paths.
+ * attempt cannot bring them back. So git merge runs on `branch` in a scratch worktree of this repository, with its
+ * configuration and hooks (pre-merge-commit, commit-msg, merge.verifySignatures, signing), and its result reaches this
+ * working tree only through checkout --no-overwrite-ignore, which refuses, atomically and before any change, to
+ * replace an untracked or ignored file, including one that appeared after refuseLocalFiles. Hooks run in the scratch
+ * worktree, so they do not see this checkout's untracked or ignored files. A conflicting --reconcile merge arrives as
+ * a temporary commit of its files (conflict markers included) that then gives way to the merge state git merge leaves
+ * (conflict stages, MERGE_HEAD). Returns the conflicting paths.
  */
 function mergeInScratch(root, { branch, imported, message, reconcile }) {
   const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
   const worktree = path.join(scratch, "worktree");
   const original = git(root, ["rev-parse", "HEAD"]).trim();
+  const removeWorktree = () => {
+    git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true });
+    git(root, ["worktree", "prune"], { allowFailure: true });
+  };
+  // Leaves the scratch worktree and checks out `branch` (at `commit`) here.
   const checkout = (commit) => {
-    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, commit]);
+    removeWorktree();
+    git(root, ["branch", "-f", branch, commit]);
+    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", branch, "--"]);
     if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
   };
   // This checkout's hooks, also when core.hooksPath is relative to it (the scratch worktree lacks untracked files).
   const hooks = path.resolve(root, git(root, ["rev-parse", "--git-path", "hooks"]).trim());
   try {
-    git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", worktree, "HEAD"]);
+    git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
     const mergeArgs = ["-c", `core.hooksPath=${hooks}`, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported];
     const merged = git(worktree, mergeArgs, { allowFailure: true, env: worktreeConfigEnv(root) });
     if (merged.status === 0) {
@@ -806,9 +805,8 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
     git(root, ["update-ref", "ORIG_HEAD", original]);
     return conflicts;
   } finally {
-    git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true });
+    removeWorktree();
     rmSync(scratch, { recursive: true, force: true });
-    git(root, ["worktree", "prune"], { allowFailure: true });
   }
 }
 

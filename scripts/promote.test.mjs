@@ -584,6 +584,11 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--unset", "core.hooksPath");
+  // A hook that rejects merges on promote/* branches still sees the promotion branch.
+  useHook(dev, "pre-merge-commit", 'case "$(git branch --show-current)" in promote/*) exit 1;; esac');
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  git(dev, "config", "--unset", "core.hooksPath");
   // The imported commits are unsigned.
   git(dev, "config", "merge.verifySignatures", "true");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
@@ -595,6 +600,12 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--worktree", "--unset", "merge.verifySignatures");
+  // ... also through a relative include in config.worktree, which must still resolve.
+  write(dev, { ".git/merge-policy.conf": "[merge]\n\tverifySignatures = true\n" });
+  git(dev, "config", "--worktree", "include.path", "merge-policy.conf");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  write(dev, { ".git/merge-policy.conf": "[merge]\n\tverifySignatures = false\n" });
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
   assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), head, "ORIG_HEAD is the commit before the merge, as git merge leaves it");
