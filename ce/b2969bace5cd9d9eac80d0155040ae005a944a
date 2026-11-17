@@ -1,0 +1,45 @@
+billfn/admin/package.json
+  s_68c0ad071393d4::t_99f0289167218f 48
+billfn/core/package.json
+  s_68c0ad071393d4::t_3b935ddf769538 44
+billfn/provider-dodo/package.json
+  s_68c0ad071393d4::t_d86439e02bcde0 38
+datafn/client/package.json
+  s_68c0ad071393d4::t_2af86b09d80de5 28
+datafn/server/package.json
+  s_68c0ad071393d4::t_421b0aa77f1ef5 58
+package-lock.json
+  s_68c0ad071393d4::t_e70b61da8a19cb 4973,5016,6071,9926,11004,59359,59781,60093,60449,60474,62190,63625,63636,64045,64054,73925
+packages/db/package.json
+  s_68c0ad071393d4::t_bc885dc4751d64 3
+packages/middleware/package.json
+  s_68c0ad071393d4::t_ed3a846e4e5acf 46
+packages/queue/package.json
+  s_68c0ad071393d4::t_dfb23fc906ea7f 57
+plugfn/core/package.json
+  s_68c0ad071393d4::t_590bdce5b606d3 49,53
+searchfn/adapter-sqlite/package.json
+  s_68c0ad071393d4::t_b5ed052d7a1ca4 71
+secfn/core/package.json
+  s_68c0ad071393d4::t_b3d22e6a6ada89 48,59
+secfn/server/package.json
+  s_68c0ad071393d4::t_e5f5ba6ec99715 45,48
+watchfn/typescript/package.json
+  s_68c0ad071393d4::t_90cb21d507daad 72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ceb2969bace5cd9d9eac80d0155040ae005a944a",
+  "prompts": {},
+  "sessions": {
+    "s_68c0ad071393d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc64093c-47b6-43cc-9f92-0c913bbeca23",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
