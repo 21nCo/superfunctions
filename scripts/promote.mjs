@@ -19,7 +19,7 @@
 // Exit status: 0 promoted, 1 refused or failed (nothing changed), 2 promoted with merge conflicts left (--reconcile).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -723,12 +723,12 @@ function writeTree(root, args) {
  * conflicts left by --reconcile they stay staged for the operator's merge commit). Returns the conflicting paths.
  *
  * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
- * attempt cannot bring them back. So a clean merge is built without touching the working tree (merge-tree and
- * commit-tree) and the branch is created on it with checkout --no-overwrite-ignore, which refuses, atomically and
- * before any change, to replace an untracked or ignored file, including one that appeared after refuseLocalFiles.
- * Only a conflicting --reconcile merge needs git merge itself; refuseLocalFiles is repeated right before it.
+ * attempt cannot bring them back. So no merge writes this working tree: a clean merge is built with merge-tree and
+ * commit-tree, a conflicting --reconcile merge runs in a scratch worktree, and the branch is created on the result with
+ * checkout --no-overwrite-ignore, which refuses, atomically and before any change, to replace an untracked or ignored
+ * file, including one that appeared after refuseLocalFiles.
  */
-function mergeAndCommit(root, { branch, imported, label, paths, files, pin, reconcile, edits }) {
+function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, edits }) {
   let conflicts = [];
   const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
   const tree = git(root, ["merge-tree", "--write-tree", "--allow-unrelated-histories", "HEAD", imported], { allowFailure: true });
@@ -739,11 +739,7 @@ function mergeAndCommit(root, { branch, imported, label, paths, files, pin, reco
     const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, merge]);
     if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
   } else if (tree.status === 1 && reconcile) {
-    git(root, ["checkout", "-q", "-b", branch]);
-    refuseLocalFiles(root, paths, files);
-    const merged = writeTree(root, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported]);
-    conflicts = merged.status === 0 ? [] : lines(git(root, ["diff", "--name-only", "--diff-filter=U"]));
-    if (merged.status !== 0 && conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+    conflicts = conflictedMerge(root, { branch, imported, message });
   } else {
     throw new PromoteError("git-failed", `merge failed: ${(tree.stderr || tree.stdout).trim()}`);
   }
@@ -753,6 +749,46 @@ function mergeAndCommit(root, { branch, imported, label, paths, files, pin, reco
     git(root, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
   }
   return conflicts;
+}
+
+/**
+ * A conflicting --reconcile merge, left on `branch` here as git merge leaves it (conflict stages, MERGE_HEAD), without
+ * git merge writing this working tree: it runs in a scratch worktree; its files, conflict markers included, arrive
+ * through checkout --no-overwrite-ignore of a temporary commit, which then gives way to the merge state.
+ */
+function conflictedMerge(root, { branch, imported, message }) {
+  const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
+  const worktree = path.join(scratch, "worktree");
+  try {
+    git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", worktree, "HEAD"]);
+    const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+    const conflicts = lines(git(worktree, ["diff", "--name-only", "--diff-filter=U"]));
+    if (merged.status === 0 || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+    const stages = git(worktree, ["ls-files", "-s", "-z"]);
+    // The worktree's files, conflict markers included, as a tree, staged in a copy of its index.
+    const index = path.join(scratch, "index");
+    copyFileSync(path.resolve(worktree, git(worktree, ["rev-parse", "--git-path", "index"]).trim()), index);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+    git(worktree, ["add", "-A"], { env });
+    const files = git(worktree, ["write-tree"], { env }).trim();
+    const transfer = git(root, ["commit-tree", files, "-p", "HEAD", "-m", "promote: conflicted merge (temporary)"]).trim();
+    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, transfer]);
+    if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
+    // Back to the original commit with the merge's index and the merge in progress; the files stay as they are.
+    git(root, ["reset", "-q", "--soft", "HEAD^"]);
+    git(root, ["read-tree", "--empty"]);
+    git(root, ["update-index", "-z", "--index-info"], { input: stages });
+    git(root, ["update-index", "-q", "--refresh"], { allowFailure: true });
+    const gitPath = (name) => path.resolve(root, git(root, ["rev-parse", "--git-path", name]).trim());
+    writeFileSync(gitPath("MERGE_HEAD"), `${imported}\n`);
+    writeFileSync(gitPath("MERGE_MSG"), `${message}\n`);
+    writeFileSync(gitPath("MERGE_MODE"), "no-ff");
+    return conflicts;
+  } finally {
+    git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true });
+    rmSync(scratch, { recursive: true, force: true });
+    git(root, ["worktree", "prune"], { allowFailure: true });
+  }
 }
 
 /** Without --reconcile every imported path must equal next at the pin, mode included. */
@@ -805,7 +841,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       // is created and checked out.
       const label = fn ?? paths.join(", ");
       const edits = { manifest, changed, plan };
-      const conflicts = mergeAndCommit(root, { branch, imported, label, paths, files: pinned.files, pin: pinned.sha, reconcile, edits });
+      const conflicts = mergeAndCommit(root, { branch, imported, label, paths, pin: pinned.sha, reconcile, edits });
       if (!reconcile) verifyImported(root, { paths, pinned, branch });
       return promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip });
     } catch (error) {

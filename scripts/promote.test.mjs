@@ -232,6 +232,16 @@ historyTest("a dirty tree, a branch not based on origin/dev and a conflicting pa
   assert.match(run.stdout, /Merge conflicts left for you[^\n]*\n {2}uifn\/foo\/bar\.js/);
   assert.equal(git(dev, "branch", "--show-current"), "promote/uifn/foo");
   assert.equal(git(dev, "diff", "--name-only", "--diff-filter=U"), "uifn/foo/bar.js");
+  // The merge is in progress here as git merge leaves it: the operator resolves, adds and commits.
+  assert.equal(git(dev, "rev-parse", "HEAD"), conflicted);
+  const mergeHead = git(dev, "rev-parse", "MERGE_HEAD");
+  assert.equal(git(dev, "log", "-1", "--format=%s", mergeHead), "SFN-12 widget python");
+  assert.match(readFileSync(path.join(dev, "uifn/foo/bar.js"), "utf8"), /^<<<<<<< /m);
+  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, "no scratch worktree is left");
+  write(dev, { "uifn/foo/bar.js": "export const bar = 'merged';\n" });
+  git(dev, "add", "uifn/foo/bar.js");
+  git(dev, "commit", "-q", "--no-edit");
+  assert.deepEqual(git(dev, "rev-list", "--parents", "-1", "HEAD").split(" ").slice(1), [conflicted, mergeHead]);
 });
 
 historyTest("paths outside the public manifest, missing paths and an unknown pin are refused", () => {
@@ -504,18 +514,22 @@ function useHook(dev, name, script) {
   git(dev, "config", "core.hooksPath", hooks);
 }
 
+/** Environment whose git-filter-repo writes `content` to `file` while promote filters the history (after its preflight). */
+function lateFilterRepo(name, file, content) {
+  const real = spawnSync("sh", ["-c", "command -v git-filter-repo"], { encoding: "utf8" }).stdout.trim();
+  const bin = path.join(scratch, `${name}-bin`);
+  const script = `if [ "$1" != "--version" ]; then mkdir -p '${path.dirname(file)}'; printf '${content}\\n' > '${file}'; fi`;
+  write(bin, { "git-filter-repo": `#!/bin/sh\n${script}\nexec '${real}' "$@"\n` });
+  chmodSync(path.join(bin, "git-filter-repo"), 0o755);
+  return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+}
+
 historyTest("an ignored file created after the preflight is not overwritten, and a retry after moving it succeeds", () => {
   const { dev } = fixture("late-ignored");
   const head = git(dev, "rev-parse", "HEAD");
   write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\n" });
-  // A git-filter-repo wrapper creates the ignored file while the history is filtered: after refuseLocalFiles, before
-  // the branch and its working tree are written.
-  const real = spawnSync("sh", ["-c", "command -v git-filter-repo"], { encoding: "utf8" }).stdout.trim();
   const late = path.join(dev, "widgetfn/core/src/index.js");
-  const bin = path.join(scratch, "late-ignored-bin");
-  write(bin, { "git-filter-repo": `#!/bin/sh\nif [ "$1" != "--version" ]; then mkdir -p '${path.dirname(late)}'; printf 'late local\\n' > '${late}'; fi\nexec '${real}' "$@"\n` });
-  chmodSync(path.join(bin, "git-filter-repo"), 0o755);
-  const run = promoteCli(dev, ["widgetfn"], { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+  const run = promoteCli(dev, ["widgetfn"], { env: lateFilterRepo("late-ignored", late, "late local") });
   assert.equal(run.status, 1, run.stderr);
   assert.match(run.stderr, /^promote: path-conflict: widgetfn\/core\/src\/index\.js exists here as an untracked or ignored file/);
   assert.equal(readFileSync(late, "utf8"), "late local\n");
@@ -527,6 +541,26 @@ historyTest("an ignored file created after the preflight is not overwritten, and
   rmSync(path.join(dev, "widgetfn"), { recursive: true });
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
+historyTest("a conflicting --reconcile merge does not overwrite an ignored file created after the preflight either", () => {
+  const { dev, next } = fixture("late-reconcile");
+  const pin = commit(next, "new uifn/foo file", { "uifn/foo/new.js": "export const fresh = 1;\n" });
+  const head = commit(dev, "dev has its own uifn/foo", { "uifn/foo/bar.js": "export const bar = 'dev';\n" });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  write(dev, { ".git/info/exclude": "uifn/foo/new.js\n" });
+  const late = path.join(dev, "uifn/foo/new.js");
+  const env = lateFilterRepo("late-reconcile", late, "late local");
+  const run = promoteCli(dev, ["--path", "uifn/foo", "--pin", pin, "--source", next, "--reconcile"], { env });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /^promote: path-conflict: uifn\/foo\/new\.js exists here as an untracked or ignored file/);
+  assert.equal(readFileSync(late, "utf8"), "late local\n");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  assert.equal(spawnSync(gitBinary(), ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: dev }).status, 1);
+  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
 });
 
 historyTest("a rejecting post-checkout hook on the new branch restores the original checkout and branch list", () => {

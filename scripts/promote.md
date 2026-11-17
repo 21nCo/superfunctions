@@ -18,19 +18,20 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    path. Older commits that held them are stripped from the imported history.
 3. **Check the whole history is publishable.** Every imported commit and every file version in it becomes public,
    including content deleted or overwritten before the pin; the Public boundary check reads only the final tree. On
-   `next`, read every historical patch, merge changes included, for credentials, customer data or private planning
-   notes (a file list such as `--stat` does not show contents):
+   `next`, read every historical patch, merge changes and side branches a merge discarded included, for credentials,
+   customer data or private planning notes (a file list such as `--stat` does not show contents; `--full-history`
+   keeps git from skipping a side branch whose changes the merge did not keep, which promotion still imports):
 
    ```sh
-   git log -p -m --text <pin> -- <path>...
+   git log -p -m --text --full-history <pin> -- <path>...
    ```
 
    Then list the binary files the history ever held, and inspect each historical version of each one separately
    (`git cat-file -p <blob> > <file>`, then open it):
 
    ```sh
-   git log -m --numstat --format= <pin> -- <path>... | awk -F'\t' '$1 == "-" { print $3 }' | sort -u
-   git log -m --raw --no-abbrev --format= <pin> -- <binary path> | awk '{ print $4 }' | sort -u   # blob ids
+   git log -m --full-history --numstat --format= <pin> -- <path>... | awk -F'\t' '$1 == "-" { print $3 }' | sort -u
+   git log -m --full-history --raw --no-abbrev --format= <pin> -- <binary path> | awk '$4 !~ /^0+$/ { print $4 }' | sort -u
    ```
 
    If any version holds something private, do not promote with history: import the content without history instead
