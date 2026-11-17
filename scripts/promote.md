@@ -66,8 +66,9 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   it in a linked worktree and refuses rather than emulate configuration there. That is the case when git loads
   different configuration in a linked worktree (an `includeIf "gitdir:..."` that matches only this checkout's git
   directory or only linked worktrees, an `includeIf "onbranch:..."` for the current branch, `config.worktree`), when
-  `core.hooksPath` is relative (also when only the promotion branch's `onbranch` configuration sets it), or when
-  `core.worktree` is set. Run it from a detached checkout as shown above; if it still refuses, run it from a separate
+  `core.hooksPath` is relative, when another value climbs out of the work tree with `..` (a `gpg.program`,
+  `core.fsmonitor` or merge driver; include paths and URLs excepted), also when only the promotion branch's `onbranch`
+  configuration sets it, or when `core.worktree` is set. Run it from a detached checkout as shown above; if it still refuses, run it from a separate
   clone without checkout-specific configuration rather than weakening this checkout's;
 - this checkout's commit, branch or working tree changes while the script runs (the branch is planned from the commit
   it started on), or an object of the imported history cannot be read;

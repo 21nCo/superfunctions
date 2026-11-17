@@ -824,6 +824,9 @@ function configEntries(cwd) {
 }
 
 const POLICY_HINT = "promotion builds the branch in a linked worktree and refuses to emulate git configuration there";
+const PARENT_SEGMENT = /(?:^|[\s"'=:;,(/\\])\.\.(?:[/\\]|$)/;
+// Resolved against the including file (and compared as loaded files) or not a local path at all.
+const NOT_WORKTREE_PATH = /^(?:include(?:if\..*)?\.path|remote\..*\.(?:push)?url|submodule\..*\.url|url\..*)$/i;
 
 /**
  * The branch is built with exactly this checkout's git policy or not at all: git itself must load the same
@@ -840,6 +843,14 @@ function refusePolicyDifference(root, worktree, stage) {
     if (index !== -1 || here.length !== there.length) {
       const differing = (here[index] ?? there[here.length]).split("\0");
       throw new PromoteError("checkout-policy", `git loads other configuration in a linked worktree than here (first difference: ${differing[2].split("\n")[0]} from ${differing[1]}); ${POLICY_HINT}. Run it from a detached checkout (git switch --detach origin/dev) without worktree-only or gitdir-specific configuration`);
+    }
+  }
+  // A value climbing out with ".." (a gpg program, core.fsmonitor, a merge or filter driver) names another file from
+  // the scratch worktree than from here, possibly in a shared directory above this repository.
+  for (const record of configEntries(worktree)) {
+    const [key, value = ""] = record.split("\0")[2].split("\n");
+    if (!NOT_WORKTREE_PATH.test(key) && PARENT_SEGMENT.test(value)) {
+      throw new PromoteError("checkout-policy", `${key} = ${JSON.stringify(value)} climbs out of the work tree with "..", so it names another path in a linked worktree; ${POLICY_HINT}. Use an absolute path, then retry`);
     }
   }
   const setting = (key) => git(worktree, ["config", "--path", "--get", key], { allowFailure: true }).stdout.trim();
