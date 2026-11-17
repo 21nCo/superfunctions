@@ -1,0 +1,29 @@
+filefn/docs/content/docs/sdk/server.md
+  s_403adbae23b647::t_666c18c786e6b5 167-169,177-179,187-195
+filefn/docs/static/llms-full.txt
+  s_403adbae23b647::t_e098edc9696d4c 8944-8946,8954-8956,8964-8972
+filefn/server/src/files/file-commit-lock.ts
+  s_403adbae23b647::t_bb262aff56e79a 41-49,58,74,76-82
+filefn/server/src/files/import.ts
+  s_403adbae23b647::t_e6ad01fa7d6291 248-250,414
+filefn/server/src/upload-sessions/file-id.ts
+  s_403adbae23b647::t_86ce4d97c0c281 63-70,76,157-160,165-168,188-189,196,205,207,209-214,232-233,237
+filefn/server/tests/import-object.test.ts
+  s_403adbae23b647::t_e4b631c663a963 10,156-159,555-635,698-732
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5eb4fdd5284202e9db8882e05aaee2f59c312c12",
+  "prompts": {},
+  "sessions": {
+    "s_403adbae23b647": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_403adbae23b647",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

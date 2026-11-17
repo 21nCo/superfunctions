@@ -1,0 +1,33 @@
+filefn/docs/content/docs/sdk/server.md
+  s_6f8514e3ae1605::t_afc7cd26d85af7 120-123,161-166,176-181,184-187
+filefn/docs/static/llms-full.txt
+  s_6f8514e3ae1605::t_0a119b7b8e8b99 8897-8900,8938-8943,8953-8958,8961-8964
+filefn/server/src/files/file-commit-lock.ts
+  s_6f8514e3ae1605::t_7738a3a8a32369 1-75
+filefn/server/src/files/import.ts
+  s_6f8514e3ae1605::t_941caa8a67e700 7-8,53-54,167-173,177-180,192-196,229-314,341-351
+filefn/server/src/files/service.ts
+  s_6f8514e3ae1605::t_bf9dd317b3931e 98-99,377-379
+filefn/server/src/index.ts
+  s_6f8514e3ae1605::t_2e5e0a7615cf6d 240
+filefn/server/src/upload-sessions/service.ts
+  s_6f8514e3ae1605::t_06418fbc372260 17-18,106-120,240-241,251,990
+filefn/server/tests/import-object.test.ts
+  s_6f8514e3ae1605::t_712780b33acea4 54-55,59,65-89,95-105,108,114-117,121-122,295-296,332,336-337,345-491
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f71172b8f3694033cb0fa9ed5e320a4e7b897849",
+  "prompts": {},
+  "sessions": {
+    "s_6f8514e3ae1605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6f8514e3ae1605",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
