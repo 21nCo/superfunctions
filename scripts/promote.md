@@ -26,23 +26,8 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    git log -p -m --text --full-history <pin> -- <path>...
    ```
 
-   Then list every historical file version that is not plain text, and render and inspect each one separately
-   (`git cat-file -p <blob> > <file>`, then open it). Git's binary detection is not enough: an image stored as text
-   (an ASCII `P3` PPM, an SVG) shows in the patch above only as numbers or markup, so open every `image/*` version as
-   an image. The listing is NUL-delimited, so names with tabs, newlines or non-ASCII characters stay intact, and
-   `--no-renames` lists a renamed file under its old and its new path, so a version changed during a rename and every
-   version of a deleted file are listed too (run it in bash):
-
-   ```sh
-   git log -z -m --full-history --no-renames --raw --no-abbrev --format= <pin> -- <path>... |
-     perl -0ne 'chomp; if (/^:\S+ \S+ \S+ (\S+) \S+$/) { $blob = $1; next } print "$blob\t$_\0" if defined $blob && $blob !~ /^0+$/; undef $blob' |
-     sort -z -u |
-     while IFS= read -r -d '' record; do
-       blob=${record%%$'\t'*}
-       type=$(git cat-file -p "$blob" | file -b --mime-type -)
-       case $type in text/*|inode/x-empty|application/json) ;; *) printf '%s %s %s\n' "$blob" "$type" "${record#*$'\t'}" ;; esac
-     done
-   ```
+   The script then lists every non-text or image file version it imports (see "After the script"); you inspect
+   those there.
 
    If any version holds something private, do not promote with history: import the content without history instead
    (D9).
@@ -77,8 +62,15 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   is not spelled exactly as its canonical name in both its `pyproject.toml` and the overlay or `TARGETS`
   (`scripts/python_release.py` matches the tag name to `project.name` exactly). Fix `next` first;
 - a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
-- an `includeIf "gitdir:..."` condition applies to this checkout's git directory but not to its linked worktrees (the
-  branch is built in one, so git could not apply it): end its pattern with `/` so it covers them, or remove it;
+- (`checkout-policy`) git would build the branch under other configuration than this checkout's: the script builds
+  it in a linked worktree and refuses rather than emulate configuration there. That is the case when git loads
+  different configuration in a linked worktree (an `includeIf "gitdir:..."` that matches only this checkout's git
+  directory or only linked worktrees, an `includeIf "onbranch:..."` for the current branch, `config.worktree`), when
+  `core.hooksPath` is relative (also when only the promotion branch's `onbranch` configuration sets it), or when
+  `core.worktree` is set. Run it from a detached checkout as shown above; if it still refuses, run it from a separate
+  clone without checkout-specific configuration rather than weakening this checkout's;
+- this checkout's commit, branch or working tree changes while the script runs (the branch is planned from the commit
+  it started on), or an object of the imported history cannot be read;
 - `git-filter-repo` is missing (it prints the install command).
 
 `--source <repo>` fetches the pin from another repository: a URL, or a local path resolved against your current
@@ -100,15 +92,22 @@ retry or a partial cutover leaves no duplicates on `next`.
 
 1. Check the result: `git log --follow -- <path>/<file>` shows the `next` history, and
    `git diff <next-sha> HEAD -- <path>` is empty (the script already checks this unless `--reconcile` was used).
-2. Run `npm install` to refresh `package-lock.json`, then `node scripts/verify-owners.mjs` and
+2. Inspect every version under "Historical non-text and image versions" in the script's output: the object id, the
+   kind (`image` or `binary`) and every path it was imported under, as JSON strings. The script reads these from the
+   exact filtered history it imports, deleted and side-branch versions included, and stops if any object cannot be
+   read. Save each one with `git cat-file blob <id> > <file>` and open it; render every `image` version, also those
+   stored as text (an ASCII PPM, an SVG), which the patch review above shows only as numbers or markup. If any
+   version holds something private, delete the branch (`git switch -` then `git branch -D <branch>`) and import the
+   content without history instead (D9).
+3. Run `npm install` to refresh `package-lock.json`, then `node scripts/verify-owners.mjs` and
    `node scripts/verify-public-boundary.mjs`. Commit any lockfile change.
-3. Bump the version of any package that was already published from `next` above its highest npm version (D8).
-4. Push the branch and open a PR to `dev`. **Merge it with a merge commit**: a squash or rebase merge drops the
+4. Bump the version of any package that was already published from `next` above its highest npm version (D8).
+5. Push the branch and open a PR to `dev`. **Merge it with a merge commit**: a squash or rebase merge drops the
    imported history.
-5. On `next`, remove the entries the script lists under "On next" from `superfunctions.owners.next.json`,
+6. On `next`, remove the entries the script lists under "On next" from `superfunctions.owners.next.json`,
    `release-packages.next.json` and `python-release-packages.next.json` before the next sync merges the promotion;
    otherwise the owner and release checks on `next` fail with duplicate entries.
-6. Move Linear issues (D11): every open SF Next issue of the promoted code moves to its public team (for example
+7. Move Linear issues (D11): every open SF Next issue of the promoted code moves to its public team (for example
    Docsfn or Probefn), or to SFNS when none exists. Closed issues stay. Start from the issue identifiers and search
    terms the script prints.
-7. Lift the freeze on `next` once the sync carrying the promotion has merged there.
+8. Lift the freeze on `next` once the sync carrying the promotion has merged there.

@@ -19,8 +19,8 @@
 // Exit status: 0 promoted, 1 refused or failed (nothing changed), 2 merge conflicts left in a printed worktree (--reconcile).
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST, REPO_ROOT, canonicalPythonName, normalizePath, parseManifest } from "./owners.mjs";
@@ -71,15 +71,19 @@ function gitEnv() {
     const probe = spawnSync(gitBinary(), ["rev-parse", "--local-env-vars"], { env, encoding: "utf8" });
     localEnvVars = new Set(["GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", ...lines(probe.stdout ?? "")]);
   }
-  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !localEnvVars.has(name) && !/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(name)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !localEnvVars.has(name) && !/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(name)));
+  // git reads a relative GIT_CONFIG_GLOBAL/SYSTEM against its own directory, which differs per call (this checkout,
+  // the temporary repository, the scratch worktree): resolve it once against the caller's, as the operator meant it.
+  for (const name of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"]) if (env[name] && !path.isAbsolute(env[name])) env[name] = path.resolve(env[name]);
+  return env;
 }
 
-/** Runs git in `cwd` with gitEnv() plus the per-call `env` overrides. */
-function git(cwd, args, { input, allowFailure = false, env } = {}) {
-  const result = spawnSync(gitBinary(), args, { cwd, input, env: { ...gitEnv(), ...env }, encoding: "utf8", maxBuffer: 1 << 30 });
+/** Runs git in `cwd` with gitEnv() plus the per-call `env` overrides; `encoding: "buffer"` returns raw bytes. */
+function git(cwd, args, { input, allowFailure = false, env, encoding = "utf8" } = {}) {
+  const result = spawnSync(gitBinary(), args, { cwd, input, env: { ...gitEnv(), ...env }, encoding, maxBuffer: 1 << 30 });
   if (result.error) throw result.error;
   if (result.status !== 0 && !allowFailure) {
-    throw new PromoteError("git-failed", `git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
+    throw new PromoteError("git-failed", `git ${args.join(" ")} failed: ${String(result.stderr || result.stdout).trim()}`);
   }
   return allowFailure ? result : result.stdout;
 }
@@ -112,9 +116,11 @@ function ownersCheck(fn) {
   }
 }
 
-/** Parsed JSON of a file in the working checkout. */
-function readJsonFile(root, file) {
-  const text = readFileSync(path.join(root, file), "utf8");
+/** Parsed JSON of a file at `rev` of this checkout (the commit promotion plans against). */
+function readJsonFile(root, rev, file) {
+  const result = git(root, ["show", `${rev}:${file}`], { allowFailure: true });
+  if (result.status !== 0) throw new PromoteError("malformed-file", `${file} not found at ${rev}`);
+  const text = result.stdout;
   try {
     return { text, data: JSON.parse(text) };
   } catch (error) {
@@ -533,6 +539,7 @@ function checkWorkingRepo(root, { base, branch }) {
     throw new PromoteError("branch-exists", `branch ${branch} already exists`);
   }
   if (!gitOk(root, ["check-ref-format", "--branch", branch])) throw new PromoteError("usage", `${JSON.stringify(branch)} is not a valid branch name`);
+  return currentCheckout(root);
 }
 
 /** Fetches the pin into a new temporary repository and reads everything the promotion needs from it. */
@@ -578,7 +585,58 @@ function filterHistory(work, paths) {
     const [sha, subject, body] = record.split("\0");
     return { sha, subject, body };
   });
-  return { head, commits };
+  return { head, commits, history: auditHistory(work, head) };
+}
+
+const RAW_ENTRY = /^\n*:\d{6} (\d{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*$/;
+const IMAGE_EXTENSION = /\.(?:svgz?|p[bgpna]m|xpm|xbm)$/i;
+const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s)/;
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+/** "image", "binary" or null (text) for one blob and the paths it was imported under. */
+function classifyBlob(content, paths) {
+  let text = null;
+  try {
+    text = content.includes(0) ? null : utf8.decode(content);
+  } catch {
+    // invalid UTF-8: binary
+  }
+  if (IMAGE_MAGIC.test(content.subarray(0, 16).toString("latin1")) || paths.some((file) => IMAGE_EXTENSION.test(file)) || /<svg[\s>]/i.test(text ?? "")) return "image";
+  return text === null ? "binary" : null;
+}
+
+/**
+ * Every non-text or image blob version the promotion imports, from the filtered history (deleted and side-branch
+ * versions too): {oid, kind, paths}. Fails closed: rev-list --objects is the complete set, each blob must have a path
+ * in some commit's diff and be read by cat-file, so a missing object or a gap stops the promotion (git-failed).
+ */
+function auditHistory(work, head) {
+  const objects = lines(git(work, ["rev-list", "--objects", "--no-object-names", head]));
+  const checked = lines(git(work, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { input: `${objects.join("\n")}\n` })).map((line) => line.split(" "));
+  if (checked.length !== objects.length || checked.some(([, type]) => type === "missing")) throw new PromoteError("git-failed", "history audit: an imported object is missing");
+  const blobs = checked.filter(([, type]) => type === "blob").map(([oid]) => oid);
+  const raw = git(work, ["log", "--raw", "-z", "--no-abbrev", "--no-renames", "--root", "--diff-merges=separate", "--no-show-signature", "--format=", head]).split("\0");
+  const pathsOf = new Map();
+  for (let index = 0; index < raw.length; index += 1) {
+    const entry = RAW_ENTRY.exec(raw[index]);
+    if (!entry) continue;
+    const file = raw[(index += 1)];
+    if (entry[1] !== "000000" && entry[1] !== "160000") pathsOf.set(entry[2], (pathsOf.get(entry[2]) ?? new Set()).add(file));
+  }
+  if (blobs.length === 0) return [];
+  const out = git(work, ["cat-file", "--batch"], { input: Buffer.from(`${blobs.join("\n")}\n`), encoding: "buffer" });
+  const listed = [];
+  let at = 0;
+  for (const oid of blobs) {
+    const eol = out.indexOf(10, at);
+    const [name, type, size] = out.subarray(at, eol === -1 ? out.length : eol).toString().split(" ");
+    const paths = [...(pathsOf.get(oid) ?? [])].sort(compareText);
+    if (eol === -1 || name !== oid || type !== "blob" || paths.length === 0) throw new PromoteError("git-failed", `history audit: cannot read or place imported blob ${oid}`);
+    const kind = classifyBlob(out.subarray(eol + 1, eol + 1 + Number(size)), paths);
+    if (kind) listed.push({ oid, kind, paths });
+    at = eol + 2 + Number(size);
+  }
+  return listed.sort((a, b) => compareText(a.paths[0], b.paths[0]) || compareText(a.oid, b.oid));
 }
 
 /** SF Next issue identifiers named in the imported commits, for the Linear move list (D11). */
@@ -588,7 +646,7 @@ export function referencedIssues(commits) {
   return [...found].sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)));
 }
 
-/** The commit and branch (null when detached) checked out now, to return to after a failed attempt. */
+/** The commit and branch (null when detached) checked out now: what promotion plans against and builds from. */
 function currentCheckout(root) {
   const symbolic = git(root, ["symbolic-ref", "-q", "--short", "HEAD"], { allowFailure: true }).stdout.trim();
   return { sha: git(root, ["rev-parse", "HEAD"]).trim(), branch: symbolic || null };
@@ -621,7 +679,7 @@ function localPin(root, pin = "refs/remotes/next/next") {
  * Splits the paths into top-level directories and root files the promotion makes public. Refuses a sub-path of a
  * directory the public manifest does not list, and a path that exists here with other content (unless --reconcile).
  */
-function classifyPaths(root, { paths, pinned, manifest, reconcile }) {
+function classifyPaths(root, { start, paths, pinned, manifest, reconcile }) {
   const topLevel = [];
   const rootFiles = [];
   for (const target of paths) {
@@ -632,7 +690,7 @@ function classifyPaths(root, { paths, pinned, manifest, reconcile }) {
     } else if (manifest.paths?.[top] !== "public") {
       throw new PromoteError("unownable-path", `${target} lies in ${top}, which ${PUBLIC_MANIFEST} does not list; promote the whole directory ${top}`);
     }
-    const here = objectAt(root, "HEAD", target);
+    const here = objectAt(root, start.sha, target);
     if (here && !sameObject(here, object) && !reconcile) {
       throw new PromoteError("path-conflict", `${target} already exists on this branch with different content; pass --reconcile to merge it and resolve the conflicts`);
     }
@@ -651,14 +709,14 @@ const ancestorsOf = (file) => {
  * paths (a nested repository is listed once as `dir/`; the slash is dropped), plus each untracked file, symlink or
  * nested repository above a selected sub-path, which a pathspec below it does not list.
  */
-function localEntries(root, paths) {
+function localEntries(root, paths, start) {
   const listed = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
   const entries = new Set(listed.map((entry) => (entry.endsWith("/") ? entry.slice(0, -1) : entry)));
   for (const target of paths) {
     // Outermost first, stopping at the first obstruction: nothing below a file, symlink or nested repository is
     // reachable (lstat would fail with ENOTDIR), and the obstruction alone already collides with the path.
     for (const directory of ancestorsOf(target)) {
-      const tracked = objectAt(root, "HEAD", directory);
+      const tracked = objectAt(root, start.sha, directory);
       if (tracked?.type === "tree") continue;
       if (tracked !== null) break; // a tracked file above the path: the merge itself reports that conflict
       const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
@@ -678,10 +736,10 @@ function localEntries(root, paths) {
  * overwrites ignored content, and undoing a failed attempt would then delete it, so the check runs before the branch is
  * created. Other ignored content (node_modules, build output, a nested repository next writes nothing into) stays.
  */
-function refuseLocalFiles(root, paths, files) {
+function refuseLocalFiles(root, paths, files, start) {
   const importedFiles = new Set(files);
   const importedDirectories = new Set(files.flatMap(ancestorsOf));
-  for (const entry of localEntries(root, paths)) {
+  for (const entry of localEntries(root, paths, start)) {
     const clash = importedFiles.has(entry) || importedDirectories.has(entry) ? entry : ancestorsOf(entry).find((directory) => importedFiles.has(directory));
     if (clash !== undefined) {
       throw new PromoteError("path-conflict", `${entry} exists here as an untracked or ignored file or repository and next's ${clash} would replace it; move it out of the way first`);
@@ -690,16 +748,16 @@ function refuseLocalFiles(root, paths, files) {
 }
 
 /** The npm and Python release moves, checked before anything changes. */
-function planReleases(root, { pinned, paths, current }) {
+function planReleases(root, { start, pinned, paths, current }) {
   const release = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
-  const pythonScript = path.join(root, PYTHON_RELEASE_SCRIPT);
-  const pythonSource = existsSync(pythonScript) ? readFileSync(pythonScript, "utf8") : null;
+  const script = git(root, ["show", `${start.sha}:${PYTHON_RELEASE_SCRIPT}`], { allowFailure: true });
+  const pythonSource = script.status === 0 ? script.stdout : null;
   const python = pythonMoves({
     overlay: pinned.pythonOverlay,
     paths,
     targets: pythonSource === null ? new Map() : readPythonTargets(pythonSource),
     discovered: pinned.pythonProjects,
-    existing: pythonProjectsAt(root, "HEAD", filesAt(root, "HEAD")),
+    existing: pythonProjectsAt(root, start.sha, filesAt(root, start.sha)),
   });
   if (python.moves.length > 0 && pythonSource === null) throw new PromoteError("malformed-file", `${PYTHON_RELEASE_SCRIPT} not found`);
   return { release, python, pythonSource };
@@ -738,9 +796,6 @@ function writeTree(root, args) {
   return result;
 }
 
-/** git in the scratch worktree, which stays its work tree whatever core.worktree the configuration names. */
-const inWorktree = (worktree, args, options = {}) => git(worktree, args, { ...options, env: { GIT_WORK_TREE: worktree } });
-
 /** Removes only the scratch worktree (never a repository-wide prune, which would drop other missing worktrees). */
 function removeWorktree(root, worktree) {
   if (!existsSync(worktree)) return;
@@ -751,100 +806,76 @@ function removeWorktree(root, worktree) {
   }
 }
 
-/**
- * Gives the scratch worktree this checkout's config.worktree by including the file by path (its relative includes
- * still resolve), then pins core.worktree to the scratch worktree, also for an operator working in a kept one.
- */
-function shareWorktreeConfig(root, worktree) {
-  const own = path.resolve(root, git(root, ["rev-parse", "--git-path", "config.worktree"]).trim());
-  if (!existsSync(own)) return;
-  const copy = path.resolve(worktree, inWorktree(worktree, ["rev-parse", "--git-path", "config.worktree"]).trim());
-  writeFileSync(copy, `[include]\n\tpath = ${JSON.stringify(own)}\n[core]\n\tworktree = ${JSON.stringify(worktree)}\n`);
-}
-
-/** The configuration files git loads in `cwd`, by realpath: the path as git opened it and its entries. */
-function configOrigins(cwd) {
-  const records = git(cwd, ["config", "--list", "--show-origin", "-z"]).split("\0");
-  const origins = new Map();
-  for (let index = 0; index + 1 < records.length; index += 2) {
-    if (!records[index].startsWith("file:")) continue;
-    const opened = path.resolve(cwd, records[index].slice(5));
-    const origin = origins.get(realPath(opened)) ?? { opened, entries: [] };
-    const entry = records[index + 1];
-    const split = entry.indexOf("\n");
-    origin.entries.push([split === -1 ? entry : entry.slice(0, split), entry.slice(split + 1)]);
-    origins.set(realPath(opened), origin);
+/** Every configuration entry git loads in `cwd`, in order: scope, file (absolute, real path) and entry. */
+function configEntries(cwd) {
+  const records = git(cwd, ["config", "--list", "--show-origin", "--show-scope", "-z"]).split("\0");
+  const entries = [];
+  for (let index = 0; index + 2 < records.length; index += 3) {
+    const [scope, origin, entry] = records.slice(index, index + 3);
+    // Only the spelling differs between worktrees: git names this checkout's files relative to it (file:.git/config).
+    const where = origin.startsWith("file:") ? `file:${realPath(path.resolve(cwd, origin.slice(5)))}` : origin;
+    entries.push(`${scope}\0${where}\0${entry}`);
   }
-  return origins;
+  return entries;
 }
 
+const POLICY_HINT = "promotion builds the branch in a linked worktree and refuses to emulate git configuration there";
+
 /**
- * Refuses when an includeIf gitdir condition holds for this checkout's git directory but not for the scratch
- * worktree's: git cannot apply it there, and replaying its values at command scope would override the branch's own
- * policy. The operator widens the condition (a trailing slash also covers linked worktrees) or drops it.
+ * The branch is built with exactly this checkout's git policy or not at all: git itself must load the same
+ * configuration, entry for entry and in order, in the scratch worktree as here. A gitdir include matching only one of
+ * them, an onbranch include for the current branch, or a worktree-scoped config.worktree makes them differ. A relative
+ * core.hooksPath (resolved per worktree) and core.worktree (which would point the scratch worktree elsewhere) are
+ * refused too, also when the promotion branch's own onbranch configuration sets them (`stage`).
  */
-function refuseCheckoutOnlyConfig(root, worktree) {
-  const here = configOrigins(root);
-  const there = configOrigins(worktree);
-  for (const { opened, entries } of here.values()) {
-    for (const [key, value] of entries) {
-      if (!/^includeif\.gitdir(?:\/i)?:.*\.path$/.test(key)) continue;
-      // As git resolves it: relative to the including file as it was opened (a symlinked ~/.gitconfig included).
-      const expanded = value.startsWith("~/") ? path.join(homedir(), value.slice(2)) : value;
-      const included = realPath(path.resolve(path.dirname(opened), expanded));
-      // Loaded more often here than there: also a file included unconditionally and again only for this checkout.
-      if ((here.get(included)?.entries.length ?? 0) > (there.get(included)?.entries.length ?? 0)) {
-        throw new PromoteError("checkout-policy", `${key} (in ${opened}) applies to this checkout but not to the linked worktree promotion builds the branch in; end its gitdir pattern with "/" so it also covers linked worktrees, or remove it, then retry`);
-      }
+function refusePolicyDifference(root, worktree, stage) {
+  if (stage === "start") {
+    const here = configEntries(root);
+    const there = configEntries(worktree);
+    const index = here.findIndex((entry, at) => entry !== there[at]);
+    if (index !== -1 || here.length !== there.length) {
+      const differing = (here[index] ?? there[here.length]).split("\0");
+      throw new PromoteError("checkout-policy", `git loads other configuration in a linked worktree than here (first difference: ${differing[2].split("\n")[0]} from ${differing[1]}); ${POLICY_HINT}. Run it from a detached checkout (git switch --detach origin/dev) without worktree-only or gitdir-specific configuration`);
     }
   }
+  const setting = (key) => git(worktree, ["config", "--path", "--get", key], { allowFailure: true }).stdout.trim();
+  const hooksPath = setting("core.hooksPath"); // ~/ and %(prefix)/ expanded: the same in every worktree
+  if (hooksPath && !path.isAbsolute(hooksPath)) {
+    throw new PromoteError("checkout-policy", `core.hooksPath ${JSON.stringify(hooksPath)} is relative, so it names another directory in a linked worktree; ${POLICY_HINT}. Set it to an absolute path, then retry`);
+  }
+  if (setting("core.worktree")) throw new PromoteError("checkout-policy", `core.worktree is set; ${POLICY_HINT}. Unset it, then retry`);
 }
 
 /**
- * A relative core.hooksPath (as git resolves it on the branch) names a directory relative to the worktree. The scratch
- * worktree gets every hook it lacks from this checkout's directory (ignored hooks, also beside tracked ones), so the
- * merge, the ownership commit and an operator's commit in a kept worktree run this checkout's hooks. The copies are
- * ignored there as they are here; tracked files are not replaced.
+ * Builds `branch` from `start` in a scratch worktree of this repository and never writes this checkout: git merge
+ * (ort) replaces ignored files whatever its --overwrite-ignore setting. The worktree starts detached, its configuration
+ * must equal this checkout's, and only then is the branch created in it, so git itself applies the policy it resolves
+ * for that branch (includeIf onbranch, hooks, signing, merge.verifySignatures) to the merge and the ownership commit.
+ * With merge conflicts left by --reconcile the worktree is kept for the operator, the edits staged; otherwise it is
+ * removed. Returns the conflicting paths and the kept worktree (null when none).
  */
-function copyLocalHooks(root, worktree) {
-  const hooksPath = inWorktree(worktree, ["config", "--path", "--get", "core.hooksPath"], { allowFailure: true }).stdout.trim();
-  if (!hooksPath || path.isAbsolute(hooksPath)) return;
-  const local = path.resolve(root, hooksPath);
-  if (!existsSync(local)) return;
-  const copy = path.resolve(worktree, hooksPath);
-  mkdirSync(path.dirname(copy), { recursive: true });
-  cpSync(local, copy, { recursive: true, force: false });
-}
-
-/**
- * Builds `branch` in a scratch worktree of this repository and never writes this checkout: git merge (ort) replaces
- * ignored files whatever its --overwrite-ignore setting. The worktree is on `branch` from the start, so the merge and
- * the ownership commit run with the policy git resolves for that branch (includeIf onbranch, hooks, signing,
- * merge.verifySignatures). With merge conflicts left by --reconcile the worktree is kept for the operator, the edits
- * staged; otherwise it is removed. Returns the conflicting paths and the kept worktree (null when none).
- */
-function buildBranch(root, { branch, imported, label, paths, pin, reconcile, edits }) {
+function buildBranch(root, { start, branch, imported, label, paths, pin, reconcile, edits }) {
   const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
   const worktree = path.join(scratch, "worktree");
   let kept = null;
   try {
-    git(root, ["worktree", "add", "-q", "--no-checkout", "-b", branch, worktree, "HEAD"]);
-    shareWorktreeConfig(root, worktree);
-    refuseCheckoutOnlyConfig(root, worktree);
-    inWorktree(worktree, ["reset", "-q", "--hard"]);
-    copyLocalHooks(root, worktree);
+    git(root, ["worktree", "add", "-q", "--detach", "--no-checkout", worktree, start]);
+    refusePolicyDifference(root, worktree, "start");
+    git(worktree, ["switch", "-q", "-c", branch]);
+    refusePolicyDifference(root, worktree, "branch");
+    git(worktree, ["reset", "-q", "--hard"]);
     const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
-    const merged = inWorktree(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
-    const conflicts = merged.status === 0 ? [] : lines(inWorktree(worktree, ["diff", "--name-only", "--diff-filter=U"]));
+    const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+    const conflicts = merged.status === 0 ? [] : lines(git(worktree, ["diff", "--name-only", "--diff-filter=U"]));
     if (merged.status !== 0 && (!reconcile || conflicts.length === 0)) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
     const edited = writeEdits(worktree, edits);
-    if (edited.length > 0) inWorktree(worktree, ["add", "--", ...edited]);
+    if (edited.length > 0) git(worktree, ["add", "--", ...edited]);
     if (conflicts.length > 0) {
       kept = worktree;
       return { conflicts, worktree };
     }
     if (edited.length > 0) {
-      inWorktree(worktree, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
+      git(worktree, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
     }
     return { conflicts, worktree: null };
   } finally {
@@ -869,6 +900,14 @@ function switchToBranch(root, branch, original) {
   throw new PromoteError("git-failed", `checkout of ${branch} failed: ${(switched.stderr || switched.stdout).trim()}${where}`);
 }
 
+/** Refuses to switch when this checkout moved or changed while promotion ran: the branch was planned from `start`. */
+function refuseMovedCheckout(root, start) {
+  const now = currentCheckout(root);
+  if (now.sha !== start.sha || now.branch !== start.branch || git(root, ["status", "--porcelain", "--untracked-files=normal"]).trim() !== "") {
+    throw new PromoteError("git-failed", `this checkout changed while promotion ran (it was planned from ${start.sha.slice(0, 12)}${start.branch ? ` on ${start.branch}` : ""}); nothing was switched, retry from a clean checkout`);
+  }
+}
+
 /** Without --reconcile every imported path must equal next at the pin, mode included. */
 function verifyImported(root, { paths, pinned, branch }) {
   for (const target of paths) {
@@ -888,10 +927,11 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   if (!hasFilterRepo()) throw new PromoteError("missing-filter-repo", FILTER_REPO_HINT);
   branch ??= `promote/${fn ?? paths[0]}`;
   const from = pinSource(root, { source, pin });
-  checkWorkingRepo(root, { base, branch });
+  // Everything is planned against this one commit, and the branch is built from it.
+  const start = checkWorkingRepo(root, { base, branch });
   const fetchPin = from.local ? localPin(root, from.pin) : from.pin;
 
-  const current = readJsonFile(root, RELEASE_FILES.public).data;
+  const current = readJsonFile(root, start.sha, RELEASE_FILES.public).data;
   if (!Array.isArray(current)) throw new PromoteError("malformed-file", `${RELEASE_FILES.public} must be an array`);
   const work = mkdtempSync(path.join(tmpdir(), "promote-"));
   try {
@@ -899,31 +939,31 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     if (fn !== undefined && pinned.objects.get(paths[0]).type !== "tree") {
       throw new PromoteError("path-missing", `${fn} is not a directory in next at ${pinned.sha}; use --path for a file`);
     }
-    const manifest = readJsonFile(root, PUBLIC_MANIFEST).data;
+    const manifest = readJsonFile(root, start.sha, PUBLIC_MANIFEST).data;
     ownersCheck(() => parseManifest(structuredClone(manifest), { kind: "public" }));
-    const { topLevel, rootFiles } = classifyPaths(root, { paths, pinned, manifest, reconcile });
-    refuseLocalFiles(root, paths, pinned.files);
-    const plan = planReleases(root, { pinned, paths, current });
+    const { topLevel, rootFiles } = classifyPaths(root, { start, paths, pinned, manifest, reconcile });
+    refuseLocalFiles(root, paths, pinned.files, start);
+    const plan = planReleases(root, { start, pinned, paths, current });
     // Every imported release becomes public, including one this checkout already lists (a retry or partial cutover).
     const flip = { topLevel, rootFiles, slugs: plan.release.entries.map((entry) => entry.slug), pythonNames: plan.python.names };
     const changed = flipManifest(manifest, flip);
 
-    const { head, commits } = filterHistory(work, paths);
+    const { head, commits, history } = filterHistory(work, paths);
     git(root, ["fetch", "-q", "--no-tags", work, `refs/heads/${SOURCE_BRANCH}`]);
     const imported = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]).trim();
     if (imported !== head) throw new PromoteError("git-failed", `fetched ${imported}, expected ${head}`);
 
-    const original = currentCheckout(root);
     try {
       // Until the final checkout promotion owns only the branch and the scratch worktree; a failure removes those.
       const label = fn ?? paths.join(", ");
       const edits = { manifest, changed, plan };
-      const { conflicts, worktree } = buildBranch(root, { branch, imported, label, paths, pin: pinned.sha, reconcile, edits });
-      const result = promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip, worktree });
+      const { conflicts, worktree } = buildBranch(root, { start: start.sha, branch, imported, label, paths, pin: pinned.sha, reconcile, edits });
+      const result = promotionResult({ fn, branch, paths, pinned, commits, history, plan, changed, conflicts, flip, worktree });
       if (conflicts.length > 0) return result;
       if (!reconcile) verifyImported(root, { paths, pinned, branch });
-      switchToBranch(root, branch, original);
-      git(root, ["update-ref", "ORIG_HEAD", original.sha]); // as git merge leaves it, for git reset --merge ORIG_HEAD
+      refuseMovedCheckout(root, start);
+      switchToBranch(root, branch, start);
+      git(root, ["update-ref", "ORIG_HEAD", start.sha]); // as git merge leaves it, for git reset --merge ORIG_HEAD
       return result;
     } catch (error) {
       discardBranch(root, branch);
@@ -934,7 +974,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   }
 }
 
-function promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip, worktree }) {
+function promotionResult({ fn, branch, paths, pinned, commits, history, plan, changed, conflicts, flip, worktree }) {
   const releaseEntries = plan.release.entries;
   const pythonEntries = plan.python.entries;
   return {
@@ -943,6 +983,7 @@ function promotionResult({ fn, branch, paths, pinned, commits, plan, changed, co
     paths,
     commits,
     files: pinned.files,
+    history,
     releases: plan.release.moves,
     python: plan.python.moves,
     changed,
@@ -967,6 +1008,11 @@ export function formatReport(result) {
   out.push(`Promoted ${result.paths.join(" ")} from next ${result.pin} onto branch ${result.branch}.`);
   list("Imported commits", result.commits, ({ sha, subject }) => `${sha.slice(0, 12)} ${subject}`);
   list("Imported files", result.files);
+  list(
+    "Historical non-text and image versions to inspect before the PR (git cat-file blob <id>; render every image)",
+    result.history,
+    ({ oid, kind, paths }) => `${oid} ${kind} ${paths.map((file) => JSON.stringify(file)).join(" ")}`,
+  );
   list("Release entries moved into release-packages.json", result.releases, ({ slug, name, path: directory, source }) => `${slug} ${name} ${directory} (from ${source})`);
   list("Python projects moved into TARGETS", result.python, ({ name, path: directory }) => `${name} ${directory}`);
   const flipped = Object.entries(result.changed).flatMap(([section, names]) => names.map((name) => `${section}.${name}`));

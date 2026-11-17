@@ -57,7 +57,7 @@ function git(cwd, ...args) {
 function write(root, files) {
   for (const [file, content] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), typeof content === "string" ? content : `${JSON.stringify(content, null, 2)}\n`);
+    writeFileSync(path.join(root, file), typeof content === "string" || Buffer.isBuffer(content) ? content : `${JSON.stringify(content, null, 2)}\n`);
   }
 }
 
@@ -516,23 +516,23 @@ function useHook(dev, name, script) {
   git(dev, "config", "core.hooksPath", hooks);
 }
 
-/** Environment whose git-filter-repo writes `content` to `file` while promote filters the history (after its preflight). */
-function lateFilterRepo(name, file, content) {
+/** Environment whose git-filter-repo runs `before` and `after` shell code around each real run (not --version). */
+function wrapFilterRepo(name, { before = ":", after = ":" }) {
   const real = spawnSync("sh", ["-c", "command -v git-filter-repo"], { encoding: "utf8" }).stdout.trim();
   const bin = path.join(scratch, `${name}-bin`);
-  const script = `if [ "$1" != "--version" ]; then mkdir -p '${path.dirname(file)}'; printf '${content}\\n' > '${file}'; fi`;
-  write(bin, { "git-filter-repo": `#!/bin/sh\n${script}\nexec '${real}' "$@"\n` });
+  const script = `[ "$1" = "--version" ] && exec '${real}' "$@"\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n${before}\n'${real}' "$@" || exit $?\n${after}`;
+  write(bin, { "git-filter-repo": `#!/bin/sh\n${script}\n` });
   chmodSync(path.join(bin, "git-filter-repo"), 0o755);
   return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
 }
+
+/** Environment whose git-filter-repo writes `content` to `file` while promote filters the history (after its preflight). */
+const lateFilterRepo = (name, file, content) => wrapFilterRepo(name, { before: `mkdir -p '${path.dirname(file)}'; printf '${content}\\n' > '${file}'` });
 
 historyTest("an ignored file created after the preflight is not overwritten, and a retry after moving it succeeds", () => {
   const { dev } = fixture("late-ignored");
   const head = git(dev, "rev-parse", "HEAD");
   write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\n" });
-  // This worktree's own configuration names it as core.worktree; the scratch merge must still stay in its worktree.
-  git(dev, "config", "extensions.worktreeConfig", "true");
-  git(dev, "config", "--worktree", "core.worktree", dev);
   const late = path.join(dev, "widgetfn/core/src/index.js");
   const run = promoteCli(dev, ["widgetfn"], { env: lateFilterRepo("late-ignored", late, "late local") });
   assert.equal(run.status, 1, run.stderr);
@@ -550,12 +550,10 @@ historyTest("an ignored file created after the preflight is not overwritten, and
 
 historyTest("a conflicting --reconcile merge stays in a kept worktree with the edits staged; this checkout is not written", () => {
   const { dev } = fixture("late-reconcile");
-  const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n", "local-hooks/README": "hooks\n" });
+  const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n" });
   git(dev, "update-ref", "refs/remotes/origin/dev", head);
-  // A core.hooksPath relative to the checkout, holding a tracked file and an ignored rejecting pre-commit hook.
-  write(dev, { ".git/info/exclude": "widgetfn/core/package.json\nlocal-hooks/\n", "local-hooks/pre-commit": "#!/bin/sh\nexit 1\n" });
-  chmodSync(path.join(dev, "local-hooks/pre-commit"), 0o755);
-  git(dev, "config", "core.hooksPath", "local-hooks");
+  write(dev, { ".git/info/exclude": "widgetfn/core/package.json\n" });
+  useHook(dev, "pre-commit", "exit 1");
   const late = path.join(dev, "widgetfn/core/package.json");
   const run = promoteCli(dev, ["widgetfn", "--reconcile"], { env: lateFilterRepo("late-reconcile", late, "late local") });
   assert.equal(run.status, 2, run.stderr);
@@ -568,8 +566,8 @@ historyTest("a conflicting --reconcile merge stays in a kept worktree with the e
   assert.equal(git(worktree, "diff", "--name-only", "--diff-filter=U"), "widgetfn/core/src/index.js");
   const staged = git(worktree, "diff", "--cached", "--name-only").split("\n");
   for (const file of ["superfunctions.owners.json", "release-packages.json", "scripts/python_release.py"]) assert.ok(staged.includes(file), file);
-  assert.equal(git(worktree, "status", "--porcelain", "--", "local-hooks"), "", "the hooks copy is ignored there too");
-  // The operator's commit in the kept worktree still runs this checkout's hooks.
+  // Plain git commands in the kept worktree work on it, and the operator's commit there runs this checkout's hooks.
+  assert.equal(realpathSync(git(worktree, "rev-parse", "--show-toplevel")), realpathSync(worktree));
   write(worktree, { "widgetfn/core/src/index.js": "export const widget = 'merged';\n" });
   git(worktree, "add", "widgetfn/core/src/index.js");
   assert.notEqual(spawnSync(gitBinary(), ["commit", "-q", "--no-edit"], { cwd: worktree }).status, 0, "the rejecting pre-commit hook runs");
@@ -601,37 +599,170 @@ historyTest("the destination branch's policy (includeIf onbranch:promote/**) ref
   unchanged();
 });
 
-historyTest("ignored hooks beside tracked ones in a relative hooks directory, and a symlinked config's checkout-only include, still apply", () => {
-  const { dev } = fixture("mixed-hooks");
-  const head = commit(dev, "tracked hooks readme", { "local-hooks/README": "hooks\n" });
-  git(dev, "update-ref", "refs/remotes/origin/dev", head);
-  write(dev, { ".git/info/exclude": "local-hooks/pre-merge-commit\n", "local-hooks/pre-merge-commit": "#!/bin/sh\nexit 1\n" });
-  chmodSync(path.join(dev, "local-hooks/pre-merge-commit"), 0o755);
-  git(dev, "config", "core.hooksPath", "local-hooks");
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+historyTest("configuration git would apply differently in the scratch worktree is refused as checkout-policy, never emulated", () => {
+  const { dev } = fixture("checkout-policy");
+  const head = git(dev, "rev-parse", "HEAD");
+  const config = path.join(dev, ".git", "config");
+  const baseline = readFileSync(config, "utf8");
+  const gitdir = realpathSync(path.join(dev, ".git"));
+  const planted = path.join(scratch, "checkout-policy-planted");
+  write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
+  const refused = (what, setup, env = {}) => {
+    writeFileSync(config, baseline);
+    rmSync(path.join(dev, ".git", "config.worktree"), { force: true });
+    setup();
+    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, env);
+    try {
+      assert.throws(() => promote({ root: dev, fn: "widgetfn" }), (error) => error.code === "checkout-policy", what);
+    } finally {
+      for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    assert.equal(git(dev, "rev-parse", "HEAD"), head, what);
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "", what);
+    assert.equal(git(dev, "status", "--porcelain"), "", what);
+    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, what);
+  };
+  // Relative hooks directories name another directory in a linked worktree; a hook planted there never runs.
+  const tmp = path.join(scratch, "checkout-policy-tmp");
+  write(tmp, { "hooks/post-checkout": `#!/bin/sh\ntouch '${planted}'\n`, "hooks/pre-merge-commit": `#!/bin/sh\ntouch '${planted}'\n` });
+  chmodSync(path.join(tmp, "hooks/post-checkout"), 0o755);
+  chmodSync(path.join(tmp, "hooks/pre-merge-commit"), 0o755);
+  for (const hooksPath of [".git/hooks", "../../hooks", "local-hooks"]) {
+    refused(`core.hooksPath ${hooksPath}`, () => git(dev, "config", "core.hooksPath", hooksPath), { TMPDIR: tmp });
+  }
+  assert.equal(spawnSync("test", ["-e", planted]).status, 1, "the planted hook never ran");
+  // ... also when only the promotion branch's onbranch configuration sets one.
+  write(dev, { ".git/promote-hooks.conf": "[core]\n\thooksPath = ../../hooks\n" });
+  refused("onbranch:promote/** relative hooksPath", () => git(dev, "config", "includeIf.onbranch:promote/**.path", "promote-hooks.conf"), { TMPDIR: tmp });
+  assert.equal(spawnSync("test", ["-e", planted]).status, 1, "the planted hook never ran");
+  refused("core.worktree", () => git(dev, "config", "core.worktree", dev));
+  refused("config.worktree", () => {
+    git(dev, "config", "extensions.worktreeConfig", "true");
+    git(dev, "config", "--worktree", "merge.verifySignatures", "true");
+  });
+  refused("gitdir include for this checkout only", () => git(dev, "config", `includeIf.gitdir:${gitdir}.path`, "signed.conf"));
+  refused("gitdir include through ~/", () => git(dev, "config", "includeIf.gitdir:~/dev/.git.path", "signed.conf"), { HOME: realpathSync(path.dirname(dev)) });
+  refused("gitdir include for linked worktrees only", () => git(dev, "config", "includeIf.gitdir:**/worktrees/**.path", "signed.conf"));
+  refused("onbranch include for the current branch", () => git(dev, "config", "includeIf.onbranch:dev.path", "signed.conf"));
+  refused("a file included everywhere and again only here", () =>
+    writeFileSync(config, `${baseline}[include]\n\tpath = signed.conf\n[merge]\n\tverifySignatures = false\n[includeIf "gitdir:${gitdir}"]\n\tpath = signed.conf\n`));
+  // A global configuration reached through a symlink (git resolves its relative include beside the link), with a
+  // nested include for this checkout only.
+  const linked = path.join(scratch, "checkout-policy", "gitconfig");
+  write(scratch, { "checkout-policy/dotfiles/gitconfig": "[include]\n\tpath = nested.inc\n", "checkout-policy/nested.inc": `[includeIf "gitdir:${gitdir}"]\n\tpath = ${path.join(gitdir, "signed.conf")}\n` });
+  spawnSync("ln", ["-s", path.join(scratch, "checkout-policy/dotfiles/gitconfig"), linked]);
+  refused("nested include in a symlinked global config", () => {}, { GIT_CONFIG_GLOBAL: linked });
+
+  // From a detached checkout, as the runbook says, the current-branch include no longer differs and promotion runs.
+  writeFileSync(config, baseline);
+  git(dev, "config", "includeIf.onbranch:dev.path", "signed.conf");
+  git(dev, "switch", "-q", "--detach");
+  const result = promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+  assert.deepEqual(result.history, [], "a text-only history has nothing to inspect");
+});
+
+historyTest("a relative GIT_CONFIG_GLOBAL keeps its meaning in every repository promotion runs git in", () => {
+  const { dev } = fixture("relative-global");
+  const head = git(dev, "rev-parse", "HEAD");
+  write(scratch, { "relative-global/home/gitconfig": "[merge]\n\tverifySignatures = true\n" });
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join("home", "gitconfig") };
+  const run = promoteCli(dev, ["widgetfn"], { env, cwd: path.join(scratch, "relative-global") });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: git-failed: merge failed/, "the unsigned history is refused by the global policy");
   assert.equal(git(dev, "rev-parse", "HEAD"), head);
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+});
+
+historyTest("a commit made here while promotion filters is refused, keeping the advanced checkout and its metadata", () => {
+  const { dev } = fixture("moved-head");
+  const manifest = JSON.parse(readFileSync(path.join(dev, "superfunctions.owners.json"), "utf8"));
+  manifest.paths.newfn = "public";
+  const staged = path.join(scratch, "moved-head-files");
+  write(staged, {
+    "superfunctions.owners.json": manifest,
+    "python_release.py": PYTHON_RELEASE.replace("}\n\nOTHER", '    "newfn": "newfn/python",\n}\n\nOTHER'),
+  });
+  const marker = path.join(staged, "done");
+  const env = wrapFilterRepo("moved-head", {
+    before: `[ -e '${marker}' ] || { touch '${marker}'; cp '${staged}/superfunctions.owners.json' '${dev}/'; cp '${staged}/python_release.py' '${dev}/scripts/'; git -C '${dev}' commit -qam concurrent; }`,
+  });
+  const run = promoteCli(dev, ["widgetfn"], { env });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: git-failed: this checkout changed while promotion ran/);
+  assert.equal(git(dev, "log", "-1", "--format=%s"), "concurrent");
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
   assert.equal(git(dev, "status", "--porcelain"), "");
-  git(dev, "config", "--unset", "core.hooksPath");
-  // A global config reached through a symlink: git resolves its relative include beside the symlink.
-  const linked = path.join(scratch, "mixed-hooks", "gitconfig");
-  write(scratch, { "mixed-hooks/dotfiles/gitconfig": `[includeIf "gitdir:${realpathSync(path.join(dev, ".git"))}"]\n\tpath = work.inc\n`, "mixed-hooks/work.inc": "[merge]\n\tverifySignatures = true\n" });
-  spawnSync("ln", ["-s", path.join(scratch, "mixed-hooks/dotfiles/gitconfig"), linked]);
-  const global = process.env.GIT_CONFIG_GLOBAL;
-  process.env.GIT_CONFIG_GLOBAL = linked;
-  try {
-    throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
-  } finally {
-    process.env.GIT_CONFIG_GLOBAL = global;
+  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+  // A retry plans against the advanced checkout and keeps its additions.
+  git(dev, "update-ref", "refs/remotes/origin/dev", "HEAD");
+  promote({ root: dev, fn: "widgetfn" });
+  const owners = JSON.parse(readFileSync(path.join(dev, "superfunctions.owners.json"), "utf8"));
+  assert.equal(owners.paths.newfn, "public");
+  assert.equal(owners.paths.widgetfn, "public");
+  assert.match(readFileSync(path.join(dev, "scripts/python_release.py"), "utf8"), /"newfn": "newfn\/python"/);
+});
+
+historyTest("every non-text or image version in the imported history is listed with its literal paths", () => {
+  const { dev, next } = fixture("history-audit");
+  const png = (byte) => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, byte]);
+  const binary = (byte) => Buffer.from([0xff, 0xfe, byte, 0x80]);
+  const odd = "widgetfn/assets/tab\tnamé.bin";
+  const first = commit(next, "assets", {
+    "widgetfn/assets/logo.png": png(1),
+    "widgetfn/assets/pic.ppm": "P3\n1 1\n255\n0 0 0\n",
+    "widgetfn/assets/icon.svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+    [odd]: binary(1),
+  });
+  git(next, "mv", "widgetfn/assets/logo.png", "widgetfn/assets/brand.png");
+  git(next, "rm", "-q", "widgetfn/assets/pic.ppm");
+  const second = commit(next, "rename and change the logo, delete the PPM", { "widgetfn/assets/brand.png": png(2) });
+  git(next, "switch", "-q", "-c", "side");
+  const side = commit(next, "side data", { "widgetfn/data.bin": binary(2) });
+  git(next, "switch", "-q", "main");
+  const main = commit(next, "main data", { "widgetfn/data.bin": binary(3) });
+  spawnSync(gitBinary(), ["merge", "-q", "-m", "merge side", "side"], { cwd: next });
+  const pin = commit(next, "resolve to main", { "widgetfn/data.bin": binary(3) });
+  const oid = (rev, file) => git(next, "rev-parse", `${rev}:${file}`);
+  const expected = [
+    { oid: oid(second, "widgetfn/assets/brand.png"), kind: "image", paths: ["widgetfn/assets/brand.png"] },
+    { oid: oid(first, "widgetfn/assets/icon.svg"), kind: "image", paths: ["widgetfn/assets/icon.svg"] },
+    { oid: oid(first, "widgetfn/assets/logo.png"), kind: "image", paths: ["widgetfn/assets/logo.png"] },
+    { oid: oid(first, "widgetfn/assets/pic.ppm"), kind: "image", paths: ["widgetfn/assets/pic.ppm"] },
+    { oid: oid(first, odd), kind: "binary", paths: [odd] },
+    ...[side, main].map((rev) => ({ oid: oid(rev, "widgetfn/data.bin"), kind: "binary", paths: ["widgetfn/data.bin"] })),
+  ].sort((a, b) => (a.paths[0] < b.paths[0] ? -1 : a.paths[0] > b.paths[0] ? 1 : a.oid < b.oid ? -1 : 1));
+  const run = promoteCli(dev, ["widgetfn", "--pin", pin, "--source", next]);
+  assert.equal(run.status, 0, run.stderr);
+  for (const { oid: id, kind, paths } of expected) assert.ok(run.stdout.includes(`  ${id} ${kind} ${paths.map((file) => JSON.stringify(file)).join(" ")}`), `${id}\n${run.stdout}`);
+  assert.match(run.stdout, /^Historical non-text and image versions to inspect before the PR .*\(7\):$/m);
+  // The same set as the imported branch tip's blobs that are not plain text.
+  const blobs = git(dev, "rev-list", "--objects", "--no-object-names", "HEAD^^2").split("\n");
+  const types = spawnSync(gitBinary(), ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { cwd: dev, input: `${blobs.join("\n")}\n`, encoding: "utf8" }).stdout;
+  const unlisted = types.split("\n").filter((line) => line.endsWith(" blob")).map((line) => line.split(" ")[0]).filter((id) => !expected.some((entry) => entry.oid === id));
+  assert.equal(unlisted.length + expected.length, types.split("\n").filter((line) => line.endsWith(" blob")).length);
+  for (const id of unlisted) {
+    const content = spawnSync(gitBinary(), ["cat-file", "blob", id], { cwd: dev }).stdout;
+    assert.ok(!content.includes(0) && !/^P[1-7]\s|<svg/.test(content.toString()), `${id} is plain text`);
   }
+});
+
+historyTest("a missing object in the imported history stops the promotion before the branch", () => {
+  const { dev } = fixture("history-missing");
+  const head = git(dev, "rev-parse", "HEAD");
+  const env = wrapFilterRepo("history-missing", {
+    after: `case "$*" in *--invert-paths*) tree=$(printf '100644 blob ${"1".repeat(40)}\\tghost.bin\\n' | git mktree --missing) && c=$(git commit-tree "$tree" -p refs/heads/promote-source -m ghost) && git update-ref refs/heads/promote-source "$c";; esac`,
+  });
+  const run = promoteCli(dev, ["widgetfn"], { env });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: git-failed: /);
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
-  // A file included everywhere and again only for this checkout, after a setting it then overrides only here.
-  const config = path.join(dev, ".git", "config");
-  write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
-  const gitdir = realpathSync(path.join(dev, ".git"));
-  writeFileSync(config, `${readFileSync(config, "utf8")}[include]\n\tpath = signed.conf\n[merge]\n\tverifySignatures = false\n[includeIf "gitdir:${gitdir}"]\n\tpath = signed.conf\n`);
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
-  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "");
 });
 
 historyTest("an exported GIT_DIR and GIT_WORK_TREE do not redirect the temporary repository to this one", () => {
@@ -681,13 +812,6 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   useHook(dev, "pre-merge-commit", "exit 1");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
-  // A core.hooksPath relative to this checkout, holding ignored local files.
-  write(dev, { ".git/info/exclude": "local-hooks/\n", "local-hooks/pre-merge-commit": "#!/bin/sh\nexit 1\n" });
-  chmodSync(path.join(dev, "local-hooks/pre-merge-commit"), 0o755);
-  git(dev, "config", "core.hooksPath", "local-hooks");
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
-  unchanged();
-  git(dev, "config", "--unset", "core.hooksPath");
   // A hook that rejects merges on promote/* branches still sees the promotion branch.
   useHook(dev, "pre-merge-commit", 'case "$(git branch --show-current)" in promote/*) exit 1;; esac');
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
@@ -698,28 +822,9 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--unset", "merge.verifySignatures");
-  // The same setting in this worktree's own configuration, which a new linked worktree does not inherit.
-  git(dev, "config", "extensions.worktreeConfig", "true");
-  git(dev, "config", "--worktree", "merge.verifySignatures", "true");
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
-  unchanged();
-  git(dev, "config", "--worktree", "--unset", "merge.verifySignatures");
-  // ... also through a relative include in config.worktree, which must still resolve.
-  write(dev, { ".git/merge-policy.conf": "[merge]\n\tverifySignatures = true\n" });
-  git(dev, "config", "--worktree", "include.path", "merge-policy.conf");
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
-  unchanged();
-  git(dev, "config", "--worktree", "--unset", "include.path");
-  // ... an includeIf on this checkout's git directory alone, which git cannot apply in the linked worktree the
-  // branch is built in, is refused before the merge ...
   write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
-  const exact = `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}.path`;
-  git(dev, "config", exact, "signed.conf");
-  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
-  unchanged();
-  git(dev, "config", "--unset", exact);
-  // ... and one that also covers the repository's linked worktrees applies there.
-  git(dev, "config", `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}/.path`, "signed.conf");
+  // An include that covers this checkout and the repository's linked worktrees alike applies there.
+  git(dev, "config", `includeIf.gitdir:${realpathSync(dev)}/.path`, "signed.conf");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   write(dev, { ".git/signed.conf": "" });
