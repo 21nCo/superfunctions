@@ -3390,6 +3390,38 @@ describe('upload completion fencing (FILE-19)', () => {
       expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('replacement');
     });
 
+    it('a late row of a file whose first delete failed after marking is still swept once a retried delete succeeds', async () => {
+      const { shared, database, failNext, storageFixture, stall, dbH } = lateInsertSetup(3);
+      let failVersionsRead = false;
+      const dbS = {
+        ...shared,
+        async findMany(params: Parameters<Adapter['findMany']>[0]) {
+          if (failVersionsRead && params.model === 'fileVersions') { failVersionsRead = false; throw new Error('versions read failed'); }
+          return shared.findMany(params);
+        },
+      } as Adapter;
+      const p0 = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+      const pH = createApp({ mode: 'multipart', database: dbH, storageFixture, createFileFn: await loadProcess() });
+      const pS = createApp({ mode: 'multipart', database: dbS, storageFixture, createFileFn: await loadProcess() });
+      const staged = await p0.stage('user_a', CLIENT_ID, 'deleted twice');
+      failNext('files');
+      await expect(staged.complete()).rejects.toThrow('files insert failed');
+      stall.arm();
+      const H = pH.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }).catch((err: unknown) => ({ status: -1, json: String(err) }));
+      await stall.reached;
+      expect((await pS.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(200);
+      failVersionsRead = true;
+      await expect(pS.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).rejects.toThrow('versions read failed');
+      expect((await pS.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+      stall.resume();
+      expect((await H).status).toBe(-1);
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(1);
+
+      await pS.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
+      expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
+    });
+
     it('the sweep stops checking a deleted file\'s publication once no completion call of it can still be running', async () => {
       const database = memoryAdapter();
       const app = createApp({ mode: 'multipart', database });
