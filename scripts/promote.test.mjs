@@ -11,6 +11,7 @@ import {
   FILTER_REPO_HINT,
   PromoteError,
   appendReleaseEntries,
+  classifyBlob,
   flipManifest,
   hasFilterRepo,
   normalizePaths,
@@ -135,6 +136,20 @@ function fixture(name) {
 
 function promoteCli(dev, args, { env = process.env, cwd } = {}) {
   return spawnSync(process.execPath, [SCRIPT, "--root", dev, ...args], { encoding: "utf8", env, cwd });
+}
+
+/** Runs `fn` with `env` merged into process.env, then restores each name, deleting those that were unset. */
+function withEnv(env, fn) {
+  const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, env);
+  try {
+    return fn();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 }
 
 const throwsCode = (fn, code) =>
@@ -611,14 +626,7 @@ historyTest("configuration git would apply differently in the scratch worktree i
     writeFileSync(config, baseline);
     rmSync(path.join(dev, ".git", "config.worktree"), { force: true });
     setup();
-    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-    Object.assign(process.env, env);
-    try {
-      assert.throws(() => promote({ root: dev, fn: "widgetfn" }), (error) => error.code === "checkout-policy", what);
-    } finally {
-      for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
+    withEnv(env, () => assert.throws(() => promote({ root: dev, fn: "widgetfn" }), (error) => error.code === "checkout-policy", what));
     assert.equal(git(dev, "rev-parse", "HEAD"), head, what);
     assert.equal(git(dev, "branch", "--list", "promote/*"), "", what);
     assert.equal(git(dev, "status", "--porcelain"), "", what);
@@ -642,15 +650,13 @@ historyTest("configuration git would apply differently in the scratch worktree i
   write(tmp, { fsmon: `#!/bin/sh\ntouch '${planted}'\n` });
   chmodSync(path.join(tmp, "fsmon"), 0o755);
   git(dev, "config", "core.fsmonitor", "../../fsmon");
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = tmp;
-  try {
-    promote({ root: dev, fn: "widgetfn" });
-  } catch {
-    // whether git tolerates the missing monitor does not matter here
-  } finally {
-    process.env.TMPDIR = saved;
-  }
+  withEnv({ TMPDIR: tmp }, () => {
+    try {
+      promote({ root: dev, fn: "widgetfn" });
+    } catch {
+      // whether git tolerates the missing monitor does not matter here
+    }
+  });
   assert.equal(spawnSync("test", ["-e", planted]).status, 1, "the planted fsmonitor never ran");
   git(dev, "switch", "-q", "dev");
   spawnSync(gitBinary(), ["branch", "-q", "-D", "promote/widgetfn"], { cwd: dev });
@@ -887,6 +893,86 @@ historyTest("a rejecting post-checkout hook on the new branch restores the origi
   git(dev, "config", "--unset", "core.hooksPath");
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
+historyTest("a promotion branch created or moved by something else while promotion runs survives with its reflog", () => {
+  const { dev } = fixture("branch-race");
+  const head = git(dev, "rev-parse", "HEAD");
+  git(dev, "switch", "-q", "-c", "other");
+  const other = commit(dev, "other work", { "uifn/other.js": "export const other = 1;\n" });
+  git(dev, "switch", "-q", "dev");
+  const ref = "refs/heads/promote/widgetfn";
+  const reflog = () => git(dev, "reflog", "show", "--format=%H %gs", ref);
+  const competing = (name) => wrapFilterRepo(name, { before: `git -C '${dev}' branch -q promote/widgetfn other` });
+  const unchanged = (what, log) => {
+    assert.equal(git(dev, "rev-parse", ref), other, what);
+    assert.equal(reflog(), log, what);
+    assert.equal(git(dev, "rev-parse", "HEAD"), head, what);
+    assert.equal(git(dev, "branch", "--show-current"), "dev", what);
+    assert.equal(git(dev, "status", "--porcelain"), "", what);
+    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, what);
+  };
+  // Created during filtering: branch-exists, and the competing branch is not deleted.
+  let run = promoteCli(dev, ["widgetfn"], { env: competing("branch-race") });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: branch-exists: branch promote\/widgetfn was created by something else/);
+  const log = reflog();
+  assert.match(log, new RegExp(`^${other} `));
+  unchanged("created during filtering", log);
+  // The same race when promotion fails before it would create the branch (a policy refusal).
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  git(dev, "config", "core.worktree", dev);
+  run = promoteCli(dev, ["widgetfn"], { env: competing("branch-race-policy") });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: checkout-policy: /);
+  unchanged("created during filtering, then a policy refusal", reflog());
+  git(dev, "config", "--unset", "core.worktree");
+  // Moved by something else after promotion created it: a failure leaves the moved branch alone.
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  useHook(dev, "pre-merge-commit", `git update-ref ${ref} ${other}\nexit 1`);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "rev-parse", ref), other);
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+  // A branch promotion created and still owns is removed after a rejecting hook; a retry then succeeds.
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  useHook(dev, "pre-merge-commit", "exit 1");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  git(dev, "config", "--unset", "core.hooksPath");
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
+test("image signatures and text-stored image formats are recognised; long whitespace-heavy text is classified quickly", () => {
+  const bytes = (...values) => Buffer.from(values);
+  const png = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1);
+  for (const [what, content] of [
+    ["PNG", png],
+    ["PNG after a UTF-8 BOM", Buffer.concat([bytes(0xef, 0xbb, 0xbf), png])],
+    ["JPEG", bytes(0xff, 0xd8, 0xff, 0xe0)],
+    ["GIF87a", Buffer.from("GIF87a\x01\x00", "latin1")],
+    ["GIF89a", Buffer.from("GIF89a", "latin1")],
+    ["WebP", Buffer.from("RIFF\x10\x00\x00\x00WEBPVP8 ", "latin1")],
+    ["PNM P1", Buffer.from("P1\n1 1\n0\n")],
+    ["PNM P6", Buffer.from("P6 1 1 255\n\xff\xff\xff", "latin1")],
+    ["SVG", Buffer.from('<x:svg xmlns:x="http://www.w3.org/2000/svg"/>')],
+    ["XPM", Buffer.from("/* XPM */\n")],
+    ["XBM", Buffer.from("/* c */\n  #  define a_width 8\n")],
+    ["PostScript", Buffer.from("\n %!PS-Adobe-3.0\n")],
+    ["PDF", Buffer.from("%PDF-1.4\n")],
+    ["data URI", Buffer.from("x data:image/png;base64,AA")],
+    ["notebook output", Buffer.from('{"image/png" : "AA"}')],
+  ]) assert.equal(classifyBlob(content, ["file"]), "image", what);
+  assert.equal(classifyBlob(Buffer.from("RIFF\x10\x00\x00\x00WAVE", "latin1"), ["file"]), "binary");
+  assert.equal(classifyBlob(Buffer.from("P8 not an image\n"), ["file"]), null);
+  assert.equal(classifyBlob(Buffer.from("plain text\n"), ["file.svg"]), "image");
+  const started = performance.now();
+  for (const filler of [" \n", "\t \n#", "<a", "/* ", "\n# define x "]) {
+    assert.equal(classifyBlob(Buffer.from(filler.repeat(Math.ceil(1_000_000 / filler.length))), ["file"]), null, JSON.stringify(filler));
+  }
+  assert.ok(performance.now() - started < 5000, `classified 5 MB in ${Math.round(performance.now() - started)} ms`);
 });
 
 historyTest("an ignored file several levels above a selected sub-path is a path-conflict, not an uncaught error", () => {

@@ -594,14 +594,40 @@ const RAW_ENTRY = /^\n*:\d{6} (\d{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*$/;
 // content. Text formats are matched anywhere in the file, past comments and whitespace; listing an extra version only
 // costs one more look.
 const IMAGE_EXTENSION = /\.(?:svgz?|p[bgpna]m|xpm|xbm|e?ps|pdf|ai)$/i;
-const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s)/;
-const IMAGE_TEXT = /<(?:[\w.-]+:)?svg[\s>/]|http:\/\/www\.w3\.org\/2000\/svg|\/\*\s*XPM\s*\*\/|^\s*#\s*define\s+\S*_width\s|^\s*%!PS|%PDF-|data:image\/|"image\/[\w.+-]+"\s*:/im;
+const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+// Leading bytes: PNG, JPEG, GIF87a/89a and WebP (RIFF, any 4-byte size, WEBP); PNM is P1-P7 and whitespace.
+const IMAGE_MAGIC = [
+  [0, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  [0, Buffer.from([0xff, 0xd8, 0xff])],
+  [0, Buffer.from("GIF87a")],
+  [0, Buffer.from("GIF89a")],
+  [0, Buffer.from("RIFF"), 8, Buffer.from("WEBP")],
+];
+const PNM_SPACE = new Set([0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0xa0]);
+// Simple patterns, each linear in the text: none starts with whitespace that could run across lines.
+const IMAGE_TEXT = [
+  /<(?:[\w.-]+:)?svg[\s>/]/i,
+  /http:\/\/www\.w3\.org\/2000\/svg/i,
+  /\/\*\s*XPM\s*\*\//i,
+  /^[ \t]*#[ \t]*define[ \t]+\S*_width\s/im,
+  /^[ \t]*%!PS/im,
+  /%PDF-/i,
+  /data:image\//i,
+  /"image\/[\w.+-]+"\s*:/i,
+];
 // Control characters other than tab, line feed, vertical tab, form feed and carriage return: not text.
 const CONTROL = /[\x00-\x08\x0e-\x1f\x7f]/;
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
+function hasImageMagic(content) {
+  const bytes = content.subarray(0, BOM.length).equals(BOM) ? content.subarray(BOM.length) : content;
+  const at = (offset, signature) => bytes.subarray(offset, offset + signature.length).equals(signature);
+  if (IMAGE_MAGIC.some(([offset, signature, offset2, signature2]) => at(offset, signature) && (!signature2 || at(offset2, signature2)))) return true;
+  return bytes[0] === 0x50 && bytes[1] >= 0x31 && bytes[1] <= 0x37 && PNM_SPACE.has(bytes[2]);
+}
+
 /** "image" (to render), "binary" or null (text) for one blob and the paths it was imported under. */
-function classifyBlob(content, paths) {
+export function classifyBlob(content, paths) {
   let text = null;
   try {
     text = utf8.decode(content);
@@ -609,7 +635,7 @@ function classifyBlob(content, paths) {
   } catch {
     // invalid UTF-8: binary
   }
-  if (IMAGE_MAGIC.test(content.subarray(0, 64).toString("latin1").replace(/^\ufeff|^\xef\xbb\xbf/, "")) || paths.some((file) => IMAGE_EXTENSION.test(file)) || IMAGE_TEXT.test(text ?? "")) return "image";
+  if (hasImageMagic(content) || paths.some((file) => IMAGE_EXTENSION.test(file)) || (text !== null && IMAGE_TEXT.some((pattern) => pattern.test(text)))) return "image";
   return text === null ? "binary" : null;
 }
 
@@ -628,7 +654,8 @@ function auditHistory(work, head) {
   for (let index = 0; index < raw.length; index += 1) {
     const entry = RAW_ENTRY.exec(raw[index]);
     if (!entry) continue;
-    const file = raw[(index += 1)];
+    index += 1;
+    const file = raw[index];
     if (entry[1] !== "000000" && entry[1] !== "160000") pathsOf.set(entry[2], (pathsOf.get(entry[2]) ?? new Set()).add(file));
   }
   if (blobs.length === 0) return [];
@@ -660,10 +687,31 @@ function currentCheckout(root) {
   return { sha: git(root, ["rev-parse", "HEAD"]).trim(), branch: symbolic || null };
 }
 
-/** Deletes the promotion branch after a failed attempt, unless it is checked out here; never touches this checkout. */
-function discardBranch(root, branch) {
-  if (git(root, ["symbolic-ref", "-q", "HEAD"], { allowFailure: true }).stdout.trim() === `refs/heads/${branch}`) return;
-  git(root, ["branch", "-q", "-D", branch], { allowFailure: true });
+/**
+ * Creates the promotion branch at `start` only if no such ref exists (compare-and-create) and records it as owned.
+ * A branch something else created after the early check is never adopted: branch-exists, and nothing to clean up.
+ */
+function claimBranch(root, owned, start) {
+  const created = git(root, ["update-ref", "--create-reflog", "-m", "promote: create", owned.ref, start, ""], { allowFailure: true });
+  if (created.status !== 0) throw new PromoteError("branch-exists", `branch ${owned.branch} was created by something else while promotion ran; it was left as it is`);
+  owned.oid = start;
+}
+
+/** Adopts the commit a promotion step just made on the owned branch, but only one made on top of the owned commit. */
+function advanceBranch(worktree, owned) {
+  const [tip, parent] = lines(git(worktree, ["rev-parse", "HEAD", "HEAD^"]));
+  if (parent === owned.oid) owned.oid = tip;
+}
+
+/**
+ * After a failed attempt, deletes the promotion branch only if promotion created it and it still points where
+ * promotion left it (update-ref -d with that old value), and never while it is checked out here. A branch something
+ * else created, moved or recreated survives with its reflog.
+ */
+function discardBranch(root, owned) {
+  if (owned.oid === null) return;
+  if (git(root, ["symbolic-ref", "-q", "HEAD"], { allowFailure: true }).stdout.trim() === owned.ref) return;
+  git(root, ["update-ref", "-d", owned.ref, owned.oid], { allowFailure: true });
 }
 
 /** Where the pin is fetched from: another repository needs an explicit pin; this checkout's is resolved later. */
@@ -879,7 +927,7 @@ function refusePolicyDifference(root, worktree, start = null) {
  * With merge conflicts left by --reconcile the worktree is kept for the operator, the edits staged; otherwise it is
  * removed. Returns the conflicting paths and the kept worktree (null when none).
  */
-function buildBranch(root, { start, branch, imported, label, paths, pin, reconcile, edits }) {
+function buildBranch(root, { start, owned, imported, label, paths, pin, reconcile, edits }) {
   // A private (0700) directory in this repository's git directory, not the shared tmpdir: a relative path git resolves
   // against the work tree (core.fsmonitor, gpg programs, merge and filter drivers) can then only reach this repository
   // and its ancestors, never a location another user can write.
@@ -890,13 +938,15 @@ function buildBranch(root, { start, branch, imported, label, paths, pin, reconci
   try {
     git(root, ["worktree", "add", "-q", "--detach", "--no-checkout", worktree, start]);
     const loaded = refusePolicyDifference(root, worktree);
-    git(worktree, ["switch", "-q", "-c", branch]);
+    claimBranch(root, owned, start);
+    git(worktree, ["switch", "-q", owned.branch]);
     refusePolicyDifference(root, worktree, loaded);
     git(worktree, ["reset", "-q", "--hard"]);
     const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
     const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
     const conflicts = merged.status === 0 ? [] : lines(git(worktree, ["diff", "--name-only", "--diff-filter=U"]));
     if (merged.status !== 0 && (!reconcile || conflicts.length === 0)) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+    if (merged.status === 0) advanceBranch(worktree, owned);
     const edited = writeEdits(worktree, edits);
     if (edited.length > 0) git(worktree, ["add", "--", ...edited]);
     if (conflicts.length > 0) {
@@ -905,6 +955,7 @@ function buildBranch(root, { start, branch, imported, label, paths, pin, reconci
     }
     if (edited.length > 0) {
       git(worktree, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
+      advanceBranch(worktree, owned);
     }
     return { conflicts, worktree: null };
   } finally {
@@ -933,7 +984,8 @@ function switchToBranch(root, branch, original) {
 function refuseMovedCheckout(root, start) {
   const now = currentCheckout(root);
   if (now.sha !== start.sha || now.branch !== start.branch || git(root, ["status", "--porcelain", "--untracked-files=normal"]).trim() !== "") {
-    throw new PromoteError("git-failed", `this checkout changed while promotion ran (it was planned from ${start.sha.slice(0, 12)}${start.branch ? ` on ${start.branch}` : ""}); nothing was switched, retry from a clean checkout`);
+    const onBranch = start.branch ? ` on ${start.branch}` : "";
+    throw new PromoteError("git-failed", `this checkout changed while promotion ran (it was planned from ${start.sha.slice(0, 12)}${onBranch}); nothing was switched, retry from a clean checkout`);
   }
 }
 
@@ -982,11 +1034,13 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     const imported = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]).trim();
     if (imported !== head) throw new PromoteError("git-failed", `fetched ${imported}, expected ${head}`);
 
+    // Until the final checkout promotion owns only the scratch worktree and the branch it created (once it has); a
+    // failure removes those.
+    const owned = { branch, ref: `refs/heads/${branch}`, oid: null };
     try {
-      // Until the final checkout promotion owns only the branch and the scratch worktree; a failure removes those.
       const label = fn ?? paths.join(", ");
       const edits = { manifest, changed, plan };
-      const { conflicts, worktree } = buildBranch(root, { start: start.sha, branch, imported, label, paths, pin: pinned.sha, reconcile, edits });
+      const { conflicts, worktree } = buildBranch(root, { start: start.sha, owned, imported, label, paths, pin: pinned.sha, reconcile, edits });
       const result = promotionResult({ fn, branch, paths, pinned, commits, history, plan, changed, conflicts, flip, worktree });
       if (conflicts.length > 0) return result;
       if (!reconcile) verifyImported(root, { paths, pinned, branch });
@@ -995,7 +1049,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       git(root, ["update-ref", "ORIG_HEAD", start.sha]); // as git merge leaves it, for git reset --merge ORIG_HEAD
       return result;
     } catch (error) {
-      discardBranch(root, branch);
+      discardBranch(root, owned);
       throw error;
     }
   } finally {
