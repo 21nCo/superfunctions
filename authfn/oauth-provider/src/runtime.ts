@@ -176,13 +176,20 @@ export function isAllowedRedirectUri(value: unknown): value is string {
  */
 function isWrittenAsOrigin(value: string, url: URL): boolean {
   return value.slice(0, url.origin.length).toLowerCase() === url.origin.toLowerCase() &&
-    !value.includes('\\') &&
-    !value.slice(0, authorityEnd(value)).includes('@');
+    hasPlainAuthority(value);
+}
+
+/**
+ * No backslash anywhere and no `@` (userinfo) in the raw authority. Called
+ * only on a value that begins with `scheme://`.
+ */
+function hasPlainAuthority(value: string): boolean {
+  return !value.includes('\\') && !value.slice(0, authorityEnd(value)).includes('@');
 }
 
 /**
  * Where the raw authority ends: the first `/` or `?` after `scheme://`, or
- * the end of the value. Called only on a value that begins with its origin.
+ * the end of the value. Called only on a value that begins with `scheme://`.
  */
 function authorityEnd(value: string): number {
   const start = value.indexOf('//') + 2;
@@ -246,8 +253,11 @@ function parseLoopback(value: string): LoopbackRedirectUri | null {
   } catch {
     return null;
   }
+  // Checked on the raw text rather than against the parsed origin, which
+  // normalizes the host (`127.0.0.1.:53111` has origin `http://127.0.0.1:53111`):
+  // the written host is compared byte for byte by the caller instead.
   if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.has(url.hostname) || value.includes('#') ||
-    !isWrittenAsOrigin(value, url)) {
+    value.slice(0, 'http://'.length).toLowerCase() !== 'http://' || !hasPlainAuthority(value)) {
     return null;
   }
   const start = value.indexOf('//') + 2;

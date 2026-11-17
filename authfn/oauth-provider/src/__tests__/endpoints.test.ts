@@ -293,9 +293,16 @@ describe('authorization endpoint', () => {
     ]) {
       await expectRefused(plain, redirectUri);
     }
-    // The reverse: a registered trailing dot is matched as written.
-    const exact = await provider.authorize({ redirect_uri: 'http://127.0.0.1./cb' }, dotted);
-    expect(exact.searchParams.get('code')).toBeTruthy();
+    // The scheme and authority must be written as `http://host`.
+    for (const redirectUri of ['http:127.0.0.1:53111/cb', 'http:/127.0.0.1:53111/cb', 'http:///127.0.0.1:53111/cb']) {
+      await expectRefused(plain, redirectUri);
+    }
+    // The reverse: a registered trailing dot is matched as written, on any port.
+    for (const redirectUri of ['http://127.0.0.1./cb', 'http://127.0.0.1.:/cb', 'http://127.0.0.1.:80/cb', 'http://127.0.0.1.:53111/cb']) {
+      const callback = await provider.authorize({ redirect_uri: redirectUri }, dotted);
+      expect(callback.searchParams.get('code'), redirectUri).toBeTruthy();
+    }
+    await expectRefused(dotted, 'http://127.0.0.1.:53111/x/../cb');
     for (const redirectUri of [
       'http://127.0.0.1/cb',
       'http://127.0.0.1:/cb',
