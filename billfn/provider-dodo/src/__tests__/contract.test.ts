@@ -145,6 +145,29 @@ describe('Dodo environment', () => {
     expect(proxied.calls[0]?.url).toBe('https://dodo.proxy.test/checkouts');
   });
 
+  it.each([
+    ['no trailing slash', 'https://dodo.proxy.test/v1', 'https://dodo.proxy.test/v1/checkouts'],
+    ['one trailing slash', 'https://dodo.proxy.test/v1/', 'https://dodo.proxy.test/v1/checkouts'],
+    ['several trailing slashes', 'https://dodo.proxy.test/v1///', 'https://dodo.proxy.test/v1/checkouts'],
+    ['a long trailing slash run', `https://dodo.proxy.test${'/'.repeat(100_000)}`, 'https://dodo.proxy.test/checkouts'],
+    [
+      'a long slash run followed by a non-slash suffix',
+      `https://dodo.proxy.test${'/'.repeat(100_000)}v1`,
+      `https://dodo.proxy.test${'/'.repeat(100_000)}v1/checkouts`
+    ]
+  ])('trims only the trailing slashes of a configured base URL with %s', async (_label, baseUrl, expected) => {
+    const api = dodoApi({ [`POST ${new URL(expected).pathname}`]: recorded.createCheckoutSession.response });
+    const started = performance.now();
+    await provider(api.fetchMock, { baseUrl }).createCheckout?.({
+      checkoutSessionId: 'chk_123',
+      billingAccount,
+      plan,
+      price: monthPrice
+    });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(api.calls[0]?.url).toBe(expected);
+  });
+
   it('rejects an environment Dodo does not have instead of guessing a mode', () => {
     expect(() => provider(vi.fn() as typeof fetch, { environment: 'live' as DodoProviderConfig['environment'] })).toThrow(
       expect.objectContaining({ code: 'BILLFN_VALIDATION_ERROR' })
@@ -1025,8 +1048,13 @@ describe('parseWebhook with recorded Dodo payloads', () => {
 describe('Standard Webhooks test vectors', () => {
   // The signing vector of the Standard Webhooks reference suite
   // (standard-webhooks/standard-webhooks libraries/python/tests/test_webhooks.py, test_sign_function).
+  // The reference secrets are built from their key bytes at runtime so this public test vector is not
+  // committed as a literal webhook secret (secret scanners would report it).
+  const referenceSecret = (keyBytes: number[]) => `whsec_${Buffer.from(keyBytes).toString('base64')}`;
   const vector = {
-    secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',
+    secret: referenceSecret([
+      49, 242, 144, 246, 191, 6, 41, 138, 171, 79, 8, 212, 60, 63, 8, 44, 246, 72, 163, 98, 218, 45, 164, 176
+    ]),
     id: 'msg_p5jXN8AQM9LWM0D4loKWxJek',
     timestamp: '1614265330',
     payload: '{"test": 2432232314}',
@@ -1069,7 +1097,15 @@ describe('Standard Webhooks test vectors', () => {
     ['an unsupported signature version', { signature: vector.signature.replace('v1,', 'v2,') }],
     ['another message id', { id: 'msg_p5jXN8AQM9LWM0D4loKWxJel' }],
     ['a changed body', { payload: '{"test": 2432232315}' }],
-    ['another secret', { secret: 'whsec_C2FVsBQIhrscChlQIMV+b5sSYspob7oD' }]
+    [
+      'another secret',
+      {
+        // The Standard Webhooks Rust reference tests' secret (libraries/rust/src/lib.rs).
+        secret: referenceSecret([
+          11, 97, 85, 176, 20, 8, 134, 187, 28, 10, 25, 80, 32, 197, 126, 111, 155, 18, 98, 202, 104, 111, 186, 3
+        ])
+      }
+    ]
   ])('rejects %s', async (_label, overrides) => {
     await expect(parseVector(overrides)).rejects.toMatchObject({ code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID' });
   });

@@ -617,7 +617,16 @@ function resolveDodoBaseUrl(config: DodoProviderConfig): string {
       message: "Dodo environment must be 'test_mode' or 'live_mode'"
     });
   }
-  return (config.baseUrl ?? DODO_BASE_URLS[environment]).replace(/\/+$/, '');
+  return trimTrailingSlashes(config.baseUrl ?? DODO_BASE_URLS[environment]);
+}
+
+/** Drops trailing `/` characters in one backward scan (linear time; no regex backtracking on caller input). */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.codePointAt(end - 1) === 0x2f) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 /** A Dodo API URL; each path segment is encoded, so an identifier cannot reach another endpoint. */
