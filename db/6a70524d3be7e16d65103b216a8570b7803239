@@ -1,0 +1,19 @@
+authfn/core/README.md
+  s_15bc06cb6bc29e::t_443ebd34b2d909 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db6a70524d3be7e16d65103b216a8570b7803239",
+  "prompts": {},
+  "sessions": {
+    "s_15bc06cb6bc29e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a118743e-8ac6-4c6b-9290-8ad2f4493246",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
