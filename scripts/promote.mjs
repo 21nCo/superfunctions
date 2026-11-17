@@ -589,11 +589,14 @@ function filterHistory(work, paths) {
 }
 
 const RAW_ENTRY = /^\n*:\d{6} (\d{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*$/;
-const IMAGE_EXTENSION = /\.(?:svgz?|p[bgpna]m|xpm|xbm)$/i;
-const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s)/;
+// Formats to render rather than read, including those stored as text: SVG (any namespace prefix), PNM, XPM, XBM,
+// PostScript/EPS and PDF, recognised by content or by extension.
+const IMAGE_EXTENSION = /\.(?:svgz?|p[bgpna]m|xpm|xbm|e?ps|pdf|ai)$/i;
+const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s|\/\* XPM \*\/|#define \w+_width |%!PS|%PDF-)/;
+const IMAGE_TEXT = /<(?:[\w.-]+:)?svg[\s>/]|http:\/\/www\.w3\.org\/2000\/svg/i;
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
-/** "image", "binary" or null (text) for one blob and the paths it was imported under. */
+/** "image" (to render), "binary" or null (text) for one blob and the paths it was imported under. */
 function classifyBlob(content, paths) {
   let text = null;
   try {
@@ -601,7 +604,7 @@ function classifyBlob(content, paths) {
   } catch {
     // invalid UTF-8: binary
   }
-  if (IMAGE_MAGIC.test(content.subarray(0, 16).toString("latin1")) || paths.some((file) => IMAGE_EXTENSION.test(file)) || /<svg[\s>]/i.test(text ?? "")) return "image";
+  if (IMAGE_MAGIC.test(content.subarray(0, 64).toString("latin1").replace(/^\ufeff|^\xef\xbb\xbf/, "")) || paths.some((file) => IMAGE_EXTENSION.test(file)) || IMAGE_TEXT.test(text ?? "")) return "image";
   return text === null ? "binary" : null;
 }
 

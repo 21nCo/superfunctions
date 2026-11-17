@@ -93,11 +93,13 @@ retry or a partial cutover leaves no duplicates on `next`.
 1. Check the result: `git log --follow -- <path>/<file>` shows the `next` history, and
    `git diff <next-sha> HEAD -- <path>` is empty (the script already checks this unless `--reconcile` was used).
 2. Inspect every version under "Historical non-text and image versions" in the script's output: the object id, the
-   kind (`image` or `binary`) and every path it was imported under, as JSON strings. The script reads these from the
+   kind (`image` for anything to render, also when stored as text: SVG, PNM, XPM, XBM, PostScript/EPS, PDF; or
+   `binary`) and every path it was imported under, as JSON strings. The script reads these from the
    exact filtered history it imports, deleted and side-branch versions included, and stops if any object cannot be
    read. Save each one with `git cat-file blob <id> > <file>` and open it; render every `image` version, also those
    stored as text (an ASCII PPM, an SVG), which the patch review above shows only as numbers or markup. If any
-   version holds something private, delete the branch (`git switch -` then `git branch -D <branch>`) and import the
+   version holds something private, return to the commit you started from (`git switch --detach ORIG_HEAD`, which
+   the script sets to it), delete the branch (`git branch -D <branch>`) and import the
    content without history instead (D9).
 3. Run `npm install` to refresh `package-lock.json`, then `node scripts/verify-owners.mjs` and
    `node scripts/verify-public-boundary.mjs`. Commit any lockfile change.
