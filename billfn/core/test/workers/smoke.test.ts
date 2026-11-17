@@ -2,9 +2,12 @@
  * Workers smoke test: worker.ts is bundled exactly as `wrangler deploy` would
  * bundle it and served by workerd (Miniflare). Every request goes through the
  * Hono host app into the BillFn router. The Dodo webhook is signed here with
- * WebCrypto, independently of the node:crypto verifier the provider uses.
+ * WebCrypto, independently of the node:crypto verifier the provider uses. The
+ * Apple verifier and token signer run in workerd; their results are checked
+ * here with node:crypto.
  */
 import { execFile } from 'node:child_process';
+import { generateKeyPairSync, verify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -15,7 +18,18 @@ import { promisify } from 'node:util';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  APPLE_SAMPLE_TEST_CA,
+  APPLE_SAMPLE_TEST_NOTIFICATION,
+  APPLE_SAMPLE_WRONG_BUNDLE_NOTIFICATION
+} from '../../../provider-apple/src/__tests__/fixtures/apple-published-samples.js';
+import {
+  generateAppleChain,
+  sampleSubscribedNotification,
+  signJws
+} from '../../../provider-apple/src/__tests__/fixtures/generated-chain.js';
+import {
   DODO_WEBHOOK_SECRET,
+  SMOKE_APPLE_BUNDLE_ID,
   SMOKE_EU_SUBSCRIPTION_ID,
   SMOKE_INTERNAL_TOKEN,
   SMOKE_PRINCIPAL_ID,
@@ -33,6 +47,8 @@ type EnvelopeBody = { ok: boolean; data?: any; error?: { code: string; status: n
 
 let workDir: string;
 let mf: Miniflare;
+/** Stands in for an App Store Connect in-app purchase key; its public half checks the tokens the Worker signs. */
+const appleApiKey = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 
 /**
  * The provider-dodo source is bundled from its sibling directory, which has no
@@ -64,7 +80,8 @@ async function bundleWorker(outDir: string): Promise<string> {
       alias: {
         ...providerDodoDependencyAliases(),
         '@billfn/core': fromHere('../../src/index.ts'),
-        '@billfn/provider-dodo': fromHere('../../../provider-dodo/src/index.ts')
+        '@billfn/provider-dodo': fromHere('../../../provider-dodo/src/index.ts'),
+        '@billfn/provider-apple': fromHere('../../../provider-apple/src/index.ts')
       }
     })
   );
@@ -87,7 +104,11 @@ beforeAll(async () => {
     modules: [{ type: 'ESModule', path: 'worker.js', contents: script }],
     compatibilityDate: COMPATIBILITY_DATE,
     compatibilityFlags: COMPATIBILITY_FLAGS,
-    bindings: { DODO_WEBHOOK_SECRET, INTERNAL_TOKEN: SMOKE_INTERNAL_TOKEN }
+    bindings: {
+      DODO_WEBHOOK_SECRET,
+      INTERNAL_TOKEN: SMOKE_INTERNAL_TOKEN,
+      APPLE_API_PRIVATE_KEY: appleApiKey.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
+    }
   });
   await mf.ready;
 });
@@ -159,7 +180,7 @@ describe('BillFn on workerd', () => {
     const { status, body } = await call('/billfn/status');
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.data).toMatchObject({ ok: true, version: 1, providers: ['dodo'] });
+    expect(body.data).toMatchObject({ ok: true, version: 1, providers: ['dodo', 'apple'] });
     expect(body.data.capabilities).toContain('webhook.ingest');
   });
 
@@ -312,5 +333,69 @@ describe('BillFn webhook ingress on workerd', () => {
     });
     const us = await call(`/billfn/entitlements?principalId=${EU_PRINCIPAL_ID}`);
     expect(us.body.data.entitlements ?? null).toBeNull();
+  });
+});
+
+describe('Apple verifier and token signer on workerd', () => {
+  const sampleRoot = (jws: string) =>
+    (JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString()) as { x5c: string[] }).x5c[2];
+  const verifyInWorker = async (body: Record<string, unknown>) =>
+    (await (
+      await mf.dispatchFetch(`${ORIGIN}/fixture/apple-verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bundleId: SMOKE_APPLE_BUNDLE_ID, ...body })
+      })
+    ).json()) as Record<string, { ok: boolean; value?: any; reason?: string }>;
+
+  it("verifies Apple's production chain to the pinned root and Apple's sample notification", async () => {
+    const result = await verifyInWorker({ jws: APPLE_SAMPLE_TEST_NOTIFICATION, root: sampleRoot(APPLE_SAMPLE_TEST_NOTIFICATION) });
+    expect(result.pinnedRealChain).toEqual({ ok: true, value: 'verified' });
+    expect(result.jws).toMatchObject({ ok: true, value: { environment: 'sandbox', payload: { notificationType: 'TEST' } } });
+  });
+
+  it("rejects Apple's sample notification for another bundle ID", async () => {
+    const result = await verifyInWorker({ jws: APPLE_SAMPLE_WRONG_BUNDLE_NOTIFICATION, root: APPLE_SAMPLE_TEST_CA });
+    expect(result.jws).toEqual({ ok: false, reason: 'bundle_id_mismatch' });
+  });
+
+  it('verifies a generated chain and rejects one that ends at another root', async () => {
+    const chain = generateAppleChain();
+    const jws = signJws(sampleSubscribedNotification(chain), chain);
+    expect((await verifyInWorker({ jws, root: chain.root.base64 })).jws).toMatchObject({
+      ok: true,
+      value: { environment: 'production' }
+    });
+    const other = generateAppleChain();
+    expect((await verifyInWorker({ jws, root: other.root.base64 })).jws).toEqual({ ok: false, reason: 'untrusted_root' });
+  });
+
+  it("rejects a notification whose chain does not end at the pinned Apple root through the provider's built-in verifier", async () => {
+    const { status, body } = await call('/billfn/webhooks/apple', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ signedPayload: APPLE_SAMPLE_TEST_NOTIFICATION })
+    });
+    expect(status).toBe(401);
+    expect(body.error?.code).toBe('BILLFN_WEBHOOK_SIGNATURE_INVALID');
+  });
+
+  it('signs App Store Server API tokens with the built-in signer', async () => {
+    const imported = await mf.dispatchFetch(`${ORIGIN}/fixture/apple-import`, { method: 'POST' });
+    expect(await imported.json()).toEqual({ imported: null });
+    const authorizations = (await (await mf.dispatchFetch(`${ORIGIN}/fixture/apple-authorizations`)).json()) as string[];
+    // StoreKit's not-found answer from production falls back to sandbox, so the import reads twice.
+    expect(authorizations).toHaveLength(2);
+    for (const authorization of authorizations) {
+      const [header, payload, signature] = authorization.replace(/^Bearer /, '').split('.');
+      const signed = Buffer.from(`${header}.${payload}`);
+      expect(verify('sha256', signed, { key: appleApiKey.publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))).toBe(true);
+      expect(JSON.parse(Buffer.from(header, 'base64url').toString())).toEqual({ alg: 'ES256', kid: 'SMOKEKEY01', typ: 'JWT' });
+      expect(JSON.parse(Buffer.from(payload, 'base64url').toString())).toMatchObject({
+        iss: 'smoke-issuer',
+        aud: 'appstoreconnect-v1',
+        bid: SMOKE_APPLE_BUNDLE_ID
+      });
+    }
   });
 });

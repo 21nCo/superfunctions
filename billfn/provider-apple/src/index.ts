@@ -17,6 +17,30 @@ import type {
   BillFnVerifyCheckoutInput
 } from '@billfn/core';
 import { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnError } from '@billfn/core';
+import { createAppStoreServerApiTokenSigner, type AppStoreServerApiKey } from './api-token-signer.js';
+import {
+  AppleSignedDataVerificationError,
+  createAppleSignedDataVerifier,
+  type AppleSignedDataVerifier
+} from './signed-data-verifier.js';
+
+export {
+  createAppStoreServerApiTokenSigner,
+  type AppStoreServerApiKey,
+  type AppStoreServerApiTokenSignerOptions
+} from './api-token-signer.js';
+export {
+  APPLE_SIGNING_LEAF_OID,
+  APPLE_WWDR_INTERMEDIATE_OID,
+  AppleSignedDataVerificationError,
+  createAppleSignedDataVerifier,
+  type AppleEnvironment,
+  type AppleSignedDataVerificationFailure,
+  type AppleSignedDataVerifier,
+  type AppleSignedDataVerifierOptions,
+  type AppleVerifiedSignedData
+} from './signed-data-verifier.js';
+export { APPLE_ROOT_CA_G3, APPLE_ROOT_CA_G3_SHA256 } from './apple-root-ca.js';
 
 export interface AppleNotificationVerifierContext {
   rawBody: string;
@@ -24,7 +48,8 @@ export interface AppleNotificationVerifierContext {
 }
 
 export interface AppleAdvancedCommerceConfig {
-  tokenProvider: () => Promise<string>;
+  /** Defaults to the provider's App Store Server API token provider. */
+  tokenProvider?: () => Promise<string>;
   baseUrl?: string;
   enabled?: boolean;
 }
@@ -32,9 +57,24 @@ export interface AppleAdvancedCommerceConfig {
 export interface AppleProviderConfig {
   fetch?: typeof fetch;
   environment?: 'production' | 'sandbox';
-  tokenProvider: () => Promise<string>;
+  /**
+   * The app's bundle ID. With it the built-in verifier checks notifications (x5c chain to the pinned Apple Root CA - G3,
+   * Apple's OIDs, ES256 signature, certificate validity, this bundle ID), and the built-in signer claims it.
+   */
+  bundleId?: string;
+  /** The in-app purchase key the built-in signer signs App Store Server API tokens with; requires bundleId. */
+  appStoreServerApiKey?: AppStoreServerApiKey;
+  /** Overrides the built-in signer. Either this or bundleId with appStoreServerApiKey is required. */
+  tokenProvider?: () => Promise<string>;
+  /** Overrides the built-in verifier; it returns the verified notification payload, or null to reject it. */
   notificationVerifier?: (context: AppleNotificationVerifierContext) => Promise<Record<string, unknown> | null>;
   advancedCommerce?: AppleAdvancedCommerceConfig;
+}
+
+/** The provider config with its token provider and notification verifier resolved to the host's or the built-in ones. */
+interface ResolvedAppleProviderConfig extends AppleProviderConfig {
+  tokenProvider: () => Promise<string>;
+  verifyNotification?: (context: AppleNotificationVerifierContext) => Promise<Record<string, unknown>>;
 }
 
 interface AppleTransactionExpectation {
@@ -45,7 +85,8 @@ interface AppleTransactionExpectation {
   appAccountToken: string | null;
 }
 
-export function createAppleProvider(config: AppleProviderConfig): BillFnProviderAdapter {
+export function createAppleProvider(providerConfig: AppleProviderConfig): BillFnProviderAdapter {
+  const config = resolveAppleProviderConfig(providerConfig);
   const fetchImpl = config.fetch ?? fetch;
 
   return {
@@ -60,7 +101,7 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
       changeSubscription: true,
       resumeSubscription: true,
       refundCharge: true,
-      notificationHistory: Boolean(config.notificationVerifier),
+      notificationHistory: Boolean(config.verifyNotification),
       importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
@@ -169,11 +210,12 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
           message: 'Apple cancellation requires a transaction reference'
         });
       }
-      if (!config.advancedCommerce?.enabled || !config.advancedCommerce.tokenProvider) {
+      if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple subscription management is handled by Apple-managed surfaces');
       }
       const response = await requestAdvancedCommerce(
         fetchImpl,
+        config.advancedCommerce.tokenProvider ?? config.tokenProvider,
         config.advancedCommerce,
         `/subscription/cancel/${transactionId}`,
         {
@@ -209,11 +251,12 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
           message: 'Apple refund requires a transaction reference'
         });
       }
-      if (!config.advancedCommerce?.enabled || !config.advancedCommerce.tokenProvider) {
+      if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple refunds require Advanced Commerce or Apple-managed support flows');
       }
       const response = await requestAdvancedCommerce(
         fetchImpl,
+        config.advancedCommerce.tokenProvider ?? config.tokenProvider,
         config.advancedCommerce,
         `/subscription/revoke/${transactionId}`,
         {
@@ -285,10 +328,10 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
       return [mapAppleNotificationEvent(decoded, signedPayload)];
     },
     async fetchNotificationHistory(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage> {
-      if (!config.notificationVerifier) {
+      if (!config.verifyNotification) {
         throw createBillFnError({
           code: 'BILLFN_FEATURE_UNAVAILABLE',
-          message: 'Apple notification history requires notificationVerifier'
+          message: 'Apple notification history requires bundleId or notificationVerifier'
         });
       }
       const response = await requestStoreKitWithFallback(
@@ -333,7 +376,7 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
 
 async function requestStoreKitWithFallback(
   fetchImpl: typeof fetch,
-  config: AppleProviderConfig,
+  config: ResolvedAppleProviderConfig,
   path: string,
   init: RequestInit = {}
 ) {
@@ -361,6 +404,7 @@ async function requestStoreKitWithFallback(
 
 async function requestAdvancedCommerce(
   fetchImpl: typeof fetch,
+  tokenProvider: () => Promise<string>,
   config: AppleAdvancedCommerceConfig,
   path: string,
   init: RequestInit
@@ -369,7 +413,7 @@ async function requestAdvancedCommerce(
   const response = await fetchImpl(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      authorization: `Bearer ${await config.tokenProvider()}`,
+      authorization: `Bearer ${await tokenProvider()}`,
       'content-type': 'application/json',
       ...(init.headers ?? {})
     }
@@ -499,20 +543,69 @@ function shouldFallbackToSandbox(error: unknown, environment: 'production' | 'sa
   }
 }
 
+function resolveAppleProviderConfig(config: AppleProviderConfig): ResolvedAppleProviderConfig {
+  const bundleId = config.bundleId === undefined ? undefined : requireBundleId(config.bundleId);
+  let tokenProvider = config.tokenProvider;
+  if (!tokenProvider && config.appStoreServerApiKey) {
+    if (!bundleId) {
+      throw new TypeError('The Apple provider signs App Store Server API tokens only with a bundleId');
+    }
+    tokenProvider = createAppStoreServerApiTokenSigner({ ...config.appStoreServerApiKey, bundleId });
+  }
+  if (!tokenProvider) {
+    throw new TypeError('The Apple provider requires tokenProvider, or bundleId with appStoreServerApiKey');
+  }
+  const hostVerifier = config.notificationVerifier;
+  let verifyNotification: ResolvedAppleProviderConfig['verifyNotification'];
+  if (hostVerifier) {
+    verifyNotification = async (context) => {
+      const verified = await hostVerifier(context);
+      if (!verified) {
+        throw notificationSignatureInvalid();
+      }
+      return verified;
+    };
+  } else if (bundleId) {
+    verifyNotification = createBuiltInNotificationVerifier(createAppleSignedDataVerifier({ bundleId }));
+  }
+  return { ...config, bundleId, tokenProvider, verifyNotification };
+}
+
+function requireBundleId(bundleId: unknown): string {
+  if (typeof bundleId !== 'string' || bundleId.trim().length === 0) {
+    throw new TypeError('The Apple provider bundleId must be a non-empty string');
+  }
+  return bundleId;
+}
+
+function createBuiltInNotificationVerifier(verifier: AppleSignedDataVerifier) {
+  return async (context: AppleNotificationVerifierContext) => {
+    try {
+      return (await verifier.verifyNotification(context.signedPayload)).payload;
+    } catch (error) {
+      if (error instanceof AppleSignedDataVerificationError) {
+        throw notificationSignatureInvalid(error.reason);
+      }
+      throw error;
+    }
+  };
+}
+
+function notificationSignatureInvalid(reason?: string) {
+  return createBillFnError({
+    code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID',
+    message: 'Apple notification signature verification failed',
+    ...(reason ? { details: { reason } } : {})
+  });
+}
+
 async function decodeNotificationPayload(
-  config: AppleProviderConfig,
+  config: ResolvedAppleProviderConfig,
   context: AppleNotificationVerifierContext
 ) {
-  if (config.notificationVerifier) {
-    const verified = await config.notificationVerifier(context);
-    if (!verified) {
-      throw createBillFnError({
-        code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID',
-        message: 'Apple notification signature verification failed'
-      });
-    }
+  if (config.verifyNotification) {
     return {
-      payload: verified,
+      payload: await config.verifyNotification(context),
       signatureVerified: true
     };
   }

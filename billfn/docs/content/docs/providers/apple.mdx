@@ -18,20 +18,23 @@ import { createAppleProvider } from "@billfn/provider-apple";
 
 const apple = createAppleProvider({
   environment: "sandbox",
-  tokenProvider: async () => {
-    return process.env.APPLE_STOREKIT_JWT!;
-  },
-  notificationVerifier: async ({ signedPayload }) => {
-    return verifyAppleSignedPayload(signedPayload);
+  bundleId: "com.example.app",
+  appStoreServerApiKey: {
+    issuerId: process.env.APPLE_ISSUER_ID!,
+    keyId: process.env.APPLE_KEY_ID!,
+    privateKey: process.env.APPLE_IN_APP_PURCHASE_KEY!, // the .p8 file's PEM
   },
   advancedCommerce: {
     enabled: true,
-    tokenProvider: async () => process.env.APPLE_ADVANCED_COMMERCE_JWT!,
   },
 });
 ```
 
-`tokenProvider` is required. `environment` defaults to `"production"`.
+With `bundleId` and `appStoreServerApiKey`, the adapter signs its own App Store Server API tokens (ES256, reused until shortly before they expire) and verifies App Store Server Notifications itself. Both run on WebCrypto, so they work on Workers. `environment` defaults to `"production"`.
+
+A host can still supply either function: `tokenProvider` replaces the built-in signer (it is required when `appStoreServerApiKey` is not set), and `notificationVerifier` replaces the built-in verifier. Advanced Commerce uses its own `tokenProvider` when given one and the adapter's otherwise.
+
+The verifier and signer are also exported for direct use: `createAppleSignedDataVerifier({ bundleId })` verifies notifications and signed transactions (for example StoreKit 2's `jwsRepresentation`), and `createAppStoreServerApiTokenSigner({ issuerId, keyId, privateKey, bundleId })` returns a token provider.
 
 ## Current Capabilities
 
@@ -88,4 +91,16 @@ The adapter decodes StoreKit JWT payloads and maps them into normalized BillFn b
 
 ## Notifications
 
-BillFn expects App Store Server Notifications v2 payloads with `signedPayload`. If you provide `notificationVerifier`, BillFn marks the resulting events as signature-verified before projecting entitlement state.
+BillFn expects App Store Server Notifications v2 payloads with `signedPayload`. The built-in verifier accepts a notification only when:
+
+- it is an ES256 JWS whose `x5c` chain is a leaf, an intermediate and Apple Root CA - G3, byte for byte the root bundled with the adapter and pinned by its SHA-256 (`63343abf…3e9179`);
+- the intermediate signed the leaf, the root signed the intermediate, and the intermediate is a certificate authority;
+- the leaf carries Apple's receipt signing OID (`1.2.840.113635.100.6.11.1`) and the intermediate Apple's WWDR OID (`1.2.840.113635.100.6.2.1`);
+- every certificate is valid at the time of verification and the leaf's key verifies the signature;
+- the payload names the configured `bundleId` and the `Production` or `Sandbox` environment. Both environments are accepted, and the verifier reports which one a payload came from.
+
+A notification carries its bundle ID and environment in `data`, in `summary` for a summary notification, in `appData` for a `RESCIND_CONSENT` notification, or in `unclaimInfo` for an `UNCLAIM_SEATS` notification, and the same bundle ID and environment rules apply to each. An `externalPurchaseToken` notification has no environment field: the verifier treats it as `Sandbox` (reported as `sandbox`) when its `externalPurchaseId` starts with `SANDBOX`, and as `Production` (`production`) otherwise.
+
+Certificate validity is checked against the current time, not the payload's `signedDate`. A notification that Apple retries, or that you read from notification history, after its leaf certificate has expired is rejected even though it was valid when Apple signed it.
+
+A rejected notification fails with `BILLFN_WEBHOOK_SIGNATURE_INVALID`, whose `details.reason` names the failed check. Without `bundleId` or a `notificationVerifier`, notifications cannot be verified and BillFn rejects them, and notification history is unavailable.
