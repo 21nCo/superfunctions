@@ -1,5 +1,5 @@
 import type { Adapter, WhereClause } from '@superfunctions/db';
-import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
+import { getStorageCapabilities, type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import {
   matchesContentType,
@@ -337,9 +337,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // A claim older than the completion timeout belongs to a completion that
   // crashed or stalled; another completion call may take the session over. Its
-  // keys and versionId are the session's own (FILE-16), so a stalled holder that
-  // resumes writes the same object and version, and its own final write, which
-  // matches on its claim, then fails.
+  // keys and versionId are the session's own (FILE-16), and a stalled holder
+  // that resumes checks its claim before each storage write and its commit, so
+  // it writes and commits nothing more; its final write, which matches on its
+  // claim, fails too.
   function isStaleClaim(session: UploadSession): boolean {
     const claimedAtMs = Date.parse((session.completionClaim ?? '').split(' ')[0]);
     return Number.isNaN(claimedAtMs) || Date.now() - claimedAtMs >= completionTimeoutMs;
@@ -430,6 +431,71 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     } catch {
       // The claim lapses after the completion timeout.
     }
+  }
+
+  // The checks a completion passes before it claims the session: every part
+  // recorded, and the quota still allowing the session's size.
+  async function admitCompletion(
+    session: UploadSession,
+    ctx: FileProviderContext,
+  ): Promise<{ parts: Array<{ partNumber: number; etag: string }> } | { error: Error }> {
+    const parts = await db.findMany<{ partNumber: number; etag: string }>({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      namespace,
+    });
+    if (parts.length !== session.totalParts) {
+      return { error: errors.uploadIncomplete() };
+    }
+    if (quota) {
+      const quotaResult = await quota.checkQuota({
+        principalId: ctx.principalId,
+        tenantId: ctx.tenantId,
+        requestedBytes: session.size,
+      });
+      if (!quotaResult.allowed) {
+        return { error: errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size) };
+      }
+    }
+    return { parts };
+  }
+
+  // Whether the session is still held by `claim`.
+  async function holdsClaim(uploadSessionId: string, claim: string): Promise<boolean> {
+    const holder = await readSession(uploadSessionId);
+    return holder?.status === 'completing' && holder.completionClaim === claim;
+  }
+
+  // Whether the session's own final object is already in storage at its full
+  // size: a completion that finalized storage and then failed or crashed before
+  // publishing left it (its multipart upload is consumed, or its proxy parts are
+  // deleted). The key is the session's own (FILE-16), so no other upload wrote it.
+  async function isStorageFinalized(session: UploadSession, target: StorageTargetName | undefined): Promise<boolean> {
+    if (!storage.statObject) return false;
+    try {
+      const stat = await storage.statObject({ key: session.storageKey, target });
+      return stat.size === session.size;
+    } catch {
+      return false;
+    }
+  }
+
+  // Whether every proxy part object of the session is still in storage. Without
+  // statObject this cannot be told, and stitching runs as before.
+  async function proxyPartsPresent(
+    session: UploadSession,
+    parts: Array<{ partNumber: number }>,
+    target: StorageTargetName | undefined,
+  ): Promise<boolean> {
+    if (!storage.statObject) return true;
+    for (const part of parts) {
+      try {
+        await storage.statObject({ key: proxyPartKey(session.storageKey, part.partNumber), target });
+      } catch {
+        return false;
+      }
+    }
+    return true;
   }
 
   // The result a completed session recorded.
@@ -1090,35 +1156,30 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
 
         let current: UploadSession | null;
-        if (
-          session.status === 'completing' &&
-          !isStaleClaim(session) &&
-          !(await isOwnVersionPublished(session))
-        ) {
+        // A session whose own version is already published only has to be
+        // marked completed: its parts and quota were admitted by the call that
+        // published it, and that call may be deleting its parts and recording
+        // its usage right now, so neither is checked again.
+        const versionPublished = session.status === 'completing' && (await isOwnVersionPublished(session));
+        if (session.status === 'completing' && !versionPublished && !isStaleClaim(session)) {
           if (Date.now() >= waitUntil) throw errors.uploadCompletionInProgress();
           await delay(COMPLETION_POLL_INTERVAL_MS);
           current = await readSession(uploadSessionId);
         } else {
-          parts = await db.findMany<{ partNumber: number; etag: string }>({
-            model: 'uploadParts',
-            where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-            namespace,
-          });
-
-          if (parts.length !== session.totalParts) {
-            throw errors.uploadIncomplete();
-          }
-
-          // Re-check quota
-          if (quota) {
-            const quotaResult = await quota.checkQuota({
-              principalId: ctx.principalId,
-              tenantId: ctx.tenantId,
-              requestedBytes: session.size,
-            });
-            if (!quotaResult.allowed) {
-              throw errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size);
+          parts = [];
+          if (!versionPublished) {
+            const admission = await admitCompletion(session, ctx);
+            if ('error' in admission) {
+              // Checked against a session another call may have moved on
+              // meanwhile (completed it, or published it): decide again from
+              // the session as it is now.
+              const fresh = await readSession(uploadSessionId);
+              if (!fresh) throw errors.sessionNotFound();
+              if (fresh.status === session.status && fresh.completionClaim === session.completionClaim) throw admission.error;
+              session = fresh;
+              continue;
             }
+            parts = admission.parts;
           }
 
           const claimed = await claimCompletion(session);
@@ -1133,20 +1194,29 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       // A failure before the session's version is published returns the
-      // session to the status it was claimed from, so it can be retried or
-      // aborted at once. Once published, the claim is kept: the next completion
-      // call takes it over and only marks the session completed, and no abort
-      // can end it meanwhile. A claim taken over from a stale one is kept too,
-      // since the earlier holder may have published; it lapses after the timeout.
+      // session to the status it was claimed from ('in_progress' for a claim
+      // taken over from a stale one, whose parts were all recorded), so it can
+      // be retried or aborted at once. Once published, the claim is kept: the
+      // next completion call takes it over and only marks the session
+      // completed, and no abort can end it meanwhile. A call that failed after
+      // its claim was taken over and the session completed returns the
+      // recorded result instead of its own failure.
       const claimedSession = session;
       let published = false;
       try {
         return await completeClaimedSession(session, claim, parts, () => { published = true; });
       } catch (err) {
-        if (!published && claimedSession.status !== 'completing') {
+        const now = await readSession(uploadSessionId).catch(() => undefined);
+        if (now?.status === 'completed' && now.completionClaim !== claim) {
+          return recordedResult(now);
+        }
+        if (!published && now?.status === 'completing' && now.completionClaim === claim) {
           // A version write that failed may have landed anyway.
           const landed = await isOwnVersionPublished(claimedSession).catch(() => true);
-          if (!landed) await releaseClaim(uploadSessionId, claim, claimedSession.status);
+          if (!landed) {
+            const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
+            await releaseClaim(uploadSessionId, claim, releasedStatus);
+          }
         }
         throw err;
       }
@@ -1222,7 +1292,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           await runSerialized(fileKey, async () => {}, { ...fileKeyOptions(session), evictableAt: undefined });
         }
 
-        // Complete multipart upload
+        // Finalize storage. Each storage write first checks that this call still
+        // holds its claim: a call that stalled past the completion timeout and
+        // was taken over writes nothing more, so it cannot rewrite or truncate
+        // the object the call that took over published. A call that finds
+        // storage already finalized by an earlier holder of the session (its
+        // multipart upload consumed, or its proxy parts stitched and deleted)
+        // goes on from that object.
         if (publishedVersion) {
           // Storage completion already succeeded for this version.
         } else if (
@@ -1231,12 +1307,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           storage.completeMultipartUpload &&
           session.storageUploadId
         ) {
-          await storage.completeMultipartUpload({
-            key: session.storageKey,
-            target: policyStorageTarget,
-            uploadId: session.storageUploadId,
-            parts: parts.sort((a, b) => a.partNumber - b.partNumber).map(p => ({ partNumber: p.partNumber, etag: p.etag })),
-          });
+          if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+          try {
+            await storage.completeMultipartUpload({
+              key: session.storageKey,
+              target: policyStorageTarget,
+              uploadId: session.storageUploadId,
+              parts: parts.sort((a, b) => a.partNumber - b.partNumber).map(p => ({ partNumber: p.partNumber, etag: p.etag })),
+            });
+          } catch (err) {
+            // S3 and R2 answer NoSuchUpload for an upload already completed.
+            if (!(await isStorageFinalized(session, policyStorageTarget))) throw err;
+          }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts
           if (!storage.openUploadStream || !storage.openDownloadStream) {
@@ -1244,41 +1326,54 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
 
           const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
-          const writeStream = await storage.openUploadStream({ 
-              key: session.storageKey,
-              target: policyStorageTarget,
-              contentType: session.mimeType
-          });
+          if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget))) {
+            // Never open (and so truncate) the final object without every part.
+            if (!(await isStorageFinalized(session, policyStorageTarget))) {
+              throw new Error(`Proxy part objects of upload session ${uploadSessionId} are missing`);
+            }
+          } else {
+            if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+            const writeStream = await storage.openUploadStream({
+                key: session.storageKey,
+                target: policyStorageTarget,
+                contentType: session.mimeType
+            });
 
-          const writer = writeStream.getWriter();
-          try {
-              for (const part of sortedParts) {
-                  const partKey = proxyPartKey(session.storageKey, part.partNumber);
-                  const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
-                  const reader = readStream.getReader();
+            const writer = writeStream.getWriter();
+            try {
+                for (const part of sortedParts) {
+                    const partKey = proxyPartKey(session.storageKey, part.partNumber);
+                    const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
+                    const reader = readStream.getReader();
 
-                  try {
-                      while (true) {
-                          const { done, value } = await reader.read();
-                          if (done) break;
-                          await writer.write(value);
-                      }
-                  } finally {
-                      reader.releaseLock();
-                  }
-              }
-          } finally {
-              await writer.close();
-          }
+                    try {
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            await writer.write(value);
+                        }
+                    } finally {
+                        reader.releaseLock();
+                    }
+                }
+            } catch (err) {
+                // A failed stitch never commits the object it was writing.
+                await writer.abort(err).catch(() => {});
+                throw err;
+            }
+            await writer.close();
 
-          // Cleanup parts
-          for (const part of sortedParts) {
-               const partKey = proxyPartKey(session.storageKey, part.partNumber);
-               try {
-                   await storage.deleteObject({ key: partKey, target: policyStorageTarget });
-               } catch {
-                   // ignore
-               }
+            // Cleanup parts, unless the session was taken over meanwhile: the
+            // call holding it now may be stitching from them.
+            if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+            for (const part of sortedParts) {
+                 const partKey = proxyPartKey(session.storageKey, part.partNumber);
+                 try {
+                     await storage.deleteObject({ key: partKey, target: policyStorageTarget });
+                 } catch {
+                     // ignore
+                 }
+            }
           }
         }
 
@@ -1301,7 +1396,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // Check for deduplication
         let finalStorageKey = publishedVersion?.storageKey || session.storageKey;
         let checksumSha256Base64: string | null = null;
-        let isDeduplicated = false;
 
         if (!publishedVersion && dedup && dedup.isEnabled()) {
           const dedupResult = await dedup.computeAndCheckDuplicate(
@@ -1314,18 +1408,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           checksumSha256Base64 = dedupResult.checksumSha256Base64;
 
           if (dedupResult.isDuplicate && dedupResult.existingStorageKey) {
-            // Reuse existing storage key (reference to existing object)
+            // Reuse existing storage key (reference to existing object). The
+            // session's own object is deleted once the session is completed
+            // (below), so a call that takes the session over after this one
+            // stalled or crashed still finds it.
             finalStorageKey = dedupResult.existingStorageKey;
-            isDeduplicated = true;
-
-            // Delete the newly uploaded file since we're reusing an existing one
-            if (storage.deleteObject && finalStorageKey !== session.storageKey) {
-              try {
-                await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
-              } catch {
-                // Ignore deletion errors - storage cleanup is non-critical
-              }
-            }
           }
         }
 
@@ -1435,9 +1522,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
 
         if (commitOutcome === 'refused') {
-          // Dedup's own delete of the session's object ignores failures, and
-          // stitching's proxy part deletes too; these delete them again and check
-          // the result.
+          // Stitching's proxy part deletes ignore failures; these delete them
+          // again, with the session's own object, and check the result.
           await deleteRefusedUploads(session);
           throw errors.forbidden({ fileId, operation: 'replace' });
         }
@@ -1464,6 +1550,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
           namespace,
         });
+
+        // The published version reuses an existing object (dedup): delete the
+        // session's own copy, which nothing references.
+        if (storage.deleteObject && finalStorageKey !== session.storageKey) {
+          try {
+            await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
+          } catch {
+            // Ignore deletion errors - storage cleanup is non-critical
+          }
+        }
 
         // Record quota usage
         if (quota) {
