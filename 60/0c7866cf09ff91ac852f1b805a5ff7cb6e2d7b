@@ -1,0 +1,21 @@
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_d01bef198d1245::t_df223196d7818f 296-305
+authfn/oauth-provider/src/runtime.ts
+  s_d01bef198d1245::t_eb422d43ae1621 179-187,192,256-258,260
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "600c7866cf09ff91ac852f1b805a5ff7cb6e2d7b",
+  "prompts": {},
+  "sessions": {
+    "s_d01bef198d1245": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d01bef198d1245",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

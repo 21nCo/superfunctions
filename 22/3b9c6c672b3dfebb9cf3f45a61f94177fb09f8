@@ -1,0 +1,23 @@
+billfn/docs/content/docs/providers/apple.mdx
+  s_f180f9a2ac11e4::t_bea5c42d68d3e2 102-105
+billfn/provider-apple/src/__tests__/signed-data-verifier.test.ts
+  s_f180f9a2ac11e4::t_d04188dffc1651 128-142,217-231
+billfn/provider-apple/src/signed-data-verifier.ts
+  s_f180f9a2ac11e4::t_42327ab1e843ad 107,123-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "223b9c6c672b3dfebb9cf3f45a61f94177fb09f8",
+  "prompts": {},
+  "sessions": {
+    "s_f180f9a2ac11e4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e59d8d2d-2ce1-459b-9c27-36c81f6d1a74",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
