@@ -1,0 +1,35 @@
+billfn/swift-bridge/src/__tests__/storekit.test.ts
+  s_19abec75182420::t_230a3202c61496 21,166-189
+billfn/swift-bridge/src/nativeBackedClient.ts
+  s_19abec75182420::t_123c653fcd7381 61-93,100-101,108
+billfn/swift/README.md
+  s_19abec75182420::t_03b241145f834f 53-57,72-73,86-89
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_19abec75182420::t_2e47fc537f9936 209-217,222,268,320-325,327,330-331,336-337,340-347,370,392,399,411
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_19abec75182420::t_5c88f2bf4305dc 93-94,198-214,317,361,460-463,509-510,553-556,604,628-630
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_19abec75182420::t_24cf98d6677a17 4-10,14-21
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitAttemptTests.swift
+  s_19abec75182420::t_e485373d2e9329 5-6,11-12,15-16,19-21,24,26-55
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_19abec75182420::t_03d0f7168302c8 57,87
+billfn/swift/Tests/BillFnWebViewBridgeHostTests/BillFnStoreKitBridgeTests.swift
+  s_19abec75182420::t_2a1ee560965af3 7,55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc45293d38c43184abfd3455d98a863fa2a409bb",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
