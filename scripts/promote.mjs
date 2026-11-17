@@ -604,13 +604,13 @@ const IMAGE_MAGIC = [
   [0, Buffer.from("RIFF"), 8, Buffer.from("WEBP")],
 ];
 const PNM_SPACE = new Set([0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0xa0]);
-// Simple patterns, each linear in the text: none starts with whitespace that could run across lines.
+// Simple patterns, each linear in the text: leading whitespace never runs across lines.
 const IMAGE_TEXT = [
   /<(?:[\w.-]+:)?svg[\s>/]/i,
   /http:\/\/www\.w3\.org\/2000\/svg/i,
   /\/\*\s*XPM\s*\*\//i,
-  /^[ \t]*#[ \t]*define[ \t]+\S*_width\s/im,
-  /^[ \t]*%!PS/im,
+  /^[ \t\v\f]*#[ \t\v\f]*define[ \t\v\f]+\S*_width\s/im,
+  /^[ \t\v\f]*%!PS/im,
   /%PDF-/i,
   /data:image\//i,
   /"image\/[\w.+-]+"\s*:/i,
@@ -693,8 +693,20 @@ function currentCheckout(root) {
  */
 function claimBranch(root, owned, start) {
   const created = git(root, ["update-ref", "--create-reflog", "-m", "promote: create", owned.ref, start, ""], { allowFailure: true });
-  if (created.status !== 0) throw new PromoteError("branch-exists", `branch ${owned.branch} was created by something else while promotion ran; it was left as it is`);
-  owned.oid = start;
+  if (created.status === 0) {
+    owned.oid = start;
+    return;
+  }
+  if (gitOk(root, ["rev-parse", "--verify", "--quiet", owned.ref])) {
+    throw new PromoteError("branch-exists", `branch ${owned.branch} was created by something else while promotion ran; it was left as it is`);
+  }
+  throw new PromoteError("git-failed", `cannot create branch ${owned.branch}: ${created.stderr.trim()}`);
+}
+
+/** Refuses to go on with a promotion branch that no longer points where promotion left it: something else moved it. */
+function requireOwned(root, owned) {
+  const now = git(root, ["rev-parse", "--verify", "--quiet", owned.ref], { allowFailure: true }).stdout.trim();
+  if (now !== owned.oid) throw new PromoteError("git-failed", `branch ${owned.branch} was moved by something else while promotion ran; it was left as it is`);
 }
 
 /** Adopts the commit a promotion step just made on the owned branch, but only one made on top of the owned commit. */
@@ -705,12 +717,13 @@ function advanceBranch(worktree, owned) {
 
 /**
  * After a failed attempt, deletes the promotion branch only if promotion created it and it still points where
- * promotion left it (update-ref -d with that old value), and never while it is checked out here. A branch something
- * else created, moved or recreated survives with its reflog.
+ * promotion left it (update-ref -d with that old value), and never while any worktree has it checked out (as
+ * git branch -D refuses). A branch something else created, moved, recreated or checked out survives with its reflog.
  */
 function discardBranch(root, owned) {
   if (owned.oid === null) return;
-  if (git(root, ["symbolic-ref", "-q", "HEAD"], { allowFailure: true }).stdout.trim() === owned.ref) return;
+  const checkedOut = git(root, ["worktree", "list", "--porcelain", "-z"]).split("\0").includes(`branch ${owned.ref}`);
+  if (checkedOut) return;
   git(root, ["update-ref", "-d", owned.ref, owned.oid], { allowFailure: true });
 }
 
@@ -940,6 +953,7 @@ function buildBranch(root, { start, owned, imported, label, paths, pin, reconcil
     const loaded = refusePolicyDifference(root, worktree);
     claimBranch(root, owned, start);
     git(worktree, ["switch", "-q", owned.branch]);
+    requireOwned(root, owned);
     refusePolicyDifference(root, worktree, loaded);
     git(worktree, ["reset", "-q", "--hard"]);
     const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
@@ -1043,6 +1057,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       const { conflicts, worktree } = buildBranch(root, { start: start.sha, owned, imported, label, paths, pin: pinned.sha, reconcile, edits });
       const result = promotionResult({ fn, branch, paths, pinned, commits, history, plan, changed, conflicts, flip, worktree });
       if (conflicts.length > 0) return result;
+      requireOwned(root, owned);
       if (!reconcile) verifyImported(root, { paths, pinned, branch });
       refuseMovedCheckout(root, start);
       switchToBranch(root, branch, start);

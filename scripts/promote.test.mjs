@@ -935,6 +935,24 @@ historyTest("a promotion branch created or moved by something else while promoti
   assert.equal(git(dev, "rev-parse", "HEAD"), head);
   assert.equal(git(dev, "status", "--porcelain"), "");
   assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+  // Moved after the ownership commit: promotion neither checks it out nor reports success, and leaves it alone
+  // (also with --reconcile, which skips the content check).
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  useHook(dev, "post-commit", `git update-ref ${ref} ${other}`);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", reconcile: true }), "git-failed");
+  assert.equal(git(dev, "rev-parse", ref), other);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  // Checked out in another worktree before the cleanup: the branch is kept, as git branch -D would.
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  const elsewhere = path.join(scratch, "branch-race-elsewhere");
+  useHook(dev, "pre-merge-commit", `unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\ngit -C '${dev}' worktree add -q -f '${elsewhere}' promote/widgetfn\nexit 1`);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(elsewhere, "branch", "--show-current"), "promote/widgetfn");
+  assert.equal(git(elsewhere, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  git(dev, "worktree", "remove", "--force", elsewhere);
   // A branch promotion created and still owns is removed after a rejecting hook; a retry then succeeds.
   git(dev, "branch", "-q", "-D", "promote/widgetfn");
   useHook(dev, "pre-merge-commit", "exit 1");
@@ -960,6 +978,8 @@ test("image signatures and text-stored image formats are recognised; long whites
     ["SVG", Buffer.from('<x:svg xmlns:x="http://www.w3.org/2000/svg"/>')],
     ["XPM", Buffer.from("/* XPM */\n")],
     ["XBM", Buffer.from("/* c */\n  #  define a_width 8\n")],
+    ["XBM with a form feed", Buffer.from("#\fdefine a_width 8\n")],
+    ["XBM with a vertical tab", Buffer.from("\v#define\va_width 8\n")],
     ["PostScript", Buffer.from("\n %!PS-Adobe-3.0\n")],
     ["PDF", Buffer.from("%PDF-1.4\n")],
     ["data URI", Buffer.from("x data:image/png;base64,AA")],
