@@ -7,8 +7,17 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
-import { PROCESSING_RUN_KIND } from '../processing/service.js';
+import { artifactSourceOf } from '../processing/client-artifacts.js';
+import {
+  DISPLACED_OBJECT_KIND,
+  PROCESSING_RUN_KIND,
+  UPLOAD_INTENT_KIND,
+  recordedStorageTarget,
+} from '../processing/service.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
+
+/** Kinds of the rows recording an artifact object no artifact row names (see the processing service). */
+const RECORD_KINDS = [DISPLACED_OBJECT_KIND, UPLOAD_INTENT_KIND];
 
 export interface FileRecord {
   fileId: string;
@@ -44,6 +53,7 @@ interface FileArtifactRecord {
   mimeType: string;
   size?: number | null;
   createdAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface UploadSessionRecord {
@@ -779,10 +789,22 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // A client object is deleted where its row recorded storing it; a
+      // server artifact row's object is where reads find it, by policy. A
+      // server object no row names any more is never deleted here, and its
+      // record stays: its key is a processor's, which another file may publish
+      // again between any reference check and a delete, so reclaiming it needs
+      // coordination with publishers that file deletion does not have.
+      const displacedServerObject = (artifact: FileArtifactRecord) =>
+        artifact.kind === DISPLACED_OBJECT_KIND && artifactSourceOf(artifact) !== 'client';
+      const refOf = (artifact: FileArtifactRecord) => storageRef(
+        (artifactSourceOf(artifact) === 'client' ? recordedStorageTarget(artifact) : undefined) ?? artifactStorageTarget,
+        artifact.storageKey,
+      );
       const artifactStorageRefs = new Set<string>();
       for (const artifact of artifacts) {
-        if (artifact.kind !== PROCESSING_RUN_KIND) {
-          artifactStorageRefs.add(storageRef(artifactStorageTarget, artifact.storageKey));
+        if (artifact.kind !== PROCESSING_RUN_KIND && !displacedServerObject(artifact)) {
+          artifactStorageRefs.add(refOf(artifact));
         }
       }
 
@@ -792,12 +814,30 @@ export function createFileService(config: FileServiceConfig) {
         { fileId },
       );
 
+      // A client object's key is its upload's alone, so the record of one
+      // stays until `cleanupOrphanedArtifacts` confirms its delete, whatever
+      // happens to the deletes below or to a concurrent upload's: each client
+      // artifact row becomes such a record, and upload and displaced-object
+      // records stay.
+      const clientRowIds = artifacts
+        .filter((artifact) => artifactSourceOf(artifact) === 'client' && !RECORD_KINDS.includes(artifact.kind))
+        .map((artifact) => artifact.artifactId);
+      if (clientRowIds.length > 0) {
+        await db.updateMany({
+          model: 'fileArtifacts',
+          where: [{ field: 'artifactId', operator: 'in', value: clientRowIds }],
+          data: { kind: DISPLACED_OBJECT_KIND },
+          namespace,
+        });
+      }
       await db.deleteMany({
         model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'not_in', value: RECORD_KINDS },
+        ],
         namespace,
       });
-
       await db.deleteMany({
         model: 'uploadSessions',
         where: openSessionsWhere,

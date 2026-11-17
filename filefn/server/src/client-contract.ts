@@ -354,6 +354,34 @@ export const fileFnClientContract = {
         },
       }),
     },
+    '/{fileId}/versions/{versionId}/artifacts/{kind}': {
+      put: operation('Attach a client-supplied artifact', {
+        tags: ['artifacts'],
+        parameters: [
+          ref('#/components/parameters/FileID'),
+          ref('#/components/parameters/VersionID'),
+          ref('#/components/parameters/ArtifactKind'),
+          queryParameter(
+            'durationMs',
+            { type: 'integer', minimum: 0, maximum: 86400000 },
+            'Time the client spent producing the artifact, in milliseconds',
+          ),
+        ],
+        includeAuth: true,
+        requestBody: {
+          required: true,
+          content: {
+            'image/webp': { schema: { type: 'string', contentMediaType: 'image/webp' } },
+            'image/png': { schema: { type: 'string', contentMediaType: 'image/png' } },
+            'image/jpeg': { schema: { type: 'string', contentMediaType: 'image/jpeg' } },
+          },
+        },
+        responses: {
+          '200': successResponse('#/components/schemas/ArtifactEnvelope'),
+          default: errorResponse(),
+        },
+      }),
+    },
     '/policies': {
       get: operation('List policies', {
         tags: ['policies'],
@@ -524,6 +552,13 @@ export const fileFnClientContract = {
       UploadSessionID: pathParameter('uploadSessionId', 'Opaque FileFn upload-session identifier.'),
       PermissionID: pathParameter('permissionId', 'Opaque FileFn permission grant identifier.'),
       ArtifactID: pathParameter('artifactId', 'Opaque FileFn artifact identifier.'),
+      ArtifactKind: {
+        name: 'kind',
+        in: 'path',
+        required: true,
+        description: 'Client-supplied artifact kind.',
+        schema: { type: 'string', enum: ['thumbnail-small', 'thumbnail-medium', 'thumbnail-large', 'converted'] },
+      },
       Token: pathParameter('token', 'Opaque FileFn share-link token.'),
       PartNumber: {
         name: 'partNumber',
@@ -803,9 +838,18 @@ export const fileFnClientContract = {
           kind: { type: 'string' },
           mimeType: { type: 'string' },
           size: { type: 'integer' },
+          source: { type: 'string', enum: ['client', 'server'] },
+          processingDurationMs: { type: 'integer' },
           createdAt: { type: 'string' },
         },
         required: ['artifactId', 'kind', 'mimeType', 'size', 'createdAt'],
+      },
+      ArtifactEnvelope: {
+        type: 'object',
+        properties: {
+          artifact: ref('#/components/schemas/ArtifactDescriptor'),
+        },
+        required: ['artifact'],
       },
       ArtifactPage: {
         type: 'object',
@@ -935,6 +979,7 @@ export const fileFnClientContract = {
           size: { type: 'integer' },
           fileName: { type: 'string' },
           processors: { type: 'array', items: { type: 'string' } },
+          force: { type: 'boolean' },
         },
         required: ['storageKey', 'mimeType', 'size', 'fileName'],
       },

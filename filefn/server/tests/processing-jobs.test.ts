@@ -311,6 +311,7 @@ describe('processing jobs', () => {
     expect(artifacts[0].metadata).toEqual({
       source: 'uppercase',
       processing: {
+        source: 'server',
         processor: 'uppercase',
         durationMs: expect.any(Number),
         idempotencyKey: queue.jobs[0].idempotencyKey,

@@ -10,6 +10,7 @@ function createFakeDbAdapter() {
     create: vi.fn().mockResolvedValue({ artifactId: 'art_1' }),
     findOne: vi.fn().mockResolvedValue(null),
     update: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue(1),
     findMany: vi.fn().mockResolvedValue([]),
   } as any;
 }
@@ -208,7 +209,7 @@ describe('ProcessingService', () => {
     await service.runProcessing(input, ctx);
 
     expect(db.create).toHaveBeenCalled();
-    expect(db.update).not.toHaveBeenCalled();
+    expect(db.updateMany).not.toHaveBeenCalled();
   });
 
   it('should update artifact if exists (idempotency)', async () => {
@@ -222,12 +223,19 @@ describe('ProcessingService', () => {
     };
     const ctx = { requestId: 'req1' };
 
-    db.findOne.mockResolvedValue({ artifactId: 'art_existing', kind: 'thumbnail-small' }); // Found
+    // Found, naming the object this processor writes again.
+    db.findOne.mockResolvedValue({ artifactId: 'art_existing', kind: 'thumbnail-small', storageKey: 'thumb/key' });
 
     await service.runProcessing(input, ctx);
 
     expect(db.create).not.toHaveBeenCalled();
-    expect(db.update).toHaveBeenCalled();
+    // Conditional on the row still naming the object it named when read.
+    expect(db.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: [
+        { field: 'artifactId', operator: 'eq', value: 'art_existing' },
+        { field: 'storageKey', operator: 'eq', value: 'thumb/key' },
+      ],
+    }));
   });
 
   it('should propagate request IDs in processing completion events', async () => {
@@ -365,6 +373,7 @@ describe('ProcessingService', () => {
     expect(artifacts[0].kind).toBe('thumbnail-small');
     expect(artifacts[0].metadata).toEqual({
       processing: {
+        source: 'server',
         processor: 'thumbnail',
         durationMs: expect.any(Number),
         idempotencyKey: `processing:${uploadResult.fileId}:${uploadResult.versionId}:thumbnail`,

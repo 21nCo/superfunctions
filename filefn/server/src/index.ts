@@ -99,11 +99,17 @@ export interface FileFnServices {
     | 'getArtifactDownloadUrlForFile'
     | 'getArtifactDownloadStreamForFile'
     | 'getReadableVersionForFile'
+    | 'attachClientArtifact'
   > & {
+    /**
+     * Enqueues or runs processing of a file version. `force` replaces
+     * client-supplied artifacts too and needs write access to the file.
+     */
     triggerProcessingForFile(
       fileId: string,
       ctx: FileProviderContext,
       versionId?: string,
+      options?: { force?: boolean },
     ): ReturnType<ProcessingService['triggerProcessing']>;
   };
   policies: PolicyRegistryWithDefine;
@@ -121,6 +127,12 @@ export interface FileFn extends FileProvider {
    * (for example a Workers cron trigger); FileFn does not run it on its own.
    */
   cleanupExpiredSessions(): ReturnType<UploadSessionService['cleanupExpiredSessions']>;
+  /**
+   * Deletes artifact objects left recorded for versions that no longer exist,
+   * such as a client upload that finished after its file was deleted. Call it
+   * from a scheduled job; FileFn does not run it on its own.
+   */
+  cleanupOrphanedArtifacts(): ReturnType<ProcessingService['cleanupOrphanedArtifacts']>;
 }
 
 function hasConfiguredRouteRateLimits(limits?: FileFnRouteRateLimits): boolean {
@@ -238,6 +250,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     namespace,
     enabled: processingConfig?.enabled ?? false,
     background,
+    writeChecker: fileService,
   });
 
   const uploadService = createUploadSessionService({
@@ -385,9 +398,17 @@ export function createFileFn(config: FileFnConfig): FileFn {
         getArtifactDownloadUrlForFile: processingService.getArtifactDownloadUrlForFile.bind(processingService),
         getArtifactDownloadStreamForFile: processingService.getArtifactDownloadStreamForFile.bind(processingService),
         getReadableVersionForFile: processingService.getReadableVersionForFile.bind(processingService),
-        async triggerProcessingForFile(fileId, ctx, versionId) {
-          const file = await fileService.getFile(fileId, ctx);
-          const version = await fileService.getVersion(fileId, versionId ?? file.currentVersionId, ctx);
+        attachClientArtifact: processingService.attachClientArtifact.bind(processingService),
+        async triggerProcessingForFile(fileId, ctx, versionId, options) {
+          const force = options?.force === true;
+          // Forcing replaces client-supplied artifacts: it needs write access,
+          // which the configured write check alone decides.
+          const { file, version } = force
+            ? await processingService.getWritableVersionForFile(fileId, ctx, versionId)
+            : await (async () => {
+              const readable = await fileService.getFile(fileId, ctx);
+              return { file: readable, version: await fileService.getVersion(fileId, versionId ?? readable.currentVersionId, ctx) };
+            })();
           return processingService.triggerProcessing({
             fileId: file.fileId,
             versionId: version.versionId,
@@ -396,6 +417,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
             size: version.size,
             fileName: file.name,
             tenantId: file.tenantId ?? ctx.tenantId,
+            force,
           }, ctx);
         },
       },
@@ -412,6 +434,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
 
     cleanupExpiredSessions() {
       return uploadService.cleanupExpiredSessions();
+    },
+
+    cleanupOrphanedArtifacts() {
+      return processingService.cleanupOrphanedArtifacts();
     },
 
     // FileProvider implementation
@@ -524,6 +550,7 @@ export type { Logger, LogContext, LoggerOptions } from './observability/logger.j
 export { createProcessingService, PROCESSING_QUEUE_NAME, PROCESSING_RUN_KIND } from './processing/service.js';
 export type {
   ArtifactProcessingMetadata,
+  ClientArtifactUpload,
   ProcessingJob,
   ProcessingJobDelivery,
   ProcessingJobOutcome,
@@ -538,6 +565,18 @@ export type {
   FlowFnQueue,
 } from './processing/service.js';
 export { createProcessingRoutes } from './processing/routes.js';
+export {
+  CLIENT_ARTIFACT_KINDS,
+  CLIENT_CONVERTED_KIND,
+  CLIENT_THUMBNAIL_KINDS,
+  CLIENT_THUMBNAIL_MAX_BYTES,
+  clientArtifactRule,
+} from './processing/client-artifacts.js';
+export type {
+  ArtifactSource,
+  ClientArtifactProcessingMetadata,
+  ClientArtifactRule,
+} from './processing/client-artifacts.js';
 export { createProcessingJobHandler } from './processing/job-handler.js';
 export type {
   ProcessingJobDeliveryInfo,

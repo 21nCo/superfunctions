@@ -1,6 +1,11 @@
 import type { Adapter } from '@superfunctions/db';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from './policies.js';
-import { PROCESSING_RUN_KIND } from './processing/service.js';
+import { DISPLACED_OBJECT_KIND, PROCESSING_RUN_KIND, UPLOAD_INTENT_KIND, recordedStorageTarget } from './processing/service.js';
+
+/** Read at call time: this module and the processing service import each other. */
+function referencesNothing(kind: string): boolean {
+  return kind === PROCESSING_RUN_KIND || kind === DISPLACED_OBJECT_KIND || kind === UPLOAD_INTENT_KIND;
+}
 
 /**
  * One stored object: the same key in two storage targets is two objects, so
@@ -23,9 +28,12 @@ export interface StorageReferenceLookup {
 
 /**
  * Returns the refs among `candidates` that a `fileVersions` or `fileArtifacts`
- * row still references; a processing run row stores no object and references
- * nothing. Each row's target comes from its file's policy: the storage target
- * for a version, the artifact storage target for an artifact.
+ * row still references; a processing run row stores no object, and a record of
+ * an object no row names (displaced, or an upload's own) is not read from, so
+ * neither references anything. Each row's target comes from its file's policy: the storage target
+ * for a version, the artifact storage target for an artifact. An artifact row
+ * that recorded another target references the object there too, since the
+ * policy may have changed since it was stored.
  * Rows of the `exclude` file are ignored; with a `versionId`, only that
  * version's rows are.
  */
@@ -67,18 +75,22 @@ export async function findReferencedStorageRefs(
     }
   }
 
-  const allArtifacts = await db.findMany<{ fileId: string; versionId: string; kind: string; storageKey: string }>({
+  const allArtifacts = await db.findMany<{
+    fileId: string; versionId: string; kind: string; storageKey: string; metadata?: Record<string, unknown>;
+  }>({
     model: 'fileArtifacts',
     where: [],
-    select: ['fileId', 'versionId', 'kind', 'storageKey'],
+    select: ['fileId', 'versionId', 'kind', 'storageKey', 'metadata'],
     namespace,
   });
   for (const artifact of allArtifacts) {
-    // A processing run row stores no object; its key is a placeholder.
-    if (artifact.kind === PROCESSING_RUN_KIND) continue;
-    const ref = storageRef(resolveArtifactStorageTarget(policyFor(artifact.fileId)), artifact.storageKey);
-    if (!isExcluded(artifact) && candidates.has(ref)) {
-      referenced.add(ref);
+    if (referencesNothing(artifact.kind) || isExcluded(artifact)) continue;
+    const targets = [resolveArtifactStorageTarget(policyFor(artifact.fileId)), recordedStorageTarget(artifact)];
+    for (const target of targets) {
+      const ref = target === undefined ? '' : storageRef(target, artifact.storageKey);
+      if (candidates.has(ref)) {
+        referenced.add(ref);
+      }
     }
   }
 

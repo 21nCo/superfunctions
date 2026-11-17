@@ -1,5 +1,6 @@
 import type {
   ArtifactDescriptor,
+  ClientArtifactKind,
   RenderDescriptor,
   FileFnClientConfig,
   InitUploadResponse,
@@ -79,6 +80,18 @@ export interface HttpClient {
     options?: { versionId?: string },
     signal?: AbortSignal,
   ): Promise<{ url: string }>;
+
+  uploadArtifact(
+    params: {
+      fileId: string;
+      versionId: string;
+      kind: ClientArtifactKind;
+      data: Blob | Uint8Array;
+      mimeType: string;
+      durationMs?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<ArtifactDescriptor>;
 
   downloadArtifact(
     fileId: string,
@@ -252,6 +265,16 @@ function createPartUrlResolver(
   };
 }
 
+/** A request body sent as is (artifact bytes) instead of as JSON. */
+class RawBody {
+  readonly data: Blob;
+
+  constructor(data: Blob | Uint8Array) {
+    // A Blob is resent unchanged by each retry and is a body every fetch accepts.
+    this.data = data instanceof Uint8Array ? new Blob([data as BlobPart]) : data;
+  }
+}
+
 export function createHttpClient(config: FileFnClientConfig): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -310,7 +333,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   ): Promise<T> {
     return withRetry(
       async () => {
-        const hasJsonBody = body !== undefined;
+        const raw = body instanceof RawBody;
+        const hasJsonBody = body !== undefined && !raw;
         const headers = mergeHeaders(
           await readAuthHeaders(),
           hasJsonBody ? { "Content-Type": "application/json" } : undefined,
@@ -319,7 +343,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
-          body: body ? JSON.stringify(body) : undefined,
+          body: raw ? body.data : body ? JSON.stringify(body) : undefined,
           credentials: transport.credentials,
           signal,
         });
@@ -411,6 +435,25 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         ? `/${fileId}/versions/${options.versionId}/download`
         : `/${fileId}/download`;
       return request<{ url: string }>("GET", path, undefined, signal);
+    },
+
+    async uploadArtifact(params, signal) {
+      const search = params.durationMs !== undefined
+        ? `?${new URLSearchParams({ durationMs: String(params.durationMs) }).toString()}`
+        : "";
+      const path =
+        `/${encodeURIComponent(params.fileId)}/versions/${encodeURIComponent(params.versionId)}` +
+        `/artifacts/${encodeURIComponent(params.kind)}${search}`;
+      // PUT replaces the same artifact record, so a retried upload is safe.
+      const response = await request<{ artifact: ArtifactDescriptor }>(
+        "PUT",
+        path,
+        new RawBody(params.data),
+        signal,
+        retryOptions,
+        { "Content-Type": params.mimeType },
+      );
+      return response.artifact;
     },
 
     async downloadArtifact(fileId, artifactId, signal) {

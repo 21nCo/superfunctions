@@ -55,6 +55,12 @@ export const ErrorCodes = {
   STORAGE_PATH_NOT_PER_VERSION: 'FILEFN_STORAGE_PATH_NOT_PER_VERSION',
   INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
   UPLOAD_COMPLETION_IN_PROGRESS: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
+  INVALID_REQUEST: 'FILEFN_INVALID_REQUEST',
+  ARTIFACT_KIND_NOT_ALLOWED: 'FILEFN_ARTIFACT_KIND_NOT_ALLOWED',
+  ARTIFACT_TYPE_NOT_ALLOWED: 'FILEFN_ARTIFACT_TYPE_NOT_ALLOWED',
+  ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
+  ARTIFACT_WRITE_CONFLICT: 'FILEFN_ARTIFACT_WRITE_CONFLICT',
+  STORAGE_UPLOAD_UNSUPPORTED: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -248,5 +254,59 @@ export function uploadCompletionInProgress(): FileFnError {
     'Another completion of this upload session or file is still running; retry the completion later',
     409,
     { retryable: true }
+  );
+}
+
+export function invalidRequest(message: string, details?: Record<string, unknown>): FileFnError {
+  return new FileFnError(ErrorCodes.INVALID_REQUEST, message, 400, details);
+}
+
+export function artifactKindNotAllowed(kind: string, allowedKinds: string[]): FileFnError {
+  return new FileFnError(
+    ErrorCodes.ARTIFACT_KIND_NOT_ALLOWED,
+    'Artifact kind not allowed',
+    400,
+    { kind, allowedKinds },
+  );
+}
+
+export function artifactTypeNotAllowed(kind: string, mimeType: string, allowedMimeTypes: string[]): FileFnError {
+  return new FileFnError(
+    ErrorCodes.ARTIFACT_TYPE_NOT_ALLOWED,
+    'Artifact content type not allowed',
+    415,
+    { kind, mimeType, allowedMimeTypes },
+  );
+}
+
+export function artifactTooLarge(kind: string, maxSizeBytes: number): FileFnError {
+  return new FileFnError(
+    ErrorCodes.ARTIFACT_TOO_LARGE,
+    'Artifact exceeds the size limit for its kind',
+    413,
+    { kind, maxSizeBytes },
+  );
+}
+
+export function artifactWriteConflict(kind: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.ARTIFACT_WRITE_CONFLICT,
+    'Concurrent writes of this artifact kind kept replacing each other; retry the upload',
+    409,
+    { kind, retryable: true },
+  );
+}
+
+/**
+ * The storage target can take neither a streamed server-side upload nor a
+ * PUT to a URL it signs, so FileFn cannot store a body it receives itself,
+ * such as a client-supplied artifact.
+ */
+export function storageUploadUnsupported(target: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.STORAGE_UPLOAD_UNSUPPORTED,
+    'The storage target does not support server-side uploads',
+    501,
+    { target },
   );
 }

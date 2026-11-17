@@ -91,7 +91,30 @@ export interface ArtifactDescriptor {
   kind: string;
   mimeType: string;
   size: number;
+  /** Who produced the artifact; servers that predate sources omit it. */
+  source?: ArtifactSource;
+  /** Processing time recorded for the artifact, in milliseconds. */
+  processingDurationMs?: number;
   createdAt: string;
+}
+
+/** Who produced an artifact: a server processor or the client on the device. */
+export type ArtifactSource = 'client' | 'server';
+
+/** Kinds a client may supply: the thumbnail sizes the viewer resolves, and a converted image. */
+export type ClientArtifactKind = 'thumbnail-small' | 'thumbnail-medium' | 'thumbnail-large' | 'converted';
+
+export interface UploadArtifactInput {
+  fileId: string;
+  versionId: string;
+  kind: ClientArtifactKind;
+  /** The artifact bytes. A Blob's own type is used when `mimeType` is omitted. */
+  data: Blob | Uint8Array;
+  /** image/webp, image/png or image/jpeg for a thumbnail; image/png for a converted image. */
+  mimeType?: string;
+  /** Time spent producing the artifact on the device, in milliseconds. */
+  durationMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface RenderDescriptor {

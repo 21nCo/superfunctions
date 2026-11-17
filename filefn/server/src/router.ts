@@ -239,6 +239,11 @@ export function createRouter(config: FileFnRouterConfig) {
           return processingRoutes.proxyDownloadArtifact(request, proxyArtifactDownloadMatch[1], proxyArtifactDownloadMatch[2]);
         }
 
+        const versionArtifactMatch = path.match(/^\/([^/]+)\/versions\/([^/]+)\/artifacts\/([^/]+)$/);
+        if (versionArtifactMatch && method === 'PUT') {
+          return processingRoutes.uploadArtifact(request, versionArtifactMatch[1], versionArtifactMatch[2], versionArtifactMatch[3]);
+        }
+
         const processMatch = path.match(/^\/([^/]+)\/process$/);
         if (processMatch && method === 'POST') {
           return processingRoutes.triggerProcessing(request, processMatch[1]);
