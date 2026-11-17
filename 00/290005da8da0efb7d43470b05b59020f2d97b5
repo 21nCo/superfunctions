@@ -1,0 +1,14 @@
+devfn/docs/src/app.css
+  h_bdc5b81c173ee9 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00290005da8da0efb7d43470b05b59020f2d97b5",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

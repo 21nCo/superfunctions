@@ -1,0 +1,21 @@
+authfn/core/src/__tests__/rate-limit.test.ts
+  s_d3691c29bcf49a::t_bc4de279f9d764 55,196-257
+authfn/core/src/core/rate-limit.ts
+  s_d3691c29bcf49a::t_c6e36c172dfeb3 53-56,58,61-66,83-86,164,169,171,189,191,203,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a981d929037ff7f80ddbf81f37691579b597b81",
+  "prompts": {},
+  "sessions": {
+    "s_d3691c29bcf49a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d3691c29bcf49a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

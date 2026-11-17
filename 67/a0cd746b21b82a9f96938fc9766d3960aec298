@@ -1,0 +1,14 @@
+searchfn/client/src/client.ts
+  h_bdc5b81c173ee9 231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67a0cd746b21b82a9f96938fc9766d3960aec298",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
