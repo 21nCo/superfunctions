@@ -60,6 +60,7 @@ interface FileArtifactRecord {
 interface UploadSessionRecord {
   uploadSessionId: string;
   status: 'pending' | 'in_progress' | 'completing' | 'publishing' | 'completed' | 'aborted' | 'refused' | 'expired';
+  completionPublication?: (Record<string, unknown> & { fileDeleted?: boolean }) | null;
   policy: string;
   uploadMode: string;
   storageKey: string;
@@ -689,7 +690,10 @@ export function createFileService(config: FileServiceConfig) {
       // record, so refused sessions are left to the expiry sweep, which finishes
       // the cleanup. A session a completion holds ('completing') or is
       // publishing may be writing the file and its versions: the delete waits
-      // for it (409, retryable) and never touches it.
+      // for it (409, retryable) and never touches it. Every other open session
+      // is ended (aborted) first, with a write conditional on the status read
+      // here, so one a completion claims meanwhile is never torn down: the
+      // delete then gets 409 too.
       const openSessionsWhere: WhereClause[] = [
         { field: 'fileId', operator: 'eq', value: fileId },
         { field: 'status', operator: 'ne', value: 'completed' },
@@ -708,7 +712,51 @@ export function createFileService(config: FileServiceConfig) {
       if (unfinishedSessions.some((session) => session.status === 'completing' || session.status === 'publishing')) {
         throw errors.uploadCompletionInProgress();
       }
-      const pendingSessions = unfinishedSessions.filter((session) => session.status !== 'refused');
+      const pendingSessions: UploadSessionRecord[] = [];
+      for (const session of unfinishedSessions) {
+        if (session.status === 'refused') continue;
+        const sessionWhere: WhereClause[] = [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }];
+        let ended: unknown;
+        try {
+          ended = await db.update({
+            model: 'uploadSessions',
+            where: [...sessionWhere, { field: 'status', operator: 'eq', value: session.status }],
+            data: { status: 'aborted' },
+            namespace,
+          });
+        } catch {
+          ended = undefined;
+        }
+        if (!ended) {
+          const current = await db.findOne<UploadSessionRecord>({ model: 'uploadSessions', where: sessionWhere, namespace });
+          if (current?.status === 'refused' || !current) continue;
+          if (current.status !== 'aborted') throw errors.uploadCompletionInProgress();
+        }
+        pendingSessions.push(session);
+      }
+
+      // A completion call of a completed session may still be finishing its
+      // publication (it overlapped the call that completed it) and create a
+      // files or version row this delete removes. Each such call checks this
+      // mark after creating a row, and removes the row again.
+      const completedSessions = await db.findMany<UploadSessionRecord>({
+        model: 'uploadSessions',
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'status', operator: 'eq', value: 'completed' },
+        ],
+        namespace,
+      });
+      for (const session of completedSessions) {
+        const publication = session.completionPublication;
+        if (!publication || publication.fileDeleted) continue;
+        await db.update({
+          model: 'uploadSessions',
+          where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+          data: { completionPublication: { ...publication, fileDeleted: true } },
+          namespace,
+        });
+      }
 
       for (const session of pendingSessions) {
         const sessionPolicy = policies?.get(session.policy) ?? {};

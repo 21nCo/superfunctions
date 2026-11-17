@@ -135,6 +135,8 @@ export interface CompletionPublication {
   unusedKeys: string[];
   /** The call that completed the session. */
   finishedBy?: string;
+  /** Set by deleteFile on a completed session once the file is being deleted. */
+  fileDeleted?: boolean;
 }
 
 type PublishOutcome =
@@ -668,6 +670,29 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return fenced.applied;
   }
 
+  // Deletes the retake objects (`<storageKey>.c<nonce>`, this session's alone)
+  // a refused session's claim or publication recorded. Returns false when a
+  // delete failed: the session row is then kept for the expiry sweep.
+  async function deleteRefusedAttemptObjects(session: UploadSession): Promise<boolean> {
+    if (session.uploadMode !== 'proxy' || !storage.deleteObject) return true;
+    const publication = session.completionPublication;
+    const keys = new Set([
+      ...(session.completionClaim ? [attemptStorageKey(session, session.completionClaim)] : []),
+      ...(publication ? [publication.storageKey, ...publication.unusedKeys] : []),
+    ]);
+    const target = resolveStorageTarget(policies.get(session.policy) ?? {});
+    let allDeleted = true;
+    for (const key of keys) {
+      if (!key.startsWith(`${session.storageKey}.c`)) continue;
+      try {
+        await storage.deleteObject({ key, target });
+      } catch {
+        allDeleted = false;
+      }
+    }
+    return allDeleted;
+  }
+
   // Deletes what a refused session uploaded: its proxy part objects and its own
   // final object (never a key dedup pointed it at). Its part rows are dropped
   // once every delete succeeded.
@@ -749,8 +774,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         where: [{ field: 'versionId', operator: 'eq', value: versionId }],
         namespace,
       });
-      const ensureVersion = async () => {
-        if (await findOwnVersion()) return;
+      // Both return whether this call's insert created the row.
+      const ensureVersion = async (): Promise<boolean> => {
+        if (await findOwnVersion()) return false;
         try {
           await db.create({
             model: 'fileVersions',
@@ -766,14 +792,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             },
             namespace,
           });
+          return true;
         } catch (err) {
           // Another call of this session inserted it first.
           if (!(await findOwnVersion())) throw err;
+          return false;
         }
       };
       // Creates the file at this version; a failed insert rethrows unless a
       // row exists after all (another writer's, or this session's).
-      const createFile = async (): Promise<void> => {
+      const createFile = async (): Promise<boolean> => {
         const now = new Date().toISOString();
         try {
           await db.create({
@@ -794,18 +822,45 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             },
             namespace,
           });
+          return true;
         } catch (err) {
           if (!(await findFile())) throw err;
+          return false;
         }
+      };
+      // A call that resumes late (another call completed the session, and the
+      // file was deleted since) may create a row the delete already removed.
+      // deleteFile marks the completed session first, so a row this call
+      // created is checked against the mark and removed again.
+      const undoAfterDelete = async (created: boolean): Promise<UploadSession | null | undefined> => {
+        if (!created) return undefined;
+        const now = await readSession(uploadSessionId);
+        if (!now?.completionPublication?.fileDeleted) return undefined;
+        await db.deleteMany({
+          model: 'files',
+          where: [
+            { field: 'fileId', operator: 'eq', value: fileId },
+            { field: 'currentVersionId', operator: 'eq', value: versionId },
+          ],
+          namespace,
+        });
+        await db.deleteMany({
+          model: 'fileVersions',
+          where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+          namespace,
+        });
+        return now;
       };
 
       const file = await findFile();
       let rewrite: Partial<UploadSession> | undefined;
+      let undone: UploadSession | null | undefined;
       if (file?.currentVersionId === versionId) {
-        await ensureVersion();
+        undone = await undoAfterDelete(await ensureVersion());
       } else if (baseVersionId === null) {
         if (!file) {
-          await createFile();
+          undone = await undoAfterDelete(await createFile());
+          if (undone !== undefined) return { kind: 'other', current: undone };
           continue;
         }
         // Another writer created the file first.
@@ -816,10 +871,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             }
           : { status: 'refused' };
       } else {
-        await ensureVersion();
+        undone = await undoAfterDelete(await ensureVersion());
+        if (undone !== undefined) return { kind: 'other', current: undone };
         if (!file) {
           // Deleted meanwhile: the upload creates it again.
-          await createFile();
+          undone = await undoAfterDelete(await createFile());
+          if (undone !== undefined) return { kind: 'other', current: undone };
           continue;
         }
         if (file.currentVersionId === baseVersionId) {
@@ -855,6 +912,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
+      if (undone !== undefined) return { kind: 'other', current: undone };
+
       if (rewrite) {
         const target = rewrite;
         const next = await updateSessionIf(
@@ -875,7 +934,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       // Calls finishing one publication share its claim, so the one that
-      // completes it is told by a token of its own.
+      // completes it is told by a token of its own. The version's object is
+      // read first: nothing may fail between completing the session and its
+      // effects.
+      const storageKey = (await findOwnVersion())?.storageKey || publication.storageKey;
       const finishedBy = randomBytes(6).toString('hex');
       const finished = await updateSessionIf(
         uploadSessionId,
@@ -883,9 +945,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         { status: 'completed', completionVersionId: versionId, completionPublication: { ...publication, finishedBy } },
         (row) => row.status === 'completed' && row.completionPublication?.finishedBy === finishedBy,
       );
-      if (finished.applied) {
-        return { kind: 'completed', storageKey: (await findOwnVersion())?.storageKey || publication.storageKey };
-      }
+      if (finished.applied) return { kind: 'completed', storageKey };
       if (finished.current?.status !== 'publishing') return { kind: 'other', current: finished.current };
       session = finished.current;
     }
@@ -904,15 +964,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (outcome.kind === 'other') return lostClaimResult(session.uploadSessionId, outcome.current);
     if (outcome.kind === 'refused') {
       // Nothing was published: the rival's file never pointed at the version.
-      // Retake stitches are this session's alone; the session's own object
-      // and parts go as for any refusal.
-      const target = resolveStorageTarget(policies.get(session.policy) ?? {});
-      if (storage.deleteObject) {
-        for (const key of new Set([publication.storageKey, ...publication.unusedKeys])) {
-          if (!key.startsWith(`${session.storageKey}.c`)) continue;
-          await storage.deleteObject({ key, target }).catch(() => {});
-        }
-      }
+      // A retake object left behind is deleted by the expiry sweep.
+      await deleteRefusedAttemptObjects(session);
       await deleteRefusedUploads(session);
       throw errors.forbidden({ fileId, operation: 'replace' });
     }
@@ -1886,7 +1939,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // deleted, keep the session and its part rows for the next sweep.
             const partsDeleted = await deleteProxyTempPartObjects(session);
             const objectDeleted = session.status === 'refused'
-                ? await deleteOwnUnpublishedObject(session, referencedRefs)
+                ? (await deleteOwnUnpublishedObject(session, referencedRefs)) && (await deleteRefusedAttemptObjects(session))
                 : true;
             if (!partsDeleted || !objectDeleted) {
                 continue;

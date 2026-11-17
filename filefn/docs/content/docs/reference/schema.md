@@ -28,7 +28,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
 | `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`) or that moved it to `publishing`, or of the last call that stitched an object and released it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
-| `completionPublication` | json? | Set with the move to `publishing`: `{ versionId, storageKey, checksumSha256Base64, baseVersionId, unusedKeys }`, what the completion publishes (`baseVersionId` is the file version it replaces, `null` for a new file). Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionPublication` | json? | Set with the move to `publishing`: `{ versionId, storageKey, checksumSha256Base64, baseVersionId, unusedKeys }`, what the completion publishes (`baseVersionId` is the file version it replaces, `null` for a new file), plus `finishedBy` (the call that completed it) and `fileDeleted` (set by a file delete). Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
