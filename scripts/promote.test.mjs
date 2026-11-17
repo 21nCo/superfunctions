@@ -563,6 +563,29 @@ historyTest("a conflicting --reconcile merge does not overwrite an ignored file 
   assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
 });
 
+historyTest("merge policies still apply: a rejecting pre-merge-commit hook or merge.verifySignatures refuses the promotion", () => {
+  const { dev } = fixture("merge-policy");
+  const head = git(dev, "rev-parse", "HEAD");
+  const unchanged = () => {
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--show-current"), "dev");
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+    assert.equal(git(dev, "status", "--porcelain"), "");
+    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+  };
+  useHook(dev, "pre-merge-commit", "exit 1");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  git(dev, "config", "--unset", "core.hooksPath");
+  // The imported commits are unsigned.
+  git(dev, "config", "merge.verifySignatures", "true");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  git(dev, "config", "--unset", "merge.verifySignatures");
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
 historyTest("a rejecting post-checkout hook on the new branch restores the original checkout and branch list", () => {
   const { dev } = fixture("checkout-hook");
   const head = git(dev, "rev-parse", "HEAD");

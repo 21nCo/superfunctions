@@ -721,28 +721,10 @@ function writeTree(root, args) {
 /**
  * Creates the branch with the imported history merged in, then stages the edits and commits them (with merge
  * conflicts left by --reconcile they stay staged for the operator's merge commit). Returns the conflicting paths.
- *
- * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
- * attempt cannot bring them back. So no merge writes this working tree: a clean merge is built with merge-tree and
- * commit-tree, a conflicting --reconcile merge runs in a scratch worktree, and the branch is created on the result with
- * checkout --no-overwrite-ignore, which refuses, atomically and before any change, to replace an untracked or ignored
- * file, including one that appeared after refuseLocalFiles.
  */
 function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, edits }) {
-  let conflicts = [];
   const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
-  const tree = git(root, ["merge-tree", "--write-tree", "--allow-unrelated-histories", "HEAD", imported], { allowFailure: true });
-  if (tree.status === 0) {
-    // commit-tree, unlike git merge, does not read commit.gpgSign (nor run commit hooks); sign as git merge would.
-    const sign = git(root, ["config", "--type=bool", "--get", "commit.gpgSign"], { allowFailure: true }).stdout.trim() === "true" ? ["-S"] : [];
-    const merge = git(root, ["commit-tree", ...sign, lines(tree.stdout)[0], "-p", "HEAD", "-p", imported, "-m", message]).trim();
-    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, merge]);
-    if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
-  } else if (tree.status === 1 && reconcile) {
-    conflicts = conflictedMerge(root, { branch, imported, message });
-  } else {
-    throw new PromoteError("git-failed", `merge failed: ${(tree.stderr || tree.stdout).trim()}`);
-  }
+  const conflicts = mergeInScratch(root, { branch, imported, message, reconcile });
   const edited = writeEdits(root, edits);
   if (edited.length > 0) git(root, ["add", "--", ...edited]);
   if (edited.length > 0 && conflicts.length === 0) {
@@ -752,18 +734,30 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
 }
 
 /**
- * A conflicting --reconcile merge, left on `branch` here as git merge leaves it (conflict stages, MERGE_HEAD), without
- * git merge writing this working tree: it runs in a scratch worktree; its files, conflict markers included, arrive
- * through checkout --no-overwrite-ignore of a temporary commit, which then gives way to the merge state.
+ * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
+ * attempt cannot bring them back. So git merge runs in a scratch worktree of this repository, with its configuration
+ * and hooks (pre-merge-commit, commit-msg, merge.verifySignatures, signing), and its result reaches this working tree
+ * only through checkout --no-overwrite-ignore, which refuses, atomically and before any change, to replace an
+ * untracked or ignored file, including one that appeared after refuseLocalFiles. A conflicting --reconcile merge
+ * arrives as a temporary commit of its files (conflict markers included) that then gives way to the merge state git
+ * merge leaves (conflict stages, MERGE_HEAD). Returns the conflicting paths.
  */
-function conflictedMerge(root, { branch, imported, message }) {
+function mergeInScratch(root, { branch, imported, message, reconcile }) {
   const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
   const worktree = path.join(scratch, "worktree");
+  const checkout = (commit) => {
+    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, commit]);
+    if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
+  };
   try {
     git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", worktree, "HEAD"]);
     const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+    if (merged.status === 0) {
+      checkout(git(worktree, ["rev-parse", "HEAD"]).trim());
+      return [];
+    }
     const conflicts = lines(git(worktree, ["diff", "--name-only", "--diff-filter=U"]));
-    if (merged.status === 0 || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+    if (!reconcile || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
     const stages = git(worktree, ["ls-files", "-s", "-z"]);
     // The worktree's files, conflict markers included, as a tree, staged in a copy of its index.
     const index = path.join(scratch, "index");
@@ -771,9 +765,7 @@ function conflictedMerge(root, { branch, imported, message }) {
     const env = { ...process.env, GIT_INDEX_FILE: index };
     git(worktree, ["add", "-A"], { env });
     const files = git(worktree, ["write-tree"], { env }).trim();
-    const transfer = git(root, ["commit-tree", files, "-p", "HEAD", "-m", "promote: conflicted merge (temporary)"]).trim();
-    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, transfer]);
-    if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
+    checkout(git(root, ["commit-tree", files, "-p", "HEAD", "-m", "promote: conflicted merge (temporary)"]).trim());
     // Back to the original commit with the merge's index and the merge in progress; the files stay as they are.
     git(root, ["reset", "-q", "--soft", "HEAD^"]);
     git(root, ["read-tree", "--empty"]);
