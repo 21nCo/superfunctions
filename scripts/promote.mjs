@@ -19,8 +19,8 @@
 // Exit status: 0 promoted, 1 refused or failed (nothing changed), 2 merge conflicts left in a printed worktree (--reconcile).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST, REPO_ROOT, canonicalPythonName, normalizePath, parseManifest } from "./owners.mjs";
@@ -47,7 +47,7 @@ const SOURCE_BRANCH = "promote-source";
 
 export class PromoteError extends Error {
   /**
-   * @param {"usage" | "missing-filter-repo" | "dirty-tree" | "wrong-base" | "branch-exists" | "pin-missing" | "path-missing" | "protected-path" | "conduct-path" | "unownable-path" | "path-conflict" | "release-conflict" | "malformed-file" | "git-failed"} code
+   * @param {"usage" | "missing-filter-repo" | "dirty-tree" | "wrong-base" | "branch-exists" | "pin-missing" | "path-missing" | "protected-path" | "conduct-path" | "unownable-path" | "path-conflict" | "release-conflict" | "malformed-file" | "checkout-policy" | "git-failed"} code
    * @param {string} message
    */
   constructor(code, message) {
@@ -762,13 +762,53 @@ function shareWorktreeConfig(root, worktree) {
   writeFileSync(copy, `[include]\n\tpath = ${JSON.stringify(own)}\n[core]\n\tworktree = ${JSON.stringify(worktree)}\n`);
 }
 
+/** The configuration files git loads in `cwd` (realpaths), from git config --list --show-origin. */
+function configOrigins(cwd) {
+  const records = git(cwd, ["config", "--list", "--show-origin", "-z"]).split("\0");
+  const origins = new Map();
+  for (let index = 0; index + 1 < records.length; index += 2) {
+    if (!records[index].startsWith("file:")) continue;
+    const file = realPath(path.resolve(cwd, records[index].slice(5)));
+    const entry = records[index + 1];
+    const split = entry.indexOf("\n");
+    origins.set(file, [...(origins.get(file) ?? []), [split === -1 ? entry : entry.slice(0, split), entry.slice(split + 1)]]);
+  }
+  return origins;
+}
+
 /**
- * The branch's own core.hooksPath, as git resolves it on the branch, is kept; a relative one is taken relative to
- * this checkout, where its untracked hooks are, rather than to the scratch worktree.
+ * Refuses when an includeIf gitdir condition holds for this checkout's git directory but not for the scratch
+ * worktree's: git cannot apply it there, and replaying its values at command scope would override the branch's own
+ * policy. The operator widens the condition (a trailing slash also covers linked worktrees) or drops it.
  */
-function hooksArgs(root, worktree) {
+function refuseCheckoutOnlyConfig(root, worktree) {
+  const here = configOrigins(root);
+  const there = configOrigins(worktree);
+  for (const [origin, entries] of here) {
+    for (const [key, value] of entries) {
+      if (!/^includeif\.gitdir(?:\/i)?:.*\.path$/.test(key)) continue;
+      const expanded = value.startsWith("~/") ? path.join(homedir(), value.slice(2)) : value;
+      const included = realPath(path.resolve(path.dirname(origin), expanded));
+      if (here.has(included) && !there.has(included)) {
+        throw new PromoteError("checkout-policy", `${key} (in ${origin}) applies to this checkout but not to the linked worktree promotion builds the branch in; end its gitdir pattern with "/" so it also covers linked worktrees, or remove it, then retry`);
+      }
+    }
+  }
+}
+
+/**
+ * A relative core.hooksPath (as git resolves it on the branch) names a directory relative to the worktree. When the
+ * scratch worktree lacks it (untracked, ignored hooks here), it gets a copy, so the merge, the ownership commit and an
+ * operator's commit in a kept worktree run this checkout's hooks. The copy is ignored there as it is here.
+ */
+function copyLocalHooks(root, worktree) {
   const hooksPath = inWorktree(worktree, ["config", "--path", "--get", "core.hooksPath"], { allowFailure: true }).stdout.trim();
-  return hooksPath && !path.isAbsolute(hooksPath) ? ["-c", `core.hooksPath=${path.resolve(root, hooksPath)}`] : [];
+  if (!hooksPath || path.isAbsolute(hooksPath)) return;
+  const local = path.resolve(root, hooksPath);
+  const copy = path.resolve(worktree, hooksPath);
+  if (existsSync(copy) || !existsSync(local)) return;
+  mkdirSync(path.dirname(copy), { recursive: true });
+  cpSync(local, copy, { recursive: true });
 }
 
 /**
@@ -785,10 +825,11 @@ function buildBranch(root, { branch, imported, label, paths, pin, reconcile, edi
   try {
     git(root, ["worktree", "add", "-q", "--no-checkout", "-b", branch, worktree, "HEAD"]);
     shareWorktreeConfig(root, worktree);
+    refuseCheckoutOnlyConfig(root, worktree);
     inWorktree(worktree, ["reset", "-q", "--hard"]);
-    const hooks = hooksArgs(root, worktree);
+    copyLocalHooks(root, worktree);
     const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
-    const merged = inWorktree(worktree, [...hooks, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+    const merged = inWorktree(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
     const conflicts = merged.status === 0 ? [] : lines(inWorktree(worktree, ["diff", "--name-only", "--diff-filter=U"]));
     if (merged.status !== 0 && (!reconcile || conflicts.length === 0)) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
     const edited = writeEdits(worktree, edits);
@@ -798,7 +839,7 @@ function buildBranch(root, { branch, imported, label, paths, pin, reconcile, edi
       return { conflicts, worktree };
     }
     if (edited.length > 0) {
-      inWorktree(worktree, [...hooks, "commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
+      inWorktree(worktree, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
     }
     return { conflicts, worktree: null };
   } finally {

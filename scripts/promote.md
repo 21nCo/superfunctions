@@ -77,6 +77,8 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   is not spelled exactly as its canonical name in both its `pyproject.toml` and the overlay or `TARGETS`
   (`scripts/python_release.py` matches the tag name to `project.name` exactly). Fix `next` first;
 - a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
+- an `includeIf "gitdir:..."` condition applies to this checkout's git directory but not to its linked worktrees (the
+  branch is built in one, so git could not apply it): end its pattern with `/` so it covers them, or remove it;
 - `git-filter-repo` is missing (it prints the install command).
 
 `--source <repo>` fetches the pin from another repository: a URL, or a local path resolved against your current

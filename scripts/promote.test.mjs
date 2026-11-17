@@ -552,7 +552,10 @@ historyTest("a conflicting --reconcile merge stays in a kept worktree with the e
   const { dev } = fixture("late-reconcile");
   const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n" });
   git(dev, "update-ref", "refs/remotes/origin/dev", head);
-  write(dev, { ".git/info/exclude": "widgetfn/core/package.json\n" });
+  // A core.hooksPath relative to the checkout, holding an ignored rejecting pre-commit hook.
+  write(dev, { ".git/info/exclude": "widgetfn/core/package.json\nlocal-hooks/\n", "local-hooks/pre-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(dev, "local-hooks/pre-commit"), 0o755);
+  git(dev, "config", "core.hooksPath", "local-hooks");
   const late = path.join(dev, "widgetfn/core/package.json");
   const run = promoteCli(dev, ["widgetfn", "--reconcile"], { env: lateFilterRepo("late-reconcile", late, "late local") });
   assert.equal(run.status, 2, run.stderr);
@@ -565,6 +568,11 @@ historyTest("a conflicting --reconcile merge stays in a kept worktree with the e
   assert.equal(git(worktree, "diff", "--name-only", "--diff-filter=U"), "widgetfn/core/src/index.js");
   const staged = git(worktree, "diff", "--cached", "--name-only").split("\n");
   for (const file of ["superfunctions.owners.json", "release-packages.json", "scripts/python_release.py"]) assert.ok(staged.includes(file), file);
+  assert.equal(git(worktree, "status", "--porcelain", "--", "local-hooks"), "", "the hooks copy is ignored there too");
+  // The operator's commit in the kept worktree still runs this checkout's hooks.
+  write(worktree, { "widgetfn/core/src/index.js": "export const widget = 'merged';\n" });
+  git(worktree, "add", "widgetfn/core/src/index.js");
+  assert.notEqual(spawnSync(gitBinary(), ["commit", "-q", "--no-edit"], { cwd: worktree }).status, 0, "the rejecting pre-commit hook runs");
   git(dev, "worktree", "remove", "--force", worktree);
 });
 
@@ -669,8 +677,15 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--worktree", "--unset", "include.path");
-  // ... and through an includeIf on this repository's git directory, which covers its linked worktrees.
+  // ... an includeIf on this checkout's git directory alone, which git cannot apply in the linked worktree the
+  // branch is built in, is refused before the merge ...
   write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
+  const exact = `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}.path`;
+  git(dev, "config", exact, "signed.conf");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "checkout-policy");
+  unchanged();
+  git(dev, "config", "--unset", exact);
+  // ... and one that also covers the repository's linked worktrees applies there.
   git(dev, "config", `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}/.path`, "signed.conf");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
