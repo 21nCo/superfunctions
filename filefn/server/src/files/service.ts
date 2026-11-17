@@ -95,6 +95,8 @@ export interface FileServiceConfig {
   authorizer?: Authorizer;
   namespace?: string;
   signedUrlTtlSeconds?: number;
+  /** The database the host passed, before FileFn's wrappers (default `db`); see `createFileCommitLock`. */
+  databaseIdentity?: object;
 }
 
 interface CursorTuple {
@@ -372,7 +374,9 @@ export function createFileService(config: FileServiceConfig) {
     };
   }
 
-  const importObject = createImportObject({ db, storage, policies, quota, logger, namespace });
+  const importObject = createImportObject({
+    db, storage, policies, quota, logger, namespace, databaseIdentity: config.databaseIdentity,
+  });
 
   return {
     /**

@@ -14,7 +14,8 @@ import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
-import { createKeyedSerializer, parseRequestedFileId } from './file-id.js';
+import { parseRequestedFileId } from './file-id.js';
+import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
   createUploadStartedEvent,
@@ -102,39 +103,21 @@ export interface UploadSession {
   uploadSessionTokenHash?: string | null;
 }
 
-// Serializes, across every FileFn instance in this process (hosts may build one
-// per request), the calls completing one upload session and, per namespace and
-// fileId, the commit decisions (database steps only, never storage I/O). On
-// adapters without unique constraints, which are single-process, the fileId key
-// is the only guard and is scoped to one store, by that store's own rows (see
-// sessionsInThisStore): no adapter property reliably tells whether two adapter
-// objects (for example two wrappers) share one store. With unique constraints
-// it is scoped to the adapter object (see databaseToken). Keys: `session\0...`
-// then `file\0...`, always acquired in that order. A call that waits longer than
-// SERIALIZED_WAIT_TIMEOUT_MS for its session key fails with the retryable 409
-// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything; so does one
-// that waits that long, before its storage step, for a commit of its fileId
-// already running. A call waiting for its fileId key to commit has already
-// completed its storage upload, which a retry could not redo, so it keeps
-// waiting (unless it may take the key, see fileKeyEvictableAt); that key is
-// only held for database steps.
-const runSerialized = createKeyedSerializer();
-
-// One token per database adapter object the host passed. Used only on adapters
-// with unique constraints, where completions against different databases then
-// never wait on each other, and adapter objects that share one store but get
-// different tokens are arbitrated by the unique `files.fileId` constraint, as
-// across processes.
-const databaseTokens = new WeakMap<object, string>();
-let nextDatabaseToken = 0;
-function databaseToken(database: object): string {
-  let token = databaseTokens.get(database);
-  if (token === undefined) {
-    token = String(nextDatabaseToken++);
-    databaseTokens.set(database, token);
-  }
-  return token;
-}
+// Upload completion serializes, through the process-wide serializer it shares
+// with import (see files/file-commit-lock.ts), the calls completing one upload
+// session and, per namespace and fileId, the commit decisions (database steps
+// only, never storage I/O). On adapters without unique constraints, which are
+// single-process, the fileId key is the only guard and is scoped to one store
+// (see createFileCommitLock). With unique constraints it is scoped to the
+// adapter object. Keys: `session\0...` then `file\0...`, always acquired in that
+// order. A call that waits longer than SERIALIZED_WAIT_TIMEOUT_MS for its
+// session key fails with the retryable 409 FILEFN_UPLOAD_COMPLETION_IN_PROGRESS
+// before changing anything; so does one that waits that long, before its
+// storage step, for a commit of its fileId already running. A call waiting for
+// its fileId key to commit has already completed its storage upload, which a
+// retry could not redo, so it keeps waiting (unless it may take the key, see
+// fileKeyEvictableAt); that key is only held for database steps.
+const runSerialized = runFileFnSerialized;
 
 function isAbortedStatus(status: string): boolean {
   return status === 'aborted' || status === 'refused';
@@ -254,31 +237,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // processes. Without unique constraints the key is taken only after the
   // holder's session has expired; a completion still running then is a session
   // expiring during its completion, which FileFn does not guard (FILE-14).
-  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
-  const fileLockScope = uniqueConstraints
-    ? `${databaseToken(databaseIdentity)}\u0000${namespace}`
-    : namespace;
+  const fileCommitLock = createFileCommitLock({ db, namespace, databaseIdentity });
+  const { uniqueConstraints } = fileCommitLock;
   function fileKeyEvictableAt(expiresAt: string): number | undefined {
     if (uniqueConstraints) return 0;
     const expiresAtMs = Date.parse(expiresAt);
     return Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
   }
-  // Without unique constraints, completions wait only behind those of their
-  // own store: a busy key's group is this store's when one of its sessions is
-  // visible here. Adapter objects cannot tell (wrappers share a store).
-  async function sessionsInThisStore(uploadSessionIds: readonly string[]): Promise<boolean> {
-    const found = await Promise.all(uploadSessionIds.map((uploadSessionId) => db.findOne<UploadSession>({
-      model: 'uploadSessions',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-      namespace,
-    })));
-    return found.some(Boolean);
-  }
   function fileKeyOptions(session: UploadSession) {
     return {
       evictableAt: fileKeyEvictableAt(session.expiresAt),
       member: session.uploadSessionId,
-      sharesKeyWith: uniqueConstraints ? undefined : sessionsInThisStore,
+      sharesKeyWith: fileCommitLock.sharesKeyWith,
     };
   }
 
@@ -1017,7 +987,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // A files row pointing at this session's own versionId was written by this
       // session (another call of it may still be committing), never by a rival.
       const isOwnRow = (file: { currentVersionId: string } | null) => file?.currentVersionId === versionId;
-      const fileKey = `file\u0000${fileLockScope}\u0000${fileId}`;
+      const fileKey = fileCommitLock.fileKey(fileId);
 
       // Refuse early, before any storage completion, when the file already exists
       // and the caller cannot write it (for example a session whose init ran

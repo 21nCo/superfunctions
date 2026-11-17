@@ -8894,6 +8894,10 @@ not expose `runProcessing` or a trigger accepting caller-supplied storage keys:
 `triggerProcessingForFile` authorizes the file/version and resolves the input
 from FileFn before scheduling work.
 
+`@filefn/admin` requires this declared server version. Its
+`createFileFnDomainAdminService({ fileFn, context })` maps each active admin
+actor/scope to FileFn's domain context rather than bypassing these checks.
+
 ### Importing existing objects
 
 `fileFn.services.files.importObject(input)` (`@filefn/server` 0.6.0) registers an
@@ -8931,9 +8935,12 @@ const { file, version, created } = await fileFn.services.files.importObject({
   `fileId`, or none): an import stopped after writing its file row is completed.
   Of two imports racing on one object, the first version insert creates the file
   and the other returns it and removes the file row it had written (a loser stopped
-  before that removes it when it is rerun). On adapters with unique constraints
-  (Postgres) the database decides across processes; on adapters without them,
-  imports of one object in one process run one at a time.
+  before that removes it when it is rerun). A file ID is claimed once: an import
+  whose `fileId` another import or an upload completion is creating fails with
+  `FILEFN_IMPORT_CONFLICT` and publishes nothing. On adapters with unique
+  constraints (Postgres) the database decides across processes; on adapters
+  without them, imports and upload completions claiming one file ID, and imports
+  of one object, run one at a time in the process.
 - **Failures.** No object at the key: `404 FILEFN_IMPORT_OBJECT_NOT_FOUND`. A stored
   size other than `size`: `409 FILEFN_IMPORT_SIZE_MISMATCH`. Neither writes any row.
   The object already imported for another owner or tenant, or a `fileId` that names
@@ -8943,16 +8950,18 @@ const { file, version, created } = await fileFn.services.files.importObject({
   Other storage errors (for example a transient HEAD failure) are thrown as they
   are; retry the import.
 - **Side effects.** The call that creates the file records `size` bytes of quota
-  usage (so deleting the file balances it); an import interrupted between its
-  version insert and that record is not recorded again by a rerun. It emits no
-  `file:uploaded` event and schedules no processing; call
-  `services.processing.triggerProcessingForFile` for previews.
+  usage (so deleting the file balances it). Usage is recorded just before the
+  version insert: a rerun after a failed record (or a failed insert, whose record
+  is taken back) records it once; only a process stopped between the record and
+  the insert leaves it recorded twice. It emits no `file:uploaded` event and
+  schedules no processing; call `services.processing.triggerProcessingForFile` for
+  previews.
 - **Trust.** The import trusts that the object at the key is the one meant; an
   actor with direct write access to the bucket is outside this API's protection.
-
-`@filefn/admin` requires this declared server version. Its
-`createFileFnDomainAdminService({ fileFn, context })` maps each active admin
-actor/scope to FileFn's domain context rather than bypassing these checks.
+  Without a `fileId`, the file ID is derived from the object's target and key; an
+  upload that already took that ID makes the import fail with
+  `FILEFN_IMPORT_CONFLICT` (`fileId`), so pass your own `fileId` for keys an API
+  user could predict.
 
 ## Routes
 

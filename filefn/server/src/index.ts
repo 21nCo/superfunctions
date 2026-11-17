@@ -237,6 +237,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     authorizer,
     namespace,
     signedUrlTtlSeconds,
+    databaseIdentity: inputDatabase,
   });
 
   const processingService = createProcessingService({

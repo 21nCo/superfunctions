@@ -4,7 +4,8 @@ import type { StorageAdapter, StorageObjectStat } from '@superfunctions/storage'
 import type { QuotaProvider } from '../upload-sessions/service.js';
 import type { Logger } from '../observability/logger.js';
 import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
-import { createKeyedSerializer, isValidClientFileId } from '../upload-sessions/file-id.js';
+import { isValidClientFileId } from '../upload-sessions/file-id.js';
+import { createFileCommitLock, runFileFnSerialized } from './file-commit-lock.js';
 import { storageRef } from '../storage-references.js';
 import * as errors from '../errors.js';
 import type { FileRecord, FileVersionRecord } from './service.js';
@@ -49,15 +50,9 @@ export interface ImportObjectDeps {
   quota?: QuotaProvider;
   logger?: Logger;
   namespace: string;
+  /** The database the host passed, before FileFn's wrappers (default `db`). */
+  databaseIdentity?: object;
 }
-
-/**
- * Serializes, per namespace and imported object, the database steps of
- * imports in this process (across FileFn instances). On adapters without unique
- * constraints it is the only guard against two imports of one object both
- * creating a file; with them, the unique `fileVersions.versionId` decides.
- */
-const runSerialized = createKeyedSerializer();
 
 /** Crockford base32, lowercase, as in `generateFileFnId`. */
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
@@ -169,10 +164,20 @@ function isStorageNotFound(error: unknown): boolean {
  * first, pointing at that version; a row left by an import interrupted before
  * its version insert is resumed by a rerun with the same file ID, and one left
  * by the loser of a race is removed by it (or by a later rerun of it).
+ *
+ * Within this process, imports of one object run one at a time (object key),
+ * and the file ID claim runs under the per-fileId commit key upload completion
+ * uses, so an import never creates a file another import or an upload is
+ * creating with the same ID. On adapters without unique constraints these
+ * keys are the only guard; with them, the unique `files.fileId` and
+ * `fileVersions.versionId` constraints decide across processes.
  */
 export function createImportObject(deps: ImportObjectDeps) {
   const { db, storage, policies, quota, logger, namespace } = deps;
-  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
+  const lock = createFileCommitLock({ db, namespace, databaseIdentity: deps.databaseIdentity });
+  // With unique constraints a stuck holder may be overtaken: the inserts still
+  // let only one import create the file.
+  const evictableAt = lock.uniqueConstraints ? 0 : undefined;
 
   const findFile = (fileId: string) => db.findOne<FileRecord>({
     model: 'files',
@@ -183,6 +188,11 @@ export function createImportObject(deps: ImportObjectDeps) {
     model: 'fileVersions',
     where: [{ field: 'versionId', operator: 'eq', value: versionId }],
     namespace,
+  });
+  const recordUsage = (request: ParsedImport, bytes: number) => quota?.recordUsage({
+    principalId: request.principalId,
+    tenantId: request.tenantId ?? undefined,
+    bytes,
   });
 
   /**
@@ -216,6 +226,92 @@ export function createImportObject(deps: ImportObjectDeps) {
     return { file, version, created: false };
   }
 
+  /**
+   * Claims `fileId` for this import and publishes its version; runs under the
+   * object key and the file ID's commit key.
+   */
+  async function claimAndPublish(
+    request: ParsedImport,
+    fileId: string,
+    versionId: string,
+    createdAt: string,
+    visibility: FileRecord['visibility'],
+  ): Promise<ImportObjectResult> {
+    const raced = await findVersion(versionId);
+    if (raced) return existingImport(request, fileId, raced);
+
+    // A row of this file ID pointing at the import version was written by an
+    // import of this object (an interrupted one, or a concurrent one with the
+    // same file ID) and is resumed, for the same owner only; any other row is
+    // another file (an upload's, or another object's import).
+    const assertResumable = (row: FileRecord) => {
+      if (row.currentVersionId !== versionId) {
+        throw errors.importConflict(request.storageKey, 'fileId', fileId);
+      }
+      if (row.ownerId !== request.principalId || (row.tenantId ?? null) !== request.tenantId) {
+        throw errors.importConflict(request.storageKey, 'owner');
+      }
+    };
+
+    let file = await findFile(fileId);
+    if (file) assertResumable(file);
+    if (!file) {
+      const data: FileRecord = {
+        fileId,
+        currentVersionId: versionId,
+        ownerId: request.principalId,
+        tenantId: request.tenantId,
+        visibility,
+        policy: request.policy,
+        mimeType: request.mimeType,
+        size: request.size,
+        name: request.fileName,
+        metadata: request.metadata,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      try {
+        file = (await db.create<FileRecord>({ model: 'files', data, namespace })) ?? data;
+      } catch (err) {
+        // Lost the insert to another writer of this file ID: re-read its row.
+        file = await findFile(fileId);
+        if (!file) throw err;
+        assertResumable(file);
+      }
+    }
+
+    // Usage is recorded before the version insert, so the version row also
+    // records that it was: a rerun after a failed or interrupted record finds no
+    // version and records it, and one after the insert records nothing. Only a
+    // stop between the two counts the bytes twice. A call whose insert then
+    // fails takes its record back.
+    await recordUsage(request, request.size);
+    const version: FileVersionRecord = {
+      versionId,
+      fileId,
+      storageKey: request.storageKey,
+      mimeType: request.mimeType,
+      size: request.size,
+      checksumSha256Base64: null,
+      createdAt,
+    };
+    let created: FileVersionRecord;
+    try {
+      created = (await db.create<FileVersionRecord>({
+        model: 'fileVersions',
+        data: { ...version, tenantId: request.tenantId },
+        namespace,
+      })) ?? version;
+    } catch (err) {
+      await recordUsage(request, -request.size);
+      // Another import of this object (in another process) inserted it first.
+      const winner = await findVersion(versionId);
+      if (!winner) throw err;
+      return existingImport(request, fileId, winner);
+    }
+    return { file, version: created, created: true };
+  }
+
   return async function importObject(input: ImportObjectInput): Promise<ImportObjectResult> {
     const request = parseImportInput(input);
     const registered = policies?.get(request.policy);
@@ -242,89 +338,20 @@ export function createImportObject(deps: ImportObjectDeps) {
     }
 
     const createdAt = request.createdAt ?? new Date().toISOString();
-    const outcome = await runSerialized(
-      `import\u0000${namespace}\u0000${versionId}`,
-      async (): Promise<ImportObjectResult> => {
-        const raced = await findVersion(versionId);
-        if (raced) return existingImport(request, fileId, raced);
-
-        // A row of this file ID pointing at the import version was written by
-        // an import of this object (an interrupted one, or a concurrent one with
-        // the same file ID) and is resumed, for the same owner only; any other
-        // row is another file.
-        const assertResumable = (row: FileRecord) => {
-          if (row.currentVersionId !== versionId) {
-            throw errors.importConflict(request.storageKey, 'fileId', fileId);
-          }
-          if (row.ownerId !== request.principalId || (row.tenantId ?? null) !== request.tenantId) {
-            throw errors.importConflict(request.storageKey, 'owner');
-          }
-        };
-
-        let file = await findFile(fileId);
-        if (file) assertResumable(file);
-        if (!file) {
-          const data: FileRecord = {
-            fileId,
-            currentVersionId: versionId,
-            ownerId: request.principalId,
-            tenantId: request.tenantId,
-            visibility: registered?.visibility ?? 'private',
-            policy: request.policy,
-            mimeType: request.mimeType,
-            size: request.size,
-            name: request.fileName,
-            metadata: request.metadata,
-            createdAt,
-            updatedAt: createdAt,
-          };
-          try {
-            file = (await db.create<FileRecord>({ model: 'files', data, namespace })) ?? data;
-          } catch (err) {
-            // Lost the insert to another writer of this file ID: re-read its row.
-            file = await findFile(fileId);
-            if (!file) throw err;
-            assertResumable(file);
-          }
-        }
-
-        const version: FileVersionRecord = {
-          versionId,
-          fileId,
-          storageKey: request.storageKey,
-          mimeType: request.mimeType,
-          size: request.size,
-          checksumSha256Base64: null,
-          createdAt,
-        };
-        let created: FileVersionRecord;
-        try {
-          created = (await db.create<FileVersionRecord>({
-            model: 'fileVersions',
-            data: { ...version, tenantId: request.tenantId },
-            namespace,
-          })) ?? version;
-        } catch (err) {
-          // Another import of this object inserted the version first.
-          const winner = await findVersion(versionId);
-          if (!winner) throw err;
-          return existingImport(request, fileId, winner);
-        }
-        return { file, version: created, created: true };
-      },
-      // With unique constraints a stuck holder may be overtaken: the version
-      // insert still lets only one import create the file.
-      { evictableAt: uniqueConstraints ? 0 : undefined, keepWaiting: true },
+    const visibility = registered?.visibility ?? 'private';
+    // Keys: the object's, then the file ID's (upload completion never holds a
+    // file key while waiting for another key, so the order cannot deadlock).
+    const outcome = await runFileFnSerialized(
+      `import\u0000${lock.scope}\u0000${versionId}`,
+      () => runFileFnSerialized(
+        lock.fileKey(fileId),
+        () => claimAndPublish(request, fileId, versionId, createdAt, visibility),
+        { evictableAt, keepWaiting: true, member: lock.importMember, sharesKeyWith: lock.sharesKeyWith },
+      ),
+      { evictableAt, keepWaiting: true },
     );
 
     if (outcome.created) {
-      if (quota) {
-        await quota.recordUsage({
-          principalId: request.principalId,
-          tenantId: request.tenantId ?? undefined,
-          bytes: request.size,
-        });
-      }
       logger?.info('Storage object imported', {
         fileId: outcome.file.fileId,
         versionId,
