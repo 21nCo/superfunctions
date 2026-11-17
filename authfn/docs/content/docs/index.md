@@ -63,10 +63,10 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 - [Getting Started](./getting-started) — install, configure, and sign in your first user.
 - [Quickstart](./quickstart) — per-framework setup walkthroughs.
 - [Core Concepts](./core-concepts) — sessions, plugins, regions, observability, the runtime resolver, and the canonical envelope/error model.
-- [Plugins](./plugins) — every bundled plugin documented end to end.
+- [Plugins](./plugins) — the bundled plugins documented end to end; `@authfn/oauth-provider` is documented in its [package README](https://github.com/21nCo/superfunctions/blob/dev/authfn/oauth-provider/README.md).
 - [SDKs](./sdk) — `authfn`, `@authfn/client`, `@authfn/svelte`, the Python package, and Swift.
 - [Adapters](./adapters) — database, mail, and OAuth provider adapters.
 - [Frameworks](./frameworks) — Hono, Express, Bun, SvelteKit, Next.js, FastAPI, Flask, Starlette.
 - [Recipes](./recipes) — copy-pasteable solutions for common flows.
-- [API Reference](./api) — OpenAPI-backed endpoint documentation, generated from a server with every plugin enabled.
+- [API Reference](./api) — OpenAPI-backed endpoint documentation, generated from a server with the plugins documented under [Plugins](./plugins) enabled (not `@authfn/oauth-provider`).
 - [AI resources](./ai-resources) — generated `llms.txt` context for coding assistants.

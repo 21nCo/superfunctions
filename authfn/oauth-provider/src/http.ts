@@ -120,13 +120,16 @@ export async function authenticateClient(
   const viaHeader = request.headers.has('authorization');
   const bodyId = params.get('client_id');
   const clientId = basic?.clientId ?? bodyId;
+  // RFC 6749 5.2: 401 with a Basic challenge when the client tried the
+  // Authorization header; otherwise 400, without a challenge.
+  const invalidClient = viaHeader ? invalidClientViaHeader : invalidClientViaBody;
   if (!clientId || (basic && bodyId !== undefined && bodyId !== basic.clientId)) {
-    throw invalidClient(viaHeader);
+    throw invalidClient();
   }
 
   const client = await runtime.resolveClient(clientId, request);
   if (!client) {
-    throw invalidClient(viaHeader);
+    throw invalidClient();
   }
 
   const method = clientAuthMethod(client);
@@ -142,23 +145,25 @@ export async function authenticateClient(
     ? params.has('client_secret')
     : viaHeader || (method === 'none' && params.has('client_secret'));
   if (sentOtherCredential) {
-    throw invalidClient(viaHeader);
+    throw invalidClient();
   }
   if (method !== 'none' && (!presented || !client.clientSecret || !secretsEqual(presented, client.clientSecret))) {
-    throw invalidClient(viaHeader);
+    throw invalidClient();
   }
 
   return client;
 }
 
-/**
- * RFC 6749 5.2: 401 with a Basic challenge when the client tried the
- * Authorization header; otherwise 400, without a challenge.
- */
-function invalidClient(viaHeader: boolean): OAuthError {
-  return viaHeader
-    ? new OAuthError('invalid_client', 'Client authentication failed', 401, { 'www-authenticate': 'Basic realm="oauth"' })
-    : new OAuthError('invalid_client', 'Client authentication failed', 400);
+const CLIENT_AUTHENTICATION_FAILED = 'Client authentication failed';
+
+/** RFC 6749 5.2: a failed attempt with the Authorization header is a 401 with a Basic challenge. */
+function invalidClientViaHeader(): OAuthError {
+  return new OAuthError('invalid_client', CLIENT_AUTHENTICATION_FAILED, 401, { 'www-authenticate': 'Basic realm="oauth"' });
+}
+
+/** RFC 6749 5.2: any other failed client authentication is a 400, without a challenge. */
+function invalidClientViaBody(): OAuthError {
+  return new OAuthError('invalid_client', CLIENT_AUTHENTICATION_FAILED, 400);
 }
 
 function readBasicCredentials(request: Request): { clientId: string; clientSecret: string } | null {
@@ -170,7 +175,7 @@ function readBasicCredentials(request: Request): { clientId: string; clientSecre
   const decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8');
   const separator = decoded.indexOf(':');
   if (separator <= 0) {
-    throw invalidClient(true);
+    throw invalidClientViaHeader();
   }
 
   // RFC 6749 2.3.1: both halves are form-urlencoded before Basic encoding.
@@ -180,7 +185,7 @@ function readBasicCredentials(request: Request): { clientId: string; clientSecre
       clientSecret: formDecode(decoded.slice(separator + 1))
     };
   } catch {
-    throw invalidClient(true);
+    throw invalidClientViaHeader();
   }
 }
 
