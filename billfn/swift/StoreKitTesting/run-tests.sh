@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 # Runs the BillFnStoreKit tests against StoreKit testing in the macOS host app.
 #
-# StoreKit testing keeps state in the test process. After a simulated purchase error, an
-# Ask to Buy request or a finished transaction offered again, a later purchase's finish() does
-# not reach the test store, so the tests that do one run in their own host processes. The other tests share one process: in a fresh one,
-# StoreKit testing did not show a forced renewal to the app in local runs.
+# StoreKit testing reaches the host app through LaunchServices, which does not find an app under the temporary
+# folder (/var/folders): there storekitagent fails every push for it (kLSApplicationNotFoundErr), so the app never
+# sees Transaction.updates or a renewal and its transaction caches go stale. The derived data therefore goes under
+# Xcode's DerivedData folder, and is removed afterwards unless BILLFN_STOREKIT_DERIVED_DATA names it.
+#
+# StoreKit testing keeps a simulated purchase error, Ask to Buy and finished transactions offered again between
+# tests, so the tests that use them run in their own host processes. The other tests share one process.
 set -euo pipefail
 
 cd "$(dirname "$0")"
-derived_data="${BILLFN_STOREKIT_DERIVED_DATA:-$(mktemp -d)}"
+if [[ -n "${BILLFN_STOREKIT_DERIVED_DATA:-}" ]]; then
+  derived_data="$BILLFN_STOREKIT_DERIVED_DATA"
+else
+  derived_data_root="$HOME/Library/Developer/Xcode/DerivedData"
+  mkdir -p "$derived_data_root"
+  derived_data="$(mktemp -d "$derived_data_root/BillFnStoreKitTesting.XXXXXX")"
+  trap 'rm -rf "$derived_data"' EXIT
+fi
 common=(-project BillFnStoreKitTesting.xcodeproj -scheme BillFnStoreKitTesting
   -destination "platform=macOS,arch=$(uname -m)" -derivedDataPath "$derived_data")
 isolated=(
@@ -18,11 +28,6 @@ isolated=(
   BillFnStoreKitTests/BillFnStoreKitTests/testRefusedPurchaseDropsItsCheckoutAndAFailedOneKeepsIt
   BillFnStoreKitTests/BillFnStoreKitTests/testConfirmedPurchaseOfferedAgainLeavesALeftoverCheckoutOutstanding
 )
-
-# In CI the host app can become active, so the real Transaction.updates test must run rather than skip.
-if [[ -n "${CI:-}" ]]; then
-  export TEST_RUNNER_BILLFN_STOREKIT_REQUIRE_UPDATES=1
-fi
 
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet
 

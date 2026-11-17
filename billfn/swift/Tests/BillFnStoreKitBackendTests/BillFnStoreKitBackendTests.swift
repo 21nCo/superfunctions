@@ -54,7 +54,7 @@ private func backend(status: Int = 200, body: String) -> BillFnHTTPStoreKitBacke
     return BillFnHTTPStoreKitBackend(client: client)
 }
 
-private let token = "2e54f6b7-3e0d-5b18-98d2-2a2f84a70f7f"
+private let token = "00000000-0000-4000-8000-00000000000a"
 private let transaction = BillFnStoreKitTransactionReference(
     transactionId: "2000000002",
     originalTransactionId: "2000000001",
@@ -84,7 +84,7 @@ struct BillFnStoreKitBackendTests {
 
     @Test("Rejects a checkout that is not a usable Apple purchase", arguments: [
         #"{"type":"redirect","url":"https://checkout.example.test"}"#,
-        #"{"type":"apple-purchase","metadata":{"appAccountToken":"2e54f6b7-3e0d-5b18-98d2-2a2f84a70f7f"}}"#,
+        #"{"type":"apple-purchase","metadata":{"appAccountToken":"00000000-0000-4000-8000-00000000000a"}}"#,
         #"{"type":"apple-purchase","productId":"apple.pro.month","metadata":{}}"#,
         #"{"type":"apple-purchase","productId":"apple.pro.month","metadata":{"appAccountToken":"acct_1"}}"#,
     ])

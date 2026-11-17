@@ -18,7 +18,7 @@ const transaction = {
   transactionId: '2000000001',
   originalTransactionId: '2000000000',
   productId: 'apple.pro.month',
-  appAccountToken: '2e54f6b7-3e0d-5b18-98d2-2a2f84a70f7f',
+  appAccountToken: '00000000-0000-4000-8000-00000000000a',
   revoked: false
 };
 
@@ -160,6 +160,30 @@ describe('StoreKit bridge methods', () => {
     const { client } = nativeHost((message) => ({
       ok: true,
       result: message.method === 'storekit.checkout' ? { status: 'purchased', checkoutSessionId: 'chk_3' } : { transactions: 'none' }
+    }));
+    await client.handshake();
+
+    await expect(client.checkout({ planKey: 'pro' })).rejects.toMatchObject({ code: 'BRIDGE_PROTOCOL_MISMATCH' });
+    await expect(client.restore()).rejects.toMatchObject({ code: 'BRIDGE_PROTOCOL_MISMATCH' });
+    await expect(client.transactions()).rejects.toMatchObject({ code: 'BRIDGE_PROTOCOL_MISMATCH' });
+  });
+
+  it.each([
+    ['an empty outcome', {}],
+    ['an outcome without its transaction', { status: 'confirmed', finished: true, billing: {} }],
+    ['a transaction missing a field', { transaction: { ...transaction, revoked: undefined }, status: 'confirmed', finished: true, billing: {} }],
+    ['a confirmed outcome that is not finished', { transaction, status: 'confirmed', finished: false, billing: {} }],
+    ['a confirmed outcome without billing', { transaction, status: 'confirmed', finished: true }],
+    ['a failed outcome without its error', { transaction, status: 'failed', finished: false }],
+    ['a skipped outcome that is finished', { transaction, status: 'skipped', finished: true, reason: 'No plan' }],
+    ['an unknown status', { transaction, status: 'refunded', finished: false }]
+  ])('rejects %s nested in a native result', async (_name, outcome) => {
+    const { client } = nativeHost((message) => ({
+      ok: true,
+      result:
+        message.method === 'storekit.checkout'
+          ? { status: 'purchased', checkoutSessionId: 'chk_3', productId: 'apple.pro.month', outcome }
+          : { transactions: [outcome] }
     }));
     await client.handshake();
 

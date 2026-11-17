@@ -206,11 +206,20 @@ public actor BillFnStoreKit {
 
     /// Syncs with the App Store (which may ask the user to sign in) and confirms each current entitlement with BillFn.
     public func restore(syncWithAppStore: Bool = true) async throws -> [BillFnStoreKitTransactionOutcome] {
+        try await restore(syncWithAppStore: syncWithAppStore, entitlements: Transaction.currentEntitlements)
+    }
+
+    /// `restore()` with the entitlements to confirm; `restore()` passes `Transaction.currentEntitlements`.
+    /// Each element is confirmed by `process(_:)`.
+    public func restore<Entitlements: AsyncSequence & Sendable>(
+        syncWithAppStore: Bool = true,
+        entitlements: Entitlements
+    ) async throws -> [BillFnStoreKitTransactionOutcome] where Entitlements.Element == VerificationResult<Transaction> {
         if syncWithAppStore {
             try await AppStore.sync()
         }
         var results: [BillFnStoreKitTransactionOutcome] = []
-        for await entitlement in Transaction.currentEntitlements {
+        for try await entitlement in entitlements {
             results.append(await process(entitlement))
         }
         return results
@@ -256,10 +265,7 @@ public actor BillFnStoreKit {
             revoked: transaction.revocationDate != nil
         )
         let facts = BillFnStoreKitAttemptFacts(transaction)
-        let reasonIsPurchase = Self.reasonIsPurchase(transaction)
-        // Without StoreKit's reason (before iOS 17 and macOS 14), the transaction's own history decides instead.
-        let history = reasonIsPurchase == nil ? await Self.history(ofOriginalId: transaction.originalID) : []
-        let checkout = claimCheckout(for: facts, reasonIsPurchase: reasonIsPurchase, history: history, purchasedWith: purchaseCheckout)
+        let checkout = claimCheckout(for: facts, reasonIsPurchase: Self.reasonIsPurchase(transaction), purchasedWith: purchaseCheckout)
         defer {
             if let checkout { claimedCheckouts.remove(checkout.checkoutSessionId) }
         }
@@ -311,47 +317,35 @@ public actor BillFnStoreKit {
 
     /// Whether the transaction can be the one the purchase attempt that saved an outstanding checkout at `savedAt`
     /// produced, so it may claim that checkout. It must have been purchased after the attempt started (within the
-    /// clock tolerance): an older one is a restored purchase and would take a pending attempt's checkout. It must not
-    /// be a renewal: every renewal carries the billing account's `appAccountToken`, so it would take a leftover
-    /// checkout (an attempt that failed on the network or was declined) and send BillFn's verify a renewal id.
-    ///
-    /// From iOS 17 and macOS 14 StoreKit says why the transaction exists (`reasonIsPurchase`). Earlier systems do not,
-    /// so `history` (the transactions with its original id, from `Transaction.all`) decides: the transaction renews
-    /// an entitlement when an earlier, not revoked or upgraded transaction of the same product in its subscription
-    /// was still active when the attempt started or was bought after it. A first purchase, an upgrade or crossgrade
-    /// to the checkout's product and a resubscription after the entitlement lapsed may claim it; a renewal of what
-    /// the user held, or bought through another attempt, may not. A renewal that recovers from billing retry after
-    /// the entitlement lapsed before the attempt started looks like a resubscription there.
-    static func mayClaimOutstanding(
-        _ transaction: BillFnStoreKitAttemptFacts,
-        reasonIsPurchase: Bool?,
-        savedAt: Date,
-        history: [BillFnStoreKitAttemptFacts]
-    ) -> Bool {
+    /// clock tolerance): an older one is a restored purchase and would take a pending attempt's checkout. It must be a
+    /// purchase, not a renewal: every renewal carries the billing account's `appAccountToken`, so it would take a
+    /// leftover checkout (an attempt that failed on the network or was declined) and send BillFn's verify a renewal id.
+    /// A first purchase, an upgrade or crossgrade and a resubscription are purchases; a renewal, including one that
+    /// recovers from billing retry, is not. When the reason is unknown (`reasonIsPurchase` nil) it claims nothing.
+    static func mayClaimOutstanding(_ transaction: BillFnStoreKitAttemptFacts, reasonIsPurchase: Bool?, savedAt: Date) -> Bool {
         guard savedAt <= transaction.purchaseDate.addingTimeInterval(checkoutClockTolerance) else { return false }
-        if let reasonIsPurchase { return reasonIsPurchase }
-        return !history.contains { earlier in
-            earlier.id != transaction.id && earlier.originalId == transaction.originalId
-                && earlier.productId == transaction.productId && !earlier.superseded
-                && earlier.purchaseDate < transaction.purchaseDate
-                && (earlier.expirationDate.map { $0 > savedAt } ?? true)
-        }
+        return reasonIsPurchase ?? false
     }
 
-    /// `transaction.reason == .purchase` where StoreKit says it (iOS 17, macOS 14 and later), else nil.
+    /// Whether StoreKit says the transaction is a purchase rather than a renewal: `Transaction.reason` from iOS 17 and
+    /// macOS 14, else the `transactionReason` of the signed transaction, nil when it has none.
     private static func reasonIsPurchase(_ transaction: Transaction) -> Bool? {
         if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
             return transaction.reason == .purchase
         }
-        return nil
+        // Not `reasonStringRepresentation`: before iOS 17 it reports "PURCHASE" when the transaction has no reason.
+        return reasonIsPurchase(transactionJSON: transaction.jsonRepresentation)
     }
 
-    private static func history(ofOriginalId originalId: UInt64) async -> [BillFnStoreKitAttemptFacts] {
-        var history: [BillFnStoreKitAttemptFacts] = []
-        for await result in Transaction.all where result.unsafePayloadValue.originalID == originalId {
-            history.append(BillFnStoreKitAttemptFacts(result.unsafePayloadValue))
+    /// The `transactionReason` of a signed transaction's JSON payload: true for `PURCHASE`, false for `RENEWAL`, nil
+    /// when it is missing or anything else.
+    static func reasonIsPurchase(transactionJSON: Data) -> Bool? {
+        let payload = try? JSONSerialization.jsonObject(with: transactionJSON) as? [String: Any]
+        switch payload?["transactionReason"] as? String {
+        case "PURCHASE": return true
+        case "RENEWAL": return false
+        default: return nil
         }
-        return history
     }
 
     /// The checkout to verify the transaction against: the purchase's own one, else the kept checkout this transaction
@@ -361,7 +355,6 @@ public actor BillFnStoreKit {
     private func claimCheckout(
         for transaction: BillFnStoreKitAttemptFacts,
         reasonIsPurchase: Bool?,
-        history: [BillFnStoreKitAttemptFacts],
         purchasedWith purchaseCheckout: BillFnStoreKitCheckout?
     ) -> BillFnStoreKitCheckout? {
         let transactionId = String(transaction.id)
@@ -374,7 +367,7 @@ public actor BillFnStoreKit {
         }
         let mayClaimOutstanding = { (savedAt: Date) in
             !self.checkouts.isConfirmed(transactionId: transactionId)
-                && Self.mayClaimOutstanding(transaction, reasonIsPurchase: reasonIsPurchase, savedAt: savedAt, history: history)
+                && Self.mayClaimOutstanding(transaction, reasonIsPurchase: reasonIsPurchase, savedAt: savedAt)
         }
         let candidate = purchaseCheckout.flatMap { available($0) ? $0 : nil }
             ?? kept.first(where: { $0.transactionId == transactionId && available($0.checkout) })?.checkout
@@ -396,36 +389,26 @@ public actor BillFnStoreKit {
     }
 }
 
-/// What `BillFnStoreKit.mayClaimOutstanding` reads from a StoreKit transaction.
+/// What `BillFnStoreKit.mayClaimOutstanding` and the checkout match read from a StoreKit transaction.
 struct BillFnStoreKitAttemptFacts: Sendable, Equatable {
     let id: UInt64
-    let originalId: UInt64
     let productId: String
     let appAccountToken: UUID?
     let purchaseDate: Date
-    let expirationDate: Date?
-    /// Revoked, or replaced by an upgrade.
-    let superseded: Bool
 
-    init(id: UInt64, originalId: UInt64, productId: String, appAccountToken: UUID? = nil, purchaseDate: Date, expirationDate: Date? = nil, superseded: Bool = false) {
+    init(id: UInt64, productId: String, appAccountToken: UUID? = nil, purchaseDate: Date) {
         self.id = id
-        self.originalId = originalId
         self.productId = productId
         self.appAccountToken = appAccountToken
         self.purchaseDate = purchaseDate
-        self.expirationDate = expirationDate
-        self.superseded = superseded
     }
 
     init(_ transaction: Transaction) {
         self.init(
             id: transaction.id,
-            originalId: transaction.originalID,
             productId: transaction.productID,
             appAccountToken: transaction.appAccountToken,
-            purchaseDate: transaction.purchaseDate,
-            expirationDate: transaction.expirationDate,
-            superseded: transaction.revocationDate != nil || transaction.isUpgraded
+            purchaseDate: transaction.purchaseDate
         )
     }
 }

@@ -58,20 +58,54 @@ function invalidResult(method: string): never {
   throw new BillFnBridgeClientError('BRIDGE_PROTOCOL_MISMATCH', `Native bridge returned an invalid ${method} result`);
 }
 
+function isTransaction(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.transactionId === 'string' &&
+    typeof value.originalTransactionId === 'string' &&
+    typeof value.productId === 'string' &&
+    (value.appAccountToken === null || typeof value.appAccountToken === 'string') &&
+    typeof value.revoked === 'boolean'
+  );
+}
+
+function isTransactionOutcome(value: unknown): boolean {
+  if (!isRecord(value) || !isTransaction(value.transaction)) {
+    return false;
+  }
+  switch (value.status) {
+    case 'confirmed':
+      return value.finished === true && 'billing' in value;
+    case 'failed':
+      return (
+        value.finished === false &&
+        isRecord(value.error) &&
+        typeof value.error.code === 'string' &&
+        typeof value.error.message === 'string' &&
+        typeof value.error.retryable === 'boolean'
+      );
+    case 'skipped':
+      return value.finished === false && typeof value.reason === 'string';
+    default:
+      return false;
+  }
+}
+
 function assertCheckoutResult(value: unknown): asserts value is BillFnStoreKitCheckoutResult {
   if (
     !isRecord(value) ||
     typeof value.status !== 'string' ||
     !STOREKIT_CHECKOUT_STATUSES.has(value.status) ||
     typeof value.checkoutSessionId !== 'string' ||
-    (value.status === 'purchased' && !isRecord(value.outcome))
+    typeof value.productId !== 'string' ||
+    (value.status === 'purchased' && !isTransactionOutcome(value.outcome))
   ) {
     invalidResult('storekit.checkout');
   }
 }
 
 function assertTransactionsResult(value: unknown, method: string): asserts value is BillFnStoreKitTransactionsResult {
-  if (!isRecord(value) || !Array.isArray(value.transactions) || !value.transactions.every(isRecord)) {
+  if (!isRecord(value) || !Array.isArray(value.transactions) || !value.transactions.every(isTransactionOutcome)) {
     invalidResult(method);
   }
 }

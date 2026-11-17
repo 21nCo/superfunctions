@@ -50,14 +50,11 @@ let restored = try await storeKit.restore()
   (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
   leftover checkout (a purchase that failed on the network, a declined Ask to Buy request) would
-  otherwise be verified with a renewal. From iOS 17 and macOS 14 `Transaction.reason` tells a renewal
-  from a purchase. On iOS 16 and macOS 13 the transaction's history (`Transaction.all`) decides: it is
-  a renewal when an earlier transaction of the same product in its subscription, not revoked or
-  upgraded, was still active when the attempt started or was bought after it. On every system a first
-  purchase, an upgrade, a crossgrade or a resubscription bought through its own checkout claims it,
-  and a renewal is restored onto its plan (or skipped if none maps). On iOS 16 and macOS 13 a renewal
-  that recovers from billing retry after the subscription lapsed before the attempt started looks
-  like a resubscription.
+  otherwise be verified with a renewal. StoreKit's reason tells a renewal from a purchase:
+  `Transaction.reason` from iOS 17 and macOS 14, the signed transaction's `transactionReason` on iOS 16
+  and macOS 13. A first purchase, an upgrade, a crossgrade or a resubscription bought through its own
+  checkout claims it; a renewal, including one that recovers from billing retry, is restored onto its
+  plan (or skipped if none maps). A transaction whose reason is unknown claims no outstanding checkout.
 - Each transaction BillFn confirms is recorded (the newest 256) before it is finished, so when
   StoreKit offers it again (a redelivered update, `restore()`) it never claims an outstanding checkout.
 - When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error,
@@ -72,7 +69,8 @@ let restored = try await storeKit.restore()
   that completed while the app was not running is still verified against it. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
   (such as a network failure) keeps it, since the purchase may still complete.
-- `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
+- `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`, and
+  `restore(entitlements:)` the entitlements to confirm in place of `Transaction.currentEntitlements`,
   for example in tests.
 - `outcomes` streams every transaction outcome, for example to refresh entitlements.
 
@@ -85,4 +83,7 @@ billfn/swift/StoreKitTesting/run-tests.sh
 
 StoreKit testing needs an app bundle, which `swift test` does not provide, so the StoreKit tests
 run in the `StoreKitTesting` macOS host app against `StoreKitTesting/Tests/BillFn.storekit`
-(Xcode required).
+(Xcode required). `run-tests.sh` builds the host app under Xcode's DerivedData folder: StoreKit
+testing cannot reach an app under the temporary folder, so it would not deliver
+`Transaction.updates`. StoreKit testing reports no `Transaction.currentEntitlements` on macOS 26
+and later, so the restore tests pass `restore(entitlements:)` the transactions it would report.

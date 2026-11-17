@@ -4,7 +4,7 @@ import BillFnWebViewBridgeHost
 import Foundation
 import Testing
 
-private let token = UUID(uuidString: "2E54F6B7-3E0D-5B18-98D2-2A2F84A70F7F")!
+private let token = UUID(uuidString: "00000000-0000-4000-8000-00000000000A")!
 private let checkout = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: token)
 private let reference = BillFnStoreKitTransactionReference(
     transactionId: "2000000002",
@@ -52,7 +52,7 @@ private let encodedTransaction: BillFnBridgeValue = .object([
     "transactionId": "2000000002",
     "originalTransactionId": "2000000001",
     "productId": "apple.pro.month",
-    "appAccountToken": "2e54f6b7-3e0d-5b18-98d2-2a2f84a70f7f",
+    "appAccountToken": "00000000-0000-4000-8000-00000000000a",
     "revoked": .bool(false),
 ])
 

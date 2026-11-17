@@ -7,8 +7,6 @@ struct BillFnStoreKitTestHostApp: App {
         WindowGroup("BillFn StoreKit Test Host") {
             Text("BillFn StoreKit test host")
                 .padding()
-                // StoreKit testing delivered no Transaction.updates to an inactive host in local runs.
-                .onAppear { NSApplication.shared.activate(ignoringOtherApps: true) }
         }
     }
 }
