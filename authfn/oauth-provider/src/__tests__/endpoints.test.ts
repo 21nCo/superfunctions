@@ -266,6 +266,45 @@ describe('authorization endpoint', () => {
       expect(response.headers.get('location')).toBeNull();
     }
   });
+
+  it('compares the whole written loopback host, ignoring only the port (AUTH-21)', async () => {
+    const plain = { clientId: 'loopback-plain', name: 'Plain', redirectUris: ['http://127.0.0.1/cb', 'http://[::1]/cb'] };
+    const dotted = { clientId: 'loopback-dotted', name: 'Dotted', redirectUris: ['http://127.0.0.1./cb'] };
+    const provider = await setupProvider({ clients: [plain, dotted] });
+    const expectRefused = async (client: typeof plain, redirectUri: string) => {
+      const response = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: redirectUri }, client));
+      expect(response.status, redirectUri).toBe(400);
+      expect(response.headers.get('location'), redirectUri).toBeNull();
+    };
+
+    // Only the port differs: a default, empty or other port matches.
+    for (const redirectUri of ['http://127.0.0.1:80/cb', 'http://127.0.0.1:/cb', 'http://[::1]:53111/cb', 'http://[::1]:/cb']) {
+      const callback = await provider.authorize({ redirect_uri: redirectUri }, plain);
+      expect(callback.searchParams.get('code'), redirectUri).toBeTruthy();
+    }
+    // The host parses to the registered one but is written differently.
+    for (const redirectUri of [
+      'http://127.0.0.1./cb',
+      'http://127.0.0.1.:/cb',
+      'http://127.0.0.1.:80/cb',
+      'http://127.0.0.1.:53111/cb',
+      'http://127.0.0.1%2E/cb',
+      'http://127.0.0.1%2E:53111/cb'
+    ]) {
+      await expectRefused(plain, redirectUri);
+    }
+    // The reverse: a registered trailing dot is matched as written.
+    const exact = await provider.authorize({ redirect_uri: 'http://127.0.0.1./cb' }, dotted);
+    expect(exact.searchParams.get('code')).toBeTruthy();
+    for (const redirectUri of [
+      'http://127.0.0.1/cb',
+      'http://127.0.0.1:/cb',
+      'http://127.0.0.1:80/cb',
+      'http://127.0.0.1:53111/cb'
+    ]) {
+      await expectRefused(dotted, redirectUri);
+    }
+  });
 });
 
 describe('token endpoint', () => {

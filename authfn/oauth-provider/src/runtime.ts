@@ -230,7 +230,10 @@ export function matchesRedirectUri(client: OAuthProviderClient, redirectUri: str
 
 /** A loopback redirect URI split around its port, each part as written. */
 interface LoopbackRedirectUri {
-  /** `http://` and the loopback IP literal. */
+  /**
+   * `http://` and the loopback IP literal: the whole written authority
+   * without its `:port`, so a trailing dot or an encoded byte still counts.
+   */
   schemeAndHost: string;
   /** Everything after the authority. */
   pathAndQuery: string;
@@ -247,9 +250,15 @@ function parseLoopback(value: string): LoopbackRedirectUri | null {
     !isWrittenAsOrigin(value, url)) {
     return null;
   }
+  const start = value.indexOf('//') + 2;
+  const end = authorityEnd(value);
+  const authority = value.slice(start, end);
+  // The URL parsed, so a `:` after an IPv6 literal's `]` starts the port.
+  const portStart = authority.lastIndexOf(':');
+  const host = portStart > authority.lastIndexOf(']') ? authority.slice(0, portStart) : authority;
   return {
-    schemeAndHost: value.slice(0, `${url.protocol}//${url.hostname}`.length),
-    pathAndQuery: value.slice(authorityEnd(value))
+    schemeAndHost: value.slice(0, start) + host,
+    pathAndQuery: value.slice(end)
   };
 }
 
