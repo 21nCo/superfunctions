@@ -946,10 +946,17 @@ historyTest("a promotion branch created or moved by something else while promoti
   assert.equal(git(dev, "symbolic-ref", ref), "refs/heads/victim");
   git(dev, "symbolic-ref", "--delete", ref);
   git(dev, "branch", "-q", "-D", "victim");
-  // A symbolic promotion ref left behind is never followed when promotion creates its branch.
+  // A dangling symbolic promotion ref, there before the run or created during filtering, is neither replaced nor followed.
   git(dev, "symbolic-ref", ref, "refs/heads/absent");
   git(dev, "config", "--unset", "core.hooksPath");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "branch-exists");
+  assert.equal(git(dev, "symbolic-ref", ref), "refs/heads/absent");
+  assert.equal(spawnSync(gitBinary(), ["rev-parse", "-q", "--verify", "refs/heads/absent"], { cwd: dev }).status, 1);
+  git(dev, "symbolic-ref", "--delete", ref);
+  run = promoteCli(dev, ["widgetfn"], { env: wrapFilterRepo("branch-race-symref", { before: `git -C '${dev}' symbolic-ref ${ref} refs/heads/absent` }) });
+  assert.equal(run.status, 1, run.stdout);
+  assert.match(run.stderr, /^promote: branch-exists: /);
+  assert.equal(git(dev, "symbolic-ref", ref), "refs/heads/absent");
   assert.equal(spawnSync(gitBinary(), ["rev-parse", "-q", "--verify", "refs/heads/absent"], { cwd: dev }).status, 1);
   git(dev, "symbolic-ref", "--delete", ref);
   git(dev, "branch", "-q", "promote/widgetfn", other);

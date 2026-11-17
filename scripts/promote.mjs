@@ -535,7 +535,7 @@ function checkWorkingRepo(root, { base, branch }) {
   if (!gitOk(root, ["merge-base", "--is-ancestor", base, "HEAD"])) {
     throw new PromoteError("wrong-base", `the current branch is not based on ${base}; start from an up-to-date ${base}`);
   }
-  if (gitOk(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])) {
+  if (gitOk(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]) || gitOk(root, ["symbolic-ref", "-q", `refs/heads/${branch}`])) {
     throw new PromoteError("branch-exists", `branch ${branch} already exists`);
   }
   if (!gitOk(root, ["check-ref-format", "--branch", branch])) throw new PromoteError("usage", `${JSON.stringify(branch)} is not a valid branch name`);
@@ -692,6 +692,10 @@ function currentCheckout(root) {
  * A branch something else created after the early check is never adopted: branch-exists, and nothing to clean up.
  */
 function claimBranch(root, owned, start) {
+  // A symbolic ref (even a dangling one) is something else's; some git versions would replace a dangling one.
+  if (gitOk(root, ["symbolic-ref", "-q", owned.ref])) {
+    throw new PromoteError("branch-exists", `branch ${owned.branch} was created by something else while promotion ran; it was left as it is`);
+  }
   const created = git(root, ["update-ref", "--no-deref", "--create-reflog", "-m", "promote: create", owned.ref, start, ""], { allowFailure: true });
   if (created.status === 0) {
     owned.oid = start;
