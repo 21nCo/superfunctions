@@ -692,21 +692,26 @@ function currentCheckout(root) {
  * A branch something else created after the early check is never adopted: branch-exists, and nothing to clean up.
  */
 function claimBranch(root, owned, start) {
-  const created = git(root, ["update-ref", "--create-reflog", "-m", "promote: create", owned.ref, start, ""], { allowFailure: true });
+  const created = git(root, ["update-ref", "--no-deref", "--create-reflog", "-m", "promote: create", owned.ref, start, ""], { allowFailure: true });
   if (created.status === 0) {
     owned.oid = start;
     return;
   }
-  if (gitOk(root, ["rev-parse", "--verify", "--quiet", owned.ref])) {
+  if (gitOk(root, ["rev-parse", "--verify", "--quiet", owned.ref]) || gitOk(root, ["symbolic-ref", "-q", owned.ref])) {
     throw new PromoteError("branch-exists", `branch ${owned.branch} was created by something else while promotion ran; it was left as it is`);
   }
   throw new PromoteError("git-failed", `cannot create branch ${owned.branch}: ${created.stderr.trim()}`);
 }
 
+/** Whether the promotion branch is still the plain (not symbolic) ref promotion created, where promotion left it. */
+function stillOwned(root, owned) {
+  if (owned.oid === null || gitOk(root, ["symbolic-ref", "-q", owned.ref])) return false;
+  return git(root, ["rev-parse", "--verify", "--quiet", owned.ref], { allowFailure: true }).stdout.trim() === owned.oid;
+}
+
 /** Refuses to go on with a promotion branch that no longer points where promotion left it: something else moved it. */
 function requireOwned(root, owned) {
-  const now = git(root, ["rev-parse", "--verify", "--quiet", owned.ref], { allowFailure: true }).stdout.trim();
-  if (now !== owned.oid) throw new PromoteError("git-failed", `branch ${owned.branch} was moved by something else while promotion ran; it was left as it is`);
+  if (!stillOwned(root, owned)) throw new PromoteError("git-failed", `branch ${owned.branch} was moved by something else while promotion ran; it was left as it is`);
 }
 
 /** Adopts the commit a promotion step just made on the owned branch, but only one made on top of the owned commit. */
@@ -716,15 +721,16 @@ function advanceBranch(worktree, owned) {
 }
 
 /**
- * After a failed attempt, deletes the promotion branch only if promotion created it and it still points where
- * promotion left it (update-ref -d with that old value), and never while any worktree has it checked out (as
- * git branch -D refuses). A branch something else created, moved, recreated or checked out survives with its reflog.
+ * After a failed attempt, deletes the promotion branch only if promotion created it and it is still a plain ref
+ * where promotion left it (update-ref --no-deref -d with that old value), and never while any worktree has it checked
+ * out (as git branch -D refuses). A branch something else created, moved, recreated, replaced with a symbolic ref or
+ * checked out survives with its reflog, and so does the target of such a symbolic ref.
  */
 function discardBranch(root, owned) {
-  if (owned.oid === null) return;
+  if (!stillOwned(root, owned)) return;
   const checkedOut = git(root, ["worktree", "list", "--porcelain", "-z"]).split("\0").includes(`branch ${owned.ref}`);
   if (checkedOut) return;
-  git(root, ["update-ref", "-d", owned.ref, owned.oid], { allowFailure: true });
+  git(root, ["update-ref", "--no-deref", "-d", owned.ref, owned.oid], { allowFailure: true });
 }
 
 /** Where the pin is fetched from: another repository needs an explicit pin; this checkout's is resolved later. */

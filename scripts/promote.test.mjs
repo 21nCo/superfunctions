@@ -935,6 +935,24 @@ historyTest("a promotion branch created or moved by something else while promoti
   assert.equal(git(dev, "rev-parse", "HEAD"), head);
   assert.equal(git(dev, "status", "--porcelain"), "");
   assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
+  // Replaced with a symbolic ref to another branch at the same commit: neither that branch nor its reflog is deleted.
+  git(dev, "branch", "-q", "-D", "promote/widgetfn");
+  git(dev, "branch", "-q", "victim", head);
+  const victimLog = git(dev, "reflog", "show", "--format=%H %gs", "refs/heads/victim");
+  useHook(dev, "pre-merge-commit", `git symbolic-ref ${ref} refs/heads/victim\nexit 1`);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "rev-parse", "refs/heads/victim"), head);
+  assert.equal(git(dev, "reflog", "show", "--format=%H %gs", "refs/heads/victim"), victimLog);
+  assert.equal(git(dev, "symbolic-ref", ref), "refs/heads/victim");
+  git(dev, "symbolic-ref", "--delete", ref);
+  git(dev, "branch", "-q", "-D", "victim");
+  // A symbolic promotion ref left behind is never followed when promotion creates its branch.
+  git(dev, "symbolic-ref", ref, "refs/heads/absent");
+  git(dev, "config", "--unset", "core.hooksPath");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "branch-exists");
+  assert.equal(spawnSync(gitBinary(), ["rev-parse", "-q", "--verify", "refs/heads/absent"], { cwd: dev }).status, 1);
+  git(dev, "symbolic-ref", "--delete", ref);
+  git(dev, "branch", "-q", "promote/widgetfn", other);
   // Moved after the ownership commit: promotion neither checks it out nor reports success, and leaves it alone
   // (also with --reconcile, which skips the content check).
   git(dev, "branch", "-q", "-D", "promote/widgetfn");
