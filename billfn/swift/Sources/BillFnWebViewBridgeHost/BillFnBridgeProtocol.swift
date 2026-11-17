@@ -1,3 +1,4 @@
+import BillFnClient
 import Foundation
 
 public let BILLFN_BRIDGE_PROTOCOL = "billfn-bridge/v1"
@@ -16,6 +17,16 @@ public let BILLFN_BRIDGE_METHODS: [String] = [
     "subscription.resume",
     "subscription.manage",
     "health.check",
+    "storekit.checkout",
+    "storekit.restore",
+    "storekit.transactions",
+]
+
+/// The bridge methods that run StoreKit 2 purchases; they are answered by `BillFnBridgeDispatcher.respond(to:)`.
+public let BILLFN_BRIDGE_STOREKIT_METHODS: [String] = [
+    "storekit.checkout",
+    "storekit.restore",
+    "storekit.transactions",
 ]
 
 public let BILLFN_BRIDGE_EVENT_NAMES: [String] = [
@@ -24,6 +35,7 @@ public let BILLFN_BRIDGE_EVENT_NAMES: [String] = [
     "subscription.changed",
     "entitlements.changed",
     "health.changed",
+    "transaction.updated",
 ]
 
 public struct BillFnBridgeError: Codable, Sendable, Equatable, Error {
@@ -59,56 +71,8 @@ public struct BillFnBridgeRequestEnvelope: Codable, Sendable, Equatable {
     }
 }
 
-public enum BillFnBridgeValue: Codable, Sendable, Equatable {
-    case string(String)
-    case integer(Int)
-    case double(Double)
-    case bool(Bool)
-    case array([BillFnBridgeValue])
-    case object([String: BillFnBridgeValue])
-    case null
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let bool = try? container.decode(Bool.self) {
-            self = .bool(bool)
-        } else if let integer = try? container.decode(Int.self) {
-            self = .integer(integer)
-        } else if let double = try? container.decode(Double.self) {
-            self = .double(double)
-        } else if let string = try? container.decode(String.self) {
-            self = .string(string)
-        } else if let array = try? container.decode([BillFnBridgeValue].self) {
-            self = .array(array)
-        } else if let object = try? container.decode([String: BillFnBridgeValue].self) {
-            self = .object(object)
-        } else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported bridge JSON value")
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .string(let value):
-            try container.encode(value)
-        case .integer(let value):
-            try container.encode(value)
-        case .double(let value):
-            try container.encode(value)
-        case .bool(let value):
-            try container.encode(value)
-        case .array(let value):
-            try container.encode(value)
-        case .object(let value):
-            try container.encode(value)
-        case .null:
-            try container.encodeNil()
-        }
-    }
-}
+/// Bridge payloads are BillFn JSON values.
+public typealias BillFnBridgeValue = BillFnJSONValue
 
 public struct BillFnBridgeResponseEnvelope: Codable, Sendable, Equatable {
     public let protocolVersion: String
@@ -137,8 +101,8 @@ public struct BillFnBridgeResponseEnvelope: Codable, Sendable, Equatable {
         Self(id: id, ok: true, result: result, error: nil)
     }
 
-    public static func failure(id: String, code: String, message: String) -> Self {
-        Self(id: id, ok: false, result: nil, error: BillFnBridgeError(code: code, message: message))
+    public static func failure(id: String, code: String, message: String, details: [String: BillFnBridgeValue]? = nil) -> Self {
+        Self(id: id, ok: false, result: nil, error: BillFnBridgeError(code: code, message: message, details: details))
     }
 }
 

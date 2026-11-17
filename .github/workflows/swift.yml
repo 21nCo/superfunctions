@@ -140,6 +140,14 @@ jobs:
           run_tests --skip '^UIFnSwiftUITests\.' || status=$?
           run_tests --filter '^UIFnSwiftUITests\.' || status=$?
           exit "$status"
+      # BillFnSwift is its own package (billfn/swift), outside the root Package.swift.
+      - name: BillFn Swift package tests
+        run: swift test --package-path billfn/swift --only-use-versions-from-resolved-file
+      # StoreKit testing needs an app bundle, which swift test does not provide, so the
+      # BillFnStoreKit purchase, pending, cancel, restore and update tests run hosted in a
+      # macOS app against billfn/swift/StoreKitTesting/Tests/BillFn.storekit.
+      - name: BillFnStoreKit tests (Xcode StoreKit testing)
+        run: billfn/swift/StoreKitTesting/run-tests.sh
       - name: Upload UIFnSwiftUI snapshots that differ from their references
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

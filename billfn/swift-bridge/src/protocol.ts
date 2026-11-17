@@ -8,7 +8,8 @@ export const BILLFN_BRIDGE_CAPABILITIES = [
   'subscriptions',
   'purchases',
   'health',
-  'events'
+  'events',
+  'storekit'
 ] as const;
 
 export const BILLFN_BRIDGE_METHODS = [
@@ -24,7 +25,10 @@ export const BILLFN_BRIDGE_METHODS = [
   'subscription.change',
   'subscription.resume',
   'subscription.manage',
-  'health.check'
+  'health.check',
+  'storekit.checkout',
+  'storekit.restore',
+  'storekit.transactions'
 ] as const;
 
 export const BILLFN_BRIDGE_EVENT_NAMES = [
@@ -32,7 +36,8 @@ export const BILLFN_BRIDGE_EVENT_NAMES = [
   'bridge.closed',
   'subscription.changed',
   'entitlements.changed',
-  'health.changed'
+  'health.changed',
+  'transaction.updated'
 ] as const;
 
 export type BillFnBridgeMethod = (typeof BILLFN_BRIDGE_METHODS)[number];
@@ -99,6 +104,52 @@ export interface BillFnBridgeHandshakeResult {
   capabilities: string[];
 }
 
+export interface BillFnStoreKitCheckoutPayload {
+  planKey: string;
+  priceId?: string;
+  interval?: string;
+}
+
+export interface BillFnStoreKitRestorePayload {
+  /** Defaults to true: StoreKit's AppStore.sync, which may ask the user to sign in. */
+  syncWithAppStore?: boolean;
+}
+
+export interface BillFnStoreKitTransaction {
+  transactionId: string;
+  originalTransactionId: string;
+  productId: string;
+  appAccountToken: string | null;
+  revoked: boolean;
+}
+
+/**
+ * What BillFn did with one StoreKit transaction. Only a `confirmed` transaction is finished;
+ * a `failed` or `skipped` one stays unfinished and is retried on the app's next launch.
+ */
+export type BillFnStoreKitTransactionOutcome =
+  | { transaction: BillFnStoreKitTransaction; status: 'confirmed'; finished: true; billing: unknown }
+  | {
+      transaction: BillFnStoreKitTransaction;
+      status: 'failed';
+      finished: false;
+      error: { code: string; message: string; retryable: boolean };
+    }
+  | { transaction: BillFnStoreKitTransaction; status: 'skipped'; finished: false; reason: string };
+
+export type BillFnStoreKitCheckoutResult =
+  | {
+      status: 'purchased';
+      checkoutSessionId: string;
+      productId: string;
+      outcome: BillFnStoreKitTransactionOutcome;
+    }
+  | { status: 'pending' | 'cancelled'; checkoutSessionId: string; productId: string };
+
+export interface BillFnStoreKitTransactionsResult {
+  transactions: BillFnStoreKitTransactionOutcome[];
+}
+
 export interface CreateNativeBackedBillFnClientOptions
   extends CreateWKWebViewBridgeBusOptions,
     BillFnBridgeHandshakePayload {}
@@ -123,6 +174,12 @@ export interface NativeBackedBillFnClient {
   resumeSubscription(payload?: unknown): Promise<unknown>;
   manageSubscription(payload?: unknown): Promise<unknown>;
   healthCheck(payload?: unknown): Promise<unknown>;
+  /** Buys the plan with StoreKit 2 in the native app; the transaction is finished once BillFn verifies it. */
+  checkout(payload: BillFnStoreKitCheckoutPayload): Promise<BillFnStoreKitCheckoutResult>;
+  /** Restores the App Store purchases onto the BillFn billing account. */
+  restore(payload?: BillFnStoreKitRestorePayload): Promise<BillFnStoreKitTransactionsResult>;
+  /** Confirms the unfinished StoreKit transactions with BillFn now and returns their outcomes. */
+  transactions(): Promise<BillFnStoreKitTransactionsResult>;
   subscribe(handler: (event: BillFnBridgeEventEnvelope) => void): () => void;
 }
 

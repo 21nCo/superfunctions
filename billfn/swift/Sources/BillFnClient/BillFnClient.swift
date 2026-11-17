@@ -3,10 +3,17 @@ import Foundation
 public struct BillFnClientConfiguration: Sendable {
     public var baseURL: URL
     public var session: URLSession
+    /// Headers added to every request `send` makes, read per request so a rotating credential stays current.
+    public var headers: @Sendable () async throws -> [String: String]
 
-    public init(baseURL: URL, session: URLSession = .shared) {
+    public init(
+        baseURL: URL,
+        session: URLSession = .shared,
+        headers: @escaping @Sendable () async throws -> [String: String] = { [:] }
+    ) {
         self.baseURL = baseURL
         self.session = session
+        self.headers = headers
     }
 }
 
@@ -25,6 +32,8 @@ public struct BillFnOperationAction: Codable, Sendable, Equatable {
 public enum BillFnClientError: Error, Equatable {
     case invalidBaseURL
     case invalidResponse
+    /// BillFn answered with an error envelope.
+    case server(code: String, message: String, status: Int, retryable: Bool)
 }
 
 public final class BillFnClient: @unchecked Sendable {
@@ -72,5 +81,35 @@ public final class BillFnClient: @unchecked Sendable {
             request.setValue(value, forHTTPHeaderField: key)
         }
         return request
+    }
+
+    /// Sends a JSON request and returns the `data` of BillFn's success envelope.
+    public func send(path: String, method: String = "POST", body: BillFnJSONValue? = nil) async throws -> BillFnJSONValue {
+        let encodedBody = try body.map { try JSONEncoder().encode($0) }
+        let request = try makeRequest(
+            path: path,
+            method: method,
+            body: encodedBody,
+            headers: try await configuration.headers(),
+            accept: "application/json"
+        )
+        let (data, response) = try await configuration.session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard case .object(let envelope)? = try? JSONDecoder().decode(BillFnJSONValue.self, from: data),
+              case .bool(let ok)? = envelope["ok"] else {
+            throw BillFnClientError.invalidResponse
+        }
+        if ok, (200..<300).contains(status), let payload = envelope["data"] {
+            return payload
+        }
+        guard !ok, case .object(let error)? = envelope["error"] else {
+            throw BillFnClientError.invalidResponse
+        }
+        throw BillFnClientError.server(
+            code: error["code"]?.stringValue ?? "BILLFN_ERROR",
+            message: error["message"]?.stringValue ?? "BillFn request failed",
+            status: status,
+            retryable: error["retryable"]?.boolValue ?? (status >= 500)
+        )
     }
 }

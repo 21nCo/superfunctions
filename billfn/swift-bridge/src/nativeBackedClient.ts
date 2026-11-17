@@ -9,6 +9,8 @@ import {
   type BillFnBridgeMethod,
   type BillFnBridgeRequestEnvelope,
   type BillFnBridgeResponseEnvelope,
+  type BillFnStoreKitCheckoutResult,
+  type BillFnStoreKitTransactionsResult,
   type CreateNativeBackedBillFnClientOptions,
   type NativeBackedBillFnClient
 } from './protocol.js';
@@ -44,6 +46,34 @@ function buildRequest(
     method,
     payload
   };
+}
+
+const STOREKIT_CHECKOUT_STATUSES = new Set(['purchased', 'pending', 'cancelled']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function invalidResult(method: string): never {
+  throw new BillFnBridgeClientError('BRIDGE_PROTOCOL_MISMATCH', `Native bridge returned an invalid ${method} result`);
+}
+
+function assertCheckoutResult(value: unknown): asserts value is BillFnStoreKitCheckoutResult {
+  if (
+    !isRecord(value) ||
+    typeof value.status !== 'string' ||
+    !STOREKIT_CHECKOUT_STATUSES.has(value.status) ||
+    typeof value.checkoutSessionId !== 'string' ||
+    (value.status === 'purchased' && !isRecord(value.outcome))
+  ) {
+    invalidResult('storekit.checkout');
+  }
+}
+
+function assertTransactionsResult(value: unknown, method: string): asserts value is BillFnStoreKitTransactionsResult {
+  if (!isRecord(value) || !Array.isArray(value.transactions) || !value.transactions.every(isRecord)) {
+    invalidResult(method);
+  }
 }
 
 export function createNativeBackedBillFnClient(
@@ -125,6 +155,24 @@ export function createNativeBackedBillFnClient(
     },
     healthCheck(payload) {
       return request('health.check', payload);
+    },
+    async checkout(payload) {
+      if (!isRecord(payload) || typeof payload.planKey !== 'string' || payload.planKey.length === 0) {
+        throw new BillFnBridgeClientError('BRIDGE_INVALID_REQUEST', 'checkout requires a planKey');
+      }
+      const result = await request('storekit.checkout', payload);
+      assertCheckoutResult(result);
+      return result;
+    },
+    async restore(payload) {
+      const result = await request('storekit.restore', payload ?? {});
+      assertTransactionsResult(result, 'storekit.restore');
+      return result;
+    },
+    async transactions() {
+      const result = await request('storekit.transactions');
+      assertTransactionsResult(result, 'storekit.transactions');
+      return result;
     },
     subscribe(handler: (event: BillFnBridgeEventEnvelope) => void) {
       return bus.subscribe(handler);

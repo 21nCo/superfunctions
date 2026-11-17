@@ -20,6 +20,12 @@ export {
   type BillFnBridgeMethod,
   type BillFnBridgeRequestEnvelope,
   type BillFnBridgeResponseEnvelope,
+  type BillFnStoreKitCheckoutPayload,
+  type BillFnStoreKitCheckoutResult,
+  type BillFnStoreKitRestorePayload,
+  type BillFnStoreKitTransaction,
+  type BillFnStoreKitTransactionOutcome,
+  type BillFnStoreKitTransactionsResult,
   type CreateNativeBackedBillFnClientOptions,
   type CreateWKWebViewBridgeBusOptions,
   type NativeBackedBillFnClient

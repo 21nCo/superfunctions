@@ -36,8 +36,18 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "BillFnStoreKitBackendTests",
+            dependencies: [
+                "BillFnClient",
+                "BillFnStoreKit",
+                .product(name: "Testing", package: "swift-testing"),
+            ]
+        ),
+        .testTarget(
             name: "BillFnWebViewBridgeHostTests",
             dependencies: [
+                "BillFnClient",
+                "BillFnStoreKit",
                 "BillFnWebViewBridgeHost",
                 .product(name: "Testing", package: "swift-testing"),
             ]
