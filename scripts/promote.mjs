@@ -745,15 +745,20 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
 function mergeInScratch(root, { branch, imported, message, reconcile }) {
   const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
   const worktree = path.join(scratch, "worktree");
+  const original = git(root, ["rev-parse", "HEAD"]).trim();
   const checkout = (commit) => {
     const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, commit]);
     if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
   };
+  // This checkout's hooks, also when core.hooksPath is relative to it (the scratch worktree lacks untracked files).
+  const hooks = path.resolve(root, git(root, ["rev-parse", "--git-path", "hooks"]).trim());
   try {
     git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", worktree, "HEAD"]);
-    const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+    const mergeArgs = ["-c", `core.hooksPath=${hooks}`, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported];
+    const merged = git(worktree, mergeArgs, { allowFailure: true });
     if (merged.status === 0) {
       checkout(git(worktree, ["rev-parse", "HEAD"]).trim());
+      git(root, ["update-ref", "ORIG_HEAD", original]); // as git merge leaves it, for git reset --merge ORIG_HEAD
       return [];
     }
     const conflicts = lines(git(worktree, ["diff", "--name-only", "--diff-filter=U"]));
@@ -775,6 +780,7 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
     writeFileSync(gitPath("MERGE_HEAD"), `${imported}\n`);
     writeFileSync(gitPath("MERGE_MSG"), `${message}\n`);
     writeFileSync(gitPath("MERGE_MODE"), "no-ff");
+    git(root, ["update-ref", "ORIG_HEAD", original]);
     return conflicts;
   } finally {
     git(root, ["worktree", "remove", "--force", worktree], { allowFailure: true });

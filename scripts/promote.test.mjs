@@ -238,6 +238,7 @@ historyTest("a dirty tree, a branch not based on origin/dev and a conflicting pa
   assert.equal(git(dev, "log", "-1", "--format=%s", mergeHead), "SFN-12 widget python");
   assert.match(readFileSync(path.join(dev, "uifn/foo/bar.js"), "utf8"), /^<<<<<<< /m);
   assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, "no scratch worktree is left");
+  assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), conflicted, "git reset --merge ORIG_HEAD abandons the merge");
   write(dev, { "uifn/foo/bar.js": "export const bar = 'merged';\n" });
   git(dev, "add", "uifn/foo/bar.js");
   git(dev, "commit", "-q", "--no-edit");
@@ -576,6 +577,12 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   useHook(dev, "pre-merge-commit", "exit 1");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
+  // A core.hooksPath relative to this checkout, holding ignored local files.
+  write(dev, { ".git/info/exclude": "local-hooks/\n", "local-hooks/pre-merge-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(dev, "local-hooks/pre-merge-commit"), 0o755);
+  git(dev, "config", "core.hooksPath", "local-hooks");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
   git(dev, "config", "--unset", "core.hooksPath");
   // The imported commits are unsigned.
   git(dev, "config", "merge.verifySignatures", "true");
@@ -584,6 +591,7 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   git(dev, "config", "--unset", "merge.verifySignatures");
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+  assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), head, "ORIG_HEAD is the commit before the merge, as git merge leaves it");
 });
 
 historyTest("a rejecting post-checkout hook on the new branch restores the original checkout and branch list", () => {
