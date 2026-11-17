@@ -8894,6 +8894,62 @@ not expose `runProcessing` or a trigger accepting caller-supplied storage keys:
 `triggerProcessingForFile` authorizes the file/version and resolves the input
 from FileFn before scheduling work.
 
+### Importing existing objects
+
+`fileFn.services.files.importObject(input)` (`@filefn/server` 0.6.0) registers an
+object that is already in storage, for example one copied from another bucket
+during a migration, as a new file and version. It does not copy, read or move
+the object; it checks it with one HEAD (`statObject`). It is a trusted
+server-side API with no route and no caller context: the caller decides the owner.
+
+```ts
+const { file, version, created } = await fileFn.services.files.importObject({
+  storageKey: "tenants/t1/2019/report.pdf", // object already in the policy's storage target
+  principalId: "user_1",                     // owner of the new file
+  tenantId: "t1",                            // or null
+  fileName: "report.pdf",
+  mimeType: "application/pdf",
+  size: 48213,                               // must equal the object's stored size
+  createdAt: "2019-03-04T05:06:07Z",         // optional; kept as createdAt and updatedAt
+  metadata: { source: "s3" },                // optional
+  fileId: "file_01hxyz...",                  // optional; client file ID grammar
+  policy: "nucleus-durable-default",         // optional; see below
+});
+```
+
+- **Policy.** The file's policy decides the storage target the object is read from
+  and the file's visibility. A named policy must be registered. Omitted, the file
+  records the policy `"default"`; unless you registered a policy of that name, it
+  resolves to the default storage target and private visibility. Policy content-type and size limits
+  are not applied to imports.
+- **Idempotent per object.** Every import of one object (storage target and key)
+  creates the same version ID, so a second import returns the existing file with
+  `created: false`, without a HEAD, even when its other fields differ or a later
+  upload has added versions. Use the returned `file.fileId`: it is the first
+  importer's, which may not be the `fileId` you passed.
+- **Reruns and races.** Rerun an interrupted batch with the same input (the same
+  `fileId`, or none): an import stopped after writing its file row is completed.
+  Of two imports racing on one object, the first version insert creates the file
+  and the other returns it and removes the file row it had written (a loser stopped
+  before that removes it when it is rerun). On adapters with unique constraints
+  (Postgres) the database decides across processes; on adapters without them,
+  imports of one object in one process run one at a time.
+- **Failures.** No object at the key: `404 FILEFN_IMPORT_OBJECT_NOT_FOUND`. A stored
+  size other than `size`: `409 FILEFN_IMPORT_SIZE_MISMATCH`. Neither writes any row.
+  The object already imported for another owner or tenant, or a `fileId` that names
+  another file: `409 FILEFN_IMPORT_CONFLICT` (`details.reason` is `owner` or
+  `fileId`). Invalid input: `400 FILEFN_INVALID_REQUEST` or
+  `FILEFN_INVALID_FILE_ID`; an unregistered `policy`: `FILEFN_POLICY_NOT_FOUND`.
+  Other storage errors (for example a transient HEAD failure) are thrown as they
+  are; retry the import.
+- **Side effects.** The call that creates the file records `size` bytes of quota
+  usage (so deleting the file balances it); an import interrupted between its
+  version insert and that record is not recorded again by a rerun. It emits no
+  `file:uploaded` event and schedules no processing; call
+  `services.processing.triggerProcessingForFile` for previews.
+- **Trust.** The import trusts that the object at the key is the one meant; an
+  actor with direct write access to the bucket is outside this API's protection.
+
 `@filefn/admin` requires this declared server version. Its
 `createFileFnDomainAdminService({ fileFn, context })` maps each active admin
 actor/scope to FileFn's domain context rather than bypassing these checks.

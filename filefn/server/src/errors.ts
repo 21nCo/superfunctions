@@ -61,6 +61,9 @@ export const ErrorCodes = {
   ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
   ARTIFACT_WRITE_CONFLICT: 'FILEFN_ARTIFACT_WRITE_CONFLICT',
   STORAGE_UPLOAD_UNSUPPORTED: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED',
+  IMPORT_OBJECT_NOT_FOUND: 'FILEFN_IMPORT_OBJECT_NOT_FOUND',
+  IMPORT_SIZE_MISMATCH: 'FILEFN_IMPORT_SIZE_MISMATCH',
+  IMPORT_CONFLICT: 'FILEFN_IMPORT_CONFLICT',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -308,5 +311,35 @@ export function storageUploadUnsupported(target: string): FileFnError {
     'The storage target does not support server-side uploads',
     501,
     { target },
+  );
+}
+
+/** `importObject`: no object exists at the storage key. */
+export function importObjectNotFound(storageKey: string): FileFnError {
+  return new FileFnError(ErrorCodes.IMPORT_OBJECT_NOT_FOUND, 'Storage object to import not found', 404, { storageKey });
+}
+
+/** `importObject`: the object's stored size is not the size the caller gave. */
+export function importSizeMismatch(storageKey: string, expected: number, actual: number): FileFnError {
+  return new FileFnError(
+    ErrorCodes.IMPORT_SIZE_MISMATCH,
+    'Stored object size does not match the expected size',
+    409,
+    { storageKey, expected, actual },
+  );
+}
+
+/**
+ * `importObject`: the object was imported for another owner (`owner`), or the
+ * requested file ID names another file (`fileId`).
+ */
+export function importConflict(storageKey: string, reason: 'owner' | 'fileId', fileId?: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.IMPORT_CONFLICT,
+    reason === 'owner'
+      ? 'Storage object was already imported for another owner'
+      : 'File ID already names another file',
+    409,
+    fileId === undefined ? { storageKey, reason } : { storageKey, reason, fileId },
   );
 }

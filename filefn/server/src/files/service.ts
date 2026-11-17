@@ -15,6 +15,7 @@ import {
   recordedStorageTarget,
 } from '../processing/service.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
+import { createImportObject } from './import.js';
 
 /** Kinds of the rows recording an artifact object no artifact row names (see the processing service). */
 const RECORD_KINDS = [DISPLACED_OBJECT_KIND, UPLOAD_INTENT_KIND];
@@ -371,7 +372,17 @@ export function createFileService(config: FileServiceConfig) {
     };
   }
 
+  const importObject = createImportObject({ db, storage, policies, quota, logger, namespace });
+
   return {
+    /**
+     * Registers an object already in storage as a new file and version without
+     * copying it, after a HEAD confirms it exists with the given size. A trusted
+     * server-side API (no route, no authorization context): the caller decides
+     * the owner. Idempotent per object; see `ImportObjectInput`.
+     */
+    importObject,
+
     async getFile(fileId: string, ctx: FileProviderContext, versionId?: string): Promise<FileReadResult> {
       const file = await db.findOne<FileRecord>({
         model: 'files',

@@ -524,6 +524,8 @@ export { createUploadSessionService } from './upload-sessions/service.js';
 export type { QuotaProvider, UploadSessionService, CreateSessionInput, UploadSession } from './upload-sessions/service.js';
 export { createFileService } from './files/service.js';
 export type { FileService, FileRecord, FileVersionRecord, Authorizer } from './files/service.js';
+export { DEFAULT_IMPORT_POLICY } from './files/import.js';
+export type { ImportObjectInput, ImportObjectResult } from './files/import.js';
 export * from './errors.js';
 export type { FileFnRouter } from './router.js';
 export type { FileFnRuntime } from './runtime.js';
