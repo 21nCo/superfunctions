@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type {
   AuthFnApiKeyRecord,
+  AuthFnApiKeySession,
   AuthFnRuntimeConfig,
-  AuthFnSession,
   AuthFnUserRecord
 } from '../types.js';
 import { AuthFnApiKeyRevokedError, AuthFnNotFoundError, AuthFnValidationError } from './errors.js';
@@ -164,7 +164,7 @@ export async function authenticateApiKey(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   secret: string,
   options?: { now?: () => Date }
-): Promise<AuthFnSession | null> {
+): Promise<AuthFnApiKeySession | null> {
   const record = await config.database.findOne<AuthFnApiKeyRecord>({
     model: 'api_keys',
     where: [{ field: 'secretHash', operator: 'eq', value: hashSecret(secret) }],
@@ -187,7 +187,8 @@ export async function authenticateApiKey(
   }
 
   // An owned key acts as its owner, so the owner must still be able to act:
-  // a deleted or disabled owner leaves the key authenticating as no one.
+  // with a deleted or disabled owner the key fails authentication, no session
+  // is issued and the key is not touched.
   let owner: AuthFnUserRecord | null = null;
   if (record.userId != null) {
     owner = await findActiveApiKeyOwner(config, record.userId);
@@ -252,7 +253,8 @@ export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): 
 
 /**
  * Loads the owner an API key acts as. Returns `null` when the owner was
- * deleted or is disabled, so the key authenticates as no one. Shared by every
+ * deleted or is disabled, so the key fails authentication (401) and no
+ * session is issued. Shared by every
  * API-key authentication path so they cannot disagree on owner eligibility.
  */
 export async function findActiveApiKeyOwner(

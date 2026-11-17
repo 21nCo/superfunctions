@@ -17,10 +17,20 @@ Both modes use the same `authfn_sessions` table and the same lifecycle — only 
 ## Anatomy of a session
 
 ```ts
-interface AuthFnSession {
-  id: string;                                  // session id (stable across rotations)
-  type: 'session' | 'api-key';
-  credential?: { type: 'api-key'; id: string }; // set when an API key authenticated the request
+type AuthFnSession = AuthFnUserSession | AuthFnApiKeySession;
+
+interface AuthFnUserSession extends AuthFnSessionBase {
+  type: 'session';                             // cookie or bearer session token
+  credential?: undefined;
+}
+
+interface AuthFnApiKeySession extends AuthFnSessionBase {
+  type: 'api-key';
+  credential: { type: 'api-key'; id: string }; // the API key that authenticated the request
+}
+
+interface AuthFnSessionBase {
+  id: string;                                  // session id (stable across rotations) or API key id
   subject: {
     actorId: string;
     actorType: 'user' | 'api-key';
@@ -155,7 +165,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). In the TypeScript `authfn` package (0.6.0 and later), every session carries `scopes`: interactive cookie and bearer sessions get `['*']` and API-key sessions get the key's stored scopes that the registry can grant; call `requireScopes(session, needed)` to enforce them (see [Plugins → API keys → Scopes](../plugins/api-keys#scopes)). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled fails authentication (401) and no session is issued. In `authfn` 0.7.0 and later, `AuthFnSession` is the union `AuthFnUserSession | AuthFnApiKeySession`, so checking `session.type === 'api-key'` narrows `session.credential` to a required value and `session.type === 'session'` narrows it to `undefined`. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). In the TypeScript `authfn` package (0.6.0 and later), every session carries `scopes`: interactive cookie and bearer sessions get `['*']` and API-key sessions get the key's stored scopes that the registry can grant; call `requireScopes(session, needed)` to enforce them (see [Plugins → API keys → Scopes](../plugins/api-keys#scopes)). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 

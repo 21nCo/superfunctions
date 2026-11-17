@@ -87,10 +87,14 @@ The context is frozen and contains:
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
 | `scopes` | API-key contexts only; absent for interactive user sessions. TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+ only): always present for user-owned API keys and holds the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. The Python issuer does not filter yet: it signs every stored string scope, including unregistered ones such as `legacy:*`, and omits the claim when the key has no stored scope list. Verifiers must not treat a Python-signed `scopes` claim as registry-filtered. |
 | `requestId` | Correlation id. |
-| `actorType` | `user` or `api-key`. |
+| `actorType` | `user` or `api-key`. A user-owned API key signs `api-key` (see [API-key actor shape](#api-key-actor-shape)). |
 | `userId` | Omitted unless `includeUserId: true`. |
 
 Raw email, phone, cookie material, signing secrets, and internal cell destinations are never included.
+
+### API-key actor shape
+
+For a user-owned API key, the derived and signed context keeps `actorType: 'api-key'`. `sessionBinding` and `sessionVersion` come from the key, and `subject` (and `userId`, with `includeUserId: true`) identify the key's owner. This differs on purpose from the API-key session that `auth.provider.authenticate` returns, where an owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID; see [Sessions](../core-concepts/sessions#api-key-sessions)). The signed context is a wire contract that regional verifiers check, so it keeps naming the credential that authenticated the request. Consumers that need the user read `subject` or `userId`, and consumers that need to know a key was used read `actorType`.
 
 Gateway-mode servers can omit `placementDirectory`, `identityKeyForUserId`, and `publicAuthority` when those already exist on `authFnMultiRegionEnvironment({ routing })`. Direct regional-authority mode keeps working for AuthFn traffic; this issuer still requires an explicit placement directory so a client host cannot become placement authority.
 
