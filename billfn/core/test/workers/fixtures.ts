@@ -7,3 +7,5 @@ export const DODO_WEBHOOK_SECRET = `whsec_${btoa('billfn-workers-smoke-secret')}
 export const SMOKE_EU_SUBSCRIPTION_ID = 'sub_smoke_eu';
 /** Synthetic shared internal token for the owner lookup, derived at runtime like the webhook secret. */
 export const SMOKE_INTERNAL_TOKEN = `itok_${btoa('billfn-workers-smoke-internal')}`;
+/** The bundle ID the smoke Worker's Apple provider is configured for. */
+export const SMOKE_APPLE_BUNDLE_ID = 'com.example';

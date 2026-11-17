@@ -9,6 +9,7 @@
     "paths": {
       "@billfn/core": ["./src/index.ts"],
       "@billfn/provider-dodo": ["../provider-dodo/src/index.ts"],
+      "@billfn/provider-apple": ["../provider-apple/src/index.ts"],
       "@superfunctions/webhooks": [
         "./node_modules/@superfunctions/webhooks",
         "../../node_modules/@superfunctions/webhooks"
