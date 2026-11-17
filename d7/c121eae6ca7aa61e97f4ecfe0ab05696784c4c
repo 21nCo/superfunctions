@@ -1,0 +1,39 @@
+billfn/core/test/workers/smoke.test.ts
+  s_86fe7baa69bbb4::t_3338870898824c 134-149,202-203,205,222,231,237,241,246-247,259-260,270,275,282,292
+billfn/core/test/workers/worker.ts
+  s_86fe7baa69bbb4::t_c81097de23b30f 67,69,71-72
+billfn/docs/content/docs/providers/dodo.mdx
+  s_86fe7baa69bbb4::t_2b413d2bd1b1a4 27-28,32,37-38,43,64-67,69-72
+billfn/docs/content/docs/reference/errors-and-defaults.mdx
+  s_86fe7baa69bbb4::t_ad986fc4cac709 16
+billfn/provider-dodo/package.json
+  s_86fe7baa69bbb4::t_d7aedaf477d955 3
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_86fe7baa69bbb4::t_6a9bf055a1d0be 1-689
+billfn/provider-dodo/src/__tests__/fixtures/dodo-api-v1.124.0.json
+  s_86fe7baa69bbb4::t_f923cc7ac41b80 1-307
+billfn/provider-dodo/src/__tests__/lifecycle.test.ts
+  s_86fe7baa69bbb4::t_6e64ef00f94362 12-14,17,23-35
+billfn/provider-dodo/src/__tests__/provider.test.ts
+  s_86fe7baa69bbb4::t_b32e3c82b56a3e 106,110-111,160,166,171-172,175-180,333,547,677
+billfn/provider-dodo/src/index.ts
+  s_86fe7baa69bbb4::t_facce86bbca8e2 20-28,31-36,46,50,52-59,76-77,80,82-88,92,94,99-100,103-151,161,163-165,167-172,182,192,195,208-221,224-241,244-247,259,263,288-289,292-294,314,330-332,335,340-346,356,360,366,411,452,459-460,463-467,482-541,552,556-588,681-728,732-737,739,745-758,765-767,774-781,784-786,792-864
+package-lock.json
+  s_86fe7baa69bbb4::t_599135dc311dfe 6063
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7c121eae6ca7aa61e97f4ecfe0ab05696784c4c",
+  "prompts": {},
+  "sessions": {
+    "s_86fe7baa69bbb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f52cbf3-50b0-477a-a127-030594c35c7c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
