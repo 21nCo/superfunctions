@@ -680,12 +680,6 @@ export function createFileService(config: FileServiceConfig) {
         throw errors.forbidden();
       }
 
-      const versions = await db.findMany<FileVersionRecord>({
-        model: 'fileVersions',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-        namespace,
-      });
-
       // A refused session may still have objects to delete; its row is that
       // record, so refused sessions are left to the expiry sweep, which finishes
       // the cleanup. A session a completion holds ('completing') or is
@@ -757,6 +751,14 @@ export function createFileService(config: FileServiceConfig) {
           namespace,
         });
       }
+
+      // Read only now: no completion can publish a version of the file any
+      // more (none is completing or publishing, and every open session ended).
+      const versions = await db.findMany<FileVersionRecord>({
+        model: 'fileVersions',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
 
       for (const session of pendingSessions) {
         const sessionPolicy = policies?.get(session.policy) ?? {};

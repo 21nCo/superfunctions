@@ -856,7 +856,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const undoAfterDelete = async (created: boolean): Promise<UploadSession | null | undefined> => {
         if (!created) return undefined;
         const now = await readSession(uploadSessionId);
-        if (now?.status !== 'refused' && !now?.completionPublication?.fileDeleted) return undefined;
+        // A session gone meanwhile was refused (or aborted) and swept: no
+        // publishing or completed session is ever deleted.
+        if (now && now.status !== 'refused' && !now.completionPublication?.fileDeleted) return undefined;
         await db.deleteMany({
           model: 'files',
           where: [

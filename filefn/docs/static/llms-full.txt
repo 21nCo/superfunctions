@@ -8196,7 +8196,7 @@ A completion publishes in two steps. After storage finalization and its checks, 
 | --- | --- | --- |
 | GET | `/files` | List files (filtered by principal / tenant). |
 | GET | `/:fileId` | Get file metadata. |
-| DELETE | `/:fileId` | Delete file (and all versions / artifacts). Returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, deleting nothing, while an upload session of the file is `completing` or `publishing`; retry once it completes. Other open sessions of the file are aborted first, each with a write conditional on its status, so a session a completion claims meanwhile also gets 409 instead of being torn down. |
+| DELETE | `/:fileId` | Delete file (and all versions / artifacts). Returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, deleting nothing, while an upload session of the file is `completing` or `publishing`; retry once it completes. A session whose completer crashed is finished by the session's next completion call (a `completing` one once its claim is older than `completionTimeoutSeconds`), or else by the expiry sweep once the session expires, so the wait is bounded by the session TTL. Other open sessions of the file are aborted first, each with a write conditional on its status, so a session a completion claims meanwhile also gets 409 instead of being torn down. |
 
 ## Versions
 

@@ -3030,7 +3030,7 @@ describe('upload completion fencing (FILE-19)', () => {
     });
   }
 
-  it('a refused publication\'s insert that resumes after the rival file was deleted leaves no file or version', async () => {
+  for (const swept of [false, true]) it(`a refused publication's insert that resumes after the rival file was deleted${swept ? ' and the refused session swept' : ''} leaves no file or version`, async () => {
     const shared = createUniqueEnforcingDb({});
     const gate = stallGate();
     const holderDb = {
@@ -3051,12 +3051,60 @@ describe('upload completion fencing (FILE-19)', () => {
     expect((await (await other.stage('user_b', CLIENT_ID, 'rival bytes')).complete()).status).toBe(200);
     const refused = await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
     expect(refused.status).toBe(403);
+    if (swept) {
+      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+      await other.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
+    }
     expect((await other.call('DELETE', `/${CLIENT_ID}`, { user: 'user_b' })).status).toBe(200);
     gate.resume();
     const resumed = await holderDone;
 
-    expect(resumed.status).toBe(410);
+    expect(resumed.status).toBe(swept ? 404 : 410);
     expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
     expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
+  });
+
+
+  it('a file delete during which a publishing session finishes deletes its version\'s object and releases its bytes too', async () => {
+    const base = memoryAdapter();
+    let failNextVersionInsert = false;
+    let finishDuringDelete: (() => Promise<unknown>) | undefined;
+    const database = {
+      ...base,
+      async create(params: Parameters<Adapter['create']>[0]) {
+        if (params.model === 'fileVersions' && failNextVersionInsert) {
+          failNextVersionInsert = false;
+          throw new Error('version insert failed');
+        }
+        return base.create(params);
+      },
+      async findMany(params: Parameters<Adapter['findMany']>[0]) {
+        const finish = finishDuringDelete;
+        if (params.model === 'uploadSessions' && finish) {
+          finishDuringDelete = undefined;
+          await finish();
+        }
+        return base.findMany(params);
+      },
+    } as Adapter;
+    const usage: number[] = [];
+    const quota: QuotaProvider = {
+      async checkQuota() { return { allowed: true, current: 0, limit: 100 }; },
+      async recordUsage(input) { usage.push(input.bytes); },
+    };
+    const app = createApp({ mode: 'proxy', database, quota });
+    expect((await (await app.stage('user_a', CLIENT_ID, 'original')).complete()).status).toBe(200);
+    const staged = await app.stage('user_a', CLIENT_ID, 'replacement');
+    failNextVersionInsert = true;
+    await expect(staged.complete()).rejects.toThrow('version insert failed');
+    const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+    // The publication finishes as the delete reads the file's sessions.
+    finishDuringDelete = async () => expect((await staged.complete()).status).toBe(200);
+
+    expect((await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+    expect(app.fixture.objects.has(key)).toBe(false);
+    expect(usage.reduce((sum, bytes) => sum + bytes, 0)).toBe(0);
+    expect(await versionRows(database, CLIENT_ID)).toHaveLength(0);
   });
 });
