@@ -347,17 +347,28 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return Number.isNaN(claimedAtMs) || Date.now() - claimedAtMs >= completionTimeoutMs;
   }
 
-  // A session whose own version is already published (its holder failed or
-  // crashed after its commit) may be taken over at once: what remains is to
-  // mark it completed, which the holder's claim-matched write then cannot do.
-  async function isOwnVersionPublished(session: UploadSession): Promise<boolean> {
-    if (!session.completionVersionId) return false;
+  // How far the session's own version is published: 'version' once its
+  // fileVersions row exists, 'file' while only the files row points at it (the
+  // version insert failed, or has not run yet), null when neither. A session
+  // published either way is never released, aborted or discarded: the file
+  // may already point at its version. One with a 'version' row may be taken
+  // over at once: what remains is to mark it completed, which the holder's
+  // claim-matched write then cannot do.
+  async function publicationOf(session: UploadSession): Promise<'version' | 'file' | null> {
+    if (!session.completionVersionId) return null;
     const version = await db.findOne({
       model: 'fileVersions',
       where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
       namespace,
     });
-    return Boolean(version);
+    if (version) return 'version';
+    if (!session.fileId) return null;
+    const file = await db.findOne<{ currentVersionId: string }>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: session.fileId }],
+      namespace,
+    });
+    return file?.currentVersionId === session.completionVersionId ? 'file' : null;
   }
 
   // Writes `data` to the session only while it still has `expected`'s status
@@ -434,6 +445,30 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           { field: 'completionClaim', operator: 'eq', value: claim },
         ],
         data: { status },
+        namespace,
+      });
+    } catch {
+      // The claim lapses after the completion timeout.
+    }
+  }
+
+  // Leaves a claim whose completion failed after (part of) the session's
+  // version may have been published open to the next completion call at once:
+  // its time is set to the epoch, so it reads as stale. The session stays
+  // 'completing', so no abort can end it, and its nonce stays, so the call
+  // taking it over still knows the object this claim stitched. A failed write
+  // leaves the claim to lapse after the completion timeout.
+  async function expireClaim(uploadSessionId: string, claim: string): Promise<void> {
+    const expired = [new Date(0).toISOString(), ...claim.split(' ').slice(1)].join(' ');
+    try {
+      await db.updateMany({
+        model: 'uploadSessions',
+        where: [
+          { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
+          { field: 'status', operator: 'eq', value: 'completing' },
+          { field: 'completionClaim', operator: 'eq', value: claim },
+        ],
+        data: { completionClaim: expired },
         namespace,
       });
     } catch {
@@ -1200,15 +1235,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // A session whose own version is already published only has to be
         // marked completed: its parts and quota were admitted by the call that
         // published it, and that call may be deleting its parts and recording
-        // its usage right now, so neither is checked again.
-        const versionPublished = session.status === 'completing' && (await isOwnVersionPublished(session));
-        if (session.status === 'completing' && !versionPublished && !isStaleClaim(session)) {
+        // its usage right now, so neither is checked again. One the file
+        // already points at (its version insert failed, or its holder is
+        // about to run it) is taken over once its claim is stale (a holder
+        // that failed there expires its claim at once); its quota was
+        // admitted too, and its parts are read once it is claimed.
+        const publication = session.status === 'completing' ? await publicationOf(session) : null;
+        if (session.status === 'completing' && publication !== 'version' && !isStaleClaim(session)) {
           if (Date.now() >= waitUntil) throw errors.uploadCompletionInProgress();
           await delay(COMPLETION_POLL_INTERVAL_MS);
           current = await readSession(uploadSessionId);
         } else {
           parts = [];
-          if (!versionPublished) {
+          if (publication === null) {
             const admission = await admitCompletion(session, ctx);
             if ('error' in admission) {
               // Checked against a session another call may have moved on
@@ -1222,8 +1261,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 // instead of waiting for it to expire. The stale holder may
                 // have moved on meanwhile: a lost end-claim decides again from
                 // the session as it is now (its recorded result once
-                // completed), and a won one whose version was published in
-                // between finishes that version instead of releasing it.
+                // completed), and a won one whose version was published (or
+                // the file moved to it) in between finishes that version
+                // instead of releasing it.
                 if (session.status === 'completing') {
                   const ended = await claimCompletion(session);
                   if (!('claim' in ended)) {
@@ -1233,7 +1273,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                   }
                   // Kept on a failed check: the claim lapses, never released
                   // over a version that may be published.
-                  if (await isOwnVersionPublished(session)) {
+                  if ((await publicationOf(session)) !== null) {
                     claim = ended.claim;
                     parts = [];
                     break;
@@ -1262,9 +1302,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // A failure before the session's version is published returns the
       // session to the status it was claimed from ('in_progress' for a claim
       // taken over from a stale one, whose parts were all recorded), so it can
-      // be retried or aborted at once. Once published, the claim is kept: the
-      // next completion call takes it over and only marks the session
-      // completed, and no abort can end it meanwhile. A call that failed after
+      // be retried or aborted at once. Once the file points at the version (or
+      // that cannot be told), the session stays 'completing' with its claim
+      // expired: the next completion call takes it over at once and finishes
+      // the version, and no abort can end it meanwhile. A call that failed after
       // its claim was taken over and the session completed returns the
       // recorded result instead of its own failure. A proxy object it stitched
       // and did not publish is deleted.
@@ -1286,10 +1327,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (now?.status === 'completed' && now.completionClaim !== claim) {
           return recordedResult(now);
         }
-        if (!published && now?.status === 'completing' && now.completionClaim === claim) {
-          // A version write that failed may have landed anyway.
-          const landed = await isOwnVersionPublished(claimedSession).catch(() => true);
-          if (!landed) {
+        if (now?.status === 'completing' && now.completionClaim === claim) {
+          // A files or version write that failed may have landed anyway.
+          const landed = published || (await publicationOf(claimedSession).catch(() => 'unknown' as const)) !== null;
+          if (landed) {
+            await expireClaim(uploadSessionId, claim);
+          } else {
             const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
             await releaseClaim(uploadSessionId, claim, releasedStatus);
           }
@@ -1322,6 +1365,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             })
           : null;
         if (publishedVersion) markPublished();
+
+        // A call that took over a session the file already points at skipped
+        // the admission checks (they passed for the call that moved the file),
+        // so it reads the parts storage completion needs here.
+        if (!publishedVersion && parts.length !== session.totalParts) {
+          parts = await db.findMany<{ partNumber: number; etag: string }>({
+            model: 'uploadParts',
+            where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+            namespace,
+          });
+          if (parts.length !== session.totalParts) throw errors.uploadIncomplete();
+        }
 
         const fileId = publishedVersion?.fileId || session.fileId || generateFileFnId('file');
         // Publish the version allocated at init, whose ID is part of the storage key.
@@ -1588,6 +1643,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 if (await moveFileTo(current.currentVersionId)) break;
               }
 
+              // The file points at this version now: from here on the session
+              // is never released. Reads above (or the files write itself) may
+              // have taken any time, so the version is inserted only while this
+              // call still holds the session; one taken over inserts nothing
+              // and the call that took it over finishes the version.
+              markPublished();
+              if (!(await holdsClaim(uploadSessionId, claim))) return 'lost';
               try {
                 await db.create({
                   model: 'fileVersions',
@@ -1738,6 +1800,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // Already ended. A refused session may still have objects to delete; its
         // row records them for the expiry sweep, so leave it in place.
         if (isAbortedStatus(session.status)) return;
+        // A session whose version is (partly) published is never aborted, even
+        // when an earlier release left it open: the file may point at the
+        // version. A completion call finishes it. No completion can publish
+        // it between this check and the write below without claiming it
+        // first, which the write's status condition excludes.
+        if ((await publicationOf(session)) !== null) throw errors.uploadCompletionInProgress();
 
         const ended = await updateSessionIf(
           uploadSessionId,

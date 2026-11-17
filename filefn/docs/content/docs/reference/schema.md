@@ -27,7 +27,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
-| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`), of the call that completed it, or of the last call that released it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`), of the call that completed it, or of the last call that released it; a completion that failed after the file pointed at its version leaves its claim with the epoch as its time, so the next call takes it over at once. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
