@@ -121,6 +121,87 @@ from FileFn before scheduling work.
 `createFileFnDomainAdminService({ fileFn, context })` maps each active admin
 actor/scope to FileFn's domain context rather than bypassing these checks.
 
+### Importing existing objects
+
+`fileFn.services.files.importObject(input)` (`@filefn/server` 0.6.0) registers an
+object that is already in storage, for example one copied from another bucket
+during a migration, as a new file and version. It does not copy, read or move
+the object; it checks it with one HEAD (`statObject`). It is a trusted
+server-side API with no route and no caller context: the caller decides the owner.
+
+```ts
+const { file, version, created } = await fileFn.services.files.importObject({
+  storageKey: "tenants/t1/2019/report.pdf", // object already in the policy's storage target
+  principalId: "user_1",                     // owner of the new file
+  tenantId: "t1",                            // or null
+  fileName: "report.pdf",
+  mimeType: "application/pdf",
+  size: 48213,                               // must equal the object's stored size
+  createdAt: "2019-03-04T05:06:07Z",         // optional; kept as createdAt and updatedAt
+  metadata: { source: "s3" },                // optional
+  fileId: "file_01hxyz...",                  // optional; client file ID grammar
+  policy: "nucleus-durable-default",         // optional; see below
+});
+```
+
+- **Policy.** The file's policy decides the storage target the object is read from
+  and the file's visibility. A named policy must be registered. Omitted, the file
+  records the policy `"default"`; unless you registered a policy of that name, it
+  resolves to the default storage target and private visibility. Policy content-type and size limits
+  are not applied to imports.
+- **Idempotent per object.** Every import of one object (storage target and key)
+  creates the same version ID, so a second import returns the existing file with
+  `created: false`, without a HEAD, even when its other fields differ or a later
+  upload has added versions. Use the returned `file.fileId`: it is the first
+  importer's, which may not be the `fileId` you passed.
+- **Reruns and races.** Rerun an interrupted batch with the same input (the same
+  `fileId`, or none): an import stopped after writing its file row is completed.
+  Of two imports racing on one object, the first version insert creates the file
+  and the other returns it and removes the file row it had written (a loser stopped
+  before that removes it when it is rerun). A file ID is claimed once: an import
+  whose `fileId` another import or an upload completion is creating fails with
+  `FILEFN_IMPORT_CONFLICT` and publishes nothing. On adapters with unique
+  constraints (Postgres) the database decides across processes; on adapters
+  without them, imports and upload completions claiming one file ID, and imports
+  of one object, run one at a time in the process, whichever FileFn instance or
+  adapter wrapper they come through. There an import also waits for upload
+  completions of its file ID in separate stores that share the namespace, and
+  they for it; this only orders them.
+- **Failures.** No object at the key: `404 FILEFN_IMPORT_OBJECT_NOT_FOUND`. A stored
+  size other than `size`: `409 FILEFN_IMPORT_SIZE_MISMATCH`. Neither writes any row.
+  The object already imported for another owner or tenant, or a `fileId` that names
+  another file: `409 FILEFN_IMPORT_CONFLICT` (`details.reason` is `owner` or
+  `fileId`). Invalid input: `400 FILEFN_INVALID_REQUEST` or
+  `FILEFN_INVALID_FILE_ID`; an unregistered `policy`: `FILEFN_POLICY_NOT_FOUND`.
+  Other storage errors (for example a transient HEAD failure) are thrown as they
+  are; retry the import. Known gap: a file deleted while an import of its object
+  is still writing can leave the version row behind without its file; imports of
+  that object then fail with `404 FILEFN_NOT_FOUND` until that row is removed.
+- **Side effects.** The call that creates the file records `size` bytes of quota
+  usage (so deleting the file balances it). Usage is recorded just before the
+  version insert, so a rerun after a failed record records it once. A failed
+  insert takes its record back only when it is known not to have written the
+  version: no version row exists afterwards, the row belongs to another file, or
+  the database refused the insert as a duplicate key. An insert that wrote its
+  row but lost its response keeps the record and creates the file. Accounting
+  errs only toward counting the bytes more than once, in these cases: a usage
+  record that was stored but whose response was lost (the call fails and a rerun
+  records again); a process stopped between the record and the insert; a failed
+  take-back (the insert's error is thrown; a rerun after an insert that wrote
+  nothing records again); and, across processes, two imports of one object with
+  the same `fileId` where the losing insert fails with an error other than a
+  duplicate key: the loser cannot tell the winner's row from its own, so both
+  calls return `created: true` and the bytes are counted twice. Exactly-once
+  accounting needs an idempotent quota provider. It emits no `file:uploaded` event and
+  schedules no processing; call `services.processing.triggerProcessingForFile` for
+  previews.
+- **Trust.** The import trusts that the object at the key is the one meant; an
+  actor with direct write access to the bucket is outside this API's protection.
+  Without a `fileId`, the file ID is derived from the object's target and key; an
+  upload that already took that ID makes the import fail with
+  `FILEFN_IMPORT_CONFLICT` (`fileId`), so pass your own `fileId` for keys an API
+  user could predict.
+
 ## Routes
 
 `fileFn.router.handle(request)` is the single dispatcher. See [Reference › Routes](../reference/routes) for the full list.

@@ -60,11 +60,20 @@ export interface SerializedRunOptions {
    * Omitted: one group per key.
    */
   sharesKeyWith?: (members: readonly string[]) => Promise<boolean>;
+  /**
+   * For a call that may belong to any group of its key (FileFn: an import, which
+   * leaves no row a probe could find). It waits for every live group of the key
+   * and runs once it holds all of them; while it holds or waits for the key,
+   * every later call of the key, whatever its group, queues behind it in the
+   * first group it is in, without probing. Implies `keepWaiting`.
+   */
+  spansGroups?: boolean;
 }
 
 interface Turn {
   evictableAt?: number;
   member?: string;
+  spansGroups?: boolean;
 }
 
 interface KeyState {
@@ -145,10 +154,18 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
       .filter((member): member is string => member !== undefined);
   }
 
+  function heldBySpanningTurn(state: KeyState): boolean {
+    return state.holder.spansGroups === true || state.waiters.some((waiter) => waiter.turn.spansGroups === true);
+  }
+
   // Probes every group not yet probed, then decides synchronously against the
   // live groups: it joins a matching group still present, probes groups
   // started meanwhile, or starts its own group once none is left unprobed. So
   // two calls of one group never both start a group while either is live.
+  // A live group with a spanning turn is joined before anything else: every
+  // live group has that turn then (it waits in all groups, and no group starts
+  // while one is present), so the call is ordered after it and after every
+  // earlier call of its own group.
   // Probing counts as waiting: a call that is not `keepWaiting` fails with the
   // retryable error, without running, at its `deadline`, whether still probing
   // or already waiting in the group it joined.
@@ -168,12 +185,15 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
     const probed = new Set<KeyState>();
     try {
       for (;;) {
+        const spanned = (keys.get(key) ?? []).find(heldBySpanningTurn);
+        if (spanned) return wait(spanned, turn, keepWaiting, deadline);
         const unprobed = (keys.get(key) ?? []).filter((state) => !probed.has(state));
         if (unprobed.length === 0) return start(key, turn);
         unprobed.forEach((state) => probed.add(state));
         const probes = Promise.all(unprobed.map((state) => sharesKeyWith(membersOf(state))));
         const shared = await (timedOut ? Promise.race([probes, timedOut]) : probes);
         const live = keys.get(key) ?? [];
+        if (live.some(heldBySpanningTurn)) continue;
         const match = unprobed.find((state, index) => shared[index] && live.includes(state));
         if (match) return wait(match, turn, keepWaiting, deadline);
       }
@@ -182,13 +202,16 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
     }
   }
 
-  function acquire(key: string, turn: Turn, runOptions: SerializedRunOptions): Promise<KeyState> | KeyState {
+  async function acquire(key: string, turn: Turn, runOptions: SerializedRunOptions): Promise<KeyState[]> {
     const groups = keys.get(key);
-    if (!groups) return start(key, turn);
-    const keepWaiting = runOptions.keepWaiting ?? false;
+    if (!groups) return [start(key, turn)];
     const deadline = Date.now() + waitTimeoutMs;
-    if (runOptions.sharesKeyWith) return acquireAmong(key, turn, keepWaiting, deadline, runOptions.sharesKeyWith);
-    return wait(groups[0], turn, keepWaiting, deadline);
+    // Queued in every live group at once, so two spanning calls are in the
+    // same order in every group and cannot wait for each other.
+    if (turn.spansGroups) return Promise.all(groups.map((state) => wait(state, turn, true, deadline)));
+    const keepWaiting = runOptions.keepWaiting ?? false;
+    if (runOptions.sharesKeyWith) return [await acquireAmong(key, turn, keepWaiting, deadline, runOptions.sharesKeyWith)];
+    return [await wait(groups.find(heldBySpanningTurn) ?? groups[0], turn, keepWaiting, deadline)];
   }
 
   function release(key: string, state: KeyState, turn: Turn): void {
@@ -206,12 +229,12 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
   }
 
   async function runSerialized<T>(key: string, fn: () => Promise<T>, runOptions: SerializedRunOptions = {}): Promise<T> {
-    const turn: Turn = { evictableAt: runOptions.evictableAt, member: runOptions.member };
-    const state = await acquire(key, turn, runOptions);
+    const turn: Turn = { evictableAt: runOptions.evictableAt, member: runOptions.member, spansGroups: runOptions.spansGroups };
+    const states = await acquire(key, turn, runOptions);
     try {
       return await fn();
     } finally {
-      release(key, state, turn);
+      for (const state of states) release(key, state, turn);
     }
   }
 
