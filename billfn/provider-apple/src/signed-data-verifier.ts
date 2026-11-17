@@ -104,7 +104,7 @@ function createVerifier(
     if (scope.bundleId !== options.bundleId) {
       throw new AppleSignedDataVerificationError('bundle_id_mismatch', 'Apple signed data is for another bundle ID');
     }
-    const environment = ENVIRONMENTS[String(scope.environment)];
+    const environment = readEnvironment(scope.environment);
     if (!environment) {
       throw new AppleSignedDataVerificationError(
         'environment_unsupported',
@@ -120,7 +120,16 @@ function createVerifier(
   };
 }
 
-const ENVIRONMENTS: Record<string, AppleEnvironment> = { Production: 'production', Sandbox: 'sandbox' };
+/** Maps Apple's environment name by exact comparison, so inherited object keys never match. */
+function readEnvironment(value: unknown): AppleEnvironment | undefined {
+  if (value === 'Production') {
+    return 'production';
+  }
+  if (value === 'Sandbox') {
+    return 'sandbox';
+  }
+  return undefined;
+}
 
 interface SignedDataScope {
   bundleId: unknown;

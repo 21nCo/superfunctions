@@ -125,6 +125,21 @@ describe('generated chains', () => {
     await expect(verifierFor(chain).verifyNotification(signJws(summary, chain))).resolves.toMatchObject({ environment: 'sandbox' });
   });
 
+  it('derives the environment of an external purchase token notification from its externalPurchaseId', async () => {
+    const tokenNotification = (externalPurchaseId: string) => ({
+      notificationType: 'EXTERNAL_PURCHASE_TOKEN',
+      subtype: 'UNREPORTED',
+      externalPurchaseToken: { externalPurchaseId, tokenCreationDate: 1698148900000, appAppleId: 55555, bundleId: 'com.example' }
+    });
+    const verifier = verifierFor(chain);
+    await expect(verifier.verifyNotification(signJws(tokenNotification('SANDBOX_b2158121-7af9-49d4-9561-1f588205523e'), chain))).resolves.toMatchObject({
+      environment: 'sandbox'
+    });
+    await expect(verifier.verifyNotification(signJws(tokenNotification('b2158121-7af9-49d4-9561-1f588205523e'), chain))).resolves.toMatchObject({
+      environment: 'production'
+    });
+  });
+
   it('rejects a chain that does not end at the trusted root', async () => {
     const other = generateAppleChain();
     await expectFailure(verifierFor(chain).verifyNotification(signJws(sampleSubscribedNotification(other), other)), 'untrusted_root');
@@ -198,6 +213,21 @@ describe('generated chains', () => {
     const xcode = signJws(sampleSubscribedNotification(chain, { environment: 'Xcode' }), chain);
     await expectFailure(verifierFor(chain).verifyNotification(xcode), 'environment_unsupported');
   });
+
+  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])(
+    'rejects the inherited object key %s as an environment',
+    async (environment) => {
+      const verifier = verifierFor(chain);
+      await expectFailure(
+        verifier.verifyNotification(signJws(sampleSubscribedNotification(chain, { environment }), chain)),
+        'environment_unsupported'
+      );
+      await expectFailure(
+        verifier.verifyTransaction(signJws({ bundleId: 'com.example', environment, transactionId: '1' }, chain)),
+        'environment_unsupported'
+      );
+    }
+  );
 
   it('rejects any algorithm but ES256 and a chain that is not three certificates', async () => {
     const payload = sampleSubscribedNotification(chain);
