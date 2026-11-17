@@ -218,9 +218,9 @@ public actor BillFnStoreKit {
 
     /// Confirms one transaction with BillFn and finishes it if BillFn confirms it; `start()` passes each
     /// `Transaction.updates` element here. A transaction with a kept checkout for its product and `appAccountToken`
-    /// (the one it was already matched to, else the oldest outstanding one saved before it was purchased) is
-    /// verified against that checkout; any other one (a renewal, a restored purchase) is restored onto the plan its
-    /// product maps to.
+    /// (the one it was already matched to, else, unless it is a renewal, the oldest outstanding one saved before it
+    /// was purchased) is verified against that checkout; any other one (a renewal, a restored purchase) is restored
+    /// onto the plan its product maps to.
     ///
     /// StoreKit's own signature check is not the trust boundary: BillFn reads the transaction from the App Store
     /// Server API and checks its `appAccountToken`, so a transaction StoreKit could not verify is still sent to
@@ -265,7 +265,7 @@ public actor BillFnStoreKit {
                 // Recorded before BillFn is asked: if the verify call fails or the app stops before `finish()`, the
                 // checkout stays kept (it no longer expires) and the next launch verifies against it again.
                 checkouts.markMatched(checkout, transactionId: reference.transactionId)
-                billing = try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
+                billing = try await verify(reference, against: checkout)
             } else if let plan = plans[transaction.productID] {
                 billing = try await backend.restorePurchase(plan: plan, transaction: reference)
             } else {
@@ -285,6 +285,33 @@ public actor BillFnStoreKit {
         }
     }
 
+    /// Verifies the transaction against its checkout. When BillFn rejects that for good (a non-retryable error, such
+    /// as `BILLFN_CONFLICT` once a later renewal superseded the transaction) and a plan maps the product, the
+    /// transaction is restored onto the plan instead (by its original transaction id), so it is not retried against
+    /// the checkout forever. With no plan, the rejection is the outcome: the transaction stays unfinished and its
+    /// checkout kept, and each launch reports it again as a non-retryable failure.
+    private func verify(_ reference: BillFnStoreKitTransactionReference, against checkout: BillFnStoreKitCheckout) async throws -> BillFnJSONValue {
+        do {
+            return try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
+        } catch BillFnClientError.server(_, _, _, false) where plans[reference.productId] != nil {
+            return try await backend.restorePurchase(plan: plans[reference.productId]!, transaction: reference)
+        }
+    }
+
+    /// Whether the transaction can be the one a purchase attempt produced, so it may claim an outstanding checkout.
+    /// A renewal never is: every renewal carries the billing account's `appAccountToken`, so it would otherwise take a
+    /// leftover checkout (an attempt that failed on the network or was declined) and send BillFn's verify a renewal id.
+    /// From iOS 17 and macOS 14 StoreKit says why the transaction exists, so an upgrade, a crossgrade or a
+    /// resubscription bought through its own checkout (whose id differs from its original id) still claims it.
+    /// Earlier systems do not say, so there only a first purchase (id equal to its original id) claims one; any other
+    /// transaction is restored onto the plan its product maps to, and skipped if none does.
+    static func mayCompleteAnAttempt(_ transaction: Transaction) -> Bool {
+        if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
+            return transaction.reason == .purchase
+        }
+        return transaction.id == transaction.originalID
+    }
+
     /// How much earlier than a checkout was saved a transaction's purchase date may be and still claim it, for a
     /// device clock ahead of the App Store's.
     static let checkoutClockTolerance: TimeInterval = 15 * 60
@@ -292,8 +319,8 @@ public actor BillFnStoreKit {
     /// The checkout to verify the transaction against: the purchase's own one, else the kept checkout this transaction
     /// was already matched to, else the oldest outstanding kept checkout for its product and `appAccountToken` saved
     /// before the transaction was purchased. Never one matched to another transaction or one another transaction is
-    /// being verified against, and never an outstanding one for a transaction bought before its attempt started (a
-    /// restored or renewed purchase), which would take a pending attempt's checkout.
+    /// being verified against, and never an outstanding one for a renewal (`mayCompleteAnAttempt`) or for a
+    /// transaction bought before its attempt started (a restored purchase), which would take a pending attempt's checkout.
     private func claimCheckout(for transaction: Transaction, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) -> BillFnStoreKitCheckout? {
         let transactionId = String(transaction.id)
         let kept = checkouts.keptCheckouts()
@@ -306,7 +333,9 @@ public actor BillFnStoreKit {
         let latestSave = transaction.purchaseDate.addingTimeInterval(Self.checkoutClockTolerance)
         let candidate = purchaseCheckout.flatMap { available($0) ? $0 : nil }
             ?? kept.first(where: { $0.transactionId == transactionId && available($0.checkout) })?.checkout
-            ?? kept.first(where: { $0.transactionId == nil && $0.savedAt <= latestSave && available($0.checkout) })?.checkout
+            ?? (Self.mayCompleteAnAttempt(transaction)
+                ? kept.first(where: { $0.transactionId == nil && $0.savedAt <= latestSave && available($0.checkout) })?.checkout
+                : nil)
         if let candidate { claimedCheckouts.insert(candidate.checkoutSessionId) }
         return candidate
     }

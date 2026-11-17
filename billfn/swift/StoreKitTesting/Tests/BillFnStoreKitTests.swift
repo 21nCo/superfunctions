@@ -400,6 +400,66 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertTrue(unfinished.contains(renewal.unsafePayloadValue.id))
     }
 
+    /// A renewal carries the billing account's token, like a leftover checkout from an attempt that never produced a
+    /// transaction (here saved before the renewal). It does not claim that checkout: it is restored onto its plan and
+    /// finished, and the leftover checkout stays outstanding and unmatched.
+    func testRenewalLeavesALeftoverCheckoutOutstanding() async throws {
+        let backend = FakeBillFnBackend()
+        let kit = launch(backend)
+        guard case .purchased(_, let purchase) = try await kit.purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+        let leftover = BillFnStoreKitCheckout(checkoutSessionId: "chk_leftover", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        let savedAt = Date()
+        checkoutStore(now: savedAt).save(leftover)
+
+        try session.forceRenewalOfSubscription(productIdentifier: proMonthly)
+        let renewal = try await latestTransaction(after: purchase)
+        let outcome = await kit.process(renewal)
+
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1"])
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), [outcome.transaction.transactionId])
+        try await assertFinished(outcome)
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [BillFnStoreKitKeptCheckout(checkout: leftover, savedAt: savedAt)])
+    }
+
+    /// BillFn rejects verifying a transaction against its checkout for good. With no plan for the product that is the
+    /// outcome: the transaction stays unfinished and its checkout stays matched to it. A later launch whose plans map
+    /// the product verifies once more, is rejected again and restores the transaction onto the plan instead, so it is
+    /// finished rather than retried against the checkout forever.
+    func testTransactionBillFnRejectsForGoodIsRestoredOntoItsPlan() async throws {
+        let backend = FakeBillFnBackend()
+        let conflict = BillFnClientError.server(code: "BILLFN_CONFLICT", message: "Not the latest transaction", status: 409, retryable: false)
+        await backend.failVerification(with: conflict)
+        let firstLaunch = launch(backend, plans: [])
+
+        guard case .purchased(_, let rejected) = try await firstLaunch.purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+        XCTAssertEqual(rejected.status, .failed(BillFnStoreKitFailure(code: "BILLFN_CONFLICT", message: "Not the latest transaction", retryable: false)))
+        let unfinished = await unfinishedTransactionIds()
+        XCTAssertTrue(unfinished.contains(try XCTUnwrap(UInt64(rejected.transaction.transactionId))))
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [rejected.transaction.transactionId])
+        let restoresBefore = await backend.restores
+        XCTAssertTrue(restoresBefore.isEmpty)
+
+        let nextLaunch = launch(backend)
+        let outcomes = await nextLaunch.start()
+
+        let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == rejected.transaction.transactionId })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1", "chk_1"])
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), [rejected.transaction.transactionId])
+        XCTAssertEqual(restores.map(\.plan.planKey), ["pro"])
+        try await assertFinished(outcome)
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [])
+    }
+
     /// Additional coverage of the real `Transaction.updates`; StoreKit testing delivers them only to an active app.
     func testListenerConfirmsTransactionUpdates() async throws {
         let active = await MainActor.run { NSApplication.shared.isActive }

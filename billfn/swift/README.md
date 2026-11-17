@@ -47,8 +47,17 @@ let restored = try await storeKit.restore()
   transaction whose verify call failed, or that the app stopped before finishing, is verified
   against the same checkout on a later launch however late, and no other transaction can take it.
 - An outstanding checkout is claimed only by a transaction purchased after its attempt started
-  (allowing 15 minutes of clock difference), so restoring or renewing an older purchase never takes
-  a pending attempt's checkout.
+  (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
+  attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
+  leftover checkout (a purchase that failed on the network, a declined Ask to Buy request) would
+  otherwise be verified with a renewal. From iOS 17 and macOS 14 `Transaction.reason` tells a renewal
+  from a purchase, so an upgrade, crossgrade or resubscription bought through its own checkout still
+  claims it; on iOS 16 and macOS 13 only a first purchase (transaction id equal to its original id)
+  claims one, and any other transaction is restored onto its plan (or skipped if none maps).
+- When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error,
+  such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is restored onto that plan
+  instead and finished. With no plan, it stays unfinished with its checkout and every launch reports
+  the same non-retryable failure; resolve it on the BillFn side.
 - An outstanding checkout (no transaction yet) is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
   however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
   or an interrupted purchase waiting. Retention takes effect at the next
