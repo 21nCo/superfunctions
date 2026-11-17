@@ -1,0 +1,25 @@
+package-lock.json
+  s_19abec75182420::t_a77b44dba038c9 59367
+packages/db/package.json
+  s_19abec75182420::t_190e19576ddc4b 87
+packages/db/src/adapters/kysely/dialects.test.ts
+  s_19abec75182420::t_4f42ca0651ded9 1-205
+packages/db/src/adapters/kysely/index.ts
+  s_19abec75182420::t_5709447ff07e30 132-141,176,221,238,246,256-259,266-267,284,346,366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eed0ee09aaa361667740cd4fbeb7edc6daffaaf1",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

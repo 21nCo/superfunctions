@@ -1,0 +1,21 @@
+authfn/core/README.md
+  s_5e0fa386b303f2::t_2d20255c06098b 15
+authfn/core/src/core/verifications.ts
+  s_5e0fa386b303f2::t_bb285a759f6403 298-301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f701e6516812037f631eb3433f595e4a4470f5b3",
+  "prompts": {},
+  "sessions": {
+    "s_5e0fa386b303f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5e0fa386b303f2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
