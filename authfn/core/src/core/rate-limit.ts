@@ -92,10 +92,13 @@ function policyForScope(
 }
 
 /**
- * Shortest window: one millisecond. A shorter one makes the window index
- * `floor(now / windowMs)` infinite and the window's end `NaN`.
+ * Shortest window: one second. Windows are whole seconds so that the window's
+ * end is an exact millisecond (a refusal's `resetAt` is then the first instant
+ * of the next window) and every store TTL is at least one second (stores such
+ * as Redis and DynamoDB floor TTLs to whole seconds, and a TTL of 0 deletes
+ * or rejects the counter).
  */
-const MIN_WINDOW_SECONDS = 0.001;
+const MIN_WINDOW_SECONDS = 1;
 /**
  * Longest window: half the range of a JavaScript `Date` (8.64e15 ms), so the
  * end of the current window is always a valid date.
@@ -104,21 +107,21 @@ const MAX_WINDOW_SECONDS = 4_320_000_000_000;
 
 /**
  * Rejects, when the middleware is created, any route policy whose window
- * cannot be divided into fixed windows. Otherwise a refusal would have no
- * valid reset time (a 500 instead of a 429) and local counters would never
- * expire.
+ * every mode cannot enforce as fixed windows. Otherwise a refusal could have
+ * no valid reset time (a 500 instead of a 429), local counters could never
+ * expire, or a store could drop or refuse the counter.
  */
 function assertValidWindows(config: AuthFnRuntimeConfig): void {
   for (const scope of Object.keys(defaultPolicies) as AuthFnRateLimitScope[]) {
     const windowSeconds: unknown = policyForScope(config, scope).windowSeconds;
     if (
       typeof windowSeconds !== 'number'
-      || !Number.isFinite(windowSeconds)
+      || !Number.isInteger(windowSeconds)
       || windowSeconds < MIN_WINDOW_SECONDS
       || windowSeconds > MAX_WINDOW_SECONDS
     ) {
       throw new AuthFnConfigError(
-        `rateLimit.policies.${scope}.windowSeconds must be a finite number of seconds `
+        `rateLimit.policies.${scope}.windowSeconds must be a whole number of seconds `
           + `from ${MIN_WINDOW_SECONDS} to ${MAX_WINDOW_SECONDS}`,
         { scope, windowSeconds: String(windowSeconds) }
       );

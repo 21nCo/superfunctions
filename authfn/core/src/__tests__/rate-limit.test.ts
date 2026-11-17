@@ -192,7 +192,7 @@ describe('authfn rate limiting', () => {
       });
     });
 
-    it.each([0, -60, Number.NaN, Number.POSITIVE_INFINITY, 0.0005, 5e12])(
+    it.each([0, -60, Number.NaN, Number.POSITIVE_INFINITY, 0.0005, 0.001, 0.0015, 0.5, 1.5, 5e12])(
       'rejects windowSeconds %s when the middleware is created',
       (windowSeconds) => {
         const { config } = createModeConfig(mode, `rate-limit-${mode}-invalid-window`, {
@@ -208,18 +208,18 @@ describe('authfn rate limiting', () => {
     );
 
     it('refuses with a valid reset time at the shortest allowed window', async () => {
-      freezeClock(WINDOW_START + 10_000);
+      freezeClock(WINDOW_START + 10_250);
       const client = { ip: '203.0.113.11', email: 'short@example.com' };
       const { config } = createModeConfig(mode, `rate-limit-${mode}-shortest-window`, {
-        'otp-send': { ipLimit: 1, windowSeconds: 0.001 }
+        'otp-send': { ipLimit: 1, windowSeconds: 1 }
       });
 
       await expect(postRateLimitedRoute(config, '/auth/otp/send', client)).resolves.toHaveProperty('status', 200);
       await expect(postRateLimitedRoute(config, '/auth/otp/send', client)).rejects.toMatchObject({
         name: 'AuthFnRateLimitedError',
-        details: { scope: 'otp-send', resetAt: new Date(WINDOW_START + 10_001).toISOString() }
+        details: { scope: 'otp-send', resetAt: new Date(WINDOW_START + 11_000).toISOString() }
       });
-      vi.setSystemTime(WINDOW_START + 10_001);
+      vi.setSystemTime(WINDOW_START + 11_000);
       await expect(postRateLimitedRoute(config, '/auth/otp/send', client)).resolves.toHaveProperty('status', 200);
     });
   });
