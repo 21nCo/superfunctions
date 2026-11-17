@@ -16,11 +16,14 @@ not published to npm. The image is the deliverable.
 docker build --platform linux/amd64 -f filefn/processing/container/Dockerfile -t filefn-processing .
 ```
 
-The image is `node:22-bookworm-slim` with:
+The image is `node:22-trixie-slim` with:
 
 - `ffmpeg` (Debian package),
 - `tesseract` with English language data (`tesseract-ocr`, `tesseract-ocr-eng`),
-- `sharp` with its prebuilt libvips,
+- `sharp` compiled against Debian's libvips (`libvips42t64`), which reads PDFs
+  through poppler. sharp's prebuilt libvips has no PDF loader, so the image
+  removes the prebuilt binaries and the build fails if the compiled `sharp`
+  cannot read PDFs,
 
 and runs `node dist/main.js` as the unprivileged `node` user on port 8080.
 
@@ -28,9 +31,9 @@ Processors it runs (`FILEFN_PROCESSORS`): `thumbnail`, `pdf-preview` and
 `ocr`. OCR calls the native `tesseract` command, so recognition needs no
 network access. Audio and video processors are not offered yet.
 
-The prebuilt libvips in `sharp` has no PDF loader, so `pdf-preview` produces
-its placeholder preview of page 1 (`metadata.renderMode: "placeholder"`), not
-a rasterized page.
+`pdf-preview` rasterizes the first page of a PDF
+(`metadata.renderMode: "page-rasterized"`). A PDF libvips cannot read still
+gets the processor's placeholder preview (`"placeholder"`).
 
 ## Routes
 
@@ -68,30 +71,64 @@ message for every status except `retry`, which asks for redelivery.
 | 401 | The bearer token is missing or wrong. | Fix configuration; retry. |
 | 413 | The body is larger than `FILEFN_CONTAINER_MAX_BODY_BYTES`. | Ack and drop. |
 | 415 | The content type is not `application/json`. | Fix the caller. |
-| 503 | `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are already running (`Retry-After: 1`). | Retry. |
-| 500 | The job threw. | Retry. |
+| 503 | No job slot freed up within `FILEFN_CONTAINER_JOB_WAIT_MS` (`Retry-After: 30`). | Retry after `Retry-After` seconds. |
+| 500 | The job threw. | Retry with a delay. |
+
+A request that arrives while `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are
+running waits for a free slot, first come first served, for up to
+`FILEFN_CONTAINER_JOB_WAIT_MS`; only then does it get 503. A waiting request
+whose client disconnects is not started. A started job runs to the end even if
+its client disconnects.
 
 Errors are `{"error":{"code","message"}}` with codes prefixed
 `FILEFN_CONTAINER_`.
 
 A Worker queue consumer forwards each message and acts on the outcome, for
-example with a container binding:
+example with a container binding. It retries with a delay, so a busy or
+failing container does not use up the message's attempts within seconds:
 
 ```ts
 async queue(batch: MessageBatch, env: Env) {
   const container = env.FILEFN_PROCESSING_CONTAINER.getByName("processing");
   for (const message of batch.messages) {
-    const response = await container.fetch("http://container/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${env.FILEFN_CONTAINER_TOKEN}` },
-      body: JSON.stringify({ job: message.body, attempts: message.attempts }),
-    });
+    let response: Response;
+    try {
+      response = await container.fetch("http://container/jobs", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.FILEFN_CONTAINER_TOKEN}` },
+        body: JSON.stringify({ job: message.body, attempts: message.attempts }),
+      });
+    } catch {
+      message.retry({ delaySeconds: 30 });
+      continue;
+    }
     const outcome = response.ok ? ((await response.json()) as { outcome: { status: string } }).outcome : null;
     if (response.status === 400 || response.status === 413 || (outcome && outcome.status !== "retry")) message.ack();
-    else message.retry();
+    else message.retry({ delaySeconds: Number(response.headers.get("retry-after")) || 30 });
   }
 }
 ```
+
+Configure the consumer so it does not send more jobs than the container runs
+at once, and keep the messages that run out of attempts:
+
+```jsonc
+// wrangler.jsonc
+"queues": {
+  "consumers": [{
+    "queue": "filefn-processing",
+    "max_batch_size": 1,
+    "max_concurrency": 2,          // At most FILEFN_CONTAINER_MAX_CONCURRENT_JOBS.
+    "max_retries": 3,              // The same as FILEFN_PROCESSING_MAX_RETRIES.
+    "dead_letter_queue": "filefn-processing-dlq"
+  }]
+}
+```
+
+The delivery whose `attempts` exceeds `FILEFN_PROCESSING_MAX_RETRIES` records
+`processing.failed` when the container runs it. If that last delivery cannot
+run (503, 500 or the container is unreachable), no failure is recorded and the
+message goes to the dead-letter queue, where it can be inspected or replayed.
 
 ## Configuration
 
@@ -113,6 +150,7 @@ the process with `FILEFN_CONTAINER_CONFIG_INVALID: …`.
 | `FILEFN_PROCESSING_MAX_RETRIES` | `3` | The queue consumer's `max_retries`. |
 | `FILEFN_CONTAINER_TOKEN` | none | Bearer token `POST /jobs` requires. Set it unless only a trusted Worker can reach the container. |
 | `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` | `2` | Jobs run at once (1 to 64). |
+| `FILEFN_CONTAINER_JOB_WAIT_MS` | `60000` | How long a job request waits for a free slot before 503 (0 to 600000). |
 | `FILEFN_CONTAINER_MAX_BODY_BYTES` | `262144` | Largest `POST /jobs` body. |
 | `PORT` | `8080` | Listening port. |
 
@@ -151,7 +189,8 @@ names the producer's processors, and the container runs its own.
 ## Shutdown
 
 On `SIGTERM` or `SIGINT` the server stops accepting connections, waits for
-running jobs to finish, closes the database and exits 0.
+every accepted job to finish (including jobs whose client disconnected and
+requests waiting for a slot), closes the database and exits 0.
 
 ## Tests
 
@@ -164,9 +203,14 @@ container, which must store a thumbnail and a first-page PDF preview in the
 bucket and record them in the shared in-memory database. Set
 `FILEFN_CONTAINER_IT_REQUIRED=1` to fail instead of skipping without an
 endpoint, and `FILEFN_CONTAINER_IT_OCR=1` to also run OCR through `tesseract`.
+With `FILEFN_CONTAINER_IT_PDF_RENDER=1`, or when the host's `sharp` can read
+PDFs, the PDF preview must be the rasterized page: `renderMode`
+`page-rasterized`, the page's aspect ratio, and the page's fill colour at its
+centre.
 
 `.github/workflows/filefn-processing-container.yml` builds the image on
 Ubuntu, runs that suite inside the image's build stage against MinIO with OCR
-enabled, then starts the runtime image and checks its tools, `/health`, a job,
+and PDF rendering required, then starts the runtime image and checks its tools
+(including `sharp`'s PDF loader), `/health`, a job,
 token enforcement, an unknown route and a clean `SIGTERM` exit. Live
 Cloudflare Containers are not covered.

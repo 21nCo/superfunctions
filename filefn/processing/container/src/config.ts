@@ -16,6 +16,8 @@ export interface ContainerConfig {
   processors: ContainerProcessorName[];
   maxRetries?: number;
   maxConcurrentJobs: number;
+  /** Milliseconds a job request waits for a free slot before 503. */
+  maxJobWaitMs: number;
   maxBodyBytes: number;
   ocrLanguage: string;
 }
@@ -100,6 +102,7 @@ export function readContainerConfig(env: ContainerEnv): ContainerConfig {
     processors: processors(env),
     maxRetries: integer(env, 'FILEFN_PROCESSING_MAX_RETRIES', undefined, 0, 1_000),
     maxConcurrentJobs: integer(env, 'FILEFN_CONTAINER_MAX_CONCURRENT_JOBS', 2, 1, 64)!,
+    maxJobWaitMs: integer(env, 'FILEFN_CONTAINER_JOB_WAIT_MS', 60_000, 0, 600_000)!,
     maxBodyBytes: integer(env, 'FILEFN_CONTAINER_MAX_BODY_BYTES', 256 * 1024, 1_024, 16 * 1024 * 1024)!,
     ocrLanguage,
   };

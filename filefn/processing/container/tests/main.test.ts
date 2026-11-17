@@ -54,6 +54,39 @@ describe('startContainer', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for a job whose client disconnected before closing the database', async () => {
+    const events: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const handler = {
+      handle: vi.fn(async () => {
+        await gate;
+        events.push('job finished');
+        return { status: 'completed' };
+      }),
+    };
+    vi.spyOn(sharedDatabase, 'close').mockImplementation(async () => { events.push('database closed'); });
+    const running = await startContainer(env, { handler });
+    const disconnected = new AbortController();
+
+    const request = fetch(`http://127.0.0.1:${running.port}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ job: { fileId: 'file_1' } }),
+      signal: disconnected.signal,
+    }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));
+    disconnected.abort();
+    await request;
+    const closing = running.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(events).toEqual([]);
+    release();
+    await closing;
+
+    expect(events).toEqual(['job finished', 'database closed']);
+  });
+
   it('rejects an invalid configuration before loading the database', async () => {
     const before = received.length;
     await expect(startContainer({ ...env, FILEFN_PROCESSORS: 'video' })).rejects.toThrow(/FILEFN_CONTAINER_CONFIG_INVALID/);

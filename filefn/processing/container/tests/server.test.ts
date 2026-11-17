@@ -1,29 +1,48 @@
 import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createJobServer, type ContainerJobHandler, type JobServerOptions } from '../src/server.js';
+import { BUSY_RETRY_AFTER_SECONDS, createJobServer, type ContainerJobHandler, type JobServer, type JobServerOptions } from '../src/server.js';
 
-const servers: Server[] = [];
+const servers: JobServer[] = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))));
+  await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  })));
 });
 
 async function start(handler: ContainerJobHandler, options: Partial<JobServerOptions> = {}) {
-  const server = createJobServer({ handler, maxConcurrentJobs: 2, maxBodyBytes: 4096, ...options });
+  const server = createJobServer({ handler, maxConcurrentJobs: 2, maxJobWaitMs: 5_000, maxBodyBytes: 4096, ...options });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
+    server,
     get: (path: string, init: RequestInit = {}) => fetch(`${base}${path}`, init),
-    postJob: (body: unknown, headers: Record<string, string> = {}) =>
+    postJob: (body: unknown, headers: Record<string, string> = {}, signal?: AbortSignal) =>
       fetch(`${base}/jobs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...headers },
         body: typeof body === 'string' ? body : JSON.stringify(body),
+        signal,
       }),
   };
 }
+
+/** A handler whose jobs block until `release()`; `finished` lists finished calls in order. */
+function gatedHandler() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const finished: number[] = [];
+  const handle = vi.fn(async (_job: unknown, delivery?: { attempts?: number }) => {
+    await gate;
+    finished.push(delivery?.attempts ?? 0);
+    return { status: 'completed' };
+  });
+  return { handle, release, finished };
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function completingHandler() {
   return { handle: vi.fn(async () => ({ status: 'completed', artifactsCreated: 1, skippedProcessors: [] })) };
@@ -131,25 +150,76 @@ describe('container job server', () => {
     expect(handler.handle).toHaveBeenCalledTimes(1);
   });
 
-  it('answers 503 past the concurrent job limit and accepts jobs again once one finishes', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const handle = vi.fn(async () => {
-      await gate;
-      return { status: 'completed' };
-    });
-    const client = await start({ handle }, { maxConcurrentJobs: 1 });
+  it('queues a job past the concurrent limit until a slot frees instead of rejecting it', async () => {
+    const handler = gatedHandler();
+    const client = await start(handler, { maxConcurrentJobs: 1 });
+
+    const first = client.postJob({ job, attempts: 1 });
+    await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));
+    const second = client.postJob({ job, attempts: 2 });
+    await pause(50);
+    expect(handler.handle).toHaveBeenCalledTimes(1);
+    handler.release();
+
+    expect([(await first).status, (await second).status]).toEqual([200, 200]);
+    expect(handler.handle).toHaveBeenCalledTimes(2);
+    expect(handler.finished).toEqual([1, 2]);
+  });
+
+  it('answers 503 with Retry-After when no slot frees within the wait limit, and accepts jobs again later', async () => {
+    const handler = gatedHandler();
+    const client = await start(handler, { maxConcurrentJobs: 1, maxJobWaitMs: 50 });
 
     const running = client.postJob({ job });
-    await vi.waitFor(() => expect(handle).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));
     const busy = await client.postJob({ job });
-    release();
+    handler.release();
 
     expect(busy.status).toBe(503);
-    expect(busy.headers.get('retry-after')).toBe('1');
+    expect(busy.headers.get('retry-after')).toBe(String(BUSY_RETRY_AFTER_SECONDS));
+    expect((await busy.json()).error.code).toBe('FILEFN_CONTAINER_BUSY');
     expect((await running).status).toBe(200);
     expect((await client.postJob({ job })).status).toBe(200);
-    expect(handle).toHaveBeenCalledTimes(2);
+    expect(handler.handle).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not start a waiting job whose client gave up, and hands its slot on', async () => {
+    const handler = gatedHandler();
+    const client = await start(handler, { maxConcurrentJobs: 1 });
+
+    const first = client.postJob({ job, attempts: 1 });
+    await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));
+    const abandoned = new AbortController();
+    const gaveUp = client.postJob({ job, attempts: 2 }, {}, abandoned.signal).catch((error: unknown) => error);
+    const third = client.postJob({ job, attempts: 3 });
+    await pause(50);
+    abandoned.abort();
+    await gaveUp;
+    await pause(50);
+    handler.release();
+
+    expect([(await first).status, (await third).status]).toEqual([200, 200]);
+    expect(handler.finished).toEqual([1, 3]);
+  });
+
+  it('drains a running job whose client disconnected', async () => {
+    const handler = gatedHandler();
+    const client = await start(handler);
+    const disconnected = new AbortController();
+
+    const request = client.postJob({ job }, {}, disconnected.signal).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));
+    disconnected.abort();
+    await request;
+    await new Promise((resolve) => client.server.close(resolve));
+    let drained = false;
+    const draining = client.server.drainJobs().then(() => { drained = true; });
+    await pause(50);
+    expect(drained).toBe(false);
+    handler.release();
+    await draining;
+
+    expect(handler.finished).toEqual([1]);
   });
 
   it('answers 500 and reports the error when the handler throws', async () => {

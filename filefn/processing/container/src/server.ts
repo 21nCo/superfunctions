@@ -10,16 +10,34 @@ export interface JobServerOptions {
   handler: ContainerJobHandler;
   /** When set, `POST /jobs` requires `Authorization: Bearer <token>`. */
   token?: string;
-  /** Jobs run at once; a request past it gets 503 so the queue redelivers it. */
+  /** Jobs run at once; a further request waits for a free slot. */
   maxConcurrentJobs: number;
+  /**
+   * How long a request waits for a free slot before it gets 503 with
+   * `Retry-After`, so the queue redelivers it later.
+   */
+  maxJobWaitMs: number;
   /** Largest accepted `POST /jobs` body in bytes. */
   maxBodyBytes: number;
   /** Reports a job that threw; `handle` is not expected to throw. */
   onError?: (error: unknown) => void;
 }
 
+/** A job server: the HTTP server plus a way to wait for the jobs it accepted. */
+export interface JobServer extends Server {
+  /**
+   * Resolves once every accepted job has finished, including jobs whose
+   * client disconnected and requests still waiting for a slot. Call it after
+   * `close()` and before releasing what the handler uses.
+   */
+  drainJobs(): Promise<void>;
+}
+
 /** Largest attempt number accepted from the caller. */
 const MAX_ATTEMPTS = 1_000_000;
+
+/** Seconds a caller should wait before redelivering a job the server was too busy to start. */
+export const BUSY_RETRY_AFTER_SECONDS = 30;
 
 class RequestError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -94,10 +112,38 @@ function parseJobRequest(raw: Buffer): { job: unknown; attempts: number } {
  * `{ outcome }`. An outcome with status `retry` asks the caller to redeliver
  * the message; every other outcome means acknowledge it.
  */
-export function createJobServer(options: JobServerOptions): Server {
-  const { handler, maxConcurrentJobs, maxBodyBytes, onError } = options;
+export function createJobServer(options: JobServerOptions): JobServer {
+  const { handler, maxConcurrentJobs, maxJobWaitMs, maxBodyBytes, onError } = options;
   const expectedToken = options.token ? digest(options.token) : undefined;
   let running = 0;
+  const waiting: Array<() => void> = [];
+  const accepted = new Set<Promise<void>>();
+
+  /** Takes a job slot, waiting up to `maxJobWaitMs` for one; false when none freed up. */
+  function acquireSlot(): Promise<boolean> {
+    if (running < maxConcurrentJobs) {
+      running += 1;
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        waiting.splice(waiting.indexOf(grant), 1);
+        resolve(false);
+      }, maxJobWaitMs);
+      waiting.push(grant);
+    });
+  }
+
+  /** Hands the slot to the longest-waiting request, or frees it. */
+  function releaseSlot(): void {
+    const next = waiting.shift();
+    if (next) next();
+    else running -= 1;
+  }
 
   async function runJob(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (expectedToken && !isAuthorized(req, expectedToken)) {
@@ -108,20 +154,37 @@ export function createJobServer(options: JobServerOptions): Server {
       throw new RequestError(415, 'FILEFN_CONTAINER_UNSUPPORTED_MEDIA_TYPE', 'content-type must be application/json');
     }
     const { job, attempts } = parseJobRequest(await readBody(req, maxBodyBytes));
-    if (running >= maxConcurrentJobs) {
-      sendError(res, new RequestError(503, 'FILEFN_CONTAINER_BUSY', 'too many jobs are running'), { 'retry-after': '1' });
+    let clientGone = false;
+    res.once('close', () => {
+      clientGone = !res.writableFinished;
+    });
+    if (!(await acquireSlot())) {
+      sendError(res, new RequestError(503, 'FILEFN_CONTAINER_BUSY', 'no job slot freed up in time'), {
+        'retry-after': String(BUSY_RETRY_AFTER_SECONDS),
+      });
       return;
     }
-    running += 1;
     try {
+      // A caller that gave up while waiting redelivers the message; do not start it twice.
+      if (clientGone) {
+        res.destroy();
+        return;
+      }
+      // The job runs to completion even if the client disconnects now.
       const outcome = await handler.handle(job, { attempts });
       send(res, 200, { outcome });
     } finally {
-      running -= 1;
+      releaseSlot();
     }
   }
 
-  return createServer((req, res) => {
+  function track(job: Promise<void>): Promise<void> {
+    accepted.add(job);
+    void job.finally(() => accepted.delete(job)).catch(() => {});
+    return job;
+  }
+
+  const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0];
     const route = path === '/health' ? 'health' : path === '/jobs' ? 'jobs' : null;
     if (route === null) {
@@ -137,8 +200,9 @@ export function createJobServer(options: JobServerOptions): Server {
       sendError(res, new RequestError(405, 'FILEFN_CONTAINER_METHOD_NOT_ALLOWED', 'use POST'), { allow: 'POST' });
       return;
     }
-    runJob(req, res).catch((error: unknown) => {
-      if (res.headersSent) {
+    track(runJob(req, res).catch((error: unknown) => {
+      if (res.headersSent || res.destroyed) {
+        if (!(error instanceof RequestError)) onError?.(error);
         res.destroy();
         return;
       }
@@ -149,6 +213,12 @@ export function createJobServer(options: JobServerOptions): Server {
       }
       onError?.(error);
       sendError(res, new RequestError(500, 'FILEFN_CONTAINER_JOB_ERROR', 'the job could not be run'));
-    });
+    }));
+  });
+
+  return Object.assign(server, {
+    async drainJobs() {
+      while (accepted.size > 0) await Promise.allSettled([...accepted]);
+    },
   });
 }

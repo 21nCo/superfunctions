@@ -20,6 +20,7 @@ describe('readContainerConfig', () => {
       processors: ['thumbnail', 'pdf-preview', 'ocr'],
       maxRetries: undefined,
       maxConcurrentJobs: 2,
+      maxJobWaitMs: 60_000,
       maxBodyBytes: 262_144,
       ocrLanguage: 'eng',
     });
@@ -37,6 +38,7 @@ describe('readContainerConfig', () => {
       FILEFN_PROCESSORS: ' pdf-preview , thumbnail,thumbnail ',
       FILEFN_PROCESSING_MAX_RETRIES: '5',
       FILEFN_CONTAINER_MAX_CONCURRENT_JOBS: '4',
+      FILEFN_CONTAINER_JOB_WAIT_MS: '0',
       FILEFN_OCR_LANGUAGE: 'eng+deu',
     });
 
@@ -48,6 +50,7 @@ describe('readContainerConfig', () => {
       processors: ['pdf-preview', 'thumbnail'],
       maxRetries: 5,
       maxConcurrentJobs: 4,
+      maxJobWaitMs: 0,
       ocrLanguage: 'eng+deu',
     });
   });
@@ -61,6 +64,7 @@ describe('readContainerConfig', () => {
     ['PORT', { PORT: '80a' }],
     ['FILEFN_PROCESSING_MAX_RETRIES', { FILEFN_PROCESSING_MAX_RETRIES: '-1' }],
     ['FILEFN_CONTAINER_MAX_CONCURRENT_JOBS', { FILEFN_CONTAINER_MAX_CONCURRENT_JOBS: '0' }],
+    ['FILEFN_CONTAINER_JOB_WAIT_MS', { FILEFN_CONTAINER_JOB_WAIT_MS: '600001' }],
     ['unknown processor "video"', { FILEFN_PROCESSORS: 'thumbnail,video' }],
     ['FILEFN_PROCESSORS must name', { FILEFN_PROCESSORS: ' , ' }],
     ['FILEFN_R2_JURISDICTION', { FILEFN_R2_JURISDICTION: 'us' }],

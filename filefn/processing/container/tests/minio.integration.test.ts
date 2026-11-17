@@ -7,7 +7,9 @@
  * STORAGE_R2_S3_SECRET_ACCESS_KEY to enable it; with
  * FILEFN_CONTAINER_IT_REQUIRED=1 a missing endpoint fails instead of
  * skipping. FILEFN_CONTAINER_IT_OCR=1 also runs OCR through the native
- * `tesseract` command (the CI image has it).
+ * `tesseract` command (the CI image has it). The PDF preview must be the
+ * rasterized first page when FILEFN_CONTAINER_IT_PDF_RENDER=1 (the image) or
+ * when this host's sharp can read PDFs.
  */
 import { fileURLToPath } from 'node:url';
 import { createOCRProcessor, createPdfPreviewProcessor, createThumbnailProcessor } from '@filefn/processing';
@@ -21,6 +23,7 @@ import { sharedDatabase } from './fixtures/shared-database.js';
 
 const endpoint = process.env.STORAGE_R2_S3_ENDPOINT;
 const withOcr = process.env.FILEFN_CONTAINER_IT_OCR === '1';
+const expectPageRender = process.env.FILEFN_CONTAINER_IT_PDF_RENDER === '1' || sharp.format.pdf?.input?.buffer === true;
 if (process.env.FILEFN_CONTAINER_IT_REQUIRED === '1' && !endpoint) {
   throw new Error('FILEFN_CONTAINER_IT_REQUIRED=1 but STORAGE_R2_S3_ENDPOINT is not set');
 }
@@ -35,7 +38,10 @@ const prefix = `filefn-container-it-${Date.now()}-${Math.random().toString(36).s
 const owner = { principalId: 'owner', tenantId: 'tenant', requestId: 'req_it' };
 const TOKEN = 'it-token';
 
-/** A one-page PDF with a filled rectangle, small enough to write by hand. */
+/** The fill colour of the PDF's rectangle, as 8-bit RGB. */
+const PAGE_FILL = { r: 51, g: 102, b: 204 };
+
+/** A one-page PDF with a filled rectangle over most of the page, small enough to write by hand. */
 function onePagePdf(): Uint8Array {
   const content = '0.2 0.4 0.8 rg 20 20 160 100 re f';
   const objects = [
@@ -175,8 +181,19 @@ describe.skipIf(!endpoint)('processing container against MinIO and an in-memory 
     const preview = pdfArtifacts.find((artifact) => artifact.kind === 'pdf-preview-page-1-small');
     expect(preview).toBeDefined();
     expect(preview!.metadata).toMatchObject({ pageNumber: 1 });
-    const previewImage = await sharp(await readObject(storage, preview!.storageKey)).metadata();
+    const previewBytes = await readObject(storage, preview!.storageKey);
+    const previewImage = await sharp(previewBytes).metadata();
     expect(previewImage.format).toBe('png');
+    if (expectPageRender) {
+      // The page is 200x140 points, so the small preview keeps its aspect ratio;
+      // a placeholder card is square and has no rectangle in the page colour.
+      expect(preview!.metadata).toMatchObject({ renderMode: 'page-rasterized' });
+      expect(previewImage).toMatchObject({ width: 150, height: 105 });
+      const { data, info } = await sharp(previewBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const centre = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * info.channels;
+      const [r, g, b] = data.subarray(centre, centre + 3);
+      expect(Math.abs(r - PAGE_FILL.r) + Math.abs(g - PAGE_FILL.g) + Math.abs(b - PAGE_FILL.b)).toBeLessThan(24);
+    }
 
     if (withOcr) {
       expect(imageArtifacts.map((artifact) => artifact.kind)).toContain('ocr-text');

@@ -12,13 +12,13 @@ import type { Adapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createR2StorageAdapter } from '@superfunctions/storage-r2';
 import { ContainerConfigError, readContainerConfig, type ContainerConfig, type ContainerEnv } from './config.js';
-import { createJobServer } from './server.js';
+import { createJobServer, type ContainerJobHandler } from './server.js';
 import { createTesseractCliOCRProvider } from './tesseract-cli.js';
 
 export { readContainerConfig, ContainerConfigError, CONTAINER_PROCESSORS } from './config.js';
 export type { ContainerConfig, ContainerEnv, ContainerProcessorName } from './config.js';
-export { createJobServer } from './server.js';
-export type { ContainerJobHandler, JobServerOptions } from './server.js';
+export { BUSY_RETRY_AFTER_SECONDS, createJobServer } from './server.js';
+export type { ContainerJobHandler, JobServer, JobServerOptions } from './server.js';
 export { createTesseractCliOCRProvider } from './tesseract-cli.js';
 
 /** A `FILEFN_DATABASE` module's default export. */
@@ -27,8 +27,16 @@ export type CreateDatabase = (env: ContainerEnv) => Adapter | Promise<Adapter>;
 export interface RunningContainer {
   config: ContainerConfig;
   port: number;
-  /** Stops accepting requests, waits for running jobs, then closes the database. */
+  /**
+   * Stops accepting requests, waits for every accepted job (including jobs
+   * whose client disconnected), then closes the database.
+   */
   close(): Promise<void>;
+}
+
+export interface StartContainerOptions {
+  /** Replaces the FileFn processing job handler; for tests. */
+  handler?: ContainerJobHandler;
 }
 
 /**
@@ -68,7 +76,7 @@ function buildProcessors(config: ContainerConfig): Processor[] {
 }
 
 /** Starts the container's job server from its environment. */
-export async function startContainer(env: ContainerEnv): Promise<RunningContainer> {
+export async function startContainer(env: ContainerEnv, options: StartContainerOptions = {}): Promise<RunningContainer> {
   const config = readContainerConfig(env);
   const database = await loadDatabase(config.database, env);
   try {
@@ -78,11 +86,12 @@ export async function startContainer(env: ContainerEnv): Promise<RunningContaine
       namespace: config.namespace,
       processing: { enabled: true, processors: buildProcessors(config) },
     });
-    const handler = createProcessingJobHandler(fileFn, { maxRetries: config.maxRetries });
+    const handler = options.handler ?? createProcessingJobHandler(fileFn, { maxRetries: config.maxRetries });
     const server = createJobServer({
       handler,
       token: config.token,
       maxConcurrentJobs: config.maxConcurrentJobs,
+      maxJobWaitMs: config.maxJobWaitMs,
       maxBodyBytes: config.maxBodyBytes,
       onError: (error) => console.error('[filefn-container] job failed', error),
     });
@@ -98,10 +107,14 @@ export async function startContainer(env: ContainerEnv): Promise<RunningContaine
       config,
       port: (server.address() as AddressInfo).port,
       close() {
-        closing ??= new Promise<void>((resolveClose) => {
-          server.close(() => resolveClose());
+        closing ??= (async () => {
+          const closed = new Promise<void>((resolveClose) => server.close(() => resolveClose()));
           server.closeIdleConnections();
-        }).then(() => database.close());
+          await closed;
+          // A job whose client disconnected no longer holds a connection open.
+          await server.drainJobs();
+          await database.close();
+        })();
         return closing;
       },
     };

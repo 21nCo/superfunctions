@@ -86,12 +86,12 @@ jobs:
       - name: Build the image's build stage
         run: docker build --target build -f filefn/processing/container/Dockerfile -t filefn-processing-container:build .
 
-      - name: Run the container suite in the image against MinIO (thumbnail, PDF preview and native OCR)
+      - name: Run the container suite in the image against MinIO (thumbnail, rasterized PDF page and native OCR)
         run: >-
           docker run --rm --network host
           -e STORAGE_R2_S3_ENDPOINT -e STORAGE_R2_S3_BUCKET
           -e STORAGE_R2_S3_ACCESS_KEY_ID -e STORAGE_R2_S3_SECRET_ACCESS_KEY
-          -e FILEFN_CONTAINER_IT_REQUIRED=1 -e FILEFN_CONTAINER_IT_OCR=1
+          -e FILEFN_CONTAINER_IT_REQUIRED=1 -e FILEFN_CONTAINER_IT_OCR=1 -e FILEFN_CONTAINER_IT_PDF_RENDER=1
           filefn-processing-container:build
           npm test --workspace @filefn/processing-container
 
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --entrypoint sh filefn-processing-container:ci -c \
-            'ffmpeg -version | head -n 1 && tesseract --list-langs 2>&1 | grep -qx eng && node -e "import(\"sharp\").then((m) => console.log(\"sharp\", m.default.versions.vips))"'
+            'ffmpeg -version | head -n 1 && tesseract --list-langs 2>&1 | grep -qx eng && node -e "import(\"sharp\").then((m) => { console.log(\"libvips\", m.default.versions.vips); if (!m.default.format.pdf.input.buffer) process.exit(1); })"'
           docker run -d --name filefn-ct --network host \
             -e PORT=18080 -e FILEFN_DATABASE=memory -e FILEFN_CONTAINER_TOKEN="$SMOKE_TOKEN" \
             -e FILEFN_R2_ENDPOINT="$STORAGE_R2_S3_ENDPOINT" -e FILEFN_R2_BUCKET="$STORAGE_R2_S3_BUCKET" \

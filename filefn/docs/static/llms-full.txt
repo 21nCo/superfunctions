@@ -7137,32 +7137,42 @@ Run FileFn processing jobs in a container image with sharp, ffmpeg and tesseract
 docker build --platform linux/amd64 -f filefn/processing/container/Dockerfile -t filefn-processing .
 ```
 
-The image has `ffmpeg`, `tesseract` with English language data, and `sharp`. It runs the `thumbnail`, `pdf-preview` and `ocr` processors (`FILEFN_PROCESSORS`); OCR calls the native `tesseract` command. Audio and video processors are not offered yet. The prebuilt libvips in `sharp` has no PDF loader, so PDF previews in this image are placeholder previews of page 1 (`metadata.renderMode: "placeholder"`).
+The image (`node:22-trixie-slim`) has `ffmpeg`, `tesseract` with English language data, and `sharp` compiled against Debian's libvips, which reads PDFs through poppler. It runs the `thumbnail`, `pdf-preview` and `ocr` processors (`FILEFN_PROCESSORS`); OCR calls the native `tesseract` command, and PDF previews are the rasterized first page (`metadata.renderMode: "page-rasterized"`). Audio and video processors are not offered yet.
 
 ## Routes
 
 The container serves two routes and nothing else:
 
 - `GET /health` returns `200 {"status":"ok"}`.
-- `POST /jobs` takes `{"job": <queued message body>, "attempts": <delivery attempt>}` as `application/json`, runs the job through `createProcessingJobHandler`, and returns `200 {"outcome": …}`. Acknowledge the message unless `outcome.status` is `retry`. A 503 (too many running jobs) or 500 asks for a retry; a 400 or 413 body can never succeed.
+- `POST /jobs` takes `{"job": <queued message body>, "attempts": <delivery attempt>}` as `application/json`, runs the job through `createProcessingJobHandler`, and returns `200 {"outcome": …}`. Acknowledge the message unless `outcome.status` is `retry`. A request that arrives while `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are running waits up to `FILEFN_CONTAINER_JOB_WAIT_MS` (default 60 s) for a slot; after that it gets 503 with `Retry-After: 30`. A 503 or 500 asks for a delayed retry; a 400 or 413 body can never succeed.
 
 When `FILEFN_CONTAINER_TOKEN` is set, `POST /jobs` requires `Authorization: Bearer <token>`.
+
+The consumer retries with a delay, so a busy or failing container does not use up a message's attempts within seconds:
 
 ```ts
 async queue(batch: MessageBatch, env: Env) {
   const container = env.FILEFN_PROCESSING_CONTAINER.getByName("processing");
   for (const message of batch.messages) {
-    const response = await container.fetch("http://container/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${env.FILEFN_CONTAINER_TOKEN}` },
-      body: JSON.stringify({ job: message.body, attempts: message.attempts }),
-    });
+    let response: Response;
+    try {
+      response = await container.fetch("http://container/jobs", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.FILEFN_CONTAINER_TOKEN}` },
+        body: JSON.stringify({ job: message.body, attempts: message.attempts }),
+      });
+    } catch {
+      message.retry({ delaySeconds: 30 });
+      continue;
+    }
     const outcome = response.ok ? ((await response.json()) as { outcome: { status: string } }).outcome : null;
     if (response.status === 400 || response.status === 413 || (outcome && outcome.status !== "retry")) message.ack();
-    else message.retry();
+    else message.retry({ delaySeconds: Number(response.headers.get("retry-after")) || 30 });
   }
 }
 ```
+
+Give the consumer `max_batch_size: 1`, a `max_concurrency` no higher than `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS`, the same `max_retries` as `FILEFN_PROCESSING_MAX_RETRIES`, and a `dead_letter_queue`. The last delivery records `processing.failed` when it runs; if it cannot run (503, 500 or an unreachable container), the message lands in the dead-letter queue instead of disappearing.
 
 ## Storage and database
 
@@ -7174,7 +7184,7 @@ The full list of variables, status codes and the test setup is in `filefn/proces
 
 ## What is verified
 
-CI builds the image on Ubuntu, runs the container's suite inside it against MinIO with an in-memory database (a PNG thumbnail, a first-page PDF preview and OCR through `tesseract`), and smoke-tests the runtime image. Live Cloudflare Containers are not covered.
+CI builds the image on Ubuntu, runs the container's suite inside it against MinIO with an in-memory database (a PNG thumbnail, the rasterized first page of a PDF and OCR through `tesseract`), and smoke-tests the runtime image. Live Cloudflare Containers are not covered.
 
 
 ---
