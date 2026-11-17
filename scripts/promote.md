@@ -26,15 +26,22 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    git log -p -m --text --full-history <pin> -- <path>...
    ```
 
-   Then list the binary files the history ever held, and inspect each historical version of each one separately
-   (`git cat-file -p <blob> > <file>`, then open it). `--no-renames` lists a renamed file under its old and its new
-   path, so a binary changed while it was renamed is not hidden behind an `{old => new}` entry:
+   Then list every historical file version that is not plain text, and render and inspect each one separately
+   (`git cat-file -p <blob> > <file>`, then open it). Git's binary detection is not enough: an image stored as text
+   (an ASCII `P3` PPM, an SVG) shows in the patch above only as numbers or markup, so open every `image/*` version as
+   an image. The listing is NUL-delimited, so names with tabs, newlines or non-ASCII characters stay intact, and
+   `--no-renames` lists a renamed file under its old and its new path, so a version changed during a rename and every
+   version of a deleted file are listed too (run it in bash):
 
    ```sh
-   git -c core.quotePath=false log -m --full-history --no-renames --numstat --format= <pin> -- <path>... |
-     awk -F'\t' '$1 == "-" { print $3 }' | sort -u
-   git log -m --full-history --no-renames --raw --no-abbrev --format= <pin> -- <binary path> |
-     awk '$4 !~ /^0+$/ { print $4 }' | sort -u
+   git log -z -m --full-history --no-renames --raw --no-abbrev --format= <pin> -- <path>... |
+     perl -0ne 'chomp; if (/^:\S+ \S+ \S+ (\S+) \S+$/) { $blob = $1; next } print "$blob\t$_\0" if defined $blob && $blob !~ /^0+$/; undef $blob' |
+     sort -z -u |
+     while IFS= read -r -d '' record; do
+       blob=${record%%$'\t'*}
+       type=$(git cat-file -p "$blob" | file -b --mime-type -)
+       case $type in text/*|inode/x-empty|application/json) ;; *) printf '%s %s %s\n' "$blob" "$type" "${record#*$'\t'}" ;; esac
+     done
    ```
 
    If any version holds something private, do not promote with history: import the content without history instead
@@ -55,7 +62,9 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
 - the working tree has uncommitted or untracked changes;
 - the current branch does not contain `origin/dev` (`--base` names another ref);
 - a path already exists on the branch with content or a file mode that differs from `next` at the pin. `--reconcile` merges it
-  anyway and leaves the conflicts for you (exit status 2): resolve them, `git add` them and `git commit`;
+  anyway. When that leaves conflicts (exit status 2), this checkout stays as it was and the merge waits, with the
+  manifest and release edits staged, in a worktree on the promotion branch whose path the script prints: resolve the
+  conflicts there, `git add` them and `git commit`, then `git worktree remove <path>` and `git switch <branch>` here;
 - a `--path` lies inside a top-level directory `superfunctions.owners.json` does not list (promote the whole
   directory instead), or names a file the script edits or a `next`-only file (manifests, release lists, lockfiles);
 - a release slug or npm name it would move is already listed in `release-packages.json` with other values, or two

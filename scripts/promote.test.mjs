@@ -226,23 +226,24 @@ historyTest("a dirty tree, a branch not based on origin/dev and a conflicting pa
   assert.equal(git(dev, "rev-parse", "HEAD"), conflicted);
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
 
-  // --reconcile merges and leaves the conflict for the operator (exit 2).
+  // --reconcile merges in a worktree it keeps and prints, and leaves the conflict there for the operator (exit 2).
   const run = promoteCli(dev, ["--path", "uifn/foo", "--pin", pin, "--reconcile"]);
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stdout, /Merge conflicts left for you[^\n]*\n {2}uifn\/foo\/bar\.js/);
-  assert.equal(git(dev, "branch", "--show-current"), "promote/uifn/foo");
-  assert.equal(git(dev, "diff", "--name-only", "--diff-filter=U"), "uifn/foo/bar.js");
-  // The merge is in progress here as git merge leaves it: the operator resolves, adds and commits.
-  assert.equal(git(dev, "rev-parse", "HEAD"), conflicted);
-  const mergeHead = git(dev, "rev-parse", "MERGE_HEAD");
-  assert.equal(git(dev, "log", "-1", "--format=%s", mergeHead), "SFN-12 widget python");
-  assert.match(readFileSync(path.join(dev, "uifn/foo/bar.js"), "utf8"), /^<<<<<<< /m);
-  assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, "no scratch worktree is left");
-  assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), conflicted, "git reset --merge ORIG_HEAD abandons the merge");
-  write(dev, { "uifn/foo/bar.js": "export const bar = 'merged';\n" });
-  git(dev, "add", "uifn/foo/bar.js");
-  git(dev, "commit", "-q", "--no-edit");
-  assert.deepEqual(git(dev, "rev-list", "--parents", "-1", "HEAD").split(" ").slice(1), [conflicted, mergeHead]);
+  const worktree = /in the worktree (.+) on promote\/uifn\/foo;/.exec(run.stdout)[1];
+  assert.equal(git(dev, "branch", "--show-current"), "dev", "this checkout is not written");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  assert.equal(git(worktree, "branch", "--show-current"), "promote/uifn/foo");
+  assert.equal(git(worktree, "diff", "--name-only", "--diff-filter=U"), "uifn/foo/bar.js");
+  assert.equal(git(worktree, "rev-parse", "HEAD"), conflicted);
+  const mergeHead = git(worktree, "rev-parse", "MERGE_HEAD");
+  assert.equal(git(worktree, "log", "-1", "--format=%s", mergeHead), "SFN-12 widget python");
+  assert.match(readFileSync(path.join(worktree, "uifn/foo/bar.js"), "utf8"), /^<<<<<<< /m);
+  write(worktree, { "uifn/foo/bar.js": "export const bar = 'merged';\n" });
+  git(worktree, "add", "uifn/foo/bar.js");
+  git(worktree, "commit", "-q", "--no-edit");
+  assert.deepEqual(git(dev, "rev-list", "--parents", "-1", "promote/uifn/foo").split(" ").slice(1), [conflicted, mergeHead]);
+  git(dev, "worktree", "remove", worktree);
 });
 
 historyTest("paths outside the public manifest, missing paths and an unknown pin are refused", () => {
@@ -547,23 +548,77 @@ historyTest("an ignored file created after the preflight is not overwritten, and
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
 });
 
-historyTest("a conflicting --reconcile merge does not overwrite an ignored file created after the preflight either", () => {
-  const { dev, next } = fixture("late-reconcile");
-  const pin = commit(next, "new uifn/foo file", { "uifn/foo/new.js": "export const fresh = 1;\n" });
-  const head = commit(dev, "dev has its own uifn/foo", { "uifn/foo/bar.js": "export const bar = 'dev';\n" });
+historyTest("a conflicting --reconcile merge stays in a kept worktree with the edits staged; this checkout is not written", () => {
+  const { dev } = fixture("late-reconcile");
+  const head = commit(dev, "dev has its own widgetfn entry", { "widgetfn/core/src/index.js": "export const widget = 'dev';\n" });
   git(dev, "update-ref", "refs/remotes/origin/dev", head);
-  write(dev, { ".git/info/exclude": "uifn/foo/new.js\n" });
-  const late = path.join(dev, "uifn/foo/new.js");
-  const env = lateFilterRepo("late-reconcile", late, "late local");
-  const run = promoteCli(dev, ["--path", "uifn/foo", "--pin", pin, "--source", next, "--reconcile"], { env });
-  assert.equal(run.status, 1, run.stderr);
-  assert.match(run.stderr, /^promote: path-conflict: uifn\/foo\/new\.js exists here as an untracked or ignored file/);
+  write(dev, { ".git/info/exclude": "widgetfn/core/package.json\n" });
+  const late = path.join(dev, "widgetfn/core/package.json");
+  const run = promoteCli(dev, ["widgetfn", "--reconcile"], { env: lateFilterRepo("late-reconcile", late, "late local") });
+  assert.equal(run.status, 2, run.stderr);
   assert.equal(readFileSync(late, "utf8"), "late local\n");
   assert.equal(git(dev, "rev-parse", "HEAD"), head);
   assert.equal(git(dev, "branch", "--show-current"), "dev");
-  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
   assert.equal(git(dev, "status", "--porcelain"), "");
   assert.equal(spawnSync(gitBinary(), ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: dev }).status, 1);
+  const worktree = /in the worktree (.+) on promote\/widgetfn;/.exec(run.stdout)[1];
+  assert.equal(git(worktree, "diff", "--name-only", "--diff-filter=U"), "widgetfn/core/src/index.js");
+  const staged = git(worktree, "diff", "--cached", "--name-only").split("\n");
+  for (const file of ["superfunctions.owners.json", "release-packages.json", "scripts/python_release.py"]) assert.ok(staged.includes(file), file);
+  git(dev, "worktree", "remove", "--force", worktree);
+});
+
+historyTest("the destination branch's policy (includeIf onbranch:promote/**) refuses the promotion and leaves nothing behind", () => {
+  const { dev } = fixture("onbranch-policy");
+  const head = git(dev, "rev-parse", "HEAD");
+  const unchanged = () => {
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--show-current"), "dev");
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+    assert.equal(git(dev, "status", "--porcelain"), "");
+    assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1, "no scratch worktree is left");
+  };
+  const hooks = path.join(dev, ".git", "promote-hooks");
+  write(hooks, { "pre-merge-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(hooks, "pre-merge-commit"), 0o755);
+  write(dev, { ".git/promote-hooks.conf": `[core]\n\thooksPath = ${hooks}\n` });
+  git(dev, "config", "includeIf.onbranch:promote/**.path", "promote-hooks.conf");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  git(dev, "config", "--unset", "includeIf.onbranch:promote/**.path");
+  git(dev, "config", "merge.verifySignatures", "false");
+  write(dev, { ".git/promote-signed.conf": "[merge]\n\tverifySignatures = true\n" });
+  git(dev, "config", "includeIf.onbranch:promote/**.path", "promote-signed.conf");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+});
+
+historyTest("an exported GIT_DIR and GIT_WORK_TREE do not redirect the temporary repository to this one", () => {
+  const { dev } = fixture("git-env");
+  const refs = () => git(dev, "for-each-ref", "--format=%(refname) %(objectname)").split("\n").filter((line) => !line.startsWith("refs/heads/promote/"));
+  const before = refs();
+  const env = { ...process.env, GIT_DIR: path.join(dev, ".git"), GIT_WORK_TREE: dev, GIT_INDEX_FILE: path.join(dev, ".git", "index") };
+  const run = promoteCli(dev, ["widgetfn"], { env, cwd: scratch });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(refs(), before, "only the promotion branch is new");
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+  assert.equal(git(dev, "rev-list", "--count", "HEAD^^2"), "3", "the merge (before the ownership commit) imports the three commits");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+});
+
+historyTest("a tracked edit made during filtering survives a rejected merge: only promotion-owned state is removed", () => {
+  const { dev } = fixture("tracked-late");
+  const head = git(dev, "rev-parse", "HEAD");
+  const edited = path.join(dev, "uifn/keep.js");
+  useHook(dev, "pre-merge-commit", "exit 1");
+  const run = promoteCli(dev, ["widgetfn"], { env: lateFilterRepo("tracked-late", edited, "edited locally") });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /^promote: git-failed: merge failed/);
+  assert.equal(readFileSync(edited, "utf8"), "edited locally\n");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "M uifn/keep.js");
   assert.equal(git(dev, "worktree", "list", "--porcelain").match(/^worktree /gm).length, 1);
 });
 
@@ -614,9 +669,9 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--worktree", "--unset", "include.path");
-  // ... and through an includeIf on this checkout's git directory, which the scratch worktree's does not match.
+  // ... and through an includeIf on this repository's git directory, which covers its linked worktrees.
   write(dev, { ".git/signed.conf": "[merge]\n\tverifySignatures = true\n" });
-  git(dev, "config", `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}.path`, "signed.conf");
+  git(dev, "config", `includeIf.gitdir:${realpathSync(path.join(dev, ".git"))}/.path`, "signed.conf");
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   write(dev, { ".git/signed.conf": "" });
