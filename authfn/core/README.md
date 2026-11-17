@@ -10,6 +10,10 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.6.1 release
+
+The email OTP attempt limit (`maxAttempts`, default 5) now holds when wrong codes for one challenge are submitted concurrently. Each verification reserves an attempt with a conditional write before it compares the code, so a challenge is compared at most `maxAttempts` times for wrong codes; before, parallel requests that read the same attempt count were all compared while the stored count rose by one. A request that cannot reserve an attempt gets `400 AUTHFN_OTP_INVALID`. A correct code that is then rejected without consuming the challenge (for example, sign-in for an email with no user) hands its attempt back, as before. `POST /auth/otp/verify` and password reset completion get the fix through `@authfn/email-otp` 0.1.5 and `@authfn/password` 0.1.6. Those, `@authfn/api-keys` 0.2.1, `@authfn/multi-region` 0.2.1, `@authfn/oauth-provider` 0.3.2, and `@authfn/native-handoff`, `@authfn/social-oauth` and `@authfn/two-factor` 0.1.5 depend on `authfn` 0.6.1; upgrade them together so only one copy of `authfn` is installed.
+
 ## 0.6.0 release
 
 Scopes are now enforced. Declare the scopes your app accepts as a registry on `authfn()`, then call `requireScopes` before protected work:

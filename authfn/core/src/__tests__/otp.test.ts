@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnEmailOtpPlugin } from '@authfn/email-otp';
@@ -12,6 +12,64 @@ import type {
 import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
 import { getLatestOtpChallenge } from '../core/verifications.js';
+
+// Counts constant-time comparisons: in the verify-email flow the only caller
+// is the OTP code check, so this is the number of codes compared.
+const codeComparisons = vi.hoisted(() => ({ count: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    timingSafeEqual: (left: NodeJS.ArrayBufferView, right: NodeJS.ArrayBufferView) => {
+      codeComparisons.count += 1;
+      return actual.timingSafeEqual(left, right);
+    }
+  };
+});
+
+type AuthFnDatabase = AuthFnRuntimeConfig['database'];
+
+/**
+ * Wraps an adapter so the next `count` OTP challenge lookups all return before
+ * any of them continues: every request reads the same stored attempt count
+ * and then races on the write, the interleaving the attempt cap must survive.
+ */
+function holdOtpChallengeReads(adapter: AuthFnDatabase) {
+  let expected = 0;
+  let waiting: Array<() => void> = [];
+  const held = new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== 'function') {
+        return value;
+      }
+      if (property !== 'findMany') {
+        return value.bind(target);
+      }
+      return async (params: { model: string }) => {
+        const rows = await value.call(target, params);
+        if (expected > 0 && params.model === 'otp_challenges') {
+          await new Promise<void>((resolve) => {
+            waiting.push(resolve);
+            if (waiting.length === expected) {
+              const release = waiting;
+              expected = 0;
+              waiting = [];
+              release.forEach((resume) => resume());
+            }
+          });
+        }
+        return rows;
+      };
+    }
+  });
+  return {
+    adapter: held,
+    holdNextReads(count: number) {
+      expected = count;
+    }
+  };
+}
 
 function createClock(start: Date = new Date('2026-03-22T00:00:00.000Z')) {
   let current = start;
@@ -673,5 +731,84 @@ describe('authfn otp plugin', () => {
         baseUrl: 'https://account.example.com'
       }
     ]);
+  });
+  it('compares at most maxAttempts codes when wrong codes for one challenge arrive concurrently', async () => {
+    const reads = holdOtpChallengeReads(memoryAdapter({ debug: false }));
+    const config = createConfig({ database: reads.adapter }) as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { maxAttempts: 5 });
+    const auth = createTestServer(config);
+    const verify = (code: string) => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    );
+
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    const sendResponse = await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    expect(sendResponse.status).toBe(200);
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+    const wrongCode = code === '000000' ? '111111' : '000000';
+
+    reads.holdNextReads(20);
+    codeComparisons.count = 0;
+    const responses = await Promise.all(Array.from({ length: 20 }, () => verify(wrongCode)));
+
+    expect(codeComparisons.count).toBe(5);
+    expect(responses.map((response) => response.status)).toEqual(Array(20).fill(400));
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+    expect(bodies.map((body) => body.error.code)).toEqual(Array(20).fill('AUTHFN_OTP_INVALID'));
+    const afterBurst = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterBurst?.attemptCount).toBeGreaterThanOrEqual(5);
+
+    codeComparisons.count = 0;
+    const correct = await verify(code);
+    expect(correct.status).toBe(400);
+    expect((await correct.json()).error.code).toBe('AUTHFN_OTP_INVALID');
+    expect(codeComparisons.count).toBe(0);
+    const afterCorrect = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterCorrect?.consumedAt).toBeNull();
+  });
+  it('verifies a correct code once when the same request is retried concurrently', async () => {
+    const reads = holdOtpChallengeReads(memoryAdapter({ debug: false }));
+    const config = createConfig({ database: reads.adapter }) as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    const auth = createTestServer(config);
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+
+    reads.holdNextReads(3);
+    const responses = await Promise.all(Array.from({ length: 3 }, () => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    )));
+
+    const outcomes = await Promise.all(responses.map(async (response) => {
+      const body = await response.json();
+      return response.status === 200 ? 'verified' : body.error.code;
+    }));
+    expect(outcomes.sort()).toEqual(['AUTHFN_OTP_REPLAYED', 'AUTHFN_OTP_REPLAYED', 'verified']);
+    const stored = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(stored?.consumedAt).not.toBeNull();
   });
 });

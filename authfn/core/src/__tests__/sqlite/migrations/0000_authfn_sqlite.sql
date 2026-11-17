@@ -14,6 +14,21 @@ CREATE TABLE `authfn_api_keys` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `idx_authfn_api_keys_secret_hash` ON `authfn_api_keys` (`secret_hash`);--> statement-breakpoint
 CREATE INDEX `idx_authfn_api_keys_user_id_created_at` ON `authfn_api_keys` (`user_id`,`created_at`);--> statement-breakpoint
+CREATE TABLE `authfn_otp_challenges` (
+	`attempt_count` integer NOT NULL,
+	`code_hash` text NOT NULL,
+	`consumed_at` integer,
+	`created_at` integer NOT NULL,
+	`delivery_metadata` text,
+	`email` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	`id` text PRIMARY KEY NOT NULL,
+	`purpose` text NOT NULL,
+	`updated_at` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_authfn_otp_challenges_email_purpose_created_at` ON `authfn_otp_challenges` (`email`,`purpose`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_authfn_otp_challenges_expires_at` ON `authfn_otp_challenges` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `authfn_password_credentials` (
 	`created_at` integer NOT NULL,
 	`id` text PRIMARY KEY NOT NULL,

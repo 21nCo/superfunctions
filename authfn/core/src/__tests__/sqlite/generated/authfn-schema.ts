@@ -83,3 +83,24 @@ export const api_keys = sqliteTable(
     idx_authfn_api_keys_user_id_created_at: index('idx_authfn_api_keys_user_id_created_at').on(table.userId, table.createdAt)
   })
 );
+
+
+export const otp_challenges = sqliteTable(
+  'authfn_otp_challenges',
+  {
+  attemptCount: integer('attempt_count').notNull(),
+  codeHash: text('code_hash').notNull(),
+  consumedAt: integer('consumed_at', { mode: 'timestamp_ms' }),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  deliveryMetadata: text('delivery_metadata', { mode: 'json' }),
+  email: text('email').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  id: text('id').primaryKey().notNull(),
+  purpose: text('purpose').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => ({
+    idx_authfn_otp_challenges_email_purpose_created_at: index('idx_authfn_otp_challenges_email_purpose_created_at').on(table.email, table.purpose, table.createdAt),
+    idx_authfn_otp_challenges_expires_at: index('idx_authfn_otp_challenges_expires_at').on(table.expiresAt)
+  })
+);

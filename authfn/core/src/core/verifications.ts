@@ -278,66 +278,69 @@ export async function verifyOtpChallenge(
     });
   }
 
-  const nextAttemptCount = challenge.attemptCount + 1;
   const maxAttempts = runtimeOptions.maxAttempts ?? DEFAULT_OTP_MAX_ATTEMPTS;
-  if (nextAttemptCount > maxAttempts) {
-    await incrementAttemptCount(config, challenge.id, nextAttemptCount, now);
-    throw new AuthFnOtpInvalidError('OTP code is invalid', {
-      challengeId: challenge.id,
-      attemptCount: nextAttemptCount
-    });
-  }
+  const reserved = await reserveOtpAttempt(config, challenge, maxAttempts, now);
 
   if (!safeCompareHex(challenge.codeHash, hashSecret(input.code))) {
-    await incrementAttemptCount(config, challenge.id, nextAttemptCount, now);
     throw new AuthFnOtpInvalidError('OTP code is invalid', {
       challengeId: challenge.id,
-      attemptCount: nextAttemptCount
+      attemptCount: reserved.attemptCount
     });
   }
 
+  let consumed: AuthFnOtpChallengeRecord;
   let createdUser = false;
   let linkedExistingUser = false;
-  let user = await findUserByPrimaryEmail(config, email);
+  let user: AuthFnUserRecord | null;
   let pendingSignUp: OtpSignUpUserInput | undefined;
+  // The code matched, so this attempt was not a wrong guess. When the request
+  // ends before consuming the challenge (missing user, conflict, hook
+  // rejection), hand the reserved attempt back unless another request has
+  // reserved one since; only wrong codes then count towards maxAttempts.
+  try {
+    user = await findUserByPrimaryEmail(config, email);
 
-  if (input.purpose === 'sign-in') {
-    if (!user) {
-      throw new AuthFnOtpInvalidError('OTP sign-in requires an existing user', {
-        email
-      });
-    }
-  } else if (input.purpose === 'sign-up') {
-    pendingSignUp = await resolveOtpSignUpUserInput(config, hooks, input, now);
-    user = await findUserByPrimaryEmail(config, pendingSignUp.primaryEmail);
-    if (user) {
-      if (!allowsOtpSignUpExistingUser(config)) {
-        await emitAccountLinkingConflictEvent(config, {
-          request: input.request,
-          user,
-          regionId: pendingSignUp.environment?.regionId,
-          method: 'email-otp',
-          reason: 'otp_sign_up_existing_user_disabled'
-        });
-        throw new AuthFnConflictError('A user with this email already exists', {
-          primaryEmail: pendingSignUp.primaryEmail,
-          linking: {
-            method: 'email-otp',
-            reason: 'existing_user'
-          }
+    if (input.purpose === 'sign-in') {
+      if (!user) {
+        throw new AuthFnOtpInvalidError('OTP sign-in requires an existing user', {
+          email
         });
       }
-      linkedExistingUser = true;
+    } else if (input.purpose === 'sign-up') {
+      pendingSignUp = await resolveOtpSignUpUserInput(config, hooks, input, now);
+      user = await findUserByPrimaryEmail(config, pendingSignUp.primaryEmail);
+      if (user) {
+        if (!allowsOtpSignUpExistingUser(config)) {
+          await emitAccountLinkingConflictEvent(config, {
+            request: input.request,
+            user,
+            regionId: pendingSignUp.environment?.regionId,
+            method: 'email-otp',
+            reason: 'otp_sign_up_existing_user_disabled'
+          });
+          throw new AuthFnConflictError('A user with this email already exists', {
+            primaryEmail: pendingSignUp.primaryEmail,
+            linking: {
+              method: 'email-otp',
+              reason: 'existing_user'
+            }
+          });
+        }
+        linkedExistingUser = true;
+      }
+    } else if (input.purpose === 'reset-password') {
+      if (!user) {
+        throw new AuthFnOtpInvalidError('Password reset requires an existing user', {
+          email
+        });
+      }
     }
-  } else if (input.purpose === 'reset-password') {
-    if (!user) {
-      throw new AuthFnOtpInvalidError('Password reset requires an existing user', {
-        email
-      });
-    }
-  }
 
-  const consumed = await consumeOtpChallenge(config, challenge, nextAttemptCount, now);
+    consumed = await consumeOtpChallenge(config, challenge, now);
+  } catch (error) {
+    await releaseOtpAttempt(config, reserved, now);
+    throw error;
+  }
 
   if (input.purpose === 'verify-email') {
     if (user) {
@@ -410,10 +413,11 @@ export async function verifyOtpChallenge(
 async function consumeOtpChallenge(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   challenge: AuthFnOtpChallengeRecord,
-  attemptCount: number,
   consumedAt: Date
 ): Promise<AuthFnOtpChallengeRecord> {
   try {
+    // attemptCount is not written here: the reservation already counted this
+    // attempt, and an absolute write could undo concurrent reservations.
     return await config.database.update<AuthFnOtpChallengeRecord>({
       model: 'otp_challenges',
       where: [
@@ -421,7 +425,6 @@ async function consumeOtpChallenge(
         { field: 'consumedAt', operator: 'eq', value: null }
       ],
       data: {
-        attemptCount,
         consumedAt,
         updatedAt: consumedAt
       },
@@ -503,20 +506,116 @@ async function findLatestChallenge(
   return rows[0] ?? null;
 }
 
-async function incrementAttemptCount(
+/**
+ * Upper bound on compare-and-set rounds for one reservation. A round is lost
+ * only when another request reserved an attempt first, so with the default cap
+ * of 5 a request sees the cap long before this bound. A request that runs out
+ * of rounds is treated as over the limit.
+ */
+const OTP_ATTEMPT_RESERVATION_ROUNDS = 16;
+
+interface OtpAttemptReservation {
+  challengeId: string;
+  /** The attempt count this request stored; its attempt is number attemptCount. */
+  attemptCount: number;
+}
+
+/**
+ * Reserves one attempt on the challenge before its code is compared, so the
+ * number of comparisons never exceeds maxAttempts. The update only applies
+ * while the stored count still equals the count this request read and the
+ * challenge is unconsumed; concurrent requests that read the same count lose
+ * the write, re-read the challenge and try the next count.
+ */
+async function reserveOtpAttempt(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  challengeId: string,
-  attemptCount: number,
+  challenge: AuthFnOtpChallengeRecord,
+  maxAttempts: number,
+  now: Date
+): Promise<OtpAttemptReservation> {
+  let current = challenge;
+  for (let round = 0; round < OTP_ATTEMPT_RESERVATION_ROUNDS; round += 1) {
+    const attemptCount = current.attemptCount + 1;
+    if (attemptCount > maxAttempts) {
+      throw otpAttemptLimitError(challenge.id, attemptCount);
+    }
+
+    try {
+      await config.database.update<AuthFnOtpChallengeRecord>({
+        model: 'otp_challenges',
+        where: [
+          { field: 'id', operator: 'eq', value: challenge.id },
+          { field: 'attemptCount', operator: 'eq', value: current.attemptCount },
+          { field: 'consumedAt', operator: 'eq', value: null }
+        ],
+        data: {
+          attemptCount,
+          updatedAt: now
+        },
+        namespace: namespace(config)
+      });
+      return { challengeId: challenge.id, attemptCount };
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        throw error;
+      }
+    }
+
+    const latest = await config.database.findOne<AuthFnOtpChallengeRecord>({
+      model: 'otp_challenges',
+      where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+      namespace: namespace(config)
+    });
+    if (!latest) {
+      throw new AuthFnOtpInvalidError('OTP code is invalid', {
+        challengeId: challenge.id
+      });
+    }
+    if (latest.consumedAt) {
+      throw new AuthFnOtpReplayedError('OTP code has already been used', {
+        challengeId: challenge.id
+      });
+    }
+    current = latest;
+  }
+
+  throw otpAttemptLimitError(challenge.id, current.attemptCount + 1);
+}
+
+/**
+ * Returns a reserved attempt after the code matched but the challenge was not
+ * consumed. It only applies while no later reservation or consumption has
+ * happened; otherwise the count stays as it is, which errs towards the limit.
+ */
+async function releaseOtpAttempt(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  reservation: OtpAttemptReservation,
   updatedAt: Date
 ): Promise<void> {
-  await config.database.update({
-    model: 'otp_challenges',
-    where: [{ field: 'id', operator: 'eq', value: challengeId }],
-    data: {
-      attemptCount,
-      updatedAt
-    },
-    namespace: namespace(config)
+  try {
+    await config.database.update<AuthFnOtpChallengeRecord>({
+      model: 'otp_challenges',
+      where: [
+        { field: 'id', operator: 'eq', value: reservation.challengeId },
+        { field: 'attemptCount', operator: 'eq', value: reservation.attemptCount },
+        { field: 'consumedAt', operator: 'eq', value: null }
+      ],
+      data: {
+        attemptCount: reservation.attemptCount - 1,
+        updatedAt
+      },
+      namespace: namespace(config)
+    });
+  } catch {
+    // Keeping the reservation is the safe outcome; the caller rethrows the
+    // error that ended the request.
+  }
+}
+
+function otpAttemptLimitError(challengeId: string, attemptCount: number): AuthFnOtpInvalidError {
+  return new AuthFnOtpInvalidError('OTP code is invalid', {
+    challengeId,
+    attemptCount
   });
 }
 

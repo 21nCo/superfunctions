@@ -8,12 +8,27 @@
  */
 
 import { createHash } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authFnApiKeyPlugin } from '@authfn/api-keys';
+import { authFnEmailOtpPlugin } from '@authfn/email-otp';
 import { authFnPasswordPlugin } from '@authfn/password';
 import { drizzleAdapter } from '../../../../../packages/db/src/adapters/drizzle/index.js';
 import { authfn, authFnPlugins, type AuthFnServer } from '../../index.js';
 import { migrationStatements } from './fixture.js';
+
+// Counts constant-time comparisons so the OTP case can tell how many codes
+// were compared; in the email OTP verify flow only the code check uses it.
+const codeComparisons = vi.hoisted(() => ({ count: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    timingSafeEqual: (left: NodeJS.ArrayBufferView, right: NodeJS.ArrayBufferView) => {
+      codeComparisons.count += 1;
+      return actual.timingSafeEqual(left, right);
+    }
+  };
+});
 
 export interface SqliteHarness {
   /** Drizzle database created with `{ schema }` from the generated authfn schema. */
@@ -117,6 +132,7 @@ export function describeAuthFnSqliteConformance(
       );
       expect(tables.map((table) => table.name)).toEqual([
         'authfn_api_keys',
+        'authfn_otp_challenges',
         'authfn_password_credentials',
         'authfn_sessions',
         'authfn_users'
@@ -443,6 +459,56 @@ export function describeAuthFnSqliteConformance(
       await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toMatchObject({
         actorId: signedIn.userId
       });
+    });
+
+    it('compares at most maxAttempts OTP codes when wrong codes for one challenge arrive concurrently', async () => {
+      const codes: string[] = [];
+      const otpAuth = authfn({ plugins: authFnPlugins(authFnEmailOtpPlugin()) }).createServer({
+        database: drizzleAdapter({ db: harness.db, dialect: 'sqlite' }),
+        pluginRuntime: {
+          emailOtp: {
+            maxAttempts: 5,
+            codeGenerator: () => '731942',
+            delivery: {
+              async send(input) {
+                codes.push(input.code);
+                return { sent: true };
+              }
+            }
+          }
+        }
+      });
+      const otp = async (path: string, body: Json) => {
+        const response = await otpAuth.router.handle(
+          new Request(`${ORIGIN}/auth/otp/${path}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+        );
+        return { status: response.status, body: (await response.json()) as Json };
+      };
+      const verify = (code: string) => otp('verify', { purpose: 'verify-email', email: 'race@example.com', code });
+
+      const sent = await otp('send', { purpose: 'verify-email', email: 'race@example.com' });
+      expect(sent.status).toBe(200);
+      expect(codes).toEqual(['731942']);
+
+      codeComparisons.count = 0;
+      const responses = await Promise.all(Array.from({ length: 20 }, () => verify('000000')));
+
+      expect(codeComparisons.count).toBe(5);
+      expect(responses.map((response) => response.status)).toEqual(Array(20).fill(400));
+      expect(responses.map((response) => response.body.error.code)).toEqual(Array(20).fill('AUTHFN_OTP_INVALID'));
+      const afterBurst = await row('authfn_otp_challenges', sent.body.data.challengeId);
+      expect(afterBurst.attempt_count).toBeGreaterThanOrEqual(5);
+
+      codeComparisons.count = 0;
+      const correct = await verify('731942');
+      expect(correct.status).toBe(400);
+      expect(correct.body.error.code).toBe('AUTHFN_OTP_INVALID');
+      expect(codeComparisons.count).toBe(0);
+      expect((await row('authfn_otp_challenges', sent.body.data.challengeId)).consumed_at).toBeNull();
     });
 
     async function createKey(

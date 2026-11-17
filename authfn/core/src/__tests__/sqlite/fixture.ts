@@ -2,8 +2,8 @@
  * The published SQLite artifacts the conformance suite runs against.
  *
  * - `generated/authfn-schema.ts` is verbatim `@superfunctions/cli generate-schema
- *   --adapter drizzle --dialect sqlite` output for authfn with the password and
- *   api-keys plugins.
+ *   --adapter drizzle --dialect sqlite` output for authfn with the password,
+ *   api-keys and email-otp plugins.
  * - `migrations/0000_authfn_sqlite.sql` is verbatim `drizzle-kit generate
  *   --name authfn_sqlite` output (Drizzle Kit 0.31.10) for that schema: the file
  *   Wrangler applies to D1. Drizzle Kit 0.31 needs a newer drizzle-orm than the
