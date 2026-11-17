@@ -95,29 +95,29 @@ public final class BillFnClient: @unchecked Sendable {
         )
         let (data, response) = try await configuration.session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard case .object(let envelope)? = try? JSONDecoder().decode(BillFnJSONValue.self, from: data),
-              case .bool(let ok)? = envelope["ok"] else {
-            // No BillFn envelope: an error status came from something in front of BillFn (a gateway, a proxy), and
-            // keeps its status so a timeout, rate limit or 5xx is reported as retryable.
-            guard status >= 400 else { throw BillFnClientError.invalidResponse }
-            throw BillFnClientError.server(
-                code: "BILLFN_HTTP_ERROR",
-                message: "BillFn request failed with HTTP \(status)",
-                status: status,
-                retryable: Self.isRetryable(status: status)
-            )
-        }
-        if ok, (200..<300).contains(status), let payload = envelope["data"] {
+        let envelope: [String: BillFnJSONValue]? = {
+            guard case .object(let envelope)? = try? JSONDecoder().decode(BillFnJSONValue.self, from: data) else { return nil }
+            return envelope
+        }()
+        if case .bool(true)? = envelope?["ok"], (200..<300).contains(status), let payload = envelope?["data"] {
             return payload
         }
-        guard !ok, case .object(let error)? = envelope["error"] else {
-            throw BillFnClientError.invalidResponse
+        if case .bool(false)? = envelope?["ok"], case .object(let error)? = envelope?["error"] {
+            throw BillFnClientError.server(
+                code: error["code"]?.stringValue ?? "BILLFN_ERROR",
+                message: error["message"]?.stringValue ?? "BillFn request failed",
+                status: status,
+                retryable: error["retryable"]?.boolValue ?? Self.isRetryable(status: status)
+            )
         }
+        // No valid BillFn envelope (none at all, a malformed one, or a success-shaped one with an error status): an
+        // error status keeps its status, so a timeout, rate limit or 5xx from a gateway or proxy is reported as retryable.
+        guard status >= 400 else { throw BillFnClientError.invalidResponse }
         throw BillFnClientError.server(
-            code: error["code"]?.stringValue ?? "BILLFN_ERROR",
-            message: error["message"]?.stringValue ?? "BillFn request failed",
+            code: "BILLFN_HTTP_ERROR",
+            message: "BillFn request failed with HTTP \(status)",
             status: status,
-            retryable: error["retryable"]?.boolValue ?? Self.isRetryable(status: status)
+            retryable: Self.isRetryable(status: status)
         )
     }
 

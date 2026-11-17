@@ -150,8 +150,8 @@ struct BillFnStoreKitBackendTests {
 
     @Test("Rejects a response that is not a BillFn envelope", arguments: [
         (200, "<html>gateway</html>"),
-        (502, #"{"ok":true,"data":{}}"#),
         (200, #"{"ok":false}"#),
+        (200, #"{"ok":true}"#),
     ])
     func rejectsNonEnvelopes(status: Int, body: String) async throws {
         let backend = backend(status: status, body: body)
@@ -168,6 +168,11 @@ struct BillFnStoreKitBackendTests {
         (408, "", true),
         (429, "Too Many Requests", true),
         (404, "<html>Not Found</html>", false),
+        // Malformed or success-shaped envelopes with an error status keep the status too.
+        (503, #"{"ok":false}"#, true),
+        (502, #"{"ok":true,"data":{}}"#, true),
+        (500, #"{"ok":false,"error":"down"}"#, true),
+        (400, #"{"ok":false}"#, false),
     ])
     func classifiesNonEnvelopeErrors(status: Int, body: String, retryable: Bool) async throws {
         let backend = backend(status: status, body: body)
