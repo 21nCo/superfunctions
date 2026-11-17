@@ -1,6 +1,6 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
-import { AuthFnRateLimitedError } from './errors.js';
+import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
 import type {
   AuthFnRateLimitCategory,
   AuthFnRateLimitConfig,
@@ -41,6 +41,7 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
   if (mode === 'strict' && !config.stores?.atomicKv) {
     throw new Error('AUTHFN_ATOMIC_STORE_REQUIRED: rateLimit strict mode requires stores.atomicKv');
   }
+  assertValidWindows(config);
   const localState = createLocalRateLimitState();
 
   return async (request, _context, next) => {
@@ -88,6 +89,41 @@ function policyForScope(
     ...config.rateLimit?.policies
   };
   return policies[scope] ?? defaultPolicies.account;
+}
+
+/**
+ * Shortest window: one millisecond. A shorter one makes the window index
+ * `floor(now / windowMs)` infinite and the window's end `NaN`.
+ */
+const MIN_WINDOW_SECONDS = 0.001;
+/**
+ * Longest window: half the range of a JavaScript `Date` (8.64e15 ms), so the
+ * end of the current window is always a valid date.
+ */
+const MAX_WINDOW_SECONDS = 4_320_000_000_000;
+
+/**
+ * Rejects, when the middleware is created, any route policy whose window
+ * cannot be divided into fixed windows. Otherwise a refusal would have no
+ * valid reset time (a 500 instead of a 429) and local counters would never
+ * expire.
+ */
+function assertValidWindows(config: AuthFnRuntimeConfig): void {
+  for (const scope of Object.keys(defaultPolicies) as AuthFnRateLimitScope[]) {
+    const windowSeconds: unknown = policyForScope(config, scope).windowSeconds;
+    if (
+      typeof windowSeconds !== 'number'
+      || !Number.isFinite(windowSeconds)
+      || windowSeconds < MIN_WINDOW_SECONDS
+      || windowSeconds > MAX_WINDOW_SECONDS
+    ) {
+      throw new AuthFnConfigError(
+        `rateLimit.policies.${scope}.windowSeconds must be a finite number of seconds `
+          + `from ${MIN_WINDOW_SECONDS} to ${MAX_WINDOW_SECONDS}`,
+        { scope, windowSeconds: String(windowSeconds) }
+      );
+    }
+  }
 }
 
 function scopeForPath(path: string): AuthFnRateLimitScope {
