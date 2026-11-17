@@ -465,6 +465,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // conditional on it apply only for a call holding the publication as it is
   // now, never for one that read an earlier decision, even one made within the
   // same millisecond.
+  function claimNonce(claim: string | null | undefined): string {
+    return (claim ?? '').split(' ').slice(1).join(' ');
+  }
   function revisedClaim(claim: string | null): string {
     const [, ...rest] = (claim ?? `- ${randomBytes(6).toString('hex')}`).split(' ');
     return [`${new Date().toISOString()}/${randomBytes(6).toString('hex')}`, ...rest].join(' ');
@@ -792,8 +795,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   }
 
   // A session an earlier FileFn (before the publication record) left partly
-  // published: its version row exists, or its file points at its version, but
-  // the session never reached 'completed'. It is moved to 'publishing' with
+  // published: its file points at its version, but the session never reached
+  // 'completed' (its version row may be missing). It is moved to 'publishing' with
   // the publication rebuilt from what was written, its base being its own
   // version (so its file is never moved off a later version), and finished
   // like any publication: never admitted (quota, parts), released, aborted or
@@ -815,16 +818,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       where: [{ field: 'versionId', operator: 'eq', value: versionId }],
       namespace,
     });
-    const fileId = version?.fileId ?? session.fileId;
+    const fileId = session.fileId ?? version?.fileId;
     if (!fileId) return undefined;
-    if (!version) {
-      const file = await db.findOne<{ currentVersionId: string }>({
-        model: 'files',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-        namespace,
-      });
-      if (file?.currentVersionId !== versionId) return undefined;
-    }
+    const file = await db.findOne<{ currentVersionId: string }>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      namespace,
+    });
+    if (file?.currentVersionId !== versionId) return undefined;
     const claim = revisedClaim(session.completionClaim ?? null);
     const adopted: Partial<UploadSession> = {
       status: 'publishing',
@@ -1018,7 +1019,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 completionClaim: revisedClaim(claim),
                 completionPublication: { ...publication, baseVersionId: file.currentVersionId },
               }
-            : { status: 'refused' };
+            : { status: 'refused', completionClaim: revisedClaim(claim) };
         }
       } else {
         undone = await undoAfterDelete(await ensureVersion());
@@ -1792,7 +1793,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       } catch (err) {
         const discarded = await discardStitched();
         const now = await readSession(uploadSessionId).catch(() => undefined);
-        if (now?.status === 'completed' && now.completionClaim !== claim) {
+        // Completed by another call (a claim of another nonce): its result.
+        // An error of this call's own publication (its effects) is rethrown.
+        if (now?.status === 'completed' && claimNonce(now.completionClaim) !== claimNonce(claim)) {
           return recordedResult(now);
         }
         if (now?.status === 'completing' && now.completionClaim === claim) {
@@ -2092,6 +2095,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 continue;
             }
             if (session.status === 'completing' && !isStaleClaim(session)) continue;
+            // A refused publication's record stays until no write a completion
+            // call started before the refusal can still land (its claim time is
+            // the refusal's, see rollForward).
+            if (session.status === 'refused' && session.completionPublication && !isStaleClaim(session)) continue;
             let adopted: UploadSession | null | undefined;
             try {
                 adopted = await adoptLegacyPublication(session);

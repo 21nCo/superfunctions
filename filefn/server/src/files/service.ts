@@ -732,8 +732,9 @@ export function createFileService(config: FileServiceConfig) {
       // A completion call of a completed session may still be finishing its
       // publication (it overlapped the call that completed it) and create a
       // files or version row this delete removes. Each such call checks this
-      // mark after creating a row, and removes the row again; the expiry sweep
-      // removes one it left (the claim records the session for the sweep).
+      // mark after creating a row, and removes the row again. Once the file row
+      // is deleted (below), the claim records the session for the expiry
+      // sweep, which removes a row such a call left.
       const completedSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
         where: [
@@ -742,18 +743,17 @@ export function createFileService(config: FileServiceConfig) {
         ],
         namespace,
       });
+      const markedSessions: UploadSessionRecord[] = [];
       for (const session of completedSessions) {
         const publication = session.completionPublication;
         if (!publication || publication.fileDeleted) continue;
         await db.update({
           model: 'uploadSessions',
           where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
-          data: {
-            completionClaim: FILE_DELETED_CLAIM,
-            completionPublication: { ...publication, fileDeleted: true, fileDeletedAt: new Date().toISOString() },
-          },
+          data: { completionPublication: { ...publication, fileDeleted: true } },
           namespace,
         });
+        markedSessions.push(session);
       }
 
       // Read only now: no completion can publish a version of the file any
@@ -929,6 +929,17 @@ export function createFileService(config: FileServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
         namespace,
       });
+      for (const session of markedSessions) {
+        await db.update({
+          model: 'uploadSessions',
+          where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+          data: {
+            completionClaim: FILE_DELETED_CLAIM,
+            completionPublication: { ...session.completionPublication, fileDeleted: true, fileDeletedAt: new Date().toISOString() },
+          },
+          namespace,
+        });
+      }
 
       for (const ref of artifactStorageRefs) {
         if (!artifactRefsReferencedElsewhere.has(ref)) {

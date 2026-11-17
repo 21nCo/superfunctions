@@ -2031,6 +2031,11 @@ describe('conditional session status writes on Prisma-style update semantics', (
 });
 
 describe('upload completion fencing (FILE-19)', () => {
+  /** The session's claim, dated past the default completion timeout. */
+  async function agedClaim(database: Adapter, uploadSessionId: string) {
+    const claim = (await rawSession(database, uploadSessionId))!.completionClaim as string;
+    return [new Date(Date.now() - 901_000).toISOString(), ...claim.split(' ').slice(1)].join(' ');
+  }
   async function setSession(database: Adapter, uploadSessionId: string, data: Record<string, unknown>) {
     await database.update({
       model: 'uploadSessions',
@@ -2997,7 +3002,12 @@ describe('upload completion fencing (FILE-19)', () => {
     expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('refused');
     expect(storageFixture.objects.has(retakeKey)).toBe(true);
 
+    // Expired but refused just now: a write started before the refusal may still land, so its record stays.
     await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+    await holder.fileFn.services.uploads.cleanupExpiredSessions();
+    expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('refused');
+    // Expired, and refused longer than the completion timeout ago.
+    await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString(), completionClaim: await agedClaim(shared, staged.uploadSessionId) });
     await holder.fileFn.services.uploads.cleanupExpiredSessions();
     expect(storageFixture.objects.has(retakeKey)).toBe(false);
     expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
@@ -3058,7 +3068,7 @@ describe('upload completion fencing (FILE-19)', () => {
     const refused = await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
     expect(refused.status).toBe(403);
     if (swept) {
-      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString(), completionClaim: await agedClaim(shared, staged.uploadSessionId) });
       await other.fileFn.services.uploads.cleanupExpiredSessions();
       expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
     }
@@ -3323,6 +3333,62 @@ describe('upload completion fencing (FILE-19)', () => {
         expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
       });
     }
+
+    it('an error of the completing call\'s own effects reaches its caller', async () => {
+      const database = memoryAdapter();
+      const quota: QuotaProvider = {
+        async checkQuota() { return { allowed: true, current: 0, limit: 10 }; },
+        async recordUsage() { throw new Error('usage store down'); },
+      };
+      const app = createApp({ mode: 'multipart', database, quota });
+      const staged = await app.stage('user_a', CLIENT_ID, 'effects fail');
+      await expect(staged.complete()).rejects.toThrow('usage store down');
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+    });
+
+    it('a file delete that fails after marking its completed sessions leaves the file to its retry, not to the sweep', async () => {
+      const base = memoryAdapter();
+      let failVersionsRead = false;
+      const database = {
+        ...base,
+        async findMany(params: Parameters<Adapter['findMany']>[0]) {
+          if (failVersionsRead && params.model === 'fileVersions') { failVersionsRead = false; throw new Error('versions read failed'); }
+          return base.findMany(params);
+        },
+      } as Adapter;
+      const app = createApp({ mode: 'multipart', database });
+      const staged = await app.stage('user_a', CLIENT_ID, 'kept');
+      const done = await staged.complete();
+      expect(done.status).toBe(200);
+      failVersionsRead = true;
+      await expect(app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).rejects.toThrow('versions read failed');
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
+      expect(await versionIds(database)).toEqual([done.json.data.versionId]);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept');
+      expect((await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
+    });
+
+    it('an old replacement that inserted its version but never moved the file is published normally', async () => {
+      const database = memoryAdapter();
+      const app = createApp({ mode: 'multipart', database });
+      expect((await (await app.stage('user_a', CLIENT_ID, 'original')).complete()).status).toBe(200);
+      const replacement = await app.stage('user_a', CLIENT_ID, 'replacement');
+      const session = (await rawSession(database, replacement.uploadSessionId))!;
+      const v1 = (session as unknown as { completionVersionId: string }).completionVersionId;
+      // What base f34442366 left after a crash between a version insert and the file move.
+      await database.create({
+        model: 'fileVersions',
+        data: { versionId: v1, fileId: CLIENT_ID, storageKey: session.storageKey, mimeType: 'text/plain', size: 'replacement'.length, checksumSha256Base64: null, tenantId: null, createdAt: new Date().toISOString() },
+        namespace: 'filefn',
+      });
+      const done = await replacement.complete();
+      expect(done.status).toBe(200);
+      expect(done.json.data.versionId).toBe(v1);
+      expect(await currentOf(database)).toBe(v1);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('replacement');
+    });
 
     it('the sweep stops checking a deleted file\'s publication once no completion call of it can still be running', async () => {
       const database = memoryAdapter();
