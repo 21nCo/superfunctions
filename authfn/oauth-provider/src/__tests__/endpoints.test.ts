@@ -242,6 +242,30 @@ describe('authorization endpoint', () => {
     const otherPath = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: 'http://127.0.0.1:53682/other' }, MCP_HOST));
     expect(otherPath.status).toBe(400);
   });
+
+  it('matches a loopback redirect on another port only when everything but the port is byte-identical (AUTH-21)', async () => {
+    const loopback = { clientId: 'loopback-cb', name: 'Loopback', redirectUris: ['http://127.0.0.1/cb'] };
+    const provider = await setupProvider({ clients: [loopback] });
+    const callback = await provider.authorize({ redirect_uri: 'http://127.0.0.1:53111/cb' }, loopback);
+    expect(`${callback.origin}${callback.pathname}`).toBe('http://127.0.0.1:53111/cb');
+    expect(callback.searchParams.get('code')).toBeTruthy();
+
+    // Each of these parses to the registered path and query (or carries
+    // same-host userinfo), but is not written the same way.
+    for (const redirectUri of [
+      'http://127.0.0.1:53111/x/../cb',
+      'http://127.0.0.1:53111/%63b',
+      'http://127.0.0.1:53111/./cb',
+      'http://127.0.0.1:53111/cb?',
+      'HTTP://127.0.0.1:53111/cb',
+      'http://127.0.0.1:@127.0.0.1/cb',
+      'http://127.0.0.1:53111\\cb'
+    ]) {
+      const response = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: redirectUri }, loopback));
+      expect(response.status, redirectUri).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
+    }
+  });
 });
 
 describe('token endpoint', () => {
@@ -477,6 +501,25 @@ describe('configuration', () => {
       'HTTPS://Client.Example.com:443/cb',
       'com.example.app:/oauth/callback'
     ])).not.toThrow();
+  });
+
+  it('rejects a configured https or loopback redirect URI with a backslash or an @ in its authority (AUTH-21)', () => {
+    const create = (redirectUris: string[]) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: { oauthProvider: { clients: [{ clientId: 'c', name: 'C', redirectUris }], resources: RESOURCES, ...hooks } }
+    });
+    for (const uri of [
+      'https://app.example\\cb',
+      'https://app.example/a\\b',
+      'https://app.example@app.example/cb',
+      'https://user@app.example/cb',
+      'http://127.0.0.1@127.0.0.1/cb',
+      'http://127.0.0.1\\cb'
+    ]) {
+      expect(() => create([uri]), uri).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    }
+    // An @ after the authority is not userinfo.
+    expect(() => create(['https://app.example/cb?x=@', 'https://app.example/p@th'])).not.toThrow();
   });
 
   it('requires introspection secrets that are valid Bearer credentials (RFC 6750 2.1)', () => {

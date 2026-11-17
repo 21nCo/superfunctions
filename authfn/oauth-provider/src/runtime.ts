@@ -155,20 +155,39 @@ export function isAllowedRedirectUri(value: unknown): value is string {
     return false;
   }
   const url = new URL(value);
-  const allowedScheme = url.protocol === 'https:' ? startsWithOrigin(value, url)
-    : url.protocol === 'http:' ? LOOPBACK_HOSTS.has(url.hostname) && startsWithOrigin(value, url)
-      : PRIVATE_USE_SCHEME.test(url.protocol);
-  return allowedScheme && RESPONSE_PARAMETERS.every((name) => !url.searchParams.has(name));
+  if (RESPONSE_PARAMETERS.some((name) => url.searchParams.has(name))) {
+    return false;
+  }
+  if (url.protocol === 'https:') {
+    return isWrittenAsOrigin(value, url);
+  }
+  if (url.protocol === 'http:') {
+    return LOOPBACK_HOSTS.has(url.hostname) && isWrittenAsOrigin(value, url);
+  }
+  return PRIVATE_USE_SCHEME.test(url.protocol);
 }
 
 /**
- * The raw value begins with its own origin, `scheme://host[:port]`. The
- * redirect is sent as written, and a browser resolves forms the URL parser
- * repairs (`https:host/cb`, `https:/host/cb`, backslashes, userinfo)
- * differently or relative to the authorization page.
+ * The raw value is written as its origin, `scheme://host[:port]`, followed by
+ * its path and query: it begins with that origin, has no backslash, and has
+ * no `@` in its authority. The redirect is sent as written, and a browser
+ * resolves forms the URL parser repairs (`https:host/cb`, `https:/host/cb`,
+ * backslashes, userinfo) differently or relative to the authorization page.
  */
-function startsWithOrigin(value: string, url: URL): boolean {
-  return value.slice(0, url.origin.length).toLowerCase() === url.origin.toLowerCase();
+function isWrittenAsOrigin(value: string, url: URL): boolean {
+  return value.slice(0, url.origin.length).toLowerCase() === url.origin.toLowerCase() &&
+    !value.includes('\\') &&
+    !value.slice(0, authorityEnd(value)).includes('@');
+}
+
+/**
+ * Where the raw authority ends: the first `/` or `?` after `scheme://`, or
+ * the end of the value. Called only on a value that begins with its origin.
+ */
+function authorityEnd(value: string): number {
+  const start = value.indexOf('//') + 2;
+  const length = value.slice(start).search(/[/?]/);
+  return length === -1 ? value.length : start + length;
 }
 
 function configError(message: string): AuthFnConfigError {
@@ -189,7 +208,8 @@ export function isAbsoluteUriWithoutFragment(value: unknown): value is string {
 
 /**
  * Exact redirect URI matching (OAuth 2.1), except that an `http` loopback IP
- * redirect URI matches on any port (RFC 8252 7.3).
+ * redirect URI matches on any port (RFC 8252 7.3): everything but the port,
+ * the path and query included, must then be byte-identical.
  */
 export function matchesRedirectUri(client: OAuthProviderClient, redirectUri: string): boolean {
   // The URL parser drops tabs and newlines, so check the raw value first.
@@ -203,20 +223,34 @@ export function matchesRedirectUri(client: OAuthProviderClient, redirectUri: str
   return requested !== null && client.redirectUris.some((registered) => {
     const candidate = parseLoopback(registered);
     return candidate !== null &&
-      candidate.hostname === requested.hostname &&
-      candidate.pathname === requested.pathname &&
-      candidate.search === requested.search;
+      candidate.schemeAndHost === requested.schemeAndHost &&
+      candidate.pathAndQuery === requested.pathAndQuery;
   });
 }
 
-function parseLoopback(value: string): URL | null {
+/** A loopback redirect URI split around its port, each part as written. */
+interface LoopbackRedirectUri {
+  /** `http://` and the loopback IP literal. */
+  schemeAndHost: string;
+  /** Everything after the authority. */
+  pathAndQuery: string;
+}
+
+function parseLoopback(value: string): LoopbackRedirectUri | null {
+  let url: URL;
   try {
-    const url = new URL(value);
-    return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname) && !value.includes('#') &&
-      startsWithOrigin(value, url) ? url : null;
+    url = new URL(value);
   } catch {
     return null;
   }
+  if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.has(url.hostname) || value.includes('#') ||
+    !isWrittenAsOrigin(value, url)) {
+    return null;
+  }
+  return {
+    schemeAndHost: value.slice(0, `${url.protocol}//${url.hostname}`.length),
+    pathAndQuery: value.slice(authorityEnd(value))
+  };
 }
 
 /**
@@ -266,7 +300,7 @@ export interface OAuthEndpoints {
 /** Removes trailing slashes in linear time. */
 export function trimTrailingSlashes(value: string): string {
   let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+  while (end > 0 && value.codePointAt(end - 1) === 47) {
     end -= 1;
   }
   return value.slice(0, end);
