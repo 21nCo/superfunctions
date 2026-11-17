@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTestServer } from './test-server.js';
+import { NotFoundError } from '@superfunctions/db';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnEmailOtpPlugin } from '@authfn/email-otp';
 import { authFnPasswordPlugin } from '@authfn/password';
@@ -69,6 +70,39 @@ function holdOtpChallengeReads(adapter: AuthFnDatabase) {
       expected = count;
     }
   };
+}
+
+/**
+ * Wraps an adapter so `update` behaves like the Prisma adapter and the MySQL
+ * drizzle and kysely adapters: it writes, then re-selects with the original
+ * where and reports NotFound when that where no longer matches the written row.
+ */
+function reselectUpdatesWithOriginalWhere(adapter: AuthFnDatabase): AuthFnDatabase {
+  return new Proxy(adapter, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'update') {
+        return async (params: Parameters<AuthFnDatabase['update']>[0]) => {
+          await target.updateMany({
+            model: params.model,
+            where: params.where,
+            data: params.data,
+            namespace: params.namespace
+          });
+          const row = await target.findOne({
+            model: params.model,
+            where: params.where,
+            namespace: params.namespace
+          });
+          if (!row) {
+            throw new NotFoundError(params.model, params.where);
+          }
+          return row;
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
 }
 
 function createClock(start: Date = new Date('2026-03-22T00:00:00.000Z')) {
@@ -810,5 +844,48 @@ describe('authfn otp plugin', () => {
     expect(outcomes.sort()).toEqual(['AUTHFN_OTP_REPLAYED', 'AUTHFN_OTP_REPLAYED', 'verified']);
     const stored = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
     expect(stored?.consumedAt).not.toBeNull();
+  });
+  it('counts each verification once on adapters whose update re-selects with the original where', async () => {
+    const config = createConfig({
+      database: reselectUpdatesWithOriginalWhere(memoryAdapter({ debug: false }))
+    }) as AuthFnRuntimeConfig & {
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+    const auth = createTestServer(config);
+    const verify = (code: string) => auth.router.handle(
+      new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com', code })
+      })
+    );
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'verify-email', email: 'ada@example.com' })
+      })
+    );
+    const code = config.__delivery.codeFor('verify-email', 'ada@example.com')!;
+    const wrongCode = code === '000000' ? '111111' : '000000';
+
+    codeComparisons.count = 0;
+    const wrong = await verify(wrongCode);
+    expect(wrong.status).toBe(400);
+    expect((await wrong.json()).error.code).toBe('AUTHFN_OTP_INVALID');
+    expect(codeComparisons.count).toBe(1);
+    const afterWrong = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterWrong?.attemptCount).toBe(1);
+
+    codeComparisons.count = 0;
+    const correct = await verify(code);
+    expect(correct.status).toBe(200);
+    const body = await correct.json();
+    expect(body.data.verified).toBe(true);
+    expect(codeComparisons.count).toBe(1);
+    const afterCorrect = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
+    expect(afterCorrect?.attemptCount).toBe(2);
+    expect(afterCorrect?.consumedAt).not.toBeNull();
   });
 });

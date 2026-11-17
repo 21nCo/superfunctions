@@ -1,5 +1,4 @@
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { NotFoundError } from '@superfunctions/db';
 import type {
   AuthFnRuntimeConfig,
   AuthFnDeliveryMessageResolver,
@@ -415,29 +414,35 @@ async function consumeOtpChallenge(
   challenge: AuthFnOtpChallengeRecord,
   consumedAt: Date
 ): Promise<AuthFnOtpChallengeRecord> {
-  try {
-    // attemptCount is not written here: the reservation already counted this
-    // attempt, and an absolute write could undo concurrent reservations.
-    return await config.database.update<AuthFnOtpChallengeRecord>({
-      model: 'otp_challenges',
-      where: [
-        { field: 'id', operator: 'eq', value: challenge.id },
-        { field: 'consumedAt', operator: 'eq', value: null }
-      ],
-      data: {
-        consumedAt,
-        updatedAt: consumedAt
-      },
-      namespace: namespace(config)
+  // The affected-row count acknowledges the consumption. Adapter.update
+  // re-selects with the original where on some adapters (Prisma, MySQL), which
+  // no longer matches once consumedAt is set. attemptCount is not written here:
+  // the reservation already counted this attempt, and an absolute write could
+  // undo concurrent reservations.
+  const affected = await config.database.updateMany({
+    model: 'otp_challenges',
+    where: [
+      { field: 'id', operator: 'eq', value: challenge.id },
+      { field: 'consumedAt', operator: 'eq', value: null }
+    ],
+    data: {
+      consumedAt,
+      updatedAt: consumedAt
+    },
+    namespace: namespace(config)
+  });
+  if (affected === 0) {
+    throw new AuthFnOtpReplayedError('OTP code has already been used', {
+      challengeId: challenge.id
     });
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      throw new AuthFnOtpReplayedError('OTP code has already been used', {
-        challengeId: challenge.id
-      });
-    }
-    throw error;
   }
+
+  const consumed = await config.database.findOne<AuthFnOtpChallengeRecord>({
+    model: 'otp_challenges',
+    where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+    namespace: namespace(config)
+  });
+  return consumed ?? { ...challenge, consumedAt, updatedAt: consumedAt };
 }
 
 export async function completeResetPassword(
@@ -540,25 +545,25 @@ async function reserveOtpAttempt(
       throw otpAttemptLimitError(challenge.id, attemptCount);
     }
 
-    try {
-      await config.database.update<AuthFnOtpChallengeRecord>({
-        model: 'otp_challenges',
-        where: [
-          { field: 'id', operator: 'eq', value: challenge.id },
-          { field: 'attemptCount', operator: 'eq', value: current.attemptCount },
-          { field: 'consumedAt', operator: 'eq', value: null }
-        ],
-        data: {
-          attemptCount,
-          updatedAt: now
-        },
-        namespace: namespace(config)
-      });
+    // The affected-row count acknowledges the reservation. Adapter.update is
+    // not used: on some adapters (Prisma, MySQL) it re-selects with the
+    // original where, which no longer matches after attemptCount changed, so
+    // a won write would look like a lost race.
+    const affected = await config.database.updateMany({
+      model: 'otp_challenges',
+      where: [
+        { field: 'id', operator: 'eq', value: challenge.id },
+        { field: 'attemptCount', operator: 'eq', value: current.attemptCount },
+        { field: 'consumedAt', operator: 'eq', value: null }
+      ],
+      data: {
+        attemptCount,
+        updatedAt: now
+      },
+      namespace: namespace(config)
+    });
+    if (affected > 0) {
       return { challengeId: challenge.id, attemptCount };
-    } catch (error) {
-      if (!isNotFoundError(error)) {
-        throw error;
-      }
     }
 
     const latest = await config.database.findOne<AuthFnOtpChallengeRecord>({
@@ -593,7 +598,7 @@ async function releaseOtpAttempt(
   updatedAt: Date
 ): Promise<void> {
   try {
-    await config.database.update<AuthFnOtpChallengeRecord>({
+    await config.database.updateMany({
       model: 'otp_challenges',
       where: [
         { field: 'id', operator: 'eq', value: reservation.challengeId },
@@ -739,15 +744,6 @@ async function rollbackOtpSignUpUser(
 function readRollbackFailure(operation: string, error: unknown): string {
   const reason = error instanceof Error ? error.name : 'UnknownError';
   return `${operation}: ${reason}`;
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return error instanceof NotFoundError
-    || Boolean(
-      error
-        && typeof error === 'object'
-        && (error as { name?: unknown }).name === 'NotFoundError'
-    );
 }
 
 async function buildChallengeHookContext(
