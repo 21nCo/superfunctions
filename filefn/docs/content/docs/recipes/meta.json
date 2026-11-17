@@ -9,6 +9,7 @@
     "heic-conversion",
     "cdn-integration",
     "cloudflare-workers",
+    "processing-container",
     "virus-scanning",
     "signed-share-links",
     "custom-processor",

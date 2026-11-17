@@ -1,0 +1,15 @@
+# Build context is the repository root; send only what the image builds from.
+*
+!package.json
+!package-lock.json
+!scripts/ci-install-rollup-native.mjs
+!packages/observability/
+!packages/files/
+!packages/storage/
+!packages/storage-r2/
+!filefn/server/
+!filefn/processing/
+**/node_modules
+**/dist
+**/.turbo
+**/coverage

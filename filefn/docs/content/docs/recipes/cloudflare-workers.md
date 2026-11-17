@@ -127,6 +127,8 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
 - A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
 - Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey, storageTarget }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
 
+Processors that need native tools (sharp, ffmpeg, tesseract) do not run in a Worker. To run them, forward each message to the [processing container](./processing-container) and acknowledge or retry it by the outcome the container returns.
+
 ## Expired upload sessions
 
 `fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept.

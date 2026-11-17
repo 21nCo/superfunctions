@@ -89,6 +89,7 @@
 - [HEIC conversion](https://filefn.com/docs/recipes/heic-conversion): Handle iPhone HEIC photos correctly in browsers, native iOS, and on the server — without any of them seeing HEIC.
 - [Image uploads](https://filefn.com/docs/recipes/image-uploads): Production-grade image upload pipeline with HEIC handling, EXIF stripping, thumbnails, and previews.
 - [OPFS offline](https://filefn.com/docs/recipes/opfs-offline): Reliable uploads when the network is bad — OPFS-staged content with automatic resume on reconnect.
+- [Processing container](https://filefn.com/docs/recipes/processing-container): Run FileFn processing jobs in a container image with sharp, ffmpeg and tesseract, for example on Cloudflare Containers behind a queue consumer Worker.
 - [Signed share links](https://filefn.com/docs/recipes/signed-share-links): Common share-link patterns — one-time, time-bound, password-protected, IP-restricted.
 - [Tenant isolation](https://filefn.com/docs/recipes/tenant-isolation): Per-tenant storage paths, quotas, grants, and authorization — the production isolation pattern.
 - [Video uploads](https://filefn.com/docs/recipes/video-uploads): Large-file video uploads with 720p transcoding, poster frames, and queued processing.
