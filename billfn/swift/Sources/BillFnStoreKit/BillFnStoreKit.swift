@@ -22,6 +22,13 @@ public struct BillFnStoreKitFailure: Error, Sendable, Equatable {
             self.init(code: "BILLFN_STOREKIT_ERROR", message: String(describing: error), retryable: false)
         case let error as URLError:
             self.init(code: "BILLFN_NETWORK_ERROR", message: error.localizedDescription, retryable: true)
+        // StoreKit wraps the transport error when it cannot reach the App Store (loading products,
+        // purchasing, syncing), so it is retryable like a BillFn network error.
+        case StoreKitError.networkError(let underlying):
+            self.init(code: "BILLFN_NETWORK_ERROR", message: underlying.localizedDescription, retryable: true)
+        // A StoreKit system error (the device's StoreKit daemon failed) is transient: trying again can succeed.
+        case StoreKitError.systemError(let underlying):
+            self.init(code: "BILLFN_STOREKIT_FAILED", message: underlying.localizedDescription, retryable: true)
         case let error as BillFnClientError:
             self.init(code: "BILLFN_INVALID_RESPONSE", message: String(describing: error), retryable: false)
         default:

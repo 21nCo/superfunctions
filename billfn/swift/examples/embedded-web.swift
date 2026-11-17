@@ -27,6 +27,11 @@ let handshake = await dispatcher.respond(
 )
 print("Bridge handshake:", handshake)
 
+// At launch, before any checkout: listen to Transaction.updates and confirm every unfinished
+// transaction (renewals, approved Ask to Buy requests, ones BillFn has not confirmed yet).
+let launchOutcomes = await storeKit.start()
+print("Launch outcomes:", launchOutcomes)
+
 // The web view's checkout({ planKey: 'pro' }) arrives as this request.
 let checkout = await dispatcher.respond(
     to: BillFnBridgeRequestEnvelope(id: "req_2", method: "storekit.checkout", payload: ["planKey": "pro"])

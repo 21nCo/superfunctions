@@ -1,6 +1,7 @@
 import BillFnClient
 import BillFnStoreKit
 import Foundation
+import StoreKit
 import Testing
 
 /// Answers every request of a stubbed URLSession with the queued response and records the request.
@@ -192,6 +193,15 @@ struct BillFnStoreKitBackendTests {
             == BillFnStoreKitFailure(code: "BILLFN_PROVIDER_ERROR", message: "Apple unavailable", retryable: true))
         #expect(BillFnStoreKitFailure(error: URLError(.notConnectedToInternet)).code == "BILLFN_NETWORK_ERROR")
         #expect(BillFnStoreKitFailure(error: URLError(.notConnectedToInternet)).retryable)
+        let storeKitNetwork = BillFnStoreKitFailure(error: StoreKitError.networkError(URLError(.notConnectedToInternet)))
+        #expect(storeKitNetwork.code == "BILLFN_NETWORK_ERROR")
+        #expect(storeKitNetwork.retryable)
+        let storeKitSystem = BillFnStoreKitFailure(error: StoreKitError.systemError(URLError(.cannotLoadFromNetwork)))
+        #expect(storeKitSystem.code == "BILLFN_STOREKIT_FAILED")
+        #expect(storeKitSystem.retryable)
+        #expect(BillFnStoreKitFailure(error: StoreKitError.notAvailableInStorefront) == BillFnStoreKitFailure(
+            code: "BILLFN_STOREKIT_FAILED", message: StoreKitError.notAvailableInStorefront.localizedDescription, retryable: false
+        ))
         #expect(BillFnStoreKitFailure(error: BillFnClientError.invalidResponse).code == "BILLFN_INVALID_RESPONSE")
         #expect(BillFnStoreKitFailure(error: BillFnStoreKitError.productNotFound("apple.pro.month")).code == "BILLFN_STOREKIT_ERROR")
     }

@@ -2,6 +2,7 @@ import BillFnClient
 import BillFnStoreKit
 import BillFnWebViewBridgeHost
 import Foundation
+import StoreKit
 import Testing
 
 private let token = UUID(uuidString: "00000000-0000-4000-8000-00000000000A")!
@@ -168,6 +169,17 @@ struct BillFnStoreKitBridgeTests {
 
         #expect(!response.ok)
         #expect(response.error == BillFnBridgeError(code: "BILLFN_CONFLICT", message: "Another account", details: ["retryable": .bool(false)]))
+    }
+
+    @Test("A StoreKit network error reaches the web view as a retryable network error")
+    func storeKitNetworkErrorsAreRetryable() async {
+        let storeKit = FakeStoreKit(error: StoreKitError.networkError(URLError(.notConnectedToInternet)))
+
+        let response = await dispatcher(storeKit).respond(to: BillFnBridgeRequestEnvelope(id: "req_9", method: "storekit.restore"))
+
+        #expect(!response.ok)
+        #expect(response.error?.code == "BILLFN_NETWORK_ERROR")
+        #expect(response.error?.details == ["retryable": .bool(true)])
     }
 
     @Test("StoreKit methods need a configured StoreKit and the async entry point")

@@ -144,12 +144,14 @@ jobs:
       # The BillFn steps run even when an earlier step of this job failed, so BillFn results are always reported.
       - name: BillFn Swift package tests
         if: ${{ !cancelled() }}
+        timeout-minutes: 10
         run: swift test --package-path billfn/swift --only-use-versions-from-resolved-file
       # StoreKit testing needs an app bundle, which swift test does not provide, so the
       # BillFnStoreKit purchase, pending, cancel, restore and update tests run hosted in a
       # macOS app against billfn/swift/StoreKitTesting/Tests/BillFn.storekit.
       - name: BillFnStoreKit tests (Xcode StoreKit testing)
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: billfn/swift/StoreKitTesting/run-tests.sh
       - name: Upload UIFnSwiftUI snapshots that differ from their references
         if: failure()

@@ -57,9 +57,10 @@ let restored = try await storeKit.restore()
   plan (or skipped if none maps). A transaction whose reason is unknown claims no outstanding checkout.
 - Each transaction BillFn confirms is recorded (the newest 256) before it is finished, so when
   StoreKit offers it again (a redelivered update, `restore()`) it never claims an outstanding checkout.
-- When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error,
-  such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is restored onto that plan
-  instead and finished. With no plan, it stays unfinished with its checkout and every launch reports
+- When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error
+  with a BillFn error code, such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is
+  restored onto that plan instead and finished. A `BILLFN_HTTP_ERROR` (a gateway or proxy answered
+  without a BillFn error envelope) never falls back: the transaction stays unfinished with its checkout. With no plan, it stays unfinished with its checkout and every launch reports
   the same non-retryable failure; resolve it on the BillFn side.
 - An outstanding checkout (no transaction yet) is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
   however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
