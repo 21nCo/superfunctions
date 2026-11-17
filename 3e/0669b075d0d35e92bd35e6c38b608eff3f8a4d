@@ -1,0 +1,45 @@
+filefn/client/package.json
+  s_f058f999ab46b7::t_c5fe64a8780f3a 3
+filefn/client/src/__tests__/file-ids.test.ts
+  s_f058f999ab46b7::t_75def779ae1aae 1-315
+filefn/client/src/__tests__/resume-contract.test.ts
+  s_f058f999ab46b7::t_7f59acc0119d10 72,82,87
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_f058f999ab46b7::t_95b03dba9c9918 79,98,110
+filefn/client/src/__tests__/transport.test.ts
+  s_f058f999ab46b7::t_57e6509c649675 51-54,56-57,59-61,149-157,162-167,202,365,368,372,382,392,402,406
+filefn/client/src/__tests__/upload-proxy.test.ts
+  s_f058f999ab46b7::t_829e79529b5b4b 60,70,77,83
+filefn/client/src/__tests__/upload.test.ts
+  s_f058f999ab46b7::t_15c00ae46e5792 75,83,88,119,121,124,147,149,192,221,223,252,254,259,263,275,285,298-299,333,335-336,339-340,364,366,368,391,403
+filefn/client/src/index.ts
+  s_f058f999ab46b7::t_b420023904e00d 2,268-269
+filefn/client/src/offline/opfs-store.ts
+  s_f058f999ab46b7::t_20d776571cc383 3-40,143-147,150,163,165,177,266,353,356,375-379,383-393
+filefn/client/src/types.ts
+  s_f058f999ab46b7::t_c76048240c92be 53-65
+filefn/client/src/upload-manager.ts
+  s_f058f999ab46b7::t_9b663ffd4933a4 106-131,145-147
+filefn/client/tests/envelope-unwrapping.test.ts
+  s_f058f999ab46b7::t_81df0c114cf9b5 32,35,47,49,74,92,98-99,107,121,132,140,145,152,219,229,302,311,316,418,435
+filefn/client/tests/offline.test.ts
+  s_f058f999ab46b7::t_f0234427777823 186,232,243,253,463
+package-lock.json
+  s_f058f999ab46b7::t_1f3c963bcb3ab7 12714
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e0669b075d0d35e92bd35e6c38b608eff3f8a4d",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

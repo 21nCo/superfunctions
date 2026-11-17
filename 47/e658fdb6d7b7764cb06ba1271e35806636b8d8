@@ -1,0 +1,23 @@
+billfn/docs/content/docs/getting-started.mdx
+  s_3c6903320faa64::t_7cd7b58def0245 84-87
+billfn/docs/content/docs/providers/dodo.mdx
+  s_3c6903320faa64::t_d449ec156c3b3c 35-38,48
+billfn/docs/content/docs/server/setup.mdx
+  s_3c6903320faa64::t_95312aabd4ce55 80,86-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47e658fdb6d7b7764cb06ba1271e35806636b8d8",
+  "prompts": {},
+  "sessions": {
+    "s_3c6903320faa64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a08b2e75-4364-40af-a8d2-11b180f64adf",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

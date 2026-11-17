@@ -1,0 +1,95 @@
+scripts/python_release.py
+  s_19abec75182420::t_7b40d05f7981ef 39-87,90,93,98,104
+scripts/resolve-release-tag.test.mjs
+  s_19abec75182420::t_568ea6f8ec3804 6,36-76
+.github/workflows/apifn-api-check-smoke.yml
+  s_e5ad82513ddc4e::t_21b1aac2fe7285 20
+.github/workflows/apifn-api-check.yml
+  s_e5ad82513ddc4e::t_3ae2b521ef1cd1 104
+.github/workflows/ci.yml
+  s_21bbd8c846ded7::t_04c18d80cfb2e4 26,95,137,216,246-276,280,314,338,384
+.github/workflows/devfn-readiness-repeat.yml
+  s_e5ad82513ddc4e::t_c26c8a77e14fa6 37
+.github/workflows/mailfn-release.yml
+  s_e5ad82513ddc4e::t_b98f1bb9ffe0d0 23
+.github/workflows/pullfrog.yml
+  s_e5ad82513ddc4e::t_3af29ea84b8e3a 19
+.github/workflows/queue-postgres.yml
+  s_e5ad82513ddc4e::t_5e2d1e3895ca1d 27
+.github/workflows/release-swift.yml
+  s_e5ad82513ddc4e::t_4fc3cbf0dc5131 23
+.github/workflows/reviewfn-release.yml
+  s_e5ad82513ddc4e::t_86a91c0025a9cc 32
+.github/workflows/searchfn-client-tests.yml
+  s_e5ad82513ddc4e::t_0103ca72f4a4cf 31
+.github/workflows/searchfn-client-tusk-vitest.yml
+  s_e5ad82513ddc4e::t_76d1623687d7c7 23
+.github/workflows/searchfn-postgres.yml
+  s_e5ad82513ddc4e::t_a839941850f449 31
+.github/workflows/storage-r2-minio.yml
+  s_e5ad82513ddc4e::t_5b9aa6e478d838 31
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_e5ad82513ddc4e::t_e1e0a4c9f9bdfc 110,142
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_e5ad82513ddc4e::t_b0b41cca20ce3c 44
+.github/workflows/swift.yml
+  s_e5ad82513ddc4e::t_a5c31002eba9dd 50,172,272
+.github/workflows/uifn-browser.yml
+  s_e5ad82513ddc4e::t_08723a952613b3 38,83
+.github/workflows/uifn-catalogs-cloudflare-preview.yml
+  s_e5ad82513ddc4e::t_623427f6ef276b 47
+.github/workflows/uifn-phase-14-compat.yml
+  s_e5ad82513ddc4e::t_59d6c26ab28704 16,70,154,242,340,432,516
+.github/workflows/uifn-registry-sign.yml
+  s_e5ad82513ddc4e::t_7283e5a7d141d9 35,116
+.github/workflows/uifn-version-bump-retarget.yml
+  s_e5ad82513ddc4e::t_d5ad1ee5d0d863 23
+scripts/pack-release-package.mjs
+  s_21bbd8c846ded7::t_56b820a00f25e8 8-9
+scripts/resolve-release-tag.mjs
+  s_21bbd8c846ded7::t_0c5dcf65eb0565 5,13-88,99
+scripts/test_python_release.py
+  s_21bbd8c846ded7::t_9148aa567155b3 2,9,49-88
+scripts/verify-owners.mjs
+  s_21bbd8c846ded7::t_33a59a4c80cd11 7-8,55-182,700-709
+scripts/verify-owners.test.mjs
+  s_21bbd8c846ded7::t_f642dcde10aee2 10,14-15,32,428-501
+scripts/workspaces.test.mjs
+  s_21bbd8c846ded7::t_a36fc8d2eeca1e 1-102
+package-lock.json
+  s_21bbd8c846ded7::t_d329cf5ad81cac 12-19
+package.json
+  s_21bbd8c846ded7::t_655f3511b8d81b 7-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbde9d59dae56004b134400042ed7dee4bd0b395",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_21bbd8c846ded7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0d0020b-653c-4d5c-ba18-756e724f1fc8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ad82513ddc4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "12a0ff39-5fcb-43fe-a79e-19229d1312e2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

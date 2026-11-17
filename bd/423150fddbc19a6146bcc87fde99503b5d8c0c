@@ -1,0 +1,14 @@
+devfn/config/src/credentials.ts
+  h_bdc5b81c173ee9 70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd423150fddbc19a6146bcc87fde99503b5d8c0c",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

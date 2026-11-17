@@ -1,0 +1,23 @@
+authfn/oauth-provider/README.md
+  s_ace82070dcb8c7::t_b45fbd7e64a648 50
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_ace82070dcb8c7::t_d5ba8c24827f15 269-307
+authfn/oauth-provider/src/runtime.ts
+  s_ace82070dcb8c7::t_37c17b343eaad3 233-236,253-258,260-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc1061720aa7d3afe0c60b1f882e440a014bcfbb",
+  "prompts": {},
+  "sessions": {
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

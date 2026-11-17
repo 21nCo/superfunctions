@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_19abec75182420::t_e2fbc19568248c 41-42,177,197-198,201,212-255
+scripts/ci-plan.mjs
+  s_19abec75182420::t_469c66f97bf1f5 5,45-49,240-299,449-463,476,487,491,494-495
+scripts/ci-plan.test.mjs
+  s_19abec75182420::t_9c06202c81b2bc 82-84,88-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fc4481419a1af305a7ad9c806b30d3fc15de1d6",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

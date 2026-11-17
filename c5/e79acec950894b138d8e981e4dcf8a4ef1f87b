@@ -1,0 +1,35 @@
+filefn/docs/content/docs/reference/routes.md
+  s_ace82070dcb8c7::t_4d7e62f5a1c324 44
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_900ebd57eaa52a::t_c20d0d445cf8d4 2034-2038,3005,3008-3011,3071,3337-3392
+filefn/server/src/files/service.ts
+  s_ace82070dcb8c7::t_009d3031bcceab 735-737,746,753,756,932-942
+filefn/server/src/upload-sessions/service.ts
+  s_ace82070dcb8c7::t_b678b8dbce7b50 468-470,798-799,821,823-828,1022,1796-1798,2098-2101
+filefn/docs/static/llms-full.txt
+  s_ace82070dcb8c7::t_f78f98726ff112 8191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5e79acec950894b138d8e981e4dcf8a4ef1f87b",
+  "prompts": {},
+  "sessions": {
+    "s_900ebd57eaa52a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1eac4-c569-7e41-a943-fe4657c565d4",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

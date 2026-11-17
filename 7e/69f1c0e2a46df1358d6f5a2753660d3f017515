@@ -1,0 +1,43 @@
+filefn/server/src/errors.ts
+  s_f058f999ab46b7::t_449833e1b33c76 301-303
+filefn/server/src/index.ts
+  s_aa793b0a8d1ac8::t_3bc169d6076976 398-405
+filefn/server/src/processing/routes.ts
+  s_ace82070dcb8c7::t_a7bccfe1bdcb1f 252-256
+filefn/server/src/processing/service.ts
+  s_f058f999ab46b7::t_7af4e0a16c4da6 363-370,507-516,646-651,653-660,747-796,798-805,807,833-836,858,862-868,876-880,886-890,893,905-908,935-940,952-958,960-977,1000,1005,1011,1678-1688
+filefn/server/tests/client-artifacts.test.ts
+  s_aa793b0a8d1ac8::t_1e61a44181df74 5,7-9,27,37-38,40-42,45-53,56-57,61,73,77-82,89-123,127-142,147-151,209,434,437,449-496,534-535,547-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e69f1c0e2a46df1358d6f5a2753660d3f017515",
+  "prompts": {},
+  "sessions": {
+    "s_aa793b0a8d1ac8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "027b6086-1840-4196-8460-0ca79d822514",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
