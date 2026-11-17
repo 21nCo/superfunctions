@@ -136,11 +136,20 @@ interface SignedDataScope {
   environment: unknown;
 }
 
-/** A notification names its app in `data`, in `summary` for a summary notification, or in `externalPurchaseToken`. */
+/**
+ * The notification envelopes that carry the app's `bundleId` and `environment`: `data`, `summary` for a summary
+ * notification, `appData` for RESCIND_CONSENT and `unclaimInfo` for UNCLAIM_SEATS. Apple sends exactly one of these or
+ * `externalPurchaseToken`.
+ */
+const NOTIFICATION_SCOPE_ENVELOPES = ['data', 'summary', 'appData', 'unclaimInfo'] as const;
+
+/** Reads the app a notification names from its envelope, or from `externalPurchaseToken`. */
 function readNotificationScope(payload: Record<string, unknown>): SignedDataScope {
-  const scope = asRecord(payload.data) ?? asRecord(payload.summary);
-  if (scope) {
-    return { bundleId: scope.bundleId, environment: scope.environment };
+  for (const envelope of NOTIFICATION_SCOPE_ENVELOPES) {
+    const scope = asRecord(payload[envelope]);
+    if (scope) {
+      return { bundleId: scope.bundleId, environment: scope.environment };
+    }
   }
   const token = asRecord(payload.externalPurchaseToken);
   if (token) {

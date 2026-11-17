@@ -99,7 +99,7 @@ BillFn expects App Store Server Notifications v2 payloads with `signedPayload`. 
 - every certificate is valid at the time of verification and the leaf's key verifies the signature;
 - the payload names the configured `bundleId` and the `Production` or `Sandbox` environment. Both environments are accepted, and the verifier reports which one a payload came from.
 
-A notification carries its bundle ID and environment in `data`, or in `summary` for a summary notification. An `externalPurchaseToken` notification has no environment field: the verifier treats it as `Sandbox` (reported as `sandbox`) when its `externalPurchaseId` starts with `SANDBOX`, and as `Production` (`production`) otherwise.
+A notification carries its bundle ID and environment in `data`, in `summary` for a summary notification, in `appData` for a `RESCIND_CONSENT` notification, or in `unclaimInfo` for an `UNCLAIM_SEATS` notification, and the same bundle ID and environment rules apply to each. An `externalPurchaseToken` notification has no environment field: the verifier treats it as `Sandbox` (reported as `sandbox`) when its `externalPurchaseId` starts with `SANDBOX`, and as `Production` (`production`) otherwise.
 
 Certificate validity is checked against the current time, not the payload's `signedDate`. A notification that Apple retries, or that you read from notification history, after its leaf certificate has expired is rejected even though it was valid when Apple signed it.
 

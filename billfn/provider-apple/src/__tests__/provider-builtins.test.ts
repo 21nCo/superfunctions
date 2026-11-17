@@ -55,6 +55,29 @@ describe('createAppleProvider built-in verifier and signer', () => {
     ).rejects.toMatchObject({ code: 'BILLFN_WEBHOOK_SIGNATURE_INVALID', details: { reason: 'bundle_id_mismatch' } });
   });
 
+  it('returns a notification history page that mixes billing, RESCIND_CONSENT and UNCLAIM_SEATS notifications', async () => {
+    const scope = { bundleId: 'com.example', environment: 'Production' };
+    const signedPayloads = [
+      signJws(sampleSubscribedNotification(chain), chain),
+      signJws({ notificationType: 'RESCIND_CONSENT', notificationUUID: 'rescind-1', appData: { appAppleId: 1234567890, ...scope } }, chain),
+      signJws(
+        { notificationType: 'UNCLAIM_SEATS', notificationUUID: 'unclaim-1', unclaimInfo: { originalTransactionId: '12345', unclaimSeatIds: ['seat-1'], ...scope } },
+        chain
+      )
+    ];
+    const fetchMock = vi.fn(async () =>
+      Response.json({ notificationHistory: signedPayloads.map((signedPayload) => ({ signedPayload })), paginationToken: 'next' })
+    );
+    const provider = createAppleProvider({ bundleId: 'com.example', appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+    const page = await provider.fetchNotificationHistory!({ limit: 10 });
+    expect(page.nextCursor).toBe('next');
+    expect(page.events).toEqual([
+      expect.objectContaining({ type: 'SUBSCRIBED.INITIAL_BUY', signatureVerified: true, billingState: expect.objectContaining({ subscriptionStatus: 'active' }) }),
+      expect.objectContaining({ providerEventId: 'rescind-1', type: 'RESCIND_CONSENT', signatureVerified: true, billingState: undefined }),
+      expect.objectContaining({ providerEventId: 'unclaim-1', type: 'UNCLAIM_SEATS', signatureVerified: true, billingState: undefined })
+    ]);
+  });
+
   it("uses the host's verifier over the built-in one", async () => {
     const notificationVerifier = vi.fn(async () => null);
     const provider = createAppleProvider({ bundleId: 'com.example', appStoreServerApiKey, notificationVerifier });

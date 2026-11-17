@@ -125,6 +125,37 @@ describe('generated chains', () => {
     await expect(verifierFor(chain).verifyNotification(signJws(summary, chain))).resolves.toMatchObject({ environment: 'sandbox' });
   });
 
+  const envelopeNotifications = {
+    appData: (scope: Record<string, unknown>) => ({ notificationType: 'RESCIND_CONSENT', appData: { appAppleId: 1234567890, ...scope } }),
+    unclaimInfo: (scope: Record<string, unknown>) => ({
+      notificationType: 'UNCLAIM_SEATS',
+      unclaimInfo: { appAppleId: 1234567890, originalTransactionId: '12345', unclaimSeatIds: ['seat-1'], ...scope }
+    })
+  };
+
+  it.each(Object.entries(envelopeNotifications))(
+    'reads the app and environment of a notification from its %s envelope',
+    async (_envelope, notification) => {
+      const verifier = verifierFor(chain);
+      await expect(
+        verifier.verifyNotification(signJws(notification({ bundleId: 'com.example', environment: 'Production' }), chain))
+      ).resolves.toMatchObject({ environment: 'production' });
+      await expect(
+        verifier.verifyNotification(signJws(notification({ bundleId: 'com.example', environment: 'Sandbox' }), chain))
+      ).resolves.toMatchObject({ environment: 'sandbox' });
+      await expectFailure(
+        verifier.verifyNotification(signJws(notification({ bundleId: 'com.example.other', environment: 'Production' }), chain)),
+        'bundle_id_mismatch'
+      );
+      for (const environment of ['Xcode', 'constructor', undefined]) {
+        await expectFailure(
+          verifier.verifyNotification(signJws(notification({ bundleId: 'com.example', environment }), chain)),
+          'environment_unsupported'
+        );
+      }
+    }
+  );
+
   it('derives the environment of an external purchase token notification from its externalPurchaseId', async () => {
     const tokenNotification = (externalPurchaseId: string) => ({
       notificationType: 'EXTERNAL_PURCHASE_TOKEN',
@@ -132,10 +163,10 @@ describe('generated chains', () => {
       externalPurchaseToken: { externalPurchaseId, tokenCreationDate: 1698148900000, appAppleId: 55555, bundleId: 'com.example' }
     });
     const verifier = verifierFor(chain);
-    await expect(verifier.verifyNotification(signJws(tokenNotification('SANDBOX_b2158121-7af9-49d4-9561-1f588205523e'), chain))).resolves.toMatchObject({
+    await expect(verifier.verifyNotification(signJws(tokenNotification('SANDBOX_test-external-purchase'), chain))).resolves.toMatchObject({
       environment: 'sandbox'
     });
-    await expect(verifier.verifyNotification(signJws(tokenNotification('b2158121-7af9-49d4-9561-1f588205523e'), chain))).resolves.toMatchObject({
+    await expect(verifier.verifyNotification(signJws(tokenNotification('test-external-purchase'), chain))).resolves.toMatchObject({
       environment: 'production'
     });
   });
