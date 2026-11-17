@@ -137,7 +137,9 @@ public actor BillFnStoreKit {
         listener = nil
     }
 
-    /// Confirms every unfinished transaction with BillFn and finishes those it confirms.
+    /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then reconciles the checkout
+    /// store: drops matched checkouts whose transaction is finished and, only now that every unfinished transaction
+    /// has been offered the checkouts it could claim, outstanding checkouts past the store's retention.
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
         // Only checkouts matched before reading the unfinished transactions are swept: a transaction matched while
@@ -160,6 +162,9 @@ public actor BillFnStoreKit {
             else { continue }
             checkouts.removeCheckout(checkoutSessionId: checkoutSessionId)
         }
+        // An expired outstanding checkout no unfinished transaction claimed belongs to an attempt that never produced
+        // a transaction. The store removes it only if it is still outstanding; one being verified against is kept.
+        checkouts.removeExpiredOutstandingCheckouts(excluding: claimedCheckouts)
         return results
     }
 

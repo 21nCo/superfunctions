@@ -590,4 +590,33 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         try await assertFinished(outcome)
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
     }
+
+    /// A purchase completed while the app was not running (an approved Ask to Buy request, an interrupted purchase),
+    /// so it was never matched to its outstanding checkout, and the next launch comes a retention period later. That
+    /// launch still verifies it against the checkout, with no plans (without the checkout it would be skipped for
+    /// good), and finishes it; only then does it drop an expired checkout no transaction claimed.
+    func testTransactionCompletedWhileStoppedIsVerifiedAgainstItsExpiredCheckout() async throws {
+        let backend = FakeBillFnBackend()
+        let attempt = BillFnStoreKitCheckout(checkoutSessionId: "chk_attempt", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        let abandoned = BillFnStoreKitCheckout(checkoutSessionId: "chk_abandoned", productId: proMonthly, appAccountToken: UUID())
+        checkoutStore.save(abandoned)
+        checkoutStore.save(attempt)
+        // StoreKit completes the attempt's purchase; no BillFnStoreKit sees it before the next launch.
+        let completed = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+
+        let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [abandoned, attempt])
+        let nextLaunch = launch(backend, plans: [], now: later)
+        let outcomes = await nextLaunch.processUnfinishedTransactions()
+
+        let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == String(completed.id) })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_attempt"])
+        XCTAssertEqual(verifications.first?.transaction.transactionId, String(completed.id))
+        let restores = await backend.restores
+        XCTAssertTrue(restores.isEmpty)
+        try await assertFinished(outcome)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
+    }
 }

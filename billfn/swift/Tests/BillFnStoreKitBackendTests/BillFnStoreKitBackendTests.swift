@@ -214,15 +214,48 @@ struct BillFnStoreKitBackendTests {
         #expect(store.checkouts(forProductId: "apple.pro.month").first == pending)
         #expect(store.checkouts(forProductId: "apple.pro.month").count == 51)
 
-        // 30 seconds past its retention the pending attempt can no longer complete, so it is dropped; the
+        // 30 seconds past its retention the pending attempt can no longer complete, so pruning drops it; the
         // attempts saved a minute or more after it stay.
         clock.advance(by: day - 200 * 60 + 30)
-        let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-            .checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
+        let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        later.removeExpiredOutstandingCheckouts(excluding: [])
+        let kept = later.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
         #expect(!kept.contains("chk_pending"))
         #expect(kept.first == "chk_0")
         clock.advance(by: day)
+        store.removeExpiredOutstandingCheckouts(excluding: [])
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
+    }
+
+    @Test("Reads an expired outstanding checkout until it is pruned, and pruning keeps matched and excluded ones")
+    func prunesExpiredOutstandingCheckoutsOnlyWhenAsked() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        let account = UUID(uuidString: token)!
+        let expired = BillFnStoreKitCheckout(checkoutSessionId: "chk_expired", productId: "apple.pro.month", appAccountToken: account)
+        let claimed = BillFnStoreKitCheckout(checkoutSessionId: "chk_claimed", productId: "apple.pro.month", appAccountToken: account)
+        let matched = BillFnStoreKitCheckout(checkoutSessionId: "chk_matched", productId: "apple.pro.year", appAccountToken: account)
+        let young = BillFnStoreKitCheckout(checkoutSessionId: "chk_young", productId: "apple.pro.year", appAccountToken: account)
+        store.save(expired)
+        store.save(claimed)
+        store.save(matched)
+        store.markMatched(matched, transactionId: "2000000001")
+        clock.advance(by: 7 * day - 60)
+        store.save(young)
+        clock.advance(by: 2 * day)
+
+        // Past its retention, an outstanding checkout is still read (and so still claimable by a transaction that
+        // completed while the app was not running) by this and any other store, until a prune removes it.
+        let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        #expect(reread.keptCheckouts().map(\.checkout) == [expired, claimed, matched, young])
+        #expect(store.checkouts(forProductId: "apple.pro.month") == [expired, claimed])
+
+        store.removeExpiredOutstandingCheckouts(excluding: ["chk_claimed"])
+
+        let kept = reread.keptCheckouts()
+        #expect(kept.map(\.checkout) == [claimed, matched, young])
+        #expect(kept.map(\.transactionId) == [nil, "2000000001", nil])
     }
 
     @Test("Keeps a checkout matched to a transaction past its retention until it is removed")
@@ -242,7 +275,9 @@ struct BillFnStoreKitBackendTests {
         store.markMatched(unkept, transactionId: "2000000002")
 
         clock.advance(by: 30 * day)
-        let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now }).keptCheckouts()
+        let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        later.removeExpiredOutstandingCheckouts(excluding: [])
+        let kept = later.keptCheckouts()
         #expect(kept.map(\.checkout) == [matched, unkept])
         #expect(kept.map(\.transactionId) == ["2000000001", "2000000002"])
         #expect(kept.first?.savedAt == Date(timeIntervalSince1970: 1_800_000_000))

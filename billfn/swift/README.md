@@ -51,7 +51,10 @@ let restored = try await storeKit.restore()
   a pending attempt's checkout.
 - An outstanding checkout (no transaction yet) is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
   however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
-  or an interrupted purchase waiting. A purchase StoreKit refuses before it reaches the App Store
+  or an interrupted purchase waiting. Retention takes effect at the next
+  `processUnfinishedTransactions()` (run by `start()`), after every unfinished transaction has been
+  offered the checkouts it could claim: an expired checkout stays claimable until then, so a purchase
+  that completed while the app was not running is still verified against it. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
   (such as a network failure) keeps it, since the purchase may still complete.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
