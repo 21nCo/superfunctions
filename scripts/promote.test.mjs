@@ -637,6 +637,23 @@ historyTest("configuration git would apply differently in the scratch worktree i
   write(dev, { ".git/promote-hooks.conf": "[core]\n\thooksPath = ../../hooks\n" });
   refused("onbranch:promote/** relative hooksPath", () => git(dev, "config", "includeIf.onbranch:promote/**.path", "promote-hooks.conf"), { TMPDIR: tmp });
   assert.equal(spawnSync("test", ["-e", planted]).status, 1, "the planted hook never ran");
+  // Other relative commands git runs from the work tree (here core.fsmonitor) never reach the shared tmpdir either.
+  writeFileSync(config, baseline);
+  write(tmp, { fsmon: `#!/bin/sh\ntouch '${planted}'\n` });
+  chmodSync(path.join(tmp, "fsmon"), 0o755);
+  git(dev, "config", "core.fsmonitor", "../../fsmon");
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = tmp;
+  try {
+    promote({ root: dev, fn: "widgetfn" });
+  } catch {
+    // whether git tolerates the missing monitor does not matter here
+  } finally {
+    process.env.TMPDIR = saved;
+  }
+  assert.equal(spawnSync("test", ["-e", planted]).status, 1, "the planted fsmonitor never ran");
+  git(dev, "switch", "-q", "dev");
+  spawnSync(gitBinary(), ["branch", "-q", "-D", "promote/widgetfn"], { cwd: dev });
   refused("core.worktree", () => git(dev, "config", "core.worktree", dev));
   refused("config.worktree", () => {
     git(dev, "config", "extensions.worktreeConfig", "true");

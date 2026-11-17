@@ -859,7 +859,11 @@ function refusePolicyDifference(root, worktree, stage) {
  * removed. Returns the conflicting paths and the kept worktree (null when none).
  */
 function buildBranch(root, { start, branch, imported, label, paths, pin, reconcile, edits }) {
-  const scratch = mkdtempSync(path.join(tmpdir(), "promote-merge-"));
+  // A private (0700) directory in this repository's git directory, not the shared tmpdir: a relative path git resolves
+  // against the work tree (core.fsmonitor, gpg programs, merge and filter drivers) can then only reach this repository
+  // and its ancestors, never a location another user can write.
+  const common = path.resolve(root, git(root, ["rev-parse", "--git-common-dir"]).trim());
+  const scratch = mkdtempSync(path.join(common, "promote-"));
   const worktree = path.join(scratch, "worktree");
   let kept = null;
   try {
