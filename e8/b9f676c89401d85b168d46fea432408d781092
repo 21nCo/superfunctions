@@ -1,0 +1,23 @@
+filefn/server/src/files/service.ts
+  s_aa793b0a8d1ac8::t_62f7118bbd6b7b 10-16,19-21,56,795,805-820,825,829-838
+filefn/server/src/processing/service.ts
+  s_aa793b0a8d1ac8::t_2551717bba10b5 149-153,155,159-163,307,396-399,541-544,550-551,788-789,791-796,807-810,844,850,877,951-954,962,964-966,973,982,988,1049-1050,1052-1055,1060,1063,1335,1337,1369-1402,1788-1790,1801-1803,1815,1834-1835,1916-1927,1932-1933,1944-1947,1949-1952,1957-1958,1962
+filefn/server/tests/client-artifacts.test.ts
+  s_aa793b0a8d1ac8::t_0f39bdeb90d95a 55-56,91,240-244,249,325,447-462,1082,1090,1092,1108,1111-1115,1117-1119,1122,1130,1132-1134,1137,1139,1151,1156-1157,1163,1165-1166,1168-1266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8b9f676c89401d85b168d46fea432408d781092",
+  "prompts": {},
+  "sessions": {
+    "s_aa793b0a8d1ac8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "027b6086-1840-4196-8460-0ca79d822514",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

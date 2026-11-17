@@ -1,0 +1,19 @@
+authfn/core/src/core/verifications.ts
+  s_dc70fbeadfe331::t_a2d65a0f03a505 338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f34442366ca305d2fdfcaa9d3c23303883ca66e5",
+  "prompts": {},
+  "sessions": {
+    "s_dc70fbeadfe331": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_dc70fbeadfe331",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

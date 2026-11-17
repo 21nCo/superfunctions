@@ -1,0 +1,39 @@
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_f35b422006faeb::t_b46912c41ffba0 5-6,17
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_f35b422006faeb::t_419a87cd5d5c6b 174,178-196,198-205,207-210
+billfn/swift-bridge/README.md
+  s_f35b422006faeb::t_287050b2975985 33-38
+billfn/swift-bridge/src/__tests__/storekit.test.ts
+  s_f35b422006faeb::t_5ddabf36d24b49 2,8,186-307
+billfn/swift-bridge/src/index.ts
+  s_f35b422006faeb::t_d30cd5d1a853cc 6
+billfn/swift-bridge/src/protocol.ts
+  s_f35b422006faeb::t_a0612cd0485f66 50-51,93,95-99,102-104
+billfn/swift-bridge/src/wkwebviewBus.ts
+  s_f35b422006faeb::t_d2b66eaa01945e 2,16,19-21,43,112-113,115,121-133,135-138
+billfn/swift/README.md
+  s_f35b422006faeb::t_f2650d45d8177e 41-46
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_f35b422006faeb::t_fa402cd8b51064 74-75,111-119,122-128,164,169,173,193-195,202-209,214,222,230-233,236,238-239,255-267
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_f35b422006faeb::t_4ba16993853b31 133,135-136,138-139,141,145-148,158-159,164-166,170,172,176-178,181
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_f35b422006faeb::t_669b731cd2d025 23-28,47,59-77,91-92,120,125-142,223,272,340,373,377-477
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "776ebc2bf6de23d02ff25a46d71594f4b77bd086",
+  "prompts": {},
+  "sessions": {
+    "s_f35b422006faeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "679baf05-05c3-434b-8d43-45dfc1b3d785",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
