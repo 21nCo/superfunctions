@@ -49,7 +49,7 @@ interface FileFn extends FileProvider {
 | `defaultChunkSizeBytes` | `number` | `5 MiB` | Multipart chunk floor. |
 | `uploadSessionTtlSeconds` | `number` | `86400` | Session TTL. |
 | `signedUrlTtlSeconds` | `number` | `900` | Per-part signed URL TTL. |
-| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing) and above your database statement and request timeouts: a completion stalled past it inside a single database write can still publish after a takeover released the session. |
+| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing); a completion taken over publishes nothing. |
 | `dedup` | `{ enabled: boolean }` | `{ enabled: false }` | Content-addressable storage. |
 | `processing` | `{ enabled, processors?, flowFn? }` | `{ enabled: false }` | Processing pipeline. |
 
@@ -92,7 +92,9 @@ const result = await fileFn.completeUploadSession({ uploadSessionId: session.upl
 ## Expired upload sessions
 
 `fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before
-completing, aborting their multipart uploads and proxy part objects, and returns
+completing, aborting their multipart uploads and proxy part objects (it leaves
+sessions that are `publishing` or held by a running completion), deletes part
+rows a completed session's cleanup left, and returns
 `{ deletedSessions, abortedMultipart }`. Call it from a scheduled job such as a
 Workers cron trigger; filefn does not schedule it.
 

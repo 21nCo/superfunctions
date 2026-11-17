@@ -2930,7 +2930,8 @@ stateDiagram-v2
   initialized --> in_progress: PUT /upload/:id/parts/:n (proxy)\nor signed PUT to storage
   in_progress --> in_progress: POST /upload/:id/parts/:n/complete
   in_progress --> completing: POST /upload/:id/complete
-  completing --> completed
+  completing --> publishing: publication recorded
+  publishing --> completed
   completing --> in_progress: completion failed before publishing
   initialized --> aborted: POST /upload/:id/abort
   in_progress --> aborted: POST /upload/:id/abort
@@ -2946,6 +2947,7 @@ States:
 - **initialized** — session row exists, no parts recorded yet.
 - **in_progress** — at least one part has been recorded.
 - **completing** — one `complete` call holds the session. Another `complete` waits for its result; `abort` returns 409. Reported as `in_progress` by the status route.
+- **publishing** — the completion recorded what it publishes; any `complete` call finishes it, even past expiry. `abort` and deleting the file return 409. Reported as `in_progress`.
 - **completed** — `complete` succeeded, `fileVersions` row written, session is read-only.
 - **aborted** — explicit abort or implicit cleanup. The session is gone.
 - **expired** — TTL hit. The cleanup job evicts the row and any orphaned storage objects.
@@ -6578,7 +6580,7 @@ Processors that need native tools (sharp, ffmpeg, tesseract) do not run in a Wor
 
 ## Expired upload sessions
 
-`fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept.
+`fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept, and so are `publishing` sessions and sessions a running completion holds; part rows a completed session's cleanup left are deleted.
 
 ## IDs
 
@@ -8023,7 +8025,7 @@ Wire-format envelope:
 | `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |
-| `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | On `complete`: another completion call of the same upload session (in any FileFn process sharing the database), or the commit step of a completion of the same `fileId` in the same database in this process, is still running and did not finish within 30 seconds. On `abort` or a part call: a completion of the session is running, or the file already points at the session's version (a completion call finishes it). Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay; it returns the completed result. An abort cannot end a session whose completion is running. |
+| `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | On `complete`: another completion call of the same upload session (in any FileFn process sharing the database), or the commit step of a completion of the same `fileId` in the same database in this process, is still running and did not finish within 30 seconds. On `abort` or a part call: a completion of the session is running or publishing (a completion call finishes it). On `DELETE /:fileId`: an upload session of the file is completing or publishing. Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay; it returns the completed result. An abort cannot end a session whose completion is running. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` called twice. | Treat as success; the file id is in the previous response. |
 | `FILEFN_IDEMPOTENCY_CONFLICT` | 409 | Same idempotency key + different request body. | Use a new idempotency key, or replay with the same body. |
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
@@ -8182,11 +8184,11 @@ The unique `files.fileId` column decides which completion creates the file, so s
 
 An upload session completes at most once, also across FileFn processes sharing one database. Before it changes anything, a completion call claims the session with a conditional write that moves it from `pending` or `in_progress` to `completing`. While a call holds that claim:
 
-- Another `POST /upload/:id/complete` of the session waits for it (polling the session, for at most 30 seconds) and then returns the same `{ fileId, versionId }`; if it is still running after 30 seconds, the call returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` without changing anything. It never repeats storage finalization or a refusal.
+- Another `POST /upload/:id/complete` of the session waits for it (polling the session, for at most 30 seconds) and then returns the same `{ fileId, versionId }`; if it is still running after 30 seconds, the call returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` without changing anything. It never repeats storage finalization or a refusal. Once the session is `publishing`, it finishes the recorded publication instead of waiting.
 - `POST /upload/:id/abort` and the part calls return 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. An abort ends the session with the same kind of conditional write before deleting anything, so an abort and a completion never both proceed.
-- `GET /upload/:id/status` reports the session as `in_progress`.
+- `GET /upload/:id/status` reports the session (`completing` or `publishing`) as `in_progress`.
 
-A completion that fails before it publishes the session's version returns the session to its earlier status, so it can be retried or aborted at once. Once the file points at the session's version (the files row is written before the version row), the session is never returned, aborted or discarded: a completion that fails after that point keeps the session `completing` with its claim expired, so the next completion call takes it over at once and finishes the version (only marking the session completed once the version row exists), and an abort returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, even for a session an earlier release left open. A claim older than `completionTimeoutSeconds` (default 900), such as one left by a crashed process, is taken over by the next completion call; if that call is refused before claiming (for example by the quota), it ends the stale claim, so the session can be aborted, unless the earlier holder completed or published the session meanwhile (or the file already points at its version): then it returns that result, or finishes the published version, instead of its refusal. A multipart takeover that finds the upload already completed by the earlier holder publishes the object it left. A proxy upload keeps its part objects until the session is completed, and every completion after the session's first claim stitches them into an object of its own, so a stalled holder still writing its stitch never rewrites or truncates the published object; the call that completes the session deletes the parts and the objects it does not publish. A stalled holder that resumes after a takeover also moves the file only from the version it read (never back from a later one), re-checks its claim right before each files write and before the version insert, and refuses or completes the session only with writes conditional on its claim, so it returns the session's result and changes nothing. A proxy stitch that fails part-way aborts its write instead of committing a partial object. Claims are checked between database writes, not inside one, so set `completionTimeoutSeconds` above your database statement and request timeouts: a holder stalled past it inside a single write can still publish after a takeover released the session.
+A completion publishes in two steps. After storage finalization and its checks, it moves the session from `completing` to `publishing` with one conditional write on its claim, recording what it publishes (`completionPublication`: the version ID, its object, and the file version it replaces, or none for a new file); only then does it write the version and the file. A completion that fails before that write returns the session to its earlier status, so it can be retried or aborted at once. A `publishing` session is never returned, aborted, expired or deleted with its file: abort, the part calls and `DELETE /:fileId` return 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, the expiry sweep leaves it, and the next completion call (also past the session's expiry) finishes the recorded publication without checking the quota again: it inserts the version row, then points the file at it (creating a new file, or moving the file only from the recorded version), then marks the session completed. These steps are idempotent, so overlapping calls finish one publication once; the call that marks the session completed records usage, emits `file:uploaded` and triggers processing, and a cleanup failure after that (temporary parts or unused objects) never skips them: part rows whose objects could not be deleted stay for the expiry sweep. A replacement inserts its version before moving the file, so the file never points at a missing version; if another writer moved the file on meanwhile, the file keeps that writer's version and this one stays in its history. A new file that another principal created first is written only with the caller's write permission, otherwise the session is refused. A claim older than `completionTimeoutSeconds` (default 900), such as one left by a crashed or stalled process, is taken over by the next completion call, in another process or (after waiting 30 seconds for the earlier call) in the same one; if that call is refused before claiming (for example by the quota), it ends the stale claim, so the session can be aborted, unless the earlier holder moved it to `publishing` or completed it meanwhile: then it finishes or returns that. A holder taken over writes no file or version row: its move to `publishing`, and its refusal, are conditional on its claim. A multipart takeover that finds the upload already completed by the earlier holder publishes the object it left. A proxy upload keeps its part objects until the session is completed, and every completion after the session's first claim stitches them into an object of its own, so a stalled holder still writing its stitch never rewrites or truncates the published object; the call that completes the session deletes the parts and the objects it does not publish, and an abort or the expiry sweep deletes the object of the last claim that stitched one. A proxy stitch that fails part-way aborts its write instead of committing a partial object.
 
 ## Files
 
@@ -8194,7 +8196,7 @@ A completion that fails before it publishes the session's version returns the se
 | --- | --- | --- |
 | GET | `/files` | List files (filtered by principal / tenant). |
 | GET | `/:fileId` | Get file metadata. |
-| DELETE | `/:fileId` | Delete file (and all versions / artifacts). |
+| DELETE | `/:fileId` | Delete file (and all versions / artifacts). Returns 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, deleting nothing, while an upload session of the file is `completing` or `publishing`; retry once it completes. |
 
 ## Versions
 
@@ -8289,7 +8291,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | Column | Type | Notes |
 | --- | --- | --- |
 | `uploadSessionId` | string (PK) | |
-| `status` | string | `"pending" | "in_progress" | "completing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `refused` is a completion refused for permission. The status route reports them as `in_progress` and `aborted`. |
+| `status` | string | `"pending" | "in_progress" | "completing" | "publishing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `publishing` has a recorded publication that any completion call finishes; `refused` is a completion refused for permission. The status route reports `completing` and `publishing` as `in_progress` and `refused` as `aborted`. |
 | `policy` | string | |
 | `fileId` | string? | Set on completion. |
 | `fileName` | string | |
@@ -8304,7 +8306,8 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
-| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`), of the call that completed it, or of the last call that released it; a completion that failed after the file pointed at its version leaves its claim with the epoch as its time, so the next call takes it over at once. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`) or that moved it to `publishing`, or of the last call that stitched an object and released it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionPublication` | json? | Set with the move to `publishing`: `{ versionId, storageKey, checksumSha256Base64, baseVersionId, unusedKeys }`, what the completion publishes (`baseVersionId` is the file version it replaces, `null` for a new file). Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
@@ -8907,7 +8910,7 @@ interface FileFn extends FileProvider {
 | `defaultChunkSizeBytes` | `number` | `5 MiB` | Multipart chunk floor. |
 | `uploadSessionTtlSeconds` | `number` | `86400` | Session TTL. |
 | `signedUrlTtlSeconds` | `number` | `900` | Per-part signed URL TTL. |
-| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing) and above your database statement and request timeouts: a completion stalled past it inside a single database write can still publish after a takeover released the session. |
+| `completionTimeoutSeconds` | `number` | `900` | How long an upload completion may hold its session before another completion call may take it over (for example after a crash). Set it above your longest completion (storage finalization, proxy stitching, dedup hashing); a completion taken over publishes nothing. |
 | `dedup` | `{ enabled: boolean }` | `{ enabled: false }` | Content-addressable storage. |
 | `processing` | `{ enabled, processors?, flowFn? }` | `{ enabled: false }` | Processing pipeline. |
 
@@ -8950,7 +8953,9 @@ const result = await fileFn.completeUploadSession({ uploadSessionId: session.upl
 ## Expired upload sessions
 
 `fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before
-completing, aborting their multipart uploads and proxy part objects, and returns
+completing, aborting their multipart uploads and proxy part objects (it leaves
+sessions that are `publishing` or held by a running completion), deletes part
+rows a completed session's cleanup left, and returns
 `{ deletedSessions, abortedMultipart }`. Call it from a scheduled job such as a
 Workers cron trigger; filefn does not schedule it.
 

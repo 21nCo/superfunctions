@@ -59,7 +59,7 @@ interface FileArtifactRecord {
 
 interface UploadSessionRecord {
   uploadSessionId: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'refused' | 'expired';
+  status: 'pending' | 'in_progress' | 'completing' | 'publishing' | 'completed' | 'aborted' | 'refused' | 'expired';
   policy: string;
   uploadMode: string;
   storageKey: string;
@@ -687,17 +687,28 @@ export function createFileService(config: FileServiceConfig) {
 
       // A refused session may still have objects to delete; its row is that
       // record, so refused sessions are left to the expiry sweep, which finishes
-      // the cleanup.
+      // the cleanup. A session a completion holds ('completing') or is
+      // publishing may be writing the file and its versions: the delete waits
+      // for it (409, retryable) and never touches it.
       const openSessionsWhere: WhereClause[] = [
         { field: 'fileId', operator: 'eq', value: fileId },
         { field: 'status', operator: 'ne', value: 'completed' },
         { field: 'status', operator: 'ne', value: 'refused' },
+        { field: 'status', operator: 'ne', value: 'completing' },
+        { field: 'status', operator: 'ne', value: 'publishing' },
       ];
-      const pendingSessions = await db.findMany<UploadSessionRecord>({
+      const unfinishedSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
-        where: openSessionsWhere,
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'status', operator: 'ne', value: 'completed' },
+        ],
         namespace,
       });
+      if (unfinishedSessions.some((session) => session.status === 'completing' || session.status === 'publishing')) {
+        throw errors.uploadCompletionInProgress();
+      }
+      const pendingSessions = unfinishedSessions.filter((session) => session.status !== 'refused');
 
       for (const session of pendingSessions) {
         const sessionPolicy = policies?.get(session.policy) ?? {};

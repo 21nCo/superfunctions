@@ -705,9 +705,10 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
   });
 
   for (const user of ['user_a', undefined] as const) {
-    it(`a second completion of the same ${user ? 'named' : 'anonymous'} session while the first is between its files and version inserts waits for it, returns the same result and finalizes storage once`, async () => {
-      // Process one inserts the files row, then is held before its version insert
-      // while process two completes the same session: two waits for one's claim.
+    it(`a second completion of the same ${user ? 'named' : 'anonymous'} session while the first is between its files and version inserts finishes that publication, returns the same result and finalizes storage once`, async () => {
+      // Process one moves the session to 'publishing', inserts the files row,
+      // then is held before its version insert while process two completes the
+      // same session: two finishes the recorded publication (one version row).
       let versionInserts = 0;
       let heldAtVersion!: () => void;
       const firstHeld = new Promise<void>((resolve) => { heldAtVersion = resolve; });
@@ -739,7 +740,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       releaseFirst();
       const [firstResult, second] = await Promise.all([first, pendingSecond]);
       expect(storageFixture.finalizeCount(key)).toBe(1);
-      expect(versionInserts).toBe(1);
+      expect(await versionRows(database, CLIENT_ID)).toHaveLength(1);
 
       expect(second.status).toBe(200);
       expect(firstResult.status).toBe(200);
@@ -754,9 +755,10 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     });
   }
 
-  it('a concurrent second completion call of the same session in another process returns the recorded result and inserts nothing', async () => {
-    // Process one is held at its files insert (it has finalized storage); the
-    // duplicate in process two waits for its claim instead of racing it.
+  it('a concurrent second completion call of the same session in another process finishes the same publication and creates the file once', async () => {
+    // Process one is held at its files insert (it has finalized storage and
+    // recorded its publication); the duplicate in process two finishes that
+    // publication, never one of its own: the unique insert admits one files row.
     let filesInserts = 0;
     let firstArrived!: () => void;
     const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
@@ -766,6 +768,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       async before(model) {
         if (model !== 'files') return;
         filesInserts += 1;
+        if (filesInserts > 1) return;
         firstArrived();
         await firstReleased;
       },
@@ -782,7 +785,9 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     await new Promise((resolve) => setTimeout(resolve, 50));
     releaseFirst();
     const [firstResult, second] = await Promise.all([first, pendingSecond]);
-    expect(filesInserts).toBe(1);
+    expect(filesInserts).toBe(2);
+    expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
+    expect(await versionRows(database, CLIENT_ID)).toHaveLength(1);
     expect(storageFixture.finalizeCount(key)).toBe(1);
     expect(firstResult.status).toBe(200);
     expect(second.status).toBe(200);
@@ -824,9 +829,9 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
   });
 
   it('a stalled completion resuming after a takeover and a later writer moved the file on returns the recorded result', async () => {
-    // The anonymous session's first call claims it, reads "not published" and
-    // stalls past the completion timeout. A second call takes the session over
-    // and publishes it, an editor adds a later version, and the first resumes.
+    // The anonymous session's first call publishes it (it created the file)
+    // and stalls before its version insert. A second call finishes the
+    // publication, an editor adds a later version, and the first resumes.
     let holdNextVersionMiss = false;
     let stalled!: () => void;
     const duplicateStalled = new Promise<void>((resolve) => { stalled = resolve; });
@@ -856,7 +861,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     holdNextVersionMiss = true;
     const duplicate = other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { token: staged.token });
     await duplicateStalled;
-    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
     await new Promise((resolve) => setTimeout(resolve, 60));
     const first = await staged.complete();
     expect(first.status).toBe(200);
@@ -1812,7 +1817,14 @@ describe('expiry cleanup of a session whose object another file shares', () => {
     const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
     failNext.add('session-completed');
     await expect(app.fileFn.services.uploads.completeSession(a.uploadSessionId, { principalId: 'user_a' }, a.token)).rejects.toThrow('transient update failure');
-    expect((await rawSession(database, a.uploadSessionId))!.status).not.toBe('completed');
+    expect((await rawSession(database, a.uploadSessionId))!.status).toBe('publishing');
+    // As a session an earlier FileFn left open after publishing its version.
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: a.uploadSessionId }],
+      data: { status: 'pending' },
+      namespace: 'filefn',
+    });
 
     // B uploads the same bytes under another ID; dedup points it at A's object.
     const b = await app.stage('user_b', undefined, 'shared bytes');
@@ -1892,10 +1904,10 @@ describe('expiry cleanup of a session whose object another file shares', () => {
 
 describe('expiry cleanup while a completion of the expired session is running', () => {
   /** A's completion finalized its object and is held before publishing; then A's session expires. */
-  async function startHeldCompletion() {
+  async function startHeldCompletion(completionTimeoutSeconds?: number) {
     const database = memoryAdapter();
     const storageFixture = createStorage('multipart');
-    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
+    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true, completionTimeoutSeconds });
     const a = await app.stage('user_a', CLIENT_ID, 'shared bytes');
     const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
     const resume = storageFixture.holdStat(keyA);
@@ -1908,11 +1920,14 @@ describe('expiry cleanup while a completion of the expired session is running', 
       data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
       namespace: 'filefn',
     });
-    return { database, storageFixture, app, keyA, resume, completion };
+    return { database, storageFixture, app, a, keyA, resume, completion };
   }
 
   it('keeps an object published and shared by dedup after the sweep read the session', async () => {
-    const { storageFixture, app, keyA, resume, completion } = await startHeldCompletion();
+    // A's claim is stale by the time the sweep reads the session, so the sweep
+    // takes it up; A still holds it and publishes.
+    const { storageFixture, app, keyA, resume, completion } = await startHeldCompletion(0.05);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     // Pause the sweep at its first storage call, after everything it reads up front.
     let paused!: () => void;
     const sweepPaused = new Promise<void>((resolve) => { paused = resolve; });
@@ -1940,21 +1955,18 @@ describe('expiry cleanup while a completion of the expired session is running', 
     expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
   });
 
-  it('keeps the final object of an expired session whose completion is still running', async () => {
-    const { storageFixture, app, keyA, resume, completion } = await startHeldCompletion();
+  it('leaves an expired session whose completion is still running (live claim) to that completion', async () => {
+    const { database, storageFixture, app, a, keyA, resume, completion } = await startHeldCompletion();
     const result = await app.fileFn.services.uploads.cleanupExpiredSessions();
-    expect(result.deletedSessions).toBe(1);
+    expect(result.deletedSessions).toBe(0);
+    expect(result.abortedMultipart).toBe(0);
     expect(storageFixture.objects.has(keyA)).toBe(true);
 
-    // The completion resumes. Its claim went with the session row, so it
-    // publishes nothing and reports the session gone; its object is kept (a
-    // session expiring during its completion is FILE-14).
     resume();
     const ended = await completion;
-    expect(ended.status).toBe(404);
-    expect(ended.json.error.code).toBe('FILEFN_SESSION_NOT_FOUND');
-    expect(storageFixture.objects.has(keyA)).toBe(true);
-    await expect(app.readBytes(CLIENT_ID, 'user_a')).rejects.toThrow('File not found');
+    expect(ended.status).toBe(200);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('shared bytes');
+    expect((await rawSession(database, a.uploadSessionId))!.status).toBe('completed');
   });
 });
 
@@ -2163,7 +2175,8 @@ describe('upload completion fencing (FILE-19)', () => {
       ...shared,
       async findOne(params: Parameters<Adapter['findOne']>[0]) {
         const result = await shared.findOne(params);
-        if (params.model === 'fileVersions' && result === null && holdNextVersionMiss) {
+        // The holder's claim check right before its stitch.
+        if (params.model === 'uploadSessions' && (result as { status?: string } | null)?.status === 'completing' && holdNextVersionMiss) {
           holdNextVersionMiss = false;
           stalled();
           await resumed;
@@ -2190,9 +2203,10 @@ describe('upload completion fencing (FILE-19)', () => {
 
     expect(resumedResult.status).toBe(200);
     expect(resumedResult.json.data).toEqual(second.json.data);
-    // The taker stitched into its own object; the resumed call found its claim
-    // lost and never opened the session's.
-    expect(storageFixture.finalizeCount(key)).toBe(0);
+    // The taker stitched into its own object. The resumed call, past its claim
+    // check, stitched the session's key (its own), found the parts gone and
+    // published nothing; its object is deleted.
+    expect(storageFixture.objects.has(key)).toBe(false);
     expect(await taker.readBytes(CLIENT_ID, 'user_a')).toBe('published by the taker');
   });
 
@@ -2377,15 +2391,15 @@ describe('upload completion fencing (FILE-19)', () => {
   for (const mode of ['multipart', 'proxy'] as const) {
     it(`${mode}: a session whose crashed completer finalized storage but published nothing is taken over and completes from the stored object`, async () => {
       const base = memoryAdapter();
-      let crashAtVersionInsert = true;
+      let crashAtPublishing = true;
       const database = {
         ...base,
-        async create(params: Parameters<Adapter['create']>[0]) {
-          if (params.model === 'fileVersions' && crashAtVersionInsert) {
-            crashAtVersionInsert = false;
+        async update(params: Parameters<Adapter['update']>[0]) {
+          if ((params.data as { status?: string }).status === 'publishing' && crashAtPublishing) {
+            crashAtPublishing = false;
             throw new Error('process crashed');
           }
-          return base.create(params);
+          return base.update(params);
         },
       } as Adapter;
       const app = createApp({ mode, database });
@@ -2393,8 +2407,8 @@ describe('upload completion fencing (FILE-19)', () => {
       app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
       const staged = await app.stage('user_a', CLIENT_ID, 'finalized once');
       const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
-      // Storage was finalized before the version insert; the completer then
-      // died holding its claim. Multipart: the upload is consumed. Proxy: the
+      // Storage was finalized before the move to 'publishing'; the completer
+      // then died holding its claim. Multipart: the upload is consumed. Proxy: the
       // parts stay until the session is completed (the failed call deleted the
       // object it stitched), so the call taking over stitches again.
       await expect(staged.complete()).rejects.toThrow('process crashed');
@@ -2515,161 +2529,6 @@ describe('upload completion fencing (FILE-19)', () => {
     expect(storageFixture.finalizeCount(key)).toBe(1);
   });
 
-  // Process one (the holder) claims the session and stalls past the completion
-  // timeout. Process two (the refused taker) finds the stale claim, is refused
-  // admission by its quota, and pauses right before ending that claim, while
-  // the holder resumes.
-  async function refusedTakerAgainstResumingHolder(holderStallsAt: 'version-lookup' | 'version-insert' | 'files-written') {
-    const shared = createUniqueEnforcingDb({});
-    const gate = () => {
-      let open!: () => void;
-      const opened = new Promise<void>((resolve) => { open = resolve; });
-      return { open, opened };
-    };
-    const holderStalled = gate();
-    const holderResumes = gate();
-    const holderAtCompletedWrite = gate();
-    const holderFinishes = gate();
-    const holderAtFilesWritten = gate();
-    let holderArmed = false;
-    let holdCompletedWrite = holderStallsAt === 'version-insert';
-    // 'files-written': the holder stalls (before publishing) while the taker
-    // reads the session, then, once resumed, pauses right after its files
-    // insert landed, before its version insert.
-    let holdAfterFilesInsert = holderStallsAt === 'files-written';
-    let holderVersionInserts = 0;
-    const holderDb = {
-      ...shared,
-      async findOne(params: Parameters<Adapter['findOne']>[0]) {
-        const result = await shared.findOne(params);
-        if (holderStallsAt !== 'version-insert' && holderArmed && params.model === 'fileVersions' && result === null) {
-          holderArmed = false;
-          holderStalled.open();
-          await holderResumes.opened;
-        }
-        return result;
-      },
-      async create(params: Parameters<Adapter['create']>[0]) {
-        if (params.model === 'fileVersions') holderVersionInserts += 1;
-        if (holderStallsAt === 'version-insert' && holderArmed && params.model === 'fileVersions') {
-          holderArmed = false;
-          holderStalled.open();
-          await holderResumes.opened;
-        }
-        const created = await shared.create(params);
-        if (holdAfterFilesInsert && params.model === 'files') {
-          holdAfterFilesInsert = false;
-          holderAtFilesWritten.open();
-          await holderFinishes.opened;
-        }
-        return created;
-      },
-      async update(params: Parameters<Adapter['update']>[0]) {
-        if (holdCompletedWrite && params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'completed') {
-          holdCompletedWrite = false;
-          holderAtCompletedWrite.open();
-          await holderFinishes.opened;
-        }
-        return shared.update(params);
-      },
-    } as Adapter;
-    const takerAtEndClaim = gate();
-    const takerEndsClaim = gate();
-    let takerArmed = false;
-    const takerDb = {
-      ...shared,
-      async update(params: Parameters<Adapter['update']>[0]) {
-        if (takerArmed && params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'completing') {
-          takerArmed = false;
-          takerAtEndClaim.open();
-          await takerEndsClaim.opened;
-        }
-        return shared.update(params);
-      },
-    } as Adapter;
-    const refusing: QuotaProvider = {
-      async checkQuota() { return { allowed: false, current: 10, limit: 10 }; },
-      async recordUsage() {},
-    };
-    const storageFixture = createStorage('multipart');
-    const completionTimeoutSeconds = 0.05;
-    const holder = createApp({ mode: 'multipart', database: holderDb, storageFixture, completionTimeoutSeconds, createFileFn: await loadProcess() });
-    const taker = createApp({ mode: 'multipart', database: takerDb, storageFixture, completionTimeoutSeconds, quota: refusing, createFileFn: await loadProcess() });
-    const uploaded: string[] = [];
-    for (const app of [holder, taker]) app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
-    const staged = await holder.stage('user_a', CLIENT_ID, 'finished once');
-    const key = (await rawSession(shared, staged.uploadSessionId))!.storageKey;
-
-    holderArmed = true;
-    const holderDone = staged.complete();
-    await holderStalled.opened;
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    takerArmed = true;
-    const takerDone = taker.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
-    await takerAtEndClaim.opened;
-    return { shared, taker, holderVersionInserts: () => holderVersionInserts, storageFixture, uploaded, staged, key, holderDone, takerDone, holderResumes, holderAtFilesWritten, holderAtCompletedWrite, holderFinishes, takerEndsClaim };
-  }
-
-  it('a taker refused by its quota whose stale holder completes before it ends the claim returns the recorded result', async () => {
-    const run = await refusedTakerAgainstResumingHolder('version-lookup');
-    run.holderResumes.open();
-    const first = await run.holderDone;
-    expect(first.status).toBe(200);
-    run.takerEndsClaim.open();
-    const second = await run.takerDone;
-
-    expect(second.status).toBe(200);
-    expect(second.json.data).toEqual(first.json.data);
-    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
-    expect(run.uploaded).toEqual([first.json.data.versionId]);
-    expect(run.storageFixture.finalizeCount(run.key)).toBe(1);
-  });
-
-  it('a taker refused by its quota whose stale holder publishes before it ends the claim completes that version, never releasing it', async () => {
-    const run = await refusedTakerAgainstResumingHolder('version-insert');
-    run.holderResumes.open();
-    await run.holderAtCompletedWrite.opened;
-    run.takerEndsClaim.open();
-    const second = await run.takerDone;
-    expect(second.status).toBe(200);
-    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
-    run.holderFinishes.open();
-    const first = await run.holderDone;
-
-    expect(first.status).toBe(200);
-    expect(first.json.data).toEqual(second.json.data);
-    expect(run.uploaded).toEqual([second.json.data.versionId]);
-    expect(run.storageFixture.finalizeCount(run.key)).toBe(1);
-    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
-  });
-
-  it('a taker refused by its quota never releases a session the file already points at, and the holder it took over inserts no version', async () => {
-    // The holder's files insert lands while the refused taker is about to end
-    // the stale claim; the taker finishes the version instead of releasing
-    // the session, so no abort can end it, and the resumed holder (taken
-    // over) inserts nothing.
-    const run = await refusedTakerAgainstResumingHolder('files-written');
-    run.holderResumes.open();
-    await run.holderAtFilesWritten.opened;
-    run.takerEndsClaim.open();
-    const second = await run.takerDone;
-    expect(second.status).toBe(200);
-    expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
-    const abort = await run.taker.call('POST', `/upload/${run.staged.uploadSessionId}/abort`, { user: 'user_a' });
-    expect(abort.status).toBe(409);
-    expect(abort.json.error.code).toBe('FILEFN_UPLOAD_ALREADY_COMPLETED');
-    run.holderFinishes.open();
-    const first = await run.holderDone;
-
-    expect(first.status).toBe(200);
-    expect(first.json.data).toEqual(second.json.data);
-    expect(await versionRows(run.shared, CLIENT_ID)).toHaveLength(1);
-    expect(run.holderVersionInserts()).toBe(0);
-    expect(run.uploaded).toEqual([second.json.data.versionId]);
-    expect((await fileRows(run.shared, CLIENT_ID))[0].currentVersionId).toBe(second.json.data.versionId);
-    expect(await run.taker.readBytes(CLIENT_ID, 'user_a')).toBe('finished once');
-  });
-
   it('a completion that fails before publishing releases its claim, so a retry completes at once', async () => {
     const database = memoryAdapter();
     const app = createApp({ mode: 'multipart', database });
@@ -2709,22 +2568,30 @@ describe('upload completion fencing (FILE-19)', () => {
 
   for (const mode of ['multipart', 'proxy'] as const) {
     for (const replace of [false, true]) {
-      it(`${mode}: a completion whose version insert fails after the file ${replace ? 'moved to' : 'was created at'} its version keeps the session, so an abort gets 409 and a retry publishes it`, async () => {
+      it(`${mode}: a ${replace ? 'replacement' : 'new file'} whose version insert fails stays publishing, so an abort gets 409 and a retry publishes the same version once`, async () => {
         const { database, app, uploaded, failNextVersionInsert } = failingVersionInsert(mode);
         if (replace) expect((await (await app.stage('user_a', CLIENT_ID, 'original')).complete()).status).toBe(200);
         const staged = await app.stage('user_a', CLIENT_ID, 'replacement');
         const versionId = ((await rawSession(database, staged.uploadSessionId)) as unknown as { completionVersionId: string }).completionVersionId;
         failNextVersionInsert();
         await expect(staged.complete()).rejects.toThrow('version insert failed');
-        expect((await fileRows(database, CLIENT_ID))[0].currentVersionId).toBe(versionId);
-        expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+        // A new file is created first; a replacement moves the file only after
+        // its version row exists, so the file keeps its readable version.
+        const pointer = (await fileRows(database, CLIENT_ID))[0].currentVersionId;
+        if (replace) {
+          expect(pointer).not.toBe(versionId);
+          expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('original');
+        } else {
+          expect(pointer).toBe(versionId);
+        }
+        expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
 
         const abort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token });
         expect(abort.status).toBe(409);
         expect(abort.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
-        expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+        expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
 
-        // The failed call expired its claim, so a retry takes it over at once.
+        // Any completion call finishes the recorded publication at once.
         const done = await within(staged.complete(), 1_000);
         expect(done.status).toBe(200);
         expect(done.json.data).toEqual({ fileId: CLIENT_ID, versionId });
@@ -2736,23 +2603,235 @@ describe('upload completion fencing (FILE-19)', () => {
     }
   }
 
-  it('proxy: an open session the file already points at (left released by an earlier version) is never aborted, and completes', async () => {
-    const { database, app, failNextVersionInsert } = failingVersionInsert('proxy');
-    const staged = await app.stage('user_a', CLIENT_ID, 'left open');
-    const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+  const refusingQuota: QuotaProvider = {
+    async checkQuota() { return { allowed: false, current: 10, limit: 10 }; },
+    async recordUsage() {},
+  };
+
+  /**
+   * Process one (the holder) stalls at `stallAt` past the completion timeout;
+   * process two, refused by its quota, then completes the session and the
+   * owner aborts it; then the holder resumes.
+   */
+  async function stalledHolderThenRefusedTakerAndAbort(kind: 'create' | 'replace', stallAt: 'files-write' | 'publishing-write') {
+    const shared = createUniqueEnforcingDb({});
+    let armed = false;
+    let stalled!: () => void;
+    const holderStalled = new Promise<void>((resolve) => { stalled = resolve; });
+    let resume!: () => void;
+    const holderResumes = new Promise<void>((resolve) => { resume = resolve; });
+    const stall = async (hit: boolean) => {
+      if (armed && hit) {
+        armed = false;
+        stalled();
+        await holderResumes;
+      }
+    };
+    const filesWrite = (model: string) => stallAt === 'files-write' && model === 'files';
+    const holderDb = {
+      ...shared,
+      async create(params: Parameters<Adapter['create']>[0]) { await stall(filesWrite(params.model)); return shared.create(params); },
+      async updateMany(params: Parameters<Adapter['updateMany']>[0]) { await stall(filesWrite(params.model)); return shared.updateMany(params); },
+      async update(params: Parameters<Adapter['update']>[0]) {
+        await stall(filesWrite(params.model) || (stallAt === 'publishing-write' && (params.data as { status?: string }).status === 'publishing'));
+        return shared.update(params);
+      },
+    } as Adapter;
+    const storageFixture = createStorage('multipart');
+    const completionTimeoutSeconds = 0.05;
+    const holder = createApp({ mode: 'multipart', database: holderDb, storageFixture, completionTimeoutSeconds, createFileFn: await loadProcess() });
+    const taker = createApp({ mode: 'multipart', database: shared, storageFixture, completionTimeoutSeconds, quota: refusingQuota, createFileFn: await loadProcess() });
+    const uploaded: string[] = [];
+    for (const app of [holder, taker]) app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+    if (kind === 'replace') expect((await (await holder.stage('user_a', CLIENT_ID, 'original')).complete()).status).toBe(200);
+    uploaded.length = 0;
+    const staged = await holder.stage('user_a', CLIENT_ID, 'replacement');
+    armed = true;
+    const holderDone = staged.complete();
+    await holderStalled;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const takerResult = await taker.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+    const abort = await taker.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a' });
+    resume();
+    const holderResult = await holderDone;
+    const versions = (await versionRows(shared, CLIENT_ID)).map((version) => version.versionId);
+    const files = await fileRows(shared, CLIENT_ID);
+    for (const file of files) expect(versions).toContain(file.currentVersionId);
+    return { shared, holder, staged, takerResult, abort, holderResult, versions, files, uploaded };
+  }
+
+  for (const kind of ['create', 'replace'] as const) {
+    it(`${kind}: a holder stalled inside its files write is finished by a quota-refused taker, so the abort gets 409 and no file points at a missing version`, async () => {
+      const run = await stalledHolderThenRefusedTakerAndAbort(kind, 'files-write');
+      expect(run.takerResult.status).toBe(200);
+      expect(run.abort.status).toBe(409);
+      expect(run.holderResult.status).toBe(200);
+      expect(run.holderResult.json.data).toEqual(run.takerResult.json.data);
+      expect(run.files[0].currentVersionId).toBe(run.takerResult.json.data.versionId);
+      expect(run.versions).toHaveLength(kind === 'replace' ? 2 : 1);
+      expect(run.uploaded).toEqual([run.takerResult.json.data.versionId]);
+      expect(await run.holder.readBytes(CLIENT_ID, 'user_a')).toBe('replacement');
+      expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('completed');
+    });
+
+    it(`${kind}: a holder stalled before its move to publishing, ended by a quota-refused taker and aborted, writes nothing when it resumes`, async () => {
+      const run = await stalledHolderThenRefusedTakerAndAbort(kind, 'publishing-write');
+      expect(run.takerResult.status).toBe(402);
+      expect(run.abort.status).toBe(200);
+      expect(run.holderResult.status).toBe(410);
+      expect(run.versions).toHaveLength(kind === 'replace' ? 1 : 0);
+      expect(run.files).toHaveLength(kind === 'replace' ? 1 : 0);
+      if (kind === 'replace') expect(await run.holder.readBytes(CLIENT_ID, 'user_a')).toBe('original');
+      expect(run.uploaded).toEqual([]);
+      expect((await rawSession(run.shared, run.staged.uploadSessionId))!.status).toBe('aborted');
+    });
+  }
+
+  it('a session from before init allocated its version, whose completion failed after publishing, completes the same version on retry', async () => {
+    const { database, app, uploaded, failNextVersionInsert } = failingVersionInsert('multipart');
+    const staged = await app.stage('user_a', CLIENT_ID, 'legacy bytes');
+    await setSession(database, staged.uploadSessionId, { completionVersionId: null });
     failNextVersionInsert();
     await expect(staged.complete()).rejects.toThrow('version insert failed');
-    // As an earlier release over a partly published version left it.
-    await setSession(database, staged.uploadSessionId, { status: 'in_progress' });
-
-    const abort = await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token });
-    expect(abort.status).toBe(409);
-    expect(abort.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
-    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('in_progress');
-    expect(app.fixture.objects.has(`${key}.part1`)).toBe(true);
+    const published = (await fileRows(database, CLIENT_ID))[0].currentVersionId;
 
     const done = await staged.complete();
     expect(done.status).toBe(200);
-    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('left open');
+    expect(done.json.data).toEqual({ fileId: CLIENT_ID, versionId: published });
+    expect((await versionRows(database, CLIENT_ID)).map((version) => version.versionId)).toEqual([published]);
+    expect(uploaded).toEqual([published]);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('legacy bytes');
   });
+
+  it('the expiry sweep leaves a publishing session, which a completion call then finishes past its expiry', async () => {
+    const { database, app, uploaded, failNextVersionInsert } = failingVersionInsert('proxy');
+    const staged = await app.stage('user_a', CLIENT_ID, 'kept past expiry');
+    failNextVersionInsert();
+    await expect(staged.complete()).rejects.toThrow('version insert failed');
+    await setSession(database, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+
+    const swept = await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(swept.deletedSessions).toBe(0);
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
+
+    const done = await staged.complete();
+    expect(done.status).toBe(200);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept past expiry');
+    expect(uploaded).toEqual([done.json.data.versionId]);
+  });
+
+  it('deleting a file while a session of it is publishing gets 409 and keeps the file; the delete succeeds once it completes', async () => {
+    const { database, app, failNextVersionInsert } = failingVersionInsert('proxy');
+    expect((await (await app.stage('user_a', CLIENT_ID, 'original')).complete()).status).toBe(200);
+    const staged = await app.stage('user_a', CLIENT_ID, 'replacement');
+    failNextVersionInsert();
+    await expect(staged.complete()).rejects.toThrow('version insert failed');
+
+    const refused = await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' });
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('publishing');
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('original');
+
+    expect((await staged.complete()).status).toBe(200);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('replacement');
+    expect((await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+  });
+
+  for (const failure of ['part-rows', 'part-object'] as const) {
+    it(`a ${failure} cleanup failure after completion still records usage and emits once, and the sweep finishes the cleanup`, async () => {
+      const base = memoryAdapter();
+      let failPartRows = failure === 'part-rows';
+      const database = {
+        ...base,
+        async deleteMany(params: Parameters<Adapter['deleteMany']>[0]) {
+          if (params.model === 'uploadParts' && failPartRows) {
+            failPartRows = false;
+            throw new Error('part rows delete failed');
+          }
+          return base.deleteMany(params);
+        },
+      } as Adapter;
+      const usage: number[] = [];
+      const quota: QuotaProvider = {
+        async checkQuota() { return { allowed: true, current: 0, limit: 100 }; },
+        async recordUsage(input) { usage.push(input.bytes); },
+      };
+      const app = createApp({ mode: 'proxy', database, quota });
+      const uploaded: string[] = [];
+      app.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+      const staged = await app.stage('user_a', CLIENT_ID, 'cleaned later');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      if (failure === 'part-object') app.fixture.deleteFailures.set(`${key}.part1`, 1);
+
+      const done = await staged.complete();
+      expect(done.status).toBe(200);
+      expect(uploaded).toEqual([done.json.data.versionId]);
+      expect(usage).toEqual(['cleaned later'.length]);
+      const parts = () => database.findMany({ model: 'uploadParts', where: [{ field: 'uploadSessionId', operator: 'eq', value: staged.uploadSessionId }], namespace: 'filefn' });
+      expect(await parts()).toHaveLength(1);
+      expect(app.fixture.objects.has(`${key}.part1`)).toBe(failure === 'part-object');
+
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await parts()).toHaveLength(0);
+      expect(app.fixture.objects.has(`${key}.part1`)).toBe(false);
+      expect(uploaded).toHaveLength(1);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('cleaned later');
+    });
+  }
+
+  it('proxy: a retry in the holder\'s own process takes over a completion stalled past the timeout', async () => {
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'proxy', database, completionTimeoutSeconds: 1 });
+    const staged = await app.stage('user_a', CLIENT_ID, 'taken over in process');
+    const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const release = app.fixture.gate(key);
+    const stalled = staged.complete();
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completing');
+
+    const retry = staged.complete();
+    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS + 1_000);
+    const done = await retry;
+    expect(done.status).toBe(200);
+    vi.useRealTimers();
+    release();
+    const resumed = await stalled;
+    expect(resumed.status).toBe(200);
+    expect(resumed.json.data).toEqual(done.json.data);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('taken over in process');
+  });
+
+  for (const next of ['abort', 'complete'] as const) {
+    it(`proxy: the object a crashed retake stitched survives a quota-refused end of its claim, and ${next === 'abort' ? 'an abort' : 'the completion'} deletes it`, async () => {
+      const database = memoryAdapter();
+      let allowed = true;
+      const quota: QuotaProvider = {
+        async checkQuota() { return { allowed, current: 10, limit: 10 }; },
+        async recordUsage() {},
+      };
+      const app = createApp({ mode: 'proxy', database, quota });
+      const staged = await app.stage('user_a', CLIENT_ID, 'retaken');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      // A retake that stitched its own object and crashed.
+      app.fixture.objects.set(`${key}.cabc123`, Buffer.from('retaken'));
+      await setSession(database, staged.uploadSessionId, {
+        status: 'completing',
+        completionClaim: `${new Date(Date.now() - 901_000).toISOString()} abc123 retake`,
+      });
+      allowed = false;
+      expect((await staged.complete()).status).toBe(402);
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('in_progress');
+
+      if (next === 'abort') {
+        expect((await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token })).status).toBe(200);
+      } else {
+        allowed = true;
+        expect((await staged.complete()).status).toBe(200);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('retaken');
+      }
+      expect(app.fixture.objects.has(`${key}.cabc123`)).toBe(false);
+    });
+  }
 });

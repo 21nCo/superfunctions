@@ -69,6 +69,7 @@ export function getSchema(options: FileFnSchemaOptions = {}): { version: number;
       idempotencyPayloadHash: { type: 'string', required: false },
       completionVersionId: { type: 'string', required: false },
       completionClaim: { type: 'string', required: false },
+      completionPublication: { type: 'json', required: false },
       uploadSessionToken: { type: 'string', required: false },
       uploadSessionTokenHash: { type: 'string', required: false },
       expiresAt: { type: 'string', required: true },

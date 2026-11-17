@@ -86,9 +86,10 @@ export interface UploadSession {
   uploadSessionId: string;
   // 'refused' is a completion refused at commit or admission whose own objects
   // may still need deleting; clients see it as 'aborted'. 'completing' is held
-  // by one completion call (see claimCompletion); clients see it as
-  // 'in_progress'.
-  status: 'pending' | 'in_progress' | 'completing' | 'completed' | 'aborted' | 'refused' | 'expired';
+  // by one completion call (see claimCompletion); 'publishing' records the
+  // version that call decided to publish (completionPublication), which any
+  // completion call then finishes. Clients see both as 'in_progress'.
+  status: 'pending' | 'in_progress' | 'completing' | 'publishing' | 'completed' | 'aborted' | 'refused' | 'expired';
   policy: string;
   fileId: string | null;
   fileName: string;
@@ -113,9 +114,33 @@ export interface UploadSession {
    * time the call claimed the session. Conditional writes match on it.
    */
   completionClaim?: string | null;
+  /** What a 'publishing' (and then 'completed') session publishes. */
+  completionPublication?: CompletionPublication | null;
   uploadSessionToken?: string | null;
   uploadSessionTokenHash?: string | null;
 }
+
+/**
+ * The commit record of an upload completion, written with the move to
+ * 'publishing' before the version or the file is written. `baseVersionId` is
+ * the file's version the publication replaces (null: it creates the file).
+ * `unusedKeys` are the session's objects the version does not use, deleted
+ * once the session is completed.
+ */
+export interface CompletionPublication {
+  versionId: string;
+  storageKey: string;
+  checksumSha256Base64: string | null;
+  baseVersionId: string | null;
+  unusedKeys: string[];
+  /** The call that completed the session. */
+  finishedBy?: string;
+}
+
+type PublishOutcome =
+  | { kind: 'completed'; storageKey: string }
+  | { kind: 'refused' }
+  | { kind: 'other'; current: UploadSession | null };
 
 // Upload completion serializes, through the process-wide serializer it shares
 // with import (see files/file-commit-lock.ts), the calls completing one upload
@@ -338,37 +363,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // A claim older than the completion timeout belongs to a completion that
   // crashed or stalled; another completion call may take the session over. A
   // stalled holder that resumes cannot undo what the call that took over did:
-  // it stitches into an object of its own (attemptStorageKey), moves the file
-  // only from the version it read (compare-and-set), refuses and completes the
-  // session only with writes conditional on its claim, and the unique versionId
-  // admits one version insert of the session.
+  // it stitches into an object of its own (attemptStorageKey), and it publishes
+  // or refuses only through a write conditional on its claim (the move to
+  // 'publishing', fenceRefusedSession), so one taken over writes no file or
+  // version row.
   function isStaleClaim(session: UploadSession): boolean {
     const claimedAtMs = Date.parse((session.completionClaim ?? '').split(' ')[0]);
     return Number.isNaN(claimedAtMs) || Date.now() - claimedAtMs >= completionTimeoutMs;
-  }
-
-  // How far the session's own version is published: 'version' once its
-  // fileVersions row exists, 'file' while only the files row points at it (the
-  // version insert failed, or has not run yet), null when neither. A session
-  // published either way is never released, aborted or discarded: the file
-  // may already point at its version. One with a 'version' row may be taken
-  // over at once: what remains is to mark it completed, which the holder's
-  // claim-matched write then cannot do.
-  async function publicationOf(session: UploadSession): Promise<'version' | 'file' | null> {
-    if (!session.completionVersionId) return null;
-    const version = await db.findOne({
-      model: 'fileVersions',
-      where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
-      namespace,
-    });
-    if (version) return 'version';
-    if (!session.fileId) return null;
-    const file = await db.findOne<{ currentVersionId: string }>({
-      model: 'files',
-      where: [{ field: 'fileId', operator: 'eq', value: session.fileId }],
-      namespace,
-    });
-    return file?.currentVersionId === session.completionVersionId ? 'file' : null;
   }
 
   // Writes `data` to the session only while it still has `expected`'s status
@@ -430,11 +431,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   }
 
   // Returns a claimed session to the status it was claimed from, after its
-  // completion failed before publishing anything, so the client can retry or
-  // abort at once. A failed release leaves the claim to lapse. The claim stays
-  // on the row: an earlier holder that was taken over may still be writing the
-  // session's key, so the next claim is a retake and stitches elsewhere.
-  async function releaseClaim(uploadSessionId: string, claim: string, status: UploadSession['status']): Promise<void> {
+  // completion failed before publishing anything (it never moved to
+  // 'publishing'), so the client can retry or abort at once. A failed release
+  // leaves the claim to lapse. The row keeps `keptClaim`: the claim whose
+  // stitched object may still exist (this one's, or the one it took over when
+  // it left no object of its own), so the next completion, an abort or the
+  // expiry sweep can find and delete that object, and the next claim is a
+  // retake that stitches elsewhere.
+  async function releaseClaim(
+    uploadSessionId: string,
+    claim: string,
+    status: UploadSession['status'],
+    keptClaim: string | null = claim,
+  ): Promise<void> {
     try {
       // Conditional and count-free: a no-op once the session left this claim.
       await db.updateMany({
@@ -444,31 +453,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           { field: 'status', operator: 'eq', value: 'completing' },
           { field: 'completionClaim', operator: 'eq', value: claim },
         ],
-        data: { status },
-        namespace,
-      });
-    } catch {
-      // The claim lapses after the completion timeout.
-    }
-  }
-
-  // Leaves a claim whose completion failed after (part of) the session's
-  // version may have been published open to the next completion call at once:
-  // its time is set to the epoch, so it reads as stale. The session stays
-  // 'completing', so no abort can end it, and its nonce stays, so the call
-  // taking it over still knows the object this claim stitched. A failed write
-  // leaves the claim to lapse after the completion timeout.
-  async function expireClaim(uploadSessionId: string, claim: string): Promise<void> {
-    const expired = [new Date(0).toISOString(), ...claim.split(' ').slice(1)].join(' ');
-    try {
-      await db.updateMany({
-        model: 'uploadSessions',
-        where: [
-          { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
-          { field: 'status', operator: 'eq', value: 'completing' },
-          { field: 'completionClaim', operator: 'eq', value: claim },
-        ],
-        data: { completionClaim: expired },
+        data: { status, completionClaim: keptClaim },
         namespace,
       });
     } catch {
@@ -524,21 +509,25 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Deletes a proxy object a completion stitched that the session's version
   // does not use (the completion lost its claim, failed or was refused). Only
-  // the session's own version could publish such a key, so it is kept only when
-  // that version (or a read failure, or a session from before per-session keys)
-  // leaves it in doubt.
-  async function deleteAttemptObject(session: UploadSession, key: string, target: StorageTargetName | undefined): Promise<void> {
-    if (session.uploadMode !== 'proxy' || !storage.deleteObject || !session.completionVersionId) return;
+  // the session's own publication could use such a key, so it is kept only when
+  // that publication or version (or a read failure, or a session from before
+  // per-session keys) leaves it in doubt. Returns whether it was deleted.
+  async function deleteAttemptObject(session: UploadSession, key: string, target: StorageTargetName | undefined): Promise<boolean> {
+    if (session.uploadMode !== 'proxy' || !storage.deleteObject || !session.completionVersionId) return false;
     try {
+      const now = await readSession(session.uploadSessionId);
+      if (now?.completionPublication?.storageKey === key) return false;
       const version = await db.findOne<{ storageKey: string }>({
         model: 'fileVersions',
         where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
         namespace,
       });
-      if (version?.storageKey === key) return;
+      if (version?.storageKey === key) return false;
       await storage.deleteObject({ key, target });
+      return true;
     } catch {
       // Left behind; the object is unreferenced.
+      return false;
     }
   }
 
@@ -710,12 +699,293 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  // Aborts the session's storage upload, deletes its proxy part objects and ends
-  // it as aborted; a refused session is ended by fenceRefusedSession instead.
+  // Aborts the session's storage upload, deletes its proxy part objects and the
+  // object its last claim stitched (released unpublished, see releaseClaim), and
+  // ends it as aborted; a refused session is ended by fenceRefusedSession instead.
   async function discardSessionUpload(session: UploadSession): Promise<void> {
     await abortStorageUpload(session);
     await deleteProxyTempPartObjects(session);
+    await deleteClaimStitch(session);
     await endSessionAborted(session.uploadSessionId);
+  }
+
+  // Deletes the object the session's last claim stitched, for a session no
+  // completion can publish any more (aborted, or deleted by the sweep).
+  async function deleteClaimStitch(session: UploadSession): Promise<void> {
+    if (!session.completionClaim) return;
+    const target = resolveStorageTarget(policies.get(session.policy) ?? {});
+    await deleteAttemptObject(session, attemptStorageKey(session, session.completionClaim), target);
+  }
+
+  // Finishes a 'publishing' session, whichever completion call runs it (the
+  // one that moved it there, or any later call of the session, also after
+  // that one stalled or crashed). Every step is idempotent, so calls may
+  // overlap: the version row (unique versionId) and the file pointing at it,
+  // then 'completed', which one call wins (it alone runs the effects, see
+  // finishCompletedSession). A replacement inserts its version first and then
+  // moves the file from the recorded base version (compare-and-set), so the
+  // file never points at a missing version and a call that resumes late never
+  // moves it back; a file another writer moved on meanwhile keeps that
+  // writer's version, and this one stays in its history. A new file is created
+  // first, the unique `files.fileId` deciding between rivals, so no version
+  // joins a file another principal created: a rival's file is then written
+  // only with the caller's write permission (the base is recorded again, under
+  // a renewed claim), otherwise the session is refused. Database steps only;
+  // the caller holds the fileId key.
+  async function rollForward(session: UploadSession, ctx: FileProviderContext): Promise<PublishOutcome> {
+    const { uploadSessionId } = session;
+    const fileId = session.fileId!;
+    const findFile = () => db.findOne<{ currentVersionId: string }>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      namespace,
+    });
+    for (;;) {
+      const publication = session.completionPublication!;
+      const claim = session.completionClaim ?? null;
+      const { versionId, baseVersionId } = publication;
+      const findOwnVersion = () => db.findOne<{ storageKey: string }>({
+        model: 'fileVersions',
+        where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+        namespace,
+      });
+      const ensureVersion = async () => {
+        if (await findOwnVersion()) return;
+        try {
+          await db.create({
+            model: 'fileVersions',
+            data: {
+              versionId,
+              fileId,
+              storageKey: publication.storageKey,
+              mimeType: session.mimeType,
+              size: session.size,
+              checksumSha256Base64: publication.checksumSha256Base64,
+              tenantId: session.tenantId,
+              createdAt: new Date().toISOString(),
+            },
+            namespace,
+          });
+        } catch (err) {
+          // Another call of this session inserted it first.
+          if (!(await findOwnVersion())) throw err;
+        }
+      };
+      // Creates the file at this version; a failed insert rethrows unless a
+      // row exists after all (another writer's, or this session's).
+      const createFile = async (): Promise<void> => {
+        const now = new Date().toISOString();
+        try {
+          await db.create({
+            model: 'files',
+            data: {
+              fileId,
+              currentVersionId: versionId,
+              ownerId: session.ownerId,
+              tenantId: session.tenantId,
+              visibility: policies.get(session.policy)?.visibility || 'private',
+              policy: session.policy,
+              mimeType: session.mimeType,
+              size: session.size,
+              name: session.fileName,
+              metadata: session.metadata ?? {},
+              createdAt: now,
+              updatedAt: now,
+            },
+            namespace,
+          });
+        } catch (err) {
+          if (!(await findFile())) throw err;
+        }
+      };
+
+      const file = await findFile();
+      let rewrite: Partial<UploadSession> | undefined;
+      if (file?.currentVersionId === versionId) {
+        await ensureVersion();
+      } else if (baseVersionId === null) {
+        if (!file) {
+          await createFile();
+          continue;
+        }
+        // Another writer created the file first.
+        rewrite = (await canWriteFileNow(fileId, ctx))
+          ? {
+              completionClaim: [new Date().toISOString(), ...(claim ?? '').split(' ').slice(1)].join(' '),
+              completionPublication: { ...publication, baseVersionId: file.currentVersionId },
+            }
+          : { status: 'refused' };
+      } else {
+        await ensureVersion();
+        if (!file) {
+          // Deleted meanwhile: the upload creates it again.
+          await createFile();
+          continue;
+        }
+        if (file.currentVersionId === baseVersionId) {
+          // Compare-and-set. A write that matched nothing (another writer
+          // moved the file first) throws or returns nothing on some adapters:
+          // the row read back decides, and a failed write of an unchanged row
+          // rethrows.
+          let failure: unknown;
+          try {
+            const moved = await db.update<unknown>({
+              model: 'files',
+              where: [
+                { field: 'fileId', operator: 'eq', value: fileId },
+                { field: 'currentVersionId', operator: 'eq', value: baseVersionId },
+              ],
+              data: {
+                currentVersionId: versionId,
+                size: session.size,
+                mimeType: session.mimeType,
+                metadata: session.metadata ?? {},
+                updatedAt: new Date().toISOString(),
+              },
+              namespace,
+            });
+            if (moved) continue;
+          } catch (err) {
+            failure = err;
+          }
+          if ((await findFile())?.currentVersionId === baseVersionId) {
+            throw failure ?? new Error(`Conditional update of file ${fileId} did not apply`);
+          }
+          continue;
+        }
+      }
+
+      if (rewrite) {
+        const target = rewrite;
+        const next = await updateSessionIf(
+          uploadSessionId,
+          { status: 'publishing', completionClaim: claim },
+          target,
+          (row) => row.status === (target.status ?? 'publishing') && row.completionClaim === (target.completionClaim ?? claim),
+        );
+        if (next.applied && target.status === 'refused') return { kind: 'refused' };
+        if (next.applied) {
+          session = { ...session, ...target };
+        } else if (next.current?.status === 'publishing') {
+          session = next.current;
+        } else {
+          return { kind: 'other', current: next.current };
+        }
+        continue;
+      }
+
+      // Calls finishing one publication share its claim, so the one that
+      // completes it is told by a token of its own.
+      const finishedBy = randomBytes(6).toString('hex');
+      const finished = await updateSessionIf(
+        uploadSessionId,
+        { status: 'publishing', completionClaim: claim },
+        { status: 'completed', completionVersionId: versionId, completionPublication: { ...publication, finishedBy } },
+        (row) => row.status === 'completed' && row.completionPublication?.finishedBy === finishedBy,
+      );
+      if (finished.applied) {
+        return { kind: 'completed', storageKey: (await findOwnVersion())?.storageKey || publication.storageKey };
+      }
+      if (finished.current?.status !== 'publishing') return { kind: 'other', current: finished.current };
+      session = finished.current;
+    }
+  }
+
+  // Finishes a 'publishing' session (rollForward, under the fileId key) and,
+  // in the call that completed it, runs the completion's effects.
+  async function publishSession(session: UploadSession, ctx: FileProviderContext): Promise<{ fileId: string; versionId: string }> {
+    const fileId = session.fileId!;
+    const publication = session.completionPublication!;
+    const outcome = await runSerialized(
+      fileCommitLock.fileKey(fileId),
+      () => rollForward(session, ctx),
+      { ...fileKeyOptions(session), keepWaiting: true },
+    );
+    if (outcome.kind === 'other') return lostClaimResult(session.uploadSessionId, outcome.current);
+    if (outcome.kind === 'refused') {
+      // Nothing was published: the rival's file never pointed at the version.
+      // Retake stitches are this session's alone; the session's own object
+      // and parts go as for any refusal.
+      const target = resolveStorageTarget(policies.get(session.policy) ?? {});
+      if (storage.deleteObject) {
+        for (const key of new Set([publication.storageKey, ...publication.unusedKeys])) {
+          if (!key.startsWith(`${session.storageKey}.c`)) continue;
+          await storage.deleteObject({ key, target }).catch(() => {});
+        }
+      }
+      await deleteRefusedUploads(session);
+      throw errors.forbidden({ fileId, operation: 'replace' });
+    }
+    await finishCompletedSession(session, fileId, publication, outcome.storageKey, ctx);
+    return { fileId, versionId: publication.versionId };
+  }
+
+  // The effects of a completion, run once by the call that completed the
+  // session: usage, the file:uploaded event and processing. Cleanup runs after
+  // the usage and the event and never stops them: a proxy part object that
+  // cannot be deleted keeps its part row, which the expiry sweep finishes.
+  async function finishCompletedSession(
+    session: UploadSession,
+    fileId: string,
+    publication: CompletionPublication,
+    storageKey: string,
+    ctx: FileProviderContext,
+  ): Promise<void> {
+    const { uploadSessionId } = session;
+    const { versionId } = publication;
+    if (quota) {
+      await quota.recordUsage({ principalId: ctx.principalId, tenantId: ctx.tenantId, bytes: session.size });
+    }
+
+    events.emit('file:uploaded', createFileUploadedEvent({
+      fileId,
+      versionId,
+      fileName: session.fileName,
+      size: session.size,
+      mimeType: session.mimeType,
+      ownerId: session.ownerId,
+      tenantId: session.tenantId || undefined,
+    }, ctx.requestId));
+
+    logger?.info('Upload session completed', { uploadSessionId, fileId, versionId, requestId: ctx.requestId });
+
+    try {
+      await deleteCompletedParts(session);
+      // The session's objects the version does not use (see the publication).
+      const target = resolveStorageTarget(policies.get(session.policy) ?? {});
+      for (const key of publication.unusedKeys) {
+        if (key === storageKey || !storage.deleteObject) continue;
+        await storage.deleteObject({ key, target }).catch(() => {});
+      }
+    } catch (err) {
+      logger?.warn('Upload session cleanup failed; the expiry sweep retries it', {
+        uploadSessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (processingService) {
+      await processingService.triggerProcessing({
+        fileId,
+        versionId,
+        storageKey,
+        mimeType: session.mimeType,
+        size: session.size,
+        fileName: session.fileName,
+        tenantId: session.tenantId || undefined,
+      }, ctx);
+    }
+  }
+
+  // Deletes a completed session's proxy part objects, then its part rows (kept
+  // while any object delete failed).
+  async function deleteCompletedParts(session: UploadSession): Promise<void> {
+    if (!(await deleteProxyTempPartObjects(session))) return;
+    await db.deleteMany({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      namespace,
+    });
   }
 
   const service = {
@@ -994,7 +1264,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         fileId: session.fileId ?? undefined,
         status: session.status === 'refused'
           ? 'aborted'
-          : session.status === 'completing' ? 'in_progress' : session.status,
+          : session.status === 'completing' || session.status === 'publishing' ? 'in_progress' : session.status,
         totalParts: session.totalParts,
         recordedParts,
         uploadedParts: recordedParts,
@@ -1020,7 +1290,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
-      if (session.status === 'completing') throw errors.uploadCompletionInProgress();
+      if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
 
@@ -1075,7 +1345,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
-      if (session.status === 'completing') throw errors.uploadCompletionInProgress();
+      if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
@@ -1169,7 +1439,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isAbortedStatus(session.status)) throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
-      if (session.status === 'completing') throw errors.uploadCompletionInProgress();
+      if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
@@ -1219,75 +1489,55 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Claim the session ('completing') before changing anything, so it
       // completes at most once and no abort runs alongside. A session another
-      // call holds (in another process: calls in this one run one at a time) is
-      // polled until that call ends, for at most SERIALIZED_WAIT_TIMEOUT_MS; its
-      // recorded result is then returned. A claim past the completion timeout,
-      // or one whose version is already published, is taken over.
+      // call holds (in another process: calls in this one run one at a time,
+      // see below) is polled until that call ends, for at most
+      // SERIALIZED_WAIT_TIMEOUT_MS; its recorded result is then returned. A
+      // claim past the completion timeout is taken over. A 'publishing'
+      // session is finished at once, even past its expiry: what it publishes
+      // is decided, and any completion call may finish it (publishSession).
       const waitUntil = Date.now() + SERIALIZED_WAIT_TIMEOUT_MS;
       let claim: string | undefined;
       let parts: Array<{ partNumber: number; etag: string }> = [];
       while (claim === undefined) {
         if (isAbortedStatus(session.status)) throw errors.uploadAborted();
         if (session.status === 'completed') return recordedResult(session);
+        if (session.status === 'publishing') return publishSession(session, ctx);
         if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
 
         let current: UploadSession | null;
-        // A session whose own version is already published only has to be
-        // marked completed: its parts and quota were admitted by the call that
-        // published it, and that call may be deleting its parts and recording
-        // its usage right now, so neither is checked again. One the file
-        // already points at (its version insert failed, or its holder is
-        // about to run it) is taken over once its claim is stale (a holder
-        // that failed there expires its claim at once); its quota was
-        // admitted too, and its parts are read once it is claimed.
-        const publication = session.status === 'completing' ? await publicationOf(session) : null;
-        if (session.status === 'completing' && publication !== 'version' && !isStaleClaim(session)) {
+        if (session.status === 'completing' && !isStaleClaim(session)) {
           if (Date.now() >= waitUntil) throw errors.uploadCompletionInProgress();
           await delay(COMPLETION_POLL_INTERVAL_MS);
           current = await readSession(uploadSessionId);
         } else {
-          parts = [];
-          if (publication === null) {
-            const admission = await admitCompletion(session, ctx);
-            if ('error' in admission) {
-              // Checked against a session another call may have moved on
-              // meanwhile (completed it, or published it): decide again from
-              // the session as it is now.
-              const fresh = await readSession(uploadSessionId);
-              if (!fresh) throw errors.sessionNotFound();
-              if (fresh.status === session.status && fresh.completionClaim === session.completionClaim) {
-                // A stale claim this call cannot take over is ended (claimed
-                // and released at once), so the owner can abort the session
-                // instead of waiting for it to expire. The stale holder may
-                // have moved on meanwhile: a lost end-claim decides again from
-                // the session as it is now (its recorded result once
-                // completed), and a won one whose version was published (or
-                // the file moved to it) in between finishes that version
-                // instead of releasing it.
-                if (session.status === 'completing') {
-                  const ended = await claimCompletion(session);
-                  if (!('claim' in ended)) {
-                    if (!ended.current) throw errors.sessionNotFound();
-                    session = ended.current;
-                    continue;
-                  }
-                  // Kept on a failed check: the claim lapses, never released
-                  // over a version that may be published.
-                  if ((await publicationOf(session)) !== null) {
-                    claim = ended.claim;
-                    parts = [];
-                    break;
-                  }
-                  await releaseClaim(uploadSessionId, ended.claim, 'in_progress');
-                }
-                throw admission.error;
-              }
+          const admission = await admitCompletion(session, ctx);
+          if ('error' in admission) {
+            // Checked against a session another call may have moved on
+            // meanwhile: decide again from the session as it is now.
+            const fresh = await readSession(uploadSessionId);
+            if (!fresh) throw errors.sessionNotFound();
+            if (fresh.status !== session.status || fresh.completionClaim !== session.completionClaim) {
               session = fresh;
               continue;
             }
-            parts = admission.parts;
+            // A stale claim this call cannot take over is ended (claimed and
+            // released at once, the row keeping the stale claim for the object
+            // it may have stitched), so the owner can abort the session instead
+            // of waiting for it to expire. A stale holder that moved on
+            // meanwhile (to 'publishing', or completed) makes the end-claim
+            // lost: decide again from the session as it is now.
+            if (session.status === 'completing') {
+              const ended = await claimCompletion(session);
+              if (!('claim' in ended)) {
+                if (!ended.current) throw errors.sessionNotFound();
+                session = ended.current;
+                continue;
+              }
+              await releaseClaim(uploadSessionId, ended.claim, 'in_progress', session.completionClaim ?? null);
+            }
+            throw admission.error;
           }
-
+          parts = admission.parts;
           const claimed = await claimCompletion(session);
           if ('claim' in claimed) {
             claim = claimed.claim;
@@ -1299,43 +1549,34 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         session = current;
       }
 
-      // A failure before the session's version is published returns the
-      // session to the status it was claimed from ('in_progress' for a claim
-      // taken over from a stale one, whose parts were all recorded), so it can
-      // be retried or aborted at once. Once the file points at the version (or
-      // that cannot be told), the session stays 'completing' with its claim
-      // expired: the next completion call takes it over at once and finishes
-      // the version, and no abort can end it meanwhile. A call that failed after
-      // its claim was taken over and the session completed returns the
-      // recorded result instead of its own failure. A proxy object it stitched
-      // and did not publish is deleted.
+      // A failure before the move to 'publishing' (this call writes nothing
+      // else) returns the session to the status it was claimed from
+      // ('in_progress' for a claim taken over from a stale one, whose parts
+      // were all recorded), so it can be retried or aborted at once, and
+      // deletes a proxy object it stitched. A failure after it leaves the
+      // session 'publishing' for the next completion call to finish; no abort,
+      // release or expiry ends it meanwhile. A call that failed after its claim
+      // was taken over and the session completed returns the recorded result.
       const claimedSession = session;
-      let published = false;
       let stitchedKey: string | undefined;
       const claimedTarget = (() => {
         const claimedPolicy = policies.get(claimedSession.policy);
         return claimedPolicy ? resolveStorageTarget(claimedPolicy) : undefined;
       })();
-      const discardStitched = async () => {
-        if (stitchedKey !== undefined) await deleteAttemptObject(claimedSession, stitchedKey, claimedTarget);
-      };
+      const discardStitched = async (): Promise<boolean> =>
+        stitchedKey === undefined || deleteAttemptObject(claimedSession, stitchedKey, claimedTarget);
       try {
-        return await completeClaimedSession(session, claim, parts, () => { published = true; });
+        return await completeClaimedSession(session, claim, parts);
       } catch (err) {
-        await discardStitched();
+        const discarded = await discardStitched();
         const now = await readSession(uploadSessionId).catch(() => undefined);
         if (now?.status === 'completed' && now.completionClaim !== claim) {
           return recordedResult(now);
         }
         if (now?.status === 'completing' && now.completionClaim === claim) {
-          // A files or version write that failed may have landed anyway.
-          const landed = published || (await publicationOf(claimedSession).catch(() => 'unknown' as const)) !== null;
-          if (landed) {
-            await expireClaim(uploadSessionId, claim);
-          } else {
-            const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
-            await releaseClaim(uploadSessionId, claim, releasedStatus);
-          }
+          const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
+          // A stitch left behind keeps this claim, so the next call deletes it.
+          await releaseClaim(uploadSessionId, claim, releasedStatus, discarded ? claimedSession.completionClaim ?? null : claim);
         }
         throw err;
       }
@@ -1344,7 +1585,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         session: UploadSession,
         claim: string,
         parts: Array<{ partNumber: number; etag: string }>,
-        markPublished: () => void,
       ): Promise<{ fileId: string; versionId: string }> {
         const policy = policies.get(session.policy);
         const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
@@ -1353,34 +1593,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const attemptKey = attemptStorageKey(session, claim);
         const predecessorKey = session.completionClaim ? attemptStorageKey(session, session.completionClaim) : undefined;
 
-        // An earlier attempt may have written this session's version and then failed
-        // before marking the session completed. Its object and rows are already
-        // published, so resume from that version instead of re-running storage
-        // completion or inserting the same unique versionId again.
-        let publishedVersion = session.completionVersionId
-          ? await db.findOne<{ fileId: string; versionId: string; storageKey: string }>({
-              model: 'fileVersions',
-              where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
-              namespace,
-            })
-          : null;
-        if (publishedVersion) markPublished();
-
-        // A call that took over a session the file already points at skipped
-        // the admission checks (they passed for the call that moved the file),
-        // so it reads the parts storage completion needs here.
-        if (!publishedVersion && parts.length !== session.totalParts) {
-          parts = await db.findMany<{ partNumber: number; etag: string }>({
-            model: 'uploadParts',
-            where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-            namespace,
-          });
-          if (parts.length !== session.totalParts) throw errors.uploadIncomplete();
-        }
-
-        const fileId = publishedVersion?.fileId || session.fileId || generateFileFnId('file');
+        const fileId = session.fileId || generateFileFnId('file');
         // Publish the version allocated at init, whose ID is part of the storage key.
-        // Sessions created before init allocated it have none, so mint one for them.
+        // Sessions created before init allocated it have none, so mint one for
+        // them; the move to 'publishing' records it before anything uses it.
         const versionId = session.completionVersionId || generateFileFnId('ver');
 
         const findFile = () => db.findOne<{ fileId: string; currentVersionId: string }>({
@@ -1388,70 +1604,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           where: [{ field: 'fileId', operator: 'eq', value: fileId }],
           namespace,
         });
-        const findOwnVersion = () => db.findOne<{ fileId: string; versionId: string; storageKey: string }>({
-          model: 'fileVersions',
-          where: [{ field: 'versionId', operator: 'eq', value: versionId }],
-          namespace,
-        });
         // A files row pointing at this session's own versionId was written by this
-        // session (another call of it may still be committing), never by a rival.
+        // session (as an earlier version of FileFn published), never by a rival.
         const isOwnRow = (file: { currentVersionId: string } | null) => file?.currentVersionId === versionId;
         const fileKey = fileCommitLock.fileKey(fileId);
-        // Moves the file from `fromVersionId` to this session's version, only if
-        // it still points there. Returns false when another writer moved it
-        // first; a write that failed while the row is unchanged rethrows.
-        const moveFileTo = async (fromVersionId: string): Promise<boolean> => {
-          let failure: unknown;
-          try {
-            const updated = await db.update<unknown>({
-              model: 'files',
-              where: [
-                { field: 'fileId', operator: 'eq', value: fileId },
-                { field: 'currentVersionId', operator: 'eq', value: fromVersionId },
-              ],
-              data: {
-                currentVersionId: versionId,
-                size: session.size,
-                mimeType: session.mimeType,
-                metadata: session.metadata ?? {},
-                updatedAt: new Date().toISOString(),
-              },
-              namespace,
-            });
-            if (updated) return true;
-          } catch (err) {
-            failure = err;
-          }
-          const file = await findFile();
-          if (isOwnRow(file)) return true;
-          if (file?.currentVersionId === fromVersionId) {
-            throw failure ?? new Error(`Conditional update of file ${fileId} did not apply`);
-          }
-          return false;
-        };
 
         // Refuse early, before any storage completion, when the file already exists
         // and the caller cannot write it (for example a session whose init ran
         // before another principal created the file). Nothing the session uploaded
-        // is kept, including a final object an interrupted attempt left. A session
-        // whose own commit is published or in flight skips this.
-        if (!publishedVersion && session.fileId) {
+        // is kept, including a final object an interrupted attempt left.
+        if (session.fileId) {
           const current = await findFile();
-          if (current && !isOwnRow(current)) {
-            // An earlier holder of the session may have published since this
-            // call read it, and a later writer may have moved the file on since:
-            // finish from that version.
-            publishedVersion = await findOwnVersion();
-            if (publishedVersion) {
-              markPublished();
-            } else if (!(await canWriteFileNow(fileId, ctx))) {
-              // Refused only while this call still holds the session: one
-              // whose claim was taken over refuses and deletes nothing.
-              if (!(await fenceRefusedSession(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
-              await abortStorageUpload(session);
-              await deleteRefusedUploads(session);
-              throw errors.forbidden({ fileId, operation: 'replace' });
-            }
+          if (current && !isOwnRow(current) && !(await canWriteFileNow(fileId, ctx))) {
+            // Refused only while this call still holds the session: one
+            // whose claim was taken over refuses and deletes nothing.
+            if (!(await fenceRefusedSession(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+            await abortStorageUpload(session);
+            await deleteRefusedUploads(session);
+            throw errors.forbidden({ fileId, operation: 'replace' });
           }
         }
 
@@ -1459,9 +1629,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // already running. A stuck one makes this call fail with the retryable
         // 409 while it has changed nothing; only a commit that starts during this
         // call's own storage step can keep it waiting below.
-        if (!publishedVersion) {
-          await runSerialized(fileKey, async () => {}, { ...fileKeyOptions(session), evictableAt: undefined });
-        }
+        await runSerialized(fileKey, async () => {}, { ...fileKeyOptions(session), evictableAt: undefined });
 
         // Finalize storage. A proxy stitch writes only this call's own object
         // (attemptKey), so a holder that stalled past the completion timeout
@@ -1471,9 +1639,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // completion assembles the same recorded parts whoever runs it; a call
         // that finds the upload already consumed by an earlier holder of the
         // session goes on from the object it left.
-        if (publishedVersion) {
-          // Storage completion already succeeded for this version.
-        } else if (
+        if (
           session.uploadMode === 'multipart-signed-url' &&
           getStorageCapabilities(storage, policyStorageTarget).multipart &&
           storage.completeMultipartUpload &&
@@ -1539,7 +1705,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
 
         // Validate size if supported
-        if (!publishedVersion && storage.statObject) {
+        if (storage.statObject) {
           try {
             const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
             if (stat.size !== session.size) {
@@ -1551,14 +1717,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
         }
 
-        const now = new Date().toISOString();
-        const metadata = session.metadata ?? {};
-
         // Check for deduplication
-        let finalStorageKey = publishedVersion?.storageKey || attemptKey;
+        let finalStorageKey = attemptKey;
         let checksumSha256Base64: string | null = null;
 
-        if (!publishedVersion && dedup && dedup.isEnabled()) {
+        if (dedup && dedup.isEnabled()) {
           const dedupResult = await dedup.computeAndCheckDuplicate(
             attemptKey,
             session.tenantId,
@@ -1570,124 +1733,59 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
           if (dedupResult.isDuplicate && dedupResult.existingStorageKey) {
             // Reuse existing storage key (reference to existing object). This
-            // call's own object is deleted once the session is completed
-            // (below), so a call that takes the session over after this one
-            // stalled or crashed still finds it.
+            // call's own object is deleted once the session is completed (it
+            // is in the publication's unusedKeys), so a call that takes the
+            // session over after this one stalled or crashed still finds it.
             finalStorageKey = dedupResult.existingStorageKey;
           }
         }
 
-        // Commit section: create the file or add a version to it. The first
-        // completion to insert the `files` row owns the file; init reserves nothing.
-        // Within this process the commit decisions per fileId run one at a time
-        // (only these database steps: storage I/O above and refusal deletes below
-        // run outside the key, so a completion stuck in storage blocks no other).
-        // That is the only guard on adapters without unique constraints
-        // (single-process only). Across processes the unique `files.fileId`
-        // constraint decides the winner. A call whose claim was taken over
-        // (it ran past the completion timeout) commits nothing.
-        const commitOutcome = publishedVersion
-          ? 'resumed'
-          : await runSerialized(fileKey, async (): Promise<'published' | 'recorded' | 'refused' | 'lost'> => {
-              const holder = await readSession(uploadSessionId);
-              if (holder?.status !== 'completing' || holder.completionClaim !== claim) return 'lost';
-              // An earlier holder of this session already published it.
-              if (await findOwnVersion()) return 'recorded';
+        // Publish. Under the fileId key (only database steps, see
+        // runSerialized above), decide against the file as it is now, refusing
+        // a file the caller cannot write, and move the session to 'publishing'
+        // with that decision recorded (completionPublication) before any file
+        // or version row is written. The move is conditional on this call's
+        // claim, so a call taken over (it ran past the completion timeout)
+        // writes nothing. From it on, the session is never released, aborted or
+        // expired, and any completion call finishes it (publishSession).
+        const unused = new Set([attemptKey]);
+        if (session.completionVersionId) {
+          // Sessions from before per-session keys may share their key.
+          unused.add(session.storageKey);
+          if (predecessorKey !== undefined) unused.add(predecessorKey);
+        }
+        unused.delete(finalStorageKey);
+        const publication: CompletionPublication = {
+          versionId,
+          storageKey: finalStorageKey,
+          checksumSha256Base64,
+          baseVersionId: null,
+          unusedKeys: [...unused],
+        };
+        const decision = await runSerialized(fileKey, async (): Promise<'publishing' | 'refused' | 'lost'> => {
+          const current = await findFile();
+          if (current && !isOwnRow(current) && !(await canWriteFileNow(fileId, ctx))) {
+            // Fenced under the key; its storage deletes run after release.
+            return (await fenceRefusedSession(uploadSessionId, claim)) ? 'refused' : 'lost';
+          }
+          publication.baseVersionId = current?.currentVersionId ?? null;
+          const moved = await updateSessionIf(
+            uploadSessionId,
+            { status: 'completing', completionClaim: claim },
+            { status: 'publishing', fileId, completionPublication: publication },
+            (row) => row.status !== 'completing' && row.completionClaim === claim && row.completionPublication?.versionId === versionId,
+          );
+          return moved.applied ? 'publishing' : 'lost';
+        }, { ...fileKeyOptions(session), keepWaiting: true });
 
-              // Point the file at this version. A row this session wrote itself
-              // skips straight to its version. Someone else's row (or a later
-              // version of it) is decided from the row as it is now, not from
-              // the checks at init or above, and moved only from the version
-              // read here (compare-and-set): a call that stalled anywhere in
-              // between, and was taken over, never moves the file back.
-              for (;;) {
-                const current = await findFile();
-                if (!current) {
-                  if (!(await holdsClaim(uploadSessionId, claim))) return 'lost';
-                  try {
-                    await db.create({
-                      model: 'files',
-                      data: {
-                        fileId,
-                        currentVersionId: versionId,
-                        ownerId: session.ownerId,
-                        tenantId: session.tenantId,
-                        visibility: policy?.visibility || 'private',
-                        policy: session.policy,
-                        mimeType: session.mimeType,
-                        size: session.size,
-                        name: session.fileName,
-                        metadata,
-                        createdAt: now,
-                        updatedAt: now,
-                      },
-                      namespace,
-                    });
-                    break;
-                  } catch (err) {
-                    // Lost the insert to another process: decide from the row it wrote.
-                    if (!(await findFile())) throw err;
-                    continue;
-                  }
-                }
-                if (isOwnRow(current)) break;
-                if (await findOwnVersion()) return 'recorded';
-                const writable = await canWriteFileNow(fileId, ctx);
-                // The check above may have taken any time: decide on the claim
-                // as it is now.
-                if (!(await holdsClaim(uploadSessionId, claim))) return 'lost';
-                if (!writable) {
-                  // Fenced under the key; its storage deletes run after release.
-                  return (await fenceRefusedSession(uploadSessionId, claim)) ? 'refused' : 'lost';
-                }
-                if (await moveFileTo(current.currentVersionId)) break;
-              }
-
-              // The file points at this version now: from here on the session
-              // is never released. Reads above (or the files write itself) may
-              // have taken any time, so the version is inserted only while this
-              // call still holds the session; one taken over inserts nothing
-              // and the call that took it over finishes the version.
-              markPublished();
-              if (!(await holdsClaim(uploadSessionId, claim))) return 'lost';
-              try {
-                await db.create({
-                  model: 'fileVersions',
-                  data: {
-                    versionId,
-                    fileId,
-                    storageKey: finalStorageKey,
-                    mimeType: session.mimeType,
-                    size: session.size,
-                    checksumSha256Base64,
-                    tenantId: session.tenantId,
-                    createdAt: now,
-                  },
-                  namespace,
-                });
-              } catch (err) {
-                // Another call of this session inserted the same version first.
-                if (await findOwnVersion()) return 'recorded';
-                throw err;
-              }
-              return 'published';
-            }, { ...fileKeyOptions(session), keepWaiting: true });
-
-        if (commitOutcome === 'lost') {
+        if (decision === 'lost') {
           await discardStitched();
-          return lostClaimResult(uploadSessionId);
+          const now = await readSession(uploadSessionId);
+          // Taken over and published by another call: help finish it.
+          if (now?.status === 'publishing') return publishSession(now, ctx);
+          return lostClaimResult(uploadSessionId, now);
         }
-        if (commitOutcome === 'published') markPublished();
-
-        if (commitOutcome === 'recorded') {
-          // An earlier holder published this version and lost its claim before
-          // marking the session completed; this call, the holder now, finishes
-          // the session (the earlier one deletes and emits nothing).
-          markPublished();
-          finalStorageKey = (await findOwnVersion())?.storageKey || finalStorageKey;
-        }
-
-        if (commitOutcome === 'refused') {
+        if (decision === 'refused') {
           // The session's own object is deleted (or kept for the sweep) here;
           // a retake's stitch only this call knows of.
           await deleteRefusedUploads(session);
@@ -1695,93 +1793,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           stitchedKey = undefined;
           throw errors.forbidden({ fileId, operation: 'replace' });
         }
-
-        // Complete the session while this call still holds it. Only the call that
-        // does so records usage, emits and triggers processing; one whose claim
-        // was taken over returns the session's state instead.
-        const finished = await updateSessionIf(
-          uploadSessionId,
-          { status: 'completing', completionClaim: claim },
-          { status: 'completed', fileId, completionVersionId: versionId },
-          (row) => row.status === 'completed' && row.completionClaim === claim,
+        return publishSession(
+          { ...session, status: 'publishing', fileId, completionClaim: claim, completionPublication: publication },
+          ctx,
         );
-        if (!finished.applied) {
-          // This call published the session's version, or lost the claim before
-          // its version insert; the call that took the session over completes
-          // it with the version published. Its object is deleted unless that
-          // version uses it.
-          await discardStitched();
-          if (finished.current?.status === 'completed') return recordedResult(finished.current);
-          if (finished.current?.status === 'completing') return { fileId, versionId };
-          return lostClaimResult(uploadSessionId, finished.current);
-        }
-
-        // Only the call that completed the session deletes its proxy part
-        // objects: every holder before may still need them.
-        await deleteProxyTempPartObjects(session);
-        await db.deleteMany({
-          model: 'uploadParts',
-          where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-          namespace,
-        });
-
-        // Delete the session's objects the published version does not use: its
-        // own copy when the version reuses an existing object (dedup), this
-        // call's stitch when an earlier holder's version was published, and the
-        // stitch of the claim this call took over. Nothing references them.
-        // Sessions from before per-session keys (no pre-allocated versionId) may
-        // share their key, so only this call's own object is deleted for them.
-        const unused = new Set([attemptKey]);
-        if (session.completionVersionId) {
-          unused.add(session.storageKey);
-          if (predecessorKey !== undefined) unused.add(predecessorKey);
-        }
-        unused.delete(finalStorageKey);
-        if (storage.deleteObject) {
-          for (const key of unused) {
-            try {
-              await storage.deleteObject({ key, target: policyStorageTarget });
-            } catch {
-              // Ignore deletion errors - storage cleanup is non-critical
-            }
-          }
-        }
-
-        // Record quota usage
-        if (quota) {
-          await quota.recordUsage({ principalId: ctx.principalId, tenantId: ctx.tenantId, bytes: session.size });
-        }
-
-        events.emit('file:uploaded', createFileUploadedEvent({
-          fileId,
-          versionId,
-          fileName: session.fileName,
-          size: session.size,
-          mimeType: session.mimeType,
-          ownerId: session.ownerId,
-          tenantId: session.tenantId || undefined,
-        }, ctx.requestId));
-
-        logger?.info('Upload session completed', {
-          uploadSessionId,
-          fileId,
-          versionId,
-          requestId: ctx.requestId,
-        });
-
-        if (processingService) {
-          await processingService.triggerProcessing({
-            fileId,
-            versionId,
-            storageKey: finalStorageKey,
-            mimeType: session.mimeType,
-            size: session.size,
-            fileName: session.fileName,
-            tenantId: session.tenantId || undefined,
-          }, ctx);
-        }
-
-        return { fileId, versionId };
       }
     },
 
@@ -1796,16 +1811,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // longer be claimed.
       for (;;) {
         if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-        if (session.status === 'completing') throw errors.uploadCompletionInProgress();
+        // Held by a completion, or publishing: a completion call finishes it.
+        if (session.status === 'completing' || session.status === 'publishing') {
+          throw errors.uploadCompletionInProgress();
+        }
         // Already ended. A refused session may still have objects to delete; its
         // row records them for the expiry sweep, so leave it in place.
         if (isAbortedStatus(session.status)) return;
-        // A session whose version is (partly) published is never aborted, even
-        // when an earlier release left it open: the file may point at the
-        // version. A completion call finishes it. No completion can publish
-        // it between this check and the write below without claiming it
-        // first, which the write's status condition excludes.
-        if ((await publicationOf(session)) !== null) throw errors.uploadCompletionInProgress();
 
         const ended = await updateSessionIf(
           uploadSessionId,
@@ -1824,14 +1836,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
     async cleanupExpiredSessions(): Promise<{ deletedSessions: number; abortedMultipart: number }> {
         const now = new Date().toISOString();
-        const expiredSessions = await db.findMany<UploadSession>({
+        // A 'publishing' session is finished by its next completion call, even
+        // past its expiry (the file may already point at its version), and a
+        // 'completing' one whose claim is live is still running: the sweep
+        // leaves both. A stale claim's holder writes nothing once the sweep
+        // deleted its row (see the conditional delete below).
+        const expiredSessions = (await db.findMany<UploadSession>({
             model: 'uploadSessions',
             where: [
                 { field: 'expiresAt', operator: 'lt', value: now },
                 { field: 'status', operator: 'ne', value: 'completed' }
             ],
             namespace
-        });
+        })).filter((session) => session.status !== 'publishing' && !(session.status === 'completing' && !isStaleClaim(session)));
 
         let deletedSessions = 0;
         let abortedMultipart = 0;
@@ -1875,7 +1892,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 continue;
             }
             // Only while it still has the status this sweep read: a session
-            // refused meanwhile keeps its row, the record of what to delete.
+            // refused meanwhile keeps its row, the record of what to delete,
+            // and so does one a completion moved on (to 'publishing' or
+            // 'completed'). An expired session is never claimed anew, so a
+            // completion of it that loses its row here writes nothing.
             const removed = await db.deleteMany({
                 model: 'uploadSessions',
                 where: [
@@ -1892,7 +1912,22 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
                 namespace
             });
+            // No completion can publish it now: delete what its last claim stitched.
+            if (session.status !== 'refused') await deleteClaimStitch(session);
             deletedSessions++;
+        }
+
+        // Part rows a completed session kept because a part object delete
+        // failed (see finishCompletedSession).
+        const partRows = await db.findMany<{ uploadSessionId: string }>({
+            model: 'uploadParts',
+            where: [],
+            select: ['uploadSessionId'],
+            namespace
+        });
+        for (const uploadSessionId of new Set(partRows.map((part) => part.uploadSessionId))) {
+            const session = await readSession(uploadSessionId);
+            if (session?.status === 'completed') await deleteCompletedParts(session);
         }
 
         return { deletedSessions, abortedMultipart };
@@ -1903,10 +1938,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // retried call never finalizes storage or refuses alongside another call of
   // the same session; it reads the result the earlier call recorded. Across
   // processes the session's 'completing' claim does the same (see
-  // completeSession). After the
-  // session has expired its key may be taken by a call that has waited out
-  // SERIALIZED_WAIT_TIMEOUT_MS: that call only reads the session and reports it
-  // expired. Sessions of one fileId run their storage steps concurrently (each
+  // completeSession). Once the call has run past the completion timeout (or
+  // the session has expired), its key may be taken by a call that has waited
+  // out SERIALIZED_WAIT_TIMEOUT_MS: that call finds the call's claim stale and
+  // takes the session over (or reports it expired), as a call in another
+  // process would. Sessions of one fileId run their storage steps concurrently (each
   // has its own storage key) and only their commit decision per fileId (see the
   // commit section) one at a time.
   const completeSessionNow = service.completeSession;
@@ -1922,8 +1958,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       return complete();
     }
     const expiresAtMs = Date.parse(session.expiresAt);
+    const staleAtMs = Date.now() + completionTimeoutMs;
     return runSerialized(`session\u0000${namespace}\u0000${uploadSessionId}`, complete, {
-      evictableAt: Number.isNaN(expiresAtMs) ? undefined : expiresAtMs,
+      evictableAt: Number.isNaN(expiresAtMs) ? staleAtMs : Math.min(expiresAtMs, staleAtMs),
     });
   };
 

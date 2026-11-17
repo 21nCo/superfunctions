@@ -12,7 +12,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | Column | Type | Notes |
 | --- | --- | --- |
 | `uploadSessionId` | string (PK) | |
-| `status` | string | `"pending" | "in_progress" | "completing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `refused` is a completion refused for permission. The status route reports them as `in_progress` and `aborted`. |
+| `status` | string | `"pending" | "in_progress" | "completing" | "publishing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `publishing` has a recorded publication that any completion call finishes; `refused` is a completion refused for permission. The status route reports `completing` and `publishing` as `in_progress` and `refused` as `aborted`. |
 | `policy` | string | |
 | `fileId` | string? | Set on completion. |
 | `fileName` | string | |
@@ -27,7 +27,8 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
-| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`), of the call that completed it, or of the last call that released it; a completion that failed after the file pointed at its version leaves its claim with the epoch as its time, so the next call takes it over at once. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`) or that moved it to `publishing`, or of the last call that stitched an object and released it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionPublication` | json? | Set with the move to `publishing`: `{ versionId, storageKey, checksumSha256Base64, baseVersionId, unusedKeys }`, what the completion publishes (`baseVersionId` is the file version it replaces, `null` for a new file). Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
