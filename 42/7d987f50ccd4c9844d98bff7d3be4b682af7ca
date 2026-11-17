@@ -1,0 +1,27 @@
+billfn/swift/README.md
+  s_99b1ab69d682d2::t_a5c23226a850cd 45-52
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_99b1ab69d682d2::t_fa6495fa3e3455 143-145,152-161,216-218,260-262,283-291,294-299,301-304
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_99b1ab69d682d2::t_42f57b552cd826 138-142,144,147,154-156,162-164,178-179,212,214-215,218,220,239,244
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_99b1ab69d682d2::t_7341fda3d43e48 264-315,565-568,577-578
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_99b1ab69d682d2::t_ca8119d2d0bfeb 228-229,234,236,238,240-242,246-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "427d987f50ccd4c9844d98bff7d3be4b682af7ca",
+  "prompts": {},
+  "sessions": {
+    "s_99b1ab69d682d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_99b1ab69d682d2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
