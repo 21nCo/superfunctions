@@ -183,14 +183,17 @@ export async function createDeviceCode(
       claimId: null,
       createdAt: now
     };
+    // Required order: each try reconciles a failed insert (its own row
+    // first, then the user code it collided on) before the next try, so the
+    // tries run one at a time.
     try {
-      await store.database.create({ model: DEVICE_CODE_MODEL, data: { ...record }, namespace: namespace(store) });
+      await store.database.create({ model: DEVICE_CODE_MODEL, data: { ...record }, namespace: namespace(store) }); // NOSONAR S9382: sequential by design (required order above)
       return { deviceCode, userCode };
     } catch (error) {
-      if ((await findBy(store, 'deviceCodeHash', record.deviceCodeHash))?.id === record.id) {
+      if ((await findBy(store, 'deviceCodeHash', record.deviceCodeHash))?.id === record.id) { // NOSONAR S9382: sequential by design (required order above)
         return { deviceCode, userCode };
       }
-      if (!(await findBy(store, 'userCodeHash', record.userCodeHash))) {
+      if (!(await findBy(store, 'userCodeHash', record.userCodeHash))) { // NOSONAR S9382: sequential by design (required order above)
         throw error;
       }
       lastError = error;
@@ -226,13 +229,18 @@ export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<v
   const exchanged = await store.database.findMany<DeviceCodeRecord>({
     model: DEVICE_CODE_MODEL, where: [due], limit: PRUNE_BATCH, namespace: namespace(store)
   });
+  // Required order: codes never exchanged are deleted first, so the batch
+  // holds exchanged rows. Each of those reads its grant and refresh tokens
+  // before it moves its own `pruneKey` or is deleted, both only while that
+  // key is unchanged. The rows go one at a time and are not batched, so a
+  // prune issues its reads and writes in sequence, at most PRUNE_BATCH rows.
   for (const row of exchanged) {
-    const until = row.grantId ? await refreshableUntil(store, row.grantId, now) : 0;
+    const until = row.grantId ? await refreshableUntil(store, row.grantId, now) : 0; // NOSONAR S9382: sequential by design (required order above)
     const where = [eq('id', row.id), eq('pruneKey', row.pruneKey)];
     if (until > now.getTime()) {
-      await store.database.updateMany({ model: DEVICE_CODE_MODEL, where, data: { pruneKey: timeKey(until) }, namespace: namespace(store) });
+      await store.database.updateMany({ model: DEVICE_CODE_MODEL, where, data: { pruneKey: timeKey(until) }, namespace: namespace(store) }); // NOSONAR S9382: sequential by design (required order above)
     } else {
-      await store.database.deleteMany({ model: DEVICE_CODE_MODEL, where, namespace: namespace(store) });
+      await store.database.deleteMany({ model: DEVICE_CODE_MODEL, where, namespace: namespace(store) }); // NOSONAR S9382: sequential by design (required order above)
     }
   }
 }
@@ -344,7 +352,7 @@ export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, no
     if (committed.includes(id)) {
       return { outcome };
     }
-    if (stored && !committed.includes(last.ids[last.ids.length - 1])) {
+    if (stored && !committed.includes(last.ids.at(-1)!)) {
       // So many polls committed since that neither its ID nor the state it read is left.
       return { outcome: 'unknown', retryAfterSeconds: retryAfter(stored, now, tooFast) };
     }
@@ -370,11 +378,6 @@ export function claimDecision(
   return claimIfUnset(store, DEVICE_CODE_MODEL, recordId, ['decidedAt'], data, undefined, 'decisionClaimId');
 }
 
-/**
- * Spends an approved device code with `claimId`, which commits the tokens
- * staged under it, and keeps the row until they expire; false when another
- * exchange already did.
- */
 /** The claim ID prefix that marks a code closed because it expired before its approval completed. */
 export const EXPIRED_CLAIM_PREFIX = 'odx';
 
@@ -387,6 +390,11 @@ export function closeExpiredDeviceCode(store: DeviceStore, recordId: string, now
   return claimIfUnset(store, DEVICE_CODE_MODEL, recordId, ['consumedAt'], { consumedAt: now }, claimId);
 }
 
+/**
+ * Spends an approved device code with `claimId`, which commits the tokens
+ * staged under it, and keeps the row until they expire; false when another
+ * exchange already did.
+ */
 export function claimDeviceCode(store: DeviceStore, recordId: string, now: Date, claimId: string): Promise<boolean> {
   // The tokens staged under `claimId` expire by then; the row backs them until it.
   const pruneKey = timeKey(now.getTime() + OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000);

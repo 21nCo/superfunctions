@@ -458,7 +458,7 @@ export async function verifyOAuthAccessToken(
     return null;
   }
   const active = await loadActiveToken(store, token, 'access', options.now?.() ?? new Date());
-  return active && active.record.resource === options.resource ? toAccessTokenInfo(active.record) : null;
+  return active?.record.resource === options.resource ? toAccessTokenInfo(active.record) : null;
 }
 
 /** A user's authorization of one client at one resource. */
@@ -506,8 +506,11 @@ export async function disconnectOAuthClient(
     namespace: namespace(store)
   });
   let revoked = 0;
+  // Required order: the grants are revoked only after the consent delete
+  // above, one at a time. A failure stops with the earlier grants revoked and
+  // leaves the rest live for a retry to find; they are not batched.
   for (const grant of grants) {
-    if (!grant.revokedAt && (await revokeGrant(store, grant.id, 'revoked', now))) {
+    if (!grant.revokedAt && (await revokeGrant(store, grant.id, 'revoked', now))) { // NOSONAR S9382: sequential by design (required order above)
       revoked += 1;
     }
   }
@@ -605,9 +608,12 @@ export async function recordConsent(
   const { now, scopes, ...consent } = input;
   const earlier = await findConsents(store, consent, consent.generation);
   const id = createIdentifier('ocs');
+  // Required order: the union row is inserted before any row it merges is
+  // deleted, so a failure part way never loses an approval. The deletes run
+  // one at a time after it; they are not batched.
   await insert(store, MODELS.consents, { ...consent, scopes: unionScopes(earlier, scopes), id, createdAt: now });
   for (const record of earlier) {
-    await deleteConsent(store, record.id);
+    await deleteConsent(store, record.id); // NOSONAR S9382: sequential by design (required order above)
   }
   return id;
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hashSecret } from 'authfn/core/sessions';
 import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken, type OAuthTokenRecord } from '../index.js';
 import { activeTokenState } from '../store.js';
 import { MEMOTRON, RFC6749_CLIENT, setupProvider } from './harness.js';
@@ -190,12 +191,16 @@ describe.each([['memory', false], ['SQL', true]])('token issuance commit point (
     it.each(Object.keys(endings) as (keyof typeof endings)[])('during which a %s completes is invalid_grant and leaves nothing active', async (ending) => {
       const provider = await setupProvider({ sql });
       let send: () => Promise<Response>;
+      // The code row, or the parent refresh token row, that the exchange spends.
+      let source: { model: string; hash: string };
       if (flow === 'code') {
         const code = (await provider.authorize()).searchParams.get('code')!;
         send = () => provider.exchange(code);
+        source = { model: 'oauth_provider_codes', hash: hashSecret(code) };
       } else {
         const issued = await provider.obtainTokens();
         send = () => provider.refresh(issued.refresh_token);
+        source = { model: 'oauth_provider_tokens', hash: hashSecret(issued.refresh_token) };
       }
       const staging = provider.control.arm('oauth_provider_tokens');
       const pending = send();
@@ -206,7 +211,19 @@ describe.each([['memory', false], ['SQL', true]])('token issuance commit point (
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
       expect(await activeRows(provider)).toEqual([]);
-      // The credential stays spent.
+      // The credential stays spent: its claim committed before the grant
+      // check refused the exchange, whatever the ended grant answers later.
+      const spent = await provider.database.findOne<{ id: string; claimId: string | null; rotatedAt?: Date | null }>({
+        model: source.model,
+        where: [{ field: flow === 'code' ? 'codeHash' : 'tokenHash', operator: 'eq', value: source.hash }],
+        namespace: 'authfn'
+      });
+      expect(spent?.claimId).toEqual(expect.any(String));
+      if (flow === 'refresh') {
+        expect(spent?.rotatedAt).toEqual(expect.any(Date));
+      }
+      const staged = (await tokenRecords(provider)).filter((row) => row.sourceId === spent?.id);
+      expect(staged.map((row) => row.issuingClaimId)).toEqual([spent?.claimId, spent?.claimId]);
       expect(await (await send()).json()).toMatchObject({ error: 'invalid_grant' });
     });
   });

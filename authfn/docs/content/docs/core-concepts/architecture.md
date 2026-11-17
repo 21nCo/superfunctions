@@ -111,4 +111,4 @@ The Node kernel and the Python kernel ship the same routes, envelopes, error cod
 
 Wire-level parity is enforced by the test suites (`authfn` snapshots its OpenAPI doc; the Python kernel diffs against the Node spec; the Swift client tests run against a synthetic Node server).
 
-If you're maintaining a port to a third language, the contract surface you need to implement is fully described under [Reference](../reference) — every route, every event, every error code, every envelope shape.
+If you're maintaining a port to a third language, the contract surface of the kernel and the plugins documented under [Plugins](../plugins) is described under [Reference](../reference) — their routes, events, error codes, and envelope shapes. `@authfn/oauth-provider` is documented in its [package README](https://github.com/21nCo/superfunctions/blob/dev/authfn/oauth-provider/README.md) instead.

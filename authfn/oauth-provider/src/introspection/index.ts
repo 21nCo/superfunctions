@@ -41,7 +41,7 @@ export function createIntrospectionRoute(runtime: OAuthProviderRuntime): Route {
 
       const params = await readFormBody(request);
       const active = await loadActiveToken(runtime.store, requireParam(params, 'token'), 'access', runtime.now());
-      if (!active || active.record.resource !== caller.resource) {
+      if (active?.record.resource !== caller.resource) {
         return oauthJson({ active: false });
       }
       const { record } = active;

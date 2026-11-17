@@ -319,10 +319,11 @@ describe('token endpoint', () => {
     const provider = await setupProvider();
     const code = (await provider.authorize()).searchParams.get('code')!;
 
+    const failed = { error: 'invalid_client', error_description: 'Client authentication failed' };
     const wrongSecret = await provider.exchange(code, {}, { authorization: `Basic ${btoa('s6BhdRkqt3:nope')}` });
     expect(wrongSecret.status).toBe(401);
-    expect(wrongSecret.headers.get('www-authenticate')).toContain('Basic');
-    expect(await wrongSecret.json()).toMatchObject({ error: 'invalid_client' });
+    expect(wrongSecret.headers.get('www-authenticate')).toBe('Basic realm="oauth"');
+    expect(await wrongSecret.json()).toEqual(failed);
 
     // RFC 6749 5.2: 401 and a challenge only for an Authorization header attempt.
     const noSecret = await provider.exchange(code, { client_id: RFC6749_CLIENT.clientId }, {} as { authorization: string });
@@ -334,7 +335,7 @@ describe('token endpoint', () => {
     for (const response of [noSecret, inBody, noClient]) {
       expect(response.status).toBe(400);
       expect(response.headers.get('www-authenticate')).toBeNull();
-      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      expect(await response.json()).toEqual(failed);
     }
 
     const otherClient = await provider.exchange(code, { client_id: MCP_HOST.clientId }, {} as { authorization: string });
@@ -376,8 +377,8 @@ describe('token endpoint', () => {
         for (const authorization of ['Bearer abc', 'Basic', 'Basic !!!', 'garbage', RFC6749_BASIC]) {
           const response = await call(form, { authorization });
           expect(response.status).toBe(401);
-          expect(response.headers.get('www-authenticate')).toContain('Basic');
-          expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+          expect(response.headers.get('www-authenticate')).toBe('Basic realm="oauth"');
+          expect(await response.json()).toEqual({ error: 'invalid_client', error_description: 'Client authentication failed' });
         }
       }
     }
