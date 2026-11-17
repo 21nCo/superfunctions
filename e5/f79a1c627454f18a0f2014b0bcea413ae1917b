@@ -1,0 +1,29 @@
+.github/workflows/swift.yml
+  s_032b64cd6af7d1::t_aec26f81779d98 147,154
+billfn/swift/README.md
+  s_032b64cd6af7d1::t_ff1fcac4040f72 60-63
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_032b64cd6af7d1::t_e7aa84fab051e4 25-31
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_032b64cd6af7d1::t_3b8e2bf0240dae 4,196-204
+billfn/swift/Tests/BillFnWebViewBridgeHostTests/BillFnStoreKitBridgeTests.swift
+  s_032b64cd6af7d1::t_f91e95389c846a 5,174-184
+billfn/swift/examples/embedded-web.swift
+  s_032b64cd6af7d1::t_b51d9ab327de2a 30-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5f79a1c627454f18a0f2014b0bcea413ae1917b",
+  "prompts": {},
+  "sessions": {
+    "s_032b64cd6af7d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_032b64cd6af7d1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
