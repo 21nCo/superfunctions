@@ -79,8 +79,119 @@ test("a change to a product's shared test support runs that product's package te
     execFileSync(process.execPath, ["scripts/ci-plan.mjs"], { cwd: root, env: { ...env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: path.join(root, ".git/event.json"), GITHUB_OUTPUT: outputFile }, stdio: ["ignore", "pipe", "pipe"] });
     const outputs = readFileSync(outputFile, "utf8");
     assert.match(outputs, /^full_js<<__CI_EOF__\nfalse\n__CI_EOF__$/m);
-    assert.match(outputs, /^js_test_filters<<__CI_EOF__\n--filter=\.\.\.\.\/devfn\/core --filter=\.\.\.\.\/devfn\/proxy\n__CI_EOF__$/m);
+    assert.match(outputs, /^run_devfn<<__CI_EOF__\ntrue\n__CI_EOF__$/m);
+    assert.match(outputs, /^devfn_test_filters<<__CI_EOF__\n--filter=\.\/devfn\/core --filter=\.\/devfn\/proxy\n__CI_EOF__$/m);
+    assert.match(outputs, /^has_js_test<<__CI_EOF__\nfalse\n__CI_EOF__$/m);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// DevFn tests (SFNS-293) run in their own serialized job: the plan gives that job the DevFn part of the JavaScript test
+// selection (a changed package and its dependents, or everything on a full run) and the JavaScript test step none of it.
+function devfnFixture() {
+  const root = mkdtempSync(path.join(tmpdir(), "ci-plan-devfn-"));
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
+    GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
+  };
+  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const put = (file, contents) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), contents);
+  };
+  for (const file of ["ci-plan.mjs", "ci-utils.mjs"]) put(`scripts/${file}`, readFileSync(new URL(file, import.meta.url), "utf8"));
+  put("package.json", JSON.stringify({ name: "fixture", private: true, workspaces: ["clifn/*", "devfn/*", "filefn/*", "otherfn/*"] }));
+  put("package-lock.json", "{}\n");
+  const pkg = (dir, name, dependencies = {}, devDependencies = {}) => {
+    put(`${dir}/package.json`, JSON.stringify({ name, scripts: { build: "tsc", test: "vitest run" }, dependencies, devDependencies }));
+    put(`${dir}/src/index.ts`, "export {};\n");
+  };
+  // devfn/core depends on devfn/config, which depends on clifn/core outside DevFn; otherfn/cli depends on devfn/core.
+  pkg("clifn/core", "@clifn/core");
+  pkg("devfn/config", "@devfn/config", { "@clifn/core": "*" });
+  pkg("devfn/core", "@devfn/core", {}, { "@devfn/config": "*" });
+  pkg("devfn/proxy", "@devfn/proxy");
+  pkg("filefn/core", "@filefn/core");
+  pkg("otherfn/cli", "@otherfn/cli", { "@devfn/core": "*" });
+  git("init", "--quiet", "--initial-branch=dev");
+  git("add", "."); git("commit", "--quiet", "-m", "base");
+  const base = git("rev-parse", "HEAD");
+  const plan = (file) => {
+    git("reset", "--quiet", "--hard", base);
+    put(file, `${readFileSync(path.join(root, file), "utf8")}\n`);
+    git("add", "."); git("commit", "--quiet", "-m", `change ${file}`);
+    put(".git/event.json", JSON.stringify({ before: base }));
+    const outputFile = path.join(root, ".git/outputs");
+    writeFileSync(outputFile, "");
+    execFileSync(process.execPath, ["scripts/ci-plan.mjs"], { cwd: root, env: { ...env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: path.join(root, ".git/event.json"), GITHUB_OUTPUT: outputFile }, stdio: ["ignore", "pipe", "pipe"] });
+    const outputs = readFileSync(outputFile, "utf8");
+    return Object.fromEntries([...outputs.matchAll(/^(\w+)<<__CI_EOF__\n([\s\S]*?)\n__CI_EOF__$/gm)].map(([, name, value]) => [name, value]));
+  };
+  return { root, plan };
+}
+
+const EXCLUDE_DEVFN = "--filter=!./devfn/config --filter=!./devfn/core --filter=!./devfn/proxy";
+
+test("a DevFn change selects DevFn tests for the DevFn job and leaves them out of the JavaScript test filters", () => {
+  const { root, plan } = devfnFixture();
+  try {
+    const outputs = plan("devfn/core/src/index.ts");
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.run_devfn, "true");
+    assert.equal(outputs.devfn_test_filters, "--filter=./devfn/core");
+    // The JavaScript job still tests otherfn/cli, which depends on devfn/core, and builds devfn/core.
+    assert.equal(outputs.has_js_test, "true");
+    assert.equal(outputs.js_test_filters, `--filter=..../devfn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_build_filters, "--filter=..../devfn/core");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a DevFn change with no dependent outside DevFn leaves the JavaScript test step nothing to run", () => {
+  const { root, plan } = devfnFixture();
+  try {
+    const outputs = plan("devfn/proxy/src/index.ts");
+    assert.equal(outputs.run_devfn, "true");
+    assert.equal(outputs.devfn_test_filters, "--filter=./devfn/proxy");
+    assert.equal(outputs.has_js_test, "false");
+    assert.equal(outputs.js_test_filters, "");
+    assert.equal(outputs.has_js_build, "true");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a change to a package DevFn depends on selects its DevFn dependents for the DevFn job", () => {
+  const { root, plan } = devfnFixture();
+  try {
+    const outputs = plan("clifn/core/src/index.ts");
+    assert.equal(outputs.run_devfn, "true");
+    assert.equal(outputs.devfn_test_filters, "--filter=./devfn/config --filter=./devfn/core");
+    assert.equal(outputs.has_js_test, "true");
+    assert.equal(outputs.js_test_filters, `--filter=..../clifn/core ${EXCLUDE_DEVFN}`);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a change outside DevFn and everything it depends on selects no DevFn tests", () => {
+  const { root, plan } = devfnFixture();
+  try {
+    const outputs = plan("filefn/core/src/index.ts");
+    assert.equal(outputs.run_devfn, "false");
+    assert.equal(outputs.devfn_test_filters, "");
+    assert.equal(outputs.has_js_test, "true");
+    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core ${EXCLUDE_DEVFN}`);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a lockfile-only change runs every DevFn package in the DevFn job and none in the JavaScript job", () => {
+  const { root, plan } = devfnFixture();
+  try {
+    const outputs = plan("package-lock.json");
+    assert.equal(outputs.full_js, "true");
+    assert.equal(outputs.run_devfn, "true");
+    assert.equal(outputs.devfn_test_filters, "--filter=./devfn/config --filter=./devfn/core --filter=./devfn/proxy");
+    assert.equal(outputs.has_js_test, "true");
+    assert.equal(outputs.js_test_filters, EXCLUDE_DEVFN);
+    // Build stays a full, unfiltered run in the JavaScript job.
+    assert.equal(outputs.js_build_filters, "");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
 // Pull request plans diff against the live merge base: GitHub never refreshes base.sha after the base moves.
