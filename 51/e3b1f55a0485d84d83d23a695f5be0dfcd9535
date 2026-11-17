@@ -1,0 +1,77 @@
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_f35b422006faeb::t_e3137c6afacb1a 130-131
+filefn/processing/container/package.json
+  s_f35b422006faeb::t_86c2ce45e075fa 1-29
+filefn/processing/container/src/tesseract-cli.ts
+  s_f35b422006faeb::t_63df3fad1c9964 1-66
+filefn/processing/container/tsconfig.json
+  s_f35b422006faeb::t_071bccfd0b99b1 1-16
+filefn/processing/container/tsconfig.test.json
+  s_f35b422006faeb::t_22de6e834309e9 1-9
+filefn/processing/container/vitest.config.ts
+  s_f35b422006faeb::t_2fb60a70783803 1-9
+package-lock.json
+  s_f35b422006faeb::t_50dda60a327d50 47,13348,13361-13412,29879-29882
+.github/workflows/filefn-processing-container.yml
+  s_f35b422006faeb::t_c63e23255ed78a 1-124
+filefn/docs/content/api/filefn.json
+  s_f35b422006faeb::t_0b4ae66d05ad11 1161-1259,1966-1980,2630-2639,2652-2662,2953-2955
+filefn/docs/content/docs/recipes/meta.json
+  s_f35b422006faeb::t_ed5126efd078f8 12
+filefn/docs/content/docs/recipes/processing-container.md
+  s_f35b422006faeb::t_4412fb65e6a34e 1-52
+filefn/docs/static/llms-full.txt
+  s_f35b422006faeb::t_a65cb426c05dd0 6574-6575,7121-7179
+filefn/docs/static/llms.txt
+  s_f35b422006faeb::t_09299a4f51a506 92
+filefn/processing/container/Dockerfile
+  s_f35b422006faeb::t_02a7aa18c9fb2d 1-49
+filefn/processing/container/Dockerfile.dockerignore
+  s_f35b422006faeb::t_7789cddedd4306 1-15
+filefn/processing/container/README.md
+  s_f35b422006faeb::t_6160f851122879 1-172
+filefn/processing/container/src/config.ts
+  s_f35b422006faeb::t_ecec0f50d3eb8b 1-106
+filefn/processing/container/src/main.ts
+  s_f35b422006faeb::t_349e2af2850752 1-136
+filefn/processing/container/src/server.ts
+  s_f35b422006faeb::t_bd184aef16dd8b 1-154
+filefn/processing/container/tests/config.test.ts
+  s_f35b422006faeb::t_c94d7b625a6f3e 1-73
+filefn/processing/container/tests/fixtures/not-a-factory.ts
+  s_f35b422006faeb::t_f489f96e524985 1
+filefn/processing/container/tests/fixtures/not-an-adapter.ts
+  s_f35b422006faeb::t_3699b57f38e260 1
+filefn/processing/container/tests/fixtures/shared-database.ts
+  s_f35b422006faeb::t_89f1f9f628dc50 1-11
+filefn/processing/container/tests/main.test.ts
+  s_f35b422006faeb::t_0185e6a166358e 1-75
+filefn/processing/container/tests/minio.integration.test.ts
+  s_f35b422006faeb::t_0e6dd273aac89c 1-188
+filefn/processing/container/tests/server.test.ts
+  s_f35b422006faeb::t_d71712aacfd09e 1-166
+filefn/processing/container/tests/tesseract-cli.test.ts
+  s_f35b422006faeb::t_ae939e259e706d 1-84
+filefn/processing/package.json
+  s_f35b422006faeb::t_0818fbeeb96fa2 3
+filefn/processing/vitest.config.ts
+  s_f35b422006faeb::t_4f4f8b8e48e5af 1,7-8
+package.json
+  s_f35b422006faeb::t_bb7ccc35db4386 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51e3b1f55a0485d84d83d23a695f5be0dfcd9535",
+  "prompts": {},
+  "sessions": {
+    "s_f35b422006faeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "679baf05-05c3-434b-8d43-45dfc1b3d785",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
