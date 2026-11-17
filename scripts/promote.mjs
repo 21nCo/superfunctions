@@ -57,8 +57,8 @@ export class PromoteError extends Error {
   }
 }
 
-function git(cwd, args, { input, allowFailure = false } = {}) {
-  const result = spawnSync(gitBinary(), args, { cwd, input, encoding: "utf8", maxBuffer: 1 << 30 });
+function git(cwd, args, { input, allowFailure = false, env } = {}) {
+  const result = spawnSync(gitBinary(), args, { cwd, input, env, encoding: "utf8", maxBuffer: 1 << 30 });
   if (result.error) throw result.error;
   if (result.status !== 0 && !allowFailure) {
     throw new PromoteError("git-failed", `git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
@@ -369,6 +369,15 @@ function checkOverlayEntries(candidates, { byDirectory }) {
       const found = project ? `the imported project there is ${describePython(project)}` : "no imported pyproject.toml declares a project there";
       pythonConflict(`${describePython(listed)} does not match its directory: ${found}; fix next first`);
     }
+    // python_release.py takes the tag name as the TARGETS key and needs it to equal project.name exactly.
+    requireReleaseSpelling(project, listed);
+  }
+}
+
+/** A released Python project's TARGETS name (`listed`) must be canonical and exactly its pyproject.toml project.name. */
+function requireReleaseSpelling(project, listed) {
+  if (project.name !== project.id || listed.name !== project.name) {
+    pythonConflict(`${describePython(project)} is released as ${describePython(listed)}: python_release.py needs both spelled exactly as the canonical name ${JSON.stringify(project.id)}; fix next first`);
   }
 }
 
@@ -383,7 +392,10 @@ function checkProjectsHere(here, { byName, byDirectory }) {
     const located = byDirectory.get(other.directory);
     if (named && named.directory !== other.directory) pythonConflict(`${describePython(named)} conflicts with ${describePython(other)}`);
     if (located && located.id !== other.id) pythonConflict(`${describePython(located)} conflicts with ${describePython(other)}, which holds another name in that directory`);
-    if (named && other.inTargets) inTargets.add(other.id);
+    if (named && other.inTargets) {
+      requireReleaseSpelling(named, other);
+      inTargets.add(other.id);
+    }
   }
   return inTargets;
 }
@@ -621,13 +633,23 @@ const ancestorsOf = (file) => {
  */
 function localEntries(root, paths) {
   const listed = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
-  const entries = listed.map((entry) => (entry.endsWith("/") ? entry.slice(0, -1) : entry));
-  for (const directory of new Set(paths.flatMap(ancestorsOf))) {
-    if (objectAt(root, "HEAD", directory) !== null) continue;
-    const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
-    if (stat && (!stat.isDirectory() || lstatSync(path.join(root, directory, ".git"), { throwIfNoEntry: false }))) entries.push(directory);
+  const entries = new Set(listed.map((entry) => (entry.endsWith("/") ? entry.slice(0, -1) : entry)));
+  for (const target of paths) {
+    // Outermost first, stopping at the first obstruction: nothing below a file, symlink or nested repository is
+    // reachable (lstat would fail with ENOTDIR), and the obstruction alone already collides with the path.
+    for (const directory of ancestorsOf(target)) {
+      const tracked = objectAt(root, "HEAD", directory);
+      if (tracked?.type === "tree") continue;
+      if (tracked !== null) break; // a tracked file above the path: the merge itself reports that conflict
+      const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
+      if (!stat) break;
+      if (!stat.isDirectory() || lstatSync(path.join(root, directory, ".git"), { throwIfNoEntry: false })) {
+        entries.add(directory);
+        break;
+      }
+    }
   }
-  return entries;
+  return [...entries];
 }
 
 /**
@@ -682,17 +704,48 @@ function writeEdits(root, { manifest, changed, plan }) {
   return edited;
 }
 
+const OVERWRITE_REFUSED = /would be (?:overwritten|removed) by (?:checkout|merge):\n((?:\s.*\n?)*)/;
+
+/** Runs a git command that writes the working tree; git's refusal to replace untracked or ignored files is a path-conflict. */
+function writeTree(root, args) {
+  // git's own messages are parsed below, so they must be untranslated.
+  const result = git(root, args, { allowFailure: true, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C" } });
+  const refused = OVERWRITE_REFUSED.exec(result.stderr);
+  if (refused) {
+    const blocked = lines(refused[1]).map((line) => line.trim()).join(", ");
+    throw new PromoteError("path-conflict", `${blocked} exists here as an untracked or ignored file and next's history would replace it; move it out of the way first`);
+  }
+  return result;
+}
+
 /**
- * Merges the imported history into the new branch, then stages the edits and commits them (with merge conflicts left
- * by --reconcile they stay staged for the operator's merge commit). Returns the conflicting paths.
+ * Creates the branch with the imported history merged in, then stages the edits and commits them (with merge
+ * conflicts left by --reconcile they stay staged for the operator's merge commit). Returns the conflicting paths.
+ *
+ * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
+ * attempt cannot bring them back. So a clean merge is built without touching the working tree (merge-tree and
+ * commit-tree) and the branch is created on it with checkout --no-overwrite-ignore, which refuses, atomically and
+ * before any change, to replace an untracked or ignored file, including one that appeared after refuseLocalFiles.
+ * Only a conflicting --reconcile merge needs git merge itself; refuseLocalFiles is repeated right before it.
  */
-function mergeAndCommit(root, { imported, label, paths, pin, reconcile, edits }) {
+function mergeAndCommit(root, { branch, imported, label, paths, files, pin, reconcile, edits }) {
   let conflicts = [];
   const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
-  const merged = git(root, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
-  if (merged.status !== 0) {
-    conflicts = lines(git(root, ["diff", "--name-only", "--diff-filter=U"]));
-    if (!reconcile || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+  const tree = git(root, ["merge-tree", "--write-tree", "--allow-unrelated-histories", "HEAD", imported], { allowFailure: true });
+  if (tree.status === 0) {
+    // commit-tree, unlike git merge, does not read commit.gpgSign (nor run commit hooks); sign as git merge would.
+    const sign = git(root, ["config", "--type=bool", "--get", "commit.gpgSign"], { allowFailure: true }).stdout.trim() === "true" ? ["-S"] : [];
+    const merge = git(root, ["commit-tree", ...sign, lines(tree.stdout)[0], "-p", "HEAD", "-p", imported, "-m", message]).trim();
+    const switched = writeTree(root, ["checkout", "-q", "--no-overwrite-ignore", "-b", branch, merge]);
+    if (switched.status !== 0) throw new PromoteError("git-failed", `checkout of the merge failed: ${switched.stderr.trim()}`);
+  } else if (tree.status === 1 && reconcile) {
+    git(root, ["checkout", "-q", "-b", branch]);
+    refuseLocalFiles(root, paths, files);
+    const merged = writeTree(root, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported]);
+    conflicts = merged.status === 0 ? [] : lines(git(root, ["diff", "--name-only", "--diff-filter=U"]));
+    if (merged.status !== 0 && conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+  } else {
+    throw new PromoteError("git-failed", `merge failed: ${(tree.stderr || tree.stdout).trim()}`);
   }
   const edited = writeEdits(root, edits);
   if (edited.length > 0) git(root, ["add", "--", ...edited]);
@@ -747,10 +800,12 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     if (imported !== head) throw new PromoteError("git-failed", `fetched ${imported}, expected ${head}`);
 
     const original = currentCheckout(root);
-    git(root, ["checkout", "-q", "-b", branch]);
     try {
+      // Branch creation is inside the recovery path: a failing post-checkout hook fails the checkout after the branch
+      // is created and checked out.
       const label = fn ?? paths.join(", ");
-      const conflicts = mergeAndCommit(root, { imported, label, paths, pin: pinned.sha, reconcile, edits: { manifest, changed, plan } });
+      const edits = { manifest, changed, plan };
+      const conflicts = mergeAndCommit(root, { branch, imported, label, paths, files: pinned.files, pin: pinned.sha, reconcile, edits });
       if (!reconcile) verifyImported(root, { paths, pinned, branch });
       return promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip });
     } catch (error) {

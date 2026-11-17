@@ -496,6 +496,107 @@ historyTest("a failure after the merge restores the original branch and removes 
   assert.equal(readFileSync(path.join(dev, "widgetfn/core/node_modules/dep.js"), "utf8"), "dep\n", "ignored files survive the undo");
 });
 
+/** Installs one hook script in a fresh hooks directory of `dev` and points core.hooksPath at it. */
+function useHook(dev, name, script) {
+  const hooks = path.join(dev, ".git", `hooks-${name}`);
+  write(hooks, { [name]: `#!/bin/sh\n${script}\n` });
+  chmodSync(path.join(hooks, name), 0o755);
+  git(dev, "config", "core.hooksPath", hooks);
+}
+
+historyTest("an ignored file created after the preflight is not overwritten, and a retry after moving it succeeds", () => {
+  const { dev } = fixture("late-ignored");
+  const head = git(dev, "rev-parse", "HEAD");
+  write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\n" });
+  // A git-filter-repo wrapper creates the ignored file while the history is filtered: after refuseLocalFiles, before
+  // the branch and its working tree are written.
+  const real = spawnSync("sh", ["-c", "command -v git-filter-repo"], { encoding: "utf8" }).stdout.trim();
+  const late = path.join(dev, "widgetfn/core/src/index.js");
+  const bin = path.join(scratch, "late-ignored-bin");
+  write(bin, { "git-filter-repo": `#!/bin/sh\nif [ "$1" != "--version" ]; then mkdir -p '${path.dirname(late)}'; printf 'late local\\n' > '${late}'; fi\nexec '${real}' "$@"\n` });
+  chmodSync(path.join(bin, "git-filter-repo"), 0o755);
+  const run = promoteCli(dev, ["widgetfn"], { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /^promote: path-conflict: widgetfn\/core\/src\/index\.js exists here as an untracked or ignored file/);
+  assert.equal(readFileSync(late, "utf8"), "late local\n");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+
+  rmSync(path.join(dev, "widgetfn"), { recursive: true });
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
+historyTest("a rejecting post-checkout hook on the new branch restores the original checkout and branch list", () => {
+  const { dev } = fixture("checkout-hook");
+  const head = git(dev, "rev-parse", "HEAD");
+  const branches = git(dev, "branch", "--list");
+  useHook(dev, "post-checkout", "exit 1");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--list"), branches);
+  assert.equal(git(dev, "status", "--porcelain"), "");
+  // The retry does not hit branch-exists.
+  git(dev, "config", "--unset", "core.hooksPath");
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+});
+
+historyTest("an ignored file several levels above a selected sub-path is a path-conflict, not an uncaught error", () => {
+  const { dev, next } = fixture("deep-obstruction");
+  const pin = commit(next, "deep uifn path", { "uifn/deep/a/b/c.js": "export const c = 1;\n" });
+  const head = git(dev, "rev-parse", "HEAD");
+  write(dev, { ".git/info/exclude": "uifn/deep\n", "uifn/deep": "local only\n" });
+  throwsCode(() => promote({ root: dev, paths: ["uifn/deep/a/b/c.js"], pin, source: next }), "path-conflict");
+  const run = promoteCli(dev, ["--path", "uifn/deep/a/b/c.js", "--pin", pin, "--source", next]);
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /^promote: path-conflict: uifn\/deep exists here as an untracked or ignored file/);
+  assert.equal(readFileSync(path.join(dev, "uifn/deep"), "utf8"), "local only\n");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain"), "");
+});
+
+historyTest("a released Python project must be spelled exactly as its canonical name in pyproject.toml, the overlay and TARGETS", () => {
+  const { dev, next } = fixture("python-spelling");
+  const head = git(dev, "rev-parse", "HEAD");
+  const variant = (message, project, overlay) =>
+    commit(next, message, {
+      "widgetfn/python/pyproject.toml": `[project]\nname = "${project}"\nversion = "0.0.1"\n`,
+      "python-release-packages.next.json": [{ name: overlay, path: "widgetfn/python" }],
+    });
+  const pins = [
+    variant("mixed-case project", "WidgetFn", "widgetfn"),
+    variant("mixed-case project and overlay", "WidgetFn", "WidgetFn"),
+    variant("underscore project", "widget_fn", "widget-fn"),
+    variant("underscore project and overlay", "widget_fn", "widget_fn"),
+    variant("dotted overlay", "widget-fn", "widget.fn"),
+  ];
+  for (const pin of pins) {
+    throwsCode(() => promote({ root: dev, fn: "widgetfn", pin, source: next }), "release-conflict");
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  }
+  // TARGETS here listing the imported project in another spelling is refused too.
+  const canonical = variant("canonical", "widget-fn", "widget-fn");
+  const targets = commit(dev, "TARGETS lists Widget_Fn", {
+    "scripts/python_release.py": PYTHON_RELEASE.replace('}\n\nOTHER', '    "Widget_Fn": "widgetfn/python",\n}\n\nOTHER'),
+  });
+  git(dev, "update-ref", "refs/remotes/origin/dev", targets);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", pin: canonical, source: next }), "release-conflict");
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+
+  // The canonical spelling everywhere is released under exactly the pyproject.toml name.
+  git(dev, "reset", "-q", "--hard", head);
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  promote({ root: dev, fn: "widgetfn", pin: canonical, source: next });
+  assert.match(readFileSync(path.join(dev, "scripts/python_release.py"), "utf8"), /^ {4}"widget-fn": "widgetfn\/python",$/m);
+});
+
 test("a missing git-filter-repo fails with an install hint", () => {
   const empty = mkdtempSync(path.join(scratch, "path-"));
   const run = spawnSync(process.execPath, [SCRIPT, "widgetfn", "--root", scratch], {
@@ -560,25 +661,27 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
 });
 
 test("Python identities: one order-independent check across overlay entries, imported pyproject.toml files and this checkout", () => {
-  const targets = new Map([["Alpha_FN", "alphafn/python"]]);
+  const targets = new Map([["alpha-fn", "alphafn/python"]]);
   const paths = ["alphafn"];
   const pyproject = (name, directory) => ({ name, file: `${directory}/pyproject.toml` });
-  const discovered = [pyproject("alpha_fn", "alphafn/python"), pyproject("Beta", "alphafn/beta"), pyproject("gamma", "alphafn/gamma")];
+  // gamma has no overlay entry, so it is not released and its spelling is not checked.
+  const discovered = [pyproject("alpha-fn", "alphafn/python"), pyproject("beta", "alphafn/beta"), pyproject("Gamma", "alphafn/gamma")];
   // Each overlay entry names the imported project in its directory; TARGETS already lists alphafn, so only beta moves.
   assert.deepEqual(pythonMoves({ overlay: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }], paths, targets, discovered }), {
-    names: ["alpha_fn", "Beta", "gamma"],
+    names: ["alpha-fn", "beta", "Gamma"],
     entries: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }],
     moves: [{ name: "beta", path: "alphafn/beta/" }],
   });
   // The same project in the same directory here (pyproject.toml and TARGETS) is the same identity.
   const existing = [pyproject("beta", "alphafn/beta"), pyproject("delta", "deltafn")];
-  assert.deepEqual(pythonMoves({ overlay: [{ name: "beta", path: "alphafn/beta" }], paths, targets: new Map([...targets, ["BETA", "alphafn/beta/"]]), discovered, existing }), {
-    names: ["alpha_fn", "Beta", "gamma"],
+  assert.deepEqual(pythonMoves({ overlay: [{ name: "beta", path: "alphafn/beta" }], paths, targets: new Map([...targets, ["beta", "alphafn/beta/"]]), discovered, existing }), {
+    names: ["alpha-fn", "beta", "Gamma"],
     entries: [{ name: "beta", path: "alphafn/beta" }],
     moves: [],
   });
   const beta = discovered.slice(1, 2);
   const twice = [{ name: "beta", path: "alphafn/beta" }, { name: "Beta", path: "alphafn/beta/" }];
+  const spelled = (name) => [pyproject(name, "alphafn/beta")];
   const refused = {
     "two imported projects with one canonical name": { discovered: [pyproject("new-pkg", "alphafn/a"), pyproject("New_Pkg", "alphafn/b")] },
     "overlay name differs from the pyproject.toml in its directory": { discovered: beta, overlay: [{ name: "other-beta", path: "alphafn/beta" }] },
@@ -588,7 +691,13 @@ test("Python identities: one order-independent check across overlay entries, imp
     "two identical overlay entries, reversed": { discovered: beta, overlay: [...twice].reverse() },
     "two overlay entries for one directory": { discovered: beta, overlay: [{ name: "beta", path: "alphafn/beta" }, { name: "beta-2", path: "alphafn/beta" }] },
     "a pyproject.toml here with the name at another path": { discovered: [pyproject("Delta", "alphafn/delta")], existing },
-    "TARGETS with the name at another path": { discovered: [pyproject("alpha_fn", "alphafn/py")] },
+    "TARGETS with the name at another path": { discovered: [pyproject("alpha-fn", "alphafn/py")] },
+    // python_release.py resolves a tag only when its name equals project.name exactly, and the overlay must be canonical.
+    "a mixed-case pyproject.toml released under the canonical name": { discovered: spelled("Beta"), overlay: [{ name: "beta", path: "alphafn/beta" }] },
+    "a mixed-case pyproject.toml and overlay entry": { discovered: spelled("Beta"), overlay: [{ name: "Beta", path: "alphafn/beta" }] },
+    "an underscore pyproject.toml released under the hyphenated name": { discovered: spelled("beta_x"), overlay: [{ name: "beta-x", path: "alphafn/beta" }] },
+    "a dotted overlay entry for a canonical pyproject.toml": { discovered: spelled("beta-x"), overlay: [{ name: "beta.x", path: "alphafn/beta" }] },
+    "TARGETS listing an imported project in another spelling": { discovered: [pyproject("alpha-fn", "alphafn/python")], targets: new Map([["Alpha_FN", "alphafn/python"]]) },
     "TARGETS with another name in the imported directory": { discovered: [pyproject("other", "alphafn/python")] },
     "a pyproject.toml here with another name in the imported directory": { discovered: [pyproject("zeta", "deltafn")], existing, targets: new Map() },
   };

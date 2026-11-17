@@ -16,10 +16,25 @@ This runbook lives under `scripts/` rather than `docs/`, because `docs/` is impo
    sync would then conflict with it.
 2. **Archive `.conduct/` on `next`** (D1). The script refuses a pin whose tree still holds `.conduct` files under the
    path. Older commits that held them are stripped from the imported history.
-3. **Check the history is publishable.** Every imported commit becomes public. Read `git log --stat <pin> -- <path>`
-   on `next` for credentials, customer data or private planning notes; the Public boundary check reads only the
-   final tree. If an old commit holds something private, do not promote with history: import the content without
-   history instead (D9).
+3. **Check the whole history is publishable.** Every imported commit and every file version in it becomes public,
+   including content deleted or overwritten before the pin; the Public boundary check reads only the final tree. On
+   `next`, read every historical patch, merge changes included, for credentials, customer data or private planning
+   notes (a file list such as `--stat` does not show contents):
+
+   ```sh
+   git log -p -m --text <pin> -- <path>...
+   ```
+
+   Then list the binary files the history ever held, and inspect each historical version of each one separately
+   (`git cat-file -p <blob> > <file>`, then open it):
+
+   ```sh
+   git log -m --numstat --format= <pin> -- <path>... | awk -F'\t' '$1 == "-" { print $3 }' | sort -u
+   git log -m --raw --no-abbrev --format= <pin> -- <binary path> | awk '{ print $4 }' | sort -u   # blob ids
+   ```
+
+   If any version holds something private, do not promote with history: import the content without history instead
+   (D9).
 4. Install `git-filter-repo`: `python3 -m pip install git-filter-repo` (or `brew install git-filter-repo`).
 
 ## Promote
@@ -45,7 +60,9 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   `pyproject.toml` files share a name; two `python-release-packages.next.json` entries under the paths share a name or
   a directory; an overlay entry does not name the imported `pyproject.toml` project in its own directory; or this
   branch (a `pyproject.toml` or a `TARGETS` entry) holds an imported name in another directory, or another name in an
-  imported project directory. Fix `next` first;
+  imported project directory; or a released project (an overlay entry under the paths, or a `TARGETS` entry here)
+  is not spelled exactly as its canonical name in both its `pyproject.toml` and the overlay or `TARGETS`
+  (`scripts/python_release.py` matches the tag name to `project.name` exactly). Fix `next` first;
 - a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
 - `git-filter-repo` is missing (it prints the install command).
 
