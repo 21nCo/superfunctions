@@ -1,6 +1,6 @@
 {
   "name": "@authfn/oauth-provider",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "OAuth 2.1 authorization server plugin for AuthFn",
   "repository": {
     "type": "git",
@@ -27,7 +27,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "authfn": "0.6.1",
+    "authfn": "0.6.2",
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
