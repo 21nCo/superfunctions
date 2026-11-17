@@ -8160,9 +8160,9 @@ For an interactive explorer, see the [API page](../../api/filefn).
 | --- | --- | --- | --- |
 | POST | `/upload/init` | Create a new upload session. | `FILEFN_INVALID_FILE_ID`, `FILEFN_FORBIDDEN`, `FILEFN_POLICY_NOT_FOUND`, `FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED`, `FILEFN_POLICY_MAX_SIZE_EXCEEDED`, `FILEFN_QUOTA_EXCEEDED`, `FILEFN_NO_SUPPORTED_UPLOAD_MODE`, `FILEFN_STORAGE_PATH_NOT_PER_VERSION`, `FILEFN_IDEMPOTENCY_CONFLICT`, `FILEFN_AUTH_REQUIRED`, `FILEFN_RATE_LIMITED`. |
 | GET | `/upload/:id/status` | Get session status (open, complete, aborted, expired). | `FILEFN_SESSION_NOT_FOUND`, `FILEFN_SESSION_TOKEN_REQUIRED`, `FILEFN_SESSION_TOKEN_INVALID`. |
-| POST | `/upload/:id/parts/:n/sign` | Sign a single part for direct PUT to storage. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_RATE_LIMITED`. |
-| PUT | `/upload/:id/parts/:n` | Upload part bytes through filefn (proxy mode). | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`. |
-| POST | `/upload/:id/parts/:n/complete` | Record a finished part's etag. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_INVALID_ETAG`, `FILEFN_PART_CONFLICT`. |
+| POST | `/upload/:id/parts/:n/sign` | Sign a single part for direct PUT to storage. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, `FILEFN_RATE_LIMITED`. |
+| PUT | `/upload/:id/parts/:n` | Upload part bytes through filefn (proxy mode). | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. |
+| POST | `/upload/:id/parts/:n/complete` | Record a finished part's etag. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_INVALID_ETAG`, `FILEFN_PART_CONFLICT`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. |
 | POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_FORBIDDEN`, `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
 | POST | `/upload/:id/abort` | Abort. Cleans up storage and DB rows. | `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` (a completion is running). Otherwise idempotent. |
 
@@ -8186,7 +8186,7 @@ An upload session completes at most once, also across FileFn processes sharing o
 - `POST /upload/:id/abort` and the part calls return 409 `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. An abort ends the session with the same kind of conditional write before deleting anything, so an abort and a completion never both proceed.
 - `GET /upload/:id/status` reports the session as `in_progress`.
 
-A completion that fails before it publishes the session's version returns the session to its earlier status, so it can be retried or aborted at once. One that fails after publishing keeps the claim: the next completion call takes the session over and only marks it completed. A claim older than `completionTimeoutSeconds` (default 900), such as one left by a crashed process, is taken over by the next completion call. A takeover that finds the session's object already finalized (its multipart upload completed, or its proxy parts stitched and deleted) publishes that object; one that fails before publishing returns the session to `in_progress`, so it can be retried or aborted. Each session writes its own storage key and version ID, and a call checks that it still holds its claim before each storage write and before its commit, so a stalled holder that resumes after a takeover writes and commits nothing and returns the session's result. A proxy stitch that fails part-way aborts its write instead of committing a partial object.
+A completion that fails before it publishes the session's version returns the session to its earlier status, so it can be retried or aborted at once. One that fails after publishing keeps the claim: the next completion call takes the session over and only marks it completed. A claim older than `completionTimeoutSeconds` (default 900), such as one left by a crashed process, is taken over by the next completion call; if that call is refused before claiming (for example by the quota), it ends the stale claim, so the session can be aborted. A multipart takeover that finds the upload already completed by the earlier holder publishes the object it left. A proxy upload keeps its part objects until the session is completed, and every completion after the session's first claim stitches them into an object of its own, so a stalled holder still writing its stitch never rewrites or truncates the published object; the call that completes the session deletes the parts and the objects it does not publish. A stalled holder that resumes after a takeover also moves the file only from the version it read (never back from a later one), and refuses or completes the session only with writes conditional on its claim, so it returns the session's result and changes nothing. A proxy stitch that fails part-way aborts its write instead of committing a partial object.
 
 ## Files
 
@@ -8304,7 +8304,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
-| `completionClaim` | string? | `<ISO time> <random>`: the claim of the completion call holding the session (`completing`) or of the call that completed it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before): the claim of the completion call holding the session (`completing`), of the call that completed it, or of the last call that released it. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
