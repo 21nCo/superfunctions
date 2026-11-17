@@ -589,6 +589,12 @@ historyTest("merge policies still apply: a rejecting pre-merge-commit hook or me
   throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
   unchanged();
   git(dev, "config", "--unset", "merge.verifySignatures");
+  // The same setting in this worktree's own configuration, which a new linked worktree does not inherit.
+  git(dev, "config", "extensions.worktreeConfig", "true");
+  git(dev, "config", "--worktree", "merge.verifySignatures", "true");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  git(dev, "config", "--worktree", "--unset", "merge.verifySignatures");
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
   assert.equal(git(dev, "rev-parse", "ORIG_HEAD"), head, "ORIG_HEAD is the commit before the merge, as git merge leaves it");

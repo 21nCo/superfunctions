@@ -734,6 +734,29 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
 }
 
 /**
+ * The environment for a git command in the scratch worktree, carrying this worktree's own settings (its config.worktree
+ * under extensions.worktreeConfig, such as merge.verifySignatures), which a new linked worktree does not inherit.
+ */
+function worktreeConfigEnv(root) {
+  const env = { ...process.env };
+  if (git(root, ["config", "--type=bool", "--get", "extensions.worktreeConfig"], { allowFailure: true }).stdout.trim() !== "true") return env;
+  const file = path.resolve(root, git(root, ["rev-parse", "--git-path", "config.worktree"]).trim());
+  if (!existsSync(file)) return env;
+  const entries = git(root, ["config", "--file", file, "--list", "-z"]).split("\0").filter(Boolean);
+  let count = Number(env.GIT_CONFIG_COUNT ?? 0);
+  for (const entry of entries) {
+    const split = entry.indexOf("\n");
+    const key = split === -1 ? entry : entry.slice(0, split);
+    if (key === "core.hookspath") continue; // passed resolved against this checkout
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = split === -1 ? "true" : entry.slice(split + 1);
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  return env;
+}
+
+/**
  * git merge replaces ignored files whatever its --overwrite-ignore setting (ort ignores it), and undoing a failed
  * attempt cannot bring them back. So git merge runs in a scratch worktree of this repository, with its configuration
  * and hooks (pre-merge-commit, commit-msg, merge.verifySignatures, signing), and its result reaches this working tree
@@ -755,7 +778,7 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
   try {
     git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", worktree, "HEAD"]);
     const mergeArgs = ["-c", `core.hooksPath=${hooks}`, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported];
-    const merged = git(worktree, mergeArgs, { allowFailure: true });
+    const merged = git(worktree, mergeArgs, { allowFailure: true, env: worktreeConfigEnv(root) });
     if (merged.status === 0) {
       checkout(git(worktree, ["rev-parse", "HEAD"]).trim());
       git(root, ["update-ref", "ORIG_HEAD", original]); // as git merge leaves it, for git reset --merge ORIG_HEAD
