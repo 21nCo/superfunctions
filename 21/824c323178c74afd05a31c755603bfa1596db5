@@ -1,0 +1,31 @@
+authfn/core/src/core/rate-limit.ts
+  s_96b9d8dd313b78::t_854f7920a2c231 95-99,101,110-112,119,124
+authfn/core/README.md
+  s_ace82070dcb8c7::t_1113f0c38c5896 17
+authfn/core/src/__tests__/rate-limit.test.ts
+  s_ace82070dcb8c7::t_b261755075aa59 195,211,214,220,222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21824c323178c74afd05a31c755603bfa1596db5",
+  "prompts": {},
+  "sessions": {
+    "s_96b9d8dd313b78": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ea23-4b6c-7242-a7b2-912c88df5cbc",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
