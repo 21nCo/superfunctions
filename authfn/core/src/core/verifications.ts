@@ -1,4 +1,5 @@
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { NotFoundError, type WhereClause } from '@superfunctions/db';
 import type {
   AuthFnRuntimeConfig,
   AuthFnDeliveryMessageResolver,
@@ -414,24 +415,18 @@ async function consumeOtpChallenge(
   challenge: AuthFnOtpChallengeRecord,
   consumedAt: Date
 ): Promise<AuthFnOtpChallengeRecord> {
-  // The affected-row count acknowledges the consumption. Adapter.update
-  // re-selects with the original where on some adapters (Prisma, MySQL), which
-  // no longer matches once consumedAt is set. attemptCount is not written here:
-  // the reservation already counted this attempt, and an absolute write could
-  // undo concurrent reservations.
-  const affected = await config.database.updateMany({
-    model: 'otp_challenges',
-    where: [
-      { field: 'id', operator: 'eq', value: challenge.id },
-      { field: 'consumedAt', operator: 'eq', value: null }
-    ],
-    data: {
+  // attemptCount is not written here: the reservation already counted this
+  // attempt, and an absolute write could undo concurrent reservations.
+  const applied = await updateOtpChallengeIfMatches(
+    config,
+    challenge.id,
+    [{ field: 'consumedAt', operator: 'eq', value: null }],
+    {
       consumedAt,
       updatedAt: consumedAt
-    },
-    namespace: namespace(config)
-  });
-  if (affected === 0) {
+    }
+  );
+  if (!applied) {
     throw new AuthFnOtpReplayedError('OTP code has already been used', {
       challengeId: challenge.id
     });
@@ -545,24 +540,19 @@ async function reserveOtpAttempt(
       throw otpAttemptLimitError(challenge.id, attemptCount);
     }
 
-    // The affected-row count acknowledges the reservation. Adapter.update is
-    // not used: on some adapters (Prisma, MySQL) it re-selects with the
-    // original where, which no longer matches after attemptCount changed, so
-    // a won write would look like a lost race.
-    const affected = await config.database.updateMany({
-      model: 'otp_challenges',
-      where: [
-        { field: 'id', operator: 'eq', value: challenge.id },
+    const reserved = await updateOtpChallengeIfMatches(
+      config,
+      challenge.id,
+      [
         { field: 'attemptCount', operator: 'eq', value: current.attemptCount },
         { field: 'consumedAt', operator: 'eq', value: null }
       ],
-      data: {
+      {
         attemptCount,
         updatedAt: now
-      },
-      namespace: namespace(config)
-    });
-    if (affected > 0) {
+      }
+    );
+    if (reserved) {
       return { challengeId: challenge.id, attemptCount };
     }
 
@@ -598,23 +588,83 @@ async function releaseOtpAttempt(
   updatedAt: Date
 ): Promise<void> {
   try {
-    await config.database.updateMany({
-      model: 'otp_challenges',
-      where: [
-        { field: 'id', operator: 'eq', value: reservation.challengeId },
+    await updateOtpChallengeIfMatches(
+      config,
+      reservation.challengeId,
+      [
         { field: 'attemptCount', operator: 'eq', value: reservation.attemptCount },
         { field: 'consumedAt', operator: 'eq', value: null }
       ],
-      data: {
+      {
         attemptCount: reservation.attemptCount - 1,
         updatedAt
-      },
-      namespace: namespace(config)
-    });
+      }
+    );
   } catch {
     // Keeping the reservation is the safe outcome; the caller rethrows the
     // error that ended the request.
   }
+}
+
+/**
+ * Applies a conditional write to one OTP challenge and reports whether this
+ * call's write applied. The acknowledgement comes from the write itself, never
+ * from a later read through the guarded fields, which the write changes:
+ *
+ * - Adapters whose `update` returns the row from the statement itself
+ *   (`capabilities.operations.returning`: memory, Drizzle and Kysely on SQLite,
+ *   D1 and Postgres) use `update`. A returned row acknowledges the write and
+ *   NotFound means it matched nothing. Only `id` is selected, because the
+ *   Kysely adapter compiles the default selection as `RETURNING "*"`, which
+ *   SQLite and Postgres reject.
+ * - Other adapters (Prisma, and MySQL on Drizzle or Kysely) re-select with the
+ *   original where after `update`, which no longer matches once a guarded
+ *   field changed. They use `updateMany`, and only a finite positive
+ *   affected-row count acknowledges the write. Anything else, including a
+ *   count the driver could not report, counts as not applied, which errs
+ *   towards the attempt limit.
+ */
+async function updateOtpChallengeIfMatches(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  challengeId: string,
+  guards: WhereClause[],
+  data: Record<string, unknown>
+): Promise<boolean> {
+  const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: challengeId }, ...guards];
+  if (config.database.capabilities?.operations?.returning === true) {
+    try {
+      const row = await config.database.update<{ id?: unknown }>({
+        model: 'otp_challenges',
+        where,
+        data,
+        select: ['id'],
+        namespace: namespace(config)
+      });
+      return row?.id === challengeId;
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  const affected = await config.database.updateMany({
+    model: 'otp_challenges',
+    where,
+    data,
+    namespace: namespace(config)
+  });
+  return Number.isFinite(affected) && affected > 0;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof NotFoundError
+    || Boolean(
+      error
+        && typeof error === 'object'
+        && (error as { name?: unknown }).name === 'NotFoundError'
+    );
 }
 
 function otpAttemptLimitError(challengeId: string, attemptCount: number): AuthFnOtpInvalidError {
