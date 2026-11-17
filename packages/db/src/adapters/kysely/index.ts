@@ -129,6 +129,16 @@ function applySelect(qb: any, select?: string[]): any {
   return qb.select(select);
 }
 
+/**
+ * Apply RETURNING to an insert/update builder (Postgres and SQLite).
+ * No select or an empty select returns every column; otherwise only the
+ * selected columns.
+ */
+function applyReturning(qb: any, select?: string[]): any {
+  if (!select || select.length === 0) return qb.returningAll();
+  return qb.returning(select);
+}
+
 export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
   if (!config?.db) throw new Error('kyselyAdapter: config.db is required');
   if (!config?.schema) throw new Error('kyselyAdapter: config.schema is required');
@@ -163,7 +173,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           }
           return data as T;
         } else {
-          qb = applySelect(qb.returning(select && select.length > 0 ? select : ['*' as any]), undefined);
+          qb = applyReturning(qb, select);
           const result = await qb.executeTakeFirst();
           return result as T;
         }
@@ -208,7 +218,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           if (!row) throw new NotFoundError(model, where);
           return row as T;
         } else {
-          qb = qb.returning(select && select.length > 0 ? select : ['*' as any]);
+          qb = applyReturning(qb, select);
           const result = await qb.executeTakeFirst();
           if (!result) throw new NotFoundError(model, where);
           return result as T;
@@ -225,7 +235,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         await qb.execute();
       },
 
-      async createMany<T = any>({ model, data }: CreateManyParams): Promise<T[]> {
+      async createMany<T = any>({ model, data, select }: CreateManyParams): Promise<T[]> {
         const table = resolveTable(model);
         let qb = db.insertInto(table).values(data);
 
@@ -233,7 +243,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           await qb.execute();
           return data as T[];
         } else {
-          qb = qb.returning(['*' as any]);
+          qb = applyReturning(qb, select);
           const results = await qb.execute();
           return results as T[];
         }
@@ -243,16 +253,18 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         const table = resolveTable(model);
         let qb = db.updateTable(table).set(data);
         qb = applyWhere(qb, where ?? []);
-        const result = await qb.execute();
-        return Number((result as any).numUpdatedRows ?? (result as any).numAffectedRows ?? 0);
+        // execute() resolves to an array of results; the UpdateResult carrying
+        // numUpdatedRows (a bigint) is the single result of executeTakeFirst().
+        const result = await qb.executeTakeFirst();
+        return Number(result?.numUpdatedRows ?? 0);
       },
 
       async deleteMany({ model, where }: DeleteManyParams): Promise<number> {
         const table = resolveTable(model);
         let qb = db.deleteFrom(table);
         qb = applyWhere(qb, where ?? []);
-        const result = await qb.execute();
-        return Number((result as any).numDeletedRows ?? (result as any).numAffectedRows ?? 0);
+        const result = await qb.executeTakeFirst();
+        return Number(result?.numDeletedRows ?? 0);
       },
 
       async upsert<T = any>({ model, where, create, update, select }: UpsertParams): Promise<T> {
@@ -269,11 +281,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
             : db.insertInto(table).values(create)
                 .onConflict((oc: any) => oc.column(conflictColumn).doNothing());
 
-          if (select && select.length > 0) {
-            qb = qb.returning(select);
-          } else {
-            qb = qb.returning(['*' as any]);
-          }
+          qb = applyReturning(qb, select);
           const result = await qb.executeTakeFirst();
           // doNothing returns no rows on conflict; fall back to findOne
           if (!result && !hasUpdate) {
@@ -335,7 +343,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
 
       async count({ model, where }: CountParams): Promise<number> {
         const table = resolveTable(model);
-        let qb = db.selectFrom(table).select(db.fn.count('*').as('count'));
+        let qb = db.selectFrom(table).select(db.fn.countAll().as('count'));
         qb = applyWhere(qb, where ?? []);
         const result = await qb.executeTakeFirst();
         return Number((result as any)?.count ?? 0);
@@ -355,7 +363,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       async isHealthy() {
         try {
           // Simple health check: select 1
-          const result = await db.selectFrom(resolveTable(Object.keys(schema)[0])).select(db.fn.count('*').as('count')).executeTakeFirst();
+          const result = await db.selectFrom(resolveTable(Object.keys(schema)[0])).select(db.fn.countAll().as('count')).executeTakeFirst();
           void result; // ignore result
           return { healthy: true, uptime: 0 };
         } catch {
