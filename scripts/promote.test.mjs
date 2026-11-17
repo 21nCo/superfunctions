@@ -529,6 +529,9 @@ historyTest("an ignored file created after the preflight is not overwritten, and
   const { dev } = fixture("late-ignored");
   const head = git(dev, "rev-parse", "HEAD");
   write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\n" });
+  // This worktree's own configuration names it as core.worktree; the scratch merge must still stay in its worktree.
+  git(dev, "config", "extensions.worktreeConfig", "true");
+  git(dev, "config", "--worktree", "core.worktree", dev);
   const late = path.join(dev, "widgetfn/core/src/index.js");
   const run = promoteCli(dev, ["widgetfn"], { env: lateFilterRepo("late-ignored", late, "late local") });
   assert.equal(run.status, 1, run.stderr);

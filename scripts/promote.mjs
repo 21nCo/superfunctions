@@ -736,10 +736,11 @@ function mergeAndCommit(root, { branch, imported, label, paths, pin, reconcile, 
 /**
  * The environment for git merge in the scratch worktree: this worktree's own settings (its config.worktree under
  * extensions.worktreeConfig, such as merge.verifySignatures), which a new linked worktree need not inherit, included
- * by absolute path so that relative includes inside it still resolve against that file.
+ * by absolute path so that relative includes inside it still resolve against that file. GIT_WORK_TREE keeps the merge in
+ * the scratch worktree even when that configuration sets core.worktree (to this checkout).
  */
-function worktreeConfigEnv(root) {
-  const env = { ...process.env };
+function worktreeConfigEnv(root, worktree) {
+  const env = { ...process.env, GIT_WORK_TREE: worktree };
   if (git(root, ["config", "--type=bool", "--get", "extensions.worktreeConfig"], { allowFailure: true }).stdout.trim() !== "true") return env;
   const file = path.resolve(root, git(root, ["rev-parse", "--git-path", "config.worktree"]).trim());
   if (!existsSync(file)) return env;
@@ -777,7 +778,7 @@ function mergeInScratch(root, { branch, imported, message, reconcile }) {
   try {
     git(root, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
     const mergeArgs = ["-c", `core.hooksPath=${hooks}`, "merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported];
-    const merged = git(worktree, mergeArgs, { allowFailure: true, env: worktreeConfigEnv(root) });
+    const merged = git(worktree, mergeArgs, { allowFailure: true, env: worktreeConfigEnv(root, worktree) });
     if (merged.status === 0) {
       checkout(git(worktree, ["rev-parse", "HEAD"]).trim());
       git(root, ["update-ref", "ORIG_HEAD", original]); // as git merge leaves it, for git reset --merge ORIG_HEAD
