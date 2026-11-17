@@ -3,7 +3,7 @@ import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/sto
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
-import type { QuotaProvider } from '../upload-sessions/service.js';
+import { FILE_DELETED_CLAIM, type QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
@@ -732,7 +732,8 @@ export function createFileService(config: FileServiceConfig) {
       // A completion call of a completed session may still be finishing its
       // publication (it overlapped the call that completed it) and create a
       // files or version row this delete removes. Each such call checks this
-      // mark after creating a row, and removes the row again.
+      // mark after creating a row, and removes the row again; the expiry sweep
+      // removes one it left (the claim records the session for the sweep).
       const completedSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
         where: [
@@ -747,7 +748,10 @@ export function createFileService(config: FileServiceConfig) {
         await db.update({
           model: 'uploadSessions',
           where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
-          data: { completionPublication: { ...publication, fileDeleted: true } },
+          data: {
+            completionClaim: FILE_DELETED_CLAIM,
+            completionPublication: { ...publication, fileDeleted: true, fileDeletedAt: new Date().toISOString() },
+          },
           namespace,
         });
       }

@@ -12,6 +12,7 @@ export function getSchema(options: FileFnSchemaOptions = {}): { version: number;
     fields: {
       fileId: { type: 'string', required: true, unique: true },
       currentVersionId: { type: 'string', required: true },
+      originVersionId: { type: 'string', required: false },
       ownerId: { type: 'string', required: true },
       tenantId: { type: 'string', required: false },
       visibility: { type: 'string', required: true },

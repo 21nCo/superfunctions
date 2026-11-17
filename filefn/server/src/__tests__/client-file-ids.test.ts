@@ -837,9 +837,14 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     const duplicateStalled = new Promise<void>((resolve) => { stalled = resolve; });
     let resume!: () => void;
     const resumed = new Promise<void>((resolve) => { resume = resolve; });
-    const database = createUniqueEnforcingDb({
+    let publishingSessionId: string | undefined;
+    const database: Adapter = createUniqueEnforcingDb({
       async afterFindOne(model, result) {
-        if (model === 'fileVersions' && result === null && holdNextVersionMiss) {
+        // The version check of the publication (not the one before the claim).
+        if (
+          model === 'fileVersions' && result === null && holdNextVersionMiss &&
+          (await rawSession(database, publishingSessionId!))?.status === 'publishing'
+        ) {
           holdNextVersionMiss = false;
           stalled();
           await resumed;
@@ -857,6 +862,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     const other = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, completionTimeoutSeconds, createFileFn: await loadProcess() });
     const staged = await app.stage(undefined, CLIENT_ID, 'anonymous capture');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+    publishingSessionId = staged.uploadSessionId;
 
     holdNextVersionMiss = true;
     const duplicate = other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { token: staged.token });
@@ -3106,5 +3112,234 @@ describe('upload completion fencing (FILE-19)', () => {
     expect(app.fixture.objects.has(key)).toBe(false);
     expect(usage.reduce((sum, bytes) => sum + bytes, 0)).toBe(0);
     expect(await versionRows(database, CLIENT_ID)).toHaveLength(0);
+  });
+
+  describe('final publication reset (PR #362 round 2)', () => {
+    /** A unique-enforcing db whose next files or fileVersions insert can be failed once. */
+    function failableDb() {
+      const shared = createUniqueEnforcingDb({});
+      let failModel: string | undefined;
+      const database = {
+        ...shared,
+        async create(params: Parameters<Adapter['create']>[0]) {
+          if (params.model === failModel) { failModel = undefined; throw new Error(`${params.model} insert failed`); }
+          return shared.create(params);
+        },
+      } as Adapter;
+      return { shared, database, failNext: (model: string) => { failModel = model; } };
+    }
+    const currentOf = async (db: Adapter) => (await fileRows(db, CLIENT_ID))[0]?.currentVersionId;
+    const sessionVersion = async (db: Adapter, id: string) => ((await rawSession(db, id)) as unknown as { completionVersionId: string }).completionVersionId;
+    const versionIds = async (db: Adapter) => (await versionRows(db, CLIENT_ID)).map((row) => row.versionId);
+
+    // publication-rolls-back-later-version
+    it('a crashed new-file publication retried after a later replacement keeps the later version current and joins the history', async () => {
+      const { database, failNext } = failableDb();
+      const app = createApp({ mode: 'multipart', database });
+      const first = await app.stage('user_a', CLIENT_ID, 'first');
+      const v1 = await sessionVersion(database, first.uploadSessionId);
+      failNext('fileVersions');
+      await expect(first.complete()).rejects.toThrow('fileVersions insert failed');
+      expect(await currentOf(database)).toBe(v1);
+      const second = await app.stage('user_a', CLIENT_ID, 'second');
+      const done2 = await second.complete();
+      expect(done2.status).toBe(200);
+      const v2 = done2.json.data.versionId;
+
+      const retry = await first.complete();
+      expect(retry.status).toBe(200);
+      expect(retry.json.data.versionId).toBe(v1);
+      expect(await currentOf(database)).toBe(v2);
+      expect((await versionIds(database)).sort()).toEqual([v1, v2].sort());
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('second');
+      expect((await rawSession(database, first.uploadSessionId))!.status).toBe('completed');
+    });
+
+    // publication-base-rewrite-claim-collision (pullfrog PRRT_kwDOP-e7KM64iNpl)
+    it('overlapping base rewrites within one millisecond never move the file off a later writer\'s version', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-11-17T12:00:00.000Z'));
+        const { shared, database, failNext } = failableDb();
+        const storageFixture = createStorage('multipart');
+        const p0 = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+        const bFilesRead = stallGate();
+        const bAfterRewrite = stallGate();
+        const aAfterRewrite = stallGate();
+        const isBaseRewrite = (p: Parameters<Adapter['update']>[0]) =>
+          p.model === 'uploadSessions' && !!(p.data as { completionPublication?: unknown }).completionPublication && (p.data as { status?: unknown }).status === undefined;
+        // Each pauses after its rewrite attempt, whether it applied or not.
+        const dbA = { ...shared, async update(p: Parameters<Adapter['update']>[0]) { try { return await shared.update(p); } finally { await aAfterRewrite.at(isBaseRewrite(p)); } } } as Adapter;
+        const dbB = {
+          ...shared,
+          async findOne(p: Parameters<Adapter['findOne']>[0]) { await bFilesRead.at(p.model === 'files'); return shared.findOne(p); },
+          async update(p: Parameters<Adapter['update']>[0]) { try { return await shared.update(p); } finally { await bAfterRewrite.at(isBaseRewrite(p)); } },
+        } as Adapter;
+        const pA = createApp({ mode: 'multipart', database: dbA, storageFixture, createFileFn: await loadProcess() });
+        const pB = createApp({ mode: 'multipart', database: dbB, storageFixture, createFileFn: await loadProcess() });
+
+        const original = await p0.stage('user_a', CLIENT_ID, 'original-old');
+        const v0 = await sessionVersion(shared, original.uploadSessionId);
+        const rival1 = await p0.stage('user_a', CLIENT_ID, 'rival-1');
+        const rival2 = await p0.stage('user_a', CLIENT_ID, 'rival-2');
+        failNext('files');
+        await expect(original.complete()).rejects.toThrow('files insert failed');
+        const claimC = (await rawSession(shared, original.uploadSessionId))!.completionClaim;
+        expect((await rawSession(shared, original.uploadSessionId))!.status).toBe('publishing');
+        expect((await rival1.complete()).status).toBe(200);
+
+        bFilesRead.arm();
+        const B = pB.call('POST', `/upload/${original.uploadSessionId}/complete`, { user: 'user_a' });
+        await bFilesRead.reached;
+        aAfterRewrite.arm();
+        const A = pA.call('POST', `/upload/${original.uploadSessionId}/complete`, { user: 'user_a' });
+        await aAfterRewrite.reached;
+        expect((await rawSession(shared, original.uploadSessionId))!.completionClaim).not.toBe(claimC);
+        const r2 = await rival2.complete();
+        expect(r2.status).toBe(200);
+        const V2 = r2.json.data.versionId;
+        bAfterRewrite.arm();
+        bFilesRead.resume();
+        await bAfterRewrite.reached;
+        aAfterRewrite.resume();
+        const a = await A;
+        bAfterRewrite.resume();
+        const b = await B;
+
+        expect(a.status).toBe(200);
+        expect(b.status).toBe(200);
+        expect(a.json.data.versionId).toBe(v0);
+        expect(b.json.data.versionId).toBe(v0);
+        expect(await currentOf(shared)).toBe(V2);
+        expect(await versionIds(shared)).toContain(v0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // expired-completing-session-loses-upload: what base f34442366 left after a
+    // crash between its files insert and its version insert.
+    async function legacyCrashState(options: { status?: 'in_progress' | 'completing' } = {}) {
+      const { shared, database, failNext } = failableDb();
+      const storageFixture = createStorage('multipart');
+      const app = createApp({ mode: 'multipart', database, storageFixture });
+      const staged = await app.stage('user_a', CLIENT_ID, 'legacy');
+      const v = await sessionVersion(shared, staged.uploadSessionId);
+      failNext('fileVersions');
+      await expect(staged.complete()).rejects.toThrow('fileVersions insert failed');
+      expect(await currentOf(shared)).toBe(v);
+      await setSession(shared, staged.uploadSessionId, {
+        status: options.status ?? 'in_progress',
+        completionClaim: options.status === 'completing' ? `${new Date(Date.now() - 901_000).toISOString()} n0` : null,
+        completionPublication: null,
+      });
+      return { shared, storageFixture, app, staged, v };
+    }
+
+    it('the expiry sweep finishes an old partly published session instead of deleting it', async () => {
+      const { shared, app, staged, v } = await legacyCrashState();
+      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('completed');
+      expect(await versionIds(shared)).toContain(v);
+      const retry = await staged.complete();
+      expect(retry.status).toBe(200);
+      expect(retry.json.data.versionId).toBe(v);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('legacy');
+    });
+
+    for (const status of ['in_progress', 'completing'] as const) {
+      it(`an old partly published ${status} session is finished without quota or parts, and an abort gets 409`, async () => {
+        const { shared, storageFixture, staged, v } = await legacyCrashState({ status });
+        const usage: number[] = [];
+        const refusing: QuotaProvider = {
+          async checkQuota() { return { allowed: false, current: 10, limit: 10 }; },
+          async recordUsage(input) { usage.push(input.bytes); },
+        };
+        const other = createApp({ mode: 'multipart', database: shared, storageFixture, quota: refusing, createFileFn: await loadProcess() });
+        await shared.deleteMany({ model: 'uploadParts', where: [{ field: 'uploadSessionId', operator: 'eq', value: staged.uploadSessionId }], namespace: 'filefn' });
+
+        const abort = await other.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a' });
+        expect(abort.status).toBe(409);
+        // An in_progress one is adopted as a publication; a completing one is held.
+        expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe(status === 'in_progress' ? 'publishing' : 'completing');
+        const retry = await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' });
+        expect(retry.status).toBe(200);
+        expect(retry.json.data.versionId).toBe(v);
+        expect(usage).toEqual(['legacy'.length]);
+        expect(await versionIds(shared)).toEqual([v]);
+        expect(await other.readBytes(CLIENT_ID, 'user_a')).toBe('legacy');
+      });
+    }
+
+    // stale-completion-writes-after-claim-loss residual
+    function lateInsertSetup(sessionReadFailures: number) {
+      const { shared, database, failNext } = failableDb();
+      const storageFixture = createStorage('multipart');
+      const stall = stallGate();
+      let failReads = 0;
+      const dbH = {
+        ...shared,
+        async create(p: Parameters<Adapter['create']>[0]) {
+          await stall.at(p.model === 'files');
+          const r = await shared.create(p);
+          if (p.model === 'files') failReads = sessionReadFailures;
+          return r;
+        },
+        async findOne(p: Parameters<Adapter['findOne']>[0]) {
+          if (failReads > 0 && p.model === 'uploadSessions') { failReads--; throw new Error('injected session read failure'); }
+          return shared.findOne(p);
+        },
+      } as Adapter;
+      return { shared, database, failNext, storageFixture, stall, dbH };
+    }
+
+    for (const readFailures of [1, 3]) {
+      it(`a write in flight after the session completed and its file was deleted never resurrects the file${readFailures === 3 ? ' (its check failing: the sweep removes it)' : ''}`, async () => {
+        const { shared, database, failNext, storageFixture, stall, dbH } = lateInsertSetup(readFailures);
+        const p0 = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+        const pH = createApp({ mode: 'multipart', database: dbH, storageFixture, createFileFn: await loadProcess() });
+        const pS = createApp({ mode: 'multipart', database: shared, storageFixture, createFileFn: await loadProcess() });
+        const staged = await p0.stage('user_a', CLIENT_ID, 'deleted later');
+        failNext('files');
+        await expect(staged.complete()).rejects.toThrow('files insert failed');
+        stall.arm();
+        const H = pH.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }).catch((err: unknown) => ({ status: -1, json: String(err) }));
+        await stall.reached;
+        expect((await pS.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(200);
+        expect((await pS.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+        stall.resume();
+        const h = await H;
+
+        if (readFailures === 1) {
+          expect(h.status).toBe(200);
+        } else {
+          // The check could not be read: the row stays until the sweep.
+          expect(h.status).toBe(-1);
+          expect(await fileRows(shared, CLIENT_ID)).toHaveLength(1);
+          await pS.fileFn.services.uploads.cleanupExpiredSessions();
+        }
+        expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
+        expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
+      });
+    }
+
+    it('the sweep stops checking a deleted file\'s publication once no completion call of it can still be running', async () => {
+      const database = memoryAdapter();
+      const app = createApp({ mode: 'multipart', database });
+      const staged = await app.stage('user_a', CLIENT_ID, 'deleted');
+      expect((await staged.complete()).status).toBe(200);
+      expect((await app.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+      expect((await rawSession(database, staged.uploadSessionId))!.completionClaim).toBe('file-deleted');
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect((await rawSession(database, staged.uploadSessionId))!.completionClaim).toBe('file-deleted');
+      const session = (await rawSession(database, staged.uploadSessionId))!;
+      await setSession(database, staged.uploadSessionId, {
+        completionPublication: { ...session.completionPublication, fileDeletedAt: new Date(Date.now() - 901_000).toISOString() },
+      });
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect((await rawSession(database, staged.uploadSessionId))!.completionClaim).toBeNull();
+      expect((await staged.complete()).status).toBe(200);
+    });
   });
 });

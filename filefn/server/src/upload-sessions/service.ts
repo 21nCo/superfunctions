@@ -109,9 +109,10 @@ export interface UploadSession {
   idempotencyPayloadHash?: string | null;
   completionVersionId?: string | null;
   /**
-   * The claim of the completion call holding the session ('completing') or,
-   * once completed, of the call that completed it: `<ISO time> <random>`, the
-   * time the call claimed the session. Conditional writes match on it.
+   * The claim of the completion call holding the session ('completing'):
+   * `<ISO time> <random>`, the time the call claimed the session. A
+   * 'publishing' session's claim also carries the revision of its publication
+   * (see revisedClaim). Conditional writes match on it.
    */
   completionClaim?: string | null;
   /** What a 'publishing' (and then 'completed') session publishes. */
@@ -135,8 +136,26 @@ export interface CompletionPublication {
   unusedKeys: string[];
   /** The call that completed the session. */
   finishedBy?: string;
-  /** Set by deleteFile on a completed session once the file is being deleted. */
+  /**
+   * Set by deleteFile on a completed session once the file is being deleted
+   * (with fileDeletedAt and the session's completionClaim FILE_DELETED_CLAIM,
+   * the expiry sweep's record of it).
+   */
   fileDeleted?: boolean;
+  fileDeletedAt?: string;
+}
+
+// The completionClaim deleteFile writes on a completed session of a file it
+// deletes: the expiry sweep's record of the publication whose late rows it
+// removes (see cleanupExpiredSessions). Mirrored in files/service.ts.
+export const FILE_DELETED_CLAIM = 'file-deleted';
+
+// Thrown inside rollForward when the session no longer holds the publication a
+// call read (another call rewrote, completed or refused it).
+class PublicationMoved extends Error {
+  constructor(readonly current: UploadSession | null) {
+    super('Upload session publication moved on');
+  }
 }
 
 type PublishOutcome =
@@ -370,7 +389,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // 'publishing', fenceRefusedSession), so one taken over writes no file or
   // version row.
   function isStaleClaim(session: UploadSession): boolean {
-    const claimedAtMs = Date.parse((session.completionClaim ?? '').split(' ')[0]);
+    const claimedAtMs = Date.parse((session.completionClaim ?? '').split(' ')[0].split('/')[0]);
     return Number.isNaN(claimedAtMs) || Date.now() - claimedAtMs >= completionTimeoutMs;
   }
 
@@ -437,6 +456,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       (row) => row.status === 'completing' && row.completionClaim === claim,
     );
     return outcome.applied ? { claim } : { current: outcome.current };
+  }
+
+  // The claim of a 'publishing' session: the claim it moved there from (its
+  // nonce and retake history, see attemptStorageKey) with a fresh random
+  // revision after its time ("<time>/<revision> <nonce> ..."), written with
+  // every move to 'publishing' and every rewrite of the publication. Writes
+  // conditional on it apply only for a call holding the publication as it is
+  // now, never for one that read an earlier decision, even one made within the
+  // same millisecond.
+  function revisedClaim(claim: string | null): string {
+    const [, ...rest] = (claim ?? `- ${randomBytes(6).toString('hex')}`).split(' ');
+    return [`${new Date().toISOString()}/${randomBytes(6).toString('hex')}`, ...rest].join(' ');
   }
 
   // Returns a claimed session to the status it was claimed from, after its
@@ -760,29 +791,121 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
+  // A session an earlier FileFn (before the publication record) left partly
+  // published: its version row exists, or its file points at its version, but
+  // the session never reached 'completed'. It is moved to 'publishing' with
+  // the publication rebuilt from what was written, its base being its own
+  // version (so its file is never moved off a later version), and finished
+  // like any publication: never admitted (quota, parts), released, aborted or
+  // expired again. Returns undefined for any other session, else the session
+  // as it is now (adopted, or moved on first by another call).
+  async function adoptLegacyPublication(session: UploadSession): Promise<UploadSession | null | undefined> {
+    const versionId = session.completionVersionId;
+    if (
+      !versionId ||
+      session.completionPublication ||
+      session.status === 'publishing' ||
+      session.status === 'completed' ||
+      isAbortedStatus(session.status)
+    ) {
+      return undefined;
+    }
+    const version = await db.findOne<{ fileId: string; storageKey: string; checksumSha256Base64?: string | null }>({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+      namespace,
+    });
+    const fileId = version?.fileId ?? session.fileId;
+    if (!fileId) return undefined;
+    if (!version) {
+      const file = await db.findOne<{ currentVersionId: string }>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      if (file?.currentVersionId !== versionId) return undefined;
+    }
+    const claim = revisedClaim(session.completionClaim ?? null);
+    const adopted: Partial<UploadSession> = {
+      status: 'publishing',
+      fileId,
+      completionClaim: claim,
+      completionPublication: {
+        versionId,
+        storageKey: version?.storageKey ?? session.storageKey,
+        checksumSha256Base64: version?.checksumSha256Base64 ?? null,
+        baseVersionId: versionId,
+        unusedKeys: [],
+      },
+    };
+    const moved = await updateSessionIf(
+      session.uploadSessionId,
+      { status: session.status, completionClaim: session.completionClaim ?? null },
+      adopted,
+      (row) => row.status === 'publishing' && row.completionClaim === claim,
+    );
+    return moved.applied ? { ...session, ...adopted } : moved.current;
+  }
+
+  // Removes the files row still pointing at a publication's version and its
+  // version row: what a completion call that resumed late wrote for a
+  // publication nothing may keep (refused, or completed and its file deleted
+  // since, see rollForward).
+  async function deletePublicationRows(fileId: string, versionId: string): Promise<void> {
+    await db.deleteMany({
+      model: 'files',
+      where: [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'currentVersionId', operator: 'eq', value: versionId },
+      ],
+      namespace,
+    });
+    await db.deleteMany({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+      namespace,
+    });
+  }
+
   // Finishes a 'publishing' session, whichever completion call runs it (the
   // one that moved it there, or any later call of the session, also after
   // that one stalled or crashed). Every step is idempotent, so calls may
   // overlap: the version row (unique versionId) and the file pointing at it,
   // then 'completed', which one call wins (it alone runs the effects, see
-  // finishCompletedSession). A replacement inserts its version first and then
-  // moves the file from the recorded base version (compare-and-set), so the
-  // file never points at a missing version and a call that resumes late never
-  // moves it back; a file another writer moved on meanwhile keeps that
-  // writer's version, and this one stays in its history. A new file is created
-  // first, the unique `files.fileId` deciding between rivals, so no version
-  // joins a file another principal created: a rival's file is then written
-  // only with the caller's write permission (the base is recorded again, under
-  // a renewed claim), otherwise the session is refused. Database steps only;
-  // the caller holds the fileId key.
+  // finishCompletedSession). A call writes a row only while it still holds the
+  // publication as it read it (its claim's revision, see revisedClaim), so a
+  // call another one moved on writes nothing; a write already in flight then is
+  // checked afterwards and removed again (see undoAfterDelete). A replacement
+  // inserts its version first and then moves the file from the recorded base
+  // version (compare-and-set), so the file never points at a missing version
+  // and a call that resumes late never moves it back; a file another writer
+  // moved on meanwhile keeps that writer's version, and this one stays in its
+  // history. A new file is created first, recording this version as its origin
+  // (files.originVersionId, never changed afterwards), the unique
+  // `files.fileId` deciding between rivals. A file this publication created
+  // and a later upload replaced meanwhile keeps that upload's version: this
+  // one joins its history. No version joins a file another principal created:
+  // a rival's file is written only with the caller's write permission (the base
+  // is recorded again, under a new revision), otherwise the session is refused.
+  // Database steps only; the caller holds the fileId key.
   async function rollForward(session: UploadSession, ctx: FileProviderContext): Promise<PublishOutcome> {
     const { uploadSessionId } = session;
     const fileId = session.fileId!;
-    const findFile = () => db.findOne<{ currentVersionId: string }>({
+    const findFile = () => db.findOne<{ currentVersionId: string; originVersionId?: string | null }>({
       model: 'files',
       where: [{ field: 'fileId', operator: 'eq', value: fileId }],
       namespace,
     });
+    // A failed read of the session is retried before it fails the call.
+    const readNow = async (): Promise<UploadSession | null> => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await readSession(uploadSessionId);
+        } catch (err) {
+          if (attempt >= 3) throw err;
+        }
+      }
+    };
     for (;;) {
       const publication = session.completionPublication!;
       const claim = session.completionClaim ?? null;
@@ -792,9 +915,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         where: [{ field: 'versionId', operator: 'eq', value: versionId }],
         namespace,
       });
+      // Before each row write: the session still holds the publication as
+      // this call read it. Otherwise the call goes on from the session as it
+      // is now (see publishSession).
+      const assertHeld = async (): Promise<void> => {
+        const now = await readNow();
+        if (now?.status !== 'publishing' || now.completionClaim !== claim) throw new PublicationMoved(now);
+      };
       // Both return whether this call's insert created the row.
       const ensureVersion = async (): Promise<boolean> => {
         if (await findOwnVersion()) return false;
+        await assertHeld();
         try {
           await db.create({
             model: 'fileVersions',
@@ -820,6 +951,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Creates the file at this version; a failed insert rethrows unless a
       // row exists after all (another writer's, or this session's).
       const createFile = async (): Promise<boolean> => {
+        await assertHeld();
         const now = new Date().toISOString();
         try {
           await db.create({
@@ -827,6 +959,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             data: {
               fileId,
               currentVersionId: versionId,
+              originVersionId: versionId,
               ownerId: session.ownerId,
               tenantId: session.tenantId,
               visibility: policies.get(session.policy)?.visibility || 'private',
@@ -846,32 +979,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           return false;
         }
       };
-      // A call that resumes late may create a row nothing may keep: after
-      // another call completed the session and the file was deleted since
-      // (deleteFile marks the completed session first), or after another call
-      // refused the publication (a rival's file, deleted since, was in the
-      // way). A row this call created is checked against the session and
-      // removed again; the expiry sweep removes a refused publication's rows
-      // left by a call that stopped in between.
+      // A write in flight while another call completed the session and the
+      // file was deleted since (deleteFile marks the completed session first),
+      // or refused the publication (a rival's file, deleted since, was in the
+      // way), creates a row nothing may keep. A row this call created is
+      // checked against the session and removed again; one left by a call that
+      // stopped in between (or whose check failed) is removed by the expiry
+      // sweep, which keeps the record of both cases.
       const undoAfterDelete = async (created: boolean): Promise<UploadSession | null | undefined> => {
         if (!created) return undefined;
-        const now = await readSession(uploadSessionId);
+        const now = await readNow();
         // A session gone meanwhile was refused (or aborted) and swept: no
         // publishing or completed session is ever deleted.
         if (now && now.status !== 'refused' && !now.completionPublication?.fileDeleted) return undefined;
-        await db.deleteMany({
-          model: 'files',
-          where: [
-            { field: 'fileId', operator: 'eq', value: fileId },
-            { field: 'currentVersionId', operator: 'eq', value: versionId },
-          ],
-          namespace,
-        });
-        await db.deleteMany({
-          model: 'fileVersions',
-          where: [{ field: 'versionId', operator: 'eq', value: versionId }],
-          namespace,
-        });
+        await deletePublicationRows(fileId, versionId);
         return now;
       };
 
@@ -886,13 +1007,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           if (undone !== undefined) return { kind: 'other', current: undone };
           continue;
         }
-        // Another writer created the file first.
-        rewrite = (await canWriteFileNow(fileId, ctx))
-          ? {
-              completionClaim: [new Date().toISOString(), ...(claim ?? '').split(' ').slice(1)].join(' '),
-              completionPublication: { ...publication, baseVersionId: file.currentVersionId },
-            }
-          : { status: 'refused' };
+        if (file.originVersionId === versionId) {
+          // This publication created the file, and a later upload replaced
+          // it meanwhile: its version joins the history.
+          undone = await undoAfterDelete(await ensureVersion());
+        } else {
+          // Another writer created the file first.
+          rewrite = (await canWriteFileNow(fileId, ctx))
+            ? {
+                completionClaim: revisedClaim(claim),
+                completionPublication: { ...publication, baseVersionId: file.currentVersionId },
+              }
+            : { status: 'refused' };
+        }
       } else {
         undone = await undoAfterDelete(await ensureVersion());
         if (undone !== undefined) return { kind: 'other', current: undone };
@@ -903,6 +1030,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           continue;
         }
         if (file.currentVersionId === baseVersionId) {
+          await assertHeld();
           // Compare-and-set. A write that matched nothing (another writer
           // moved the file first) throws or returns nothing on some adapters:
           // the row read back decides, and a failed write of an unchanged row
@@ -938,6 +1066,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (undone !== undefined) return { kind: 'other', current: undone };
 
       if (rewrite) {
+        // Under a new revision, so a call still holding the decision it
+        // replaces (even one rewritten within the same millisecond) writes
+        // nothing more; then the row as written decides.
         const target = rewrite;
         const next = await updateSessionIf(
           uploadSessionId,
@@ -946,13 +1077,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           (row) => row.status === (target.status ?? 'publishing') && row.completionClaim === (target.completionClaim ?? claim),
         );
         if (next.applied && target.status === 'refused') return { kind: 'refused' };
-        if (next.applied) {
-          session = { ...session, ...target };
-        } else if (next.current?.status === 'publishing') {
-          session = next.current;
-        } else {
-          return { kind: 'other', current: next.current };
-        }
+        const current = next.applied ? await readNow() : next.current;
+        if (current?.status !== 'publishing') return { kind: 'other', current };
+        session = current;
         continue;
       }
 
@@ -981,7 +1108,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const publication = session.completionPublication!;
     const outcome = await runSerialized(
       fileCommitLock.fileKey(fileId),
-      () => rollForward(session, ctx),
+      async (): Promise<PublishOutcome> => {
+        for (let current = session; ;) {
+          try {
+            return await rollForward(current, ctx);
+          } catch (err) {
+            if (!(err instanceof PublicationMoved)) throw err;
+            if (err.current?.status !== 'publishing') return { kind: 'other', current: err.current };
+            current = err.current;
+          }
+        }
+      },
       { ...fileKeyOptions(session), keepWaiting: true },
     );
     if (outcome.kind === 'other') return lostClaimResult(session.uploadSessionId, outcome.current);
@@ -1578,6 +1715,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (isAbortedStatus(session.status)) throw errors.uploadAborted();
         if (session.status === 'completed') return recordedResult(session);
         if (session.status === 'publishing') return publishSession(session, ctx);
+        if (!(session.status === 'completing' && !isStaleClaim(session))) {
+          // A partly published session of an earlier FileFn is finished as published.
+          const adopted = await adoptLegacyPublication(session);
+          if (adopted !== undefined) {
+            if (!adopted) throw errors.sessionNotFound();
+            session = adopted;
+            continue;
+          }
+        }
         if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
 
         let current: UploadSession | null;
@@ -1839,6 +1985,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           baseVersionId: null,
           unusedKeys: [...unused],
         };
+        const publishingClaim = revisedClaim(claim);
         const decision = await runSerialized(fileKey, async (): Promise<'publishing' | 'refused' | 'lost'> => {
           const current = await findFile();
           if (current && !isOwnRow(current) && !(await canWriteFileNow(fileId, ctx))) {
@@ -1849,8 +1996,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           const moved = await updateSessionIf(
             uploadSessionId,
             { status: 'completing', completionClaim: claim },
-            { status: 'publishing', fileId, completionPublication: publication },
-            (row) => row.status !== 'completing' && row.completionClaim === claim && row.completionPublication?.versionId === versionId,
+            { status: 'publishing', fileId, completionClaim: publishingClaim, completionPublication: publication },
+            (row) => row.status !== 'completing' && row.completionClaim === publishingClaim,
           );
           return moved.applied ? 'publishing' : 'lost';
         }, { ...fileKeyOptions(session), keepWaiting: true });
@@ -1871,7 +2018,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           throw errors.forbidden({ fileId, operation: 'replace' });
         }
         return publishSession(
-          { ...session, status: 'publishing', fileId, completionClaim: claim, completionPublication: publication },
+          { ...session, status: 'publishing', fileId, completionClaim: publishingClaim, completionPublication: publication },
           ctx,
         );
       }
@@ -1895,6 +2042,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // Already ended. A refused session may still have objects to delete; its
         // row records them for the expiry sweep, so leave it in place.
         if (isAbortedStatus(session.status)) return;
+        // A partly published session of an earlier FileFn is finished by a
+        // completion call (or the sweep), never aborted.
+        const adopted = await adoptLegacyPublication(session);
+        if (adopted !== undefined) {
+          if (!adopted) throw errors.sessionNotFound();
+          session = adopted;
+          continue;
+        }
 
         const ended = await updateSessionIf(
           uploadSessionId,
@@ -1926,11 +2081,29 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             ],
             namespace
         });
-        const expiredSessions = unfinished.filter((session) => session.status !== 'publishing' && !(session.status === 'completing' && !isStaleClaim(session)));
+        // A partly published session of an earlier FileFn is adopted as a
+        // publication (adoptLegacyPublication) and finished with them; one
+        // whose check fails is left for the next sweep.
+        const toFinish: UploadSession[] = [];
+        const expiredSessions: UploadSession[] = [];
+        for (const session of unfinished) {
+            if (session.status === 'publishing') {
+                toFinish.push(session);
+                continue;
+            }
+            if (session.status === 'completing' && !isStaleClaim(session)) continue;
+            let adopted: UploadSession | null | undefined;
+            try {
+                adopted = await adoptLegacyPublication(session);
+            } catch {
+                continue;
+            }
+            if (adopted === undefined) expiredSessions.push(session);
+            else if (adopted?.status === 'publishing') toFinish.push(adopted);
+        }
         // Nobody finished it: the sweep finishes it, as its owner's completion
         // call would (a failure leaves it for the next sweep).
-        for (const session of unfinished) {
-            if (session.status !== 'publishing') continue;
+        for (const session of toFinish) {
             const ownerCtx = { principalId: isAnonymousSession(session) ? undefined : session.ownerId, tenantId: session.tenantId ?? undefined };
             await publishSession(session, ownerCtx).catch((err: unknown) => {
                 logger?.warn('Expired upload session publication not finished; the next sweep retries it', {
@@ -1976,15 +2149,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // not remove again (see rollForward).
             const refusedVersionId = session.status === 'refused' ? session.completionPublication?.versionId : undefined;
             if (refusedVersionId && session.fileId) {
-                await db.deleteMany({
-                    model: 'files',
-                    where: [
-                        { field: 'fileId', operator: 'eq', value: session.fileId },
-                        { field: 'currentVersionId', operator: 'eq', value: refusedVersionId },
-                    ],
-                    namespace
-                });
-                await db.deleteMany({ model: 'fileVersions', where: [{ field: 'versionId', operator: 'eq', value: refusedVersionId }], namespace });
+                await deletePublicationRows(session.fileId, refusedVersionId);
             }
 
             // If a part object or a refused session's final object cannot be
@@ -2020,6 +2185,43 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // No completion can publish it now: delete what its last claim stitched.
             if (session.status !== 'refused') await deleteClaimStitch(session);
             deletedSessions++;
+        }
+
+        // Rows a completion call resuming late wrote for a completed
+        // publication whose file was deleted since, and did not remove again
+        // (see rollForward). deleteFile records such a session (its claim);
+        // the record is dropped once no completion call of it can still be
+        // running, the completion timeout after the delete.
+        const deletedPublications = await db.findMany<UploadSession>({
+            model: 'uploadSessions',
+            where: [
+                { field: 'status', operator: 'eq', value: 'completed' },
+                { field: 'completionClaim', operator: 'eq', value: FILE_DELETED_CLAIM },
+            ],
+            namespace
+        });
+        for (const session of deletedPublications) {
+            const publication = session.completionPublication;
+            try {
+                if (publication && session.fileId) await deletePublicationRows(session.fileId, publication.versionId);
+                const deletedAtMs = Date.parse(publication?.fileDeletedAt ?? '');
+                if (Number.isNaN(deletedAtMs) || Date.now() - deletedAtMs >= completionTimeoutMs) {
+                    await db.updateMany({
+                        model: 'uploadSessions',
+                        where: [
+                            { field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId },
+                            { field: 'completionClaim', operator: 'eq', value: FILE_DELETED_CLAIM },
+                        ],
+                        data: { completionClaim: null },
+                        namespace
+                    });
+                }
+            } catch (err) {
+                logger?.warn('Deleted file\'s late publication rows not removed; the next sweep retries it', {
+                    uploadSessionId: session.uploadSessionId,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
         }
 
         // Part rows a completed session kept because a part object delete
