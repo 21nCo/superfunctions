@@ -4,6 +4,7 @@ import { is } from 'drizzle-orm';
 import { getTableConfig, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, it } from 'vitest';
 import { authFnApiKeyPlugin } from '@authfn/api-keys';
+import { authFnEmailOtpPlugin } from '@authfn/email-otp';
 import { authFnPasswordPlugin } from '@authfn/password';
 import {
   generateDrizzleSchemaFile,
@@ -22,7 +23,7 @@ describe('authfn SQLite conformance fixture', () => {
   it('matches the current generate-schema --adapter drizzle --dialect sqlite output', async () => {
     const abstractSchema = await generateLibraryAbstractSchema(
       { getSchema },
-      { plugins: [authFnPasswordPlugin(), authFnApiKeyPlugin()] }
+      { plugins: [authFnPasswordPlugin(), authFnApiKeyPlugin(), authFnEmailOtpPlugin()] }
     );
     // The CLI passes `config.namespace || libraryName` as the table prefix.
     const generated = generateDrizzleSchemaFile(abstractSchema, 'authfn', 'authfn', 'sqlite');
@@ -55,6 +56,7 @@ describe('authfn SQLite conformance fixture', () => {
 
       expect(Object.keys(declared).sort()).toEqual([
         'authfn_api_keys',
+        'authfn_otp_challenges',
         'authfn_password_credentials',
         'authfn_sessions',
         'authfn_users'
