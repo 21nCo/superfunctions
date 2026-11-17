@@ -720,6 +720,7 @@ historyTest("every non-text or image version in the imported history is listed w
     "widgetfn/assets/logo.xml": '<s:svg xmlns:s="http://www.w3.org/2000/svg"/>\n',
     "widgetfn/assets/figure.dat": "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 1 1\n",
     "widgetfn/assets/doc": "%PDF-1.4\n1 0 obj << >> endobj\n",
+    "widgetfn/assets/drawing.h": "/* diagram */\n#define drawing_width 8\n#define drawing_height 1\nstatic unsigned char drawing_bits[] = { 0x3c };\n",
   });
   git(next, "mv", "widgetfn/assets/logo.png", "widgetfn/assets/brand.png");
   git(next, "rm", "-q", "widgetfn/assets/pic.ppm");
@@ -736,14 +737,14 @@ historyTest("every non-text or image version in the imported history is listed w
     { oid: oid(first, "widgetfn/assets/icon.svg"), kind: "image", paths: ["widgetfn/assets/icon.svg"] },
     { oid: oid(first, "widgetfn/assets/logo.png"), kind: "image", paths: ["widgetfn/assets/logo.png"] },
     { oid: oid(first, "widgetfn/assets/pic.ppm"), kind: "image", paths: ["widgetfn/assets/pic.ppm"] },
-    ...["icon", "logo.xml", "figure.dat", "doc"].map((file) => ({ oid: oid(first, `widgetfn/assets/${file}`), kind: "image", paths: [`widgetfn/assets/${file}`] })),
+    ...["icon", "logo.xml", "figure.dat", "doc", "drawing.h"].map((file) => ({ oid: oid(first, `widgetfn/assets/${file}`), kind: "image", paths: [`widgetfn/assets/${file}`] })),
     { oid: oid(first, odd), kind: "binary", paths: [odd] },
     ...[side, main].map((rev) => ({ oid: oid(rev, "widgetfn/data.bin"), kind: "binary", paths: ["widgetfn/data.bin"] })),
   ].sort((a, b) => (a.paths[0] < b.paths[0] ? -1 : a.paths[0] > b.paths[0] ? 1 : a.oid < b.oid ? -1 : 1));
   const run = promoteCli(dev, ["widgetfn", "--pin", pin, "--source", next]);
   assert.equal(run.status, 0, run.stderr);
   for (const { oid: id, kind, paths } of expected) assert.ok(run.stdout.includes(`  ${id} ${kind} ${paths.map((file) => JSON.stringify(file)).join(" ")}`), `${id}\n${run.stdout}`);
-  assert.match(run.stdout, /^Historical non-text and image versions to inspect before the PR .*\(11\):$/m);
+  assert.match(run.stdout, /^Historical non-text and image versions to inspect before the PR .*\(12\):$/m);
   // The same set as the imported branch tip's blobs that are not plain text.
   const blobs = git(dev, "rev-list", "--objects", "--no-object-names", "HEAD^^2").split("\n");
   const types = spawnSync(gitBinary(), ["cat-file", "--batch-check=%(objectname) %(objecttype)"], { cwd: dev, input: `${blobs.join("\n")}\n`, encoding: "utf8" }).stdout;
@@ -751,7 +752,7 @@ historyTest("every non-text or image version in the imported history is listed w
   assert.equal(unlisted.length + expected.length, types.split("\n").filter((line) => line.endsWith(" blob")).length);
   for (const id of unlisted) {
     const content = spawnSync(gitBinary(), ["cat-file", "blob", id], { cwd: dev }).stdout;
-    assert.ok(!content.includes(0) && !/^(?:P[1-7]\s|\/\* XPM|%!PS|%PDF)|svg/.test(content.toString()), `${id} is plain text`);
+    assert.ok(!content.includes(0) && !/^P[1-7]\s|XPM|_width|%!PS|%PDF|svg/.test(content.toString()), `${id} is plain text`);
   }
 });
 

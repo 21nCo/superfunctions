@@ -590,10 +590,11 @@ function filterHistory(work, paths) {
 
 const RAW_ENTRY = /^\n*:\d{6} (\d{6}) [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*$/;
 // Formats to render rather than read, including those stored as text: SVG (any namespace prefix), PNM, XPM, XBM,
-// PostScript/EPS and PDF, recognised by content or by extension.
+// PostScript/EPS and PDF, recognised by extension or by content. Text formats are matched anywhere in the file, past
+// comments and whitespace; listing an extra version only costs one more look.
 const IMAGE_EXTENSION = /\.(?:svgz?|p[bgpna]m|xpm|xbm|e?ps|pdf|ai)$/i;
-const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s|\/\* XPM \*\/|#define \w+_width |%!PS|%PDF-)/;
-const IMAGE_TEXT = /<(?:[\w.-]+:)?svg[\s>/]|http:\/\/www\.w3\.org\/2000\/svg/i;
+const IMAGE_MAGIC = /^(?:\x89PNG\r\n\x1a\n|\xff\xd8\xff|GIF8[79]a|RIFF[\s\S]{4}WEBP|P[1-7]\s)/;
+const IMAGE_TEXT = /<(?:[\w.-]+:)?svg[\s>/]|http:\/\/www\.w3\.org\/2000\/svg|\/\*\s*XPM\s*\*\/|^\s*#\s*define\s+\S*_width\s|^\s*%!PS|%PDF-/im;
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 /** "image" (to render), "binary" or null (text) for one blob and the paths it was imported under. */
