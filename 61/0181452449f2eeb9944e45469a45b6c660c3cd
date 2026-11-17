@@ -1,0 +1,21 @@
+scripts/promote.mjs
+  s_6838e0b309d8d4::t_8c228b2c7f4739 765,771-772,775-776,789,792,794,796,803-806,812,815
+scripts/promote.test.mjs
+  s_6838e0b309d8d4::t_40242e8661612b 553,555,604-629
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "610181452449f2eeb9944e45469a45b6c660c3cd",
+  "prompts": {},
+  "sessions": {
+    "s_6838e0b309d8d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "894618d6-c79c-4bc1-90d1-7cf9da9dd260",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
