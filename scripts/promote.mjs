@@ -837,21 +837,26 @@ const NOT_WORKTREE_PATH = /^(?:include(?:if\..*)?\.path|remote\..*\.(?:push)?url
  * configuration, entry for entry and in order, in the scratch worktree as here. A gitdir include matching only one of
  * them, an onbranch include for the current branch, or a worktree-scoped config.worktree makes them differ. A relative
  * core.hooksPath (resolved per worktree) and core.worktree (which would point the scratch worktree elsewhere) are
- * refused too, also when the promotion branch's own onbranch configuration sets them (`stage`).
+ * refused too, also when the promotion branch's own onbranch configuration sets them; so is a gitdir include that
+ * configuration adds, which git may resolve differently for this checkout's git directory. Called with the entries the
+ * scratch worktree loaded before the branch existed (`start`) once it does; returns its entries.
  */
-function refusePolicyDifference(root, worktree, stage) {
-  if (stage === "start") {
+function refusePolicyDifference(root, worktree, start = null) {
+  const there = configEntries(worktree);
+  if (start === null) {
     const here = configEntries(root);
-    const there = configEntries(worktree);
     const index = here.findIndex((entry, at) => entry !== there[at]);
     if (index !== -1 || here.length !== there.length) {
       const differing = (here[index] ?? there[here.length]).split("\0");
       throw new PromoteError("checkout-policy", `git loads other configuration in a linked worktree than here (first difference: ${differing[2].split("\n")[0]} from ${differing[1]}); ${POLICY_HINT}. Run it from a detached checkout (git switch --detach origin/dev) without worktree-only or gitdir-specific configuration`);
     }
+  } else {
+    const added = there.find((record) => !start.includes(record) && /^includeif\.gitdir/i.test(record.split("\0")[2]));
+    if (added) throw new PromoteError("checkout-policy", `the promotion branch's configuration adds ${added.split("\0")[2].split("\n")[0]} (from ${added.split("\0")[1]}), which git may resolve differently for this checkout; ${POLICY_HINT}`);
   }
   // A value climbing out with ".." (a gpg program, core.fsmonitor, a merge or filter driver) names another file from
   // the scratch worktree than from here, possibly in a shared directory above this repository.
-  for (const record of configEntries(worktree)) {
+  for (const record of there) {
     const [key, value = ""] = record.split("\0")[2].split("\n");
     if (!NOT_WORKTREE_PATH.test(key) && PARENT_SEGMENT.test(value)) {
       throw new PromoteError("checkout-policy", `${key} = ${JSON.stringify(value)} climbs out of the work tree with "..", so it names another path in a linked worktree; ${POLICY_HINT}. Use an absolute path, then retry`);
@@ -863,6 +868,7 @@ function refusePolicyDifference(root, worktree, stage) {
     throw new PromoteError("checkout-policy", `core.hooksPath ${JSON.stringify(hooksPath)} is relative, so it names another directory in a linked worktree; ${POLICY_HINT}. Set it to an absolute path, then retry`);
   }
   if (setting("core.worktree")) throw new PromoteError("checkout-policy", `core.worktree is set; ${POLICY_HINT}. Unset it, then retry`);
+  return there;
 }
 
 /**
@@ -883,9 +889,9 @@ function buildBranch(root, { start, branch, imported, label, paths, pin, reconci
   let kept = null;
   try {
     git(root, ["worktree", "add", "-q", "--detach", "--no-checkout", worktree, start]);
-    refusePolicyDifference(root, worktree, "start");
+    const loaded = refusePolicyDifference(root, worktree);
     git(worktree, ["switch", "-q", "-c", branch]);
-    refusePolicyDifference(root, worktree, "branch");
+    refusePolicyDifference(root, worktree, loaded);
     git(worktree, ["reset", "-q", "--hard"]);
     const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
     const merged = git(worktree, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });

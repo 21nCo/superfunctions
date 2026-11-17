@@ -655,6 +655,10 @@ historyTest("configuration git would apply differently in the scratch worktree i
   git(dev, "switch", "-q", "dev");
   spawnSync(gitBinary(), ["branch", "-q", "-D", "promote/widgetfn"], { cwd: dev });
   refused("core.worktree", () => git(dev, "config", "core.worktree", dev));
+  refused("a gitdir include nested in the promotion branch's configuration", () => {
+    write(dev, { ".git/promotion.conf": `[includeIf "gitdir:${gitdir}"]\n\tpath = signed.conf\n` });
+    git(dev, "config", "includeIf.onbranch:promote/**.path", "promotion.conf");
+  });
   refused("a gpg program climbing out of the work tree", () => {
     git(dev, "config", "gpg.program", `${"../".repeat(8)}signer`);
     git(dev, "config", "commit.gpgSign", "true");
