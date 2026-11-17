@@ -130,55 +130,113 @@ public struct BillFnHTTPStoreKitBackend: BillFnStoreKitBackend {
     }
 }
 
-/// Keeps each checkout a purchase started until BillFn confirms its transaction, so a purchase
-/// that finishes later (Ask to Buy, an interrupted app) is still verified against its checkout.
-/// Checkouts are kept by `checkoutSessionId`: two attempts on one product are kept separately,
-/// and a cancelled or confirmed attempt removes only its own checkout.
+/// A checkout the store keeps for one purchase attempt.
+public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
+    public let checkout: BillFnStoreKitCheckout
+    /// When the purchase attempt saved it; an outstanding checkout expires a retention period later.
+    public let savedAt: Date
+    /// The transaction BillFn confirmed against this checkout. It is recorded before that transaction is finished,
+    /// so the transaction still finds its checkout if the app stops before finishing it. A confirmed checkout does
+    /// not expire: it is removed once its transaction is finished.
+    public let confirmedTransactionId: String?
+
+    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, confirmedTransactionId: String? = nil) {
+        self.checkout = checkout
+        self.savedAt = savedAt
+        self.confirmedTransactionId = confirmedTransactionId
+    }
+}
+
+/// Keeps each checkout a purchase started until its transaction is finished, so a purchase that completes later
+/// (Ask to Buy, an interrupted app) is still verified against its checkout. Checkouts are kept by
+/// `checkoutSessionId`: two attempts on one product are kept separately, and a cancelled or finished attempt
+/// removes only its own checkout. A store drops an outstanding (unconfirmed) checkout only once its attempt can no
+/// longer produce a transaction, never to make room for another.
 public protocol BillFnStoreKitCheckoutStore: Sendable {
-    /// The kept checkouts for the product, oldest first.
-    func checkouts(forProductId productId: String) -> [BillFnStoreKitCheckout]
+    /// Every kept checkout, oldest first.
+    func keptCheckouts() -> [BillFnStoreKitKeptCheckout]
+    /// Keeps the checkout of a purchase attempt that is starting.
     func save(_ checkout: BillFnStoreKitCheckout)
+    /// Records that BillFn confirmed `transactionId` against the checkout, keeping the checkout if it was not kept.
+    func markConfirmed(_ checkout: BillFnStoreKitCheckout, transactionId: String)
     func removeCheckout(checkoutSessionId: String)
 }
 
+extension BillFnStoreKitCheckoutStore {
+    /// The kept checkouts for the product, oldest first.
+    public func checkouts(forProductId productId: String) -> [BillFnStoreKitCheckout] {
+        keptCheckouts().filter { $0.checkout.productId == productId }.map(\.checkout)
+    }
+}
+
+/// Keeps checkouts in `UserDefaults`. An outstanding checkout is kept for `retention` after its attempt started,
+/// however many other attempts are saved or cancelled meanwhile: longer than the App Store keeps an Ask to Buy
+/// request or an interrupted purchase waiting, so an attempt that has not produced a transaction by then never
+/// will. A transaction that still arrives later is restored onto the plan its product maps to, if any.
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
-    /// At most this many checkouts are kept; saving another drops the oldest. A checkout whose purchase is
-    /// never completed (a declined Ask to Buy request) would otherwise be kept forever.
-    public static let capacity = 32
+    public static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
 
     private let defaults: UserDefaults
     private let key: String
+    private let retention: TimeInterval
+    private let now: @Sendable () -> Date
     private let lock = NSLock()
 
-    public init(defaults: UserDefaults = .standard, key: String = "billfn.storekit.checkouts") {
+    public init(
+        defaults: UserDefaults = .standard,
+        key: String = "billfn.storekit.checkouts",
+        retention: TimeInterval = BillFnUserDefaultsCheckoutStore.defaultRetention,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
         self.defaults = defaults
         self.key = key
+        self.retention = retention
+        self.now = now
     }
 
-    public func checkouts(forProductId productId: String) -> [BillFnStoreKitCheckout] {
-        lock.withLock { load().filter { $0.productId == productId } }
+    public func keptCheckouts() -> [BillFnStoreKitKeptCheckout] {
+        lock.withLock { load() }
     }
 
     public func save(_ checkout: BillFnStoreKitCheckout) {
-        lock.withLock {
-            var checkouts = load().filter { $0.checkoutSessionId != checkout.checkoutSessionId }
-            checkouts.append(checkout)
-            store(Array(checkouts.suffix(Self.capacity)))
+        update { kept in
+            kept.removeAll { $0.checkout.checkoutSessionId == checkout.checkoutSessionId }
+            kept.append(BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: now()))
+        }
+    }
+
+    public func markConfirmed(_ checkout: BillFnStoreKitCheckout, transactionId: String) {
+        update { kept in
+            let confirmed = { (savedAt: Date) in
+                BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, confirmedTransactionId: transactionId)
+            }
+            if let index = kept.firstIndex(where: { $0.checkout.checkoutSessionId == checkout.checkoutSessionId }) {
+                kept[index] = confirmed(kept[index].savedAt)
+            } else {
+                kept.append(confirmed(now()))
+            }
         }
     }
 
     public func removeCheckout(checkoutSessionId: String) {
-        lock.withLock {
-            store(load().filter { $0.checkoutSessionId != checkoutSessionId })
+        update { kept in
+            kept.removeAll { $0.checkout.checkoutSessionId == checkoutSessionId }
         }
     }
 
-    private func load() -> [BillFnStoreKitCheckout] {
-        guard let data = defaults.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([BillFnStoreKitCheckout].self, from: data)) ?? []
+    private func update(_ change: (inout [BillFnStoreKitKeptCheckout]) -> Void) {
+        lock.withLock {
+            var kept = load()
+            change(&kept)
+            defaults.set(try? JSONEncoder().encode(kept), forKey: key)
+        }
     }
 
-    private func store(_ checkouts: [BillFnStoreKitCheckout]) {
-        defaults.set(try? JSONEncoder().encode(checkouts), forKey: key)
+    /// The kept checkouts without the outstanding ones past their retention.
+    private func load() -> [BillFnStoreKitKeptCheckout] {
+        guard let data = defaults.data(forKey: key),
+              let kept = try? JSONDecoder().decode([BillFnStoreKitKeptCheckout].self, from: data) else { return [] }
+        let expiry = now().addingTimeInterval(-retention)
+        return kept.filter { $0.confirmedTransactionId != nil || $0.savedAt > expiry }
     }
 }

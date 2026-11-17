@@ -79,6 +79,11 @@ struct TimedOut: Error {
     let waitingFor: String
 }
 
+struct PurchaseNotCompleted: Error {
+    let productId: String
+    let result: String
+}
+
 actor OutcomeRecorder {
     private(set) var outcomes: [BillFnStoreKitTransactionOutcome] = []
 
@@ -116,15 +121,20 @@ class BillFnStoreKitTestCase: XCTestCase {
     }
 
     /// A `BillFnStoreKit` as one app launch makes it; launches share the checkout store, as they share UserDefaults.
-    func launch(_ backend: FakeBillFnBackend) -> BillFnStoreKit {
-        let kit = BillFnStoreKit(backend: backend, plans: plans, checkouts: checkoutStore)
+    /// `now` is the launch's time, `plans` defaults to the test plans.
+    func launch(_ backend: FakeBillFnBackend, plans: [BillFnStoreKitPlan]? = nil, now: Date? = nil) -> BillFnStoreKit {
+        let kit = BillFnStoreKit(backend: backend, plans: plans ?? self.plans, checkouts: checkoutStore(now: now))
         kits.append(kit)
         return kit
     }
 
     /// The checkout store as the next launch reads it.
     var checkoutStore: BillFnUserDefaultsCheckoutStore {
-        BillFnUserDefaultsCheckoutStore(defaults: defaults)
+        checkoutStore(now: nil)
+    }
+
+    func checkoutStore(now: Date?) -> BillFnUserDefaultsCheckoutStore {
+        BillFnUserDefaultsCheckoutStore(defaults: defaults, now: { now ?? Date() })
     }
 
     func keptCheckoutIds(_ productId: String) -> [String] {
@@ -193,8 +203,9 @@ class BillFnStoreKitTestCase: XCTestCase {
         let products = try await Product.products(for: [productId])
         let product = try XCTUnwrap(products.first)
         let options: Set<Product.PurchaseOption> = appAccountToken.map { [.appAccountToken($0)] } ?? []
-        guard case .success(let verification) = try await product.purchase(options: options) else {
-            throw XCTSkip("StoreKit testing did not complete the purchase of \(productId)")
+        let result = try await product.purchase(options: options)
+        guard case .success(let verification) = result else {
+            throw PurchaseNotCompleted(productId: productId, result: String(describing: result))
         }
         return verification.unsafePayloadValue
     }
@@ -409,6 +420,29 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertTrue(restores.isEmpty)
         XCTAssertEqual(keptCheckoutIds(proLifetime), [])
     }
+
+    /// A purchase StoreKit refuses before it reaches the App Store cannot produce a transaction, so its checkout
+    /// is dropped; one that fails on the network may have reached it, so its checkout stays kept for its transaction.
+    func testRefusedPurchaseDropsItsCheckoutAndAFailedOneKeepsIt() async throws {
+        let backend = FakeBillFnBackend()
+        let kit = launch(backend)
+
+        try await session.setSimulatedError(.purchase(.productUnavailable), forAPI: .purchase)
+        do {
+            _ = try await kit.purchase(planKey: "pro")
+            XCTFail("Expected the refused purchase to throw")
+        } catch Product.PurchaseError.productUnavailable {}
+        XCTAssertEqual(keptCheckoutIds(proMonthly), [])
+
+        try await session.setSimulatedError(.generic(.networkError(URLError(.networkConnectionLost))), forAPI: .purchase)
+        do {
+            _ = try await kit.purchase(planKey: "pro")
+            XCTFail("Expected the failed purchase to throw")
+        } catch StoreKitError.networkError {}
+        XCTAssertEqual(keptCheckoutIds(proMonthly), ["chk_2"])
+        let verifications = await backend.verifications
+        XCTAssertTrue(verifications.isEmpty)
+    }
 }
 
 /// Transaction updates and checkout bookkeeping. This class runs after `BillFnStoreKitTests` in the same host process:
@@ -474,5 +508,34 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         for outcome in outcomes {
             try await assertFinished(outcome)
         }
+    }
+
+    /// BillFn confirmed a transaction but the app stopped before finishing it. The next launch, a retention period
+    /// later, still verifies it against the checkout it was confirmed against and finishes it, with no plans, so
+    /// without that checkout it would be skipped for good. A confirmed checkout whose transaction is finished and an
+    /// expired outstanding one are dropped.
+    func testConfirmedTransactionLeftUnfinishedIsVerifiedAndFinishedOnTheNextLaunch() async throws {
+        let backend = FakeBillFnBackend()
+        let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let outstanding = BillFnStoreKitCheckout(checkoutSessionId: "chk_outstanding", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        let confirmed = BillFnStoreKitCheckout(checkoutSessionId: "chk_confirmed", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        let finished = BillFnStoreKitCheckout(checkoutSessionId: "chk_finished", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(outstanding)
+        checkoutStore.save(confirmed)
+        checkoutStore.markConfirmed(confirmed, transactionId: String(bought.id))
+        checkoutStore.markConfirmed(finished, transactionId: "987654321")
+
+        let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
+        let nextLaunch = launch(backend, plans: [], now: later)
+        let outcomes = await nextLaunch.start()
+
+        let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == String(bought.id) })
+        XCTAssertTrue(outcome.finished)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_confirmed"])
+        let restores = await backend.restores
+        XCTAssertTrue(restores.isEmpty)
+        try await assertFinished(outcome)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
     }
 }

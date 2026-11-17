@@ -195,18 +195,71 @@ struct BillFnStoreKitBackendTests {
         #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
     }
 
-    @Test("Drops the oldest checkout beyond its capacity")
-    func boundsCheckouts() throws {
+    @Test("Keeps an outstanding checkout for its retention however many attempts are saved and cancelled meanwhile")
+    func keepsOutstandingCheckoutsForTheirRetention() throws {
         let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
-        let capacity = BillFnUserDefaultsCheckoutStore.capacity
-        for index in 0...capacity {
-            store.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: UUID(uuidString: token)!))
-        }
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        let account = UUID(uuidString: token)!
+        let pending = BillFnStoreKitCheckout(checkoutSessionId: "chk_pending", productId: "apple.pro.month", appAccountToken: account)
+        store.save(pending)
 
-        let kept = store.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
-        #expect(kept.count == capacity)
-        #expect(kept.first == "chk_1")
-        #expect(kept.last == "chk_\(capacity)")
+        // Many later attempts, most cancelled and some left behind, do not push the pending one out.
+        for index in 0..<200 {
+            clock.advance(by: 60)
+            store.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: account))
+            if index % 4 != 0 { store.removeCheckout(checkoutSessionId: "chk_\(index)") }
+        }
+        clock.advance(by: 6 * day)
+        #expect(store.checkouts(forProductId: "apple.pro.month").first == pending)
+        #expect(store.checkouts(forProductId: "apple.pro.month").count == 51)
+
+        // 30 seconds past its retention the pending attempt can no longer complete, so it is dropped; the
+        // attempts saved a minute or more after it stay.
+        clock.advance(by: day - 200 * 60 + 30)
+        let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+            .checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
+        #expect(!kept.contains("chk_pending"))
+        #expect(kept.first == "chk_0")
+        clock.advance(by: day)
+        #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
+    }
+
+    @Test("Keeps a confirmed checkout past its retention until it is removed")
+    func keepsConfirmedCheckouts() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        let account = UUID(uuidString: token)!
+        let confirmed = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
+        let outstanding = BillFnStoreKitCheckout(checkoutSessionId: "chk_2", productId: "apple.pro.month", appAccountToken: account)
+        // A checkout another store dropped is kept again once BillFn confirms a transaction against it.
+        let unkept = BillFnStoreKitCheckout(checkoutSessionId: "chk_3", productId: "apple.pro.year", appAccountToken: account)
+        store.save(confirmed)
+        store.save(outstanding)
+        store.markConfirmed(confirmed, transactionId: "2000000001")
+        store.markConfirmed(unkept, transactionId: "2000000002")
+
+        clock.advance(by: 30 * day)
+        let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now }).keptCheckouts()
+        #expect(kept.map(\.checkout) == [confirmed, unkept])
+        #expect(kept.map(\.confirmedTransactionId) == ["2000000001", "2000000002"])
+        #expect(kept.first?.savedAt == Date(timeIntervalSince1970: 1_800_000_000))
+        store.removeCheckout(checkoutSessionId: "chk_1")
+        #expect(store.keptCheckouts().map(\.checkout) == [unkept])
     }
 }
+
+private let day: TimeInterval = 24 * 60 * 60
+
+final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = Date(timeIntervalSince1970: 1_800_000_000)
+
+    var now: Date { lock.withLock { current } }
+
+    func advance(by interval: TimeInterval) {
+        lock.withLock { current += interval }
+    }
+}
+

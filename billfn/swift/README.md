@@ -39,9 +39,17 @@ let restored = try await storeKit.restore()
   BillFn does not confirm stays unfinished, so StoreKit offers it again and `start()` retries it
   on the next launch.
 - The checkout each purchase attempt opened is kept (in `UserDefaults` by default, by its
-  `checkoutSessionId`) until BillFn confirms its transaction, so a purchase that completes after the
+  `checkoutSessionId`) until its transaction is finished, so a purchase that completes after the
   app quits still verifies against it. A second attempt on the same product does not replace a
-  pending one's checkout, and a cancelled or confirmed attempt removes only its own checkout.
+  pending one's checkout, and a cancelled or finished attempt removes only its own checkout.
+- Once BillFn confirms a transaction, its checkout is marked confirmed before the transaction is
+  finished and removed after, so a transaction the app stopped before finishing is verified against
+  the same checkout on the next launch.
+- An outstanding checkout is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
+  however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
+  or an interrupted purchase waiting. A purchase StoreKit refuses before it reaches the App Store
+  (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
+  (such as a network failure) keeps it, since the purchase may still complete.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
   for example in tests.
 - `outcomes` streams every transaction outcome, for example to refresh entitlements.
