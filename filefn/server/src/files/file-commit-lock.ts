@@ -13,7 +13,7 @@ export const runFileFnSerialized = createKeyedSerializer();
 // unique constraints, where calls against different databases then never wait
 // on each other, and adapter objects that share one store but get different
 // tokens are arbitrated by the unique `files.fileId` constraint, as across
-// processes. Imports also use it to tell their store (see `importMember`).
+// processes.
 const databaseTokens = new WeakMap<object, string>();
 let nextDatabaseToken = 0;
 function databaseToken(database: object): string {
@@ -40,18 +40,22 @@ export interface FileCommitLockConfig {
  * without them (single-process adapters) it is scoped to the namespace, and
  * calls of one key form one group per store (`sharesKeyWith`): a busy key's
  * group is this store's when one of its upload sessions is visible here, or
- * when it holds an import of this database identity. No adapter property
- * reliably tells whether two adapter objects (for example two wrappers) share
- * one store.
+ * when it holds an import. No adapter property reliably tells whether two
+ * adapter objects (for example two wrappers) share one store, and an import
+ * leaves no session row to find, so every import's turn counts as this
+ * store's: calls through any adapter object of the namespace wait for it.
+ * Calls of separate stores that share a namespace may then wait for each
+ * other's imports, which only orders them.
  */
 export function createFileCommitLock(config: FileCommitLockConfig) {
   const { db, namespace, databaseIdentity = db } = config;
   const uniqueConstraints = db.capabilities?.schema?.constraints === true;
   const scope = uniqueConstraints ? `${databaseToken(databaseIdentity)}\u0000${namespace}` : namespace;
-  const importMember = `${IMPORT_MEMBER_PREFIX}${databaseToken(databaseIdentity)}\u0000${namespace}`;
+  const importMember = `${IMPORT_MEMBER_PREFIX}${namespace}`;
 
   async function inThisStore(members: readonly string[]): Promise<boolean> {
-    if (members.includes(importMember)) return true;
+    // The key is this namespace's, so any import holding or awaiting it is.
+    if (members.some((member) => member.startsWith(IMPORT_MEMBER_PREFIX))) return true;
     const uploadSessionIds = members.filter((member) => !member.startsWith(IMPORT_MEMBER_PREFIX));
     const found = await Promise.all(uploadSessionIds.map((uploadSessionId) => db.findOne({
       model: 'uploadSessions',

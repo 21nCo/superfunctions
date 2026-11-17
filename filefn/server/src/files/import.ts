@@ -152,6 +152,34 @@ function isStorageNotFound(error: unknown): boolean {
     || err.$metadata?.httpStatusCode === 404;
 }
 
+const DUPLICATE_KEY_CODES = new Set<unknown>([
+  '23505', // Postgres unique_violation
+  'ER_DUP_ENTRY', // MySQL
+  'SQLITE_CONSTRAINT_UNIQUE',
+  'SQLITE_CONSTRAINT_PRIMARYKEY',
+  'P2002', // Prisma
+  'ADAPTER_DUPLICATE_KEY', // @superfunctions/db DuplicateKeyError
+]);
+
+/**
+ * Whether a failed insert was refused by a unique constraint, so it did not
+ * write its row. Drivers' own errors are checked along the `cause` chain
+ * (adapters and query builders wrap them).
+ */
+export function isDuplicateKeyError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+    const err = current as { code?: unknown; errno?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+    if (DUPLICATE_KEY_CODES.has(err.code) || err.errno === 1062 || err.name === 'DuplicateKeyError') return true;
+    if (typeof err.message === 'string'
+      && /duplicate key value violates unique constraint|UNIQUE constraint failed/i.test(err.message)) {
+      return true;
+    }
+    current = err.cause;
+  }
+  return false;
+}
+
 /**
  * Builds `importObject`: registers an object already in storage as a new file
  * and version without copying it. See the FileFn server SDK docs ("Importing
@@ -282,9 +310,10 @@ export function createImportObject(deps: ImportObjectDeps) {
 
     // Usage is recorded before the version insert, so the version row also
     // records that it was: a rerun after a failed or interrupted record finds no
-    // version and records it, and one after the insert records nothing. Only a
-    // stop between the two counts the bytes twice. A call whose insert then
-    // fails takes its record back.
+    // version and records it, and one after the insert records nothing. A failed
+    // insert takes the record back only when it is known not to have written
+    // its row (see `afterFailedInsert`); every other doubt keeps the record, so
+    // usage is only ever over-counted, never lost.
     await recordUsage(request, request.size);
     const version: FileVersionRecord = {
       versionId,
@@ -303,13 +332,47 @@ export function createImportObject(deps: ImportObjectDeps) {
         namespace,
       })) ?? version;
     } catch (err) {
-      await recordUsage(request, -request.size);
-      // Another import of this object (in another process) inserted it first.
-      const winner = await findVersion(versionId);
-      if (!winner) throw err;
-      return existingImport(request, fileId, winner);
+      return afterFailedInsert(request, fileId, versionId, err, file);
     }
     return { file, version: created, created: true };
+  }
+
+  /**
+   * Settles a version insert that threw after this call recorded usage. The
+   * insert is known not to have written its row when no row of the version
+   * exists, when the row names another file (another import won the object),
+   * or when the database refused the insert as a duplicate (an import in
+   * another process with this file ID won). Only then is the record taken
+   * back. A row of this file ID after any other error is this call's own
+   * insert whose response was lost: the file is created, and its usage stays.
+   */
+  async function afterFailedInsert(
+    request: ParsedImport,
+    fileId: string,
+    versionId: string,
+    insertError: unknown,
+    file: FileRecord,
+  ): Promise<ImportObjectResult> {
+    const found = await findVersion(versionId);
+    if (found && found.fileId === fileId && !isDuplicateKeyError(insertError)) {
+      return { file, version: found, created: true };
+    }
+    try {
+      await recordUsage(request, -request.size);
+    } catch (compensationError) {
+      // The insert's error is the one to report. The bytes stay counted, as
+      // after a stop between the record and the insert; a rerun that finds the
+      // winner's version records nothing more.
+      logger?.warn('Import usage could not be taken back after a failed version insert', {
+        storageKey: request.storageKey,
+        fileId,
+        size: request.size,
+        error: compensationError instanceof Error ? compensationError.message : String(compensationError),
+      });
+      throw insertError;
+    }
+    if (!found) throw insertError;
+    return existingImport(request, fileId, found);
   }
 
   return async function importObject(input: ImportObjectInput): Promise<ImportObjectResult> {

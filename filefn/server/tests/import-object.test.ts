@@ -54,7 +54,10 @@ function createStorage(initial: Record<string, number> = {}) {
  * `fileVersions.versionId` like Postgres (each check and insert atomic) and
  * reports constraints. `beforeCreate` may hold or fail an insert.
  */
-function createUniqueDb(base: Adapter = memoryAdapter(), hooks: { beforeCreate?: (model: string) => Promise<void> } = {}): Adapter {
+function createUniqueDb(
+  base: Adapter = memoryAdapter(),
+  hooks: { beforeCreate?: (model: string) => Promise<void>; afterCreate?: (model: string) => Promise<void> } = {},
+): Adapter {
   const uniqueColumns: Record<string, string> = { files: 'fileId', fileVersions: 'versionId' };
   let tail: Promise<unknown> = Promise.resolve();
   return {
@@ -70,12 +73,16 @@ function createUniqueDb(base: Adapter = memoryAdapter(), hooks: { beforeCreate?:
             where: [{ field: column, operator: 'eq', value: params.data[column] }],
             namespace: params.namespace,
           });
-          if (existing) throw new Error(`duplicate key value violates unique constraint "${params.model}_${column}"`);
+          if (existing) {
+            throw Object.assign(new Error(`duplicate key value violates unique constraint "${params.model}_${column}"`), { code: '23505' });
+          }
         }
         return base.create(params);
       });
       tail = insert.catch(() => undefined);
-      return insert;
+      const created = await insert;
+      await hooks.afterCreate?.(params.model);
+      return created;
     },
   } as Adapter;
 }
@@ -105,7 +112,7 @@ function barrier(count: number) {
 
 function createQuota() {
   const recorded: Array<{ principalId?: string; tenantId?: string; bytes: number }> = [];
-  const control = { failNext: false };
+  const control = { failNext: false, failNextTakeBack: false };
   const quota: QuotaProvider = {
     async checkQuota() {
       return { allowed: true, current: 0, limit: Number.MAX_SAFE_INTEGER };
@@ -114,6 +121,10 @@ function createQuota() {
       if (control.failNext) {
         control.failNext = false;
         throw new Error('quota store unavailable');
+      }
+      if (control.failNextTakeBack && input.bytes < 0) {
+        control.failNextTakeBack = false;
+        throw new Error('quota take-back unavailable');
       }
       recorded.push(input);
     },
@@ -468,6 +479,157 @@ describe('services.files.importObject', () => {
     });
     expect(await rows(database, 'files')).toEqual([expect.objectContaining({ fileId: 'file_claimedONCE', ownerId: 'uploader' })]);
     expect(await rows(database, 'fileVersions')).toEqual([expect.objectContaining({ versionId: published.versionId })]);
+  });
+
+  it('lets only one of two imports through separate wrappers of one memory store claim one fileId', async () => {
+    const releaseFirstFileRow = deferred();
+    const firstAtFileRow = deferred();
+    let fileRows = 0;
+    const store = createHookedDb(async (model) => {
+      if (model === 'files' && ++fileRows === 1) {
+        firstAtFileRow.resolve();
+        await releaseFirstFileRow.promise;
+      }
+    });
+    const { storage } = createStorage({ 'legacy/one.txt': 12, 'legacy/two.txt': 12 });
+    const { quota, net } = createQuota();
+    // Each wrapper is a separate adapter object that forwards to one store.
+    const viaA = build({ database: { ...store } as Adapter, storage, quota });
+    const viaB = build({ database: { ...store } as Adapter, storage, quota });
+
+    const first = viaA.services.files.importObject({ ...baseInput, storageKey: 'legacy/one.txt', fileId: 'file_claimedONCE' });
+    await firstAtFileRow.promise;
+    const second = viaB.services.files.importObject({
+      ...baseInput, storageKey: 'legacy/two.txt', fileId: 'file_claimedONCE', principalId: 'intruder',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseFirstFileRow.resolve();
+
+    await expect(first).resolves.toMatchObject({ created: true, file: { fileId: 'file_claimedONCE', ownerId: 'owner' } });
+    await expect(second).rejects.toMatchObject({
+      code: 'FILEFN_IMPORT_CONFLICT',
+      details: expect.objectContaining({ reason: 'fileId' }),
+    });
+    expect(await rows(store, 'files')).toEqual([expect.objectContaining({ fileId: 'file_claimedONCE', ownerId: 'owner' })]);
+    expect(await rows(store, 'fileVersions')).toEqual([expect.objectContaining({ storageKey: 'legacy/one.txt' })]);
+    expect(net()).toBe(12);
+  });
+
+  it('makes an upload completion through another wrapper of one memory store wait for an import of its fileId', async () => {
+    const releaseImportFileRow = deferred();
+    const importAtFileRow = deferred();
+    let fileRows = 0;
+    const store = createHookedDb(async (model) => {
+      if (model === 'files' && ++fileRows === 1) {
+        importAtFileRow.resolve();
+        await releaseImportFileRow.promise;
+      }
+    });
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const viaA = build({ database: { ...store } as Adapter, storage });
+    const viaB = build({ database: { ...store } as Adapter, storage });
+    const uploader = { principalId: 'uploader', tenantId: 'tenant' };
+    const session = await viaB.services.uploads.createSession(
+      { policy: 'doc', fileName: 'new.txt', size: 5, mimeType: 'text/plain', fileId: 'file_claimedONCE' },
+      uploader,
+    );
+    await viaB.services.uploads.uploadPartBytes(session.uploadSessionId, 1, Buffer.from('hello'), 5, uploader, session.uploadSessionToken);
+
+    const imported = viaA.services.files.importObject({ ...baseInput, fileId: 'file_claimedONCE' });
+    await importAtFileRow.promise;
+    const upload = viaB.services.uploads.completeSession(session.uploadSessionId, uploader, session.uploadSessionToken);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseImportFileRow.resolve();
+
+    await expect(imported).resolves.toMatchObject({ created: true, file: { fileId: 'file_claimedONCE', ownerId: 'owner' } });
+    await expect(upload).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+    expect(await rows(store, 'files')).toEqual([expect.objectContaining({ fileId: 'file_claimedONCE', ownerId: 'owner' })]);
+    expect(await rows(store, 'fileVersions')).toEqual([expect.objectContaining({ storageKey: baseInput.storageKey })]);
+  });
+
+  it('keeps the usage of a version insert that wrote its row but lost its response', async () => {
+    let loseResponse = true;
+    const database = createUniqueDb(memoryAdapter(), {
+      async afterCreate(model) {
+        if (model === 'fileVersions' && loseResponse) {
+          loseResponse = false;
+          throw new Error('connection reset after commit');
+        }
+      },
+    });
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const { quota, net } = createQuota();
+    const fileFn = build({ database, storage, quota });
+
+    const imported = await fileFn.services.files.importObject(baseInput);
+    expect(imported.created).toBe(true);
+    expect(await rows(database, 'fileVersions')).toHaveLength(1);
+    expect(net()).toBe(12);
+
+    expect((await fileFn.services.files.importObject(baseInput)).created).toBe(false);
+    expect(net()).toBe(12);
+    await fileFn.services.files.deleteFile(imported.file.fileId, owner);
+    expect(net()).toBe(0);
+  });
+
+  it('reports the insert error when taking back a race loser\'s usage fails, and its rerun records nothing', async () => {
+    const bothFilesWritten = deferred();
+    let filesWritten = 0;
+    const database = createUniqueDb(memoryAdapter(), {
+      async beforeCreate(model) {
+        if (model === 'files' && ++filesWritten === 2) bothFilesWritten.resolve();
+        if (model === 'fileVersions') await bothFilesWritten.promise;
+      },
+    });
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const { quota, control, net } = createQuota();
+    control.failNextTakeBack = true;
+    const otherProcess = await loadIsolatedCreateFileFn();
+    const inputA = { ...baseInput, fileId: 'file_importerAAAA' };
+    const inputB = { ...baseInput, fileId: 'file_importerBBBB' };
+    const processA = build({ database, storage, quota });
+    const processB = build({ database, storage, quota, factory: otherProcess });
+
+    const settled = await Promise.allSettled([
+      processA.services.files.importObject(inputA),
+      processB.services.files.importObject(inputB),
+    ]);
+    const loserIndex = settled.findIndex((result) => result.status === 'rejected');
+    expect(loserIndex).toBeGreaterThanOrEqual(0);
+    expect((settled[loserIndex] as PromiseRejectedResult).reason).toMatchObject({ code: '23505' });
+    const winner = (settled[1 - loserIndex] as PromiseFulfilledResult<{ created: boolean; file: { fileId: string } }>).value;
+    expect(winner.created).toBe(true);
+    // The loser's record stands (documented over-count); nothing else changes it.
+    const afterRace = net();
+    expect(afterRace).toBe(24);
+
+    const rerun = await [processA, processB][loserIndex].services.files.importObject([inputA, inputB][loserIndex]);
+    expect(rerun).toMatchObject({ created: false, file: { fileId: winner.file.fileId } });
+    expect(net()).toBe(afterRace);
+    expect((await rows(database, 'files')).map((row) => row.fileId)).toEqual([winner.file.fileId]);
+  });
+
+  it('reports the insert error, not the quota error, when taking back a failed insert\'s usage fails', async () => {
+    let failVersionInsert = true;
+    const database = createUniqueDb(memoryAdapter(), {
+      async beforeCreate(model) {
+        if (model === 'fileVersions' && failVersionInsert) {
+          failVersionInsert = false;
+          throw new Error('connection reset');
+        }
+      },
+    });
+    const { storage } = createStorage({ [baseInput.storageKey]: 12 });
+    const { quota, control, net } = createQuota();
+    control.failNextTakeBack = true;
+    const fileFn = build({ database, storage, quota });
+
+    await expect(fileFn.services.files.importObject(baseInput)).rejects.toThrow('connection reset');
+    expect(net()).toBe(12);
+    expect((await fileFn.services.files.importObject(baseInput)).created).toBe(true);
+    // Nothing durable records the stranded 12 bytes, so the rerun counts them
+    // again: the documented over-count, as after a stop before the insert.
+    expect(net()).toBe(24);
   });
 
   it('records usage once when a rerun follows a failed usage record, and a delete balances it', async () => {

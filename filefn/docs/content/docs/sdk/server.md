@@ -163,7 +163,8 @@ const { file, version, created } = await fileFn.services.files.importObject({
   `FILEFN_IMPORT_CONFLICT` and publishes nothing. On adapters with unique
   constraints (Postgres) the database decides across processes; on adapters
   without them, imports and upload completions claiming one file ID, and imports
-  of one object, run one at a time in the process.
+  of one object, run one at a time in the process, whichever FileFn instance or
+  adapter wrapper they come through.
 - **Failures.** No object at the key: `404 FILEFN_IMPORT_OBJECT_NOT_FOUND`. A stored
   size other than `size`: `409 FILEFN_IMPORT_SIZE_MISMATCH`. Neither writes any row.
   The object already imported for another owner or tenant, or a `fileId` that names
@@ -174,9 +175,14 @@ const { file, version, created } = await fileFn.services.files.importObject({
   are; retry the import.
 - **Side effects.** The call that creates the file records `size` bytes of quota
   usage (so deleting the file balances it). Usage is recorded just before the
-  version insert: a rerun after a failed record (or a failed insert, whose record
-  is taken back) records it once; only a process stopped between the record and
-  the insert leaves it recorded twice. It emits no `file:uploaded` event and
+  version insert, so a rerun after a failed record records it once. A failed
+  insert takes its record back only when it is known not to have written the
+  version: no version row exists afterwards, the row belongs to another file, or
+  the database refused the insert as a duplicate key. An insert that wrote its
+  row but lost its response keeps the record and creates the file. Accounting
+  errs only toward counting the bytes twice, in two cases: a process stopped
+  between the record and the insert, and a failed take-back (the insert's error
+  is thrown; a rerun after an insert that wrote nothing records again). It emits no `file:uploaded` event and
   schedules no processing; call `services.processing.triggerProcessingForFile` for
   previews.
 - **Trust.** The import trusts that the object at the key is the one meant; an
