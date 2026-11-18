@@ -94,13 +94,15 @@ afterEach(() => {
 });
 
 /** The collector loaded with listener methods that record each add and remove. */
-async function loadRecordingListeners() {
+async function loadRecordingListeners(hooks: { onAdd?: () => void } = {}) {
   const added: Array<[unknown, string, unknown]> = [];
   const removed: Array<[unknown, string, unknown]> = [];
   const { addEventListener, removeEventListener } = EventTarget.prototype;
   EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["addEventListener"]>) {
     added.push([this, args[0], args[1]]);
-    return addEventListener.apply(this, args);
+    const result = addEventListener.apply(this, args);
+    hooks.onAdd?.();
+    return result;
   };
   EventTarget.prototype.removeEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["removeEventListener"]>) {
     removed.push([this, args[0], args[1]]);
@@ -225,6 +227,44 @@ describe("WebSocketCollector", () => {
     }
     expect(platform.WebSocket).toBe(PageSocket);
     expect(reentrant.collect()).toEqual([]);
+  });
+
+  it("removes every listener when adding one stops the last collector", async () => {
+    const hooks: { onAdd?: () => void } = {};
+    const { fresh, added, removed } = await loadRecordingListeners(hooks);
+    const interrupted = new fresh.WebSocketCollector(5);
+    hooks.onAdd = () => {
+      hooks.onAdd = undefined;
+      interrupted.stop();
+    };
+    interrupted.start();
+    const socket = openSocket("wss://example.com/interrupted");
+    const ours = added.filter(([target]) => target === socket).map(([, type, listener]) => [type, listener]);
+    const gone = removed.filter(([target]) => target === socket).map(([, type, listener]) => [type, listener]);
+    expect(ours.length).toBeGreaterThan(0);
+    expect(gone).toEqual(expect.arrayContaining(ours));
+    expect(platform.WebSocket).toBe(PageSocket);
+    expect(socket.readyState).toBe(0); // Left as it was.
+  });
+
+  it("still sends when sizing the data fails", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/sizing");
+    socket.serverOpens();
+    const { charCodeAt } = String.prototype;
+    String.prototype.charCodeAt = () => {
+      throw new Error("patched");
+    };
+    try {
+      expect(() => socket.send("hello")).not.toThrow();
+    } finally {
+      String.prototype.charCodeAt = charCodeAt;
+    }
+    expect(socket.sent).toEqual(["hello"]);
+    expect(collector.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
+      { type: "open", direction: undefined, size: undefined },
+      { type: "message", direction: "sent", size: undefined },
+    ]);
   });
 
   it("does not record a send() whose data conversion closes the socket, and records one that converts", () => {

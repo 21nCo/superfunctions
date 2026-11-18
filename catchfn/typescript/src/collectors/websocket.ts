@@ -227,6 +227,11 @@ function install(current: Set<Listener>): (() => void) | undefined {
         forget.unregister(ref);
         for (const [type, callback] of added) unlisten(socket, type, callback);
       };
+      // Discoverable by cleanup before any listener goes on, in case adding
+      // one runs page code that stops the last collector.
+      observed.add(ref);
+      detachOf.set(socket, detach);
+      forget.register(socket, ref, ref);
       let opened = false;
       // `read` returns undefined for an event the platform did not fire.
       const on = (type: Observation["type"], read: (event: unknown) => Partial<Observation> | undefined) => {
@@ -245,7 +250,7 @@ function install(current: Set<Listener>): (() => void) | undefined {
             if (type === "close" && fields) detach();
           }
         };
-        if (listen(socket, type, callback)) added.push([type, callback]);
+        if (live() && listen(socket, type, callback)) added.push([type, callback]);
       };
       // The platform fires open once, on a socket that is open by then; a
       // listener before ours (a subclass's own) may already have closed it,
@@ -275,9 +280,10 @@ function install(current: Set<Listener>): (() => void) | undefined {
         return closed;
       });
       on("error", () => ({}));
-      observed.add(ref);
-      detachOf.set(socket, detach);
-      forget.register(socket, ref, ref);
+      if (!live()) {
+        detach(); // Stopped part way: remove what went on after the cleanup ran.
+        return;
+      }
       sockets.set(socket, url);
     };
 
@@ -309,12 +315,17 @@ function install(current: Set<Listener>): (() => void) | undefined {
           // Strings and binary data are sent as they are; anything else is
           // converted to a string first, which can run page code that closes
           // the socket, so such data is recorded only if it is still open after.
-          const size = payloadSize(args[0]);
+          let size: number | undefined;
+          try {
+            size = payloadSize(args[0]);
+          } catch {
+            size = undefined; // Sizing never stops the send.
+          }
           const openBefore = readyState(this) === OPEN;
           const result = apply(sendOwner.original, this, args);
           try {
             const url = typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-            const converted = size === undefined;
+            const converted = typeof args[0] !== "string" && size === undefined;
             if (openBefore && url !== undefined && (!converted || readyState(this) === OPEN)) {
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             }
