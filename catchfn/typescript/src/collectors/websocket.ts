@@ -18,8 +18,7 @@ const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
 // a subclass at load.
 const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
 // The platform's own send(): the deepest one the load-time WebSocket's chain
-// defines (a subclass overrides it nearer). Only for this send is the
-// conversion of other data to a string known.
+// defines (a subclass overrides it nearer). It never closes a socket itself.
 const PLATFORM_SEND = WEBSOCKET_PROTOTYPE ? prototypeChain(WEBSOCKET_PROTOTYPE).reverse().map((prototype) => intrinsic(prototype, "send", "value")).find(Boolean) : undefined;
 const OPEN = 1;
 const CLOSING = 2;
@@ -328,27 +327,27 @@ function install(current: Set<Listener>): (() => void) | undefined {
           if (url === undefined) return apply(sendOwner.original, this, args);
           const timestamp = Date.now();
           const deliver = receivers();
-          // Strings and binary data are sent as they are. The platform's send
-          // converts any other object to a string first, which can run page
-          // code that closes the socket and so discards the data. Where the
-          // wrapped send is the platform's, that conversion is done here
-          // instead, once and exactly as the platform does it, and the send
-          // gets the resulting string: the socket's state after it then tells
-          // whether the data is sent. Any other send (a library's) gets the
-          // caller's arguments unchanged, and such data is recorded without a
-          // size, by the socket's state before the call.
-          let data = args[0];
+          // The send always gets the caller's arguments unchanged, and
+          // nothing the page can replace runs on them before it: binary data
+          // is recognized through the captured brand-checked getters only.
+          const data = args[0];
           const binary = binarySize(data);
-          if (sendOwner.original === PLATFORM_SEND && args.length > 0 && binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function")) {
-            data = `${data as unknown as string}`; // Throws where the platform's conversion throws.
-            args[0] = data;
-          }
+          // Strings, binary data and other primitives reach the platform as
+          // they are or convert without page code. Any other object is
+          // converted by the send (the platform's to a string, a library's
+          // in its own way), which can run page code that closes the socket.
+          const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
           // Only a send() on an open socket transmits: the platform throws
           // while connecting and discards the data once closing or closed. A
           // send that closes the socket after transmitting still sent it.
           const openBefore = readyState(this) === OPEN;
           const result = apply(sendOwner.original, this, args);
-          if (openBefore) {
+          // The platform's own send never closes the socket, so one no
+          // longer open after it means converting the data closed it and the
+          // data was discarded. A library's send may transmit and then close,
+          // which the wrapper cannot tell from that: it is recorded by the
+          // state before its call.
+          if (openBefore && (!converted || sendOwner.original !== PLATFORM_SEND || readyState(this) === OPEN)) {
             try {
               const size = typeof data === "string" ? utf8Size(data) : binary;
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });

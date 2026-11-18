@@ -388,11 +388,11 @@ describe("WebSocketCollector", () => {
         return "discarded";
       },
     });
-    expect(conversions).toBe(2);
+    expect(conversions).toBe(2); // Only the platform's send converted each.
     expect(socket.sent).toEqual(["converted1"]);
     expect(collector.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
       { type: "open", direction: undefined, size: undefined },
-      { type: "message", direction: "sent", size: 10 },
+      { type: "message", direction: "sent", size: undefined },
     ]);
   });
 
@@ -437,6 +437,28 @@ describe("WebSocketCollector", () => {
     expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, 4]);
   });
 
+  it("passes the caller's own object to the platform's send and to a library's installed before load", async () => {
+    const received: unknown[] = [];
+    const library = function (this: PageSocket, data: unknown) {
+      received.push(data);
+      pageSend.call(this, typeof data === "object" && data !== null && !(data instanceof Blob) ? JSON.stringify(data) : data);
+    };
+    PageSocket.prototype.send = library; // Before load: counted as the platform's.
+    const fresh = await loadOverPageSocket();
+    collector = new fresh.WebSocketCollector(5);
+    collector.start();
+    const socket = openSocket("wss://example.com/identity");
+    socket.serverOpens();
+    const object = { action: "ping" };
+    const blob = new Blob(["ab"]);
+    socket.send(object);
+    socket.send(blob);
+    expect(received[0]).toBe(object);
+    expect(received[1]).toBe(blob);
+    expect(socket.sent).toEqual(['{"action":"ping"}', blob]);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, 2]);
+  });
+
   it("never sizes a bare SharedArrayBuffer by its byteLength: the platform's send converts it to a string", async () => {
     // A send other than the platform's: unconverted, recorded without a size.
     collector.start();
@@ -446,7 +468,7 @@ describe("WebSocketCollector", () => {
     expect(socket.sent).toEqual(["[object SharedArrayBuffer]"]);
     expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined]);
     collector.stop();
-    // The platform's send: sized as the string it transmits.
+    // The platform's send: still recorded without a size.
     const fresh = await loadOverPageSocket();
     collector = new fresh.WebSocketCollector(5);
     collector.start();
@@ -455,7 +477,7 @@ describe("WebSocketCollector", () => {
     platformSocket.send(new SharedArrayBuffer(1024) as unknown as ArrayBuffer);
     platformSocket.send(new ArrayBuffer(8));
     expect(platformSocket.sent).toEqual(["[object SharedArrayBuffer]", new ArrayBuffer(8)]);
-    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([26, 8]);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, 8]);
   });
 
   it("ignores message and close events the page dispatches on a socket itself", () => {
