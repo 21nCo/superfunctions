@@ -17,6 +17,10 @@ const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
 // WebSocket's chain passes to its sockets, also when the global was already
 // a subclass at load.
 const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
+// The platform's own send(): the deepest one the load-time WebSocket's chain
+// defines (a subclass overrides it nearer). Only for this send is the
+// conversion of other data to a string known.
+const PLATFORM_SEND = WEBSOCKET_PROTOTYPE ? prototypeChain(WEBSOCKET_PROTOTYPE).reverse().map((prototype) => intrinsic(prototype, "send", "value")).find(Boolean) : undefined;
 const OPEN = 1;
 const CLOSING = 2;
 const CLOSED = 3;
@@ -324,15 +328,18 @@ function install(current: Set<Listener>): (() => void) | undefined {
           if (url === undefined) return apply(sendOwner.original, this, args);
           const timestamp = Date.now();
           const deliver = receivers();
-          // Strings and binary data are sent as they are. The platform
+          // Strings and binary data are sent as they are. The platform's send
           // converts any other object to a string first, which can run page
-          // code that closes the socket and so discards the data. That
-          // conversion is done here instead, once and exactly as the platform
-          // does it, and the send gets the resulting string: the socket's state
-          // after it then tells whether the data is sent.
+          // code that closes the socket and so discards the data. Where the
+          // wrapped send is the platform's, that conversion is done here
+          // instead, once and exactly as the platform does it, and the send
+          // gets the resulting string: the socket's state after it then tells
+          // whether the data is sent. Any other send (a library's) gets the
+          // caller's arguments unchanged, and such data is recorded without a
+          // size, by the socket's state before the call.
           let data = args[0];
           const binary = binarySize(data);
-          if (args.length > 0 && binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function")) {
+          if (sendOwner.original === PLATFORM_SEND && args.length > 0 && binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function")) {
             data = `${data as unknown as string}`; // Throws where the platform's conversion throws.
             args[0] = data;
           }

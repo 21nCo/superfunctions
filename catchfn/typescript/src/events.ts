@@ -327,14 +327,15 @@ const ownCheck = (table: Record<string, Check>, field: string): Check | undefine
 function problems(value: unknown): string[] {
   // The event itself must keep its JSON form too: plain, with no callable toJSON.
   if (!isPlainRecord(value)) return ["event must be a plain object"];
-  // Each field is read once, from its own data property: a getter could
-  // answer one way here (as the `kind` or `type` that selects the checks) and
-  // another way when the event is serialized.
+  // Each field must be an own data property, and is read once, as
+  // JSON.stringify reads it: a getter could answer one way here (as the
+  // `kind` or `type` that selects the checks) and another way when the event
+  // is serialized.
   const fields: Record<string, unknown> = Object.create(null);
   const accessors: string[] = [];
   for (const field of Object.keys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, field);
-    if (descriptor && "value" in descriptor) fields[field] = descriptor.value;
+    if (descriptor && "value" in descriptor) fields[field] = value[field];
     else accessors.push(`${field} must be a data property`);
   }
   if (accessors.length > 0) return accessors;

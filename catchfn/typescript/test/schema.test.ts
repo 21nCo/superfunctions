@@ -164,6 +164,17 @@ describe("evidence event v1 schema", () => {
     expect(validateEvidenceEvent(kindGetter)).toEqual(["kind must be a data property"]);
     const sizeGetter = Object.defineProperty({ ...valid.websocket }, "size", { enumerable: true, get: () => 12 });
     expect(validateEvidenceEvent(sizeGetter)).toEqual(["size must be a data property"]);
+    // A Proxy whose descriptor and get traps disagree is read as JSON.stringify reads it.
+    const disagreeing = new Proxy(
+      { ...valid.websocketOpen, direction: "sent" },
+      {
+        getOwnPropertyDescriptor: (target, key) => (key === "type" ? { value: "message", writable: true, enumerable: true, configurable: true } : Reflect.getOwnPropertyDescriptor(target, key)),
+        get: (target, key, receiver) => (key === "type" ? "open" : Reflect.get(target, key, receiver)),
+      }
+    );
+    expect(strip(disagreeing).type).toBe("open");
+    expect(validateWithSchema(strip(disagreeing))).toBe(false);
+    expect(validateEvidenceEvent(disagreeing)).toEqual(["direction is only a message websocket event field"]);
     // The same events with data properties agree with the schema.
     for (const event of [valid.websocket, valid.websocketOpen, valid.console, { ...valid.websocketOpen, direction: "sent" }]) {
       expect(validateEvidenceEvent(event).length === 0).toBe(validateWithSchema(strip(event)));

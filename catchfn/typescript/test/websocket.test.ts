@@ -93,6 +93,13 @@ afterEach(() => {
   expectValidEvents(events);
 });
 
+/** The collector loaded while PageSocket is the global, so PageSocket's send is the platform's to it. */
+async function loadOverPageSocket() {
+  platform.WebSocket = PageSocket;
+  vi.resetModules();
+  return import("../src/collectors/websocket.js");
+}
+
 /** The collector loaded with listener methods that record each add and remove. */
 async function loadRecordingListeners(hooks: { onAdd?: () => void } = {}) {
   const added: Array<[unknown, string, unknown]> = [];
@@ -365,7 +372,10 @@ describe("WebSocketCollector", () => {
     expect(collector.collect()).toEqual([]);
   });
 
-  it("does not record a send() whose data conversion closes the socket, and records one that converts, converting each once", () => {
+  it("does not record a send() whose data conversion closes the socket, and records one that converts, converting each once", async () => {
+    const fresh = await loadOverPageSocket();
+    const platformCollector = new fresh.WebSocketCollector(5);
+    collector = platformCollector; // Stopped and its events validated after the test.
     collector.start();
     const socket = openSocket("wss://example.com/convert");
     socket.serverOpens();
@@ -386,8 +396,10 @@ describe("WebSocketCollector", () => {
     ]);
   });
 
-  it("records converted data a library's send transmits and then closes the socket after", () => {
+  it("records converted data a library's send transmits and then closes the socket after, passing it the caller's object", () => {
+    const received: unknown[] = [];
     PageSocket.prototype.send = function (this: PageSocket, data: unknown) {
+      received.push(data);
       pageSend.call(this, data);
       this.close();
     };
@@ -395,19 +407,55 @@ describe("WebSocketCollector", () => {
     const socket = openSocket("wss://example.com/library-close");
     socket.serverOpens();
     let conversions = 0;
-    socket.send({ toString: () => ((conversions += 1), "hello") });
+    const data = { toString: () => ((conversions += 1), "hello") };
+    socket.send(data);
+    expect(received[0]).toBe(data);
     expect(conversions).toBe(1);
     expect(socket.sent).toEqual(["hello"]);
-    expect(collector.collect().filter((event) => event.type === "message")).toMatchObject([{ direction: "sent", size: 5 }]);
+    // What a library's send makes of an object is its own: no size.
+    const messages = collector.collect().filter((event) => event.type === "message");
+    expect(messages.map(({ direction, size }) => ({ direction, size }))).toEqual([{ direction: "sent", size: undefined }]);
   });
 
-  it("sizes a bare SharedArrayBuffer as the string the platform converts it to, never by its byteLength", () => {
+  it("transmits what a library's send makes of an object exactly as without the collector", () => {
+    const library = function (this: PageSocket, data: unknown) {
+      pageSend.call(this, typeof data === "object" && data !== null ? JSON.stringify(data) : data);
+    };
+    const transmit = () => {
+      const socket = openSocket("wss://example.com/json");
+      socket.serverOpens();
+      socket.send({ action: "ping" });
+      socket.send("text");
+      return socket.sent;
+    };
+    PageSocket.prototype.send = library;
+    const without = transmit();
+    collector.start();
+    const withCollector = transmit();
+    expect(without).toEqual(['{"action":"ping"}', "text"]);
+    expect(withCollector).toEqual(without);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, 4]);
+  });
+
+  it("never sizes a bare SharedArrayBuffer by its byteLength: the platform's send converts it to a string", async () => {
+    // A send other than the platform's: unconverted, recorded without a size.
     collector.start();
     const socket = openSocket("wss://example.com/shared");
     socket.serverOpens();
     socket.send(new SharedArrayBuffer(1024) as unknown as ArrayBuffer);
     expect(socket.sent).toEqual(["[object SharedArrayBuffer]"]);
-    expect(collector.collect().filter((event) => event.type === "message")).toMatchObject([{ direction: "sent", size: 26 }]);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined]);
+    collector.stop();
+    // The platform's send: sized as the string it transmits.
+    const fresh = await loadOverPageSocket();
+    collector = new fresh.WebSocketCollector(5);
+    collector.start();
+    const platformSocket = openSocket("wss://example.com/shared-platform");
+    platformSocket.serverOpens();
+    platformSocket.send(new SharedArrayBuffer(1024) as unknown as ArrayBuffer);
+    platformSocket.send(new ArrayBuffer(8));
+    expect(platformSocket.sent).toEqual(["[object SharedArrayBuffer]", new ArrayBuffer(8)]);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([26, 8]);
   });
 
   it("ignores message and close events the page dispatches on a socket itself", () => {

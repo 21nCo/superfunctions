@@ -208,17 +208,21 @@ constructs through the page's own class and is not observed.
   through the platform getters captured at load. Another payload type is
   recorded without `size`. The payload itself is never recorded.
 - `send()` on a socket constructed while no collector ran is passed straight
-  to the page's `send`, unobserved. On an observed socket, an object other
-  than a string or binary data (a bare `SharedArrayBuffer` included) is
-  converted to a string once, as the platform's `send` converts it, and that
-  string is what the page's `send` receives and what is sized.
+  to the page's `send`, unobserved. On an observed socket whose `send` is
+  the platform's own (the one the `WebSocket` at load defines), an object
+  other than a string or binary data (a bare `SharedArrayBuffer` included) is
+  converted to a string once, as that `send` converts it, and the string is
+  what it receives and what is sized. Any other `send` (a library's or a
+  subclass's) receives the caller's arguments unchanged, and such an object
+  is recorded without `size`.
 - Only a `send()` on an open socket is recorded, its `readyState` read
   after that conversion and before the call through the getter captured at
   load: the platform throws while connecting (it still throws) and discards
   the data once the socket is closing or closed, also when converting the
-  data closed it (nothing is recorded). A `send` that transmits and then
-  closes the socket is recorded. Nothing the page can replace runs on the
-  data before the page's `send`, other than that one conversion.
+  data closed it (nothing is recorded; a library's `send` converts on its
+  own, so there the state before its call decides). A `send` that transmits
+  and then closes the socket is recorded. Nothing the page can replace runs
+  on the data before the page's `send`, other than that one conversion.
 - Event attributes are read only through the platform getters. A `message`
   or `close` event the page dispatches on a socket itself, which is not a
   platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has
