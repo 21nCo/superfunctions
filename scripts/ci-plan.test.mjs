@@ -47,7 +47,7 @@ test("CI changes cannot silently disable Python coverage", () => {
       assert.match(outputs, new RegExp(`^run_js<<__CI_EOF__\n${js}\n__CI_EOF__$`, "m"), file);
       assert.doesNotMatch(outputs, /run_docs(?:=|<<)/);
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
 // Shared test support outside any package (devfn/test-support) still selects the packages that use it.
@@ -82,7 +82,7 @@ test("a change to a product's shared test support runs that product's package te
     assert.match(outputs, /^run_devfn<<__CI_EOF__\ntrue\n__CI_EOF__$/m);
     assert.match(outputs, /^devfn_test_filters<<__CI_EOF__\n--filter=\.\/devfn\/core --filter=\.\/devfn\/proxy\n__CI_EOF__$/m);
     assert.match(outputs, /^has_js_test<<__CI_EOF__\nfalse\n__CI_EOF__$/m);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
 // DevFn tests (SFNS-293) run in their own serialized job: the plan gives that job the DevFn part of the JavaScript test
