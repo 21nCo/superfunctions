@@ -333,7 +333,7 @@ function install(current: Set<Listener>): (() => void) | undefined {
           let data = args[0];
           const binary = binarySize(data);
           if (args.length > 0 && binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function")) {
-            data = `${data as string}`; // Throws where the platform's conversion throws.
+            data = `${data as unknown as string}`; // Throws where the platform's conversion throws.
             args[0] = data;
           }
           // Only a send() on an open socket transmits: the platform throws
