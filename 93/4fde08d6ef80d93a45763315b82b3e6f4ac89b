@@ -1,0 +1,23 @@
+datafn/docs/content/docs/recipes/filefn-integration.mdx
+  s_2c40e6871924ed::t_fff6f95543b344 166-167,174-177,183-184,186,192,200
+datafn/docs/public/llms-full.txt
+  s_2c40e6871924ed::t_73c0aa07a0cb4f 22256-22257,22264-22267,22273-22274,22276,22282,22290
+filefn/docs/scripts/check-recipe-types.test.mjs
+  s_2c40e6871924ed::t_06ac0f34c1a071 205-207,210-216,219-220,224-230,233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "934fde08d6ef80d93a45763315b82b3e6f4ac89b",
+  "prompts": {},
+  "sessions": {
+    "s_2c40e6871924ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2c40e6871924ed",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

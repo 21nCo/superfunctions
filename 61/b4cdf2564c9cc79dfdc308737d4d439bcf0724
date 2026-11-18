@@ -1,0 +1,33 @@
+billfn/swift/Package.swift
+  s_19abec75182420::t_41ad4174300371 25-26
+billfn/swift/README.md
+  s_19abec75182420::t_db283b71adba1d 43-46,55-58,73-87,108-115
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_19abec75182420::t_112cd3be037ea0 81,83-85,191-195,199-202,204,283-284,287,290,293,297-312,317,324-329,333-336,351-352,362,364,367,371-373,383-396,398-402,422-423
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_19abec75182420::t_fd5cce219f367e 107-108,110,114-117,128-134,159-161,163,168-175,178-183,196-197,199,205-211,231,235,247-256,260-261,263,266-270,280-281,291-293,301-309,319-324,334-335,338,345,382,394,398,418,420-423,425-430,435-436,442,447-448,450,454,486-490
+billfn/swift/Sources/BillFnStoreKit/PrivacyInfo.xcprivacy
+  s_19abec75182420::t_20982be8cc1fa0 1-19
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_19abec75182420::t_f799563b9402a4 735-764,943,1031-1033,1142,1261-1262,1264,1342-1437
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_19abec75182420::t_1514b469b1f00b 50
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_19abec75182420::t_485ef6f5719c8a 2,114,118-119,268,305,326,344,354,359,366,368,379-380,389,398-506
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61b4cdf2564c9cc79dfdc308737d4d439bcf0724",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

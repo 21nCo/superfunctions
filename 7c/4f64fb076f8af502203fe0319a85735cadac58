@@ -1,0 +1,31 @@
+datafn/docs/content/docs/recipes/filefn-integration.mdx
+  s_2a44289f3023e9::t_ac5a759db4cf83 47-56,59,66-78,80-85,87-121,125,156,166,172-191,194-195
+datafn/docs/public/llms-full.txt
+  s_2a44289f3023e9::t_332ddfd94a76ec 22137-22146,22149,22156-22168,22170-22175,22177-22211,22215,22246,22256,22262-22281,22284-22285
+filefn/docs/content/docs/recipes/workers-authfn-r2-queues.md
+  s_2a44289f3023e9::t_35e7753701ce23 14,41-49,52-73,77,79,86,111-112,132,143,174,235-300,310-311,358-359,383-385,387-390,393-400,409
+filefn/docs/package.json
+  s_2a44289f3023e9::t_28d9668a7dc9e2 40
+filefn/docs/scripts/check-recipe-types.test.mjs
+  s_2a44289f3023e9::t_5b08307dffaa4f 2,5,16-22,24-38,40-47,53-75,141-247
+filefn/docs/static/llms-full.txt
+  s_2a44289f3023e9::t_2bd65c1765a790 7667,7694-7702,7705-7706,7710-7728,7730-7732,7739,7764-7765,7785,7796,7827,7888-7953,7963-7964,8011-8012,8036-8038,8040-8043,8046-8053,8062
+package-lock.json
+  s_2a44289f3023e9::t_19031d5ab9a1e4 12702
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c4f64fb076f8af502203fe0319a85735cadac58",
+  "prompts": {},
+  "sessions": {
+    "s_2a44289f3023e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2a44289f3023e9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
