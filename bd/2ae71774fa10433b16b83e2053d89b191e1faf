@@ -1,0 +1,19 @@
+scripts/ci-plan.test.mjs
+  s_f7d0fa00cb07b6::t_a33d28a94e47fd 50,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd2ae71774fa10433b16b83e2053d89b191e1faf",
+  "prompts": {},
+  "sessions": {
+    "s_f7d0fa00cb07b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f7d0fa00cb07b6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

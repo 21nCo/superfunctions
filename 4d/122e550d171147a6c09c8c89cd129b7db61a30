@@ -1,0 +1,21 @@
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_55aeecfb78e415::t_a25c000d843e73 292-293,300-301
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_55aeecfb78e415::t_e528023755546b 1179-1212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d122e550d171147a6c09c8c89cd129b7db61a30",
+  "prompts": {},
+  "sessions": {
+    "s_55aeecfb78e415": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcceda54-bed0-46c7-bc25-989dbabc3ead",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
