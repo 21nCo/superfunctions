@@ -1,0 +1,14 @@
+packages/observability/src/default-context.test.ts
+  h_bdc5b81c173ee9 10-12,15,27,41,56-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c42653fbd0e96fc6648f1352fffae1f58713a69",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
