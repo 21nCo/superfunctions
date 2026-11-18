@@ -1176,6 +1176,40 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [abandoned])
     }
 
+    /// The same transaction offered without a purchase checkout (an update, a launch retry, a restore) while the
+    /// purchase's own pass verifies it joins that pass: one BillFn call, one published outcome, the same confirmed
+    /// outcome for both callers.
+    func testUpdateDuringAPurchaseJoinsThePurchasePass() async throws {
+        let backend = FakeBillFnBackend()
+        let gate = Gate()
+        await backend.holdVerifications { await gate.wait() }
+        let own = BillFnStoreKitCheckout(checkoutSessionId: "chk_own", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(own)
+        let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let observed = try await listedTransaction(bought.id)
+        let kit = launch(backend, plans: [])
+        let recorder = record(kit)
+
+        let purchase = Task { await kit.process(observed, checkout: own) }
+        try await waitUntil("the purchase's verify call") { await gate.arrivals == 1 }
+        let update = Task { await kit.process(observed) }
+        try await waitUntil("the update to wait for the purchase's pass") { await kit.callersWaitingForARunningPass == 1 }
+        await gate.release()
+        let purchaseOutcome = await purchase.value
+        let updateOutcome = await update.value
+
+        XCTAssertTrue(purchaseOutcome.finished)
+        XCTAssertEqual(updateOutcome, purchaseOutcome)
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_own"])
+        // A later pass publishes after anything the two calls published, so a second confirmed outcome before it
+        // would be the joined call's.
+        let later = await kit.process(observed)
+        let published = try await waitForOutcomes(recorder, count: 2)
+        XCTAssertEqual(published, [purchaseOutcome, later])
+        try await assertFinished(purchaseOutcome)
+    }
+
     /// Two `BillFnStoreKit`s sharing one store confirm one transaction at once: one from a background pass, which binds
     /// the older outstanding checkout, the other from the purchase, with its own checkout. BillFn confirms the first and
     /// cannot be reached for the second. Finishing the first removes only the checkout it was confirmed against; the

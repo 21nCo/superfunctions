@@ -289,14 +289,16 @@ public actor BillFnStoreKit {
         let transaction = verification.unsafePayloadValue
         let reference = Self.reference(transaction)
         let context = PassContext(observation: reference, purchaseCheckoutSessionId: checkout?.checkoutSessionId)
-        // The same observation with the same purchase checkout joins the running pass and gets its outcome. A changed
+        // The same observation joins the running pass and gets its outcome, unless it comes with a purchase checkout
+        // that pass is not verifying against: a caller without one could only reuse the transaction's binding. A changed
         // one (revoked while the running pass confirms the unrevoked transaction, or a purchase's own checkout while a
         // pass without it runs) waits for that pass to end, then BillFn confirms it in its own pass.
         while let running = inFlight[transaction.id] {
             callersWaitingForARunningPass += 1
             let outcome = await running.task.value
             callersWaitingForARunningPass -= 1
-            if running.context == context {
+            if running.context.observation == reference
+                && (checkout == nil || running.context.purchaseCheckoutSessionId == checkout?.checkoutSessionId) {
                 return outcome
             }
             if inFlight[transaction.id]?.task == running.task {
