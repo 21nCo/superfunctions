@@ -24,12 +24,16 @@ const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data")
 const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
 const CLOSE_EVENT_CODE = intrinsic(CLOSE_EVENT_PROTOTYPE, "code");
 const CLOSE_EVENT_WAS_CLEAN = intrinsic(CLOSE_EVENT_PROTOTYPE, "wasClean");
+// The binary data a socket sends as it is, each recognized by its brand-checked
+// size getter. Anything else, a bare SharedArrayBuffer included, the platform
+// converts to a string first.
 const ARRAY_BUFFER_BYTE_LENGTH = intrinsic(prototypeOf(platform.ArrayBuffer), "byteLength");
-const SHARED_ARRAY_BUFFER_BYTE_LENGTH = intrinsic(prototypeOf(platform.SharedArrayBuffer), "byteLength");
 const TYPED_ARRAY_BYTE_LENGTH = intrinsic(Object.getPrototypeOf(Uint8Array.prototype) as object, "byteLength");
 const DATA_VIEW_BYTE_LENGTH = intrinsic(prototypeOf(platform.DataView), "byteLength");
 const BLOB_SIZE = intrinsic(prototypeOf(platform.Blob), "size");
-const SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, SHARED_ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
+const BINARY_SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
+// Sizing a string never runs a String.prototype method the page replaced.
+const CHAR_CODE_AT = intrinsic(String.prototype, "charCodeAt", "value") as Intrinsic;
 // `isTrusted`: an unforgeable own accessor of each browser event, else Event.prototype's.
 const EVENT_IS_TRUSTED = isTrustedGetter();
 // A browser window or worker fires its socket events trusted, so an untrusted
@@ -42,12 +46,13 @@ let restore: (() => void) | undefined;
 
 /** UTF-8 byte length of a string, as a socket sends it, without encoding it. */
 function utf8Size(value: string): number {
+  const codeAt = (index: number) => apply(CHAR_CODE_AT, value, [index]) as number;
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+    const code = codeAt(index);
     if (code < 0x80) bytes += 1;
     else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length && (value.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length && (codeAt(index + 1) & 0xfc00) === 0xdc00) {
       bytes += 4; // A surrogate pair.
       index += 1;
     } else bytes += 3; // Including a lone surrogate, sent as U+FFFD.
@@ -56,18 +61,21 @@ function utf8Size(value: string): number {
 }
 
 /**
- * Payload size in bytes: a string's UTF-8 length, or the size of an
- * `ArrayBuffer`, typed array, `DataView` or `Blob` through the captured
- * platform getters. The payload itself is never read or kept. Undefined for
- * anything else.
+ * The size in bytes of an `ArrayBuffer`, typed array, `DataView` or `Blob`,
+ * read through the captured platform getters, whose brand checks run no page
+ * code. Undefined for anything else.
  */
-function payloadSize(data: unknown): number | undefined {
-  if (typeof data === "string") return utf8Size(data);
-  for (const get of SIZE_GETTERS) {
+function binarySize(data: unknown): number | undefined {
+  for (const get of BINARY_SIZE_GETTERS) {
     const size = platformRead(get, data);
     if (Number.isSafeInteger(size) && (size as number) >= 0) return size as number;
   }
   return undefined;
+}
+
+/** Payload size in bytes: a string's UTF-8 length or a binary payload's size. The payload itself is never kept. */
+function payloadSize(data: unknown): number | undefined {
+  return typeof data === "string" ? utf8Size(data) : binarySize(data);
 }
 
 function isTrustedGetter(): Intrinsic | undefined {
@@ -250,7 +258,11 @@ function install(current: Set<Listener>): (() => void) | undefined {
             if (type === "close" && fields) detach();
           }
         };
-        if (live() && listen(socket, type, callback)) added.push([type, callback]);
+        if (!live()) return;
+        // Owned before the attempt: an addEventListener that registers it and
+        // then throws still leaves it for detach() to remove.
+        added.push([type, callback]);
+        listen(socket, type, callback);
       };
       // The platform fires open once, on a socket that is open by then; a
       // listener before ours (a subclass's own) may already have closed it,
@@ -307,30 +319,35 @@ function install(current: Set<Listener>): (() => void) | undefined {
     // The send() sockets of the global class actually inherit, wrapped where it is defined.
     const send = sendOwner
       ? function (this: unknown, ...args: unknown[]) {
-          if (!live()) return apply(sendOwner.original, this, args);
+          // A socket constructed while no collector ran gets the plain send.
+          const url = live() && typeof this === "object" && this !== null ? sockets.get(this) : undefined;
+          if (url === undefined) return apply(sendOwner.original, this, args);
           const timestamp = Date.now();
           const deliver = receivers();
-          // Only a send() on an open socket transmits: the platform throws
-          // while connecting and discards the data once closing or closed.
-          // Strings and binary data are sent as they are; anything else is
-          // converted to a string first, which can run page code that closes
-          // the socket, so such data is recorded only if it is still open after.
-          let size: number | undefined;
-          try {
-            size = payloadSize(args[0]);
-          } catch {
-            size = undefined; // Sizing never stops the send.
+          // Strings and binary data are sent as they are. The platform
+          // converts any other object to a string first, which can run page
+          // code that closes the socket and so discards the data. That
+          // conversion is done here instead, once and exactly as the platform
+          // does it, and the send gets the resulting string: the socket's state
+          // after it then tells whether the data is sent.
+          let data = args[0];
+          const binary = binarySize(data);
+          if (args.length > 0 && binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function")) {
+            data = `${data as string}`; // Throws where the platform's conversion throws.
+            args[0] = data;
           }
+          // Only a send() on an open socket transmits: the platform throws
+          // while connecting and discards the data once closing or closed. A
+          // send that closes the socket after transmitting still sent it.
           const openBefore = readyState(this) === OPEN;
           const result = apply(sendOwner.original, this, args);
-          try {
-            const url = typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-            const converted = typeof args[0] !== "string" && size === undefined;
-            if (openBefore && url !== undefined && (!converted || readyState(this) === OPEN)) {
+          if (openBefore) {
+            try {
+              const size = typeof data === "string" ? utf8Size(data) : binary;
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
+            } catch {
+              /* Observation never changes what send() returns. */
             }
-          } catch {
-            /* Observation never changes what send() returns. */
           }
           return result;
         }
@@ -359,12 +376,13 @@ function install(current: Set<Listener>): (() => void) | undefined {
 }
 
 function subscribe(listener: Listener): () => void {
-  if (listeners.size === 0) {
-    listeners = new Set();
-    restore = install(listeners);
-  }
+  const first = listeners.size === 0;
+  if (first) listeners = new Set();
   const current = listeners;
+  // Subscribed before installing: page code that installing runs (a
+  // WebSocket getter) and that starts another collector joins this session.
   current.add(listener);
+  if (first) restore = install(current);
   return () => {
     current.delete(listener);
     if (current === listeners && current.size === 0) {

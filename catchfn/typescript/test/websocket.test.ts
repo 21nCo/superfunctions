@@ -229,6 +229,75 @@ describe("WebSocketCollector", () => {
     expect(reentrant.collect()).toEqual([]);
   });
 
+  it("removes a listener whose addEventListener registered it and then threw, on close and on the last stop()", async () => {
+    const hooks: { onAdd?: () => void } = {};
+    const { fresh, added, removed } = await loadRecordingListeners(hooks);
+    const first = new fresh.WebSocketCollector(5);
+    const second = new fresh.WebSocketCollector(5);
+    hooks.onAdd = () => {
+      throw new Error("registered, then threw");
+    };
+    try {
+      first.start();
+      second.start();
+      const closed = openSocket("wss://example.com/closed");
+      const abandoned = openSocket("wss://example.com/abandoned");
+      const ours = (socket: unknown) => added.filter(([target]) => target === socket).map(([, type, listener]) => [type, listener]);
+      const gone = (socket: unknown) => removed.filter(([target]) => target === socket).map(([, type, listener]) => [type, listener]);
+      expect(ours(closed)).toHaveLength(4);
+      closed.serverOpens();
+      closed.serverCloses(1000, true);
+      expect(gone(closed)).toEqual(expect.arrayContaining(ours(closed)));
+      expect(first.collect().map((event) => event.type)).toEqual(["open", "close"]);
+      first.stop(); // Overlapping: the other collector still runs.
+      expect(gone(abandoned)).toEqual([]);
+      second.stop();
+      expect(ours(abandoned)).toHaveLength(4);
+      expect(gone(abandoned)).toEqual(expect.arrayContaining(ours(abandoned)));
+    } finally {
+      hooks.onAdd = undefined;
+      first.stop();
+      second.stop();
+    }
+  });
+
+  it("joins one session when installing starts another collector, and restores everything on the last stop()", () => {
+    let global: unknown = PageSocket;
+    let reads = 0;
+    const inner = new WebSocketCollector(5);
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get() {
+        reads += 1;
+        if (reads === 1) inner.start(); // Page code run by installing.
+        return global;
+      },
+      set(value) {
+        global = value;
+      },
+    });
+    try {
+      collector.start();
+      expect(global).not.toBe(PageSocket);
+      const socket = new (global as typeof PageSocket)("wss://example.com/reentrant-install");
+      socket.serverOpens();
+      socket.send("once");
+      expect(socket.sent).toEqual(["once"]);
+      for (const each of [collector, inner]) {
+        expect(each.collect().map(({ type, size }) => ({ type, size }))).toEqual([
+          { type: "open", size: undefined },
+          { type: "message", size: 4 },
+        ]);
+      }
+      inner.stop();
+      collector.stop();
+      expect(global).toBe(PageSocket);
+      expect(PageSocket.prototype.send).toBe(pageSend);
+    } finally {
+      inner.stop();
+    }
+  });
+
   it("removes every listener when adding one stops the last collector", async () => {
     const hooks: { onAdd?: () => void } = {};
     const { fresh, added, removed } = await loadRecordingListeners(hooks);
@@ -247,42 +316,98 @@ describe("WebSocketCollector", () => {
     expect(socket.readyState).toBe(0); // Left as it was.
   });
 
-  it("still sends when sizing the data fails", () => {
+  it("never runs a String.prototype method the page replaced when sizing, and sends as without the collector", () => {
     collector.start();
     const socket = openSocket("wss://example.com/sizing");
     socket.serverOpens();
     const { charCodeAt } = String.prototype;
-    String.prototype.charCodeAt = () => {
-      throw new Error("patched");
+    let calls = 0;
+    // A non-throwing hook that would close the socket before the send if it ran.
+    String.prototype.charCodeAt = function (this: string, index: number) {
+      calls += 1;
+      socket.close();
+      return charCodeAt.call(this, index);
     };
     try {
-      expect(() => socket.send("hello")).not.toThrow();
+      socket.send("hello");
     } finally {
       String.prototype.charCodeAt = charCodeAt;
     }
+    expect(calls).toBe(0);
     expect(socket.sent).toEqual(["hello"]);
     expect(collector.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
       { type: "open", direction: undefined, size: undefined },
-      { type: "message", direction: "sent", size: undefined },
+      { type: "message", direction: "sent", size: 5 },
     ]);
   });
 
-  it("does not record a send() whose data conversion closes the socket, and records one that converts", () => {
+  it("passes a send() on a socket it does not observe straight through, without sizing or converting", () => {
+    const early = new PageSocket("wss://example.com/early");
+    early.serverOpens();
+    collector.start();
+    const { charCodeAt } = String.prototype;
+    let calls = 0;
+    String.prototype.charCodeAt = function (this: string, index: number) {
+      calls += 1;
+      return charCodeAt.call(this, index);
+    };
+    let conversions = 0;
+    const data = { toString: () => `converted ${(conversions += 1)}` };
+    try {
+      (platform.WebSocket as typeof PageSocket).prototype.send.call(early, "hi");
+      (platform.WebSocket as typeof PageSocket).prototype.send.call(early, data);
+    } finally {
+      String.prototype.charCodeAt = charCodeAt;
+    }
+    expect(calls).toBe(0);
+    expect(conversions).toBe(1); // Only the page's send converted it.
+    expect(early.sent).toEqual(["hi", "converted 1"]);
+    expect(collector.collect()).toEqual([]);
+  });
+
+  it("does not record a send() whose data conversion closes the socket, and records one that converts, converting each once", () => {
     collector.start();
     const socket = openSocket("wss://example.com/convert");
     socket.serverOpens();
-    socket.send({ toString: () => "converted" });
+    let conversions = 0;
+    socket.send({ toString: () => `converted${(conversions += 1)}` });
     socket.send({
       toString: () => {
+        conversions += 1;
         socket.close();
         return "discarded";
       },
     });
-    expect(socket.sent).toEqual(["converted"]);
+    expect(conversions).toBe(2);
+    expect(socket.sent).toEqual(["converted1"]);
     expect(collector.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
       { type: "open", direction: undefined, size: undefined },
-      { type: "message", direction: "sent", size: undefined },
+      { type: "message", direction: "sent", size: 10 },
     ]);
+  });
+
+  it("records converted data a library's send transmits and then closes the socket after", () => {
+    PageSocket.prototype.send = function (this: PageSocket, data: unknown) {
+      pageSend.call(this, data);
+      this.close();
+    };
+    collector.start();
+    const socket = openSocket("wss://example.com/library-close");
+    socket.serverOpens();
+    let conversions = 0;
+    socket.send({ toString: () => ((conversions += 1), "hello") });
+    expect(conversions).toBe(1);
+    expect(socket.sent).toEqual(["hello"]);
+    expect(collector.collect().filter((event) => event.type === "message")).toMatchObject([{ direction: "sent", size: 5 }]);
+  });
+
+  it("sizes a bare SharedArrayBuffer as the string the platform converts it to, never by its byteLength", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/shared");
+    socket.serverOpens();
+    socket.send(new SharedArrayBuffer(1024) as unknown as ArrayBuffer);
+    expect(socket.sent).toEqual(["[object SharedArrayBuffer]"]);
+    expect(collector.collect().filter((event) => event.type === "message")).toMatchObject([{ direction: "sent", size: 26 }]);
   });
 
   it("ignores message and close events the page dispatches on a socket itself", () => {

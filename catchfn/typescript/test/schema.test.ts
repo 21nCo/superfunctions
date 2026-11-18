@@ -151,6 +151,25 @@ describe("evidence event v1 schema", () => {
     }
   });
 
+  it("rejects accessor-backed fields, so a getter cannot pass as one type and serialize as another", () => {
+    // The type alternates: "message" while pairing direction, "open" otherwise.
+    let reads = 0;
+    const alternating = { ...valid.websocketOpen, direction: "sent" } as Record<string, unknown>;
+    Object.defineProperty(alternating, "type", { enumerable: true, get: () => (reads++ % 2 === 1 ? "message" : "open") });
+    expect(validateEvidenceEvent(alternating)).toEqual(["type must be a data property"]);
+    expect(isEvidenceEvent(alternating)).toBe(false);
+    expect(reads).toBe(0); // Rejected without running the getter.
+    expect(validateWithSchema(strip(alternating))).toBe(false); // An open event with a direction.
+    const kindGetter = Object.defineProperty({ ...valid.console }, "kind", { enumerable: true, get: () => "console" });
+    expect(validateEvidenceEvent(kindGetter)).toEqual(["kind must be a data property"]);
+    const sizeGetter = Object.defineProperty({ ...valid.websocket }, "size", { enumerable: true, get: () => 12 });
+    expect(validateEvidenceEvent(sizeGetter)).toEqual(["size must be a data property"]);
+    // The same events with data properties agree with the schema.
+    for (const event of [valid.websocket, valid.websocketOpen, valid.console, { ...valid.websocketOpen, direction: "sent" }]) {
+      expect(validateEvidenceEvent(event).length === 0).toBe(validateWithSchema(strip(event)));
+    }
+  });
+
   it("does not read inherited fields as the event's own", () => {
     // JSON has no inherited fields, so only the hand-written validator sees this case.
     const event = Object.create(valid.console);

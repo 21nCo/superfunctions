@@ -203,16 +203,22 @@ new sockets only. A class that extended `WebSocket` before `start()`
 constructs through the page's own class and is not observed.
 
 - Messages record their direction and their size in bytes: a string's UTF-8
-  length, or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
+  length (counted with the `String.prototype.charCodeAt` captured at load),
+  or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
   through the platform getters captured at load. Another payload type is
   recorded without `size`. The payload itself is never recorded.
+- `send()` on a socket constructed while no collector ran is passed straight
+  to the page's `send`, unobserved. On an observed socket, an object other
+  than a string or binary data (a bare `SharedArrayBuffer` included) is
+  converted to a string once, as the platform's `send` converts it, and that
+  string is what the page's `send` receives and what is sized.
 - Only a `send()` on an open socket is recorded, its `readyState` read
-  before the call through the getter captured at load: the platform throws
-  while connecting (it still throws) and discards the data once the socket
-  is closing or closed (nothing is recorded). Data other than a string or
-  binary data is converted to a string first, which can run page code that
-  closes the socket, so it is recorded only if the socket is still open
-  after the call.
+  after that conversion and before the call through the getter captured at
+  load: the platform throws while connecting (it still throws) and discards
+  the data once the socket is closing or closed, also when converting the
+  data closed it (nothing is recorded). A `send` that transmits and then
+  closes the socket is recorded. Nothing the page can replace runs on the
+  data before the page's `send`, other than that one conversion.
 - Event attributes are read only through the platform getters. A `message`
   or `close` event the page dispatches on a socket itself, which is not a
   platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has

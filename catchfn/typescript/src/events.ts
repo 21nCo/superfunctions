@@ -327,24 +327,35 @@ const ownCheck = (table: Record<string, Check>, field: string): Check | undefine
 function problems(value: unknown): string[] {
   // The event itself must keep its JSON form too: plain, with no callable toJSON.
   if (!isPlainRecord(value)) return ["event must be a plain object"];
-  const kind = Object.hasOwn(value, "kind") ? value.kind : undefined;
+  // Each field is read once, from its own data property: a getter could
+  // answer one way here (as the `kind` or `type` that selects the checks) and
+  // another way when the event is serialized.
+  const fields: Record<string, unknown> = Object.create(null);
+  const accessors: string[] = [];
+  for (const field of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+    if (descriptor && "value" in descriptor) fields[field] = descriptor.value;
+    else accessors.push(`${field} must be a data property`);
+  }
+  if (accessors.length > 0) return accessors;
+  const kind = fields.kind;
   if (typeof kind !== "string" || !(EVIDENCE_KINDS as readonly string[]).includes(kind)) {
     return [`kind must be one of ${EVIDENCE_KINDS.join(", ")}`];
   }
   const shape = shapes[kind as EvidenceKind];
   const errors: string[] = [];
   for (const [field, check] of Object.entries(shape.required)) {
-    if (!Object.hasOwn(value, field)) errors.push(`${field} is required`);
-    else if (!check(value[field])) errors.push(`${field} is invalid`);
+    if (!Object.hasOwn(fields, field)) errors.push(`${field} is required`);
+    else if (!check(fields[field])) errors.push(`${field} is invalid`);
   }
-  for (const field of Object.keys(value)) {
+  for (const field of Object.keys(fields)) {
     if (Object.hasOwn(shape.required, field)) continue;
     const check = ownCheck(shape.optional, field);
     if (typeof check !== "function") errors.push(`${field} is not a ${kind} event field`);
-    else if (!check(value[field])) errors.push(`${field} is invalid`);
+    else if (!check(fields[field])) errors.push(`${field} is invalid`);
     else {
       const type = shape.onlyForType && Object.hasOwn(shape.onlyForType, field) ? shape.onlyForType[field] : undefined;
-      if (type !== undefined && value.type !== type) errors.push(`${field} is only a ${type} ${kind} event field`);
+      if (type !== undefined && fields.type !== type) errors.push(`${field} is only a ${type} ${kind} event field`);
     }
   }
   return errors;
