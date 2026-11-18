@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocketCollector } from "../src/collectors/websocket.js";
 import { expectValidEvents } from "./schema-helper.js";
 
@@ -179,6 +179,67 @@ describe("WebSocketCollector", () => {
     expect(collector.collect()).toEqual([]);
   });
 
+  it("observes a global subclass installed before start() through the members it inherits", () => {
+    class LibrarySocket extends PageSocket {} // Own prototype has no url and no send.
+    platform.WebSocket = LibrarySocket;
+    collector.start();
+    const socket = openSocket("wss://example.com/library?token=secret");
+    socket.serverOpens();
+    socket.send("abc");
+    collector.stop();
+    expect(platform.WebSocket).toBe(LibrarySocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+    expect(Object.hasOwn(LibrarySocket.prototype, "send")).toBe(false);
+    const events = collector.collect();
+    expect(events.map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
+      { type: "open", direction: undefined, size: undefined },
+      { type: "message", direction: "sent", size: 3 },
+    ]);
+    for (const event of events) expect(event.url).toMatch(/^wss:\/\/example\.com\/library\?token=(?!secret)/);
+  });
+
+  it("observes a global subclass that was installed before catchfn loaded", async () => {
+    class EarlySocket extends PageSocket {}
+    platform.WebSocket = EarlySocket;
+    vi.resetModules();
+    const fresh = await import("../src/collectors/websocket.js");
+    const early = new fresh.WebSocketCollector(5);
+    early.start();
+    try {
+      const socket = openSocket("wss://example.com/early-load");
+      socket.serverOpens();
+      socket.send("abc");
+    } finally {
+      early.stop();
+    }
+    expect(platform.WebSocket).toBe(EarlySocket);
+    const events = early.collect();
+    expect(events.map(({ type, url, size }) => ({ type, url, size }))).toEqual([
+      { type: "open", url: "wss://example.com/early-load", size: undefined },
+      { type: "message", url: "wss://example.com/early-load", size: 3 },
+    ]);
+    expectValidEvents(events);
+  });
+
+  it("restarts under another library's subclass of the stopped wrapper with full capture", () => {
+    collector.start();
+    const theirs = class extends (platform.WebSocket as typeof PageSocket) {};
+    platform.WebSocket = theirs;
+    collector.stop();
+    collector.start();
+    const socket = openSocket("wss://example.com/restarted");
+    socket.serverOpens();
+    socket.send("abcd");
+    socket.serverSends("xy");
+    const events = collector.collect();
+    expect(events.map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
+      { type: "open", direction: undefined, size: undefined },
+      { type: "message", direction: "sent", size: 4 },
+      { type: "message", direction: "received", size: 2 },
+    ]);
+    expect(events.every((event) => event.url === "wss://example.com/restarted")).toBe(true);
+  });
+
   it("lets overlapping collectors each see only what happened while they ran", () => {
     const other = new WebSocketCollector(20);
     collector.start();
@@ -220,6 +281,7 @@ function startServer(): Promise<{ server: Server; port: number; sockets: Set<Soc
       socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
+    // The fixed GUID of RFC 6455 section 1.3, a published protocol constant.
     const accept = createHash("sha1").update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     let buffered = Buffer.alloc(0);

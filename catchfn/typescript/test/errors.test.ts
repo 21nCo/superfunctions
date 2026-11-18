@@ -71,10 +71,38 @@ describe("ErrorCollector", () => {
     expect(crossOrigin).not.toHaveProperty("value");
   });
 
-  it("ignores a plain error event that is not an uncaught exception", () => {
+  it("ignores plain error and unhandledrejection events that the page dispatches itself", () => {
     collector.start();
     window.dispatchEvent(new Event("error"));
+    window.dispatchEvent(Object.assign(new Event("unhandledrejection"), { reason: "forged" }));
     expect(collector.collect()).toEqual([]);
+  });
+
+  it("redacts script URLs in the stack as in filename, keeping line and column", () => {
+    collector.start();
+    const error = new Error("from script");
+    // Userinfo is built at runtime, so no credential-shaped URL is committed.
+    const withUserinfo = new URL("https://cdn.example.com/app.js");
+    withUserinfo.username = "test-user";
+    withUserinfo.password = "stack-secret";
+    error.stack = [
+      "Error: from script",
+      "    at load (https://cdn.example.com/app.js?token=stack-secret&v=2:12:7)",
+      "    at https://cdn.example.com/app.js?token=stack-secret:3:1",
+      "    at run (https://cdn.example.com/app(1).js?token=stack-secret:8:9)",
+      `load@${withUserinfo.href}:4:5`,
+    ].join("\n");
+    window.dispatchEvent(new ErrorEvent("error", { error, message: "Uncaught Error: from script", filename: "https://cdn.example.com/app.js?token=stack-secret" }));
+    reject(error);
+    for (const event of collector.collect()) {
+      expect(JSON.stringify(event)).not.toContain("stack-secret");
+      expect(event.stack).toMatch(/at load \(https:\/\/cdn\.example\.com\/app\.js\?token=[^&]+&v=2:12:7\)/);
+      expect(event.stack).toContain(":3:1\n");
+      expect(event.stack).toMatch(/at run \(https:\/\/cdn\.example\.com\/app\(1\)\.js\?token=[^:]+:8:9\)/);
+      expect(event.stack).not.toContain("test-user");
+      expect(event.stack).toMatch(/load@https:\/\/cdn\.example\.com\/app\.js:4:5$/);
+    }
+    expect(collector.size()).toBe(2);
   });
 
   it("records an unhandled rejection with an Error reason", () => {

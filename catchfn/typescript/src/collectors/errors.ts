@@ -2,7 +2,7 @@ import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type ErrorEvidenceEvent 
 import { apply, attribute, intrinsic, listen, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
-import { MAX_ENTRY_BYTES, serializeEntry, truncateToBytes, type SerializedValue } from "../utils/serialization.js";
+import { MAX_ENTRY_BYTES, serializeEntry, truncateToBytes, utf8Length, type SerializedValue } from "../utils/serialization.js";
 
 /** What a window listener observed, already serialized and bounded. */
 type Observation = Omit<ErrorEvidenceEvent, "schemaVersion" | "kind" | "seq">;
@@ -38,6 +38,34 @@ function describe(value: SerializedValue): string {
   return text(typeof value === "string" ? value : JSON.stringify(value));
 }
 
+// A URL in a stack frame, from its scheme to the next whitespace.
+const STACK_URL = /[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+
+/** Count of `character` in `text`. */
+function count(text: string, character: string): number {
+  return text.split(character).length - 1;
+}
+
+/**
+ * A stack with each frame's script URL passed through `redactUrl`, keeping
+ * the `:line:column` suffix, so it reveals no more than `filename` does. A
+ * URL may hold parentheses itself (`app(1).js`); only the closing ones a V8
+ * frame adds after it (`at f (url:1:2)`), which leave it unbalanced, are not
+ * part of it.
+ */
+function redactStack(stack: string): string {
+  return stack.replace(STACK_URL, (match) => {
+    let url = match;
+    let closing = "";
+    while (url.endsWith(")") && count(url, ")") > count(url, "(")) {
+      url = url.slice(0, -1);
+      closing = ")" + closing;
+    }
+    const position = /(?::\d+)+$/.exec(url)?.[0] ?? "";
+    return redactUrl(url.slice(0, url.length - position.length)) + position + closing;
+  });
+}
+
 /**
  * The thrown value or rejection reason. An `Error` keeps its name, message
  * and stack (serialized as one entry, like a console argument); any other
@@ -54,7 +82,12 @@ function thrown(value: unknown): Pick<Observation, "message" | "name" | "stack" 
     message: typeof record.message === "string" ? record.message : "",
   };
   if (typeof record.name === "string") result.name = record.name;
-  if (typeof record.stack === "string") result.stack = record.stack;
+  if (typeof record.stack === "string") {
+    // Redaction can lengthen a URL; the stack keeps to what is left of the entry.
+    const budget = MAX_ENTRY_BYTES - utf8Length(JSON.stringify({ name: result.name ?? "", message: result.message, stack: "" }));
+    const stack = truncateToBytes(redactStack(record.stack), budget);
+    if (stack !== undefined) result.stack = stack;
+  }
   return result;
 }
 
@@ -86,12 +119,14 @@ function readError(event: unknown, timestamp: number): Observation | undefined {
 
 /**
  * An unhandled rejection. The reason is read through the captured
- * `PromiseRejectionEvent` getter or, on a runtime without that class (jsdom),
- * from the event's own `reason` data property; an unreadable reason is
- * recorded as `undefined`.
+ * `PromiseRejectionEvent` getter; another `unhandledrejection` event (one the
+ * page dispatches itself) is ignored, as for `error`. Only on a runtime
+ * without that class is the reason read from the event's own `reason` data
+ * property, and an unreadable one is recorded as `undefined`.
  */
-function readRejection(event: unknown, timestamp: number): Observation {
-  const reason = attribute(REJECTION_EVENT_REASON, event, "reason");
+function readRejection(event: unknown, timestamp: number): Observation | undefined {
+  const reason = REJECTION_EVENT_REASON ? platformRead(REJECTION_EVENT_REASON, event) : attribute(undefined, event, "reason");
+  if (REJECTION_EVENT_REASON && reason === UNREADABLE) return undefined;
   return { source: "unhandledrejection", timestamp, ...thrown(reason === UNREADABLE ? undefined : reason) };
 }
 

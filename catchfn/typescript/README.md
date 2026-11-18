@@ -168,11 +168,13 @@ uncaught error while it runs.
   `colno` are kept. An `error` event that is not an `ErrorEvent` (one the page
   dispatches itself) is ignored.
 - An unhandled rejection's reason is read through the captured
-  `PromiseRejectionEvent` getter or, without that class, from the event's own
-  `reason` data property.
+  `PromiseRejectionEvent` getter, and an `unhandledrejection` event that is
+  not a `PromiseRejectionEvent` is ignored. Only on a runtime without that
+  class is the reason read from the event's own `reason` data property.
 - A thrown value or reason that is an `Error` gives `name`, `message` and
   `stack`, serialized as one entry; reading them can run the error's own
-  getters, as for a console argument. Any other value is serialized into
+  getters, as for a console argument. Each URL in the stack goes through
+  `redactUrl`, keeping its `:line:column` suffix. Any other value is serialized into
   `value`, and `message` holds it as text (a string as is, anything else as
   its JSON). A cross-origin `"Script error."` has no value.
 
@@ -180,7 +182,8 @@ uncaught error while it runs.
 
 `WebSocketCollector` replaces the global `WebSocket` with a `Proxy` of the
 page's class (statics, `prototype`, `instanceof` and subclassing keep
-working) and wraps `WebSocket.prototype.send`; the last `stop()` restores
+working) and wraps the `send` its sockets inherit, on the prototype that
+defines it (`WebSocket.prototype`, also when the global is a subclass); the last `stop()` restores
 both where its own wrapper is still installed, as above. Only sockets
 constructed while a collector runs are observed: the constructor adds
 `open`, `message`, `close` and `error` listeners before the page can add its
@@ -194,7 +197,8 @@ through the page's own class and is not observed.
   recorded without `size`. The payload itself is never recorded.
 - A `send()` the socket rejects (still connecting) throws as before and is
   not recorded.
-- `url` is the socket's own `url` attribute through `redactUrl`. A close
+- `url` is the socket's `url` attribute (through the getter captured at load
+  when the global class inherits from the platform's) through `redactUrl`. A close
   event records `code` and `wasClean`, through the `CloseEvent` getters
   captured at load or, on a runtime without a global `CloseEvent` (Node 22),
   through the getters of the event's own prototype. Its `reason` is not

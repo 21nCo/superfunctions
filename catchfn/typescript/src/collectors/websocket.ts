@@ -12,7 +12,9 @@ type Listener = (observation: Observation) => void;
 // The platform getters observation reads through, captured when this module
 // loads: a getter the page patches later never runs on a socket or event.
 const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
-const WEBSOCKET_URL = intrinsic(WEBSOCKET_PROTOTYPE, "url");
+// The `url` getter each prototype of the load-time WebSocket's chain passes
+// to its sockets, also when the global was already a subclass at load.
+const LOADED_URL_GETTERS = loadedUrlGetters();
 const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data");
 const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
 const CLOSE_EVENT_CODE = intrinsic(CLOSE_EVENT_PROTOTYPE, "code");
@@ -75,6 +77,66 @@ function closeAttribute(get: Intrinsic | undefined, event: unknown, key: "code" 
   }
 }
 
+/**
+ * The prototypes a socket of the global class inherits from, nearest first,
+ * up to (not including) `Object.prototype`: a page or library may install a
+ * subclass of the platform WebSocket, whose own prototype has no `url` or `send`.
+ */
+function prototypeChain(prototype: object): object[] {
+  const chain: object[] = [];
+  for (let current: object | null = prototype; current && current !== Object.prototype && chain.length < 32; current = Object.getPrototypeOf(current) as object | null) {
+    chain.push(current);
+  }
+  return chain;
+}
+
+/** The getter an own `url` accessor defines, undefined for an own data property; absent: null. */
+function ownUrlGetter(prototype: object): Intrinsic | undefined | null {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "url");
+  if (!descriptor) return null;
+  return typeof descriptor.get === "function" ? (descriptor.get as Intrinsic) : undefined;
+}
+
+function loadedUrlGetters(): Map<object, Intrinsic | undefined> {
+  const getters = new Map<object, Intrinsic | undefined>();
+  if (!WEBSOCKET_PROTOTYPE) return getters;
+  const chain = prototypeChain(WEBSOCKET_PROTOTYPE);
+  let inherited: Intrinsic | undefined;
+  // From the top down, so each prototype maps to the nearest getter at or above it.
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const prototype = chain[index] as object;
+    const own = ownUrlGetter(prototype);
+    if (own !== null) inherited = own;
+    getters.set(prototype, inherited);
+  }
+  return getters;
+}
+
+/**
+ * The `url` getter sockets of the global class inherit: the one captured at
+ * load once the chain reaches a prototype of the load-time WebSocket's chain,
+ * else the nearest own getter (a WebSocket defined or replaced after load).
+ */
+function urlGetterOf(chain: object[]): Intrinsic | undefined {
+  for (const prototype of chain) {
+    if (LOADED_URL_GETTERS.has(prototype)) return LOADED_URL_GETTERS.get(prototype);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "url");
+    if (descriptor) return typeof descriptor.get === "function" ? (descriptor.get as Intrinsic) : undefined;
+  }
+  return undefined;
+}
+
+/** The prototype that owns the `send` sockets of the global class inherit, when it is a writable method. */
+function sendOwnerOf(chain: object[]): { owner: Record<string, unknown>; original: Intrinsic } | undefined {
+  for (const prototype of chain) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "send");
+    if (!descriptor) continue;
+    if (typeof descriptor.value !== "function" || !descriptor.writable) return undefined;
+    return { owner: prototype as Record<string, unknown>, original: descriptor.value as Intrinsic };
+  }
+  return undefined;
+}
+
 function subscribe(listener: Listener): () => void {
   if (listeners.size === 0) {
     listeners = new Set();
@@ -97,7 +159,8 @@ function subscribe(listener: Listener): () => void {
     if (typeof Original === "function" && prototype) {
       // The getter captured when this module loaded, or, for a WebSocket
       // defined or replaced later, when the wrappers are installed.
-      const urlGetter = prototype === WEBSOCKET_PROTOTYPE ? WEBSOCKET_URL : intrinsic(prototype, "url");
+      const chain = prototypeChain(prototype);
+      const urlGetter = urlGetterOf(chain);
 
       const observe = (socket: object) => {
         const url = captureUrl(attribute(urlGetter, socket, "url"));
@@ -149,9 +212,10 @@ function subscribe(listener: Listener): () => void {
         if (platform.WebSocket === wrapper) platform.WebSocket = Original;
       });
 
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, "send");
-      const originalSend = descriptor?.value as Intrinsic | undefined;
-      if (typeof originalSend === "function" && descriptor?.writable) {
+      // The send() sockets of the global class actually inherit, wrapped where it is defined.
+      const sendOwner = sendOwnerOf(chain);
+      if (sendOwner) {
+        const { owner, original: originalSend } = sendOwner;
         const send = function (this: unknown, ...args: unknown[]) {
           if (current.size === 0) return apply(originalSend, this, args);
           const timestamp = Date.now();
@@ -169,9 +233,9 @@ function subscribe(listener: Listener): () => void {
           }
           return result;
         };
-        (prototype as Record<string, unknown>).send = send;
+        owner.send = send;
         cleanups.push(() => {
-          if ((prototype as Record<string, unknown>).send === send) (prototype as Record<string, unknown>).send = originalSend;
+          if (owner.send === send) owner.send = originalSend;
         });
       }
     }
