@@ -1,0 +1,21 @@
+scripts/turbo-cache-config.test.mjs
+  s_1f9dd0a08da18e::t_c930d2796a6160 22-24
+.github/workflows/ci.yml
+  s_1f9dd0a08da18e::t_5ea32f948df14d 68-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "984366a87572dd8aafa0e1124a84412b16689445",
+  "prompts": {},
+  "sessions": {
+    "s_1f9dd0a08da18e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf0801e6-a0ee-4685-88e2-298029c2f278",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

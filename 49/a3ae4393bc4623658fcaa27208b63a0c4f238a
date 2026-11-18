@@ -1,0 +1,27 @@
+.github/workflows/ci.yml
+  s_ec3c78674bfa3c::t_984b57636d5621 168-192,237-245,281-296,306-314
+scripts/ci-plan.mjs
+  s_ec3c78674bfa3c::t_0063afae4916eb 22-39,42-45,253-259,384-389,417
+scripts/ci-plan.test.mjs
+  s_ec3c78674bfa3c::t_210a76c921f20b 90,116,198-226
+scripts/turbo-cache-config.test.mjs
+  s_ec3c78674bfa3c::t_e861bb34ea1ccc 1-173
+turbo.json
+  s_ec3c78674bfa3c::t_258831d848d805 3-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49a3ae4393bc4623658fcaa27208b63a0c4f238a",
+  "prompts": {},
+  "sessions": {
+    "s_ec3c78674bfa3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ec3c78674bfa3c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

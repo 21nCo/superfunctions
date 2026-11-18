@@ -1,0 +1,23 @@
+authfn/docs/content/docs/sdk/python.md
+  s_b026f1876e6e6b::t_29ee8e2e97dbbf 122-129,134-135,146
+authfn/docs/static/llms-full.txt
+  s_b026f1876e6e6b::t_a18cb4b2707fee 11260-11267,11272-11273,11284
+authfn/python/CHANGELOG.md
+  s_b026f1876e6e6b::t_1decf8cf760fb9 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6666b3426c7936b5731728bbc1df1dba3c4db354",
+  "prompts": {},
+  "sessions": {
+    "s_b026f1876e6e6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbb6767f-7ac3-4309-a061-b2bd17bbd64e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
