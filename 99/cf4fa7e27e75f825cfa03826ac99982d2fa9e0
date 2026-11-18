@@ -1,0 +1,35 @@
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_0ea096edfff8bc::t_f250677de8074a 189-191,194-195,199,339,349,353-358
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_0ea096edfff8bc::t_e879b0e8129044 140-143,145-146,148,152,155-156,225-230,238-240,245-250,252-254,321-326,331,349,351,355,357-361,376
+billfn/swift/README.md
+  s_55aeecfb78e415::t_94fe84ca0befd5 50-57,83-85
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_55aeecfb78e415::t_3a65cfa096acf3 22-23,40-43,67,913,1111,1179-1218
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_55aeecfb78e415::t_52988eacfdf526 252,267,304-305,310-314,323-330,343,353,358,365,367,378-379,388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99cf4fa7e27e75f825cfa03826ac99982d2fa9e0",
+  "prompts": {},
+  "sessions": {
+    "s_0ea096edfff8bc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ee20-c92e-7b10-b865-4a5db71b5815",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_55aeecfb78e415": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcceda54-bed0-46c7-bc25-989dbabc3ead",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

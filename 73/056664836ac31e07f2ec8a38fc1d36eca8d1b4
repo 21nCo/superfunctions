@@ -1,0 +1,59 @@
+authfn/core/src/__tests__/session-types.test.ts
+  s_b66d0e9dd4fae0::t_31e34086f52183 1-85
+authfn/api-keys/package.json
+  s_b66d0e9dd4fae0::t_ed174e6b6b2bdd 3,29
+authfn/core/README.md
+  s_b66d0e9dd4fae0::t_61360bb9cdc1e0 13-22,62
+authfn/core/package.json
+  s_b66d0e9dd4fae0::t_a931f424f55efe 3
+authfn/core/src/__tests__/api-key-docs.test.ts
+  s_b66d0e9dd4fae0::t_4e80fe9ba4e9cd 194-195
+authfn/core/src/__tests__/placement-context.test.ts
+  s_b66d0e9dd4fae0::t_4b0f531d87f6e0 19,549-551,553-560,575-578,587,589-590,593-596
+authfn/core/src/core/api-keys.ts
+  s_b66d0e9dd4fae0::t_9e865ded09852f 4,167,190-191,256-257
+authfn/core/src/core/sessions.ts
+  s_b66d0e9dd4fae0::t_b1a7755a565ca9 10-11,434
+authfn/core/src/types.ts
+  s_b66d0e9dd4fae0::t_bde77b16cb1852 79-83,109-133
+authfn/docs/content/docs/core-concepts/sessions.md
+  s_b66d0e9dd4fae0::t_156612b5d5e183 20-33,168
+authfn/docs/content/docs/plugins/api-keys.md
+  s_b66d0e9dd4fae0::t_be029b91c4f79b 56,60,66
+authfn/docs/content/docs/recipes/placement-bound-auth-context.md
+  s_b66d0e9dd4fae0::t_77152902ee5b06 90,95-98
+authfn/docs/static/llms-full.txt
+  s_b66d0e9dd4fae0::t_233ed5ade1b4de 3696-3709,3844,5190,5194,5200,9451,9456-9459
+authfn/email-otp/package.json
+  s_b66d0e9dd4fae0::t_7d8423a314200f 3,29
+authfn/multi-region/package.json
+  s_b66d0e9dd4fae0::t_1c8cd621325aea 3,29
+authfn/native-handoff/package.json
+  s_b66d0e9dd4fae0::t_829645c7947209 3,29
+authfn/oauth-provider/package.json
+  s_b66d0e9dd4fae0::t_e0a7e9803c0c58 3,30
+authfn/password/package.json
+  s_b66d0e9dd4fae0::t_e3dd3164cb68fa 3,29
+authfn/social-oauth/package.json
+  s_b66d0e9dd4fae0::t_278307d44cb9a7 3,33
+authfn/two-factor/package.json
+  s_b66d0e9dd4fae0::t_db593fc9816638 3,29
+package-lock.json
+  s_b66d0e9dd4fae0::t_517834fc2dda46 1551,1554,1894,2493,2496,4539,4543,4572,4576,4633,4637,4705,4708,4812,4821,4935,4938
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73056664836ac31e07f2ec8a38fc1d36eca8d1b4",
+  "prompts": {},
+  "sessions": {
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+datafn/server/__tests__/workerd/d1-harness.test.ts
+  s_e753f4ab224de9::t_577d35b869da16 1-33
+datafn/server/__tests__/workerd/d1-harness.ts
+  s_e753f4ab224de9::t_8f5d11f0a4fe3e 1-33
+datafn/server/__tests__/workerd/d1.test.ts
+  s_e753f4ab224de9::t_94f1d76de0c089 4,12
+datafn/server/__tests__/workerd/loopback-keep-alive.test.ts
+  s_e753f4ab224de9::t_3bac146ed1d76d 1-17
+datafn/server/__tests__/workerd/loopback-keep-alive.ts
+  s_e753f4ab224de9::t_b72d2dcc8a5b16 1-96
+datafn/server/vitest.workerd.config.ts
+  s_e753f4ab224de9::t_75f9a1eec40867 3-6,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ea98d0b1a5d2bf088255c09503d0e2319c2f567",
+  "prompts": {},
+  "sessions": {
+    "s_e753f4ab224de9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9b413bb-78e4-461c-b7a1-7e3598c6e221",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
