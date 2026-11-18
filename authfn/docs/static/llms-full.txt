@@ -11257,10 +11257,19 @@ There is no `superfunctions_starlette` adapter. Mount through FastAPI (`pip inst
 ## Reading the session
 
 ```python
-session = await auth.provider.authenticate(request)
+from authfn import AuthFnError
+
+try:
+    session = await auth.provider.authenticate(request)
+except AuthFnError:
+    # A bad Authorization header raises (InvalidCredentialsError,
+    # ApiKeyRevokedError, ExpiredCredentialsError), not None.
+    return Response(status_code=401)
 if session is None:
     return Response(status_code=401)
 ```
+
+`auth.provider.authenticate` checks the cookie session first: a valid cookie session is returned even when the request also has an `Authorization` header. Otherwise it returns `None` for a request with no credentials and raises an `AuthFnError` subclass for an `Authorization` header that does not authenticate.
 
 `AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `credential`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions follow the TypeScript rules (`authfn` 0.5.0 and later); see below.
 
@@ -11272,7 +11281,7 @@ API-key sessions in the Python SDK (0.2.0 and later) follow the same rules as th
 
 - A user-owned key acts as its owner: `actor_type` is `'user'`, and `actor_id` and `subject.actor_id` are the owner's user ID. An unowned service key keeps `actor_type` `'api-key'` with the key ID as `actor_id`.
 - Every API-key session carries `credential` (`AuthFnApiKeyCredential`, `type='api-key'` and the key ID as `id`). Check `session.type == "api-key"` or `session.credential is not None` to detect a key.
-- A key whose owner was deleted or is disabled (`metadata["disabled"]` is `True` on the user record) fails authentication: `ApiKeyService.authenticate` returns `None`, no session is issued and the key's `lastUsedAt` is not updated. `auth.provider.authenticate` (the example above) raises `InvalidCredentialsError` instead, as it does for any request whose `Authorization` header does not authenticate. The placement-context issuer applies the same check and raises `UnauthorizedError`. Re-enabling the owner restores the key. In a placement context, an owned key's `subject` is its owner and `actor_type` stays `'api-key'`, as in TypeScript; an unowned key gets no placement context.
+- A key whose owner was deleted or is disabled (`metadata["disabled"]` is `True` on the user record) fails authentication: `ApiKeyService.authenticate` returns `None`, no session is issued and the key's `lastUsedAt` is not updated. Through `auth.provider.authenticate` (the example above), a valid cookie session on the same request still takes precedence; otherwise the key raises `InvalidCredentialsError`, as any `Authorization` header that does not authenticate does. The placement-context issuer applies the same check and raises `UnauthorizedError`. Re-enabling the owner restores the key. In a placement context, an owned key's `subject` is its owner and `actor_type` stays `'api-key'`, as in TypeScript; an unowned key gets no placement context.
 - A revoked key raises `ApiKeyRevokedError`, as in TypeScript. An expired key raises `ExpiredCredentialsError`, where TypeScript returns no session.
 - `metadata["ownerUserId"]` (the owner's ID, or `None` for an unowned key) and `metadata["scopes"]` (the key's stored scopes) are written after the metadata stored on the key, so stored metadata cannot override them. Read `actor_id` instead of `ownerUserId`.
 
