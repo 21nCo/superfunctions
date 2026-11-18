@@ -195,6 +195,31 @@ describe("ErrorCollector", () => {
     expectValidEvents(other.collect());
   });
 
+  it("delivers an event only to collectors subscribed before reading it ran page code and still subscribed after", () => {
+    const restarted = new ErrorCollector(10);
+    const stopped = new ErrorCollector(10);
+    collector.start();
+    restarted.start();
+    stopped.start();
+    const reason = new Error("reentrant");
+    Object.defineProperty(reason, "name", {
+      get() {
+        restarted.stop();
+        restarted.start(); // A new subscription, after this rejection happened.
+        stopped.stop();
+        return "Error";
+      },
+    });
+    reject(reason);
+    reject("later");
+    restarted.stop();
+    stopped.stop();
+    expect(collector.collect().map((event) => event.message)).toEqual(["reentrant", "later"]);
+    expect(restarted.collect().map((event) => event.message)).toEqual(["later"]);
+    expect(stopped.collect()).toEqual([]);
+    expectValidEvents(restarted.collect());
+  });
+
   it("bounds a huge message and stack to one 10 KB entry", () => {
     collector.start();
     reject(new Error("x".repeat(50_000)));

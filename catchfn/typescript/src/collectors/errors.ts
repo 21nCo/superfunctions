@@ -183,10 +183,15 @@ function subscribe(listener: Listener): () => void {
     const current = listeners;
     const observe = (read: (event: unknown, timestamp: number) => Observation | undefined) => (event: unknown) => {
       if (current.size === 0) return;
+      // Reading the event can run page code (an error's getters) that stops or
+      // starts a collector: deliver only to collectors subscribed before it
+      // ran and still subscribed after.
+      const receivers = [...current];
       try {
         const observation = read(event, Date.now());
         if (!observation) return;
-        for (const receive of current) {
+        for (const receive of receivers) {
+          if (!current.has(receive)) continue;
           try {
             receive(observation);
           } catch {

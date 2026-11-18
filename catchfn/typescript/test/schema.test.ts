@@ -11,6 +11,9 @@ const valid = {
   rejection: { schemaVersion: 1, kind: "error", seq: 4, timestamp: 5, source: "unhandledrejection", message: '{"a":[1]}', value: { a: [1] } },
   websocket: { schemaVersion: 1, kind: "websocket", seq: 5, timestamp: 6, type: "message", url: "wss://example.com/", direction: "received", size: 12 },
   websocketClose: { schemaVersion: 1, kind: "websocket", seq: 6, timestamp: 7, type: "close", url: "wss://example.com/", code: 1000, wasClean: true },
+  websocketOpen: { schemaVersion: 1, kind: "websocket", seq: 7, timestamp: 8, type: "open", url: "wss://example.com/" },
+  websocketCloseWithoutCode: { schemaVersion: 1, kind: "websocket", seq: 8, timestamp: 9, type: "close", url: "wss://example.com/" },
+  websocketSentWithoutSize: { schemaVersion: 1, kind: "websocket", seq: 9, timestamp: 10, type: "message", url: "wss://example.com/", direction: "sent" },
 };
 
 const invalid: Array<[string, unknown]> = [
@@ -37,6 +40,12 @@ const invalid: Array<[string, unknown]> = [
   ["a negative message size", { ...valid.websocket, size: -1 }],
   ["a websocket payload field", { ...valid.websocket, data: "payload" }],
   ["a non-boolean wasClean", { ...valid.websocketClose, wasClean: "yes" }],
+  ["a direction on an open event", { ...valid.websocketOpen, direction: "sent" }],
+  ["a size on an error event", { ...valid.websocketOpen, type: "error", size: 3 }],
+  ["a direction on a close event", { ...valid.websocketClose, direction: "received" }],
+  ["a close code on a message event", { ...valid.websocket, code: 1000 }],
+  ["wasClean on an open event", { ...valid.websocketOpen, wasClean: true }],
+  ["a close code on an error event", { ...valid.websocketOpen, type: "error", code: 1006 }],
 ];
 
 const strip = (value: unknown) => JSON.parse(JSON.stringify(value));

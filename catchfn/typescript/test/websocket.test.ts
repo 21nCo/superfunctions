@@ -8,23 +8,29 @@ import { expectValidEvents } from "./schema-helper.js";
 const platform = globalThis as Record<string, unknown>;
 const savedWebSocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
 
-// Node 22 has no global CloseEvent; a stand-in with the same getters.
-class StandInCloseEvent extends Event {
-  readonly #code: number;
-  readonly #wasClean: boolean;
-  constructor(type: string, init: { code: number; wasClean: boolean }) {
-    super(type);
-    this.#code = init.code;
-    this.#wasClean = init.wasClean;
+// Node 22 has no global CloseEvent: a stand-in with the same branded getters,
+// installed before the collector loads, as a browser's would be.
+const { StandInCloseEvent, runtimeCloseEvent } = vi.hoisted(() => {
+  class StandInCloseEvent extends Event {
+    readonly #code: number;
+    readonly #wasClean: boolean;
+    constructor(type: string, init: { code: number; wasClean: boolean }) {
+      super(type);
+      this.#code = init.code;
+      this.#wasClean = init.wasClean;
+    }
+    get code(): number {
+      return this.#code;
+    }
+    get wasClean(): boolean {
+      return this.#wasClean;
+    }
   }
-  get code(): number {
-    return this.#code;
-  }
-  get wasClean(): boolean {
-    return this.#wasClean;
-  }
-}
-const CloseEventClass = (platform.CloseEvent as typeof StandInCloseEvent | undefined) ?? StandInCloseEvent;
+  const runtimeCloseEvent = (globalThis as Record<string, unknown>).CloseEvent as typeof StandInCloseEvent | undefined;
+  if (!runtimeCloseEvent) (globalThis as Record<string, unknown>).CloseEvent = StandInCloseEvent;
+  return { StandInCloseEvent, runtimeCloseEvent };
+});
+const CloseEventClass = runtimeCloseEvent ?? StandInCloseEvent;
 
 /** The page's WebSocket: an event target the test drives from the "server" side. */
 class PageSocket extends EventTarget {
@@ -39,10 +45,13 @@ class PageSocket extends EventTarget {
   get url(): string {
     return this.#url;
   }
-  // As the platform: throws while connecting, discards the data once closing or closed.
+  // As the platform: converts other data to a string first, then throws while
+  // connecting and discards the data once closing or closed.
   send(data: unknown): void {
+    const binary = data instanceof ArrayBuffer || ArrayBuffer.isView(data) || data instanceof Blob;
+    const value = typeof data === "object" && data !== null && !binary ? String(data) : data;
     if (this.readyState === 0) throw new DOMException("still connecting", "InvalidStateError");
-    if (this.readyState === 1) this.sent.push(data);
+    if (this.readyState === 1) this.sent.push(value);
   }
   close(): void {
     this.readyState = 2;
@@ -150,13 +159,104 @@ describe("WebSocketCollector", () => {
     expect(collector.collect().map((event) => event.type)).toEqual(["open", "close"]);
   });
 
+  it("does not record a send() whose data conversion closes the socket, and records one that converts", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/convert");
+    socket.serverOpens();
+    socket.send({ toString: () => "converted" });
+    socket.send({
+      toString: () => {
+        socket.close();
+        return "discarded";
+      },
+    });
+    expect(socket.sent).toEqual(["converted"]);
+    expect(collector.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([
+      { type: "open", direction: undefined, size: undefined },
+      { type: "message", direction: "sent", size: undefined },
+    ]);
+  });
+
   it("ignores message and close events the page dispatches on a socket itself", () => {
     collector.start();
     const socket = openSocket("wss://example.com/forged");
     socket.dispatchEvent(Object.assign(new Event("message"), { data: "forged" }));
-    if (platform.CloseEvent) socket.dispatchEvent(Object.assign(new Event("close"), { code: 4000, wasClean: true }));
+    socket.readyState = 3; // Even on a closed socket, a close event must be the platform's.
+    socket.dispatchEvent(Object.assign(new Event("close"), { code: 4000, wasClean: true }));
+    socket.readyState = 1;
     socket.serverSends("real");
     expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([{ type: "message", size: 4 }]);
+  });
+
+  it("ignores an open the socket's state contradicts and a close on a socket still open", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/state");
+    socket.dispatchEvent(new Event("open")); // Still connecting.
+    socket.serverOpens();
+    socket.dispatchEvent(new Event("open")); // The platform fires open once.
+    socket.dispatchEvent(new CloseEventClass("close", { code: 4000, wasClean: true })); // Still open.
+    socket.serverSends("ab"); // Still observed: the forged close did not detach it.
+    expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([
+      { type: "open", size: undefined },
+      { type: "message", size: 2 },
+    ]);
+  });
+
+  it("without a platform CloseEvent class, records a close without code and wasClean and never runs the event's getters", async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "CloseEvent");
+    delete platform.CloseEvent;
+    vi.resetModules();
+    try {
+      const fresh = await import("../src/collectors/websocket.js");
+      const bare = new fresh.WebSocketCollector(5);
+      let invoked = 0;
+      class PageCloseEvent extends Event {
+        get code(): number {
+          invoked += 1;
+          return 4000;
+        }
+        get wasClean(): boolean {
+          invoked += 1;
+          return true;
+        }
+      }
+      bare.start();
+      try {
+        const socket = openSocket("wss://example.com/bare");
+        socket.readyState = 3;
+        socket.dispatchEvent(new PageCloseEvent("close"));
+      } finally {
+        bare.stop();
+      }
+      expect(invoked).toBe(0);
+      expect(bare.collect().map(({ type, code, wasClean }) => ({ type, code, wasClean }))).toEqual([{ type: "close", code: undefined, wasClean: undefined }]);
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "CloseEvent", saved);
+    }
+  });
+
+  it("in a browser, ignores every socket event the page dispatches itself", async () => {
+    platform.Window = class Window {};
+    vi.resetModules();
+    try {
+      const fresh = await import("../src/collectors/websocket.js");
+      const browser = new fresh.WebSocketCollector(10);
+      browser.start();
+      try {
+        const socket = openSocket("wss://example.com/untrusted");
+        socket.serverOpens();
+        socket.serverSends("forged");
+        socket.serverFails();
+        socket.send("abc"); // A send() is not an event: still recorded.
+        socket.serverCloses(1000, true);
+      } finally {
+        browser.stop();
+      }
+      expect(browser.collect().map(({ type, direction, size }) => ({ type, direction, size }))).toEqual([{ type: "message", direction: "sent", size: 3 }]);
+      expectValidEvents(browser.collect());
+    } finally {
+      delete platform.Window;
+    }
   });
 
   it("keeps the page's class behind the wrapper: instanceof, statics and subclasses", () => {
@@ -280,6 +380,150 @@ describe("WebSocketCollector", () => {
     expectValidEvents(other.collect());
   });
 
+  it("detaches its socket listeners on close and on the last stop(), keeping the page's listeners and sockets", async () => {
+    const added: Array<[unknown, string, unknown]> = [];
+    const removed: Array<[unknown, string, unknown]> = [];
+    const { addEventListener, removeEventListener } = EventTarget.prototype;
+    EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["addEventListener"]>) {
+      added.push([this, args[0], args[1]]);
+      return addEventListener.apply(this, args);
+    };
+    EventTarget.prototype.removeEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["removeEventListener"]>) {
+      removed.push([this, args[0], args[1]]);
+      return removeEventListener.apply(this, args);
+    };
+    vi.resetModules();
+    let fresh: typeof import("../src/collectors/websocket.js");
+    try {
+      fresh = await import("../src/collectors/websocket.js"); // Captures the recording methods.
+    } finally {
+      EventTarget.prototype.addEventListener = addEventListener;
+      EventTarget.prototype.removeEventListener = removeEventListener;
+    }
+    const first = new fresh.WebSocketCollector(10);
+    const second = new fresh.WebSocketCollector(10);
+    const on = (socket: object) => added.filter(([target]) => target === socket).map(([, type, listener]) => `${type}:${added.findIndex(([, , other]) => other === listener)}`);
+    const off = (socket: object) => removed.filter(([target]) => target === socket).map(([, type, listener]) => `${type}:${added.findIndex(([, , other]) => other === listener)}`);
+    first.start();
+    second.start();
+    const kept = openSocket("wss://example.com/kept");
+    const pageMessages: unknown[] = [];
+    kept.addEventListener("message", (event) => pageMessages.push((event as MessageEvent).data));
+    kept.serverOpens();
+    const done = openSocket("wss://example.com/done");
+    done.serverOpens();
+    done.serverCloses(1000, true);
+    expect(on(done)).toHaveLength(4);
+    expect(off(done).sort()).toEqual(on(done).sort()); // A closed socket is released at once.
+    first.stop();
+    expect(off(kept)).toEqual([]); // Another collector still runs.
+    kept.serverSends("a");
+    second.stop();
+    expect(on(kept)).toHaveLength(4);
+    expect(off(kept).sort()).toEqual(on(kept).sort());
+    second.start();
+    kept.serverSends("b"); // A restart does not observe earlier sockets.
+    second.stop();
+    expect(kept.readyState).toBe(1); // Never closed by the collector.
+    expect(pageMessages).toEqual(["a", "b"]);
+    expect(first.collect().map((event) => event.url)).toEqual(["wss://example.com/kept", "wss://example.com/done", "wss://example.com/done"]);
+    expect(second.collect().map(({ type, url }) => `${type} ${url}`)).toEqual([
+      "open wss://example.com/kept",
+      "open wss://example.com/done",
+      "close wss://example.com/done",
+      "message wss://example.com/kept",
+    ]);
+  });
+
+  it("installs nothing when the global cannot be replaced or its prototype cannot be read, and never throws from start()", () => {
+    Object.defineProperty(globalThis, "WebSocket", { value: PageSocket, writable: false, configurable: true });
+    expect(() => collector.start()).not.toThrow();
+    expect(platform.WebSocket).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+    collector.stop();
+
+    const Unreadable = function () {} as unknown as { prototype: object };
+    Unreadable.prototype = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor trap");
+        },
+      }
+    );
+    Object.defineProperty(globalThis, "WebSocket", { value: Unreadable, writable: true, configurable: true });
+    expect(() => collector.start()).not.toThrow();
+    expect(platform.WebSocket).toBe(Unreadable);
+    collector.stop();
+  });
+
+  it("rolls back the constructor when wrapping send() fails part way", () => {
+    const LockedSend = class extends PageSocket {};
+    Object.setPrototypeOf(
+      LockedSend.prototype,
+      new Proxy(PageSocket.prototype, {
+        set() {
+          throw new Error("set trap");
+        },
+      })
+    );
+    platform.WebSocket = LockedSend;
+    expect(() => collector.start()).not.toThrow();
+    expect(platform.WebSocket).toBe(LockedSend);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("attempts each restore on its own and clears its state when one throws", () => {
+    let stored: unknown = PageSocket;
+    let failRestore = true;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get: () => stored,
+      set: (value: unknown) => {
+        if (value === PageSocket && failRestore) {
+          failRestore = false;
+          throw new Error("locked binding");
+        }
+        stored = value;
+      },
+    });
+    collector.start();
+    const wrapper = platform.WebSocket;
+    collector.stop(); // The constructor restore throws.
+    expect(platform.WebSocket).toBe(wrapper); // Left in place, inert.
+    expect(PageSocket.prototype.send).toBe(pageSend); // Restored all the same.
+    collector.start(); // A fresh installation, not a stale one.
+    expect(PageSocket.prototype.send).not.toBe(pageSend);
+    const socket = openSocket("wss://example.com/again");
+    socket.serverOpens();
+    socket.send("abc");
+    collector.stop();
+    expect(platform.WebSocket).toBe(wrapper); // What this installation replaced.
+    expect(PageSocket.prototype.send).toBe(pageSend);
+    expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([
+      { type: "open", size: undefined },
+      { type: "message", size: 3 },
+    ]);
+
+    // And the other way round: a send() restore that throws leaves the constructor restored.
+    const LockedRestore = class extends PageSocket {};
+    const target = Object.create(PageSocket.prototype, { send: { value: pageSend, writable: true, configurable: true } }) as Record<string, unknown>;
+    Object.setPrototypeOf(
+      LockedRestore.prototype,
+      new Proxy(target, {
+        set(object, key, value) {
+          if (key === "send" && value === pageSend) throw new Error("set trap");
+          object[key as string] = value;
+          return true;
+        },
+      })
+    );
+    stored = LockedRestore;
+    collector.start();
+    collector.stop();
+    expect(platform.WebSocket).toBe(LockedRestore);
+  });
+
   it("keeps the newest maxSize events and supports maxSize 0", () => {
     const small = new WebSocketCollector(2);
     const none = new WebSocketCollector(0);
@@ -333,10 +577,14 @@ function startServer(): Promise<{ server: Server; port: number; sockets: Set<Soc
 describe.runIf(typeof savedWebSocket?.value === "function")("WebSocketCollector on the runtime's WebSocket", () => {
   it("records a real connection: open, a text and a binary message out, replies in, close, and a refused connection's error", async () => {
     const { server, port, sockets } = await startServer();
+    // The collector as it loads on this runtime, without the test's stand-in CloseEvent.
+    if (!runtimeCloseEvent) delete platform.CloseEvent;
+    vi.resetModules();
+    const fresh = await import("../src/collectors/websocket.js");
+    const native = new fresh.WebSocketCollector(20);
     try {
-      collector.stop();
       if (savedWebSocket) Object.defineProperty(globalThis, "WebSocket", savedWebSocket);
-      collector.start();
+      native.start();
       const Native = platform.WebSocket as typeof WebSocket;
       const socket = new Native(`ws://127.0.0.1:${port}/socket?token=test-socket-token`);
       socket.addEventListener("open", () => {
@@ -346,27 +594,38 @@ describe.runIf(typeof savedWebSocket?.value === "function")("WebSocketCollector 
       const closed = await new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve));
       expect(closed.code).toBe(1000);
       socket.send("discarded after close"); // The platform drops it; nothing is recorded.
-      // Node's WebSocket reports a refused handshake with an error event only.
+      // A refused handshake fires error; Node 24 and browsers then fire an
+      // abnormal close, which Node 22 omits.
       const refused = new Native(`ws://127.0.0.1:${port}/refused`);
       await new Promise((resolve) => refused.addEventListener("error", resolve));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      native.stop();
 
-      const events = collector.collect();
+      const events = native.collect();
+      expectValidEvents(events);
+      // Without a platform CloseEvent class (Node 22), the close code and
+      // wasClean cannot be read through a verified getter and are omitted.
+      const closeFields = (code: number, wasClean: boolean) => (runtimeCloseEvent ? { code, wasClean } : { code: undefined, wasClean: undefined });
       const summary = events.map(({ type, direction, size, code, wasClean }) => ({ type, direction, size, code, wasClean }));
-      expect(summary).toEqual([
+      expect(summary.slice(0, 7)).toEqual([
         { type: "open", direction: undefined, size: undefined, code: undefined, wasClean: undefined },
         { type: "message", direction: "sent", size: 7, code: undefined, wasClean: undefined },
         { type: "message", direction: "sent", size: 3, code: undefined, wasClean: undefined },
         { type: "message", direction: "received", size: 5, code: undefined, wasClean: undefined },
         { type: "message", direction: "received", size: 5, code: undefined, wasClean: undefined },
-        { type: "close", direction: undefined, size: undefined, code: 1000, wasClean: true },
+        { type: "close", direction: undefined, size: undefined, ...closeFields(1000, true) },
         { type: "error", direction: undefined, size: undefined, code: undefined, wasClean: undefined },
       ]);
+      const abnormalClose = { type: "close", direction: undefined, size: undefined, ...closeFields(1006, false) };
+      expect([[], [abnormalClose]]).toContainEqual(summary.slice(7));
       expect(events[0]!.url).toMatch(new RegExp(`^ws://127\\.0\\.0\\.1:${port}/socket\\?token=`));
       expect(JSON.stringify(events)).not.toContain("test-socket-token");
-      expect(events[6]!.url).toBe(`ws://127.0.0.1:${port}/refused`);
+      for (const event of events.slice(6)) expect(event.url).toBe(`ws://127.0.0.1:${port}/refused`);
     } finally {
+      native.stop();
+      if (!runtimeCloseEvent) platform.CloseEvent = StandInCloseEvent;
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
     }
-  });
+  }, 20_000); // Node 22 takes about 4 s to finish the closing handshake.
 });

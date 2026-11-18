@@ -1,5 +1,5 @@
 import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type WebSocketEvidenceEvent } from "../events.js";
-import { apply, attribute, intrinsic, listen, platform, platformRead, prototypeOf, UNREADABLE, type Intrinsic } from "../utils/platform.js";
+import { apply, attribute, intrinsic, listen, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
 import { MAX_ENTRY_BYTES, truncateToBytes } from "../utils/serialization.js";
@@ -8,6 +8,7 @@ import { UNREAD_URL } from "./network.js";
 /** What a socket listener or the `send` wrapper observed, already redacted. */
 type Observation = Omit<WebSocketEvidenceEvent, "schemaVersion" | "kind" | "seq">;
 type Listener = (observation: Observation) => void;
+type Deliver = (observation: Observation) => void;
 
 // The platform getters observation reads through, captured when this module
 // loads: a getter the page patches later never runs on a socket or event.
@@ -17,6 +18,7 @@ const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
 // a subclass at load.
 const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
 const OPEN = 1;
+const CLOSED = 3;
 const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data");
 const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
 const CLOSE_EVENT_CODE = intrinsic(CLOSE_EVENT_PROTOTYPE, "code");
@@ -27,6 +29,12 @@ const TYPED_ARRAY_BYTE_LENGTH = intrinsic(Object.getPrototypeOf(Uint8Array.proto
 const DATA_VIEW_BYTE_LENGTH = intrinsic(prototypeOf(platform.DataView), "byteLength");
 const BLOB_SIZE = intrinsic(prototypeOf(platform.Blob), "size");
 const SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, SHARED_ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
+// `isTrusted`: an unforgeable own accessor of each browser event, else Event.prototype's.
+const EVENT_IS_TRUSTED = isTrustedGetter();
+// A browser window or worker fires its socket events trusted, so an untrusted
+// one there was dispatched by the page. Node dispatches its own socket events
+// untrusted, so there `isTrusted` tells nothing.
+const TRUSTED_EVENTS_ONLY = EVENT_IS_TRUSTED !== undefined && (typeof platform.Window === "function" || typeof platform.WorkerGlobalScope === "function");
 
 let listeners = new Set<Listener>();
 let restore: (() => void) | undefined;
@@ -61,22 +69,17 @@ function payloadSize(data: unknown): number | undefined {
   return undefined;
 }
 
-function captureUrl(url: unknown): string {
-  return typeof url === "string" ? (truncateToBytes(redactUrl(url), MAX_ENTRY_BYTES) ?? "") : UNREAD_URL;
+function isTrustedGetter(): Intrinsic | undefined {
+  try {
+    const Event = platform.Event as (new (type: string) => object) | undefined;
+    return (typeof Event === "function" ? intrinsic(new Event("probe"), "isTrusted") : undefined) ?? intrinsic(prototypeOf(Event), "isTrusted");
+  } catch {
+    return undefined;
+  }
 }
 
-/**
- * A close event's attribute through the captured `CloseEvent` getter. On a
- * runtime without a global `CloseEvent` (Node 22), through the getter of the
- * event's own prototype, the platform's class there.
- */
-function closeAttribute(get: Intrinsic | undefined, event: unknown, key: "code" | "wasClean"): unknown {
-  if (get || typeof event !== "object" || event === null) return attribute(get, event, key);
-  try {
-    return attribute(intrinsic(Object.getPrototypeOf(event) as object, key), event, key);
-  } catch {
-    return UNREADABLE;
-  }
+function captureUrl(url: unknown): string {
+  return typeof url === "string" ? (truncateToBytes(redactUrl(url), MAX_ENTRY_BYTES) ?? "") : UNREAD_URL;
 }
 
 /**
@@ -142,12 +145,19 @@ function sendOwnerOf(chain: object[]): { owner: Record<string, unknown>; origina
   return undefined;
 }
 
-function subscribe(listener: Listener): () => void {
-  if (listeners.size === 0) {
-    listeners = new Set();
-    const current = listeners;
-    const emit = (observation: Observation) => {
-      for (const receive of current) {
+/**
+ * Installs the constructor and `send` wrappers for one subscription set.
+ * Every target is resolved before anything is replaced, and a failure part
+ * way through undoes what was installed. Returns the restore function, which
+ * runs each cleanup on its own so one that throws never blocks the rest.
+ */
+function install(current: Set<Listener>): (() => void) | undefined {
+  /** The receivers subscribed when an observation began, minus any that stopped since. */
+  const receivers = (): Deliver => {
+    const snapshot = [...current];
+    return (observation) => {
+      for (const receive of snapshot) {
+        if (!current.has(receive)) continue;
         try {
           receive(observation);
         } catch {
@@ -155,123 +165,174 @@ function subscribe(listener: Listener): () => void {
         }
       }
     };
-    // Sockets constructed while these wrappers are installed, with their redacted URL.
-    const sockets = new WeakMap<object, string>();
-    const cleanups: Array<() => void> = [];
+  };
+  const cleanups: Array<() => void> = [];
+  const undo = () => {
+    for (const cleanup of cleanups.splice(0).reverse()) {
+      try {
+        cleanup();
+      } catch {
+        /* Each restore is attempted on its own. */
+      }
+    }
+  };
+  try {
     const Original = platform.WebSocket;
     const prototype = prototypeOf(Original);
+    if (typeof Original !== "function" || !prototype) return undefined;
+    // The getter captured when this module loaded, or, for a WebSocket
+    // defined or replaced later, when the wrappers are installed.
+    const chain = prototypeChain(prototype);
+    const urlGetter = getterOf(chain, "url");
+    const readyStateGetter = getterOf(chain, "readyState");
+    const sendOwner = sendOwnerOf(chain);
+    const readyState = (socket: unknown): unknown => {
+      try {
+        return attribute(readyStateGetter, socket, "readyState");
+      } catch {
+        return UNREADABLE;
+      }
+    };
 
-    if (typeof Original === "function" && prototype) {
-      // The getter captured when this module loaded, or, for a WebSocket
-      // defined or replaced later, when the wrappers are installed.
-      const chain = prototypeChain(prototype);
-      const urlGetter = getterOf(chain, "url");
-      const readyStateGetter = getterOf(chain, "readyState");
+    // Sockets constructed while these wrappers are installed, with their redacted URL.
+    const sockets = new WeakMap<object, string>();
+    // How to detach each observed socket's listeners: a socket's own on close, all on the last stop().
+    const detachers = new Set<() => void>();
+    cleanups.push(() => {
+      for (const detach of [...detachers]) detach();
+    });
 
-      const observe = (socket: object) => {
-        const url = captureUrl(attribute(urlGetter, socket, "url"));
-        sockets.set(socket, url);
-        // `read` returns undefined for an event the platform did not fire.
-        const on = (type: string, read: (event: unknown) => Partial<Observation> | undefined) =>
-          listen(socket, type, (event) => {
-            // A socket outlives stop(): its listeners stay attached but inert.
-            if (current.size === 0) return;
-            try {
-              const fields = read(event);
-              if (fields) emit({ type: type as Observation["type"], url, timestamp: Date.now(), ...fields });
-            } catch {
-              /* Observation never raises into the socket's event dispatch. */
-            }
-          });
-        on("open", () => ({}));
-        on("message", (event) => {
-          const data = attribute(MESSAGE_EVENT_DATA, event, "data");
-          // A message event the page dispatches itself is not a received message.
-          if (MESSAGE_EVENT_DATA && data === UNREADABLE) return undefined;
-          const size = payloadSize(data);
-          return size === undefined ? { direction: "received" } : { direction: "received", size };
-        });
-        on("close", (event) => {
-          const closed: Partial<Observation> = {};
-          const code = closeAttribute(CLOSE_EVENT_CODE, event, "code");
-          // Likewise a close event that is not the platform's CloseEvent.
-          if (CLOSE_EVENT_CODE && code === UNREADABLE) return undefined;
-          if (Number.isSafeInteger(code) && (code as number) >= 0) closed.code = code as number;
-          const wasClean = closeAttribute(CLOSE_EVENT_WAS_CLEAN, event, "wasClean");
-          if (typeof wasClean === "boolean") closed.wasClean = wasClean;
-          return closed;
-        });
-        on("error", () => ({}));
+    const observe = (socket: object) => {
+      const url = captureUrl(attribute(urlGetter, socket, "url"));
+      const added: Array<[string, (event: unknown) => void]> = [];
+      const detach = () => {
+        detachers.delete(detach);
+        for (const [type, callback] of added) unlisten(socket, type, callback);
       };
-
-      // The constructor stays the page's own class behind a Proxy, so its
-      // statics, prototype, `instanceof` and subclassing keep working. The
-      // listeners go on before the page can add its own.
-      const wrapper = new Proxy(Original, {
-        construct(target, args, newTarget) {
-          const socket = Reflect.construct(target, args, newTarget) as object;
-          if (current.size > 0) {
-            try {
-              observe(socket);
-            } catch {
-              /* An unreadable socket is returned unobserved. */
-            }
+      let opened = false;
+      // `read` returns undefined for an event the platform did not fire.
+      const on = (type: Observation["type"], read: (event: unknown) => Partial<Observation> | undefined) => {
+        const callback = (event: unknown) => {
+          if (current.size === 0) return;
+          const deliver = receivers();
+          let fields: Partial<Observation> | undefined;
+          try {
+            if (TRUSTED_EVENTS_ONLY && platformRead(EVENT_IS_TRUSTED, event) !== true) return;
+            fields = read(event);
+            if (fields) deliver({ type, url, timestamp: Date.now(), ...fields });
+          } catch {
+            /* Observation never raises into the socket's event dispatch. */
+          } finally {
+            // The platform's close is the socket's last event: nothing keeps it observed after that.
+            if (type === "close" && fields) detach();
           }
-          return socket;
-        },
+        };
+        if (listen(socket, type, callback)) added.push([type, callback]);
+      };
+      // The platform fires open once, on a socket that is open by then.
+      on("open", () => {
+        if (opened || readyState(socket) !== OPEN) return undefined;
+        opened = true;
+        return {};
       });
-      platform.WebSocket = wrapper;
-      cleanups.push(() => {
-        if (platform.WebSocket === wrapper) platform.WebSocket = Original;
+      on("message", (event) => {
+        const data = attribute(MESSAGE_EVENT_DATA, event, "data");
+        // A message event the page dispatches itself is not a received message.
+        if (MESSAGE_EVENT_DATA && data === UNREADABLE) return undefined;
+        const size = payloadSize(data);
+        return size === undefined ? { direction: "received" } : { direction: "received", size };
       });
+      on("close", (event) => {
+        // The platform fires close on a closed socket, as a CloseEvent where the runtime has that class.
+        if (readyState(socket) !== CLOSED) return undefined;
+        const closed: Partial<Observation> = {};
+        const code = attribute(CLOSE_EVENT_CODE, event, "code");
+        if (CLOSE_EVENT_CODE && code === UNREADABLE) return undefined;
+        if (Number.isSafeInteger(code) && (code as number) >= 0) closed.code = code as number;
+        const wasClean = attribute(CLOSE_EVENT_WAS_CLEAN, event, "wasClean");
+        if (typeof wasClean === "boolean") closed.wasClean = wasClean;
+        return closed;
+      });
+      on("error", () => ({}));
+      detachers.add(detach);
+      sockets.set(socket, url);
+    };
 
-      // The send() sockets of the global class actually inherit, wrapped where it is defined.
-      const sendOwner = sendOwnerOf(chain);
-      if (sendOwner) {
-        const { owner, original: originalSend } = sendOwner;
-        const send = function (this: unknown, ...args: unknown[]) {
-          if (current.size === 0) return apply(originalSend, this, args);
+    // The constructor stays the page's own class behind a Proxy, so its
+    // statics, prototype, `instanceof` and subclassing keep working. The
+    // listeners go on before the page can add its own.
+    const wrapper = new Proxy(Original, {
+      construct(target, args, newTarget) {
+        const socket = Reflect.construct(target, args, newTarget) as object;
+        if (current.size > 0) {
+          try {
+            observe(socket);
+          } catch {
+            /* An unreadable socket is returned unobserved. */
+          }
+        }
+        return socket;
+      },
+    });
+
+    // The send() sockets of the global class actually inherit, wrapped where it is defined.
+    const send = sendOwner
+      ? function (this: unknown, ...args: unknown[]) {
+          if (current.size === 0) return apply(sendOwner.original, this, args);
           const timestamp = Date.now();
+          const deliver = receivers();
           // Only a send() on an open socket transmits: the platform throws
           // while connecting and discards the data once closing or closed.
-          let open = false;
-          try {
-            open = attribute(readyStateGetter, this, "readyState") === OPEN;
-          } catch {
-            open = false;
-          }
-          const result = apply(originalSend, this, args);
+          // Converting the data can run page code that closes the socket, so
+          // it must still be open after the call too.
+          const openBefore = readyState(this) === OPEN;
+          const result = apply(sendOwner.original, this, args);
           try {
             const url = typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-            if (open && url !== undefined) {
+            if (openBefore && url !== undefined && readyState(this) === OPEN) {
               const size = payloadSize(args[0]);
-              emit(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
+              deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             }
           } catch {
             /* Observation never changes what send() returns. */
           }
           return result;
-        };
-        owner.send = send;
-        cleanups.push(() => {
-          if (owner.send === send) owner.send = originalSend;
-        });
-      }
-    }
+        }
+      : undefined;
 
     // Restore only what we replaced and still own; a wrapper another library
     // installed over ours keeps ours in its chain, inert once `current` empties.
-    restore = () => {
-      for (const cleanup of cleanups) cleanup();
-    };
+    platform.WebSocket = wrapper;
+    cleanups.push(() => {
+      if (platform.WebSocket === wrapper) platform.WebSocket = Original;
+    });
+    if (sendOwner && send) {
+      const { owner, original } = sendOwner;
+      owner.send = send;
+      cleanups.push(() => {
+        if (owner.send === send) owner.send = original;
+      });
+    }
+  } catch {
+    undo(); // A partly installed collector would record only some events.
+    return undefined;
+  }
+  return undo;
+}
+
+function subscribe(listener: Listener): () => void {
+  if (listeners.size === 0) {
+    listeners = new Set();
+    restore = install(listeners);
   }
   const current = listeners;
   current.add(listener);
   return () => {
     current.delete(listener);
     if (current === listeners && current.size === 0) {
-      restore?.();
+      const undo = restore;
       restore = undefined;
+      undo?.();
     }
   };
 }

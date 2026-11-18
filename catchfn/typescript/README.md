@@ -188,35 +188,49 @@ uncaught error while it runs.
 page's class (statics, `prototype`, `instanceof` and subclassing keep
 working) and wraps the `send` its sockets inherit, on the prototype that
 defines it (`WebSocket.prototype`, also when the global is a subclass); the last `stop()` restores
-both where its own wrapper is still installed, as above. Only sockets
-constructed while a collector runs are observed: the constructor adds
-`open`, `message`, `close` and `error` listeners before the page can add its
-own, and those listeners stay on the socket after `stop()` but record
-nothing. A class that extended `WebSocket` before `start()` constructs
-through the page's own class and is not observed.
+both where its own wrapper is still installed, as above. Every target is
+resolved before anything is replaced, so `start()` never throws: a global it
+cannot replace (or a failure part way) leaves nothing installed and the
+collector records nothing. Each restore runs on its own, so one that throws
+does not stop the others. Only sockets constructed while a collector runs
+are observed: the constructor adds `open`, `message`, `close` and `error`
+listeners before the page can add its own. They are removed after the
+socket's `close` event and from every socket on the last `stop()`; the
+page's own listeners stay and the socket is never closed. A restart observes
+new sockets only. A class that extended `WebSocket` before `start()`
+constructs through the page's own class and is not observed.
 
 - Messages record their direction and their size in bytes: a string's UTF-8
   length, or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
   through the platform getters captured at load. Another payload type is
   recorded without `size`. The payload itself is never recorded.
 - Only a `send()` on an open socket is recorded, its `readyState` read
-  before the call through the getter captured at load: the platform throws
-  while connecting (it still throws) and discards the data once the socket
-  is closing or closed (nothing is recorded).
+  before and after the call through the getter captured at load: the
+  platform throws while connecting (it still throws) and discards the data
+  once the socket is closing or closed (nothing is recorded), also when
+  converting the data to a string ran page code that closed it.
 - Event attributes are read only through the platform getters. A `message`
   or `close` event the page dispatches on a socket itself, which is not a
   platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has
   that class. Only on a runtime without the class (or for a stand-in socket
   class without a `url` or `readyState` getter) is the attribute read from
-  an own data property.
+  an own data property; a getter there is never run.
+- In a browser window or worker, which fires socket events trusted, an
+  untrusted event (`isTrusted` false, read through the platform getter) is
+  ignored, whatever its type. Node fires its socket events untrusted, so
+  there `isTrusted` is not checked; instead, on every runtime, an `open` is
+  recorded once and only on a socket whose `readyState` is open, and a
+  `close` only on a socket whose `readyState` is closed. A page-dispatched
+  `error` event is not detected on Node.
 - `url` is the socket's `url` attribute (through the getter captured at load
   when the global class inherits from the platform's) through `redactUrl`. A close
-  event records `code` and `wasClean`, through the `CloseEvent` getters
-  captured at load or, on a runtime without a global `CloseEvent` (Node 22),
-  through the getters of the event's own prototype. Its `reason` is not
-  recorded.
-- Node's built-in `WebSocket` reports a refused handshake with an `error`
-  event and no `close` event; the collector records what the runtime emits.
+  event records `code` and `wasClean` through the `CloseEvent` getters
+  captured at load. On a runtime without a global `CloseEvent` (Node 22),
+  whose close events keep them in getters, they are omitted rather than read
+  through a getter that cannot be verified. Its `reason` is not recorded.
+- A refused handshake fires `error`; browsers and Node 24 then fire a
+  `close` with code 1006, which Node 22 omits. The collector records what
+  the runtime emits.
 
 ## Serialization
 

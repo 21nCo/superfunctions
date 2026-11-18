@@ -206,6 +206,11 @@ export const evidenceEventSchema = {
         code: safeInteger,
         wasClean: { type: "boolean" },
       },
+      // direction and size belong to message events only, code and wasClean to close events only.
+      allOf: [
+        { if: { properties: { type: { const: "message" } } }, else: { properties: { direction: false, size: false } } },
+        { if: { properties: { type: { const: "close" } } }, else: { properties: { code: false, wasClean: false } } },
+      ],
     },
   ],
 } as const;
@@ -247,7 +252,14 @@ const common: Record<string, Check> = {
   timestamp: isNonNegativeInteger,
 };
 
-const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: Record<string, Check> }> = {
+interface Shape {
+  required: Record<string, Check>;
+  optional: Record<string, Check>;
+  /** Optional fields allowed only when the `type` field has the given value. */
+  onlyForType?: Record<string, string>;
+}
+
+const shapes: Record<EvidenceKind, Shape> = {
   console: {
     required: { ...common, level: oneOf(CONSOLE_LEVELS), args: (value) => Array.isArray(value) && isJsonValue(value) },
     optional: {},
@@ -290,6 +302,7 @@ const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: 
       code: isNonNegativeInteger,
       wasClean: (value) => typeof value === "boolean",
     },
+    onlyForType: { direction: "message", size: "message", code: "close", wasClean: "close" },
   },
 };
 
@@ -329,6 +342,10 @@ function problems(value: unknown): string[] {
     const check = ownCheck(shape.optional, field);
     if (typeof check !== "function") errors.push(`${field} is not a ${kind} event field`);
     else if (!check(value[field])) errors.push(`${field} is invalid`);
+    else {
+      const type = shape.onlyForType && Object.hasOwn(shape.onlyForType, field) ? shape.onlyForType[field] : undefined;
+      if (type !== undefined && value.type !== type) errors.push(`${field} is only a ${type} ${kind} event field`);
+    }
   }
   return errors;
 }
