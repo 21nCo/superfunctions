@@ -65,8 +65,9 @@ jobs:
       - name: Verify CI planner
         run: node --test scripts/ci-plan.test.mjs
 
-      # The standalone-script list checks need no Turbo, so every pull request runs them, whatever the plan selects; the
-      # JavaScript job runs the whole file, including Turbo's own task hashes.
+      # The standalone-script list (SFNS-307) must match turbo.json's global inputs and no package may use a script on
+      # it. These checks need no Turbo, so every pull request runs them, whatever the plan selects. The file's Turbo
+      # task-hash tests need an installed Turbo and run with `node --test scripts/turbo-cache-config.test.mjs`.
       - name: Verify standalone script list
         run: |
           node --test --test-name-pattern="^standalone list: " scripts/turbo-cache-config.test.mjs
@@ -171,34 +172,6 @@ jobs:
       - name: Install Rust WASM target
         run: rustup target add wasm32-unknown-unknown
 
-      # Turbo's own task hashes show which root scripts invalidate the cache and that no package uses a standalone script.
-      - name: Verify Turbo cache inputs
-        run: node --test scripts/turbo-cache-config.test.mjs
-
-      # Turbo's local task cache (SFNS-307): a task whose inputs (turbo.json, including its globalDependencies) are
-      # unchanged replays its logs and outputs instead of running. Pull requests restore the newest entry for this job,
-      # Node major and lockfile, preferring an earlier attempt on the same commit and falling back to any lockfile, so
-      # they reuse what the base branch's latest run or an earlier run of the same pull request produced. Every other
-      # event starts from an empty cache, so every task it selects runs and dev stays an uncached verification; its later
-      # steps still replay the builds its own Build step produced, as before. Every run saves its cache. Like the plan's
-      # per-package selection, Turbo does not see a file a task reads from a package it does not depend on unless
-      # turbo.json declares it; declaring those inputs is deferred to SFNS-306.
-      - name: Turbo cache key prefix
-        id: turbo-cache
-        run: echo "prefix=turbo-${{ runner.os }}-node$(node -p 'process.versions.node.split(".")[0]')-${{ github.job }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Turbo cache
-        id: turbo-cache-restore
-        if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .turbo/cache
-          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
-          restore-keys: |
-            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-
-            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
-            ${{ steps.turbo-cache.outputs.prefix }}-
-
       - name: Show plan
         run: |
           echo "base: ${{ needs.plan.outputs.base_ref }}"
@@ -243,15 +216,6 @@ jobs:
             ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
           fi
 
-      # Turbo caches only tasks that succeeded, so a failed run still saves what it verified. The run attempt is part of
-      # the key, so a re-run saves the results it adds instead of colliding with the first attempt's entry.
-      - name: Save Turbo cache
-        if: ${{ !cancelled() && steps.turbo-cache.outputs.prefix != '' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .turbo/cache
-          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
-
   # DevFn's real-process tests (SFNS-293) run one package at a time, apart from every other package's tests. The plan
   # selects the DevFn part of the JavaScript test selection: a full run selects every DevFn package. Like the JavaScript
   # job it skips McpFn-only changes. Build and typecheck of DevFn packages stay in the JavaScript job.
@@ -287,23 +251,6 @@ jobs:
       - name: Install Rust WASM target
         run: rustup target add wasm32-unknown-unknown
 
-      # Turbo's local task cache, as in the JavaScript job, under this job's own key.
-      - name: Turbo cache key prefix
-        id: turbo-cache
-        run: echo "prefix=turbo-${{ runner.os }}-node$(node -p 'process.versions.node.split(".")[0]')-${{ github.job }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Turbo cache
-        id: turbo-cache-restore
-        if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .turbo/cache
-          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
-          restore-keys: |
-            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-
-            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
-            ${{ steps.turbo-cache.outputs.prefix }}-
-
       - name: Show plan
         run: |
           echo "base: ${{ needs.plan.outputs.base_ref }}"
@@ -312,15 +259,6 @@ jobs:
 
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
-
-      # Turbo caches only tasks that succeeded, so a failed run still saves what it verified. The run attempt is part of
-      # the key, so a re-run saves the results it adds instead of colliding with the first attempt's entry.
-      - name: Save Turbo cache
-        if: ${{ !cancelled() && steps.turbo-cache.outputs.prefix != '' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .turbo/cache
-          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
 
   mcpfn-node20:
     name: McpFn Node 20 compatibility
