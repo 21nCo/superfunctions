@@ -2,6 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   discoverJsPackages,
@@ -40,6 +41,11 @@ const MCPFN_PATTERNS = [
 const SHARED_TEST_SUPPORT = [
   { pattern: /^devfn\/test-support\//, packages: "devfn/" },
 ];
+
+// DevFn's real-process tests run one package at a time in their own job, never in the shared JavaScript test step.
+const DEVFN_PACKAGE_ROOT = "devfn/";
+
+const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
 const MCPFN_SUPPORT_PATTERNS = [
   /^README\.md$/,
@@ -224,11 +230,79 @@ function matchesAny(patterns, value) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+// Code-unit order, the same order a bare sort() gives strings; localeCompare would reorder them.
+function compareStrings(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
+}
+
 function buildTurboFilters(packageDirs) {
   return [...packageDirs]
-    .sort()
+    .sort(compareStrings)
     .map((packageDir) => `--filter=..../${packageDir}`)
     .join(" ");
+}
+
+// Turbo filters for exactly these package directories, without their dependents or dependencies.
+function buildExactTurboFilters(packageDirs) {
+  return [...packageDirs]
+    .sort(compareStrings)
+    .map((packageDir) => `--filter=./${packageDir}`)
+    .join(" ");
+}
+
+function buildExcludeTurboFilters(packageDirs) {
+  return [...packageDirs]
+    .sort(compareStrings)
+    .map((packageDir) => `--filter=!./${packageDir}`)
+    .join(" ");
+}
+
+function isDevfnDir(packageDir) {
+  return packageDir.startsWith(DEVFN_PACKAGE_ROOT);
+}
+
+function readDependencyNames(manifest) {
+  const source = JSON.parse(readFileSync(path.join(repoRoot, manifest.file), "utf8"));
+  return new Set(DEPENDENCY_FIELDS.flatMap((field) => Object.keys(source[field] || {})));
+}
+
+// The packages turbo's `..../<dir>` filter selects: each seed and every package that depends on it, transitively.
+function collectJsDependents(seedDirs, manifests) {
+  const dirsByName = new Map();
+  for (const manifest of manifests) {
+    if (!dirsByName.has(manifest.name)) {
+      dirsByName.set(manifest.name, []);
+    }
+    dirsByName.get(manifest.name).push(manifest.dir);
+  }
+
+  const dependents = new Map();
+  for (const manifest of manifests) {
+    for (const dependencyName of readDependencyNames(manifest)) {
+      for (const dependencyDir of dirsByName.get(dependencyName) || []) {
+        if (!dependents.has(dependencyDir)) {
+          dependents.set(dependencyDir, new Set());
+        }
+        dependents.get(dependencyDir).add(manifest.dir);
+      }
+    }
+  }
+
+  const selected = new Set(seedDirs);
+  const queue = [...seedDirs];
+  while (queue.length > 0) {
+    for (const dependent of dependents.get(queue.shift()) || []) {
+      if (!selected.has(dependent)) {
+        selected.add(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+
+  return selected;
 }
 
 function writeOutput(name, value) {
@@ -380,6 +454,21 @@ const jsTypecheckPackages = new Set(
   selectedJsPackages.filter((manifest) => manifest.scripts.typecheck).map((manifest) => manifest.dir)
 );
 
+// The JavaScript test filters select each test package and its dependents; DevFn tests take the DevFn part of that
+// selection (on a full run, every DevFn package) and the JavaScript test step excludes every DevFn package.
+const jsTestSelection = fullJs
+  ? new Set(jsPackages.map((manifest) => manifest.dir))
+  : collectJsDependents(jsTestPackages, jsPackages);
+const testableDirs = [...jsTestSelection].filter((dir) => jsByDir.get(dir)?.scripts.test);
+const devfnTestPackages = new Set(testableDirs.filter(isDevfnDir));
+const devfnExcludeFilters = buildExcludeTurboFilters(
+  new Set(jsPackages.map((manifest) => manifest.dir).filter(isDevfnDir))
+);
+const hasJsTest = testableDirs.some((dir) => !isDevfnDir(dir));
+const jsTestFilters = [fullJs ? "" : buildTurboFilters(jsTestPackages), devfnExcludeFilters]
+  .filter(Boolean)
+  .join(" ");
+
 const pythonMatrix = selectedPythonPackages
   .map((manifest) => ({ name: manifest.name, path: manifest.dir }))
   .sort((left, right) => left.path.localeCompare(right.path));
@@ -392,6 +481,7 @@ const summary = {
   runMcpfn,
   mcpfnOnly,
   jsPackages: selectedJsPackages.map((manifest) => manifest.name).sort(),
+  devfnTestPackages: [...devfnTestPackages].map((dir) => jsByDir.get(dir).name).sort(compareStrings),
   pythonPackages: pythonMatrix,
 };
 
@@ -402,13 +492,15 @@ writeOutput("changed_files_count", String(changedPaths.length));
 writeOutput("run_js", String(fullJs || selectedJsPackages.length > 0));
 writeOutput("full_js", String(fullJs));
 writeOutput("has_js_build", String(fullJs || jsBuildPackages.size > 0));
-writeOutput("has_js_test", String(fullJs || jsTestPackages.size > 0));
+writeOutput("has_js_test", String(hasJsTest));
 writeOutput("has_js_lint", String(fullJs || jsLintPackages.size > 0));
 writeOutput("has_js_typecheck", String(fullJs || jsTypecheckPackages.size > 0));
 writeOutput("js_build_filters", fullJs ? "" : buildTurboFilters(jsBuildPackages));
-writeOutput("js_test_filters", fullJs ? "" : buildTurboFilters(jsTestPackages));
+writeOutput("js_test_filters", hasJsTest ? jsTestFilters : "");
 writeOutput("js_lint_filters", fullJs ? "" : buildTurboFilters(jsLintPackages));
 writeOutput("js_typecheck_filters", fullJs ? "" : buildTurboFilters(jsTypecheckPackages));
+writeOutput("run_devfn", String(devfnTestPackages.size > 0));
+writeOutput("devfn_test_filters", buildExactTurboFilters(devfnTestPackages));
 writeOutput("run_python", String(fullPython || pythonMatrix.length > 0));
 writeOutput("full_python", String(fullPython));
 writeOutput("python_matrix", JSON.stringify(pythonMatrix));
