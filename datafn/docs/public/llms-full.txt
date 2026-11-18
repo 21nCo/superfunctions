@@ -22253,27 +22253,33 @@ The proxy route comes back relative to FileFn's mount (`/proxy/files/<fileId>/do
 
 ```typescript
 // display.ts
-import { fileFnUrl, files, isProxyUrl } from "./clients";
+import { createFileFnClient } from "@filefn/client";
+import { FILEFN_BASE_URL, fileFnUrl, files, isProxyUrl } from "./clients";
 
 export async function showAttachment(img: HTMLImageElement, attachment: { fileId: string; filename: string }): Promise<void> {
   img.alt = attachment.filename;
   img.src = fileFnUrl(await files.downloadUrl(attachment.fileId));
 }
 
-/** For bearer-only auth: an `<img>` sends cookies but not an `Authorization` header. */
+/**
+ * For bearer-only auth: the token authenticates both the download-URL request and a
+ * proxy download. An `<img>` would send cookies, but no `Authorization` header.
+ */
 export async function showAttachmentWithToken(
   img: HTMLImageElement,
   attachment: { fileId: string; filename: string },
   token: string,
 ): Promise<void> {
+  const bearer = { authorization: `Bearer ${token}` };
+  const tokenFiles = createFileFnClient({ baseUrl: FILEFN_BASE_URL, credentials: "omit", getAuthHeaders: () => bearer });
   img.alt = attachment.filename;
-  const url = await files.downloadUrl(attachment.fileId);
+  const url = await tokenFiles.downloadUrl(attachment.fileId);
   // A signed storage URL needs no credentials, and must not receive the token.
   if (!isProxyUrl(url)) {
     img.src = url;
     return;
   }
-  const response = await fetch(fileFnUrl(url), { headers: { authorization: `Bearer ${token}` } });
+  const response = await fetch(fileFnUrl(url), { headers: bearer, credentials: "omit" });
   if (!response.ok) throw new Error(`download of ${attachment.fileId} failed: HTTP ${response.status}`);
   const objectUrl = URL.createObjectURL(await response.blob());
   img.src = objectUrl;
@@ -22281,7 +22287,7 @@ export async function showAttachmentWithToken(
 }
 ```
 
-`showAttachment` relies on the session cookie: the browser loads `img.src` itself and does not add `getAuthHeaders` headers. On storage without signed URLs, a proxy URL then needs a cookie session. With bearer-only auth, use `showAttachmentWithToken`, which fetches proxy URLs with the token and shows the bytes through an object URL.
+`showAttachment` relies on the session cookie: the browser loads `img.src` itself and does not add `getAuthHeaders` headers. On storage without signed URLs, a proxy URL then needs a cookie session. With bearer-only auth, use `showAttachmentWithToken`: it asks FileFn for the URL with the token, fetches a proxy URL with the token too, and shows the bytes through an object URL.
 
 For thumbnails and previews, `files.resolveRenderable({ fileId, intent: "thumbnail" })` picks the best artifact FileFn has for the file (see `@filefn/viewer`). On storage without signed URLs, its `source.url` (for an `artifact` or `original` source) and the URL `files.downloadArtifact(fileId, artifactId)` returns are relative proxy routes too, such as `/proxy/files/<fileId>/artifacts/<artifactId>/download`; resolve them with `fileFnUrl` as well.
 

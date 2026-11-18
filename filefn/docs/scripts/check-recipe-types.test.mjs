@@ -202,28 +202,35 @@ test("the DataFn recipe keeps one client ID per installation and sends the CSRF 
   });
 });
 
-test("the DataFn recipe sends a bearer token to proxy downloads only", async () => {
-  const fakes = { "@filefn/client": fakeFileFnClient, "@datafn/client": fakeDatafnClient };
-  let downloadUrl = "/proxy/files/file-1/download";
-  const fetched = [];
+test("the DataFn recipe authenticates bearer-only downloads with the token, and never sends it to storage", async () => {
+  let storedUrl = "/proxy/files/file-1/download";
+  const requests = [];
   const globals = {
-    fakeFiles: { downloadUrl: async () => downloadUrl },
     localStorage: memoryStorage(),
-    document: { cookie: "" },
-    fetch: async (url, init) => (fetched.push([url, init.headers.authorization]), new Response("bytes")),
-    URL: Object.assign(class extends URL {}, { createObjectURL: () => "blob:test-object", revokeObjectURL: (url) => fetched.push(["revoked", url]) }),
+    document: { cookie: "" }, // No session cookie.
+    fetch: async (url, init = {}) => {
+      requests.push([String(url), new Headers(init.headers).get("authorization"), init.credentials]);
+      if (String(url).endsWith("/files/file-1/download")) return Response.json({ ok: true, data: { url: storedUrl } });
+      return new Response("bytes");
+    },
+    URL: Object.assign(class extends URL {}, { createObjectURL: () => "blob:test-object", revokeObjectURL: (url) => requests.push(["revoked", url]) }),
   };
   await withGlobals(globals, async () => {
-    const { showAttachmentWithToken } = await importBlock(read(datafnRecipe), "display.ts", fakes);
+    // The real @filefn/client transport, over the fetch above.
+    const { showAttachmentWithToken } = await importBlock(read(datafnRecipe), "display.ts", { "@datafn/client": fakeDatafnClient });
     const img = { decode: async () => {} };
     await showAttachmentWithToken(img, { fileId: "file-1", filename: "a.png" }, "test-token");
     assert.equal(img.src, "blob:test-object");
-    assert.deepEqual(fetched, [["/files/proxy/files/file-1/download", "Bearer test-token"], ["revoked", "blob:test-object"]]);
-    downloadUrl = "https://storage.example/signed";
-    fetched.length = 0;
+    assert.deepEqual(requests, [
+      ["/files/file-1/download", "Bearer test-token", "omit"],
+      ["/files/proxy/files/file-1/download", "Bearer test-token", "omit"],
+      ["revoked", "blob:test-object"],
+    ]);
+    storedUrl = "https://storage.example/signed";
+    requests.length = 0;
     await showAttachmentWithToken(img, { fileId: "file-1", filename: "a.png" }, "test-token");
     assert.equal(img.src, "https://storage.example/signed");
-    assert.deepEqual(fetched, [], "a signed storage URL never receives the token");
+    assert.deepEqual(requests, [["/files/file-1/download", "Bearer test-token", "omit"]], "a signed storage URL never receives the token");
   });
 });
 
