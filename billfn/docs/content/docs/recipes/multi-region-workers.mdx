@@ -352,8 +352,9 @@ export default {
         if ((await worker.runNext()) === null) break; // the queue is empty
         failures = 0;
       } catch (error) {
-        // Either a job failed (its message is already retried or dead-lettered) or the queue itself
-        // failed, for example an unreachable database, and nothing was claimed.
+        // A job failed (its message is already retried or dead-lettered), the claim failed (nothing
+        // was claimed), or settling a claimed message failed (it stays leased until the lease expires).
+        // Any three in a row end this run; the next cron run drains the rest.
         failures += 1;
         console.error("billfn reconciliation run failed", error);
       }
@@ -362,7 +363,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 ```
 
-The router serves `/billfn/*` with its default `basePath`, including `/billfn/webhooks/:provider` (which the ingress forwards to), `/billfn/ops/owner` and the reconciliation routes. Both cron expressions fire at every fifth minute, as two runs: only the `*/5` run schedules the `lifecycle-events` job, and both drain the queue. Each `runNext()` claims one message with a 15-minute lease, so the two runs and the next minute's run never process the same message at once. A failed run is retried or dead-lettered by the worker as described in [Reconciliation](/docs/server/reconciliation#worker), and the cron keeps draining after it. `runNext()` also throws when the queue itself fails (the database is unreachable, or the queue table is missing), before it has claimed anything, so the cron stops after three failures in a row instead of retrying for the rest of its budget, and the next run tries again.
+The router serves `/billfn/*` with its default `basePath`, including `/billfn/webhooks/:provider` (which the ingress forwards to), `/billfn/ops/owner` and the reconciliation routes. Both cron expressions fire at every fifth minute, as two runs: only the `*/5` run schedules the `lifecycle-events` job, and both drain the queue. Each `runNext()` claims one message with a 15-minute lease, so the two runs and the next minute's run never process the same message at once. `runNext()` throws in three cases. A job fails: the worker retries or dead-letters its message as described in [Reconciliation](/docs/server/reconciliation#worker). The claim fails (the database is unreachable, or the queue table is missing): nothing is claimed. Settling a claimed message fails (acking, retrying or dead-lettering it): the message is neither retried nor dead-lettered, stays leased until its 15-minute lease expires, and is then delivered again. A success resets the count, but any three `runNext()` failures in a row, of any kind, end this cron run instead of retrying for the rest of its budget, and the rest of the queue waits for the next run.
 
 Other jobs are operator work, queued through the routes with `authorization: Bearer <BILLFN_OPS_TOKEN>` and run by the next cron:
 
