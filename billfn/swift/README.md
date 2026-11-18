@@ -86,5 +86,7 @@ StoreKit testing needs an app bundle, which `swift test` does not provide, so th
 run in the `StoreKitTesting` macOS host app against `StoreKitTesting/Tests/BillFn.storekit`
 (Xcode required). `run-tests.sh` builds the host app under Xcode's DerivedData folder: StoreKit
 testing cannot reach an app under the temporary folder, so it would not deliver
-`Transaction.updates`. StoreKit testing reports no `Transaction.currentEntitlements` on macOS 26
-and later, so the restore tests pass `restore(entitlements:)` the transactions it would report.
+`Transaction.updates`. The production `restore()` test reads `Transaction.currentEntitlements`, which
+StoreKit testing reports on macOS 26 (CI) but not on macOS 27, where that test fails; the other
+restore tests pass `restore(entitlements:)` the transactions in a set order. The tests that simulate
+a purchase error need a host where StoreKit testing applies it (CI does).

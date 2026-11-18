@@ -17,15 +17,23 @@ with `respond(to:)`, the client can buy, restore and confirm App Store purchases
 const billing = createNativeBackedBillFnClient({ clientId: 'web', mode: 'native-backed', baseURL });
 await billing.handshake();
 
+// Subscribe first, and keep the subscription: outcomes the native app reports while a request runs,
+// or after it times out, arrive only to subscriptions made before them.
+const unsubscribe = billing.subscribe((event) => {
+  if (event.event === 'transaction.updated') {
+    // a renewal, an approved purchase, or a purchase or confirmation that outlasted its request
+  }
+});
+
 const result = await billing.checkout({ planKey: 'pro' }); // 'purchased' | 'pending' | 'cancelled'
 const { transactions } = await billing.restore(); // each transaction's outcome
 await billing.transactions(); // confirm the unfinished transactions now
-billing.subscribe((event) => {
-  if (event.event === 'transaction.updated') {
-    // a renewal or an approved purchase BillFn processed
-  }
-});
+// unsubscribe() only when the page no longer shows billing state
 ```
+
+Subscribe before calling `checkout`, `restore` or `transactions`, and keep that subscription past a
+`BRIDGE_INTERACTIVE_TIMEOUT` or `BRIDGE_PROCESSING_TIMEOUT`: the bus does not replay events, so an
+outcome that arrives before a later subscription is lost to it.
 
 A transaction is finished only once BillFn confirms it (`status: 'confirmed'`); a `failed` or
 `skipped` one stays unfinished and is retried on the app's next launch.

@@ -77,7 +77,8 @@ public actor BillFnStoreKit {
     private let backend: any BillFnStoreKitBackend
     private let plans: [String: BillFnStoreKitPlan]
     private let checkouts: any BillFnStoreKitCheckoutStore
-    private var inFlight: [UInt64: Task<BillFnStoreKitTransactionOutcome, Never>] = [:]
+    /// The confirmation pass running for each transaction, with the observation of it that pass sends BillFn.
+    private var inFlight: [UInt64: (observation: BillFnStoreKitTransactionReference, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
     /// Checkouts a transaction is being verified against, so a concurrent one does not use the same checkout.
     private var claimedCheckouts: Set<String> = []
     private var listener: Task<Void, Never>?
@@ -252,18 +253,6 @@ public actor BillFnStoreKit {
         checkout: BillFnStoreKitCheckout?
     ) async -> BillFnStoreKitTransactionOutcome {
         let transaction = verification.unsafePayloadValue
-        if let running = inFlight[transaction.id] {
-            return await running.value
-        }
-        let task = Task { await self.confirmNow(transaction, purchasedWith: checkout) }
-        inFlight[transaction.id] = task
-        let outcome = await task.value
-        inFlight[transaction.id] = nil
-        outcomeContinuation.yield(outcome)
-        return outcome
-    }
-
-    private func confirmNow(_ transaction: Transaction, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) async -> BillFnStoreKitTransactionOutcome {
         let reference = BillFnStoreKitTransactionReference(
             transactionId: String(transaction.id),
             originalTransactionId: String(transaction.originalID),
@@ -271,6 +260,32 @@ public actor BillFnStoreKit {
             appAccountToken: transaction.appAccountToken,
             revoked: transaction.revocationDate != nil
         )
+        // The same observation joins the running pass. A changed one (revoked while the running pass confirms the
+        // unrevoked transaction) waits for that pass to end, then BillFn confirms it in its own pass.
+        while let running = inFlight[transaction.id] {
+            if running.observation == reference {
+                return await running.task.value
+            }
+            _ = await running.task.value
+            if inFlight[transaction.id]?.task == running.task {
+                inFlight[transaction.id] = nil
+            }
+        }
+        let task = Task { await self.confirmNow(transaction, reference: reference, purchasedWith: checkout) }
+        inFlight[transaction.id] = (reference, task)
+        let outcome = await task.value
+        if inFlight[transaction.id]?.task == task {
+            inFlight[transaction.id] = nil
+        }
+        outcomeContinuation.yield(outcome)
+        return outcome
+    }
+
+    private func confirmNow(
+        _ transaction: Transaction,
+        reference: BillFnStoreKitTransactionReference,
+        purchasedWith purchaseCheckout: BillFnStoreKitCheckout?
+    ) async -> BillFnStoreKitTransactionOutcome {
         let facts = BillFnStoreKitAttemptFacts(transaction)
         let checkout = claimCheckout(for: facts, reasonIsPurchase: Self.reasonIsPurchase(transaction), purchasedWith: purchaseCheckout)
         defer {

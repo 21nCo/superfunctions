@@ -381,6 +381,72 @@ describe('StoreKit requests over the WKWebView bus', () => {
     }
   });
 
+  it('delivers transaction.updated to a subscription made before the requests, during them and after they time out', async () => {
+    vi.useFakeTimers();
+    const native = installNativeHandler();
+    try {
+      const client = createNativeBackedBillFnClient({
+        clientId: 'web',
+        mode: 'native-backed',
+        baseURL: 'https://billfn.example.test/billfn',
+        timeoutMs: 1_000,
+        interactiveTimeoutMs: 2_000
+      });
+      const handshake = client.handshake();
+      native.respond(native.posted[0].id, { bridgeVersion: 1, billingOwner: 'native', authOwner: 'native', capabilities: [] });
+      await handshake;
+      const outcome = { transaction, status: 'confirmed', finished: true, billing: {} };
+      const updated = { protocol: BILLFN_BRIDGE_PROTOCOL, event: 'transaction.updated', payload: { outcome } };
+      const send = () => globalThis.window.__billfnBridgeReceive__?.(updated);
+
+      // As the README: subscribe first, then make the StoreKit requests.
+      const events: unknown[] = [];
+      const unsubscribe = client.subscribe((event) => events.push(event));
+      const checkout = client.checkout({ planKey: 'pro' });
+      send();
+      expect(events).toEqual([updated]);
+      native.respond(native.posted.at(-1)!.id, purchased);
+      await expect(checkout).resolves.toMatchObject({ status: 'purchased' });
+
+      const timedOutCheckout = client.checkout({ planKey: 'pro' });
+      const checkoutTimeout = expect(timedOutCheckout).rejects.toMatchObject({ code: 'BRIDGE_INTERACTIVE_TIMEOUT' });
+      const transactions = client.transactions();
+      const transactionsTimeout = expect(transactions).rejects.toMatchObject({ code: 'BRIDGE_PROCESSING_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await checkoutTimeout;
+      await transactionsTimeout;
+
+      // The native app goes on: its outcome after both timeouts still reaches the subscription.
+      send();
+      expect(events).toEqual([updated, updated]);
+      unsubscribe();
+    } finally {
+      native.restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops an outcome that arrives after a timed-out request when nothing subscribed first', async () => {
+    vi.useFakeTimers();
+    const native = installNativeHandler();
+    try {
+      const bus = createWKWebViewBridgeBus({ interactiveTimeoutMs: 1_000 });
+      const checkout = bus.request({ protocol: BILLFN_BRIDGE_PROTOCOL, id: 'req_buy', method: 'storekit.checkout', payload: { planKey: 'pro' } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(checkout).resolves.toMatchObject({ ok: false, error: { code: 'BRIDGE_INTERACTIVE_TIMEOUT' } });
+
+      const events: unknown[] = [];
+      const outcome = { transaction, status: 'confirmed', finished: true, billing: {} };
+      globalThis.window.__billfnBridgeReceive__?.({ protocol: BILLFN_BRIDGE_PROTOCOL, event: 'transaction.updated', payload: { outcome } });
+      // Subscribing only after the timeout is too late for the outcome that already arrived.
+      bus.subscribe((event) => events.push(event))();
+      expect(events).toEqual([]);
+    } finally {
+      native.restore();
+      vi.useRealTimers();
+    }
+  });
+
   it('surfaces the interactive timeout through the client as a distinct error', async () => {
     vi.useFakeTimers();
     const native = installNativeHandler();

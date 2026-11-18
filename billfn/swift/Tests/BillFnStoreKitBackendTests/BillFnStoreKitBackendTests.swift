@@ -317,6 +317,30 @@ struct BillFnStoreKitBackendTests {
         #expect(reread.isConfirmed(transactionId: "31"))
     }
 
+    @Test("Two stores on the same defaults changing them at once lose no checkout or confirmed transaction")
+    func storesOnSharedDefaultsLoseNothing() throws {
+        let suiteName = "billfn.storekit.backend-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        // As two `BillFnStoreKit`s with default stores share UserDefaults.standard and the key.
+        let stores = [BillFnUserDefaultsCheckoutStore(defaults: defaults), BillFnUserDefaultsCheckoutStore(defaults: defaults)]
+        let account = UUID(uuidString: token)!
+        let count = 120
+
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            let store = stores[index % 2]
+            let checkout = BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: account)
+            store.save(checkout)
+            store.markMatched(checkout, transactionId: "2\(index)")
+            store.recordConfirmed(transactionId: "2\(index)")
+        }
+
+        let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults)
+        let kept = reread.keptCheckouts()
+        #expect(Set(kept.map(\.checkout.checkoutSessionId)) == Set((0..<count).map { "chk_\($0)" }))
+        #expect(kept.allSatisfy { $0.transactionId == "2\($0.checkout.checkoutSessionId.dropFirst(4))" })
+        #expect((0..<count).allSatisfy { reread.isConfirmed(transactionId: "2\($0)") })
+    }
+
     @Test("Keeps a checkout matched to a transaction past its retention until it is removed")
     func keepsMatchedCheckouts() throws {
         let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))

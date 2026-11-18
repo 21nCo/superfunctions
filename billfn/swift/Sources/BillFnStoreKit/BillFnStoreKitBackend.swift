@@ -187,6 +187,9 @@ extension BillFnStoreKitCheckoutStore {
 /// will. Retention takes effect at the next `BillFnStoreKit.processUnfinishedTransactions()` (which `start()` runs):
 /// until then an expired checkout is still read and claimable, so a transaction that completed while the app was not
 /// running is matched to it first. A checkout a transaction has been matched to never expires.
+///
+/// Every instance in the process serializes its reads and changes through one lock, so stores on the same defaults
+/// and key (each `BillFnStoreKit` makes its own by default) never lose each other's checkouts or confirmed ids.
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
     public static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
     /// How many confirmed transaction ids the store keeps: far more than a billing account confirms while a checkout
@@ -197,7 +200,10 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
     private let key: String
     private let retention: TimeInterval
     private let now: @Sendable () -> Date
-    private let lock = NSLock()
+    /// Shared by every instance: a lock per instance would let two stores on the same storage interleave their
+    /// read-modify-write cycles, and `UserDefaults` does not say which instances share storage.
+    private static let lock = NSLock()
+    private var lock: NSLock { Self.lock }
 
     public init(
         defaults: UserDefaults = .standard,

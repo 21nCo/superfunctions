@@ -7,8 +7,8 @@
 # Xcode's DerivedData folder, and is removed afterwards unless BILLFN_STOREKIT_DERIVED_DATA names it (CI names one,
 # which its runner discards).
 #
-# StoreKit testing keeps a simulated purchase error, Ask to Buy and finished transactions offered again between
-# tests, so the tests that use them run in their own host processes. The other tests share one process.
+# StoreKit testing keeps a simulated purchase error, Ask to Buy, a refund and finished transactions offered again
+# between tests, so the tests that use them run in their own host processes. The other tests share one process.
 set -euo pipefail
 
 # Removes the derived data this script created, keeping the tests' exit status. StoreKit testing on macOS 26 writes
@@ -44,6 +44,7 @@ isolated=(
   BillFnStoreKitTests/BillFnStoreKitTests/testCancelledSecondAttemptKeepsThePendingAttemptsCheckout
   BillFnStoreKitTests/BillFnStoreKitTests/testRefusedPurchaseDropsItsCheckoutAndAFailedOneKeepsIt
   BillFnStoreKitTests/BillFnStoreKitTests/testConfirmedPurchaseOfferedAgainLeavesALeftoverCheckoutOutstanding
+  BillFnStoreKitTests/BillFnStoreKitUpdateTests/testRevocationDuringConfirmationIsConfirmedInItsOwnPass
 )
 
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet
