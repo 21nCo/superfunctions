@@ -35,7 +35,7 @@ const original = console.info;
 const consoleCollector = new ConsoleCollector(5);
 const network = new NetworkCollector(5);
 const breadcrumbs = new BreadcrumbCollector(5);
-const pageSocket = globalThis.WebSocket = class extends EventTarget { get url() { return "wss://packed.example/s?token=packed-secret"; } send() {} };
+const pageSocket = globalThis.WebSocket = class extends EventTarget { readyState = 1; get url() { return "wss://packed.example/s?token=packed-secret"; } send() {} };
 const sockets = new WebSocketCollector(5);
 const errors = new ErrorCollector(5); // Plain Node has no window events: it records nothing.
 consoleCollector.start();

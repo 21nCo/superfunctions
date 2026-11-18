@@ -90,6 +90,8 @@ describe("ErrorCollector", () => {
       "    at load (https://cdn.example.com/app.js?token=stack-secret&v=2:12:7)",
       "    at https://cdn.example.com/app.js?token=stack-secret:3:1",
       "    at run (https://cdn.example.com/app(1).js?token=stack-secret:8:9)",
+      // A sensitive value that itself ends in colon-separated digits.
+      "    at deep (https://cdn.example.com/app.js?token=stack-secret:4321:8:9)",
       `load@${withUserinfo.href}:4:5`,
     ].join("\n");
     window.dispatchEvent(new ErrorEvent("error", { error, message: "Uncaught Error: from script", filename: "https://cdn.example.com/app.js?token=stack-secret" }));
@@ -100,6 +102,8 @@ describe("ErrorCollector", () => {
       expect(event.stack).toContain(":3:1\n");
       expect(event.stack).toMatch(/at run \(https:\/\/cdn\.example\.com\/app\(1\)\.js\?token=[^:]+:8:9\)/);
       expect(event.stack).not.toContain("test-user");
+      expect(event.stack).not.toContain("4321");
+      expect(event.stack).toMatch(/at deep \(https:\/\/cdn\.example\.com\/app\.js\?token=[^:]+:8:9\)/);
       expect(event.stack).toMatch(/load@https:\/\/cdn\.example\.com\/app\.js:4:5$/);
     }
     expect(collector.size()).toBe(2);

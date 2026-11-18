@@ -46,12 +46,13 @@ export function dataValue(target: object, key: PropertyKey): unknown {
 }
 
 /**
- * A platform attribute through its captured getter or, for a stand-in object
- * the getter rejects, from an own data property of that name.
+ * A platform attribute through its captured getter. Only where the platform
+ * has no such getter (a runtime without the class) is it read from an own
+ * data property of that name; an object the getter rejects is unreadable.
  */
 export function attribute(get: Intrinsic | undefined, target: unknown, key: string): unknown {
-  const value = platformRead(get, target);
-  if (value !== UNREADABLE || typeof target !== "object" || target === null) return value;
+  if (get) return platformRead(get, target);
+  if (typeof target !== "object" || target === null) return UNREADABLE;
   return dataValue(target, key);
 }
 

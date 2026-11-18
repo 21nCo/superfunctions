@@ -176,7 +176,11 @@ uncaught error while it runs.
   getters, as for a console argument. Each URL in the stack goes through
   `redactUrl`, keeping its `:line:column` suffix. Any other value is serialized into
   `value`, and `message` holds it as text (a string as is, anything else as
-  its JSON). A cross-origin `"Script error."` has no value.
+  its JSON). An uncaught error whose `ErrorEvent.error` is `null` or
+  `undefined` has no `value`: a cross-origin `"Script error."` and an
+  uncaught `throw null` or `throw undefined` look the same there, and only the
+  browser's `message` tells them apart. A rejection keeps a `null` or
+  `undefined` reason in `value`.
 
 ### WebSockets
 
@@ -195,8 +199,16 @@ through the page's own class and is not observed.
   length, or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
   through the platform getters captured at load. Another payload type is
   recorded without `size`. The payload itself is never recorded.
-- A `send()` the socket rejects (still connecting) throws as before and is
-  not recorded.
+- Only a `send()` on an open socket is recorded, its `readyState` read
+  before the call through the getter captured at load: the platform throws
+  while connecting (it still throws) and discards the data once the socket
+  is closing or closed (nothing is recorded).
+- Event attributes are read only through the platform getters. A `message`
+  or `close` event the page dispatches on a socket itself, which is not a
+  platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has
+  that class. Only on a runtime without the class (or for a stand-in socket
+  class without a `url` or `readyState` getter) is the attribute read from
+  an own data property.
 - `url` is the socket's `url` attribute (through the getter captured at load
   when the global class inherits from the platform's) through `redactUrl`. A close
   event records `code` and `wasClean`, through the `CloseEvent` getters

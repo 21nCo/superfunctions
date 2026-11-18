@@ -12,9 +12,11 @@ type Listener = (observation: Observation) => void;
 // The platform getters observation reads through, captured when this module
 // loads: a getter the page patches later never runs on a socket or event.
 const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
-// The `url` getter each prototype of the load-time WebSocket's chain passes
-// to its sockets, also when the global was already a subclass at load.
-const LOADED_URL_GETTERS = loadedUrlGetters();
+// The `url` and `readyState` getters each prototype of the load-time
+// WebSocket's chain passes to its sockets, also when the global was already
+// a subclass at load.
+const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
+const OPEN = 1;
 const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data");
 const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
 const CLOSE_EVENT_CODE = intrinsic(CLOSE_EVENT_PROTOTYPE, "code");
@@ -90,14 +92,16 @@ function prototypeChain(prototype: object): object[] {
   return chain;
 }
 
-/** The getter an own `url` accessor defines, undefined for an own data property; absent: null. */
-function ownUrlGetter(prototype: object): Intrinsic | undefined | null {
-  const descriptor = Object.getOwnPropertyDescriptor(prototype, "url");
+type SocketAttribute = "url" | "readyState";
+
+/** The getter an own accessor defines, undefined for an own data property; absent: null. */
+function ownGetter(prototype: object, key: SocketAttribute): Intrinsic | undefined | null {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
   if (!descriptor) return null;
   return typeof descriptor.get === "function" ? (descriptor.get as Intrinsic) : undefined;
 }
 
-function loadedUrlGetters(): Map<object, Intrinsic | undefined> {
+function loadedGetters(key: SocketAttribute): Map<object, Intrinsic | undefined> {
   const getters = new Map<object, Intrinsic | undefined>();
   if (!WEBSOCKET_PROTOTYPE) return getters;
   const chain = prototypeChain(WEBSOCKET_PROTOTYPE);
@@ -105,7 +109,7 @@ function loadedUrlGetters(): Map<object, Intrinsic | undefined> {
   // From the top down, so each prototype maps to the nearest getter at or above it.
   for (let index = chain.length - 1; index >= 0; index -= 1) {
     const prototype = chain[index] as object;
-    const own = ownUrlGetter(prototype);
+    const own = ownGetter(prototype, key);
     if (own !== null) inherited = own;
     getters.set(prototype, inherited);
   }
@@ -113,15 +117,16 @@ function loadedUrlGetters(): Map<object, Intrinsic | undefined> {
 }
 
 /**
- * The `url` getter sockets of the global class inherit: the one captured at
- * load once the chain reaches a prototype of the load-time WebSocket's chain,
- * else the nearest own getter (a WebSocket defined or replaced after load).
+ * The getter sockets of the global class inherit: the one captured at load
+ * once the chain reaches a prototype of the load-time WebSocket's chain, else
+ * the nearest own getter (a WebSocket defined or replaced after load).
  */
-function urlGetterOf(chain: object[]): Intrinsic | undefined {
+function getterOf(chain: object[], key: SocketAttribute): Intrinsic | undefined {
   for (const prototype of chain) {
-    if (LOADED_URL_GETTERS.has(prototype)) return LOADED_URL_GETTERS.get(prototype);
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, "url");
-    if (descriptor) return typeof descriptor.get === "function" ? (descriptor.get as Intrinsic) : undefined;
+    const loaded = LOADED_GETTERS[key];
+    if (loaded.has(prototype)) return loaded.get(prototype);
+    const own = ownGetter(prototype, key);
+    if (own !== null) return own;
   }
   return undefined;
 }
@@ -160,29 +165,37 @@ function subscribe(listener: Listener): () => void {
       // The getter captured when this module loaded, or, for a WebSocket
       // defined or replaced later, when the wrappers are installed.
       const chain = prototypeChain(prototype);
-      const urlGetter = urlGetterOf(chain);
+      const urlGetter = getterOf(chain, "url");
+      const readyStateGetter = getterOf(chain, "readyState");
 
       const observe = (socket: object) => {
         const url = captureUrl(attribute(urlGetter, socket, "url"));
         sockets.set(socket, url);
-        const on = (type: string, read: (event: unknown) => Partial<Observation>) =>
+        // `read` returns undefined for an event the platform did not fire.
+        const on = (type: string, read: (event: unknown) => Partial<Observation> | undefined) =>
           listen(socket, type, (event) => {
             // A socket outlives stop(): its listeners stay attached but inert.
             if (current.size === 0) return;
             try {
-              emit({ type: type as Observation["type"], url, timestamp: Date.now(), ...read(event) });
+              const fields = read(event);
+              if (fields) emit({ type: type as Observation["type"], url, timestamp: Date.now(), ...fields });
             } catch {
               /* Observation never raises into the socket's event dispatch. */
             }
           });
         on("open", () => ({}));
         on("message", (event) => {
-          const size = payloadSize(attribute(MESSAGE_EVENT_DATA, event, "data"));
+          const data = attribute(MESSAGE_EVENT_DATA, event, "data");
+          // A message event the page dispatches itself is not a received message.
+          if (MESSAGE_EVENT_DATA && data === UNREADABLE) return undefined;
+          const size = payloadSize(data);
           return size === undefined ? { direction: "received" } : { direction: "received", size };
         });
         on("close", (event) => {
           const closed: Partial<Observation> = {};
           const code = closeAttribute(CLOSE_EVENT_CODE, event, "code");
+          // Likewise a close event that is not the platform's CloseEvent.
+          if (CLOSE_EVENT_CODE && code === UNREADABLE) return undefined;
           if (Number.isSafeInteger(code) && (code as number) >= 0) closed.code = code as number;
           const wasClean = closeAttribute(CLOSE_EVENT_WAS_CLEAN, event, "wasClean");
           if (typeof wasClean === "boolean") closed.wasClean = wasClean;
@@ -219,12 +232,18 @@ function subscribe(listener: Listener): () => void {
         const send = function (this: unknown, ...args: unknown[]) {
           if (current.size === 0) return apply(originalSend, this, args);
           const timestamp = Date.now();
-          // A send() the platform rejects (a connecting socket) throws here
-          // and is not recorded.
+          // Only a send() on an open socket transmits: the platform throws
+          // while connecting and discards the data once closing or closed.
+          let open = false;
+          try {
+            open = attribute(readyStateGetter, this, "readyState") === OPEN;
+          } catch {
+            open = false;
+          }
           const result = apply(originalSend, this, args);
           try {
             const url = typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-            if (url !== undefined) {
+            if (open && url !== undefined) {
               const size = payloadSize(args[0]);
               emit(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             }

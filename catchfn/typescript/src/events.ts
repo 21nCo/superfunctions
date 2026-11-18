@@ -87,7 +87,11 @@ export interface ErrorEvidenceEvent extends EvidenceEventBase {
   filename?: string;
   lineno?: number;
   colno?: number;
-  /** The thrown value or rejection reason when it is not an `Error`, serialized. */
+  /**
+   * The thrown value or rejection reason when it is not an `Error`, serialized.
+   * Absent for an uncaught error whose `ErrorEvent.error` is null or undefined
+   * (a cross-origin "Script error.", or `throw null` / `throw undefined`).
+   */
   value?: SerializedValue;
 }
 

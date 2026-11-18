@@ -61,7 +61,8 @@ function redactStack(stack: string): string {
       url = url.slice(0, -1);
       closing = ")" + closing;
     }
-    const position = /(?::\d+)+$/.exec(url)?.[0] ?? "";
+    // A frame ends in `:line:column` (or `:line`); any earlier digits are the URL's own.
+    const position = /(?::\d+){1,2}$/.exec(url)?.[0] ?? "";
     return redactUrl(url.slice(0, url.length - position.length)) + position + closing;
   });
 }
@@ -125,7 +126,7 @@ function readError(event: unknown, timestamp: number): Observation | undefined {
  * property, and an unreadable one is recorded as `undefined`.
  */
 function readRejection(event: unknown, timestamp: number): Observation | undefined {
-  const reason = REJECTION_EVENT_REASON ? platformRead(REJECTION_EVENT_REASON, event) : attribute(undefined, event, "reason");
+  const reason = attribute(REJECTION_EVENT_REASON, event, "reason");
   if (REJECTION_EVENT_REASON && reason === UNREADABLE) return undefined;
   return { source: "unhandledrejection", timestamp, ...thrown(reason === UNREADABLE ? undefined : reason) };
 }

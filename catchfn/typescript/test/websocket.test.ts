@@ -39,9 +39,13 @@ class PageSocket extends EventTarget {
   get url(): string {
     return this.#url;
   }
+  // As the platform: throws while connecting, discards the data once closing or closed.
   send(data: unknown): void {
-    if (this.readyState !== 1) throw new DOMException("still connecting", "InvalidStateError");
-    this.sent.push(data);
+    if (this.readyState === 0) throw new DOMException("still connecting", "InvalidStateError");
+    if (this.readyState === 1) this.sent.push(data);
+  }
+  close(): void {
+    this.readyState = 2;
   }
   serverOpens(): void {
     this.readyState = 1;
@@ -132,6 +136,27 @@ describe("WebSocketCollector", () => {
     const socket = openSocket("wss://example.com/early");
     expect(() => socket.send("too early")).toThrow("still connecting");
     expect(collector.collect()).toEqual([]);
+  });
+
+  it("does not record a send() whose data a closing or closed socket discards", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/closing");
+    socket.serverOpens();
+    socket.close();
+    socket.send("while closing");
+    socket.serverCloses(1000, true);
+    socket.send("after close");
+    expect(socket.sent).toEqual([]);
+    expect(collector.collect().map((event) => event.type)).toEqual(["open", "close"]);
+  });
+
+  it("ignores message and close events the page dispatches on a socket itself", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/forged");
+    socket.dispatchEvent(Object.assign(new Event("message"), { data: "forged" }));
+    if (platform.CloseEvent) socket.dispatchEvent(Object.assign(new Event("close"), { code: 4000, wasClean: true }));
+    socket.serverSends("real");
+    expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([{ type: "message", size: 4 }]);
   });
 
   it("keeps the page's class behind the wrapper: instanceof, statics and subclasses", () => {
@@ -320,6 +345,7 @@ describe.runIf(typeof savedWebSocket?.value === "function")("WebSocketCollector 
       });
       const closed = await new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve));
       expect(closed.code).toBe(1000);
+      socket.send("discarded after close"); // The platform drops it; nothing is recorded.
       // Node's WebSocket reports a refused handshake with an error event only.
       const refused = new Native(`ws://127.0.0.1:${port}/refused`);
       await new Promise((resolve) => refused.addEventListener("error", resolve));
