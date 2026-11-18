@@ -1,0 +1,31 @@
+billfn/swift-bridge/README.md
+  s_60001d25563fee::t_9670888293b479 39-43
+billfn/swift-bridge/src/__tests__/storekit.test.ts
+  s_60001d25563fee::t_8c03d27abcc64f 267,272,275,284-344
+billfn/swift-bridge/src/index.ts
+  s_60001d25563fee::t_9da9ebc366a6c1 7
+billfn/swift-bridge/src/protocol.ts
+  s_60001d25563fee::t_65facd7235fd6d 55-59,101-105,117-119
+billfn/swift-bridge/src/wkwebviewBus.ts
+  s_60001d25563fee::t_7430b32779e65e 3,21,122-149
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_60001d25563fee::t_625dd12fda172f 101,108-109,160-206,273,314,341,429-457,533,571,593-595,601-604,607-609,611-616,618-621
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_60001d25563fee::t_3d040034cbc55b 13-33,41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d59793bc0d8e5bcf0a4544300c8f30c2b169a601",
+  "prompts": {},
+  "sessions": {
+    "s_60001d25563fee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_60001d25563fee",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
