@@ -439,7 +439,7 @@ test("a pending checkout's later transaction.updated outcome reaches onTransacti
 
 test("onTransactionUpdated receives transaction.updated outcomes without a checkout, and again after stopBilling", async () => {
   const transaction = { transactionId: "2000000000000004", originalTransactionId: "2000000000000003", productId: "com.example.nucleus.month", appAccountToken: null, revoked: false };
-  const renewal = { transaction, status: "restored", finished: true, billing: {} };
+  const renewal = { transaction, status: "confirmed", finished: true, billing: {} };
   const host = fakeNativeHost(() => {
     throw new Error("no bridge request expected");
   });
@@ -471,6 +471,34 @@ test("onTransactionUpdated receives transaction.updated outcomes without a check
     post();
     assert.deepEqual(third, [renewal], "a later registration subscribes again");
     stopBilling();
+  });
+  assert.deepEqual(host.received, []);
+});
+
+test("a transaction.updated listener that throws does not keep the outcome from the other listeners", async () => {
+  const transaction = { transactionId: "2000000000000006", originalTransactionId: "2000000000000005", productId: "com.example.nucleus.month", appAccountToken: null, revoked: false };
+  const renewal = { transaction, status: "confirmed", finished: true, billing: {} };
+  const host = fakeNativeHost(() => {
+    throw new Error("no bridge request expected");
+  });
+  const post = () => host.window.__billfnBridgeReceive__({ protocol: "billfn-bridge/v1", event: "transaction.updated", payload: { outcome: renewal } });
+  const reported = [];
+
+  await withGlobals({ window: host.window, console: { ...console, error: (...args) => reported.push(args) } }, async () => {
+    const { onTransactionUpdated, stopBilling } = await importBlock("src/web-billing.ts");
+    const seen = [];
+    onTransactionUpdated(() => {
+      throw new Error("entitlement refresh failed");
+    });
+    onTransactionUpdated((update) => seen.push(update));
+    try {
+      post();
+      assert.deepEqual(seen, [renewal], "the second listener receives the outcome after the first throws");
+      assert.equal(reported.length, 1, "the throwing listener is reported");
+      assert.equal(reported[0][1].message, "entitlement refresh failed");
+    } finally {
+      stopBilling();
+    }
   });
   assert.deepEqual(host.received, []);
 });

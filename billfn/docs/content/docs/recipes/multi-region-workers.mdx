@@ -497,7 +497,14 @@ export function onTransactionUpdated(listener: TransactionListener): () => void 
   unsubscribe ??= billing.subscribe((event) => {
     if (event.event !== "transaction.updated") return;
     const { outcome } = event.payload as { outcome: BillFnStoreKitTransactionOutcome };
-    listeners.forEach((listener) => listener(outcome));
+    // Call each listener on its own, so one that throws does not keep the outcome from the others.
+    for (const listener of [...listeners]) {
+      try {
+        listener(outcome);
+      } catch (error) {
+        console.error("transaction listener failed", error);
+      }
+    }
   });
   return () => {
     listeners.delete(listener);
@@ -528,7 +535,7 @@ export function stopBilling(): void {
 }
 ```
 
-The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request. Event subscriptions need no handshake: the module subscribes to bridge events when the page registers its first `onTransactionUpdated` listener, not when it starts a checkout, so a page that only shows billing state (after a reload that followed an Ask to Buy request, or while a renewal is due) still receives outcomes. A `pending` checkout (Ask to Buy) or one that failed with `BRIDGE_INTERACTIVE_TIMEOUT` is not lost: its outcome arrives later as a `transaction.updated` event, which `onTransactionUpdated` hands to the page, for example to refresh its entitlements. Register the listener before calling `buyNucleusYearly()`. The bridge does not replay events, so an outcome that arrives while no listener is registered is dropped; removing the last listener or calling `stopBilling()` unsubscribes, and the next registration subscribes again. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
+The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request. Event subscriptions need no handshake: the module subscribes to bridge events when the page registers its first `onTransactionUpdated` listener, not when it starts a checkout, so a page that only shows billing state (after a reload that followed an Ask to Buy request, or while a renewal is due) still receives outcomes. A `pending` checkout (Ask to Buy) or one that failed with `BRIDGE_INTERACTIVE_TIMEOUT` is not lost: its outcome arrives later as a `transaction.updated` event, which `onTransactionUpdated` hands to each listener, for example to refresh the page's entitlements; a listener that throws is reported and does not keep the outcome from the other listeners. Register the listener before calling `buyNucleusYearly()`. The bridge does not replay events, so an outcome that arrives while no listener is registered is dropped; removing the last listener or calling `stopBilling()` unsubscribes, and the next registration subscribes again. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
 
 ## Importing legacy subscriptions
 
