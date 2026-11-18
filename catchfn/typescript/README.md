@@ -221,7 +221,8 @@ constructs through the page's own class and is not observed.
   untrusted event (`isTrusted` false, read through the platform getter) is
   ignored, whatever its type. Node fires its socket events untrusted, so
   there `isTrusted` is not checked; instead, on every runtime, an `open` is
-  recorded once and only on a socket whose `readyState` is open, and a
+  recorded once and only on a socket whose `readyState` is open (or
+  closing, when an earlier listener closed it during the event), and a
   `close` only on a socket whose `readyState` is closed. A page-dispatched
   `error` event is not detected on Node.
 - `url` is the socket's `url` attribute (through the getter captured at load

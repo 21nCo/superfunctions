@@ -237,6 +237,22 @@ describe("WebSocketCollector", () => {
     }
   });
 
+  it("records the open of a socket whose class's own open listener, added first, closes it", () => {
+    class ClosingSocket extends PageSocket {
+      constructor(url: string) {
+        super(url);
+        this.addEventListener("open", () => this.close());
+      }
+    }
+    platform.WebSocket = ClosingSocket;
+    collector.start();
+    const socket = openSocket("wss://example.com/closes-on-open");
+    socket.serverOpens();
+    expect(socket.readyState).toBe(2);
+    socket.dispatchEvent(new Event("open")); // Still once.
+    expect(collector.collect().map((event) => event.type)).toEqual(["open"]);
+  });
+
   it("in a browser, ignores every socket event the page dispatches itself", async () => {
     platform.Window = class Window {};
     vi.resetModules();

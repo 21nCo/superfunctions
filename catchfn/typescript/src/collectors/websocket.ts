@@ -18,6 +18,7 @@ const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
 // a subclass at load.
 const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
 const OPEN = 1;
+const CLOSING = 2;
 const CLOSED = 3;
 const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data");
 const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
@@ -244,9 +245,12 @@ function install(current: Set<Listener>): (() => void) | undefined {
         };
         if (listen(socket, type, callback)) added.push([type, callback]);
       };
-      // The platform fires open once, on a socket that is open by then.
+      // The platform fires open once, on a socket that is open by then; a
+      // listener before ours (a subclass's own) may already have closed it,
+      // which leaves it closing, never closed, while the event dispatches.
       on("open", () => {
-        if (opened || readyState(socket) !== OPEN) return undefined;
+        const state = readyState(socket);
+        if (opened || (state !== OPEN && state !== CLOSING)) return undefined;
         opened = true;
         return {};
       });
