@@ -97,31 +97,35 @@ test("standalone list: no tracked file outside scripts/ and .github/workflows/, 
   assert.equal(matches, "", `these files reference a standalone script (${standaloneNames.join(", ")}):\n${matches}`);
 });
 
-// The scripts outside the standalone list that name a standalone script, each run only from the root package.json or
-// a workflow, never by a workspace package's task. A new importer, such as a shared helper a package's build imports,
-// fails the next test until it is reviewed and added here.
-const STANDALONE_IMPORTERS = [
-  "scripts/ci-plan.mjs", // Holds the list.
-  "scripts/ci-plan.test.mjs",
-  "scripts/gate-mcpfn-release.mjs", // Root `gate:mcpfn-release`, run by the McpFn CI job.
-  "scripts/pack-release-package.mjs", // publish-tag.yml.
-  "scripts/turbo-cache-config.test.mjs",
-  "scripts/verify-uifn-phase-17.mjs", // Root `verify:uifn-phase-17`.
-  "scripts/verify-uifn-version-bump.mjs", // The ci.yml and uifn-version-bump-retarget.yml version bump jobs.
-  "scripts/verify-uifn-version-bump.test.mjs",
+// Files outside scripts/ that may name a script which, directly or through other scripts, names a standalone script:
+// the root package.json runs them as root scripts, never as a package task, and these data files only name them.
+const ROOT_SCRIPT_REFERENCES = [
+  "package.json",
+  "uifn/evidence/contracts/baseline.json", // Commands in UIFn evidence data, read only by root scripts.
+  "uifn/version-bump-inputs.json", // Its comment names scripts/verify-uifn-version-bump.mjs, which reads it.
 ];
 
-test("standalone list: only reviewed root-run scripts under scripts/ name a standalone script, and no package names them", () => {
+// A package task that runs a script reaching a standalone one, through any chain of scripts naming each other (an
+// import, a spawned command or a file list), would read a file Turbo does not hash.
+test("standalone list: no package names a script that reaches a standalone script through other scripts", () => {
   const standaloneExcludes = standaloneFiles.map((file) => `:(exclude,top)${file}`);
-  const importers = grepNames(standaloneNames, ["scripts/", ...standaloneExcludes], ["-l"]).split("\n").filter(Boolean);
-  assert.deepEqual(importers, [...STANDALONE_IMPORTERS].sort());
-  const importerNames = STANDALONE_IMPORTERS.map((file) => path.posix.basename(file));
-  const matches = grepNames(importerNames, [
+  const reaching = new Set();
+  for (let names = standaloneNames; names.length > 0; ) {
+    const found = grepNames(names, ["scripts/", ...standaloneExcludes], ["-l"])
+      .split("\n")
+      .filter((file) => file && !reaching.has(file));
+    for (const file of found) {
+      reaching.add(file);
+    }
+    names = [...new Set(found.map((file) => path.posix.basename(file)))];
+  }
+  assert.ok(reaching.has("scripts/verify-uifn-version-bump.mjs"), "it imports verify-package-lockfiles.mjs");
+  const reachingNames = [...new Set([...reaching].map((file) => path.posix.basename(file)))];
+  const matches = grepNames(reachingNames, [
     ".", ":(exclude)scripts/", ":(exclude).github/workflows/", ":(exclude)*.md",
-    // The root package.json runs them as root scripts; the UIFn version bump inputs name the script that reads them.
-    ":(exclude,top)package.json", ":(exclude,top)uifn/version-bump-inputs.json",
+    ...ROOT_SCRIPT_REFERENCES.map((file) => `:(exclude,top)${file}`),
   ], ["-n"]);
-  assert.equal(matches, "", `these files reference a script that names a standalone script:\n${matches}`);
+  assert.equal(matches, "", `these files reference a script that reaches a standalone script:\n${matches}`);
 });
 
 let copyRoot = "";
