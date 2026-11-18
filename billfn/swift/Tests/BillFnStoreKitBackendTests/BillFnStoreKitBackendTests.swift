@@ -249,15 +249,19 @@ struct BillFnStoreKitBackendTests {
         #expect(store.checkouts(forProductId: "apple.pro.month").first == pending)
         #expect(store.checkouts(forProductId: "apple.pro.month").count == 51)
 
-        // 30 seconds past its retention the pending attempt can no longer complete, so pruning drops it; the
-        // attempts saved a minute or more after it stay.
+        // 30 seconds past its retention, with no listed purchase that could claim it, the first reconciliation only
+        // marks the pending attempt; one a grace period later drops it. The attempts saved a minute or more after it stay.
         clock.advance(by: day - 200 * 60 + 30)
         let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        later.removeUnneededCheckouts(excluding: [])
+        #expect(later.keptCheckouts().first?.checkout == pending)
+        #expect(later.keptCheckouts().first?.unclaimedSince == clock.now)
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
         later.removeUnneededCheckouts(excluding: [])
         let kept = later.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
         #expect(!kept.contains("chk_pending"))
         #expect(kept.first == "chk_0")
-        clock.advance(by: day)
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
         store.removeUnneededCheckouts(excluding: [])
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
     }
@@ -287,10 +291,57 @@ struct BillFnStoreKitBackendTests {
         #expect(store.checkouts(forProductId: "apple.pro.month") == [expired, claimed])
 
         store.removeUnneededCheckouts(excluding: ["chk_claimed"])
+        #expect(reread.keptCheckouts().map(\.checkout) == [expired, claimed, matched, young])
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
+        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
 
         let kept = reread.keptCheckouts()
         #expect(kept.map(\.checkout) == [claimed, matched, young])
         #expect(kept.map(\.transactionId) == [nil, "2000000001", nil])
+    }
+
+    @Test("Keeps an expired outstanding checkout while a recent listed purchase could claim it, else removes it a grace period after marking it")
+    func expiresOutstandingCheckoutsOnlyOnRepeatedEvidence() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        let account = UUID(uuidString: token)!
+        let checkout = { (id: String) in BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account) }
+        for id in ["chk_listed", "chk_listed_long_ago", "chk_unlisted"] {
+            store.save(checkout(id))
+        }
+        clock.advance(by: 8 * day)
+        let sessionIds = { store.keptCheckouts().map(\.checkout.checkoutSessionId) }
+        let unclaimedSince = { (id: String) in store.keptCheckouts().first { $0.checkout.checkoutSessionId == id }?.unclaimedSince }
+        // A purchase from within the retention keeps its checkout; one older than that (finished on another device
+        // long ago) does not, so that checkout, like the unlisted one, is only marked.
+        let listed = ["chk_listed": clock.now.addingTimeInterval(-day), "chk_listed_long_ago": clock.now.addingTimeInterval(-8 * day)]
+        let marked = clock.now
+        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
+        #expect(sessionIds() == ["chk_listed", "chk_listed_long_ago", "chk_unlisted"])
+        #expect(unclaimedSince("chk_listed") == nil)
+        #expect(unclaimedSince("chk_unlisted") == marked)
+
+        // A launch whose history lists nothing marks the listed one, and keeps the marked ones within the grace period.
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace - 60)
+        store.removeUnneededCheckouts(excluding: [], listedPurchases: [:])
+        #expect(sessionIds() == ["chk_listed", "chk_listed_long_ago", "chk_unlisted"])
+        #expect(unclaimedSince("chk_listed") == clock.now)
+        #expect(unclaimedSince("chk_unlisted") == marked)
+
+        // Listed again, its mark is cleared; the grace period after marking them, the others are removed.
+        clock.advance(by: 60)
+        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
+        #expect(sessionIds() == ["chk_listed"])
+        #expect(unclaimedSince("chk_listed") == nil)
+
+        // Once its purchase is older than the retention it is marked, then removed a grace period later.
+        clock.advance(by: 7 * day)
+        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
+        #expect(unclaimedSince("chk_listed") == clock.now)
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
+        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
+        #expect(sessionIds().isEmpty)
     }
 
     @Test("Records the newest confirmed transactions across stores")
@@ -359,6 +410,8 @@ struct BillFnStoreKitBackendTests {
 
         clock.advance(by: 30 * day)
         let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        later.removeUnneededCheckouts(excluding: [])
+        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
         later.removeUnneededCheckouts(excluding: [])
         let kept = later.keptCheckouts()
         #expect(kept.map(\.checkout) == [matched, unkept])
