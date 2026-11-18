@@ -16,7 +16,7 @@ import {
   AuthFnUnauthenticatedError,
   AuthFnValidationError
 } from '../index.js';
-import { createApiKey } from '../core/api-keys.js';
+import { authenticateApiKey, createApiKey } from '../core/api-keys.js';
 import { issueSessionCookies } from '../core/cookies.js';
 import {
   createAuthFnPlacementContextIssuer,
@@ -546,8 +546,18 @@ describe('AuthFn placement-bound auth context', () => {
   });
 
   it('rejects a disabled-owner API key before any consumer runs or assertion is issued', async () => {
-    const bound = await setupIssuer();
+    let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const now = () => new Date(nowMs);
+    const bound = await setupIssuer({ now });
     const owned = await createApiKey(bound.config, { userId: bound.user.id, name: 'cli', scopes: ['*'] });
+    const readKeyTimes = async () => {
+      const record = await bound.config.database.findOne<{ lastUsedAt?: Date | null; updatedAt: Date }>({
+        model: 'api_keys',
+        where: [{ field: 'id', operator: 'eq', value: owned.keyId }],
+        namespace: 'authfn'
+      });
+      return { lastUsedAt: record?.lastUsedAt?.getTime() ?? null, updatedAt: record?.updatedAt.getTime() };
+    };
     const keyRequest = () => new Request('https://account.example.com/auth/session', {
       headers: { authorization: `Bearer ${owned.secret}` }
     });
@@ -562,6 +572,10 @@ describe('AuthFn placement-bound auth context', () => {
     await expect(bound.issuer.derive(keyRequest())).resolves.toMatchObject({ actorType: 'api-key' });
 
     await setOwnerMetadata({ disabled: true });
+    const beforeRejections = await readKeyTimes();
+    nowMs += 60_000;
+    // Every API-key path refuses a disabled owner before it touches the key.
+    await expect(authenticateApiKey(bound.config, owned.secret, { now })).resolves.toBeNull();
     await expect(bound.issuer.derive(keyRequest())).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
     let consumerRan = false;
     await expect(bound.issuer.withContext(keyRequest(), () => {
@@ -570,10 +584,16 @@ describe('AuthFn placement-bound auth context', () => {
     })).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
     expect(consumerRan).toBe(false);
     await expect(bound.issuer.issueSigned(keyRequest())).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
+    expect(await readKeyTimes()).toEqual(beforeRejections);
 
-    // Re-enabling the owner restores the key without reissuing it.
+    // Re-enabling the owner restores the key without reissuing it, and a
+    // successful authentication does touch it, so the check above can fail.
     await setOwnerMetadata({ disabled: false });
     await expect(bound.issuer.derive(keyRequest())).resolves.toMatchObject({ actorType: 'api-key' });
+    await expect(authenticateApiKey(bound.config, owned.secret, { now })).resolves.toMatchObject({
+      credential: { type: 'api-key', id: owned.keyId }
+    });
+    expect(await readKeyTimes()).toEqual({ lastUsedAt: nowMs, updatedAt: nowMs });
   });
 
   it('falls back to a valid authorization credential when the cookie is stale', async () => {

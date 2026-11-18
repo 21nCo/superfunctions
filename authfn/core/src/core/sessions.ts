@@ -7,7 +7,8 @@ import type {
   AuthFnHooks,
   AuthFnSession,
   AuthFnSessionRecord,
-  AuthFnUserRecord
+  AuthFnUserRecord,
+  AuthFnUserSession
 } from '../types.js';
 import {
   AuthFnCsrfInvalidError,
@@ -430,7 +431,7 @@ function buildUserSession(
   record: AuthFnSessionRecord,
   user: Pick<AuthFnUserRecord, 'id' | 'primaryEmail'>,
   options?: { tenantId?: string; regionId?: string }
-): AuthFnSession {
+): AuthFnUserSession {
   return {
     id: record.id,
     type: 'session',

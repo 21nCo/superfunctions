@@ -76,11 +76,12 @@ export interface AuthFnSessionCredential {
   id: string;
 }
 
-export interface AuthFnSession extends AuthSession {
+/**
+ * Fields every AuthFn session carries. `AuthFnSession` narrows on `type` to
+ * one of its two variants.
+ */
+interface AuthFnSessionBase extends AuthSession {
   id: string;
-  type: 'session' | 'api-key';
-  /** Present when an API key authenticated the request. */
-  credential?: AuthFnSessionCredential;
   subject: {
     actorId: string;
     actorType: AuthFnActorType;
@@ -104,6 +105,31 @@ export interface AuthFnSession extends AuthSession {
   expiresAt?: Date;
   metadata?: Record<string, unknown>;
 }
+
+/** An interactive session: a cookie or bearer session token for a user. */
+export interface AuthFnUserSession extends AuthFnSessionBase {
+  type: 'session';
+  /** Never set: only an API-key session carries a credential. */
+  credential?: undefined;
+}
+
+/**
+ * A session authenticated by an API key. A user-owned key acts as its owner
+ * (`actorType: 'user'`, `actorId` = owner); an unowned service key keeps
+ * `actorType: 'api-key'` with the key ID as `actorId`.
+ */
+export interface AuthFnApiKeySession extends AuthFnSessionBase {
+  type: 'api-key';
+  /** The API key that authenticated the request. */
+  credential: AuthFnSessionCredential;
+}
+
+/**
+ * The session AuthFn authenticates. Checking `session.type === 'api-key'`
+ * narrows `credential` to a required `AuthFnSessionCredential`, and
+ * `session.type === 'session'` narrows it to `undefined`.
+ */
+export type AuthFnSession = AuthFnUserSession | AuthFnApiKeySession;
 
 export interface AuthFnUserRecord {
   id: string;
