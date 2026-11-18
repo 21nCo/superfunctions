@@ -72,10 +72,10 @@ test("standalone list: every standalone glob names files directly under scripts/
 });
 
 // `git grep -F` for any of the names over the pathspecs; the matching lines, or "" when nothing matches.
-function grepNames(names, pathspecs, options = []) {
+function grepNames(names, pathspecs, options = [], cwd = repoRoot) {
   try {
     return execFileSync("git", ["grep", ...options, "-F", ...names.flatMap((name) => ["-e", name]), "--", ...pathspecs], {
-      cwd: repoRoot,
+      cwd,
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     });
@@ -107,27 +107,62 @@ const ROOT_SCRIPT_REFERENCES = [
   "uifn/version-bump-inputs.json", // Its comment names scripts/verify-uifn-version-bump.mjs, which reads it.
 ];
 
-// A package task that runs a script reaching a standalone one, through any chain of scripts naming each other (an
-// import, a spawned command or a file list), would read a file Turbo does not hash.
-test("standalone list: no package names a script that reaches a standalone script through other scripts", () => {
-  const standaloneExcludes = standaloneFiles.map((file) => `:(exclude,top)${file}`);
+// The scripts/ files that name a standalone script, directly or through any chain of scripts naming each other (an
+// import, a spawned command or a file list). `-z` keeps each path literal: without it git quotes and escapes a
+// non-ASCII or special file name, and the chain would continue under a name no file uses.
+function scriptsReachingStandalone(standalone, cwd = repoRoot) {
+  const standaloneExcludes = standalone.map((file) => `:(exclude,top)${file}`);
   const reaching = new Set();
-  for (let names = standaloneNames; names.length > 0; ) {
-    const found = grepNames(names, ["scripts/", ...standaloneExcludes], ["-l"])
-      .split("\n")
+  for (let names = [...new Set(standalone.map((file) => path.posix.basename(file)))]; names.length > 0; ) {
+    const found = grepNames(names, ["scripts/", ...standaloneExcludes], ["-z", "-l"], cwd)
+      .split("\0")
       .filter((file) => file && !reaching.has(file));
     for (const file of found) {
       reaching.add(file);
     }
     names = [...new Set(found.map((file) => path.posix.basename(file)))];
   }
-  assert.ok(reaching.has("scripts/verify-uifn-version-bump.mjs"), "it imports verify-package-lockfiles.mjs");
+  return reaching;
+}
+
+// The lines of files outside scripts/, workflows, Markdown and the allowed root references that name a reaching script.
+function packageReferencesTo(reaching, cwd = repoRoot) {
   const reachingNames = [...new Set([...reaching].map((file) => path.posix.basename(file)))];
-  const matches = grepNames(reachingNames, [
+  return grepNames(reachingNames, [
     ".", ":(exclude)scripts/", ":(exclude).github/workflows/", ":(exclude)*.md",
     ...ROOT_SCRIPT_REFERENCES.map((file) => `:(exclude,top)${file}`),
-  ], ["-n"]);
+  ], ["-n"], cwd);
+}
+
+// A package task that runs a script reaching a standalone one would read a file Turbo does not hash.
+test("standalone list: no package names a script that reaches a standalone script through other scripts", () => {
+  const reaching = scriptsReachingStandalone(standaloneFiles);
+  assert.ok(reaching.has("scripts/verify-uifn-version-bump.mjs"), "it imports verify-package-lockfiles.mjs");
+  const matches = packageReferencesTo(reaching);
   assert.equal(matches, "", `these files reference a script that reaches a standalone script:\n${matches}`);
+});
+
+test("standalone list: the chain of scripts follows non-ASCII file names to the package that names them", (t) => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "standalone-chain-"));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const files = {
+    "scripts/verify-owners.mjs": "export {};\n",
+    "scripts/audit-café.mjs": 'import "./verify-owners.mjs";\n',
+    "scripts/report-ü.mjs": 'import "./audit-café.mjs";\n',
+    "pkg/package.json": '{ "scripts": { "test": "node ../scripts/report-ü.mjs" } }\n',
+  };
+  for (const [file, contents] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(fixture, file)), { recursive: true });
+    writeFileSync(path.join(fixture, file), contents);
+  }
+  // core.quotePath=true is git's default; set it so a user's global setting cannot hide quoting.
+  execFileSync("git", ["init", "-q"], { cwd: fixture });
+  execFileSync("git", ["config", "core.quotePath", "true"], { cwd: fixture });
+  execFileSync("git", ["add", "."], { cwd: fixture });
+
+  const reaching = scriptsReachingStandalone(["scripts/verify-owners.mjs"], fixture);
+  assert.deepEqual([...reaching].sort(), ["scripts/audit-café.mjs", "scripts/report-ü.mjs"]);
+  assert.match(packageReferencesTo(reaching, fixture), /^pkg\/package\.json:1:.*report-ü\.mjs/m);
 });
 
 let copyRoot = "";
