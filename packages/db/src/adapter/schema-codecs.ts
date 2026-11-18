@@ -467,8 +467,9 @@ function transformRecord<T>(
           if (typeof value !== "boolean") throw new TypeError(`${model}.${fieldName} must be a boolean`);
           next[fieldName] = value ? 1 : 0;
         } else {
-          if (value !== 0 && value !== 1) throw new TypeError(`${model}.${fieldName} contains invalid boolean integer`);
-          next[fieldName] = value === 1;
+          // Safe-integer SQLite drivers (better-sqlite3 safeIntegers) return 0n/1n.
+          if (value !== 0 && value !== 1 && value !== 0n && value !== 1n) throw new TypeError(`${model}.${fieldName} contains invalid boolean integer`);
+          next[fieldName] = value === 1 || value === 1n;
         }
         changed = true;
       }
