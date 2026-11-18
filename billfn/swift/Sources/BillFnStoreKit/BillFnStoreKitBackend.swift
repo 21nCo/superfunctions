@@ -159,13 +159,20 @@ public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
     /// Whether BillFn rejected the bound transaction against this checkout for good and restored it onto its plan
     /// instead: a terminal resolution of the binding, not a confirmation against the checkout.
     public let restored: Bool
+    /// Whether the observation BillFn resolved the binding for is revoked: the checkout goes once that observation is
+    /// recorded finished, not on another observation's record.
+    public let resolvedRevoked: Bool?
 
-    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, transactionId: String? = nil, confirmed: Bool = false, restored: Bool = false) {
+    public init(
+        checkout: BillFnStoreKitCheckout, savedAt: Date, transactionId: String? = nil,
+        confirmed: Bool = false, restored: Bool = false, resolvedRevoked: Bool? = nil
+    ) {
         self.checkout = checkout
         self.savedAt = savedAt
         self.transactionId = transactionId
         self.confirmed = confirmed
         self.restored = restored
+        self.resolvedRevoked = resolvedRevoked
     }
 
     /// Whether BillFn has resolved the binding, by confirming against the checkout or by restoring.
@@ -175,11 +182,13 @@ public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
         BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, transactionId: transactionId)
     }
 
-    func resolved(by resolution: BillFnStoreKitResolution) -> BillFnStoreKitKeptCheckout {
-        BillFnStoreKitKeptCheckout(
+    func resolved(by resolution: BillFnStoreKitResolution, revoked: Bool) -> BillFnStoreKitKeptCheckout {
+        let confirms = resolution == .checkout(checkout.checkoutSessionId)
+        let restores = resolution == .restore(rejectedCheckout: checkout.checkoutSessionId)
+        guard confirms || restores else { return self }
+        return BillFnStoreKitKeptCheckout(
             checkout: checkout, savedAt: savedAt, transactionId: transactionId,
-            confirmed: confirmed || resolution == .checkout(checkout.checkoutSessionId),
-            restored: restored || resolution == .restore(rejectedCheckout: checkout.checkoutSessionId)
+            confirmed: confirmed || confirms, restored: restored || restores, resolvedRevoked: revoked
         )
     }
 }
@@ -419,7 +428,7 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         update { kept, records in
             if state >= .confirmed, let resolution {
                 for index in kept.indices where kept[index].transactionId == transaction.transactionId {
-                    kept[index] = kept[index].resolved(by: resolution)
+                    kept[index] = kept[index].resolved(by: resolution, revoked: transaction.revoked)
                 }
             }
             let previous = records.first { $0.isObservation(of: transaction) }
@@ -438,8 +447,11 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
 
     public func removeUnneededCheckouts() {
         update { kept, records in
-            let finished = Set(records.filter { $0.state == .finished }.map(\.facts.transactionId))
-            kept.removeAll { $0.settled && ($0.transactionId.map(finished.contains) ?? false) }
+            kept.removeAll { kept in
+                kept.settled && records.contains {
+                    $0.state == .finished && $0.facts.transactionId == kept.transactionId && $0.facts.revoked == kept.resolvedRevoked
+                }
+            }
             prune(&records, keeping: kept)
         }
     }

@@ -475,6 +475,33 @@ struct BillFnStoreKitBackendTests {
         #expect(store.keptCheckouts().isEmpty)
     }
 
+    /// The transaction was confirmed unrevoked against one checkout and finished; its refund, bound to the purchase's
+    /// own checkout, is confirmed but the app stops before finish() returns. That checkout stays until the refund itself
+    /// is recorded finished.
+    @Test("Removes a resolved checkout only once the observation it was resolved for is recorded finished")
+    func removesACheckoutOnItsOwnObservationsFinish() throws {
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
+        store.save(checkout("chk_a"))
+        clock.advance(by: 60)
+        store.save(checkout("chk_b"))
+        let bought = facts("60", purchased: clock.now)
+        let refunded = BillFnStoreKitTransactionFacts(
+            transactionId: "60", productId: "apple.pro.month", appAccountToken: account, purchaseDate: clock.now, isPurchase: true, revoked: true
+        )
+        #expect(store.claim(bought, purchasedWith: nil) == checkout("chk_a"))
+        #expect(store.claim(bought, purchasedWith: checkout("chk_b")) == checkout("chk_b"))
+        store.record(bought, state: .finished, resolution: .checkout("chk_a"))
+        store.record(refunded, state: .confirmed, resolution: .checkout("chk_b"))
+
+        store.removeUnneededCheckouts()
+        #expect(store.keptCheckouts().map(\.checkout.checkoutSessionId) == ["chk_b"])
+        #expect(store.keptCheckouts().map(\.resolvedRevoked) == [true])
+        store.record(refunded, state: .finished, resolution: .checkout("chk_b"))
+        store.removeUnneededCheckouts()
+        #expect(store.keptCheckouts().isEmpty)
+    }
+
     @Test("Never evicts a confirmed record whose finish() has not returned, however many finished ones follow")
     func keepsUnfinishedRecords() throws {
         let clock = TestClock()

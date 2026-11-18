@@ -1368,18 +1368,19 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
     }
 
     /// A background pass bound the transaction to the purchase's own checkout (the only outstanding one): the purchase
-    /// joins it, so BillFn verifies once and one outcome is published. A purchase arriving after that pass removed the
-    /// checkout gets its outcome too, and does not keep the checkout again or verify a second time.
+    /// joins it, so BillFn verifies once and one outcome is published. While that purchase is still being made, its
+    /// result arriving after the pass removed the checkout gets the pass's outcome too, and does not keep the checkout
+    /// again or verify a second time; once the purchase returns, nothing of it is kept.
     func testPurchaseJoinsABackgroundPassBoundToItsCheckout() async throws {
         let backend = FakeBillFnBackend()
         let gate = Gate()
         await backend.holdVerifications { await gate.wait() }
         let own = BillFnStoreKitCheckout(checkoutSessionId: "chk_own", productId: proLifetime, appAccountToken: backend.appAccountToken)
-        checkoutStore.save(own)
-        let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
-        let observed = try await listedTransaction(bought.id)
         let kit = launch(backend, plans: [])
         let recorder = record(kit)
+        await kit.startPurchase(own)
+        let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let observed = try await listedTransaction(bought.id)
 
         let background = Task { await kit.process(observed) }
         try await waitUntil("the background pass's verify call") { await gate.arrivals == 1 }
@@ -1389,6 +1390,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let backgroundOutcome = await background.value
         let purchaseOutcome = await purchase.value
         let late = await kit.process(observed, checkout: own)
+        await kit.endPurchase(own)
 
         XCTAssertTrue(backgroundOutcome.finished)
         XCTAssertEqual(purchaseOutcome, backgroundOutcome)

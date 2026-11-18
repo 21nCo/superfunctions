@@ -80,9 +80,12 @@ public actor BillFnStoreKit {
     /// The confirmation pass running for each transaction, with what that pass confirms: the observation it sends
     /// BillFn and the checkout it verifies against.
     private var inFlight: [UInt64: (context: PassContext, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
-    /// The newest passes BillFn confirmed, so a purchase whose transaction a background pass already confirmed against
-    /// the purchase's own checkout gets that outcome instead of verifying again.
-    private var confirmedPasses: [(context: PassContext, outcome: BillFnStoreKitTransactionOutcome)] = []
+    /// The checkouts of the purchases this actor is making, until each returns.
+    private var purchasing: Set<String> = []
+    /// For a purchase still being made, the pass that confirmed its transaction against its checkout before the
+    /// purchase returned that transaction (an update delivered first), so the purchase gets that outcome instead of
+    /// verifying again. Each entry goes when its purchase returns.
+    private var confirmedBeforeItsPurchase: [String: (context: PassContext, outcome: BillFnStoreKitTransactionOutcome)] = [:]
     /// How many callers are waiting for a running pass on the same transaction to end (tests wait on it).
     private(set) var callersWaitingForARunningPass = 0
     private var listener: Task<Void, Never>?
@@ -216,8 +219,8 @@ public actor BillFnStoreKit {
         guard let product = try await Product.products(for: [checkout.productId]).first else {
             throw BillFnStoreKitError.productNotFound(checkout.productId)
         }
-        // Saved before buying, so a purchase that completes after this launch still verifies against its checkout.
-        checkouts.save(checkout)
+        startPurchase(checkout)
+        defer { endPurchase(checkout) }
         let result: Product.PurchaseResult
         do {
             result = try await product.purchase(options: [.appAccountToken(checkout.appAccountToken)])
@@ -243,6 +246,18 @@ public actor BillFnStoreKit {
         @unknown default:
             throw BillFnStoreKitError.unknownPurchaseResult
         }
+    }
+
+    /// Keeps the checkout of a purchase that is starting: saved before buying, so a purchase that completes after this
+    /// launch still verifies against it.
+    func startPurchase(_ checkout: BillFnStoreKitCheckout) {
+        checkouts.save(checkout)
+        purchasing.insert(checkout.checkoutSessionId)
+    }
+
+    func endPurchase(_ checkout: BillFnStoreKitCheckout) {
+        purchasing.remove(checkout.checkoutSessionId)
+        confirmedBeforeItsPurchase[checkout.checkoutSessionId] = nil
     }
 
     /// Syncs with the App Store (which may ask the user to sign in) and confirms each current entitlement with BillFn.
@@ -302,7 +317,7 @@ public actor BillFnStoreKit {
             context.observation == reference
                 && (purchaseCheckout == nil || context.checkoutSessionId == purchaseCheckout?.checkoutSessionId)
         }
-        if purchaseCheckout != nil, let done = confirmedPasses.last(where: { joins($0.context) }) {
+        if let purchaseCheckout, let done = confirmedBeforeItsPurchase[purchaseCheckout.checkoutSessionId], joins(done.context) {
             return done.outcome
         }
         // The purchase's own checkout is bound before anything suspends, so a launch that stops while this waits still
@@ -331,8 +346,8 @@ public actor BillFnStoreKit {
         // it, publishes after it; a caller that joined a pass publishes nothing.
         let task = Task {
             let outcome = await self.confirmNow(transaction, reference: reference, facts: facts, checkout: checkout)
-            if outcome.finished {
-                self.confirmedPasses = Array((self.confirmedPasses + [(context, outcome)]).suffix(16))
+            if outcome.finished, let id = checkout?.checkoutSessionId, self.purchasing.contains(id) {
+                self.confirmedBeforeItsPurchase[id] = (context, outcome)
             }
             self.outcomeContinuation.yield(outcome)
             return outcome
