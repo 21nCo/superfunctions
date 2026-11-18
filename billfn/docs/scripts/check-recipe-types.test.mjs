@@ -184,6 +184,39 @@ test("the cron schedules lifecycle-events only on the five-minute trigger and dr
   });
 });
 
+test("the cron stops draining after three failures in a row, such as an unreachable queue database", async () => {
+  const fakes = {
+    "./billing": "export const createRegion = () => ({ billfn: {}, config: {} });",
+    "@billfn/core": [
+      "export const createBillFnReconciliationWorker = () => ({",
+      "  async runNext() {",
+      "    globalThis.cron.runs += 1;",
+      "    const next = globalThis.cron.results.shift();",
+      "    if (next === undefined) throw new Error('connect ECONNREFUSED');",
+      "    if (next instanceof Error) throw next;",
+      "    return next;",
+      "  },",
+      "});",
+    ].join("\n"),
+  };
+  const { default: worker } = await importBlock("src/worker.ts", fakes);
+  const cron = { results: [], runs: 0 };
+  await withGlobals({ cron, console: { ...console, error: () => {} } }, async () => {
+    // Failures separated by a success do not stop the run.
+    cron.results = [new Error("job failed"), new Error("job failed"), { id: "job-1" }, new Error("job failed"), new Error("job failed"), null];
+    await worker.scheduled({ cron: "* * * * *" }, {});
+    assert.equal(cron.runs, 6);
+
+    // A queue that keeps failing (nothing left in results) ends the run after three calls, not at the 50s budget.
+    cron.runs = 0;
+    cron.results = [];
+    const started = Date.now();
+    await worker.scheduled({ cron: "* * * * *" }, {});
+    assert.equal(cron.runs, 3);
+    assert.ok(Date.now() - started < 1_000);
+  });
+});
+
 test("the regional Worker serves /auth and /billfn and nothing else", async () => {
   const { default: worker } = await importBlock("src/worker.ts", {
     "./billing": [

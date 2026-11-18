@@ -36,7 +36,7 @@ A user holds one plan at a time. The `nucleus` plan below includes Memotron and 
 ```
 
 ```jsonc
-// ingress/wrangler.jsonc (the public webhook ingress Worker)
+// wrangler.ingress.jsonc (the public webhook ingress Worker: wrangler deploy -c wrangler.ingress.jsonc)
 {
   "name": "billing-webhooks",
   "main": "src/ingress-worker.ts",
@@ -55,7 +55,7 @@ A user holds one plan at a time. The `nucleus` plan below includes Memotron and 
 
 The ingress calls the regions through service bindings. A Worker's `fetch` to a hostname in its own zone goes to the zone's origin, not to the Worker routed there (unless the Worker sets the `global_fetch_strictly_public` flag), so with every Worker in `example.com` a plain `fetch` to `https://euwest.account.example.com` would never reach the regional Worker.
 
-Set the secrets with `wrangler secret put` in every regional environment: `BILLFN_INTERNAL_TOKEN` (one value shared by every region and the ingress), `BILLFN_OPS_TOKEN`, `DODO_API_KEY`, `DODO_WEBHOOK_SECRET`, `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_IN_APP_PURCHASE_KEY`. The ingress Worker needs only `BILLFN_INTERNAL_TOKEN`. Point the Dodo webhook and the App Store Server Notifications v2 URL at `https://billing-webhooks.example.com/webhooks/dodo` and `/webhooks/apple`.
+Set the secrets with `wrangler secret put` in every regional environment: `BILLFN_INTERNAL_TOKEN` (one value shared by every region and the ingress), `BILLFN_OPS_TOKEN`, `DODO_API_KEY`, `DODO_WEBHOOK_SECRET`, `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_IN_APP_PURCHASE_KEY`. The ingress Worker needs only `BILLFN_INTERNAL_TOKEN` (`wrangler secret put BILLFN_INTERNAL_TOKEN -c wrangler.ingress.jsonc`). Both configurations live in one project, so the ingress code is `src/ingress-worker.ts` next to `src/worker.ts`. Point the Dodo webhook and the App Store Server Notifications v2 URL at `https://billing-webhooks.example.com/webhooks/dodo` and `/webhooks/apple`.
 
 ## Environment
 
@@ -80,7 +80,7 @@ export interface Env {
 }
 ```
 
-`createDatabase(env)` in `src/database.ts` is your `@superfunctions/db` adapter over the region's Postgres, for example Kysely or Drizzle with `pg` connecting through `env.HYPERDRIVE.connectionString`. AuthFn, BillFn and the reconciliation queue share it: its table registry must include the AuthFn and BillFn tables (see [Schema](/docs/reference/schema)), and the queue table is created once with `DatabaseQueueAdapter.migrate()` before the first deploy. The queue runs its statements through the adapter's `rawSql`, which the Kysely and Drizzle SQL adapters provide.
+`createDatabase(env)` in `src/database.ts` is your `@superfunctions/db` adapter over the region's Postgres, for example Kysely or Drizzle with `pg` connecting through `env.HYPERDRIVE.connectionString`. AuthFn, BillFn and the reconciliation queue share it: its table registry must include the AuthFn and BillFn tables (see [Schema](/docs/reference/schema)), and the queue table is created once in each region's database with `await new DatabaseQueueAdapter({ db }).migrate()` before the first deploy. The queue runs its statements through the adapter's `rawSql`, which the Kysely and Drizzle SQL adapters provide.
 
 ## Catalog with discount prices
 
@@ -322,6 +322,8 @@ import type { Env } from "./env";
 const LIFECYCLE_CRON = "*/5 * * * *";
 /** How long one cron run drains the reconciliation queue; the next run continues. */
 const DRAIN_BUDGET_MS = 50_000;
+/** Failures in a row after which a cron run stops draining and leaves the queue to the next run. */
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 function isUnder(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -344,11 +346,15 @@ export default {
     }
     const worker = createBillFnReconciliationWorker(config);
     const deadline = Date.now() + DRAIN_BUDGET_MS;
-    while (Date.now() < deadline) {
+    let failures = 0;
+    while (Date.now() < deadline && failures < MAX_CONSECUTIVE_FAILURES) {
       try {
         if ((await worker.runNext()) === null) break; // the queue is empty
+        failures = 0;
       } catch (error) {
-        // runNext already released or dead-lettered the message; keep draining.
+        // Either a job failed (its message is already retried or dead-lettered) or the queue itself
+        // failed, for example an unreachable database, and nothing was claimed.
+        failures += 1;
         console.error("billfn reconciliation run failed", error);
       }
     }
@@ -356,7 +362,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 ```
 
-The router serves `/billfn/*` with its default `basePath`, including `/billfn/webhooks/:provider` (which the ingress forwards to), `/billfn/ops/owner` and the reconciliation routes. Both cron expressions fire at every fifth minute, as two runs: only the `*/5` run schedules the `lifecycle-events` job, and both drain the queue. Each `runNext()` claims one message with a 15-minute lease, so the two runs and the next minute's run never process the same message at once. A failed run is retried or dead-lettered by the worker as described in [Reconciliation](/docs/server/reconciliation#worker).
+The router serves `/billfn/*` with its default `basePath`, including `/billfn/webhooks/:provider` (which the ingress forwards to), `/billfn/ops/owner` and the reconciliation routes. Both cron expressions fire at every fifth minute, as two runs: only the `*/5` run schedules the `lifecycle-events` job, and both drain the queue. Each `runNext()` claims one message with a 15-minute lease, so the two runs and the next minute's run never process the same message at once. A failed run is retried or dead-lettered by the worker as described in [Reconciliation](/docs/server/reconciliation#worker), and the cron keeps draining after it. `runNext()` also throws when the queue itself fails (the database is unreachable, or the queue table is missing), before it has claimed anything, so the cron stops after three failures in a row instead of retrying for the rest of its budget, and the next run tries again.
 
 Other jobs are operator work, queued through the routes with `authorization: Bearer <BILLFN_OPS_TOKEN>` and run by the next cron:
 
@@ -374,7 +380,7 @@ import { createWebhookIngress, type BillingProviderName } from "@billfn/core";
 
 export interface IngressEnv {
   BILLFN_INTERNAL_TOKEN: string;
-  /** Service bindings to the regional account Workers (ingress/wrangler.jsonc). */
+  /** Service bindings to the regional account Workers (wrangler.ingress.jsonc). */
   INSOUTH: Fetcher;
   USEAST: Fetcher;
   EUWEST: Fetcher;
@@ -492,7 +498,7 @@ export async function buyNucleusYearly(): Promise<"purchased" | "pending" | "can
 }
 ```
 
-The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request.
+The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
 
 ## Importing legacy subscriptions
 
