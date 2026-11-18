@@ -165,6 +165,31 @@ jobs:
       - name: Install Rust WASM target
         run: rustup target add wasm32-unknown-unknown
 
+      # Turbo's own task hashes show which root scripts invalidate the cache and that no package uses a standalone script.
+      - name: Verify Turbo cache inputs
+        run: node --test scripts/turbo-cache-config.test.mjs
+
+      # Turbo's local task cache (SFNS-307): a task whose inputs (turbo.json, including its globalDependencies) are
+      # unchanged replays its logs and outputs instead of running. Pull requests restore the newest entry for this job,
+      # Node major and lockfile (falling back to any lockfile), so they reuse what the base branch's latest run or an
+      # earlier run of the same pull request produced. Every other event starts from an empty cache, so every task it
+      # selects runs and dev stays a full, uncached verification; its later steps still replay the builds its own
+      # Build step produced, as before. Every run saves its cache.
+      - name: Turbo cache key prefix
+        id: turbo-cache
+        run: echo "prefix=turbo-${{ runner.os }}-node$(node -p 'process.versions.node.split(".")[0]')-${{ github.job }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Turbo cache
+        id: turbo-cache-restore
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
+            ${{ steps.turbo-cache.outputs.prefix }}-
+
       - name: Show plan
         run: |
           echo "base: ${{ needs.plan.outputs.base_ref }}"
@@ -209,6 +234,15 @@ jobs:
             ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
           fi
 
+      # Turbo caches only tasks that succeeded, so a failed run still saves what it verified. A re-run that restored
+      # this exact key has nothing new to save under it.
+      - name: Save Turbo cache
+        if: ${{ !cancelled() && steps.turbo-cache.outputs.prefix != '' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+
   # DevFn's real-process tests (SFNS-293) run one package at a time, apart from every other package's tests. The plan
   # selects the DevFn part of the JavaScript test selection: a full run selects every DevFn package. Like the JavaScript
   # job it skips McpFn-only changes. Build and typecheck of DevFn packages stay in the JavaScript job.
@@ -244,6 +278,22 @@ jobs:
       - name: Install Rust WASM target
         run: rustup target add wasm32-unknown-unknown
 
+      # Turbo's local task cache, as in the JavaScript job, under this job's own key.
+      - name: Turbo cache key prefix
+        id: turbo-cache
+        run: echo "prefix=turbo-${{ runner.os }}-node$(node -p 'process.versions.node.split(".")[0]')-${{ github.job }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Turbo cache
+        id: turbo-cache-restore
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
+            ${{ steps.turbo-cache.outputs.prefix }}-
+
       - name: Show plan
         run: |
           echo "base: ${{ needs.plan.outputs.base_ref }}"
@@ -252,6 +302,15 @@ jobs:
 
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
+
+      # Turbo caches only tasks that succeeded, so a failed run still saves what it verified. A re-run that restored
+      # this exact key has nothing new to save under it.
+      - name: Save Turbo cache
+        if: ${{ !cancelled() && steps.turbo-cache.outputs.prefix != '' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: ${{ steps.turbo-cache.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
 
   mcpfn-node20:
     name: McpFn Node 20 compatibility

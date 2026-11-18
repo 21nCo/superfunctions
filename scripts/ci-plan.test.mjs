@@ -87,7 +87,7 @@ test("a change to a product's shared test support runs that product's package te
 
 // DevFn tests (SFNS-293) run in their own serialized job: the plan gives that job the DevFn part of the JavaScript test
 // selection (a changed package and its dependents, or everything on a full run) and the JavaScript test step none of it.
-function devfnFixture() {
+function devfnFixture(extraFiles = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "ci-plan-devfn-"));
   const env = {
     ...process.env,
@@ -113,6 +113,7 @@ function devfnFixture() {
   pkg("devfn/proxy", "@devfn/proxy");
   pkg("filefn/core", "@filefn/core");
   pkg("otherfn/cli", "@otherfn/cli", { "@devfn/core": "*" });
+  for (const [file, contents] of Object.entries(extraFiles)) put(file, contents);
   git("init", "--quiet", "--initial-branch=dev");
   git("add", "."); git("commit", "--quiet", "-m", "base");
   const base = git("rev-parse", "HEAD");
@@ -191,6 +192,35 @@ test("a lockfile-only change runs every DevFn package in the DevFn job and none 
     assert.equal(outputs.js_test_filters, EXCLUDE_DEVFN);
     // Build stays a full, unfiltered run in the JavaScript job.
     assert.equal(outputs.js_build_filters, "");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+// SFNS-307: standalone root scripts and workflows other than ci.yml no longer force a full JavaScript run; every other
+// scripts/ path still does, because a package may read it.
+test("only ci.yml and non-standalone scripts force a full JavaScript run", () => {
+  const { root, plan } = devfnFixture({
+    "scripts/promote.mjs": "export {};\n",
+    "scripts/public-boundary.allow.json": "{}\n",
+    "scripts/promote-helper.mjs": "export {};\n",
+    "scripts/docs-site/llms.mjs": "export {};\n",
+    ".github/workflows/ci.yml": "jobs: {}\n",
+    ".github/workflows/uifn-browser.yml": "jobs: {}\n",
+  });
+  try {
+    for (const [file, fullJs] of [
+      ["scripts/promote.mjs", false],
+      ["scripts/public-boundary.allow.json", false],
+      ["scripts/promote-helper.mjs", true],
+      ["scripts/docs-site/llms.mjs", true],
+      [".github/workflows/uifn-browser.yml", false],
+      [".github/workflows/ci.yml", true],
+    ]) {
+      const outputs = plan(file);
+      assert.equal(outputs.full_js, String(fullJs), file);
+      // Outside every package, a change that is not global selects no JavaScript work at all.
+      assert.equal(outputs.run_js, String(fullJs), file);
+      assert.equal(outputs.run_devfn, String(fullJs), file);
+    }
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
