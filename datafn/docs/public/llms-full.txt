@@ -22095,11 +22095,12 @@ URL: https://datafn.dev/docs/recipes/filefn-integration
 Description: Attach files to DataFn records — uploads, lifecycle, deletion.
 --------------------------------------------------------------------------------
 
-FileFn handles file uploads, storage adapters (S3, R2, GCS, Azure, local), pre-signed URLs, and lifecycle policies. DataFn manages the relational records that own those files. The connection is a `string` field in your schema that stores the FileFn file id.
+FileFn handles file uploads, storage adapters (S3, R2, GCS, Azure, local), signed download URLs, and upload policies. DataFn manages the relational records that own those files. The connection is a `string` field in your schema that stores the FileFn file id.
 
 ## Schema
 
 ```typescript
+// schema.ts
 import { defineSchema } from "@datafn/core";
 
 export const schema = defineSchema({
@@ -22115,9 +22116,9 @@ export const schema = defineSchema({
         { name: "fileId", type: "string", required: true },    // FileFn file id
         { name: "filename", type: "string", required: true },
         { name: "mime", type: "string", required: true },
-        { name: "size", type: "number", required: true },
+        { name: "size", type: "number", required: true, max: 25 * 1024 * 1024 },
       ],
-      indices: { base: ["ownerType", "ownerId"] },
+      indices: { base: ["ownerType", "ownerId"], search: ["filename"] },
     },
   ],
 });
@@ -22125,72 +22126,89 @@ export const schema = defineSchema({
 
 You can also embed `fileId` directly on a resource (`avatarFileId` on `users`, `coverFileId` on `posts`). The dedicated `attachments` table is correct for many-to-one relationships.
 
+## Clients
+
+```typescript
+// clients.ts
+import { createDatafnClient } from "@datafn/client";
+import { createFileFnClient } from "@filefn/client";
+import { schema } from "./schema";
+
+export const client = createDatafnClient({
+  schema,
+  clientId: "web-1", // Stable per device.
+  sync: { remote: "/datafn" },
+});
+
+// Where your server mounts FileFn (its `basePath`).
+export const files = createFileFnClient({ baseUrl: "/files" });
+```
+
+`createFileFnClient` sends requests with `credentials: "same-origin"` by default, so a session cookie for the same origin authenticates FileFn too. For a FileFn API on another origin, pass `credentials: "include"` or return an `Authorization` header from `getAuthHeaders`.
+
 ## Upload flow
 
 ```typescript
-import { filefnClient } from "@filefn/client";
+// attach.ts
+import { client, files } from "./clients";
 
-async function attachFile(ownerType: string, ownerId: string, file: File) {
-  // 1. Upload via FileFn (returns the file id + URL)
-  const fileRecord = await filefnClient.upload({
-    file,
-    folder: `${ownerType}/${ownerId}`,
-  });
+export async function attachFile(ownerType: string, ownerId: string, file: File): Promise<string> {
+  // 1. Upload through FileFn. `policy` names an upload policy configured on the FileFn server.
+  const upload = files.uploadFile({ policy: "attachments", file });
+  const { fileId } = await upload.done();
 
-  // 2. Create the DataFn attachment row
-  await client.table("attachments").mutate({
-    operation: "insert",
-    record: {
-      ownerType,
-      ownerId,
-      fileId: fileRecord.id,
-      filename: file.name,
-      mime: file.type,
-      size: file.size,
-    },
-  });
+  // 2. Create the DataFn attachment row.
+  try {
+    await client.table("attachments").mutate({
+      operation: "insert",
+      record: {
+        ownerType,
+        ownerId,
+        fileId,
+        filename: file.name,
+        mime: file.type,
+        size: file.size,
+      },
+    });
+  } catch (error) {
+    // Don't leave an uploaded file that no record points to. Best effort: keep the insert's error.
+    await files.deleteFile(fileId).catch(() => undefined);
+    throw error;
+  }
+  return fileId;
 }
 ```
 
-The two operations don't need to be transactional in most cases — a failed DataFn insert just leaves an orphan file (cleaned up by FileFn's retention policy). If you want strict consistency, wrap them in a try/catch and call FileFn's delete on the catch path.
+`uploadFile` returns a handle at once: `upload.fileId` is known before the bytes are sent, `upload.onProgress(...)` reports progress and `upload.abort()` cancels. `done()` resolves with `{ fileId, versionId }` once FileFn has stored the file.
+
+The two operations are not transactional. If the DataFn insert throws, the catch path deletes the uploaded file so it doesn't stay behind without an owner. A failed cleanup leaves the file in FileFn; the insert's error is still the one thrown.
 
 ## Download / display
 
-For images and small files, render directly from FileFn's CDN:
+`downloadUrl` asks FileFn for the current version's download URL: a short-lived signed storage URL when the storage adapter supports one, otherwise FileFn's proxy download route. Request it when you render, not once for the record's lifetime.
 
-```tsx
-<img src={filefnClient.url(att.fileId)} alt={att.filename} />
+```typescript
+// display.ts
+import { files } from "./clients";
+
+export async function showAttachment(img: HTMLImageElement, attachment: { fileId: string; filename: string }): Promise<void> {
+  img.alt = attachment.filename;
+  img.src = await files.downloadUrl(attachment.fileId);
+}
 ```
 
-For private files, request a short-lived signed URL:
-
-```tsx
-const [src, setSrc] = useState<string>();
-useEffect(() => {
-  filefnClient.signedUrl(att.fileId, { expiresIn: 60 }).then(setSrc);
-}, [att.fileId]);
-return <img src={src} alt={att.filename} />;
-```
+For thumbnails and previews, `files.resolveRenderable({ fileId, intent: "thumbnail" })` picks the best artifact FileFn has for the file (see `@filefn/viewer`).
 
 ## Lifecycle: delete attachment
 
 ```typescript
-async function detachFile(attachmentId: string, fileId: string) {
-  await client.transact({
-    steps: [
-      {
-        type: "mutation",
-        mutation: {
-          resource: "attachments",
-          version: 1,
-          operation: "delete",
-          id: attachmentId,
-        },
-      },
-    ],
-  });
-  // After the DataFn delete succeeds, queue the FileFn delete
-  await filefnClient.delete(fileId);
+// detach.ts
+import { client, files } from "./clients";
+
+export async function detachFile(attachmentId: string, fileId: string): Promise<void> {
+  await client.table("attachments").delete(attachmentId);
+  // Only after the DataFn delete succeeds, delete the file in FileFn.
+  await files.deleteFile(fileId);
 }
 ```
 
@@ -22207,27 +22225,26 @@ For soft-deletes via the `trash` capability, neither cascades automatically — 
 
 ## Quota and limits
 
-DataFn doesn't enforce file size limits — that's FileFn's job. Coordinate the two:
+DataFn doesn't enforce file size limits — that's FileFn's job. FileFn enforces them per upload policy on its server, when the upload starts:
 
 ```typescript
-filefnClient.configure({
-  maxFileSize: 25 * 1024 * 1024,
-  allowedMimes: ["image/*", "application/pdf"],
-});
+// filefn-policies.ts (on the FileFn server)
+import type { Policy } from "@filefn/server";
 
-// In DataFn schema:
-{ name: "size", type: "number", required: true, max: 25 * 1024 * 1024 }
+export const attachmentsPolicy: Policy = {
+  name: "attachments",
+  contentTypes: ["image/*", "application/pdf"],
+  maxSizeBytes: 25 * 1024 * 1024,
+  visibility: "private",
+};
+// createFileFn({ ..., policies: [attachmentsPolicy] })
 ```
 
-The `max` validator on the `size` field gives you a server-side double-check.
+The `max` validator on the schema's `size` field gives you a matching check on the DataFn side.
 
 ## Searching by file metadata
 
-If you need to search by filename or mime type, index those fields:
-
-```typescript
-indices: { base: ["ownerType", "ownerId", "filename"], search: ["filename"] },
-```
+If you need to search by filename, index it as the schema above does: `filename` is in `indices.search`. Add `mime` to `indices.base` to filter by type.
 
 For full-text search across file *contents*, you need a search provider that indexes file bodies (Tantivy via a worker, ElasticSearch). See [SearchFn integration](/docs/recipes/searchfn-integration).
 

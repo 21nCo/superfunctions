@@ -13,6 +13,8 @@ filefn's router takes a standard `Request` and returns a `Response`, so it runs 
 
 filefn's server imports Node built-ins (`crypto`, `events`, `Buffer`), so enable the `nodejs_compat` compatibility flag.
 
+For a complete Worker that authenticates FileFn with AuthFn, stores files in a regional R2 bucket and processes uploads through a queue and the processing container, see [Workers with AuthFn, R2 and Queues](./workers-authfn-r2-queues).
+
 ```jsonc
 // wrangler.jsonc
 {

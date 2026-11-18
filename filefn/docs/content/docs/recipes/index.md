@@ -16,6 +16,7 @@ Each recipe is a complete, production-tested pattern for a real problem. Copy it
 | [HEIC conversion](./heic-conversion) | iPhone photos in browsers and on iOS. |
 | [CDN integration](./cdn-integration) | Front S3 / GCS / R2 with CloudFront / Cloud CDN / Cloudflare. |
 | [Cloudflare Workers](./cloudflare-workers) | Mount filefn under a path prefix, keep processing alive with `ctx.waitUntil`, clean up sessions from cron. |
+| [Workers with AuthFn, R2 and Queues](./workers-authfn-r2-queues) | A complete Worker: AuthFn sessions with CSRF, a regional R2 bucket and Postgres, processing on the device or through Queues and a container. |
 | [Virus scanning](./virus-scanning) | ClamAV-as-a-processor pattern. |
 | [Signed share links](./signed-share-links) | Tokenised public links with TTL and download caps. |
 | [Custom processor](./custom-processor) | Author and ship your own processor. |

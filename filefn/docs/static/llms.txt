@@ -94,6 +94,7 @@
 - [Tenant isolation](https://filefn.com/docs/recipes/tenant-isolation): Per-tenant storage paths, quotas, grants, and authorization — the production isolation pattern.
 - [Video uploads](https://filefn.com/docs/recipes/video-uploads): Large-file video uploads with 720p transcoding, poster frames, and queued processing.
 - [Virus scanning](https://filefn.com/docs/recipes/virus-scanning): Plug ClamAV (or any AV provider) into the filefn processing pipeline as a custom processor.
+- [Workers with AuthFn, R2 and Queues](https://filefn.com/docs/recipes/workers-authfn-r2-queues): A complete Cloudflare Worker that serves AuthFn and FileFn on one origin, stores files in a regional R2 bucket, keeps metadata in the region's Postgres, and processes uploads on the device or through Cloudflare Queues and a processing container.
 - [Reference](https://filefn.com/docs/reference): The canonical reference for filefn — every route, every error, every event, every schema, every config knob, the changelog.
 - [Changelog](https://filefn.com/docs/reference/changelog): Notable filefn releases and migration notes.
 - [Configuration](https://filefn.com/docs/reference/configuration): Every option in FileFnConfig — types, defaults, and effects.
