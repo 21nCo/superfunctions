@@ -167,7 +167,12 @@ function install(current: Set<Listener>): (() => void) | undefined {
     };
   };
   const cleanups: Array<() => void> = [];
+  // False once restored or rolled back: a wrapper left installed (one another
+  // library chained, or one a failed restore left) then observes nothing.
+  let active = true;
+  const live = () => active && current.size > 0;
   const undo = () => {
+    active = false;
     for (const cleanup of cleanups.splice(0).reverse()) {
       try {
         cleanup();
@@ -196,24 +201,34 @@ function install(current: Set<Listener>): (() => void) | undefined {
 
     // Sockets constructed while these wrappers are installed, with their redacted URL.
     const sockets = new WeakMap<object, string>();
-    // How to detach each observed socket's listeners: a socket's own on close, all on the last stop().
-    const detachers = new Set<() => void>();
+    // The observed sockets, held weakly so the collector never keeps one alive
+    // (a refused socket may never fire close), and how to detach each one's
+    // listeners: its own after its close, all of them on the last stop().
+    const observed = new Set<WeakRef<object>>();
+    const detachOf = new WeakMap<object, () => void>();
+    const forget = new FinalizationRegistry<WeakRef<object>>((ref) => observed.delete(ref));
     cleanups.push(() => {
-      for (const detach of [...detachers]) detach();
+      for (const ref of [...observed]) {
+        const socket = ref.deref();
+        if (socket) detachOf.get(socket)?.();
+      }
+      observed.clear();
     });
 
     const observe = (socket: object) => {
       const url = captureUrl(attribute(urlGetter, socket, "url"));
       const added: Array<[string, (event: unknown) => void]> = [];
+      const ref = new WeakRef(socket);
       const detach = () => {
-        detachers.delete(detach);
+        observed.delete(ref);
+        forget.unregister(ref);
         for (const [type, callback] of added) unlisten(socket, type, callback);
       };
       let opened = false;
       // `read` returns undefined for an event the platform did not fire.
       const on = (type: Observation["type"], read: (event: unknown) => Partial<Observation> | undefined) => {
         const callback = (event: unknown) => {
-          if (current.size === 0) return;
+          if (!live()) return;
           const deliver = receivers();
           let fields: Partial<Observation> | undefined;
           try {
@@ -254,7 +269,9 @@ function install(current: Set<Listener>): (() => void) | undefined {
         return closed;
       });
       on("error", () => ({}));
-      detachers.add(detach);
+      observed.add(ref);
+      detachOf.set(socket, detach);
+      forget.register(socket, ref, ref);
       sockets.set(socket, url);
     };
 
@@ -264,7 +281,7 @@ function install(current: Set<Listener>): (() => void) | undefined {
     const wrapper = new Proxy(Original, {
       construct(target, args, newTarget) {
         const socket = Reflect.construct(target, args, newTarget) as object;
-        if (current.size > 0) {
+        if (live()) {
           try {
             observe(socket);
           } catch {
@@ -278,7 +295,7 @@ function install(current: Set<Listener>): (() => void) | undefined {
     // The send() sockets of the global class actually inherit, wrapped where it is defined.
     const send = sendOwner
       ? function (this: unknown, ...args: unknown[]) {
-          if (current.size === 0) return apply(sendOwner.original, this, args);
+          if (!live()) return apply(sendOwner.original, this, args);
           const timestamp = Date.now();
           const deliver = receivers();
           // Only a send() on an open socket transmits: the platform throws
@@ -302,16 +319,18 @@ function install(current: Set<Listener>): (() => void) | undefined {
 
     // Restore only what we replaced and still own; a wrapper another library
     // installed over ours keeps ours in its chain, inert once `current` empties.
-    platform.WebSocket = wrapper;
+    // Each rollback is registered before its write, so a write that takes
+    // effect and then throws is undone too.
     cleanups.push(() => {
       if (platform.WebSocket === wrapper) platform.WebSocket = Original;
     });
+    platform.WebSocket = wrapper;
     if (sendOwner && send) {
       const { owner, original } = sendOwner;
-      owner.send = send;
       cleanups.push(() => {
         if (owner.send === send) owner.send = original;
       });
+      owner.send = send;
     }
   } catch {
     undo(); // A partly installed collector would record only some events.

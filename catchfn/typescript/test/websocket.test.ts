@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocketCollector } from "../src/collectors/websocket.js";
 import { expectValidEvents } from "./schema-helper.js";
@@ -471,6 +473,63 @@ describe("WebSocketCollector", () => {
     expect(() => collector.start()).not.toThrow();
     expect(platform.WebSocket).toBe(LockedSend);
     expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("undoes a write that takes effect and then throws, and leaves a wrapper it cannot remove inert", () => {
+    let stored: unknown = PageSocket;
+    let writes = 0;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get: () => stored,
+      set: (value: unknown) => {
+        writes += 1;
+        if (writes === 1) stored = value; // Takes effect, then throws; later writes are refused.
+        throw new Error("locked binding");
+      },
+    });
+    expect(() => collector.start()).not.toThrow();
+    expect(platform.WebSocket).not.toBe(PageSocket); // The rollback could not remove it...
+    expect(PageSocket.prototype.send).toBe(pageSend);
+    const socket = openSocket("wss://example.com/failed-install");
+    socket.serverOpens();
+    socket.send("abc");
+    expect(collector.collect()).toEqual([]); // ...but it observes nothing.
+
+    collector.stop();
+    stored = PageSocket;
+    const target = Object.create(PageSocket.prototype, { send: { value: pageSend, writable: true, configurable: true } }) as Record<string, unknown>;
+    const MutatingSend = class extends PageSocket {};
+    Object.setPrototypeOf(
+      MutatingSend.prototype,
+      new Proxy(target, {
+        set(object, key, value) {
+          object[key as string] = value; // Takes effect, then throws.
+          throw new Error("set trap");
+        },
+      })
+    );
+    Object.defineProperty(globalThis, "WebSocket", { value: MutatingSend, writable: true, configurable: true });
+    expect(() => collector.start()).not.toThrow();
+    expect(platform.WebSocket).toBe(MutatingSend);
+    expect(target.send).toBe(pageSend);
+  });
+
+  it("never keeps an observed socket alive, also one that fails without a close event", async () => {
+    setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as () => void;
+    collector.start();
+    const ref = (() => {
+      const socket = openSocket("wss://example.com/refused");
+      socket.readyState = 3;
+      socket.serverFails(); // As Node 22 reports a refused handshake: error, no close.
+      return new WeakRef(socket);
+    })();
+    for (let attempt = 0; attempt < 10 && ref.deref(); attempt += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+      gc();
+    }
+    expect(ref.deref()).toBeUndefined();
+    expect(collector.collect().map((event) => event.type)).toEqual(["error"]);
   });
 
   it("attempts each restore on its own and clears its state when one throws", () => {

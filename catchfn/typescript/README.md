@@ -190,13 +190,15 @@ working) and wraps the `send` its sockets inherit, on the prototype that
 defines it (`WebSocket.prototype`, also when the global is a subclass); the last `stop()` restores
 both where its own wrapper is still installed, as above. Every target is
 resolved before anything is replaced, so `start()` never throws: a global it
-cannot replace (or a failure part way) leaves nothing installed and the
-collector records nothing. Each restore runs on its own, so one that throws
+cannot replace (or a failure part way) is rolled back, a wrapper it cannot
+remove is left inert, and the collector records nothing. Each restore runs on its own, so one that throws
 does not stop the others. Only sockets constructed while a collector runs
 are observed: the constructor adds `open`, `message`, `close` and `error`
 listeners before the page can add its own. They are removed after the
 socket's `close` event and from every socket on the last `stop()`; the
-page's own listeners stay and the socket is never closed. A restart observes
+page's own listeners stay and the socket is never closed. Sockets are held
+only weakly, so a running collector never keeps one alive, also one that
+fails without a `close` event. A restart observes
 new sockets only. A class that extended `WebSocket` before `start()`
 constructs through the page's own class and is not observed.
 
