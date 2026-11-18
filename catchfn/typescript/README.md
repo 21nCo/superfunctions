@@ -207,10 +207,12 @@ constructs through the page's own class and is not observed.
   through the platform getters captured at load. Another payload type is
   recorded without `size`. The payload itself is never recorded.
 - Only a `send()` on an open socket is recorded, its `readyState` read
-  before and after the call through the getter captured at load: the
-  platform throws while connecting (it still throws) and discards the data
-  once the socket is closing or closed (nothing is recorded), also when
-  converting the data to a string ran page code that closed it.
+  before the call through the getter captured at load: the platform throws
+  while connecting (it still throws) and discards the data once the socket
+  is closing or closed (nothing is recorded). Data other than a string or
+  binary data is converted to a string first, which can run page code that
+  closes the socket, so it is recorded only if the socket is still open
+  after the call.
 - Event attributes are read only through the platform getters. A `message`
   or `close` event the page dispatches on a socket itself, which is not a
   platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has

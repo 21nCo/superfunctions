@@ -218,6 +218,8 @@ function install(current: Set<Listener>): (() => void) | undefined {
 
     const observe = (socket: object) => {
       const url = captureUrl(attribute(urlGetter, socket, "url"));
+      // Redacting the URL can run page code that stops the last collector.
+      if (!live()) return;
       const added: Array<[string, (event: unknown) => void]> = [];
       const ref = new WeakRef(socket);
       const detach = () => {
@@ -304,14 +306,16 @@ function install(current: Set<Listener>): (() => void) | undefined {
           const deliver = receivers();
           // Only a send() on an open socket transmits: the platform throws
           // while connecting and discards the data once closing or closed.
-          // Converting the data can run page code that closes the socket, so
-          // it must still be open after the call too.
+          // Strings and binary data are sent as they are; anything else is
+          // converted to a string first, which can run page code that closes
+          // the socket, so such data is recorded only if it is still open after.
+          const size = payloadSize(args[0]);
           const openBefore = readyState(this) === OPEN;
           const result = apply(sendOwner.original, this, args);
           try {
             const url = typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-            if (openBefore && url !== undefined && readyState(this) === OPEN) {
-              const size = payloadSize(args[0]);
+            const converted = size === undefined;
+            if (openBefore && url !== undefined && (!converted || readyState(this) === OPEN)) {
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             }
           } catch {

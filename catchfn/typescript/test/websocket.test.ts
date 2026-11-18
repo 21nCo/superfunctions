@@ -93,6 +93,29 @@ afterEach(() => {
   expectValidEvents(events);
 });
 
+/** The collector loaded with listener methods that record each add and remove. */
+async function loadRecordingListeners() {
+  const added: Array<[unknown, string, unknown]> = [];
+  const removed: Array<[unknown, string, unknown]> = [];
+  const { addEventListener, removeEventListener } = EventTarget.prototype;
+  EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["addEventListener"]>) {
+    added.push([this, args[0], args[1]]);
+    return addEventListener.apply(this, args);
+  };
+  EventTarget.prototype.removeEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["removeEventListener"]>) {
+    removed.push([this, args[0], args[1]]);
+    return removeEventListener.apply(this, args);
+  };
+  vi.resetModules();
+  try {
+    const fresh = await import("../src/collectors/websocket.js"); // Captures the recording methods.
+    return { fresh, added, removed };
+  } finally {
+    EventTarget.prototype.addEventListener = addEventListener;
+    EventTarget.prototype.removeEventListener = removeEventListener;
+  }
+}
+
 describe("WebSocketCollector", () => {
   it("records open, messages both ways with their size, error and close, never a payload", () => {
     collector.start();
@@ -159,6 +182,49 @@ describe("WebSocketCollector", () => {
     socket.send("after close");
     expect(socket.sent).toEqual([]);
     expect(collector.collect().map((event) => event.type)).toEqual(["open", "close"]);
+  });
+
+  it("records a send() through a library's own send that closes the socket after transmitting", () => {
+    class SendAndClose extends PageSocket {
+      override send(data: unknown): void {
+        super.send(data);
+        this.close();
+      }
+    }
+    platform.WebSocket = SendAndClose;
+    collector.start();
+    const socket = openSocket("wss://example.com/send-and-close");
+    socket.serverOpens();
+    socket.send("last");
+    expect(socket.sent).toEqual(["last"]);
+    expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([
+      { type: "open", size: undefined },
+      { type: "message", size: 4 },
+    ]);
+  });
+
+  it("adds no socket listeners when redacting the URL stops the last collector", async () => {
+    const { fresh, added, removed } = await loadRecordingListeners();
+    const reentrant = new fresh.WebSocketCollector(5);
+    const PlatformURL = URL;
+    globalThis.URL = class extends PlatformURL {
+      constructor(...args: ConstructorParameters<typeof URL>) {
+        super(...args);
+        reentrant.stop();
+      }
+    } as typeof URL;
+    try {
+      reentrant.start();
+      const socket = openSocket("wss://example.com/reentrant");
+      socket.serverOpens();
+      expect(added.filter(([target]) => target === socket)).toEqual([]);
+      expect(removed).toEqual([]);
+    } finally {
+      globalThis.URL = PlatformURL;
+      reentrant.stop();
+    }
+    expect(platform.WebSocket).toBe(PageSocket);
+    expect(reentrant.collect()).toEqual([]);
   });
 
   it("does not record a send() whose data conversion closes the socket, and records one that converts", () => {
@@ -399,25 +465,7 @@ describe("WebSocketCollector", () => {
   });
 
   it("detaches its socket listeners on close and on the last stop(), keeping the page's listeners and sockets", async () => {
-    const added: Array<[unknown, string, unknown]> = [];
-    const removed: Array<[unknown, string, unknown]> = [];
-    const { addEventListener, removeEventListener } = EventTarget.prototype;
-    EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["addEventListener"]>) {
-      added.push([this, args[0], args[1]]);
-      return addEventListener.apply(this, args);
-    };
-    EventTarget.prototype.removeEventListener = function (this: EventTarget, ...args: Parameters<EventTarget["removeEventListener"]>) {
-      removed.push([this, args[0], args[1]]);
-      return removeEventListener.apply(this, args);
-    };
-    vi.resetModules();
-    let fresh: typeof import("../src/collectors/websocket.js");
-    try {
-      fresh = await import("../src/collectors/websocket.js"); // Captures the recording methods.
-    } finally {
-      EventTarget.prototype.addEventListener = addEventListener;
-      EventTarget.prototype.removeEventListener = removeEventListener;
-    }
+    const { fresh, added, removed } = await loadRecordingListeners();
     const first = new fresh.WebSocketCollector(10);
     const second = new fresh.WebSocketCollector(10);
     const on = (socket: object) => added.filter(([target]) => target === socket).map(([, type, listener]) => `${type}:${added.findIndex(([, , other]) => other === listener)}`);
