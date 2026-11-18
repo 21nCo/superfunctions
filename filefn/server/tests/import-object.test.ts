@@ -39,7 +39,11 @@ function createStorage(initial: Record<string, number> = {}) {
     },
     async openUploadStream(input) {
       calls.push(`upload:${input.key}`);
-      return new WritableStream();
+      const chunks: Uint8Array[] = [];
+      return new WritableStream<Uint8Array>({
+        write(chunk) { chunks.push(chunk); },
+        close() { objects.set(input.key, Buffer.concat(chunks)); },
+      });
     },
     async openDownloadStream(input) {
       calls.push(`download:${input.key}`);

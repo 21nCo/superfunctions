@@ -131,7 +131,7 @@ Processors that need native tools (sharp, ffmpeg, tesseract) do not run in a Wor
 
 ## Expired upload sessions
 
-`fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept.
+`fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept, and so are sessions a running completion holds; an expired `publishing` session is finished, and part rows a completed session's cleanup left are deleted.
 
 ## IDs
 

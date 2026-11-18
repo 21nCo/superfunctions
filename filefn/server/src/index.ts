@@ -76,6 +76,11 @@ export interface FileFnConfig {
   defaultChunkSizeBytes?: number;
   uploadSessionTtlSeconds?: number;
   signedUrlTtlSeconds?: number;
+  /**
+   * How long an upload completion may run before another completion call of
+   * the same session may take it over (default 900).
+   */
+  completionTimeoutSeconds?: number;
   dedup?: {
     enabled?: boolean;
   };
@@ -165,6 +170,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
     signedUrlTtlSeconds,
+    completionTimeoutSeconds,
     dedup,
     processing: processingConfig,
   } = config;
@@ -268,6 +274,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
     signedUrlTtlSeconds,
+    completionTimeoutSeconds,
     databaseIdentity: inputDatabase,
   });
 

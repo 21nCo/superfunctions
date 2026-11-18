@@ -3,11 +3,14 @@ import { createUploadSessionRoutes } from '../upload-sessions/routes.js';
 import { createUploadSessionService } from '../upload-sessions/service.js';
 
 describe('Completion Size Validation', () => {
+  // One upload session row; conditional writes to it apply.
+  let row: Record<string, unknown> = {};
   const mockDb = {
-    findOne: vi.fn(),
+    findOne: vi.fn(async ({ model }: { model: string }) => (model === 'uploadSessions' ? { ...row } : null)),
     findMany: vi.fn(),
     create: vi.fn(),
-    update: vi.fn(),
+    update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => Object.assign(row, data)),
+    updateMany: vi.fn(async () => 1),
     upsert: vi.fn(),
   };
 
@@ -32,7 +35,7 @@ describe('Completion Size Validation', () => {
 
   // TV-UPLOAD-COMPLETE-VALIDATE-SIZE-NEG-001
   it('fails completion if storage size does not match session size', async () => {
-    mockDb.findOne.mockResolvedValue({
+    row = {
       uploadSessionId: 'sess_1',
       status: 'in_progress',
       uploadMode: 'multipart-signed-url',
@@ -41,7 +44,7 @@ describe('Completion Size Validation', () => {
       expiresAt: new Date(Date.now() + 10000).toISOString(),
       storageKey: 'key',
       storageUploadId: 'uid'
-    });
+    };
     
     mockDb.findMany.mockResolvedValue([{ partNumber: 1, etag: 'e1' }]);
 

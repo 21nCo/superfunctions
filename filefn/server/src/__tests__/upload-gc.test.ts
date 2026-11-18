@@ -261,8 +261,11 @@ describe('PHASE_02 upload cleanup semantics', () => {
     const remainingSessions = db.all('uploadSessions').map((s) => s.uploadSessionId);
     expect(remainingSessions).toEqual(['s_done']);
 
+    // A completed session keeps its row; part rows its completion left (its
+    // cleanup failed) are deleted with their objects.
     const remainingParts = db.all('uploadParts').map((p) => p.uploadSessionId);
-    expect(remainingParts).toEqual(['s_done']);
+    expect(remainingParts).toEqual([]);
+    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_done.part1', target: 'durable' });
 
     expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part1', target: 'durable' });
     expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part2', target: 'durable' });
