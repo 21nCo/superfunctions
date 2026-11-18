@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { disableLoopbackKeepAliveTimeout, probeLoopbackKeepAlive } from "./__tests__/workerd/loopback-keep-alive.js";
+
+// Keeps isolated-storage push and pop from failing with "Network connection lost."; see loopback-keep-alive.ts.
+disableLoopbackKeepAliveTimeout();
 
 /**
  * Runs the Drizzle SQLite conformance suite inside workerd against a local
@@ -18,6 +22,7 @@ export default defineWorkersConfig({
           compatibilityDate: "2025-11-13",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: ["DB"],
+          serviceBindings: { LOOPBACK_KEEP_ALIVE_PROBE: probeLoopbackKeepAlive },
         },
       },
     },
