@@ -12,7 +12,7 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | Column | Type | Notes |
 | --- | --- | --- |
 | `uploadSessionId` | string (PK) | |
-| `status` | string | `"open" | "completed" | "aborted" | "expired"` |
+| `status` | string | `"pending" | "in_progress" | "completing" | "publishing" | "completed" | "aborted" | "refused"`. `completing` is held by one completion call; `publishing` has a recorded publication that any completion call finishes; `refused` is a completion refused for permission (one refused after its move to `publishing` keeps its row for good, the expiry sweep's record of rows a late completion call may still write). The status route reports `completing` and `publishing` as `in_progress` and `refused` as `aborted`. |
 | `policy` | string | |
 | `fileId` | string? | Set on completion. |
 | `fileName` | string | |
@@ -27,6 +27,8 @@ filefn ships seven tables, all prefixed with `namespace` (default `filefn`).
 | `tenantId` | string? | |
 | `idempotencyKey` | string? | Per (owner, tenant). |
 | `idempotencyPayloadHash` | string? | |
+| `completionClaim` | string? | `<ISO time> <random>` (with ` retake` appended once the session was claimed before, then the comma-separated nonces of earlier retakes whose objects may remain): the claim of the completion call holding the session (`completing`) or that moved it to `publishing`, or of the last call that stitched an object and released it. A `publishing` session's claim carries its publication revision after the time (`<ISO time>/<revision> ...`), renewed with every rewrite of the publication. `file-deleted` on a completed session whose file was deleted: kept for good, the expiry sweep's record of the publication whose late rows it removes. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
+| `completionPublication` | json? | Set with the move to `publishing`: `{ versionId, storageKey, checksumSha256Base64, baseVersionId, unusedKeys }`, what the completion publishes (`baseVersionId` is the file version it replaces, `null` for a new file), plus `finishedBy` (the call that completed it) and `fileDeleted` and `fileDeletedAt` (set by a file delete). Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `expiresAt` | string | ISO. |
 | `createdAt` | string | ISO. |
 
@@ -54,6 +56,7 @@ Index: `UNIQUE (uploadSessionId, partNumber)`.
 | --- | --- | --- |
 | `fileId` | string (PK) | |
 | `currentVersionId` | string | |
+| `originVersionId` | string? | The version an upload created the file with; never changed afterwards. Added in `@filefn/server` 0.6.1; add this nullable column to existing tables. |
 | `ownerId` | string | |
 | `tenantId` | string? | |
 | `visibility` | string | `"public" | "private" | "shared"` |

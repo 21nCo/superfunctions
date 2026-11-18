@@ -12,6 +12,7 @@ export function getSchema(options: FileFnSchemaOptions = {}): { version: number;
     fields: {
       fileId: { type: 'string', required: true, unique: true },
       currentVersionId: { type: 'string', required: true },
+      originVersionId: { type: 'string', required: false },
       ownerId: { type: 'string', required: true },
       tenantId: { type: 'string', required: false },
       visibility: { type: 'string', required: true },
@@ -68,6 +69,8 @@ export function getSchema(options: FileFnSchemaOptions = {}): { version: number;
       idempotencyKey: { type: 'string', required: false },
       idempotencyPayloadHash: { type: 'string', required: false },
       completionVersionId: { type: 'string', required: false },
+      completionClaim: { type: 'string', required: false },
+      completionPublication: { type: 'json', required: false },
       uploadSessionToken: { type: 'string', required: false },
       uploadSessionTokenHash: { type: 'string', required: false },
       expiresAt: { type: 'string', required: true },

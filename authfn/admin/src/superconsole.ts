@@ -162,7 +162,7 @@ export function createAuthFnOperatorAuth<
       const session = await authFn.provider.authenticate(request);
       // Console operators sign in interactively; an API key that acts as an
       // operator's user must not become an operator principal.
-      if (!session || session.type !== 'session') return null;
+      if (session?.type !== 'session') return null;
       const principal = await options.resolveOperator({ session, request });
       return principal ? withCookieNames(authFn, principal, request) : null;
     },

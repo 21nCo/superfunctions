@@ -32,8 +32,16 @@ function createMockDb(): Adapter {
       if (!records) return [];
       return Array.from(records.values()) as any[];
     },
-    async update() {
-      return {} as any;
+    async update({ model, where, data, namespace }) {
+      const records = storage.get(`${namespace}:${model}`);
+      for (const [id, record] of records?.entries() ?? []) {
+        if (where.every((w: any) => (record as any)[w.field] === w.value)) {
+          const updated = { ...(record as any), ...data };
+          records!.set(id, updated);
+          return updated;
+        }
+      }
+      return null as any;
     },
     async updateMany() {
       return 0;
