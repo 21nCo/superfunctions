@@ -410,3 +410,29 @@ test("buyNucleusYearly handshakes with the native host before the StoreKit check
   });
   assert.deepEqual(flaky.received, ["handshake", "handshake", "storekit.checkout"]);
 });
+
+test("a pending checkout's later transaction.updated outcome reaches onTransactionUpdated until stopBilling", async () => {
+  const handshake = { ok: true, result: { bridgeVersion: 1, billingOwner: "native", capabilities: ["storekit.checkout"] } };
+  const pending = { ok: true, result: { status: "pending", checkoutSessionId: "cs_test_1", productId: "com.example.nucleus.year" } };
+  const transaction = { transactionId: "2000000000000002", originalTransactionId: "2000000000000001", productId: "com.example.nucleus.year", appAccountToken: null, revoked: false };
+  const outcome = { transaction, status: "confirmed", finished: true, billing: {} };
+  const host = fakeNativeHost((message) => (message.method === "handshake" ? handshake : pending));
+  // The native app posts dispatcher.transactionEvent(outcome) once the Ask to Buy purchase is approved.
+  const approve = () => host.window.__billfnBridgeReceive__({ protocol: "billfn-bridge/v1", event: "transaction.updated", payload: { outcome } });
+
+  await withGlobals({ window: host.window }, async () => {
+    const { buyNucleusYearly, onTransactionUpdated, stopBilling } = await importBlock("src/web-billing.ts");
+    const seen = [];
+    onTransactionUpdated((update) => seen.push(update));
+    try {
+      assert.equal(await buyNucleusYearly(), "pending");
+      approve();
+      assert.deepEqual(seen, [outcome]);
+    } finally {
+      stopBilling();
+    }
+    approve();
+    assert.deepEqual(seen, [outcome], "no outcome after stopBilling");
+  });
+  assert.deepEqual(host.received, ["handshake", "storekit.checkout"]);
+});

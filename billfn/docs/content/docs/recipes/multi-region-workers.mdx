@@ -473,7 +473,7 @@ let result = try await storeKit.purchase(planKey: "nucleus", interval: "year")
 
 ```ts
 // src/web-billing.ts (browser)
-import { createNativeBackedBillFnClient } from "@billfn/swift-bridge";
+import { createNativeBackedBillFnClient, type BillFnStoreKitTransactionOutcome } from "@billfn/swift-bridge";
 
 const billing = createNativeBackedBillFnClient({
   clientId: "nucleus-web",
@@ -481,10 +481,29 @@ const billing = createNativeBackedBillFnClient({
   baseURL: "https://euwest.account.example.com/billfn",
 });
 
+type TransactionListener = (outcome: BillFnStoreKitTransactionOutcome) => void;
+const listeners = new Set<TransactionListener>();
+let unsubscribe: (() => void) | undefined;
 let connected: Promise<unknown> | undefined;
 
-/** Handshakes once; a failed handshake rejects this call and is tried again on the next one. */
+/**
+ * Calls `listener` with each StoreKit outcome the native app reports, including those that complete after their request:
+ * an approved Ask to Buy purchase, a renewal, or a purchase that outlasted its request. Register it while the page shows
+ * billing state; the result removes it.
+ */
+export function onTransactionUpdated(listener: TransactionListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Subscribes, then handshakes once; a failed handshake rejects this call and is tried again on the next one. */
 function connect(): Promise<unknown> {
+  // Subscribe before the first request and keep it: the bridge does not replay events.
+  unsubscribe ??= billing.subscribe((event) => {
+    if (event.event !== "transaction.updated") return;
+    const { outcome } = event.payload as { outcome: BillFnStoreKitTransactionOutcome };
+    listeners.forEach((listener) => listener(outcome));
+  });
   connected ??= billing.handshake().catch((error: unknown) => {
     connected = undefined;
     throw error;
@@ -497,9 +516,15 @@ export async function buyNucleusYearly(): Promise<"purchased" | "pending" | "can
   const result = await billing.checkout({ planKey: "nucleus", interval: "year" });
   return result.status;
 }
+
+/** Stops listening to the native app when the page no longer shows billing state. */
+export function stopBilling(): void {
+  unsubscribe?.();
+  unsubscribe = undefined;
+}
 ```
 
-The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
+The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request, and it subscribes to bridge events before that. A `pending` checkout (Ask to Buy) or one that failed with `BRIDGE_INTERACTIVE_TIMEOUT` is not lost: its outcome arrives later as a `transaction.updated` event, which `onTransactionUpdated` hands to the page, for example to refresh its entitlements. The bridge does not replay events, so an outcome that arrives before the subscription, or while no listener is registered, is dropped; call `stopBilling()` only when the page stops showing billing state. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
 
 ## Importing legacy subscriptions
 
@@ -533,4 +558,4 @@ Run it in the region that holds the user's account, from an operator tool or [`@
 
 ## What is verified
 
-`npm test --workspace @billfn/docs` typechecks every TypeScript block on this page against the current `@billfn/*`, `authfn`, `@authfn/password`, `@superfunctions/queue` and `@cloudflare/workers-types` declarations (the browser block with DOM types), with `src/database.ts`, `src/mail.ts` and `src/discount-tiers.ts` stubbed. It also runs the blocks: the signup trial against a real BillFn, `resolveSubject` through the BillFn router (401 without a session, 403 on a CSRF mismatch) with AuthFn faked, the plan emails, the cron drain, the regional routing, the ingress's owner lookups and forwards through fake service bindings, and `buyNucleusYearly` against the real bridge client and a fake native host. The `@billfn/core` workerd suite runs the router, two regions behind the ingress, Dodo checkout region metadata and the Apple verifier and signer in workerd. Live Dodo and App Store calls, StoreKit purchases on a device, Hyperdrive and cron triggers on a Cloudflare account are not covered.
+`npm test --workspace @billfn/docs` typechecks every TypeScript block on this page against the current `@billfn/*`, `authfn`, `@authfn/password`, `@superfunctions/queue` and `@cloudflare/workers-types` declarations (the browser block with DOM types), with `src/database.ts`, `src/mail.ts` and `src/discount-tiers.ts` stubbed. It also runs the blocks: the signup trial against a real BillFn, `resolveSubject` through the BillFn router (401 without a session, 403 on a CSRF mismatch) with AuthFn faked, the plan emails, the cron drain, the regional routing, the ingress's owner lookups and forwards through fake service bindings, and `buyNucleusYearly` and `onTransactionUpdated` against the real bridge client and a fake native host. The `@billfn/core` workerd suite runs the router, two regions behind the ingress, Dodo checkout region metadata and the Apple verifier and signer in workerd. Live Dodo and App Store calls, StoreKit purchases on a device, Hyperdrive and cron triggers on a Cloudflare account are not covered.
