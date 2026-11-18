@@ -1,0 +1,572 @@
+---
+title: Multi-region Workers host
+description: Run BillFn inside each regional account Worker with AuthFn, a catalog with discount prices, signup trials, plan emails, one public webhook ingress per provider, StoreKit 2, legacy import and cron-driven reconciliation.
+---
+
+This recipe puts the server pages together into one Cloudflare deployment:
+
+- **One account Worker per region** (`insouth`, `useast`, `euwest`). Each serves AuthFn at `/auth/*` and BillFn at `/billfn/*` on the region's origin, over the region's own database. A user's account, billing account, subscriptions and entitlements live in the user's home region, and clients call that region's origin.
+- **One ingress Worker** serves the public webhook URL of each provider and forwards every delivery to the region that owns it (see [Regions and webhook ingress](/docs/server/regions)).
+- **A cron trigger** in each regional Worker runs reconciliation: it schedules the `lifecycle-events` job and drains the region's reconciliation queue.
+
+A user holds one plan at a time. The `nucleus` plan below includes Memotron and Pointron, so both apps read the same entitlements.
+
+## Wrangler configuration
+
+```jsonc
+// wrangler.jsonc (the regional account Worker)
+{
+  "name": "account",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-11-13",
+  // @billfn/core and @billfn/provider-apple import node:crypto and node:async_hooks.
+  "compatibility_flags": ["nodejs_compat"],
+  // Every minute: drain the reconciliation queue. Every five minutes: also schedule the lifecycle-events job.
+  "triggers": { "crons": ["* * * * *", "*/5 * * * *"] },
+  "env": {
+    // Wrangler deploys each environment as its own Worker: "account-euwest", "account-insouth", "account-useast".
+    "euwest": {
+      "routes": [{ "pattern": "euwest.account.example.com/*", "zone_name": "example.com" }],
+      "vars": { "BILLFN_REGION": "euwest", "DODO_ENVIRONMENT": "live_mode", "APPLE_ENVIRONMENT": "production" },
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<euwest Hyperdrive config ID>" }]
+    }
+    // insouth and useast are the same with their own route, BILLFN_REGION and database.
+  }
+}
+```
+
+```jsonc
+// wrangler.ingress.jsonc (the public webhook ingress Worker: wrangler deploy -c wrangler.ingress.jsonc)
+{
+  "name": "billing-webhooks",
+  "main": "src/ingress-worker.ts",
+  "compatibility_date": "2025-11-13",
+  // @billfn/core imports node:crypto and node:async_hooks.
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "billing-webhooks.example.com/webhooks/*", "zone_name": "example.com" }],
+  // The regional Workers, reached directly rather than through their public routes.
+  "services": [
+    { "binding": "INSOUTH", "service": "account-insouth" },
+    { "binding": "USEAST", "service": "account-useast" },
+    { "binding": "EUWEST", "service": "account-euwest" }
+  ]
+}
+```
+
+The ingress calls the regions through service bindings. A Worker's `fetch` to a hostname in its own zone goes to the zone's origin, not to the Worker routed there (unless the Worker sets the `global_fetch_strictly_public` flag), so with every Worker in `example.com` a plain `fetch` to `https://euwest.account.example.com` would never reach the regional Worker.
+
+Set the secrets with `wrangler secret put` in every regional environment: `BILLFN_INTERNAL_TOKEN` (one value shared by every region and the ingress), `BILLFN_OPS_TOKEN`, `DODO_API_KEY`, `DODO_WEBHOOK_SECRET`, `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_IN_APP_PURCHASE_KEY`. The ingress Worker needs only `BILLFN_INTERNAL_TOKEN` (`wrangler secret put BILLFN_INTERNAL_TOKEN -c wrangler.ingress.jsonc`). Both configurations live in one project, so the ingress code is `src/ingress-worker.ts` next to `src/worker.ts`. Point the Dodo webhook and the App Store Server Notifications v2 URL at `https://billing-webhooks.example.com/webhooks/dodo` and `/webhooks/apple`.
+
+## Environment
+
+```ts
+// src/env.ts
+export interface Env {
+  /** This region's Postgres: the AuthFn, BillFn and queue tables. */
+  HYPERDRIVE: Hyperdrive;
+  BILLFN_REGION: "insouth" | "useast" | "euwest";
+  /** Shared with the ingress Worker, which presents it to `GET /billfn/ops/owner`. */
+  BILLFN_INTERNAL_TOKEN: string;
+  /** Guards the `/billfn/ops/*` reconciliation routes. */
+  BILLFN_OPS_TOKEN: string;
+  DODO_API_KEY: string;
+  DODO_WEBHOOK_SECRET: string;
+  DODO_ENVIRONMENT: "test_mode" | "live_mode";
+  APPLE_ENVIRONMENT: "production" | "sandbox";
+  APPLE_ISSUER_ID: string;
+  APPLE_KEY_ID: string;
+  /** The App Store Connect in-app purchase key (.p8) as PEM. */
+  APPLE_IN_APP_PURCHASE_KEY: string;
+}
+```
+
+`createDatabase(env)` in `src/database.ts` is your `@superfunctions/db` adapter over the region's Postgres, for example Kysely or Drizzle with `pg` connecting through `env.HYPERDRIVE.connectionString`. AuthFn, BillFn and the reconciliation queue share it: its table registry must include the AuthFn and BillFn tables (see [Schema](/docs/reference/schema)), and the queue table is created once in each region's database with `await new DatabaseQueueAdapter({ db }).migrate()` before the first deploy. The queue runs its statements through the adapter's `rawSql`, which the Kysely and Drizzle SQL adapters provide.
+
+## Catalog with discount prices
+
+```ts
+// src/catalog.ts
+import type { BillFnCatalog } from "@billfn/core";
+
+export const catalog: BillFnCatalog = {
+  plans: [
+    {
+      productKey: "nucleus",
+      planKey: "nucleus",
+      displayName: "Nucleus",
+      description: "Memotron and Pointron",
+      features: { memotron: true, pointron: true },
+      limits: { storageGb: 100 },
+      prices: [
+        { priceId: "nucleus_dodo_month", provider: "dodo", providerProductId: "pdt_nucleus_month", currency: "USD", amount: 10, kind: "subscription", interval: "month" },
+        { priceId: "nucleus_dodo_year", provider: "dodo", providerProductId: "pdt_nucleus_year", currency: "USD", amount: 100, kind: "subscription", interval: "year" },
+        // Discount tiers: sold only to billing accounts in the tier (see isPriceEligible in src/billing.ts).
+        { priceId: "nucleus_dodo_month_student", provider: "dodo", providerProductId: "pdt_nucleus_month_student", currency: "USD", amount: 5, kind: "subscription", interval: "month", eligibility: "student" },
+        { priceId: "nucleus_dodo_month_regional", provider: "dodo", providerProductId: "pdt_nucleus_month_regional", currency: "USD", amount: 4, kind: "subscription", interval: "month", eligibility: "regional" },
+        { priceId: "nucleus_apple_month", provider: "apple", providerProductId: "com.example.nucleus.month", currency: "USD", amount: 10, kind: "subscription", interval: "month" },
+        { priceId: "nucleus_apple_year", provider: "apple", providerProductId: "com.example.nucleus.year", currency: "USD", amount: 100, kind: "subscription", interval: "year" },
+      ],
+    },
+  ],
+};
+```
+
+Checkout never picks a price with an `eligibility` tag by default: the client asks for it by `priceId`, and checkout and plan changes sell it only when `checkout.isPriceEligible` returns `true` (see [Discounted prices](/docs/server/setup#discounted-prices)). The catalog is the same in every region.
+
+## Accounts
+
+```ts
+// src/accounts.ts
+import type { BillingAccountResolver } from "@billfn/core";
+
+/** One billing account per AuthFn user. */
+export function billingAccountIdFor(userId: string): string {
+  return `ba_user_${userId}`;
+}
+
+export const billingAccountResolver: BillingAccountResolver = {
+  async resolve(subject) {
+    if (!subject.principalId) return null;
+    return { billingAccountId: billingAccountIdFor(subject.principalId), ownerType: "user", ownerId: subject.principalId };
+  },
+};
+```
+
+## Signup trials
+
+```ts
+// src/trial.ts
+import type { BillFnInstance } from "@billfn/core";
+import { billingAccountIdFor } from "./accounts";
+
+const TRIAL_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isBillFnError(error: unknown, code: string): error is { code: string; details?: Record<string, unknown> } {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
+}
+
+/** Grants the 14-day Nucleus trial. Safe to call again: an account gets one trial ever. */
+export async function grantSignupTrial(billfn: BillFnInstance, userId: string, now = new Date()): Promise<void> {
+  try {
+    await billfn.services.grants.create({
+      billingAccountId: billingAccountIdFor(userId),
+      subject: { principalId: userId }, // creates the billing account
+      planKey: "nucleus",
+      kind: "trial",
+      expiresAt: new Date(now.getTime() + TRIAL_DAYS * DAY_MS).toISOString(),
+      operator: { id: "authfn-signup", type: "service" },
+      reason: "signup trial",
+    });
+  } catch (error) {
+    if (isBillFnError(error, "BILLFN_CONFLICT") && error.details?.reason === "trial_already_granted") return;
+    throw error;
+  }
+}
+```
+
+AuthFn calls `afterUserCreate` (wired in `src/billing.ts`) after it creates a user. The trial makes the account's entitlements `trialing` until it expires; a paid subscription supersedes it, and expiry needs no job (see [Trials and comps](/docs/server/entitlements-and-quotas#trials-and-comps)). AuthFn's after hooks fail open, so a failed grant does not fail the signup: the hook logs it, and rerunning `grantSignupTrial` for that user grants the trial or finds it already granted.
+
+## Plan emails from lifecycle events
+
+```ts
+// src/plan-emails.ts
+import type { BillFnLifecycleEventHandler } from "@billfn/core";
+import type { Env } from "./env";
+import { sendPlanEmail } from "./mail";
+
+/** Sends one plan email per lifecycle event; `event.id` is the idempotency key, because delivery is at least once. */
+export function planEmails(env: Env): BillFnLifecycleEventHandler {
+  return async (event) => {
+    const send = (template: string, data: Record<string, unknown>) =>
+      sendPlanEmail(env, { billingAccountId: event.billingAccountId, template, idempotencyKey: event.id, data });
+    switch (event.type) {
+      case "checkout.completed":
+        return send("plan-started", { planKey: event.data.planKey });
+      case "subscription.renewed":
+        return send("plan-renewed", { planKey: event.data.planKey, currentPeriodEnd: event.data.currentPeriodEnd });
+      case "subscription.canceled":
+        return send("plan-canceled", { planKey: event.data.planKey, endsAt: event.data.autoRenew ? null : event.data.currentPeriodEnd });
+      case "grant.started":
+        if (event.data.kind === "trial") return send("trial-started", { expiresAt: event.data.expiresAt });
+        return;
+      case "grant.expiring":
+        if (event.data.kind === "trial") return send("trial-ending", { expiresAt: event.data.expiresAt });
+        return;
+      case "entitlement.changed":
+        return; // Clients reread getEntitlements; no email.
+    }
+  };
+}
+```
+
+`sendPlanEmail` in `src/mail.ts` is your mail sender; it looks up the account owner's address and must drop a second send with the same idempotency key. Every regional Worker sets `onEvent`, so each event is recorded in the region that wrote it and delivered there (see [Lifecycle events](/docs/server/lifecycle-events)). A delivery still running when the request ends can be cut off on Workers; the cron's `lifecycle-events` job delivers it again after its claim lapses, so keep the handler short.
+
+## AuthFn and BillFn in one region
+
+```ts
+// src/billing.ts
+import { authfn, AuthFnCsrfInvalidError, AuthFnError, type AuthFnServer, type AuthFnSession } from "authfn";
+import { authFnPasswordPlugin } from "@authfn/password";
+import { createBillFn, createBillFnError, type BillFnConfig, type BillFnQueuedJob } from "@billfn/core";
+import { createAppleProvider } from "@billfn/provider-apple";
+import { createDodoProvider } from "@billfn/provider-dodo";
+import { DatabaseQueueAdapter } from "@superfunctions/queue";
+import { billingAccountResolver } from "./accounts";
+import { catalog } from "./catalog";
+import { createDatabase } from "./database";
+import { discountTierOf } from "./discount-tiers";
+import type { Env } from "./env";
+import { planEmails } from "./plan-emails";
+import { grantSignupTrial } from "./trial";
+
+const authApp = authfn({ basePath: "/auth", plugins: [authFnPasswordPlugin()] });
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+async function bearerMatches(request: Request, expected: string): Promise<boolean> {
+  const presented = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+  if (!presented || !expected) return false;
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all(
+    [presented, expected].map(async (value) => crypto.subtle.digest("SHA-256", encoder.encode(value))),
+  );
+  return crypto.subtle.timingSafeEqual(a, b);
+}
+
+export function createRegion(env: Env) {
+  const database = createDatabase(env);
+  const queue = new DatabaseQueueAdapter<BillFnQueuedJob>({ db: database });
+
+  const config: BillFnConfig = {
+    db: database,
+    catalog,
+    queue,
+    region: { id: env.BILLFN_REGION, internalToken: env.BILLFN_INTERNAL_TOKEN },
+    billingAccountResolver,
+    providers: {
+      dodo: createDodoProvider({
+        apiKey: env.DODO_API_KEY,
+        webhookSecret: env.DODO_WEBHOOK_SECRET,
+        environment: env.DODO_ENVIRONMENT,
+      }),
+      apple: createAppleProvider({
+        environment: env.APPLE_ENVIRONMENT,
+        bundleId: "com.example.nucleus",
+        appStoreServerApiKey: {
+          issuerId: env.APPLE_ISSUER_ID,
+          keyId: env.APPLE_KEY_ID,
+          privateKey: env.APPLE_IN_APP_PURCHASE_KEY,
+        },
+      }),
+    },
+    auth: {
+      // The AuthFn user is the billing subject. Unsafe methods need the CSRF header with a cookie session.
+      async resolveSubject(request) {
+        let session: AuthFnSession | null = null;
+        try {
+          session = SAFE_METHODS.has(request.method)
+            ? await auth.provider.authenticate(request)
+            : await auth.authorizeMutation(request);
+        } catch (error) {
+          if (error instanceof AuthFnCsrfInvalidError) {
+            throw createBillFnError({ code: "BILLFN_UNAUTHORIZED", message: "CSRF check failed" });
+          }
+          if (!(error instanceof AuthFnError && error.status === 401)) throw error;
+        }
+        if (!session) throw createBillFnError({ code: "BILLFN_UNAUTHENTICATED", message: "Sign in to manage billing" });
+        return { principalId: session.actorId };
+      },
+    },
+    checkout: {
+      // A discount price is sold only to an account in its tier.
+      isPriceEligible: async ({ billingAccountId, price }) =>
+        price.eligibility !== undefined && (await discountTierOf(env, billingAccountId)) === price.eligibility,
+    },
+    operations: { authorize: (request) => bearerMatches(request, env.BILLFN_OPS_TOKEN) },
+    onEvent: planEmails(env),
+  };
+
+  const billfn = createBillFn(config);
+  const auth: AuthFnServer = authApp.createServer({
+    database,
+    hooks: {
+      async afterUserCreate(_ctx, user) {
+        if (typeof user.id !== "string") return;
+        try {
+          await grantSignupTrial(billfn, user.id);
+        } catch (error) {
+          console.error("signup trial not granted", { userId: user.id, error });
+        }
+      },
+    },
+  });
+
+  return { database, auth, billfn, config };
+}
+```
+
+- `region.id` makes Dodo checkout write `billfn_region` into the Dodo record's metadata, so the ingress routes that subscription's events here without asking the regions. `region.internalToken` lets the ingress call `GET /billfn/ops/owner` for events without it (Apple notifications, and subscriptions created before BillFn).
+- `resolveSubject` throws `BILLFN_UNAUTHENTICATED` for a request without a valid AuthFn credential, so BillFn answers 401; returning `null` instead would answer 400 `BILLFN_VALIDATION_ERROR`, as for a request that names no subject. A CSRF mismatch answers 403. A body `subject` is ignored whenever a resolver is configured. Routes that take no subject (the catalog, webhooks and `/billfn/ops/*`) never call it.
+- The queue makes webhook ingestion and the jobs BillFn schedules itself (for example the `subscription-sync` after a provider mutation raced an event) durable: they wait in the region's database for the cron to run them.
+- `discountTierOf` in `src/discount-tiers.ts` is yours: it returns the discount tier you recorded for the billing account (`"student"`, `"regional"`) or `null`.
+
+## Worker and cron reconciliation
+
+```ts
+// src/worker.ts
+import { createBillFnReconciliationWorker } from "@billfn/core";
+import { createRegion } from "./billing";
+import type { Env } from "./env";
+
+const LIFECYCLE_CRON = "*/5 * * * *";
+/** How long one cron run drains the reconciliation queue; the next run continues. */
+const DRAIN_BUDGET_MS = 50_000;
+/** Failures in a row after which a cron run stops draining and leaves the queue to the next run. */
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+function isUnder(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+export default {
+  async fetch(request, env) {
+    const { auth, billfn } = createRegion(env);
+    const { pathname } = new URL(request.url);
+    if (isUnder(pathname, "/auth")) return auth.router.handle(request);
+    if (isUnder(pathname, "/billfn")) return billfn.router.handle(request);
+    return new Response("Not found", { status: 404 });
+  },
+
+  async scheduled(controller, env) {
+    const { billfn, config } = createRegion(env);
+    if (controller.cron === LIFECYCLE_CRON) {
+      // Records grant.expiring and grant-expiry events and delivers due lifecycle events, retries included.
+      await billfn.enqueueReconciliationJob({ kind: "lifecycle-events" });
+    }
+    const worker = createBillFnReconciliationWorker(config);
+    const deadline = Date.now() + DRAIN_BUDGET_MS;
+    let failures = 0;
+    while (Date.now() < deadline && failures < MAX_CONSECUTIVE_FAILURES) {
+      try {
+        if ((await worker.runNext()) === null) break; // the queue is empty
+        failures = 0;
+      } catch (error) {
+        // A job failed (its message is retried, dead-lettered or continued in a new message), the claim
+        // failed (nothing was claimed), or settling a claimed message failed (it is delivered again once
+        // its lease expires). Any three in a row end this run; the next cron run drains the rest.
+        failures += 1;
+        console.error("billfn reconciliation run failed", error);
+      }
+    }
+  },
+} satisfies ExportedHandler<Env>;
+```
+
+The router serves `/billfn/*` with its default `basePath`, including `/billfn/webhooks/:provider` (which the ingress forwards to), `/billfn/ops/owner` and the reconciliation routes. Both cron expressions fire at every fifth minute, as two runs: only the `*/5` run schedules the `lifecycle-events` job, and both drain the queue. Each `runNext()` claims one message with a 15-minute lease, so the two runs and the next minute's run never process the same message at once. `runNext()` throws in three cases. A job fails: the worker retries its message, dead-letters it, or, when a bounded replay finished some events before its bound, continues the job in a new message, as described in [Reconciliation](/docs/server/reconciliation#worker). The claim fails (the database is unreachable, or the queue table is missing): nothing is claimed. Settling a claimed message fails (acking, retrying or dead-lettering it): the message is not dead-lettered; it stays leased until its 15-minute lease expires and is then delivered again. A continuation queued before the failed ack also runs, and the job's processing lease keeps the two from running at once. A success resets the count, but any three `runNext()` failures in a row, of any kind, end this cron run instead of retrying for the rest of its budget, and the rest of the queue waits for the next run.
+
+Other jobs are operator work, queued through the routes with `authorization: Bearer <BILLFN_OPS_TOKEN>` and run by the next cron:
+
+```bash
+curl -X POST https://euwest.account.example.com/billfn/ops/reconciliation/jobs \
+  -H "authorization: Bearer $BILLFN_OPS_TOKEN" -H "content-type: application/json" \
+  -d '{"kind":"notification-history-backfill","provider":"apple"}'
+```
+
+## Webhook ingress
+
+```ts
+// src/ingress-worker.ts
+import { createWebhookIngress, type BillingProviderName } from "@billfn/core";
+
+export interface IngressEnv {
+  BILLFN_INTERNAL_TOKEN: string;
+  /** Service bindings to the regional account Workers (wrangler.ingress.jsonc). */
+  INSOUTH: Fetcher;
+  USEAST: Fetcher;
+  EUWEST: Fetcher;
+}
+
+const PROVIDERS: readonly BillingProviderName[] = ["dodo", "apple"];
+
+/** Sends a request for a region's host to that region's Worker through its service binding. */
+function regionFetch(env: IngressEnv): typeof fetch {
+  const bindings: Record<string, Fetcher> = {
+    "insouth.account.example.com": env.INSOUTH,
+    "useast.account.example.com": env.USEAST,
+    "euwest.account.example.com": env.EUWEST,
+  };
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const binding = bindings[new URL(request.url).hostname];
+    if (!binding) throw new Error(`No service binding for ${request.url}`);
+    return binding.fetch(request);
+  };
+}
+
+export default {
+  async fetch(request, env) {
+    const provider = PROVIDERS.find((name) => new URL(request.url).pathname === `/webhooks/${name}`);
+    if (request.method !== "POST" || !provider) return new Response("Not found", { status: 404 });
+    const ingress = createWebhookIngress({
+      regions: [
+        { id: "insouth", url: "https://insouth.account.example.com/billfn" },
+        { id: "useast", url: "https://useast.account.example.com/billfn" },
+        { id: "euwest", url: "https://euwest.account.example.com/billfn" },
+      ],
+      defaultRegion: "useast",
+      internalToken: env.BILLFN_INTERNAL_TOKEN,
+      // Owner lookups and forwards both go through the bindings.
+      fetch: regionFetch(env),
+      onRoute: (decision) => console.log("billfn webhook routed", decision),
+    });
+    return ingress.handle(provider, request);
+  },
+} satisfies ExportedHandler<IngressEnv>;
+```
+
+The ingress verifies nothing itself: it forwards the body and signature headers unchanged to `<region url>/webhooks/<provider>`, where the region verifies the signature, and returns the region's answer to the provider. A Dodo event carrying `billfn_region` goes to that region. Any other event goes to the region whose owner lookup claims its references, else to `defaultRegion`, which stores it unlinked. When a region cannot answer and no region claims the event, the ingress answers 503 so the provider retries. Routing details are in [Regions and webhook ingress](/docs/server/regions).
+
+Two cases reach `defaultRegion` even though the subscription belongs elsewhere:
+
+- An Apple notification that arrives before the app has verified the purchase: no region holds its transaction ids yet. The owner region's verification reads the subscription's live state from Apple, so the subscription is correct there; unless `defaultRegion` is the owner region, the copy stored unlinked in `defaultRegion` is never linked and expires after 90 days.
+- An event of a subscription created before BillFn, until it is imported (below).
+
+## Apple: StoreKit 2 and the Apple helpers
+
+The Apple adapter signs its own App Store Server API tokens and verifies App Store Server Notifications v2 against the pinned Apple root, both on WebCrypto, so it runs on Workers (see [Apple](/docs/providers/apple)). The same helpers are exported for host code, for example to check a StoreKit 2 `jwsRepresentation` a support tool received:
+
+```ts
+// src/apple-support.ts
+import { AppleSignedDataVerificationError, createAppleSignedDataVerifier } from "@billfn/provider-apple";
+
+const verifier = createAppleSignedDataVerifier({ bundleId: "com.example.nucleus" });
+
+/** The verified transaction payload of a StoreKit 2 `jwsRepresentation`, or null when it does not verify. */
+export async function readSignedTransaction(jws: string): Promise<Record<string, unknown> | null> {
+  try {
+    const { payload, environment } = await verifier.verifyTransaction(jws);
+    return { ...payload, environment };
+  } catch (error) {
+    if (error instanceof AppleSignedDataVerificationError) return null;
+    throw error;
+  }
+}
+```
+
+The native app buys with StoreKit 2 through `BillFnStoreKit`, against the user's home region and with the AuthFn session as a bearer token (see [Swift](/docs/clients/swift#storekit-2)):
+
+```swift
+let client = BillFnClient(configuration: BillFnClientConfiguration(
+    baseURL: URL(string: "https://euwest.account.example.com/billfn/")!,
+    headers: { ["authorization": "Bearer \(try await session.token())"] }
+))
+let storeKit = BillFnStoreKit(client: client, plans: [
+    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus", priceId: "nucleus_apple_month"),
+    BillFnStoreKitPlan(productId: "com.example.nucleus.year", planKey: "nucleus", priceId: "nucleus_apple_year"),
+])
+await storeKit.start() // at launch, before any purchase
+let result = try await storeKit.purchase(planKey: "nucleus", interval: "year")
+```
+
+`purchase` opens a BillFn Apple checkout in the home region, buys its product with the `appAccountToken` BillFn returned, and finishes the transaction only after `/billfn/checkouts/verify` confirms it. Renewals and restored purchases go to `/billfn/purchases/restore`, which needs the mapping's `priceId` because the Nucleus plan has two Apple prices; without it a restore with no checkout answers `400 BILLFN_VALIDATION_ERROR` and the transaction stays unfinished. An embedded web app asks the native host to do the same through `@billfn/swift-bridge`:
+
+```ts
+// src/web-billing.ts (browser)
+import { createNativeBackedBillFnClient, type BillFnStoreKitTransactionOutcome } from "@billfn/swift-bridge";
+
+const billing = createNativeBackedBillFnClient({
+  clientId: "nucleus-web",
+  mode: "native-backed",
+  baseURL: "https://euwest.account.example.com/billfn",
+});
+
+type TransactionListener = (outcome: BillFnStoreKitTransactionOutcome) => void;
+const listeners = new Set<TransactionListener>();
+let unsubscribe: (() => void) | undefined;
+let connected: Promise<unknown> | undefined;
+
+/**
+ * Calls `listener` with each StoreKit outcome the native app reports, whether or not this page started a checkout:
+ * an approved Ask to Buy purchase, a renewal, or a purchase that outlasted its request. Registering the first listener
+ * subscribes to the native app's events; the result removes the listener, and removing the last one unsubscribes.
+ */
+export function onTransactionUpdated(listener: TransactionListener): () => void {
+  listeners.add(listener);
+  // The bridge does not replay events, so stay subscribed while any listener is registered. No handshake is needed.
+  unsubscribe ??= billing.subscribe((event) => {
+    if (event.event !== "transaction.updated") return;
+    const { outcome } = event.payload as { outcome: BillFnStoreKitTransactionOutcome };
+    // Call each listener on its own, so one that throws does not keep the outcome from the others.
+    for (const listener of [...listeners]) {
+      try {
+        listener(outcome);
+      } catch (error) {
+        console.error("transaction listener failed", error);
+      }
+    }
+  });
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) stopBilling();
+  };
+}
+
+/** Handshakes once; a failed handshake rejects this call and is tried again on the next one. */
+function connect(): Promise<unknown> {
+  connected ??= billing.handshake().catch((error: unknown) => {
+    connected = undefined;
+    throw error;
+  });
+  return connected;
+}
+
+export async function buyNucleusYearly(): Promise<"purchased" | "pending" | "cancelled"> {
+  await connect();
+  const result = await billing.checkout({ planKey: "nucleus", interval: "year" });
+  return result.status;
+}
+
+/** Removes every listener and stops listening to the native app when the page no longer shows billing state. */
+export function stopBilling(): void {
+  listeners.clear();
+  unsubscribe?.();
+  unsubscribe = undefined;
+}
+```
+
+The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request. Event subscriptions need no handshake: the module subscribes to bridge events when the page registers its first `onTransactionUpdated` listener, not when it starts a checkout, so a page that only shows billing state (after a reload that followed an Ask to Buy request, or while a renewal is due) still receives outcomes. A `pending` checkout (Ask to Buy) or one that failed with `BRIDGE_INTERACTIVE_TIMEOUT` is not lost: its outcome arrives later as a `transaction.updated` event, which `onTransactionUpdated` hands to each listener, for example to refresh the page's entitlements; a listener that throws is reported and does not keep the outcome from the other listeners. Register the listener before calling `buyNucleusYearly()`. The bridge does not replay events, so an outcome that arrives while no listener is registered is dropped; removing the last listener or calling `stopBilling()` unsubscribes, and the next registration subscribes again. The native app builds its `BillFnBridgeDispatcher` with `storeKit:` so it answers these requests, and posts each `storeKit.outcomes` element to the web view as `dispatcher.transactionEvent(outcome)`; the dispatcher does not post them itself (see [Swift](/docs/clients/swift#embedded-web-example)).
+
+## Importing legacy subscriptions
+
+Subscriptions sold before BillFn carry no BillFn metadata, so their events are stored unlinked until an operator binds each one to its billing account in the user's home region:
+
+```ts
+// src/legacy-import.ts
+import type { BillFnInstance } from "@billfn/core";
+import { billingAccountIdFor } from "./accounts";
+
+export type LegacySubscription =
+  | { userId: string; provider: "dodo"; subscriptionId: string }
+  | { userId: string; provider: "apple"; originalTransactionId: string };
+
+/** Binds one legacy subscription to the user's Nucleus plan. Rerunning it is safe. */
+export async function importLegacySubscription(billfn: BillFnInstance, row: LegacySubscription, operatorId: string) {
+  const common = {
+    billingAccountId: billingAccountIdFor(row.userId),
+    subject: { principalId: row.userId }, // creates the billing account when missing
+    planKey: "nucleus",
+    operator: { id: operatorId, type: "user", requestId: `legacy-import:${row.provider}:${row.userId}` },
+    reason: "legacy cutover",
+  };
+  return row.provider === "dodo"
+    ? billfn.services.subscriptions.import({ ...common, provider: "dodo", providerSubscriptionId: row.subscriptionId })
+    : billfn.services.subscriptions.import({ ...common, provider: "apple", originalTransactionId: row.originalTransactionId });
+}
+```
+
+Run it in the region that holds the user's account, from an operator tool or [`@billfn/admin`](/docs/server/administration)'s `import-subscription` action; it is not a public route. The import reads the subscription from the provider, checks that its product is a price of `nucleus`, binds it and replays the unlinked events this region stored for it. From then on the region's owner lookup claims the subscription's events. Events delivered before the import to another region (the ingress's `defaultRegion`) stay there unlinked; the import's provider read already reflects them. Retry a row that failed with `BILLFN_PROVIDER_ERROR`, or with a `BILLFN_CONFLICT` whose `details.reason` is `import_replay_unfinished`; [Importing existing provider subscriptions](/docs/server/reconciliation#importing-existing-provider-subscriptions) lists the failures that are final.
+
+## What is verified
+
+`npm test --workspace @billfn/docs` typechecks every TypeScript block on this page against the current `@billfn/*`, `authfn`, `@authfn/password`, `@superfunctions/queue` and `@cloudflare/workers-types` declarations (the browser block with DOM types), with `src/database.ts`, `src/mail.ts` and `src/discount-tiers.ts` stubbed. It also runs the blocks: the signup trial against a real BillFn, `resolveSubject` through the BillFn router (401 without a session, 403 on a CSRF mismatch) with AuthFn faked, the plan emails, the cron drain, the regional routing, the ingress's owner lookups and forwards through fake service bindings, and `buyNucleusYearly` and `onTransactionUpdated` against the real bridge client and a fake native host. The `@billfn/core` workerd suite runs the router, two regions behind the ingress, Dodo checkout region metadata and the Apple verifier and signer in workerd. Live Dodo and App Store calls, StoreKit purchases on a device, Hyperdrive and cron triggers on a Cloudflare account are not covered.

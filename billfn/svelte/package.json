@@ -1,6 +1,6 @@
 {
   "name": "@billfn/svelte",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Svelte wrappers for billfn client",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,11 +12,14 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.test.*"
   ],
   "scripts": {
-    "build": "tsc",
-    "test": "vitest run"
+    "build": "npm run clean && tsc",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
   },
   "author": "21n",
   "license": "MIT",

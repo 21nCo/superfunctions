@@ -6,7 +6,9 @@
     "dev": "next dev -p 6004",
     "prebuild": "npm --prefix ../../packages/docs-theme run build && node ./scripts/ensure-docs-deps.mjs && node ../node_modules/fumadocs-mdx/dist/bin.js",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --test scripts/check-recipe-types.test.mjs scripts/package-files.test.mjs",
+    "check:recipes": "node scripts/check-recipe-types.mjs"
   },
   "dependencies": {
     "@21n/fonts": "^1.0.1",
@@ -25,10 +27,19 @@
     "styled-jsx": "5.1.6"
   },
   "devDependencies": {
+    "@authfn/password": "0.1.8",
+    "@billfn/core": "0.7.1",
+    "@billfn/provider-apple": "0.8.1",
+    "@billfn/provider-dodo": "0.8.1",
+    "@billfn/swift-bridge": "0.1.1",
+    "@cloudflare/workers-types": "4.20251120.0",
+    "@superfunctions/db": "0.3.3",
+    "@superfunctions/queue": "0.2.0",
     "@types/mdx": "^2",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "authfn": "0.7.0",
     "autoprefixer": "^10",
     "postcss": "^8",
     "tailwindcss": "^4",
