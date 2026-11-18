@@ -8,6 +8,48 @@ It implements the `billfn-bridge/v1` protocol and exposes:
 - a `WKWebView` message bus
 - a native-backed BillFn client wrapper
 
+## StoreKit purchases from a web view
+
+When the native host passes a `BillFnStoreKit` to `BillFnBridgeDispatcher` and answers requests
+with `respond(to:)`, the client can buy, restore and confirm App Store purchases:
+
+```ts
+const billing = createNativeBackedBillFnClient({ clientId: 'web', mode: 'native-backed', baseURL });
+await billing.handshake();
+
+// Subscribe first, and keep the subscription: outcomes the native app reports while a request runs,
+// or after it times out, arrive only to subscriptions made before them.
+const unsubscribe = billing.subscribe((event) => {
+  if (event.event === 'transaction.updated') {
+    // a renewal, an approved purchase, or a purchase or confirmation that outlasted its request
+  }
+});
+
+const result = await billing.checkout({ planKey: 'pro' }); // 'purchased' | 'pending' | 'cancelled'
+const { transactions } = await billing.restore(); // each transaction's outcome
+await billing.transactions(); // confirm the unfinished transactions now
+// unsubscribe() only when the page no longer shows billing state
+```
+
+Subscribe before calling `checkout`, `restore` or `transactions`, and keep that subscription past a
+`BRIDGE_INTERACTIVE_TIMEOUT` or `BRIDGE_PROCESSING_TIMEOUT`: the bus does not replay events, so an
+outcome that arrives before a later subscription is lost to it.
+
+A transaction is finished only once BillFn confirms it (`status: 'confirmed'`); a `failed` or
+`skipped` one stays unfinished and is retried on the app's next launch.
+
+`checkout` and `restore` last as long as the App Store purchase sheet or sign-in is open, so they
+do not use the 30-second `timeoutMs`: they wait up to `interactiveTimeoutMs` (10 minutes by
+default; `0` waits without a timeout). When that runs out, the call rejects with
+`BRIDGE_INTERACTIVE_TIMEOUT`. The purchase may still complete in the native app; its outcome then
+arrives as a `transaction.updated` event, so keep listening rather than treating it as a failure.
+
+`transactions` waits up to the 30-second `timeoutMs` while the native app confirms each unfinished
+transaction with BillFn. When that runs out, the call rejects with `BRIDGE_PROCESSING_TIMEOUT`:
+the native app may still be confirming and finishing the transactions, and reports each outcome as a
+`transaction.updated` event when it forwards `BillFnStoreKit.outcomes` to the web view (as the Swift
+package's embedded web example does).
+
 ## Build and test
 
 ```bash

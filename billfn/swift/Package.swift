@@ -22,7 +22,8 @@ let package = Package(
         .target(name: "BillFnClient"),
         .target(
             name: "BillFnStoreKit",
-            dependencies: ["BillFnClient"]
+            dependencies: ["BillFnClient"],
+            resources: [.copy("PrivacyInfo.xcprivacy")]
         ),
         .target(
             name: "BillFnWebViewBridgeHost",
@@ -36,8 +37,18 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "BillFnStoreKitBackendTests",
+            dependencies: [
+                "BillFnClient",
+                "BillFnStoreKit",
+                .product(name: "Testing", package: "swift-testing"),
+            ]
+        ),
+        .testTarget(
             name: "BillFnWebViewBridgeHostTests",
             dependencies: [
+                "BillFnClient",
+                "BillFnStoreKit",
                 "BillFnWebViewBridgeHost",
                 .product(name: "Testing", package: "swift-testing"),
             ]

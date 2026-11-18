@@ -1,4 +1,6 @@
 import {
+  BILLFN_BRIDGE_INTERACTIVE_METHODS,
+  BILLFN_BRIDGE_PROCESSING_METHODS,
   BILLFN_BRIDGE_PROTOCOL,
   createBridgeErrorResponse,
   isBridgeEventEnvelope,
@@ -12,8 +14,12 @@ import {
 
 type PendingRequest = {
   resolve: (response: BillFnBridgeResponseEnvelope) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 };
+
+const INTERACTIVE_METHODS = new Set<string>(BILLFN_BRIDGE_INTERACTIVE_METHODS);
+const PROCESSING_METHODS = new Set<string>(BILLFN_BRIDGE_PROCESSING_METHODS);
+const MAX_TIMER_MS = 2_147_483_647;
 
 const activeBridgeReceivers = new Set<(message: unknown) => void>();
 
@@ -36,6 +42,7 @@ export function createWKWebViewBridgeBus(
 ): BillFnBridgeBus {
   const handlerName = options.handlerName ?? 'billfn';
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const interactiveTimeoutMs = options.interactiveTimeoutMs ?? 600_000;
   const pendingRequests = new Map<string, PendingRequest>();
   const eventHandlers = new Set<(event: BillFnBridgeEventEnvelope) => void>();
 
@@ -104,21 +111,46 @@ export function createWKWebViewBridgeBus(
         );
       }
 
+      const interactive = INTERACTIVE_METHODS.has(message.method);
+      const waitMs = interactive ? interactiveTimeoutMs : timeoutMs;
       return new Promise<BillFnBridgeResponseEnvelope>((resolve) => {
-        const timer = setTimeout(() => {
+        const onTimeout = () => {
           pendingRequests.delete(message.id);
           if (pendingRequests.size === 0 && eventHandlers.size === 0) {
             activeBridgeReceivers.delete(bridgeReceiver);
           }
-          resolve(
-            createBridgeErrorResponse(
-              message.id,
-              'BRIDGE_UNAVAILABLE',
-              'Native bridge did not respond before timeout',
-              { path: `window.webkit.messageHandlers.${handlerName}` }
-            )
-          );
-        }, timeoutMs);
+          if (interactive) {
+            resolve(
+              createBridgeErrorResponse(
+                message.id,
+                'BRIDGE_INTERACTIVE_TIMEOUT',
+                'The native purchase did not finish before the timeout; it may still complete and arrive as a transaction.updated event',
+                { method: message.method, timeoutMs: waitMs }
+              )
+            );
+          } else if (PROCESSING_METHODS.has(message.method)) {
+            resolve(
+              createBridgeErrorResponse(
+                message.id,
+                'BRIDGE_PROCESSING_TIMEOUT',
+                'storekit.transactions did not finish before the timeout; the native host may still be confirming transactions with BillFn, and reports each outcome as a transaction.updated event',
+                { method: message.method, timeoutMs: waitMs }
+              )
+            );
+          } else {
+            resolve(
+              createBridgeErrorResponse(
+                message.id,
+                'BRIDGE_UNAVAILABLE',
+                'Native bridge did not respond before timeout',
+                { path: `window.webkit.messageHandlers.${handlerName}` }
+              )
+            );
+          }
+        };
+        // An interactive request with a timeout of 0 (or one beyond what setTimeout can hold) waits for as long as the user does.
+        const waitsIndefinitely = interactive && !(waitMs > 0 && waitMs <= MAX_TIMER_MS);
+        const timer = waitsIndefinitely ? undefined : setTimeout(onTimeout, waitMs);
 
         pendingRequests.set(message.id, { resolve, timer });
         ensureReceiverRegistered();
