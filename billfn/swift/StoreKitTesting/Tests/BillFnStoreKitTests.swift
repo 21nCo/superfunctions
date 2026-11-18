@@ -98,13 +98,15 @@ class BillFnStoreKitTestCase: XCTestCase {
     private var kits: [BillFnStoreKit] = []
     let plans = [BillFnStoreKitPlan(productId: proMonthly, planKey: "pro", priceId: "price_pro_apple_month")]
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "BillFn", withExtension: "storekit"))
         session = try SKTestSession(contentsOf: url)
         session.resetToDefaultState()
         session.disableDialogs = true
         session.clearTransactions()
         defaults = UserDefaults(suiteName: "billfn.storekit.tests.\(UUID().uuidString)")
+        // A clear that reached the app's cache late would drop this test's purchases from it.
+        try await waitForStoreKit("the cleared transactions to leave Transaction.all") { all, _ in all.isEmpty }
     }
 
     override func tearDown() async throws {
@@ -153,6 +155,53 @@ class BillFnStoreKitTestCase: XCTestCase {
             ids.append(result.unsafePayloadValue.id)
         }
         return ids
+    }
+
+    func allTransactionIds() async -> [UInt64] {
+        var ids: [UInt64] = []
+        for await result in Transaction.all {
+            ids.append(result.unsafePayloadValue.id)
+        }
+        return ids
+    }
+
+    /// Waits until the app's StoreKit transaction cache (what `Transaction.all`, `.unfinished` and `.latest` read)
+    /// satisfies `condition`. StoreKit testing fills that cache from `storekitagent` apart from what `purchase()`
+    /// returns: on macOS 26 (CI) a just-bought transaction is missing from all three when read right away, and on
+    /// macOS 27 one can be missing from `Transaction.unfinished` until the app syncs. So after 2 seconds this syncs
+    /// with the App Store once, which refreshes the cache, and keeps waiting. On a timeout the error shows what the
+    /// cache and the StoreKit testing session hold.
+    func waitForStoreKit(
+        _ what: String,
+        _ condition: @escaping (_ all: Set<UInt64>, _ unfinished: Set<UInt64>) -> Bool
+    ) async throws {
+        let started = Date()
+        var synced = false
+        while Date().timeIntervalSince(started) < 20 {
+            let all = Set(await allTransactionIds())
+            let unfinished = Set(await unfinishedTransactionIds())
+            if condition(all, unfinished) { return }
+            if !synced, Date().timeIntervalSince(started) > 2 {
+                synced = true
+                try await AppStore.sync()
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let all = await allTransactionIds().sorted()
+        let unfinished = await unfinishedTransactionIds().sorted()
+        let held = session.allTransactions().map(\.identifier).sorted()
+        throw TimedOut(waitingFor: "\(what): Transaction.all \(all), Transaction.unfinished \(unfinished), SKTestSession \(held)")
+    }
+
+    /// Waits until StoreKit lists transaction `id`, and lists it as unfinished when `unfinished` is true.
+    func waitUntilStoreKitLists(_ id: UInt64, unfinished: Bool) async throws {
+        try await waitForStoreKit("transaction \(id) in Transaction.all\(unfinished ? " and .unfinished" : "")") { all, unfinishedIds in
+            all.contains(id) && (!unfinished || unfinishedIds.contains(id))
+        }
+    }
+
+    func waitUntilStoreKitLists(_ outcome: BillFnStoreKitTransactionOutcome) async throws {
+        try await waitUntilStoreKitLists(try XCTUnwrap(UInt64(outcome.transaction.transactionId)), unfinished: !outcome.finished)
     }
 
     func assertFinished(_ outcome: BillFnStoreKitTransactionOutcome, file: StaticString = #filePath, line: UInt = #line) async throws {
@@ -221,6 +270,7 @@ class BillFnStoreKitTestCase: XCTestCase {
         guard case .success(let verification) = result else {
             throw PurchaseNotCompleted(productId: productId, result: String(describing: result))
         }
+        try await waitUntilStoreKitLists(verification.unsafePayloadValue.id, unfinished: true)
         return verification.unsafePayloadValue
     }
 }
@@ -261,6 +311,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertFalse(outcome.finished)
         XCTAssertEqual(outcome.status, .failed(BillFnStoreKitFailure(code: "BILLFN_PROVIDER_ERROR", message: "Apple unavailable", retryable: true)))
         let transactionId = try XCTUnwrap(UInt64(outcome.transaction.transactionId))
+        try await waitUntilStoreKitLists(outcome)
         let unfinishedAfterFailure = await unfinishedTransactionIds()
         XCTAssertTrue(unfinishedAfterFailure.contains(transactionId))
 
@@ -287,6 +338,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
             return XCTFail("Expected a purchase")
         }
         XCTAssertFalse(failed.finished)
+        try await waitUntilStoreKitLists(failed)
         XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
 
         await backend.failVerification(with: nil)
@@ -374,6 +426,35 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertTrue(unfinished.contains(other.id))
     }
 
+    /// The production `restore()`: it syncs with the App Store and confirms each transaction
+    /// `Transaction.currentEntitlements` reports. StoreKit testing reports none for these verified, unrevoked and
+    /// unexpired purchases on macOS 26 and 27 (`Transaction.currentEntitlement(for:)` and the subscription's status
+    /// are empty too), so this checks that `restore()` confirms exactly what StoreKit reports and prints it; the
+    /// restore tests above feed the same purchases through `restore(entitlements:)`.
+    func testRestoreConfirmsTheCurrentEntitlementsStoreKitReports() async throws {
+        let backend = FakeBillFnBackend()
+        let subscription = try await buyOutsideBillFn(proMonthly, appAccountToken: backend.appAccountToken)
+        let other = try await buyOutsideBillFn(unmapped, appAccountToken: nil)
+        let kit = launch(backend)
+
+        let outcomes = try await kit.restore()
+
+        var reported: [UInt64] = []
+        for await result in Transaction.currentEntitlements {
+            reported.append(result.unsafePayloadValue.id)
+        }
+        print("StoreKit testing reported current entitlements \(reported.sorted()) for purchases \([subscription.id, other.id])")
+        XCTAssertTrue(Set(reported).isSubset(of: [subscription.id, other.id]))
+        XCTAssertEqual(outcomes.map(\.transaction.transactionId).sorted(), reported.map(String.init).sorted())
+        for outcome in outcomes {
+            XCTAssertEqual(outcome.finished, outcome.transaction.productId == proMonthly)
+        }
+        let restores = await backend.restores
+        XCTAssertEqual(restores.map(\.transaction.transactionId), outcomes.filter { $0.transaction.productId == proMonthly }.map(\.transaction.transactionId))
+        let verifications = await backend.verifications
+        XCTAssertTrue(verifications.isEmpty)
+    }
+
     func testRenewalIsRestoredOntoItsPlanAndFinished() async throws {
         let backend = FakeBillFnBackend()
         let kit = launch(backend)
@@ -449,6 +530,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
             return XCTFail("Expected a purchase")
         }
         XCTAssertTrue(purchase.finished)
+        try await waitUntilStoreKitLists(purchase)
         let leftover = BillFnStoreKitCheckout(checkoutSessionId: "chk_leftover", productId: proMonthly, appAccountToken: backend.appAccountToken)
         let savedAt = Date()
         checkoutStore(now: savedAt).save(leftover)
@@ -486,6 +568,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
             return XCTFail("Expected a purchase")
         }
         XCTAssertEqual(rejected.status, .failed(BillFnStoreKitFailure(code: "BILLFN_CONFLICT", message: "Not the latest transaction", retryable: false)))
+        try await waitUntilStoreKitLists(rejected)
         let unfinished = await unfinishedTransactionIds()
         XCTAssertTrue(unfinished.contains(try XCTUnwrap(UInt64(rejected.transaction.transactionId))))
         XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [rejected.transaction.transactionId])
@@ -507,20 +590,35 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
     }
 
     /// The real `Transaction.updates`: the forced renewal reaches the listener, which restores it onto its plan.
-    /// StoreKit testing delivers it only when LaunchServices can find the host app (see `run-tests.sh`).
+    /// StoreKit testing delivers it only when LaunchServices can find the host app (see `run-tests.sh`). On macOS 26 it
+    /// also offers the purchase again through `Transaction.updates` once the purchase reaches the app's transaction
+    /// cache; the listener restores that onto its plan too, and finishes it again.
     func testListenerConfirmsTransactionUpdates() async throws {
         let backend = FakeBillFnBackend()
         let kit = launch(backend)
         let recorder = record(kit)
         await kit.start()
-        _ = try await kit.purchase(planKey: "pro")
+        guard case .purchased(_, let purchase) = try await kit.purchase(planKey: "pro") else {
+            return XCTFail("Expected a purchase")
+        }
+        try await waitUntilStoreKitLists(purchase)
 
         try session.forceRenewalOfSubscription(productIdentifier: proMonthly)
-        let outcomes = try await waitForOutcomes(recorder, count: 2)
+        try await waitUntil("the renewal's outcome") {
+            await recorder.outcomes.contains { $0.transaction.transactionId != purchase.transaction.transactionId }
+        }
 
-        XCTAssertEqual(outcomes.map(\.finished), [true, true])
+        let outcomes = await recorder.outcomes
+        XCTAssertEqual(outcomes.first?.transaction.transactionId, purchase.transaction.transactionId)
+        XCTAssertEqual(Set(outcomes.map(\.transaction.originalTransactionId)), [purchase.transaction.originalTransactionId])
+        XCTAssertEqual(Set(outcomes.map(\.transaction.transactionId)).count, 2, "Expected the purchase and one renewal")
+        XCTAssertTrue(outcomes.allSatisfy(\.finished))
+        let renewalId = try XCTUnwrap(outcomes.last { $0.transaction.transactionId != purchase.transaction.transactionId }).transaction.transactionId
         let restores = await backend.restores
-        XCTAssertEqual(restores.map(\.transaction.transactionId), outcomes.dropFirst().map(\.transaction.transactionId))
+        XCTAssertTrue(restores.contains { $0.transaction.transactionId == renewalId && $0.plan.planKey == "pro" })
+        XCTAssertEqual(Set(restores.map(\.transaction.transactionId)).subtracting([purchase.transaction.transactionId]), [renewalId])
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1"])
     }
 
     func testCancelledPurchaseIsNeitherVerifiedNorKept() async throws {

@@ -36,6 +36,11 @@ default; `0` waits without a timeout). When that runs out, the call rejects with
 `BRIDGE_INTERACTIVE_TIMEOUT`. The purchase may still complete in the native app; its outcome then
 arrives as a `transaction.updated` event, so keep listening rather than treating it as a failure.
 
+`transactions` waits up to the 30-second `timeoutMs` while the native app confirms each unfinished
+transaction with BillFn. When that runs out, the call rejects with `BRIDGE_PROCESSING_TIMEOUT`:
+the native app keeps confirming and finishing the transactions, and each outcome arrives as a
+`transaction.updated` event.
+
 ## Build and test
 
 ```bash

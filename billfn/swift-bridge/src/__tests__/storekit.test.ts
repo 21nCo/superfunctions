@@ -264,17 +264,78 @@ describe('StoreKit requests over the WKWebView bus', () => {
     }
   });
 
-  it('keeps the generic timeout for non-interactive StoreKit and BillFn requests', async () => {
+  it('keeps the generic timeout for BillFn requests', async () => {
     vi.useFakeTimers();
     const native = installNativeHandler();
     try {
       const bus = createWKWebViewBridgeBus({ timeoutMs: 30_000 });
-      const transactions = bus.request({ protocol: BILLFN_BRIDGE_PROTOCOL, id: 'req_tx', method: 'storekit.transactions' });
+      const status = bus.request({ protocol: BILLFN_BRIDGE_PROTOCOL, id: 'req_status', method: 'billing.status' });
       await vi.advanceTimersByTimeAsync(30_000);
 
-      const response = await transactions;
+      const response = await status;
       expect(response.ok).toBe(false);
       if (!response.ok) expect(response.error.code).toBe('BRIDGE_UNAVAILABLE');
+    } finally {
+      native.restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a storekit.transactions timeout as processing that goes on, with outcomes arriving as transaction.updated', async () => {
+    vi.useFakeTimers();
+    const native = installNativeHandler();
+    try {
+      const bus = createWKWebViewBridgeBus({ timeoutMs: 30_000 });
+      const events: unknown[] = [];
+      const unsubscribe = bus.subscribe((event) => events.push(event));
+      const transactions = bus.request({ protocol: BILLFN_BRIDGE_PROTOCOL, id: 'req_tx', method: 'storekit.transactions' });
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(events).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const response = await transactions;
+      expect(response).toEqual({
+        protocol: BILLFN_BRIDGE_PROTOCOL,
+        id: 'req_tx',
+        ok: false,
+        error: {
+          code: 'BRIDGE_PROCESSING_TIMEOUT',
+          message: 'The native host is still confirming transactions with BillFn; each outcome arrives as a transaction.updated event',
+          details: { method: 'storekit.transactions', timeoutMs: 30_000 }
+        }
+      });
+
+      // The native host goes on confirming: each outcome arrives as an event, and its late response is dropped.
+      const outcome = { transaction, status: 'confirmed', finished: true, billing: {} };
+      const updated = { protocol: BILLFN_BRIDGE_PROTOCOL, event: 'transaction.updated', payload: { outcome } };
+      globalThis.window.__billfnBridgeReceive__?.(updated);
+      native.respond('req_tx', { transactions: [outcome] });
+      expect(events).toEqual([updated]);
+      unsubscribe();
+    } finally {
+      native.restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces the storekit.transactions timeout through the client as a distinct error', async () => {
+    vi.useFakeTimers();
+    const native = installNativeHandler();
+    try {
+      const client = createNativeBackedBillFnClient({
+        clientId: 'web',
+        mode: 'native-backed',
+        baseURL: 'https://billfn.example.test/billfn',
+        timeoutMs: 1_000
+      });
+      const handshake = client.handshake();
+      native.respond(native.posted[0].id, { bridgeVersion: 1, billingOwner: 'native', authOwner: 'native', capabilities: [] });
+      await handshake;
+
+      const transactions = client.transactions();
+      const assertion = expect(transactions).rejects.toMatchObject({ code: 'BRIDGE_PROCESSING_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
     } finally {
       native.restore();
       vi.useRealTimers();

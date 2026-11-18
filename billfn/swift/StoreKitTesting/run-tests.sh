@@ -10,6 +10,27 @@
 # tests, so the tests that use them run in their own host processes. The other tests share one process.
 set -euo pipefail
 
+# StoreKit testing on macOS 26 writes the host app's receipt (Contents/_MASReceipt) so that this user cannot delete
+# it. The cleanup then lifts the write protection on what it can, retries, and leaves only such receipts behind,
+# listed with their owner and permissions. Anything else it cannot remove fails the script; it never hides the
+# tests' own status.
+remove_derived_data() {
+  local status=$?
+  rm -rf "$derived_data" 2>/dev/null && exit "$status"
+  chflags -R nouchg "$derived_data" 2>/dev/null || true
+  chmod -R -N "$derived_data" 2>/dev/null || true
+  chmod -R u+w "$derived_data" 2>/dev/null || true
+  rm -rf "$derived_data" 2>/dev/null && exit "$status"
+  local leftover
+  leftover="$(find "$derived_data" ! -type d 2>/dev/null || true)"
+  echo "Could not remove $derived_data as $(id -un); left behind:"
+  find "$derived_data" ! -type d -exec ls -ldeO {} + 2>&1 || true
+  if [[ -z "$leftover" ]] || grep -qv '/Contents/_MASReceipt/' <<<"$leftover"; then
+    exit 1
+  fi
+  exit "$status"
+}
+
 cd "$(dirname "$0")"
 if [[ -n "${BILLFN_STOREKIT_DERIVED_DATA:-}" ]]; then
   derived_data="$BILLFN_STOREKIT_DERIVED_DATA"
@@ -17,7 +38,7 @@ else
   derived_data_root="$HOME/Library/Developer/Xcode/DerivedData"
   mkdir -p "$derived_data_root"
   derived_data="$(mktemp -d "$derived_data_root/BillFnStoreKitTesting.XXXXXX")"
-  trap 'rm -rf "$derived_data"' EXIT
+  trap remove_derived_data EXIT
 fi
 common=(-project BillFnStoreKitTesting.xcodeproj -scheme BillFnStoreKitTesting
   -destination "platform=macOS,arch=$(uname -m)" -derivedDataPath "$derived_data")
