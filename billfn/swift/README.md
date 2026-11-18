@@ -71,11 +71,14 @@ let restored = try await storeKit.restore()
   or an interrupted purchase waiting. Retention takes effect at the next
   `processUnfinishedTransactions()` (run by `start()`), after every unfinished transaction has been
   offered the checkouts it could claim: an expired checkout stays claimable until then, so a purchase
-  that completed while the app was not running is still verified against it. A purchase StoreKit refuses before it reaches the App Store
+  that completed while the app was not running is still verified against it. An expired checkout a
+  transaction in `Transaction.all` could still claim stays (StoreKit can leave that transaction out of
+  `Transaction.unfinished`) until the transaction is delivered and BillFn confirms it. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
   (such as a network failure) keeps it, since the purchase may still complete.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
-  `processUnfinishedTransactions(_:)` the unfinished transactions in place of `Transaction.unfinished`,
+  `processUnfinishedTransactions(_:history:)` the unfinished transactions and the history in place of
+  `Transaction.unfinished` and `Transaction.all`,
   and `restore(entitlements:)` the entitlements to confirm in place of `Transaction.currentEntitlements`,
   for example in tests.
 - `outcomes` streams every transaction outcome, for example to refresh entitlements: one per

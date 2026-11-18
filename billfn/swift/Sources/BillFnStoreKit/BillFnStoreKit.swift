@@ -151,19 +151,23 @@ public actor BillFnStoreKit {
     /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then reconciles the checkout
     /// store (`removeUnneededCheckouts(excluding:)`): drops matched checkouts whose transaction is recorded finished
     /// and, only now that every unfinished transaction has been offered the checkouts it could claim, outstanding
-    /// checkouts past the store's retention.
+    /// checkouts past the store's retention that no transaction in `Transaction.all` could claim.
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
-        await processUnfinishedTransactions(Transaction.unfinished)
+        await processUnfinishedTransactions(Transaction.unfinished, history: Transaction.all)
     }
 
-    /// `processUnfinishedTransactions()` with the unfinished transactions to confirm; it passes `Transaction.unfinished`.
+    /// `processUnfinishedTransactions()` with the unfinished transactions to confirm and the transaction history
+    /// reconciliation reads; it passes `Transaction.unfinished` and `Transaction.all`.
     /// StoreKit can leave an unfinished transaction out of an enumeration, so a transaction missing from `unfinished`
-    /// is never taken as finished: its matched checkout stays until the transaction is recorded finished.
+    /// is never taken as finished: its matched checkout stays until the transaction is recorded finished, and an
+    /// outstanding checkout it could claim stays, past its retention, while `history` lists it.
     @discardableResult
-    public func processUnfinishedTransactions<Unfinished: AsyncSequence & Sendable>(
-        _ unfinished: Unfinished
-    ) async -> [BillFnStoreKitTransactionOutcome] where Unfinished.Element == VerificationResult<Transaction> {
+    public func processUnfinishedTransactions<Unfinished: AsyncSequence & Sendable, History: AsyncSequence & Sendable>(
+        _ unfinished: Unfinished,
+        history: History
+    ) async -> [BillFnStoreKitTransactionOutcome]
+    where Unfinished.Element == VerificationResult<Transaction>, History.Element == VerificationResult<Transaction> {
         var results: [BillFnStoreKitTransactionOutcome] = []
         do {
             for try await transaction in unfinished {
@@ -174,9 +178,43 @@ public actor BillFnStoreKit {
             // removed. `Transaction.unfinished` never throws.
             return results
         }
+        // A failed history read is no evidence that an expired checkout's purchase never completed, so none is removed.
+        guard let awaitingDelivery = try? await outstandingCheckoutsAwaitingDelivery(history) else { return results }
         // A checkout being verified against right now is claimed, and kept.
-        checkouts.removeUnneededCheckouts(excluding: claimedCheckouts)
+        checkouts.removeUnneededCheckouts(excluding: claimedCheckouts.union(awaitingDelivery))
         return results
+    }
+
+    /// The outstanding checkouts a transaction in `history` could still claim (`claimCheckout`'s rule: same product
+    /// and `appAccountToken`, matched to no checkout, not confirmed by BillFn, and `mayClaimOutstanding`). Its purchase
+    /// completed, but no enumeration has delivered the transaction yet, so the checkout must outlive its retention
+    /// until one does: without it, the transaction would be skipped for good when no plan maps its product. Once the
+    /// transaction is confirmed it no longer counts, so a checkout it did not take then expires.
+    private func outstandingCheckoutsAwaitingDelivery<History: AsyncSequence & Sendable>(
+        _ history: History
+    ) async throws -> Set<String> where History.Element == VerificationResult<Transaction> {
+        let kept = checkouts.keptCheckouts()
+        let matched = Set(kept.compactMap(\.transactionId))
+        var outstanding = kept.filter { $0.transactionId == nil }
+        var awaiting: Set<String> = []
+        for try await verification in history {
+            if outstanding.isEmpty { break }
+            let transaction = verification.unsafePayloadValue
+            let facts = BillFnStoreKitAttemptFacts(transaction)
+            let sameAttempt = { (entry: BillFnStoreKitKeptCheckout) in
+                entry.checkout.productId == facts.productId && entry.checkout.appAccountToken == facts.appAccountToken
+            }
+            guard outstanding.contains(where: sameAttempt), !matched.contains(String(facts.id)),
+                  !checkouts.isConfirmed(transactionId: String(facts.id)) else { continue }
+            let reasonIsPurchase = Self.reasonIsPurchase(transaction)
+            outstanding.removeAll { entry in
+                guard sameAttempt(entry),
+                      Self.mayClaimOutstanding(facts, reasonIsPurchase: reasonIsPurchase, savedAt: entry.savedAt) else { return false }
+                awaiting.insert(entry.checkout.checkoutSessionId)
+                return true
+            }
+        }
+        return awaiting
     }
 
     public func purchase(planKey: String, priceId: String? = nil, interval: String? = nil) async throws -> BillFnStoreKitPurchaseResult {

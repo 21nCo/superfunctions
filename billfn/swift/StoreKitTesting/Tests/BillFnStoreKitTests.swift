@@ -430,7 +430,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
         // A launch whose enumeration leaves the unfinished transaction out does not take it as finished: BillFn has not
         // confirmed it, so its checkout stays past its retention.
-        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions())
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
         XCTAssertTrue(omitted.isEmpty)
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
         let nextLaunch = launch(backend, plans: [], now: later)
@@ -982,7 +982,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         checkoutStore.markMatched(unconfirmed, transactionId: "987654322")
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
-        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions())
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
         XCTAssertTrue(omitted.isEmpty)
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [confirmed, unconfirmed])
 
@@ -1000,20 +1000,32 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
     }
 
     /// A purchase completed while the app was not running (an approved Ask to Buy request, an interrupted purchase),
-    /// so it was never matched to its outstanding checkout, and the next launch comes a retention period later. That
-    /// launch still verifies it against the checkout, with no plans (without the checkout it would be skipped for
-    /// good), and finishes it; only then does it drop an expired checkout no transaction claimed.
+    /// so it was never matched to its outstanding checkout, and the next launch comes a retention period later. A launch
+    /// whose enumeration leaves the transaction out keeps that expired checkout, since `Transaction.all` lists a
+    /// transaction that could claim it, and drops the abandoned attempts no listed transaction could claim (another
+    /// billing account's, and one started after the purchase). The next launch that offers the transaction still
+    /// verifies it against the checkout, with no plans (without the checkout it would be skipped for good), and
+    /// finishes it.
     func testTransactionCompletedWhileStoppedIsVerifiedAgainstItsExpiredCheckout() async throws {
         let backend = FakeBillFnBackend()
         let attempt = BillFnStoreKitCheckout(checkoutSessionId: "chk_attempt", productId: proLifetime, appAccountToken: backend.appAccountToken)
         let abandoned = BillFnStoreKitCheckout(checkoutSessionId: "chk_abandoned", productId: proMonthly, appAccountToken: UUID())
+        let startedAfter = BillFnStoreKitCheckout(checkoutSessionId: "chk_started_after", productId: proLifetime, appAccountToken: backend.appAccountToken)
         checkoutStore.save(abandoned)
         checkoutStore.save(attempt)
         // StoreKit completes the attempt's purchase; no BillFnStoreKit sees it before the next launch.
         let completed = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        let afterTolerance = completed.purchaseDate.addingTimeInterval(BillFnStoreKit.checkoutClockTolerance + 60 * 60)
+        checkoutStore(now: afterTolerance).save(startedAfter)
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
-        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [abandoned, attempt])
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [abandoned, attempt, startedAfter])
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
+        XCTAssertTrue(omitted.isEmpty)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [attempt])
+        let verificationsWhileOmitted = await backend.verifications
+        XCTAssertTrue(verificationsWhileOmitted.isEmpty)
+
         let nextLaunch = launch(backend, plans: [], now: later)
         let outcomes = await nextLaunch.processUnfinishedTransactions()
 

@@ -134,7 +134,8 @@ public struct BillFnHTTPStoreKitBackend: BillFnStoreKitBackend {
 public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
     public let checkout: BillFnStoreKitCheckout
     /// When the purchase attempt saved it; an outstanding checkout expires a retention period later, and is removed
-    /// by the next reconciliation (`BillFnStoreKit.processUnfinishedTransactions()`) that no transaction claims it in.
+    /// by the next reconciliation (`BillFnStoreKit.processUnfinishedTransactions()`) that no transaction claims it in
+    /// and that finds no transaction in `Transaction.all` that could claim it.
     public let savedAt: Date
     /// The transaction StoreKit produced for this checkout's attempt. It is recorded as soon as the transaction is
     /// matched to the checkout, before BillFn is asked to verify it, so a transaction BillFn has not confirmed yet
@@ -166,8 +167,9 @@ public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// it was not kept. The checkout then stays kept until it is removed, however long verifying takes.
     func markMatched(_ checkout: BillFnStoreKitCheckout, transactionId: String)
     func removeCheckout(checkoutSessionId: String)
-    /// Removes, except those in `checkoutSessionIds` (ones a transaction is being verified against), each outstanding
-    /// checkout (no transaction matched to it) past the store's retention, and each checkout matched to a transaction
+    /// Removes, except those in `checkoutSessionIds` (ones a transaction is being verified against, or one in
+    /// `Transaction.all` could still claim), each outstanding checkout (no transaction matched to it) past the store's
+    /// retention, and each checkout matched to a transaction
     /// recorded finished (the app stopped between finishing it and removing the checkout). A checkout matched to a
     /// transaction not recorded finished stays however old it is: StoreKit leaving that transaction out of an
     /// enumeration is no evidence it was finished, and a later launch still verifies it against the checkout.
@@ -194,7 +196,8 @@ extension BillFnStoreKitCheckoutStore {
 /// request or an interrupted purchase waiting, so an attempt that has not produced a transaction by then never
 /// will. Retention takes effect at the next `BillFnStoreKit.processUnfinishedTransactions()` (which `start()` runs):
 /// until then an expired checkout is still read and claimable, so a transaction that completed while the app was not
-/// running is matched to it first. A checkout a transaction has been matched to never expires: it is removed once the
+/// running is matched to it first, and `BillFnStoreKit` keeps it past that while a transaction in `Transaction.all`
+/// could claim it (one `Transaction.unfinished` left out). A checkout a transaction has been matched to never expires: it is removed once the
 /// transaction is recorded finished.
 ///
 /// Every instance in the process serializes its reads and changes through one lock, so stores on the same defaults
