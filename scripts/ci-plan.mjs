@@ -25,9 +25,9 @@ const JS_GLOBAL_PATTERNS = [
 // Root scripts that no workspace package uses and that run only in non-JavaScript jobs (SFNS-307). A change to one
 // neither forces a full JavaScript run nor, since turbo.json's globalDependencies exclude exactly these globs,
 // invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path segment, as in
-// Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/
-// names one of them, so the list cannot grow to cover a script a package names directly. The check does not follow
-// imports between scripts: a script that imports a standalone one must itself be one no package runs.
+// Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/,
+// Markdown and turbo.json aside, names one of them by file name, or if a script under scripts/ that is not on its
+// reviewed list of root-run importers names one, so the list cannot grow to cover a script a package uses.
 const STANDALONE_SCRIPTS = [
   "scripts/promote.*",
   "scripts/verify-public-boundary.*",

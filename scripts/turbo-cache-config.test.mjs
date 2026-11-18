@@ -69,27 +69,59 @@ test("standalone list: every standalone glob names files directly under scripts/
   assert.deepEqual(nested, [], "a standalone glob must not match a directory of scripts");
 });
 
-// A package that uses a standalone script would read a file Turbo does not hash, and its cached results would go stale.
-test("standalone list: no tracked file outside scripts/ and .github/workflows/, Markdown aside, references a standalone script", () => {
-  const names = [...new Set(standaloneFiles.map((file) => path.posix.basename(file)))];
-  let matches = "";
+// `git grep -F` for any of the names over the pathspecs; the matching lines, or "" when nothing matches.
+function grepNames(names, pathspecs, options = []) {
   try {
-    matches = execFileSync(
-      "git",
-      [
-        "grep", "-n", "-F", ...names.flatMap((name) => ["-e", name]), "--",
-        // turbo.json names them only to exclude them from its global inputs.
-        ".", ":(exclude)scripts/", ":(exclude).github/workflows/", ":(exclude)*.md", ":(exclude,top)turbo.json",
-      ],
-      { cwd: repoRoot, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }
-    );
+    return execFileSync("git", ["grep", ...options, "-F", ...names.flatMap((name) => ["-e", name]), "--", ...pathspecs], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
   } catch (error) {
     // git grep exits 1 when nothing matches; anything else is a real failure.
     if (error.status !== 1) {
       throw error;
     }
+    return "";
   }
-  assert.equal(matches, "", `these files reference a standalone script (${names.join(", ")}):\n${matches}`);
+}
+
+const standaloneNames = [...new Set(standaloneFiles.map((file) => path.posix.basename(file)))];
+
+// A package that uses a standalone script would read a file Turbo does not hash, and its cached results would go stale.
+test("standalone list: no tracked file outside scripts/ and .github/workflows/, Markdown aside, references a standalone script", () => {
+  const matches = grepNames(standaloneNames, [
+    // turbo.json names them only to exclude them from its global inputs.
+    ".", ":(exclude)scripts/", ":(exclude).github/workflows/", ":(exclude)*.md", ":(exclude,top)turbo.json",
+  ], ["-n"]);
+  assert.equal(matches, "", `these files reference a standalone script (${standaloneNames.join(", ")}):\n${matches}`);
+});
+
+// The scripts outside the standalone list that name a standalone script, each run only from the root package.json or
+// a workflow, never by a workspace package's task. A new importer, such as a shared helper a package's build imports,
+// fails the next test until it is reviewed and added here.
+const STANDALONE_IMPORTERS = [
+  "scripts/ci-plan.mjs", // Holds the list.
+  "scripts/ci-plan.test.mjs",
+  "scripts/gate-mcpfn-release.mjs", // Root `gate:mcpfn-release`, run by the McpFn CI job.
+  "scripts/pack-release-package.mjs", // publish-tag.yml.
+  "scripts/turbo-cache-config.test.mjs",
+  "scripts/verify-uifn-phase-17.mjs", // Root `verify:uifn-phase-17`.
+  "scripts/verify-uifn-version-bump.mjs", // The ci.yml and uifn-version-bump-retarget.yml version bump jobs.
+  "scripts/verify-uifn-version-bump.test.mjs",
+];
+
+test("standalone list: only reviewed root-run scripts under scripts/ name a standalone script, and no package names them", () => {
+  const standaloneExcludes = standaloneFiles.map((file) => `:(exclude,top)${file}`);
+  const importers = grepNames(standaloneNames, ["scripts/", ...standaloneExcludes], ["-l"]).split("\n").filter(Boolean);
+  assert.deepEqual(importers, [...STANDALONE_IMPORTERS].sort());
+  const importerNames = STANDALONE_IMPORTERS.map((file) => path.posix.basename(file));
+  const matches = grepNames(importerNames, [
+    ".", ":(exclude)scripts/", ":(exclude).github/workflows/", ":(exclude)*.md",
+    // The root package.json runs them as root scripts; the UIFn version bump inputs name the script that reads them.
+    ":(exclude,top)package.json", ":(exclude,top)uifn/version-bump-inputs.json",
+  ], ["-n"]);
+  assert.equal(matches, "", `these files reference a script that names a standalone script:\n${matches}`);
 });
 
 let copyRoot = "";
