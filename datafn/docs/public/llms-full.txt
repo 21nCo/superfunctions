@@ -22141,7 +22141,17 @@ export const client = createDatafnClient({
 });
 
 // Where your server mounts FileFn (its `basePath`).
-export const files = createFileFnClient({ baseUrl: "/files" });
+export const FILEFN_BASE_URL = "/files";
+
+export const files = createFileFnClient({ baseUrl: FILEFN_BASE_URL });
+
+/**
+ * A URL FileFn returned, ready for the browser. Signed storage URLs are absolute;
+ * FileFn's proxy routes (`/proxy/files/...`) are relative to where FileFn is mounted.
+ */
+export function fileFnUrl(url: string): string {
+  return url.startsWith("/") && !url.startsWith("//") ? `${FILEFN_BASE_URL}${url}` : url;
+}
 ```
 
 `createFileFnClient` sends requests with `credentials: "same-origin"` by default, so a session cookie for the same origin authenticates FileFn too. For a FileFn API on another origin, pass `credentials: "include"` or return an `Authorization` header from `getAuthHeaders`.
@@ -22157,47 +22167,43 @@ export async function attachFile(ownerType: string, ownerId: string, file: File)
   const upload = files.uploadFile({ policy: "attachments", file });
   const { fileId } = await upload.done();
 
-  // 2. Create the DataFn attachment row.
-  try {
-    await client.table("attachments").mutate({
-      operation: "insert",
-      record: {
-        ownerType,
-        ownerId,
-        fileId,
-        filename: file.name,
-        mime: file.type,
-        size: file.size,
-      },
-    });
-  } catch (error) {
-    // Don't leave an uploaded file that no record points to. Best effort: keep the insert's error.
-    await files.deleteFile(fileId).catch(() => undefined);
-    throw error;
-  }
+  // 2. Create the DataFn attachment row. If this throws, the file stays in FileFn (see below).
+  await client.table("attachments").mutate({
+    operation: "insert",
+    record: {
+      ownerType,
+      ownerId,
+      fileId,
+      filename: file.name,
+      mime: file.type,
+      size: file.size,
+    },
+  });
   return fileId;
 }
 ```
 
 `uploadFile` returns a handle at once: `upload.fileId` is known before the bytes are sent, `upload.onProgress(...)` reports progress and `upload.abort()` cancels. `done()` resolves with `{ fileId, versionId }` once FileFn has stored the file.
 
-The two operations are not transactional. If the DataFn insert throws, the catch path deletes the uploaded file so it doesn't stay behind without an owner. A failed cleanup leaves the file in FileFn; the insert's error is still the one thrown.
+The two operations are not transactional, and a failed insert does not delete the uploaded file. An error from `mutate` does not prove that nothing was stored: if the connection drops after DataFn committed the row, deleting the file would leave a committed attachment pointing at a deleted file. A file without an attachment row is the safe failure. FileFn does not delete completed files by itself, so remove such files from the server: a scheduled job that deletes files older than a grace period (an hour, say) that no attachment row references.
 
 ## Download / display
 
 `downloadUrl` asks FileFn for the current version's download URL: a short-lived signed storage URL when the storage adapter supports one, otherwise FileFn's proxy download route. Request it when you render, not once for the record's lifetime.
 
+The proxy route comes back relative to FileFn's mount (`/proxy/files/<fileId>/download`, without `/files`), so pass every URL through `fileFnUrl` before the browser loads it:
+
 ```typescript
 // display.ts
-import { files } from "./clients";
+import { fileFnUrl, files } from "./clients";
 
 export async function showAttachment(img: HTMLImageElement, attachment: { fileId: string; filename: string }): Promise<void> {
   img.alt = attachment.filename;
-  img.src = await files.downloadUrl(attachment.fileId);
+  img.src = fileFnUrl(await files.downloadUrl(attachment.fileId));
 }
 ```
 
-For thumbnails and previews, `files.resolveRenderable({ fileId, intent: "thumbnail" })` picks the best artifact FileFn has for the file (see `@filefn/viewer`).
+For thumbnails and previews, `files.resolveRenderable({ fileId, intent: "thumbnail" })` picks the best artifact FileFn has for the file (see `@filefn/viewer`). On storage without signed URLs, its `source.url` (for an `artifact` or `original` source) and the URL `files.downloadArtifact(fileId, artifactId)` returns are relative proxy routes too, such as `/proxy/files/<fileId>/artifacts/<artifactId>/download`; resolve them with `fileFnUrl` as well.
 
 ## Lifecycle: delete attachment
 

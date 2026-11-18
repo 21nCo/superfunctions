@@ -31,7 +31,13 @@ Deploy one Worker per region. Each region has its own R2 bucket, Postgres databa
       "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<eu Hyperdrive config ID>" }],
       "queues": {
         "producers": [{ "binding": "FILEFN_PROCESSING_QUEUE", "queue": "filefn-processing-eu" }],
-        "consumers": [{ "queue": "filefn-processing-eu", "max_batch_size": 1, "max_retries": 3, "dead_letter_queue": "filefn-processing-eu-dlq" }]
+        "consumers": [{
+          "queue": "filefn-processing-eu",
+          "max_batch_size": 1,
+          "max_concurrency": 2, // At most the container's FILEFN_CONTAINER_MAX_CONCURRENT_JOBS.
+          "max_retries": 3, // The container's FILEFN_PROCESSING_MAX_RETRIES.
+          "dead_letter_queue": "filefn-processing-eu-dlq"
+        }]
       }
       // Add the processing container binding (FILEFN_PROCESSING_CONTAINER) as the processing container recipe describes.
     }
@@ -40,6 +46,20 @@ Deploy one Worker per region. Each region has its own R2 bucket, Postgres databa
 ```
 
 Set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `FILEFN_CONTAINER_TOKEN` as secrets for each environment (`wrangler secret put R2_ACCESS_KEY_ID --env eu`). Leave out the queue and container bindings in an environment that sets `FILEFN_PROCESSING` to `device`.
+
+In a `remote` environment, the region's processing container must agree with this Worker and its queue consumer:
+
+| Container variable | Must be |
+| --- | --- |
+| `FILEFN_R2_BUCKET`, `FILEFN_R2_ACCOUNT_ID` | The Worker's `R2_BUCKET` and `R2_ACCOUNT_ID`. |
+| `FILEFN_R2_JURISDICTION` | The Worker's `R2_JURISDICTION` (`eu` here). Without it the container addresses the bucket outside its jurisdiction and cannot read the uploads. |
+| `FILEFN_R2_ACCESS_KEY_ID`, `FILEFN_R2_SECRET_ACCESS_KEY` | A token that can read and write this bucket. |
+| `FILEFN_DATABASE` | A module that opens the same regional Postgres (see the [processing container](./processing-container) recipe). |
+| `FILEFN_NAMESPACE` | The FileFn namespace of `createFiles` below (FileFn's default here, so leave both unset). |
+| `FILEFN_PROCESSORS` | The names in `containerProcessors` below (`thumbnail,pdf-preview,ocr`). |
+| `FILEFN_PROCESSING_MAX_RETRIES` | The consumer's `max_retries` (3). |
+| `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` | At least the consumer's `max_concurrency` (2); otherwise extra deliveries wait, get 503 and use up their attempts. |
+| `FILEFN_CONTAINER_TOKEN` | The Worker's `FILEFN_CONTAINER_TOKEN` secret. |
 
 ## Environment
 
@@ -73,6 +93,8 @@ import {
   authFnPlugins,
   AuthFnCsrfInvalidError,
   AuthFnError,
+  defineAuthFnScopes,
+  hasScopes,
   type AuthFnServer,
   type AuthFnSession,
 } from "authfn";
@@ -80,8 +102,12 @@ import { authFnPasswordPlugin } from "@authfn/password";
 import { forbidden, type FileFnPrincipal } from "@filefn/server";
 import type { Adapter } from "@superfunctions/db";
 
+/** The scopes an AuthFn API key can be granted for FileFn. */
+export const scopes = defineAuthFnScopes({ files: ["read", "write"] });
+
 export const authApp = authfn({
   basePath: "/auth",
+  scopes,
   plugins: authFnPlugins(authFnPasswordPlugin()),
 });
 
@@ -104,13 +130,17 @@ export async function resolveFileFnPrincipal(auth: AuthFnServer, request: Reques
     throw error;
   }
   if (!session) return null;
+  // User sessions carry ["*"]; an API-key session carries only its key's scopes.
+  const needed = SAFE_METHODS.has(request.method) ? "files:read" : "files:write";
+  if (!hasScopes(session, needed, { registry: scopes })) throw forbidden({ reason: "scope", missingScopes: [needed] });
   return { principalId: session.actorId, tenantId: session.tenantId };
 }
 ```
 
 - Reads (`GET`, `HEAD`) accept a cookie session, a bearer session token or an API key.
 - Every other method goes through `authorizeMutation`, which requires the `x-authfn-csrf` header to match the `authfn.csrf` cookie when the request carries a session cookie. A request without a valid credential resolves to no principal, so FileFn answers `401 FILEFN_AUTH_REQUIRED`. A CSRF mismatch answers `403 FILEFN_FORBIDDEN`. Any other error, such as a database failure, is not turned into a 401.
-- A user's session or user-owned API key acts as the user (`actorId` is the user ID). An unowned service key acts as itself (`actorId` is the key ID). Set up FileFn [policies](../core-concepts/policies) and [grants](../features/grants) for those principals.
+- AuthFn accepts an API key in any `Authorization` header, so the scope check applies to every session. Cookie and bearer user sessions carry the `*` scope and pass. An API-key session passes only with `files:read` (or `files:*`) for reads and `files:write` (or `files:*`) for everything else; a key without the needed scope, including a key created without scopes, gets `403 FILEFN_FORBIDDEN` and never the owner's access. Grant keys these scopes when you create them, for example through the `@authfn/api-keys` plugin.
+- A user's session or a user-owned API key that passes the scope check acts as the user (`actorId` is the user ID). An unowned service key acts as itself (`actorId` is the key ID). Set up FileFn [policies](../core-concepts/policies) and [grants](../features/grants) for those principals.
 
 ## FileFn
 
@@ -168,7 +198,7 @@ export function createFiles(env: Env, ctx: ExecutionContext, database: Adapter, 
 
 FileFn is created per request so that `runtime.defer` uses that request's `ctx.waitUntil`; see [Cloudflare Workers](./cloudflare-workers) for the base path, background work and rate-limit rules that come with that.
 
-With `FILEFN_PROCESSING: "remote"`, every completed upload enqueues one `filefn.processing` job. Keep the processor names equal to the container's `FILEFN_PROCESSORS` and its `FILEFN_NAMESPACE` equal to this FileFn's namespace. With `device`, server processing is off and clients upload thumbnails and converted images with `uploadArtifact` (below).
+With `FILEFN_PROCESSING: "remote"`, every completed upload enqueues one `filefn.processing` job. Keep the processor names equal to the container's `FILEFN_PROCESSORS` and its `FILEFN_NAMESPACE` equal to this FileFn's namespace (the table above lists every container variable that must match). With `device`, server processing is off and clients upload thumbnails and converted images with `uploadArtifact` (below).
 
 ## Worker
 
@@ -261,4 +291,4 @@ A native app or another service can send `Authorization: Bearer <AuthFn session 
 
 ## What is verified
 
-`npm test --workspace @filefn/docs` typechecks every TypeScript block on this page against the current `@filefn/*`, `authfn`, `@authfn/password`, `@superfunctions/storage-r2` and `@cloudflare/workers-types` declarations, with `src/database.ts` stubbed. The Worker flow itself (base path, `ctx.waitUntil`, cron cleanup) is exercised in workerd by the `@filefn/server` suite described in [Cloudflare Workers](./cloudflare-workers). Live R2, Queues, Containers and cron on a Cloudflare account are not covered.
+`npm test --workspace @filefn/docs` typechecks every TypeScript block on this page and runs `resolveFileFnPrincipal` from the `src/auth.ts` block against user and API-key sessions (a key without the needed scope gets 403) against the current `@filefn/*`, `authfn`, `@authfn/password`, `@superfunctions/storage-r2` and `@cloudflare/workers-types` declarations, with `src/database.ts` stubbed. The Worker flow itself (base path, `ctx.waitUntil`, cron cleanup) is exercised in workerd by the `@filefn/server` suite described in [Cloudflare Workers](./cloudflare-workers). Live R2, Queues, Containers and cron on a Cloudflare account are not covered.
