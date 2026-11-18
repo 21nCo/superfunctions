@@ -62,7 +62,9 @@ test("standalone list: turbo.json excludes exactly the planner's standalone scri
 });
 
 test("standalone list: every standalone glob names files directly under scripts/, never a directory", () => {
-  assert.ok(standaloneFiles.length >= standaloneGlobs.length, "each standalone glob matches a tracked script");
+  for (const glob of standaloneGlobs) {
+    assert.notDeepEqual(gitLines(["ls-files", "-z", "--", `:(glob)${glob}`]), [], `${glob} matches no tracked script`);
+  }
   const nested = gitLines(["ls-files", "-z", "--", ...standaloneGlobs.map((glob) => `:(glob)${glob}/**`)]);
   assert.deepEqual(nested, [], "a standalone glob must not match a directory of scripts");
 });
