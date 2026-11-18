@@ -38,6 +38,8 @@ jobs:
       js_test_filters: ${{ steps.plan.outputs.js_test_filters }}
       js_lint_filters: ${{ steps.plan.outputs.js_lint_filters }}
       js_typecheck_filters: ${{ steps.plan.outputs.js_typecheck_filters }}
+      run_devfn: ${{ steps.plan.outputs.run_devfn }}
+      devfn_test_filters: ${{ steps.plan.outputs.devfn_test_filters }}
       run_python: ${{ steps.plan.outputs.run_python }}
       full_python: ${{ steps.plan.outputs.full_python }}
       python_matrix: ${{ steps.plan.outputs.python_matrix }}
@@ -172,6 +174,7 @@ jobs:
           echo "test filters: ${{ needs.plan.outputs.js_test_filters }}"
           echo "lint filters: ${{ needs.plan.outputs.js_lint_filters }}"
           echo "typecheck filters: ${{ needs.plan.outputs.js_typecheck_filters }}"
+          echo "devfn tests (DevFn tests job): ${{ needs.plan.outputs.devfn_test_filters }}"
 
       - name: Build
         if: needs.plan.outputs.has_js_build == 'true'
@@ -191,15 +194,11 @@ jobs:
             ./node_modules/.bin/turbo run typecheck ${{ needs.plan.outputs.js_typecheck_filters }}
           fi
 
-      # Avoid oversubscribing hosted runners with many concurrent Vitest pools.
+      # Avoid oversubscribing hosted runners with many concurrent Vitest pools. The filters exclude every DevFn
+      # package, even on a full run: the DevFn tests job runs those.
       - name: Test
         if: needs.plan.outputs.has_js_test == 'true'
-        run: |
-          if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run test --concurrency=2
-          else
-            ./node_modules/.bin/turbo run test --concurrency=2 ${{ needs.plan.outputs.js_test_filters }}
-          fi
+        run: ./node_modules/.bin/turbo run test --concurrency=2 ${{ needs.plan.outputs.js_test_filters }}
 
       - name: Lint
         if: needs.plan.outputs.has_js_lint == 'true'
@@ -209,6 +208,50 @@ jobs:
           else
             ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
           fi
+
+  # DevFn's real-process tests (SFNS-293) run one package at a time, apart from every other package's tests. The plan
+  # selects the DevFn part of the JavaScript test selection: a full run selects every DevFn package. Like the JavaScript
+  # job it skips McpFn-only changes. Build and typecheck of DevFn packages stay in the JavaScript job.
+  devfn:
+    name: DevFn tests
+    needs: plan
+    if: github.repository == '21nCo/superfunctions' && (needs.plan.outputs.run_devfn == 'true' && needs.plan.outputs.mcpfn_only != 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build trusted esbuild native binding
+        run: npm rebuild esbuild
+
+      - name: Build trusted SQLite native binding
+        run: npm rebuild better-sqlite3
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Install Rust WASM target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Show plan
+        run: |
+          echo "base: ${{ needs.plan.outputs.base_ref }}"
+          echo "full js: ${{ needs.plan.outputs.full_js }}"
+          echo "devfn test filters: ${{ needs.plan.outputs.devfn_test_filters }}"
+
+      - name: Test
+        run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
 
   mcpfn-node20:
     name: McpFn Node 20 compatibility
