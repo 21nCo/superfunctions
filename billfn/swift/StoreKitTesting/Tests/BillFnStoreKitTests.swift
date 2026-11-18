@@ -726,8 +726,18 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(keptCheckoutIds(proMonthly), [])
         let unfinished = await unfinishedTransactionIds()
         XCTAssertEqual(unfinished, unfinishedBefore)
-        // The session, not the app's cache, shows that StoreKit made no transaction.
-        XCTAssertTrue(session.allTransactions().isEmpty, "The session holds \(describeSession())")
+        // The session, not the app's cache, shows that StoreKit made no transaction. On macOS 26 StoreKit testing
+        // records the simulated cancellation as a failed payment, which is no transaction; a record in any other state
+        // (purchasing, purchased, restored or deferred) would be one the cancellation left behind.
+        let made = session.allTransactions().filter { $0.state != .failed }
+        XCTAssertTrue(made.isEmpty, "StoreKit kept a transaction for the cancelled purchase: the session holds \(describeSession())")
+        // Synced with the App Store, the app's cache agrees: Transaction.all lists nothing for the product.
+        try await AppStore.sync()
+        var listed: [UInt64] = []
+        for await transaction in Transaction.all where transaction.unsafePayloadValue.productID == proMonthly {
+            listed.append(transaction.unsafePayloadValue.id)
+        }
+        XCTAssertEqual(listed, [], "Transaction.all lists a transaction for the cancelled purchase; the session holds \(describeSession())")
     }
 
     /// A pending purchase's checkout survives a second attempt on the same product that the user cancels, so
