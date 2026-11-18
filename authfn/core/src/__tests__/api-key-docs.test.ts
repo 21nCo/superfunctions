@@ -191,7 +191,8 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     const required = requiredScope(guide);
     for (const scopes of [undefined, null, required, {}, [7]]) {
       const authenticate = vi.spyOn(auth.provider, 'authenticate').mockResolvedValue({
-        id: 'key', type: 'api-key', actorType: 'api-key', actorId: 'key', resourceIds: [], methods: ['api-key'],
+        id: 'key', type: 'api-key', credential: { type: 'api-key', id: 'key' }, actorType: 'api-key', actorId: 'key',
+        resourceIds: [], methods: ['api-key'],
         scopes: scopes as unknown as string[],
         subject: { actorType: 'api-key', actorId: 'key', attributes: { scopes: [required] } },
         metadata: { scopes: [required] }

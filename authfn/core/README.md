@@ -10,6 +10,16 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.7.0 release
+
+`AuthFnSession` is now the union `AuthFnUserSession | AuthFnApiKeySession`, and both variants are exported. Checking `session.type === 'api-key'` narrows `session.credential` to a required `AuthFnSessionCredential` (`{ type: 'api-key', id }`), and `session.type === 'session'` narrows it to `undefined`. Indexed access such as `AuthFnSession['methods']` keeps working. This is a type-only change: sessions are built and checked at runtime exactly as before.
+
+Migration: TypeScript code that builds an `AuthFnSession` with `type: 'api-key'` (a custom authenticator, a test double) must now set `credential: { type: 'api-key', id: <keyId> }`, and code that builds `type: 'session'` must not set `credential`; either mistake is now a compile error. Code that narrowed with `session.credential!` or `session.credential?.id` after checking `session.type === 'api-key'` can drop the assertion.
+
+A key whose owner was deleted or is disabled fails authentication (401) and no session is issued; that behavior is unchanged since 0.5.0, and only the documentation wording changed. The placement-context issuer keeps `actorType: 'api-key'` for a user-owned key in the derived and signed context, unlike the session, where the key acts as its owner; the signed context is a wire contract that regional verifiers check (see the placement-bound auth context recipe).
+
+`@authfn/api-keys` 0.2.3, `@authfn/email-otp` 0.1.7, `@authfn/multi-region` 0.2.3, `@authfn/native-handoff` 0.1.7, `@authfn/oauth-provider` 0.3.5, `@authfn/password` 0.1.8, `@authfn/social-oauth` 0.1.7 and `@authfn/two-factor` 0.1.7 depend on `authfn` 0.7.0; upgrade them together so only one copy of `authfn` is installed.
+
 ## 0.6.2 release
 
 A `429 AUTHFN_RATE_LIMITED` refusal now reports in `details.resetAt` the end of the fixed window that refused the request. Refused retries in the same window all report that same time, and a request at or after it is counted in a new window. Before, `resetAt` was the refusal time plus `windowSeconds`, so every refused retry reported a later reset. In `local` mode, counters now expire at the window boundary instead of `windowSeconds` after their first request. Rate-limit counters were already kept per route category (`otp-send`, `otp-verify`, `password`, …) and per fixed window in every mode; the counter keys are unchanged, so existing counters carry over after an upgrade.
@@ -49,7 +59,7 @@ Migration: declare a registry before creating keys with scopes. Keys stored befo
 
 A session authenticated by a user-owned API key now acts as the key's owner: `actorType` is `'user'`, `actorId` is the owner's user ID, and the new `credential` field is `{ type: 'api-key', id: <keyId> }`. A host that keys data by `actorId` reaches the owner's data with the key. `type` stays `'api-key'`.
 
-- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) authenticates as no one, through `auth.provider.authenticate` and through the placement-context issuer alike.
+- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) fails authentication (401) and no session is issued, through `auth.provider.authenticate` and through the placement-context issuer alike.
 - An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`, so routes that require a user reject it.
 - `session.metadata.ownerUserId` is deprecated and stays for one more minor version; read `actorId`.
 - AuthFn's own account routes and password linking still accept only interactive sessions (`type: 'session'`).
