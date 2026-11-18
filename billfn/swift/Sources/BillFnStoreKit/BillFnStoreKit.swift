@@ -148,9 +148,10 @@ public actor BillFnStoreKit {
         listener = nil
     }
 
-    /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then, only now that every
-    /// unfinished transaction has been offered the checkouts it could claim, removes the checkouts past the store's
-    /// retention that no transaction can still need (`removeExpiredCheckouts(excluding:offeredTransactionIds:)`).
+    /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then reconciles the checkout
+    /// store (`removeUnneededCheckouts(excluding:)`): drops matched checkouts whose transaction is recorded finished
+    /// and, only now that every unfinished transaction has been offered the checkouts it could claim, outstanding
+    /// checkouts past the store's retention.
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
         await processUnfinishedTransactions(Transaction.unfinished)
@@ -158,16 +159,14 @@ public actor BillFnStoreKit {
 
     /// `processUnfinishedTransactions()` with the unfinished transactions to confirm; it passes `Transaction.unfinished`.
     /// StoreKit can leave an unfinished transaction out of an enumeration, so a transaction missing from `unfinished`
-    /// is not taken as finished: a checkout matched to it expires only once BillFn's confirmation of it is recorded.
+    /// is never taken as finished: its matched checkout stays until the transaction is recorded finished.
     @discardableResult
     public func processUnfinishedTransactions<Unfinished: AsyncSequence & Sendable>(
         _ unfinished: Unfinished
     ) async -> [BillFnStoreKitTransactionOutcome] where Unfinished.Element == VerificationResult<Transaction> {
         var results: [BillFnStoreKitTransactionOutcome] = []
-        var offered: Set<String> = []
         do {
             for try await transaction in unfinished {
-                offered.insert(String(transaction.unsafePayloadValue.id))
                 results.append(await process(transaction))
             }
         } catch {
@@ -176,7 +175,7 @@ public actor BillFnStoreKit {
             return results
         }
         // A checkout being verified against right now is claimed, and kept.
-        checkouts.removeExpiredCheckouts(excluding: claimedCheckouts, offeredTransactionIds: offered)
+        checkouts.removeUnneededCheckouts(excluding: claimedCheckouts)
         return results
     }
 
@@ -321,6 +320,9 @@ public actor BillFnStoreKit {
             // copy must not claim an outstanding checkout.
             checkouts.recordConfirmed(transactionId: reference.transactionId)
             await transaction.finish()
+            // The only evidence the transaction was finished: StoreKit leaving it out of `Transaction.unfinished` is
+            // none. A launch that stops before removing the checkout leaves it to reconciliation.
+            checkouts.recordFinished(transactionId: reference.transactionId)
             if let checkout {
                 // Only this checkout: another attempt on the product may have saved its own meanwhile.
                 checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)

@@ -47,9 +47,9 @@ let restored = try await storeKit.restore()
   transaction whose verify call failed, or that the app stopped before finishing, is verified
   against the same checkout on a later launch however late, and no other transaction can take it.
   StoreKit can leave an unfinished transaction out of `Transaction.unfinished`, so its absence is
-  never taken as finished: a matched checkout expires (30 days after its attempt started) only once
-  BillFn's confirmation of its transaction is recorded and a launch's unfinished transactions did not
-  include it, as when a launch stopped between finishing the transaction and removing the checkout.
+  never taken as finished: the transaction is recorded finished once `finish()` returns, and a
+  matched checkout is removed only on that record (by the next launch, when the app stopped between
+  finishing the transaction and removing the checkout).
 - An outstanding checkout is claimed only by a transaction purchased after its attempt started
   (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
