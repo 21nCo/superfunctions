@@ -23,8 +23,10 @@ for path in (AUTHFN_PYTHON_ROOT, PYTHON_CORE_ROOT):
         sys.path.insert(0, path)
 
 from authfn import (
+    ApiKeyRevokedError,
     AuthFnConfig,
     ConfigError,
+    ExpiredCredentialsError,
     IdentityPlacement,
     InMemoryIdentityPlacementDirectory,
     PlacementContextInvalidError,
@@ -568,6 +570,138 @@ async def test_omits_absent_api_key_scopes_from_signed_payload() -> None:
     padding = "=" * ((4 - len(encoded) % 4) % 4)
     payload = json.loads(base64.urlsafe_b64decode(encoded + padding))
     assert "scopes" not in payload
+
+
+async def _add_api_key(
+    setup: _Setup,
+    key_id: str,
+    *,
+    user_id: Optional[str],
+    metadata: Optional[Dict[str, Any]] = None,
+    expires_at: Optional[datetime] = None,
+) -> TestRequest:
+    await setup.config.database.create(
+        model="api_keys",
+        data={
+            "id": key_id,
+            "secretHash": _hash_secret(f"secret_{key_id}"),
+            "userId": user_id,
+            "name": key_id,
+            "scopes": ["read"],
+            "metadata": metadata or {},
+            "expiresAt": expires_at,
+            "revokedAt": None,
+            "lastUsedAt": None,
+            "createdAt": datetime(2026, 9, 1, tzinfo=timezone.utc),
+            "updatedAt": datetime(2026, 9, 1, tzinfo=timezone.utc),
+        },
+        namespace="authfn",
+    )
+    return TestRequest(
+        "GET",
+        "https://account.example.com/auth/session",
+        headers={"authorization": f"Api-Key secret_{key_id}"},
+    )
+
+
+async def _set_owner_metadata(setup: _Setup, metadata: Dict[str, Any]) -> None:
+    await setup.config.database.update(
+        model="users",
+        where=[{"field": "id", "operator": "eq", "value": setup.user["id"]}],
+        data={"metadata": metadata},
+        namespace="authfn",
+    )
+
+
+def _api_key_row(setup: _Setup, key_id: str) -> Dict[str, Any]:
+    return next(
+        row for row in setup.config.database.storage["api_keys"] if row["id"] == key_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_owned_api_key_context_acts_as_owner() -> None:
+    setup = await _setup()
+    owner_context = await setup.issuer.derive(setup.request)
+    request = await _add_api_key(
+        setup,
+        "key_owned",
+        user_id=setup.user["id"],
+        metadata={"ownerUserId": "user_forged"},
+    )
+
+    context = await setup.issuer.derive(request)
+
+    assert context.subject == owner_context.subject
+    assert context.home_region == "us-east-1"
+    assert context.actor_type == "api-key"
+    assert context.assurance == ("api-key",)
+    assert context.scopes == ("read",)
+    signed = await setup.issuer.issue_signed(request)
+    assert setup.issuer.verify_signed(signed["assertion"]).subject == owner_context.subject
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_state", ["deleted", "disabled"])
+async def test_api_key_of_deleted_or_disabled_owner_gets_no_context(owner_state: str) -> None:
+    setup = await _setup()
+    request = await _add_api_key(setup, "key_gone", user_id=setup.user["id"])
+    if owner_state == "deleted":
+        await setup.config.database.delete_many(
+            model="users",
+            where=[{"field": "id", "operator": "eq", "value": setup.user["id"]}],
+            namespace="authfn",
+        )
+    else:
+        await _set_owner_metadata(setup, {"disabled": True})
+
+    with pytest.raises(UnauthorizedError):
+        await setup.issuer.derive(request)
+    with pytest.raises(UnauthorizedError):
+        await setup.issuer.issue_signed(request)
+    assert _api_key_row(setup, "key_gone")["lastUsedAt"] is None
+
+
+@pytest.mark.asyncio
+async def test_api_key_context_returns_after_owner_is_re_enabled() -> None:
+    setup = await _setup()
+    owner_context = await setup.issuer.derive(setup.request)
+    request = await _add_api_key(setup, "key_paused", user_id=setup.user["id"])
+    await _set_owner_metadata(setup, {"disabled": True})
+    with pytest.raises(UnauthorizedError):
+        await setup.issuer.derive(request)
+
+    await _set_owner_metadata(setup, {"disabled": False})
+    context = await setup.issuer.derive(request)
+
+    assert context.subject == owner_context.subject
+
+
+@pytest.mark.asyncio
+async def test_unowned_revoked_and_expired_api_keys_get_no_context() -> None:
+    setup = await _setup()
+    unowned = await _add_api_key(setup, "key_service", user_id=None)
+    with pytest.raises(UnauthorizedError):
+        await setup.issuer.derive(unowned)
+
+    revoked = await _add_api_key(setup, "key_revoked", user_id=setup.user["id"])
+    await setup.config.database.update(
+        model="api_keys",
+        where=[{"field": "id", "operator": "eq", "value": "key_revoked"}],
+        data={"revokedAt": datetime(2026, 9, 2, tzinfo=timezone.utc)},
+        namespace="authfn",
+    )
+    with pytest.raises(ApiKeyRevokedError):
+        await setup.issuer.derive(revoked)
+
+    expired = await _add_api_key(
+        setup,
+        "key_expired",
+        user_id=setup.user["id"],
+        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    with pytest.raises(ExpiredCredentialsError):
+        await setup.issuer.derive(expired)
 
 
 @pytest.mark.asyncio

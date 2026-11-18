@@ -119,24 +119,35 @@ There is no `superfunctions_starlette` adapter. Mount through FastAPI (`pip inst
 ## Reading the session
 
 ```python
-session = await auth.provider.authenticate(request)
+from authfn import AuthFnError
+
+try:
+    session = await auth.provider.authenticate(request)
+except AuthFnError:
+    # A bad Authorization header raises (InvalidCredentialsError,
+    # ApiKeyRevokedError, ExpiredCredentialsError), not None.
+    return Response(status_code=401)
 if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions differ from the TypeScript shape; see below.
+`auth.provider.authenticate` checks the cookie session first: a valid cookie session is returned even when the request also has an `Authorization` header. Otherwise it returns `None` when the request has no `Authorization` header (including a missing, revoked or expired session cookie) and raises an `AuthFnError` subclass for an `Authorization` header that does not authenticate.
+
+`AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `credential`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions follow the TypeScript rules (`authfn` 0.5.0 and later); see below.
 
 The Python SDK has no typed scopes yet. Its `AuthFnSession` has no `scopes` field for cookie or API-key sessions, and there is no scope registry or `requireScopes` check; those exist only in the TypeScript `authfn` package (0.6.0 and later). See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ### API key sessions
 
-API-key sessions in the Python SDK differ from the TypeScript `authfn` package (0.5.0 and later):
+API-key sessions in the Python SDK (0.2.0 and later) follow the same rules as the TypeScript `authfn` package (0.5.0 and later):
 
-- `actor_type` is `'api-key'` and `actor_id` is the key ID, even for a user-owned key. The session exposes the owner only through `metadata["ownerUserId"]`, and metadata stored on the key when it was created is merged over that entry, so do not rely on it to authorize access to the owner's data.
-- There is no `credential` field; check `session.type == "api-key"` to detect a key.
-- A key whose owner was disabled (`metadata.disabled` is `True` on the user record) still authenticates, and so does a key whose owner was deleted. The Python placement-context issuer also skips the disabled check. Disabling a user does not cut off their keys; revoke the keys too.
+- A user-owned key acts as its owner: `actor_type` is `'user'`, and `actor_id` and `subject.actor_id` are the owner's user ID. An unowned service key keeps `actor_type` `'api-key'` with the key ID as `actor_id`.
+- Every API-key session carries `credential` (`AuthFnApiKeyCredential`, `type='api-key'` and the key ID as `id`). Check `session.type == "api-key"` or `session.credential is not None` to detect a key.
+- A key whose owner was deleted or is disabled (`metadata["disabled"]` is `True` on the user record) fails authentication: `ApiKeyService.authenticate` returns `None`, no session is issued and the key's `lastUsedAt` is not updated. Through `auth.provider.authenticate` (the example above), a valid cookie session on the same request still takes precedence; otherwise the key raises `InvalidCredentialsError`, as any `Authorization` header that does not authenticate does. The placement-context issuer applies the same check and raises `UnauthorizedError`. Re-enabling the owner restores the key. In a placement context, an owned key's `subject` is its owner and `actor_type` stays `'api-key'`, as in TypeScript; an unowned key gets no placement context.
+- A revoked key raises `ApiKeyRevokedError`, as in TypeScript. An expired key raises `ExpiredCredentialsError`, where TypeScript returns no session.
+- `metadata["ownerUserId"]` (the owner's ID, or `None` for an unowned key) and `metadata["scopes"]` (the key's stored scopes) are written after the metadata stored on the key, so stored metadata cannot override them. Read `actor_id` instead of `ownerUserId`.
 
-The TypeScript rules (owned keys act as their owner, `credential`, the owner check) are described in [Plugins → API keys](../plugins/api-keys#authentication-via-api-key).
+The Python SDK has no typed scopes: an API-key session has no `scopes` field and there is no `require_scopes` check, so `metadata["scopes"]` is display data, not a grant. See [Plugins → API keys](../plugins/api-keys#authentication-via-api-key) for the shared rules.
 
 ## Hooks
 

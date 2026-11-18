@@ -145,6 +145,13 @@ class AuthFnRuntimeResolution(BaseModel):
         return self.region_id
 
 
+class AuthFnApiKeyCredential(BaseModel):
+    """The API key an API-key session authenticated with."""
+
+    type: Literal["api-key"]
+    id: str
+
+
 class AuthFnSession(BaseModel):
     """Actor-centric auth session contract for the multi-package authfn platform."""
 
@@ -153,6 +160,8 @@ class AuthFnSession(BaseModel):
     subject: Optional[AuthSubject] = None
     actor_type: Literal["user", "api-key"] = Field(alias="actorType")
     actor_id: str = Field(alias="actorId")
+    # Set for every API-key session (also when the key acts as its owner).
+    credential: Optional[AuthFnApiKeyCredential] = Field(None, alias="credential")
     tenant_id: Optional[str] = Field(None, alias="tenantId")
     region_id: Optional[str] = Field(None, alias="regionId")
     resource_ids: Optional[List[str]] = Field(None, alias="resourceIds")
@@ -730,6 +739,7 @@ __all__ = [
     "AuthFnRuntimeResolution",
     "AuthFnRuntimeResolver",
     "AuthFnSchemaConflictError",
+    "AuthFnApiKeyCredential",
     "AuthFnSession",
     "AuthProvider",
     "ApiKeyRevokedError",
