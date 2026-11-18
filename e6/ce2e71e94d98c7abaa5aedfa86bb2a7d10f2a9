@@ -1,0 +1,39 @@
+catchfn/typescript/README.md
+  s_19abec75182420::t_ce44b73bd2be0d 3,8,13-14,18-19,24-25,30-31,36-37,42,51-52,151-204,224-226
+catchfn/typescript/package.json
+  s_19abec75182420::t_8cec220755a758 4
+catchfn/typescript/scripts/verify-packed.mjs
+  s_19abec75182420::t_a4980cf8eea287 31,38-40,43-44,48-50,53-54,57-61,88-89
+catchfn/typescript/src/collectors/errors.ts
+  s_19abec75182420::t_b85b1a7c956859 1-235
+catchfn/typescript/src/collectors/websocket.ts
+  s_19abec75182420::t_d70a82f52d7ce9 1-250
+catchfn/typescript/src/events.ts
+  s_19abec75182420::t_613e0aa877c246 13,28-36,78-113,174-205,270-289
+catchfn/typescript/src/index.ts
+  s_19abec75182420::t_23ddaf2c609dee 4-5,10,14-15,24-25,31-33
+catchfn/typescript/src/utils/platform.ts
+  s_19abec75182420::t_196d01ff775344 1-81
+catchfn/typescript/test/errors.test.ts
+  s_19abec75182420::t_e6c9db9f301ec7 1-173
+catchfn/typescript/test/schema.test.ts
+  s_19abec75182420::t_05d32b8d0d910b 10-13,19,31-39,85,130-133,163
+catchfn/typescript/test/websocket.test.ts
+  s_19abec75182420::t_1256169a578037 1-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6ce2e71e94d98c7abaa5aedfa86bb2a7d10f2a9",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

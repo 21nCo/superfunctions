@@ -1,0 +1,14 @@
+package-lock.json
+  h_bdc5b81c173ee9 59340,59513,59523,59540,59547,59590,59597,59614,59637,59644,59862
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4419def6a37fa2423bcdb2fd43f0ca1c050ef369",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
