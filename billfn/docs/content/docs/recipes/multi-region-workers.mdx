@@ -19,11 +19,12 @@ A user holds one plan at a time. The `nucleus` plan below includes Memotron and 
   "name": "account",
   "main": "src/worker.ts",
   "compatibility_date": "2025-11-13",
-  // @billfn/provider-apple uses node:crypto.
+  // @billfn/core and @billfn/provider-apple import node:crypto and node:async_hooks.
   "compatibility_flags": ["nodejs_compat"],
   // Every minute: drain the reconciliation queue. Every five minutes: also schedule the lifecycle-events job.
   "triggers": { "crons": ["* * * * *", "*/5 * * * *"] },
   "env": {
+    // Wrangler deploys each environment as its own Worker: "account-euwest", "account-insouth", "account-useast".
     "euwest": {
       "routes": [{ "pattern": "euwest.account.example.com/*", "zone_name": "example.com" }],
       "vars": { "BILLFN_REGION": "euwest", "DODO_ENVIRONMENT": "live_mode", "APPLE_ENVIRONMENT": "production" },
@@ -40,9 +41,19 @@ A user holds one plan at a time. The `nucleus` plan below includes Memotron and 
   "name": "billing-webhooks",
   "main": "src/ingress-worker.ts",
   "compatibility_date": "2025-11-13",
-  "routes": [{ "pattern": "billing-webhooks.example.com/webhooks/*", "zone_name": "example.com" }]
+  // @billfn/core imports node:crypto and node:async_hooks.
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "billing-webhooks.example.com/webhooks/*", "zone_name": "example.com" }],
+  // The regional Workers, reached directly rather than through their public routes.
+  "services": [
+    { "binding": "INSOUTH", "service": "account-insouth" },
+    { "binding": "USEAST", "service": "account-useast" },
+    { "binding": "EUWEST", "service": "account-euwest" }
+  ]
 }
 ```
+
+The ingress calls the regions through service bindings. A Worker's `fetch` to a hostname in its own zone goes to the zone's origin, not to the Worker routed there (unless the Worker sets the `global_fetch_strictly_public` flag), so with every Worker in `example.com` a plain `fetch` to `https://euwest.account.example.com` would never reach the regional Worker.
 
 Set the secrets with `wrangler secret put` in every regional environment: `BILLFN_INTERNAL_TOKEN` (one value shared by every region and the ingress), `BILLFN_OPS_TOKEN`, `DODO_API_KEY`, `DODO_WEBHOOK_SECRET`, `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_IN_APP_PURCHASE_KEY`. The ingress Worker needs only `BILLFN_INTERNAL_TOKEN`. Point the Dodo webhook and the App Store Server Notifications v2 URL at `https://billing-webhooks.example.com/webhooks/dodo` and `/webhooks/apple`.
 
@@ -252,7 +263,7 @@ export function createRegion(env: Env) {
     auth: {
       // The AuthFn user is the billing subject. Unsafe methods need the CSRF header with a cookie session.
       async resolveSubject(request) {
-        let session: AuthFnSession | null;
+        let session: AuthFnSession | null = null;
         try {
           session = SAFE_METHODS.has(request.method)
             ? await auth.provider.authenticate(request)
@@ -261,10 +272,10 @@ export function createRegion(env: Env) {
           if (error instanceof AuthFnCsrfInvalidError) {
             throw createBillFnError({ code: "BILLFN_UNAUTHORIZED", message: "CSRF check failed" });
           }
-          if (error instanceof AuthFnError && error.status === 401) return null;
-          throw error;
+          if (!(error instanceof AuthFnError && error.status === 401)) throw error;
         }
-        return session ? { principalId: session.actorId } : null;
+        if (!session) throw createBillFnError({ code: "BILLFN_UNAUTHENTICATED", message: "Sign in to manage billing" });
+        return { principalId: session.actorId };
       },
     },
     checkout: {
@@ -296,7 +307,7 @@ export function createRegion(env: Env) {
 ```
 
 - `region.id` makes Dodo checkout write `billfn_region` into the Dodo record's metadata, so the ingress routes that subscription's events here without asking the regions. `region.internalToken` lets the ingress call `GET /billfn/ops/owner` for events without it (Apple notifications, and subscriptions created before BillFn).
-- `resolveSubject` returns `null` for a request without a valid AuthFn credential, so BillFn answers 401; a body `subject` is ignored whenever a resolver is configured. A CSRF mismatch answers 403.
+- `resolveSubject` throws `BILLFN_UNAUTHENTICATED` for a request without a valid AuthFn credential, so BillFn answers 401; returning `null` instead would answer 400 `BILLFN_VALIDATION_ERROR`, as for a request that names no subject. A CSRF mismatch answers 403. A body `subject` is ignored whenever a resolver is configured. Routes that take no subject (the catalog, webhooks and `/billfn/ops/*`) never call it.
 - The queue makes webhook ingestion and the jobs BillFn schedules itself (for example the `subscription-sync` after a provider mutation raced an event) durable: they wait in the region's database for the cron to run them.
 - `discountTierOf` in `src/discount-tiers.ts` is yours: it returns the discount tier you recorded for the billing account (`"student"`, `"regional"`) or `null`.
 
@@ -363,9 +374,28 @@ import { createWebhookIngress, type BillingProviderName } from "@billfn/core";
 
 export interface IngressEnv {
   BILLFN_INTERNAL_TOKEN: string;
+  /** Service bindings to the regional account Workers (ingress/wrangler.jsonc). */
+  INSOUTH: Fetcher;
+  USEAST: Fetcher;
+  EUWEST: Fetcher;
 }
 
 const PROVIDERS: readonly BillingProviderName[] = ["dodo", "apple"];
+
+/** Sends a request for a region's host to that region's Worker through its service binding. */
+function regionFetch(env: IngressEnv): typeof fetch {
+  const bindings: Record<string, Fetcher> = {
+    "insouth.account.example.com": env.INSOUTH,
+    "useast.account.example.com": env.USEAST,
+    "euwest.account.example.com": env.EUWEST,
+  };
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const binding = bindings[new URL(request.url).hostname];
+    if (!binding) throw new Error(`No service binding for ${request.url}`);
+    return binding.fetch(request);
+  };
+}
 
 export default {
   async fetch(request, env) {
@@ -379,6 +409,8 @@ export default {
       ],
       defaultRegion: "useast",
       internalToken: env.BILLFN_INTERNAL_TOKEN,
+      // Owner lookups and forwards both go through the bindings.
+      fetch: regionFetch(env),
       onRoute: (decision) => console.log("billfn webhook routed", decision),
     });
     return ingress.handle(provider, request);
@@ -442,11 +474,25 @@ const billing = createNativeBackedBillFnClient({
   baseURL: "https://euwest.account.example.com/billfn",
 });
 
+let connected: Promise<unknown> | undefined;
+
+/** Handshakes once; a failed handshake rejects this call and is tried again on the next one. */
+function connect(): Promise<unknown> {
+  connected ??= billing.handshake().catch((error: unknown) => {
+    connected = undefined;
+    throw error;
+  });
+  return connected;
+}
+
 export async function buyNucleusYearly(): Promise<"purchased" | "pending" | "cancelled"> {
+  await connect();
   const result = await billing.checkout({ planKey: "nucleus", interval: "year" });
   return result.status;
 }
 ```
+
+The native-backed client rejects every request with `BRIDGE_HANDSHAKE_REQUIRED` until `handshake()` has completed, so the module handshakes before its first request.
 
 ## Importing legacy subscriptions
 
@@ -480,4 +526,4 @@ Run it in the region that holds the user's account, from an operator tool or [`@
 
 ## What is verified
 
-`npm test --workspace @billfn/docs` typechecks every TypeScript block on this page against the current `@billfn/*`, `authfn`, `@authfn/password`, `@superfunctions/queue` and `@cloudflare/workers-types` declarations (the browser block with DOM types), with `src/database.ts`, `src/mail.ts` and `src/discount-tiers.ts` stubbed. The `@billfn/core` workerd suite runs the router, two regions behind the ingress, Dodo checkout region metadata and the Apple verifier and signer in workerd. Live Dodo and App Store calls, StoreKit purchases on a device, Hyperdrive and cron triggers on a Cloudflare account are not covered.
+`npm test --workspace @billfn/docs` typechecks every TypeScript block on this page against the current `@billfn/*`, `authfn`, `@authfn/password`, `@superfunctions/queue` and `@cloudflare/workers-types` declarations (the browser block with DOM types), with `src/database.ts`, `src/mail.ts` and `src/discount-tiers.ts` stubbed. It also runs the blocks: the signup trial against a real BillFn, `resolveSubject` through the BillFn router (401 without a session, 403 on a CSRF mismatch) with AuthFn faked, the plan emails, the cron drain, the regional routing, the ingress's owner lookups and forwards through fake service bindings, and `buyNucleusYearly` against the real bridge client and a fake native host. The `@billfn/core` workerd suite runs the router, two regions behind the ingress, Dodo checkout region metadata and the Apple verifier and signer in workerd. Live Dodo and App Store calls, StoreKit purchases on a device, Hyperdrive and cron triggers on a Cloudflare account are not covered.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -201,24 +202,160 @@ test("the regional Worker serves /auth and /billfn and nothing else", async () =
   assert.equal((await get("/"))[0], 404);
 });
 
-test("the ingress Worker forwards a Dodo event to the region its metadata names, unchanged", async () => {
+/** A fake service binding that records each request and answers with `answer(request)`. */
+function fakeBinding(name, calls, answer) {
+  return {
+    async fetch(input, init) {
+      const request = new Request(input, init);
+      calls.push({ binding: name, method: request.method, url: request.url, authorization: request.headers.get("authorization"), signature: request.headers.get("webhook-signature"), body: request.method === "POST" ? await request.text() : null });
+      return answer(request);
+    },
+  };
+}
+
+test("the ingress Worker looks up owners and forwards through the regions' service bindings, never the global fetch", async () => {
   const { default: ingress } = await importBlock("src/ingress-worker.ts");
-  const forwarded = [];
-  const fakeFetch = async (input, init) => {
-    const request = new Request(input, init);
-    forwarded.push({ url: request.url, signature: request.headers.get("webhook-signature"), body: await request.text() });
+  const calls = [];
+  const internalToken = ["test", "internal", "token"].join("-");
+  const owned = (owner) => (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/billfn/ops/owner") return Response.json({ data: { owned: owner } });
     return new Response("accepted", { status: 200 });
   };
-  const env = { BILLFN_INTERNAL_TOKEN: ["test", "internal", "token"].join("-") };
-  const body = JSON.stringify({ type: "subscription.active", data: { subscription_id: "sub_test_1", metadata: { billfn_region: "euwest" } } });
-  await withGlobals({ fetch: fakeFetch, console: { ...console, log: () => {} } }, async () => {
-    const response = await ingress.fetch(
-      new Request("https://billing-webhooks.example.com/webhooks/dodo", { method: "POST", body, headers: { "webhook-signature": "test-signature" } }),
-      env,
-    );
-    assert.equal(response.status, 200);
+  const env = {
+    BILLFN_INTERNAL_TOKEN: internalToken,
+    INSOUTH: fakeBinding("INSOUTH", calls, owned(true)),
+    USEAST: fakeBinding("USEAST", calls, owned(false)),
+    EUWEST: fakeBinding("EUWEST", calls, owned(false)),
+  };
+  const deliver = (provider, body, init = {}) =>
+    ingress.fetch(new Request(`https://billing-webhooks.example.com/webhooks/${provider}`, { method: "POST", body, headers: { "webhook-signature": "test-signature" }, ...init }), env);
+  const globalFetch = async () => { throw new Error("the global fetch skips Workers routed in the same zone"); };
+
+  await withGlobals({ fetch: globalFetch, console: { ...console, log: () => {} } }, async () => {
+    // Region metadata: straight to that region's binding, unchanged.
+    const tagged = JSON.stringify({ type: "subscription.active", data: { subscription_id: "sub_test_1", metadata: { billfn_region: "euwest" } } });
+    assert.equal((await deliver("dodo", tagged)).status, 200);
+    assert.deepEqual(calls.splice(0), [
+      { binding: "EUWEST", method: "POST", url: "https://euwest.account.example.com/billfn/webhooks/dodo", authorization: null, signature: "test-signature", body: tagged },
+    ]);
+
+    // No metadata: every region's binding is asked, and the owner gets the event.
+    const untagged = JSON.stringify({ type: "subscription.renewed", data: { subscription_id: "sub_test_2" } });
+    assert.equal((await deliver("dodo", untagged)).status, 200);
+    const lookups = calls.filter((call) => call.method === "GET");
+    assert.deepEqual(lookups.map((call) => call.binding).sort(), ["EUWEST", "INSOUTH", "USEAST"]);
+    for (const lookup of lookups) {
+      assert.match(lookup.url, /^https:\/\/\w+\.account\.example\.com\/billfn\/ops\/owner\?provider=dodo&ref=sub_test_2$/);
+      assert.equal(lookup.authorization, `Bearer ${internalToken}`);
+    }
+    assert.deepEqual(calls.filter((call) => call.method === "POST"), [
+      { binding: "INSOUTH", method: "POST", url: "https://insouth.account.example.com/billfn/webhooks/dodo", authorization: null, signature: "test-signature", body: untagged },
+    ]);
+    calls.splice(0);
+
     assert.equal((await ingress.fetch(new Request("https://billing-webhooks.example.com/webhooks/dodo"), env)).status, 404);
-    assert.equal((await ingress.fetch(new Request("https://billing-webhooks.example.com/webhooks/stripe", { method: "POST", body }), env)).status, 404);
+    assert.equal((await deliver("stripe", tagged)).status, 404);
+    assert.deepEqual(calls, []);
   });
-  assert.deepEqual(forwarded, [{ url: "https://euwest.account.example.com/billfn/webhooks/dodo", signature: "test-signature", body }]);
+});
+
+test("billing's resolveSubject makes BillFn answer 401 without an AuthFn session and 403 on a CSRF mismatch", async () => {
+  const memoryUrl = import.meta.resolve("@superfunctions/db/adapters/memory");
+  const { createRegion } = await importBlock("src/billing.ts", {
+    authfn: [
+      "export class AuthFnError extends Error { constructor(message, status) { super(message); this.status = status; } }",
+      "export class AuthFnCsrfInvalidError extends AuthFnError { constructor() { super('CSRF token mismatch', 403); } }",
+      // The x-test-session header picks what the fake AuthFn does with the request.
+      "const session = (request) => {",
+      "  const value = request.headers.get('x-test-session');",
+      "  if (value === 'expired') throw new AuthFnError('Session expired', 401);",
+      "  if (value === 'csrf' && request.method !== 'GET') throw new AuthFnCsrfInvalidError();",
+      "  return value && value !== 'csrf' ? { actorId: value } : null;",
+      "};",
+      "export const authfn = () => ({ createServer: () => ({",
+      "  provider: { authenticate: async (request) => session(request) },",
+      "  authorizeMutation: async (request) => session(request),",
+      "}) });",
+    ].join("\n"),
+    "@authfn/password": "export const authFnPasswordPlugin = () => ({});",
+    // The memory adapter has no rawSql; these routes queue nothing.
+    "@superfunctions/queue": "export class DatabaseQueueAdapter {}",
+    "./database": `import { memoryAdapter } from "${memoryUrl}"; export const createDatabase = () => memoryAdapter({ debug: false });`,
+    "./discount-tiers": "export const discountTierOf = async () => null;",
+    "./mail": "export const sendPlanEmail = async () => {};",
+  });
+  const env = {
+    BILLFN_REGION: "euwest",
+    BILLFN_INTERNAL_TOKEN: "test-internal-token",
+    BILLFN_OPS_TOKEN: "test-ops-token",
+    DODO_API_KEY: "test-dodo-api-key",
+    DODO_WEBHOOK_SECRET: "test-dodo-webhook-secret",
+    DODO_ENVIRONMENT: "test_mode",
+    APPLE_ENVIRONMENT: "sandbox",
+    APPLE_ISSUER_ID: "test-issuer-id",
+    APPLE_KEY_ID: "test-key-id",
+    // The adapter parses its key up front; a throwaway one is made per run.
+    APPLE_IN_APP_PURCHASE_KEY: generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }),
+  };
+  const { billfn } = createRegion(env);
+  const call = async (method, path, session, body) => {
+    const headers = { "content-type": "application/json", ...(session ? { "x-test-session": session } : {}) };
+    const response = await billfn.router.handle(new Request(`https://euwest.account.example.com/billfn${path}`, { method, headers, body: body && JSON.stringify(body) }));
+    const json = await response.json();
+    return [response.status, json.error?.code ?? null];
+  };
+  const checkout = { planKey: "nucleus", provider: "dodo", interval: "month", subject: { principalId: "someone-else" } };
+
+  assert.deepEqual(await call("GET", "/entitlements"), [401, "BILLFN_UNAUTHENTICATED"]);
+  assert.deepEqual(await call("GET", "/entitlements", "expired"), [401, "BILLFN_UNAUTHENTICATED"]);
+  assert.deepEqual(await call("POST", "/checkouts", undefined, checkout), [401, "BILLFN_UNAUTHENTICATED"]);
+  assert.deepEqual(await call("POST", "/checkouts", "csrf", checkout), [403, "BILLFN_UNAUTHORIZED"]);
+  assert.deepEqual(await call("GET", "/entitlements", "user-1"), [200, null]);
+  assert.equal((await billfn.router.handle(new Request("https://euwest.account.example.com/billfn/catalog"))).status, 200);
+});
+
+/** A fake WKWebView host: answers each bridge message with `answer(message)` and records the methods it received. */
+function fakeNativeHost(answer) {
+  const received = [];
+  const window = {
+    webkit: {
+      messageHandlers: {
+        billfn: {
+          postMessage(message) {
+            received.push(message.method);
+            const reply = answer(message);
+            queueMicrotask(() => window.__billfnBridgeReceive__({ protocol: message.protocol, id: message.id, ...reply }));
+          },
+        },
+      },
+    },
+  };
+  return { window, received };
+}
+
+test("buyNucleusYearly handshakes with the native host before the StoreKit checkout, and retries a failed handshake", async () => {
+  const handshake = { ok: true, result: { bridgeVersion: 1, billingOwner: "native", capabilities: ["storekit.checkout"] } };
+  const cancelled = { ok: true, result: { status: "cancelled", checkoutSessionId: "cs_test_1", productId: "com.example.nucleus.year" } };
+
+  const host = fakeNativeHost((message) => (message.method === "handshake" ? handshake : cancelled));
+  await withGlobals({ window: host.window }, async () => {
+    const { buyNucleusYearly } = await importBlock("src/web-billing.ts");
+    assert.equal(await buyNucleusYearly(), "cancelled");
+    assert.equal(await buyNucleusYearly(), "cancelled");
+  });
+  assert.deepEqual(host.received, ["handshake", "storekit.checkout", "storekit.checkout"]);
+
+  let handshakes = 0;
+  const flaky = fakeNativeHost((message) => {
+    if (message.method !== "handshake") return cancelled;
+    handshakes += 1;
+    return handshakes === 1 ? { ok: false, error: { code: "BRIDGE_UNAVAILABLE", message: "native host not ready" } } : handshake;
+  });
+  await withGlobals({ window: flaky.window }, async () => {
+    const { buyNucleusYearly } = await importBlock("src/web-billing.ts");
+    await assert.rejects(buyNucleusYearly(), { code: "BRIDGE_UNAVAILABLE" });
+    assert.equal(await buyNucleusYearly(), "cancelled");
+  });
+  assert.deepEqual(flaky.received, ["handshake", "handshake", "storekit.checkout"]);
 });
