@@ -737,6 +737,26 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkoutStore.keptCheckouts(), [])
     }
 
+    /// A retryable `BILLFN_CONFLICT` (BillFn is still importing the purchase) is no rejection of the checkout: the
+    /// transaction is not restored onto its plan, and stays unfinished and bound to its checkout.
+    func testRetryableConflictDoesNotFallBackToRestore() async throws {
+        let backend = FakeBillFnBackend()
+        let conflict = BillFnClientError.server(code: "BILLFN_CONFLICT", message: "Import pending", status: 409, retryable: true)
+        await backend.failVerification(with: conflict)
+        let lifetimePlans = plans + [BillFnStoreKitPlan(productId: proLifetime, planKey: "pro-lifetime")]
+
+        guard case .purchased(_, let failed) = try await launch(backend, plans: lifetimePlans).purchase(planKey: "pro-lifetime") else {
+            return XCTFail("Expected a purchase")
+        }
+
+        XCTAssertEqual(failed.status, .failed(BillFnStoreKitFailure(error: conflict)))
+        let restores = await backend.restores
+        XCTAssertTrue(restores.isEmpty)
+        try await assertUnfinished(try XCTUnwrap(UInt64(failed.transaction.transactionId)))
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.settled), [false])
+    }
+
     /// BillFn's route answers an unexpected failure with HTTP 500 BILLFN_INTERNAL_ERROR (retryable false). That says
     /// nothing about the checkout, so the transaction is not restored onto its plan instead: it stays unfinished and
     /// bound to its checkout, and the next launch verifies it against that checkout again.
@@ -1350,6 +1370,9 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         try await assertFinished(first)
         try session.refundTransaction(identifier: UInt(bought.id))
         let revoked = try await listedTransaction(bought.id) { $0.revocationDate != nil }
+        // With no plan or checkout to confirm the refund through, a launch leaves it alone instead of skipping it each time.
+        let unmapped = await launch(backend, plans: []).processUnfinishedTransactions(noTransactions(), history: transactions([revoked]))
+        XCTAssertTrue(unmapped.isEmpty)
 
         await backend.failRestore(with: URLError(.notConnectedToInternet))
         let failed = await launch(backend).processUnfinishedTransactions(noTransactions(), history: transactions([revoked]))

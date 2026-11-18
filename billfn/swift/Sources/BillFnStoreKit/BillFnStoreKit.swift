@@ -204,7 +204,11 @@ public actor BillFnStoreKit {
         if let own = records.first(where: { $0.facts.revoked == facts.revoked }) {
             return own.state < .finished
         }
-        if !records.isEmpty { return facts.revoked }
+        // A refund of a transaction BillFn confirmed unrevoked, when it can reach BillFn: through its plan, or the checkout
+        // still bound to it. Otherwise it would be skipped again on every launch.
+        if !records.isEmpty {
+            return facts.revoked && (plans[facts.productId] != nil || kept.contains { $0.transactionId == facts.transactionId })
+        }
         return kept.contains { $0.transactionId == facts.transactionId || facts.mayClaim($0) }
     }
 
@@ -396,10 +400,10 @@ public actor BillFnStoreKit {
     }
 
     /// Verifies the transaction against its checkout, or restores it onto its plan when it has none, and says which.
-    /// When BillFn rejects the checkout verification for good (`BILLFN_CONFLICT`, such as once a later renewal superseded
-    /// the transaction) and a plan maps the product, the transaction is restored onto the plan instead (by its original
+    /// When BillFn rejects the checkout verification for good (a non-retryable `BILLFN_CONFLICT`, such as once a later
+    /// renewal superseded the transaction) and a plan maps the product, the transaction is restored onto the plan instead (by its original
     /// transaction id), so it is not retried against the checkout forever; that resolves the binding without confirming
-    /// the checkout. Any other error (an internal or HTTP error, a network failure) leaves the transaction unfinished and
+    /// the checkout. Any other error (a retryable conflict, an internal or HTTP error, a network failure) leaves the transaction unfinished and
     /// its checkout bound for the next launch. With no plan, the rejection is the outcome.
     private func confirm(
         _ reference: BillFnStoreKitTransactionReference,
@@ -412,7 +416,7 @@ public actor BillFnStoreKit {
         do {
             let billing = try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
             return (billing, .checkout(checkout.checkoutSessionId))
-        } catch BillFnClientError.server("BILLFN_CONFLICT", _, _, _) where plan != nil {
+        } catch BillFnClientError.server("BILLFN_CONFLICT", _, _, false) where plan != nil {
             let billing = try await backend.restorePurchase(plan: plan!, transaction: reference)
             return (billing, .restore(rejectedCheckout: checkout.checkoutSessionId))
         }
