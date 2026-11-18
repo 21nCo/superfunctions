@@ -88,5 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.11
 - Python 3.12
 
-[Unreleased]: https://github.com/21nCo/super-functions/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/21nCo/superfunctions/compare/python-authfn-v0.2.0...HEAD
+[0.2.0]: https://github.com/21nCo/superfunctions/releases/tag/python-authfn-v0.2.0
 [0.1.0]: https://github.com/21nCo/super-functions/releases/tag/v0.1.0
