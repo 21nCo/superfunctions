@@ -1,0 +1,21 @@
+packages/db/src/adapter/schema-codecs.ts
+  s_b37e38b17f81cc::t_aef622bc20fca0 470-472
+packages/db/src/adapters/kysely/boolean-codecs.test.ts
+  s_b37e38b17f81cc::t_d20657223414a5 38-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9e82584dfd33c482b590e9b7ab7e3c9acab484a",
+  "prompts": {},
+  "sessions": {
+    "s_b37e38b17f81cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "708b8382-8b15-40c0-9069-46eb3f969813",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
