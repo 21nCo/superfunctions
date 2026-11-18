@@ -27,7 +27,8 @@ const JS_GLOBAL_PATTERNS = [
 // invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path segment, as in
 // Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/,
 // Markdown and turbo.json aside, names one of them by file name, or names a script that reaches one through other
-// scripts, so the list cannot grow to cover a script a package uses.
+// scripts (the root package.json and the data files the test lists may name those), so the list cannot grow to cover
+// a script a package uses.
 const STANDALONE_SCRIPTS = [
   "scripts/promote.*",
   "scripts/verify-public-boundary.*",
