@@ -40,6 +40,7 @@ The full sample lives in [native-apple.swift](https://github.com/21nCo/super-fun
 - `start()` listens to `Transaction.updates` and confirms what earlier launches left unfinished. Call it once at launch, before any purchase.
 - `purchase(planKey:priceId:interval:)` opens a BillFn Apple checkout (`POST /checkouts`) and buys its product with the `appAccountToken` BillFn returned. It returns `.purchased` with the transaction's outcome, `.pending` (Ask to Buy; the transaction arrives later through `Transaction.updates`) or `.cancelled`.
 - A transaction is finished only after BillFn confirms it: a purchase, including an approved Ask to Buy or an interrupted one, is verified against its retained checkout (`POST /checkouts/verify`); a renewal, a restored purchase, or a transaction with no matching checkout (or whose checkout BillFn permanently rejects) is restored onto the plan its product maps to in `plans` (`POST /purchases/restore`). A transaction BillFn does not confirm stays unfinished, and `start()` retries it on the next launch.
+- A restore sends the mapping's `priceId` when it has one. Give each `BillFnStoreKitPlan` the `priceId` of its catalog price when its plan has more than one Apple price (such as a monthly and a yearly one): without it BillFn can take the price only from a checkout it recorded for the transaction, so a restore with neither answers `BILLFN_VALIDATION_ERROR` and the transaction stays unfinished.
 - `restore()` syncs with the App Store (which may ask the user to sign in) and confirms each current entitlement.
 - The checkout a purchase opened is kept in `UserDefaults` until BillFn confirms its transaction, so a pending or interrupted purchase still verifies against it.
 
@@ -51,7 +52,7 @@ let client = BillFnClient(configuration: BillFnClientConfiguration(
     headers: { ["authorization": "Bearer \(try await session.token())"] }
 ))
 let storeKit = BillFnStoreKit(client: client, plans: [
-    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus"),
+    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus", priceId: "nucleus_apple_month"),
 ])
 await storeKit.start()
 switch try await storeKit.purchase(planKey: "nucleus") {

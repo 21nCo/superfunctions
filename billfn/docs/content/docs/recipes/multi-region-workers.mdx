@@ -462,14 +462,14 @@ let client = BillFnClient(configuration: BillFnClientConfiguration(
     headers: { ["authorization": "Bearer \(try await session.token())"] }
 ))
 let storeKit = BillFnStoreKit(client: client, plans: [
-    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus"),
-    BillFnStoreKitPlan(productId: "com.example.nucleus.year", planKey: "nucleus"),
+    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus", priceId: "nucleus_apple_month"),
+    BillFnStoreKitPlan(productId: "com.example.nucleus.year", planKey: "nucleus", priceId: "nucleus_apple_year"),
 ])
 await storeKit.start() // at launch, before any purchase
 let result = try await storeKit.purchase(planKey: "nucleus", interval: "year")
 ```
 
-`purchase` opens a BillFn Apple checkout in the home region, buys its product with the `appAccountToken` BillFn returned, and finishes the transaction only after `/billfn/checkouts/verify` confirms it. Renewals and restored purchases go to `/billfn/purchases/restore`. An embedded web app asks the native host to do the same through `@billfn/swift-bridge`:
+`purchase` opens a BillFn Apple checkout in the home region, buys its product with the `appAccountToken` BillFn returned, and finishes the transaction only after `/billfn/checkouts/verify` confirms it. Renewals and restored purchases go to `/billfn/purchases/restore`, which needs the mapping's `priceId` because the Nucleus plan has two Apple prices; without it a restore with no checkout answers `400 BILLFN_VALIDATION_ERROR` and the transaction stays unfinished. An embedded web app asks the native host to do the same through `@billfn/swift-bridge`:
 
 ```ts
 // src/web-billing.ts (browser)

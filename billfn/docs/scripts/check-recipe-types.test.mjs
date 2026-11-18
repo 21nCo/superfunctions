@@ -118,6 +118,24 @@ test("grantSignupTrial grants one 14-day Nucleus trial, and a rerun finds it gra
   assert.equal(data.grants[0].expiresAt, new Date(signedUpAt.getTime() + 14 * DAY_MS).toISOString());
 });
 
+test("every StoreKit plan mapping names the catalog Apple price of its product, so a restore without a checkout finds its price", async () => {
+  const { catalog } = await importBlock("src/catalog.ts");
+  const swiftPage = readFileSync(resolve(repoRoot, "billfn/docs/content/docs/clients/swift.mdx"), "utf8");
+  const mappings = [...`${markdown}\n${swiftPage}`.matchAll(/^```swift\r?\n([\s\S]*?)^```/gm)].flatMap(([, code]) =>
+    [...code.matchAll(/BillFnStoreKitPlan\(([^)]*)\)/g)].map(([, args]) => Object.fromEntries([...args.matchAll(/(\w+): "([^"]*)"/g)].map(([, k, v]) => [k, v])))
+  );
+  assert.equal(mappings.length, 3);
+  for (const mapping of mappings) {
+    const plan = catalog.plans.find((p) => p.planKey === mapping.planKey);
+    assert.ok(plan, `no catalog plan ${mapping.planKey}`);
+    const applePrices = plan.prices.filter((p) => p.provider === "apple");
+    const price = applePrices.find((p) => p.providerProductId === mapping.productId);
+    assert.ok(price, `no Apple price for ${mapping.productId}`);
+    if (applePrices.length > 1) assert.equal(mapping.priceId, price.priceId, `${mapping.productId} needs priceId ${price.priceId}`);
+    else if (mapping.priceId) assert.equal(mapping.priceId, price.priceId);
+  }
+});
+
 test("grantSignupTrial rethrows every failure but an already granted trial", async () => {
   const { grantSignupTrial } = await importBlock("src/trial.ts");
   const failingWith = (error) => ({ services: { grants: { create: async () => { throw error; } } } });
