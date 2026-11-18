@@ -63,12 +63,14 @@ const annotated = {
     ...(document.info ?? {}),
     title: "AuthFn API",
     description:
-      "Generated from authfn with every bundled plugin enabled. The shape of " +
+      "Generated from authfn with the password, email OTP, social OAuth, API key, " +
+      "two-factor, multi-region and native handoff plugins enabled; @authfn/oauth-provider " +
+      "is not included and is documented in its package README. The shape of " +
       "your deployment's OpenAPI document depends on the plugins you actually mount.",
   },
 };
 
-const frontmatter = `---\ntitle: HTTP API Reference\ndescription: Auto-generated OpenAPI surface for an authfn server with every bundled plugin enabled.\n---\n`;
+const frontmatter = `---\ntitle: HTTP API Reference\ndescription: Auto-generated OpenAPI surface for an authfn server with the plugins documented under Plugins enabled (not @authfn/oauth-provider).\n---\n`;
 
 writeFileSync(outFile, JSON.stringify(annotated, null, 2) + "\n", "utf8");
 

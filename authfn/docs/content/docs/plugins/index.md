@@ -5,7 +5,7 @@ description: Every authfn capability is a plugin. Pick the ones you need; skip t
 
 # Plugins
 
-authfn ships seven plugins as independent packages. They compose into a single `authfn()` app — pick the ones you need, ignore the rest, and the kernel surface (routes, schema, OpenAPI, observability) tracks your choice.
+authfn ships the plugins below as independent packages, each documented on its own page here. They compose into a single `authfn()` app — pick the ones you need, ignore the rest, and the kernel surface (routes, schema, OpenAPI, observability) tracks your choice.
 
 | Plugin | Package | What it adds | Page |
 | --- | --- | --- | --- |
@@ -16,6 +16,8 @@ authfn ships seven plugins as independent packages. They compose into a single `
 | `authFnTwoFactorPlugin` | `@authfn/two-factor` | TOTP-based 2FA with recovery codes. | [Two-factor](./two-factor) |
 | `authFnMultiRegionPlugin` | `@authfn/multi-region` | Region pinning, lookup, runtime overlays. | [Multi-region](./multi-region) |
 | `authFnNativeHandoffPlugin` | `@authfn/native-handoff` | Web ↔ native session handoff. | [Native handoff](./native-handoff) |
+
+`@authfn/oauth-provider` (`authFnOAuthProviderPlugin`), an OAuth 2.1 authorization server for MCP hosts, CLIs and other clients, is also published as a plugin package. These pages do not cover it: its routes, tables and configuration are documented in its [package README](https://github.com/21nCo/superfunctions/blob/dev/authfn/oauth-provider/README.md).
 
 The kernel does **not** re-export these factories. Import each plugin from its own package. Schema and policy options go to the plugin factory in `authfn({ plugins })`. Runtime dependencies (delivery, OAuth secrets, encryption keys, clocks) go to `.createServer({ pluginRuntime })`.
 
