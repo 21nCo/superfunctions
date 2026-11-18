@@ -436,3 +436,41 @@ test("a pending checkout's later transaction.updated outcome reaches onTransacti
   });
   assert.deepEqual(host.received, ["handshake", "storekit.checkout"]);
 });
+
+test("onTransactionUpdated receives transaction.updated outcomes without a checkout, and again after stopBilling", async () => {
+  const transaction = { transactionId: "2000000000000004", originalTransactionId: "2000000000000003", productId: "com.example.nucleus.month", appAccountToken: null, revoked: false };
+  const renewal = { transaction, status: "restored", finished: true, billing: {} };
+  const host = fakeNativeHost(() => {
+    throw new Error("no bridge request expected");
+  });
+  // A renewal, or an Ask to Buy approval after the page was reloaded: no checkout runs in this page.
+  // With no subscription the page may have no receiver at all; the event is then dropped, as in the app.
+  const post = () => host.window.__billfnBridgeReceive__?.({ protocol: "billfn-bridge/v1", event: "transaction.updated", payload: { outcome: renewal } });
+
+  await withGlobals({ window: host.window }, async () => {
+    const { onTransactionUpdated, stopBilling } = await importBlock("src/web-billing.ts");
+    const first = [];
+    const removeFirst = onTransactionUpdated((update) => first.push(update));
+    post();
+    assert.deepEqual(first, [renewal], "a listener registered without a checkout receives the outcome");
+
+    stopBilling();
+    const second = [];
+    const removeSecond = onTransactionUpdated((update) => second.push(update));
+    post();
+    assert.deepEqual(second, [renewal], "a listener registered after stopBilling receives the outcome");
+    assert.deepEqual(first, [renewal], "stopBilling removed the earlier listener");
+
+    removeFirst();
+    removeSecond();
+    post();
+    assert.deepEqual(second, [renewal], "removing the last listener unsubscribes");
+
+    const third = [];
+    onTransactionUpdated((update) => third.push(update));
+    post();
+    assert.deepEqual(third, [renewal], "a later registration subscribes again");
+    stopBilling();
+  });
+  assert.deepEqual(host.received, []);
+});
