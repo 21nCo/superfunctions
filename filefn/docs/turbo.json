@@ -15,7 +15,8 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/scripts/docs-site/**",
-        "$TURBO_ROOT$/filefn/server/contracts/filefn-client-v1.openapi.json"
+        "$TURBO_ROOT$/filefn/server/contracts/filefn-client-v1.openapi.json",
+        "$TURBO_ROOT$/datafn/docs/content/docs/recipes/filefn-integration.mdx"
       ]
     }
   }

@@ -5,11 +5,12 @@ audience: guide
 applies_to: both
 ---
 
-FileFn handles file uploads, storage adapters (S3, R2, GCS, Azure, local), pre-signed URLs, and lifecycle policies. DataFn manages the relational records that own those files. The connection is a `string` field in your schema that stores the FileFn file id.
+FileFn handles file uploads, storage adapters (S3, R2, GCS, Azure, local), signed download URLs, and upload policies. DataFn manages the relational records that own those files. The connection is a `string` field in your schema that stores the FileFn file id.
 
 ## Schema
 
 ```typescript
+// schema.ts
 import { defineSchema } from "@datafn/core";
 
 export const schema = defineSchema({
@@ -25,9 +26,9 @@ export const schema = defineSchema({
         { name: "fileId", type: "string", required: true },    // FileFn file id
         { name: "filename", type: "string", required: true },
         { name: "mime", type: "string", required: true },
-        { name: "size", type: "number", required: true },
+        { name: "size", type: "number", required: true, max: 25 * 1024 * 1024 },
       ],
-      indices: { base: ["ownerType", "ownerId"] },
+      indices: { base: ["ownerType", "ownerId"], search: ["filename"] },
     },
   ],
 });
@@ -35,72 +36,181 @@ export const schema = defineSchema({
 
 You can also embed `fileId` directly on a resource (`avatarFileId` on `users`, `coverFileId` on `posts`). The dedicated `attachments` table is correct for many-to-one relationships.
 
+## Clients
+
+```typescript
+// clients.ts
+import { createDatafnClient } from "@datafn/client";
+import { createFileFnClient } from "@filefn/client";
+import { schema } from "./schema";
+
+/** This installation's DataFn client ID: generated once, then kept in `storage` across reloads. */
+export function installationId(storage: Pick<Storage, "getItem" | "setItem"> = localStorage): string {
+  let id = storage.getItem("datafn.clientId");
+  if (!id) {
+    id = `web-${crypto.randomUUID()}`;
+    storage.setItem("datafn.clientId", id);
+  }
+  return id;
+}
+
+export const client = createDatafnClient({
+  schema,
+  clientId: installationId(),
+  sync: { remote: "/datafn" },
+});
+
+// Where your server mounts FileFn (its `basePath`).
+export const FILEFN_BASE_URL = "/files";
+
+function cookie(name: string): string | undefined {
+  const entry = document.cookie.split("; ").find((part) => part.startsWith(`${name}=`));
+  return entry === undefined ? undefined : decodeURIComponent(entry.slice(name.length + 1));
+}
+
+export const files = createFileFnClient({
+  baseUrl: FILEFN_BASE_URL,
+  // AuthFn's CSRF check: a cookie-authenticated upload or delete must echo the `authfn.csrf` cookie.
+  getAuthHeaders: (): Record<string, string> => {
+    const csrf = cookie("authfn.csrf");
+    return csrf ? { "x-authfn-csrf": csrf } : {};
+  },
+});
+
+/** Whether FileFn returned one of its proxy routes, which are relative to where FileFn is mounted. */
+export function isProxyUrl(url: string): boolean {
+  return url.startsWith("/") && !url.startsWith("//");
+}
+
+/** A URL FileFn returned, ready for the browser. Signed storage URLs are absolute and pass through. */
+export function fileFnUrl(url: string): string {
+  return isProxyUrl(url) ? `${FILEFN_BASE_URL}${url}` : url;
+}
+```
+
+Each browser installation gets its own `clientId`, kept in `localStorage`; two devices or browser profiles must never share one, since DataFn tracks sync state per client.
+
+`createFileFnClient` sends requests with `credentials: "same-origin"` by default, so a session cookie for the same origin authenticates FileFn too. When the FileFn server authenticates with AuthFn (as in FileFn's [Workers with AuthFn, R2 and Queues](https://filefn.21n.co/docs/recipes/workers-authfn-r2-queues) recipe), uploads and deletes are mutations, and AuthFn rejects a cookie-authenticated mutation without the `x-authfn-csrf` header; `getAuthHeaders` adds it to every FileFn request.
+
+Mount FileFn on the app's origin if you can. FileFn's router does not answer CORS preflights or add CORS headers, so a FileFn API on another origin needs the host to do both. With an `Authorization` header from `getAuthHeaders` (no cookies, so no CSRF header), the host answers `OPTIONS` for the app's origin:
+
+```typescript
+// cors.ts
+// On the FileFn host, not in the browser.
+const ALLOWED_ORIGINS = new Set(["https://app.example.com"]);
+
+/** Wraps the host's handler with CORS for the app's origin. */
+export function withCors(handle: (request: Request) => Promise<Response>) {
+  return async (request: Request): Promise<Response> => {
+    const origin = request.headers.get("origin");
+    const allowed = origin !== null && ALLOWED_ORIGINS.has(origin);
+    let response: Response;
+    if (request.method === "OPTIONS" && request.headers.has("access-control-request-method")) {
+      response = new Response(null, { status: allowed ? 204 : 403 });
+    } else {
+      const handled = await handle(request);
+      response = new Response(handled.body, handled); // A copy, so its headers can be changed.
+    }
+    response.headers.append("vary", "origin");
+    if (!allowed) return response;
+    response.headers.set("access-control-allow-origin", origin);
+    response.headers.set("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE");
+    response.headers.set("access-control-allow-headers", "authorization, content-type, x-upload-session-token");
+    response.headers.set("access-control-max-age", "600");
+    return response;
+  };
+}
+```
+
+`credentials: "include"` (cookies on another origin) needs more: `access-control-allow-credentials: true` with the exact origin as above, `x-authfn-csrf` in the allowed headers, an AuthFn session cookie with `SameSite=None; Secure`, and an `authfn.csrf` cookie the app's page can read. Prefer the bearer header.
+
 ## Upload flow
 
 ```typescript
-import { filefnClient } from "@filefn/client";
+// attach.ts
+import { client, files } from "./clients";
 
-async function attachFile(ownerType: string, ownerId: string, file: File) {
-  // 1. Upload via FileFn (returns the file id + URL)
-  const fileRecord = await filefnClient.upload({
-    file,
-    folder: `${ownerType}/${ownerId}`,
-  });
+export async function attachFile(ownerType: string, ownerId: string, file: File): Promise<string> {
+  // 1. Upload through FileFn. `policy` names an upload policy configured on the FileFn server.
+  const upload = files.uploadFile({ policy: "attachments", file });
+  const { fileId } = await upload.done();
 
-  // 2. Create the DataFn attachment row
+  // 2. Create the DataFn attachment row. If this throws, the file stays in FileFn (see below).
   await client.table("attachments").mutate({
     operation: "insert",
     record: {
       ownerType,
       ownerId,
-      fileId: fileRecord.id,
+      fileId,
       filename: file.name,
       mime: file.type,
       size: file.size,
     },
   });
+  return fileId;
 }
 ```
 
-The two operations don't need to be transactional in most cases — a failed DataFn insert just leaves an orphan file (cleaned up by FileFn's retention policy). If you want strict consistency, wrap them in a try/catch and call FileFn's delete on the catch path.
+`uploadFile` returns a handle at once: `upload.fileId` is known before the bytes are sent, `upload.onProgress(...)` reports progress and `upload.abort()` cancels. `done()` resolves with `{ fileId, versionId }` once FileFn has stored the file.
+
+The two operations are not transactional, and a failed insert does not delete the uploaded file. An error from `mutate` does not prove that nothing was stored: if the connection drops after DataFn committed the row, deleting the file would leave a committed attachment pointing at a deleted file. A file without an attachment row is the safe failure, and this recipe keeps such files: FileFn does not delete completed files by itself. Do not add a job that deletes files no attachment row references. An insert still in flight, or one whose response was lost, has not created its row yet, and references in other fields (such as `users.avatarFileId`) are not attachment rows, so such a job can delete a file a record is about to reference or already does. Reclaiming these files safely needs a protocol that every writer of file references takes part in, which this recipe does not provide.
 
 ## Download / display
 
-For images and small files, render directly from FileFn's CDN:
+`downloadUrl` asks FileFn for the current version's download URL: a short-lived signed storage URL when the storage adapter supports one, otherwise FileFn's proxy download route. Request it when you render, not once for the record's lifetime.
 
-```tsx
-<img src={filefnClient.url(att.fileId)} alt={att.filename} />
+The proxy route comes back relative to FileFn's mount (`/proxy/files/<fileId>/download`, without `/files`), so pass every URL through `fileFnUrl` before the browser loads it:
+
+```typescript
+// display.ts
+import { createFileFnClient } from "@filefn/client";
+import { FILEFN_BASE_URL, fileFnUrl, files, isProxyUrl } from "./clients";
+
+export async function showAttachment(img: HTMLImageElement, attachment: { fileId: string; filename: string }): Promise<void> {
+  img.alt = attachment.filename;
+  img.src = fileFnUrl(await files.downloadUrl(attachment.fileId));
+}
+
+/**
+ * For bearer-only auth: the token authenticates both the download-URL request and a
+ * proxy download. An `<img>` would send cookies, but no `Authorization` header.
+ */
+export async function showAttachmentWithToken(
+  img: HTMLImageElement,
+  attachment: { fileId: string; filename: string },
+  token: string,
+): Promise<void> {
+  const bearer = { authorization: `Bearer ${token}` };
+  const tokenFiles = createFileFnClient({ baseUrl: FILEFN_BASE_URL, credentials: "omit", getAuthHeaders: () => bearer });
+  img.alt = attachment.filename;
+  const url = await tokenFiles.downloadUrl(attachment.fileId);
+  // A signed storage URL needs no credentials, and must not receive the token.
+  if (!isProxyUrl(url)) {
+    img.src = url;
+    return;
+  }
+  const response = await fetch(fileFnUrl(url), { headers: bearer, credentials: "omit" });
+  if (!response.ok) throw new Error(`download of ${attachment.fileId} failed: HTTP ${response.status}`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  img.src = objectUrl;
+  await img.decode().finally(() => URL.revokeObjectURL(objectUrl));
+}
 ```
 
-For private files, request a short-lived signed URL:
+`showAttachment` relies on the session cookie: the browser loads `img.src` itself and does not add `getAuthHeaders` headers. On storage without signed URLs, a proxy URL then needs a cookie session. With bearer-only auth, use `showAttachmentWithToken`: it asks FileFn for the URL with the token, fetches a proxy URL with the token too, and shows the bytes through an object URL.
 
-```tsx
-const [src, setSrc] = useState<string>();
-useEffect(() => {
-  filefnClient.signedUrl(att.fileId, { expiresIn: 60 }).then(setSrc);
-}, [att.fileId]);
-return <img src={src} alt={att.filename} />;
-```
+For thumbnails and previews, `files.resolveRenderable({ fileId, intent: "thumbnail" })` picks the best artifact FileFn has for the file (see `@filefn/viewer`). On storage without signed URLs, its `source.url` (for an `artifact` or `original` source) and the URL `files.downloadArtifact(fileId, artifactId)` returns are relative proxy routes too, such as `/proxy/files/<fileId>/artifacts/<artifactId>/download`; resolve them with `fileFnUrl` as well.
 
 ## Lifecycle: delete attachment
 
 ```typescript
-async function detachFile(attachmentId: string, fileId: string) {
-  await client.transact({
-    steps: [
-      {
-        type: "mutation",
-        mutation: {
-          resource: "attachments",
-          version: 1,
-          operation: "delete",
-          id: attachmentId,
-        },
-      },
-    ],
-  });
-  // After the DataFn delete succeeds, queue the FileFn delete
-  await filefnClient.delete(fileId);
+// detach.ts
+import { client, files } from "./clients";
+
+export async function detachFile(attachmentId: string, fileId: string): Promise<void> {
+  await client.table("attachments").delete(attachmentId);
+  // Only after the DataFn delete succeeds, delete the file in FileFn.
+  await files.deleteFile(fileId);
 }
 ```
 
@@ -117,27 +227,26 @@ For soft-deletes via the `trash` capability, neither cascades automatically — 
 
 ## Quota and limits
 
-DataFn doesn't enforce file size limits — that's FileFn's job. Coordinate the two:
+DataFn doesn't enforce file size limits — that's FileFn's job. FileFn enforces them per upload policy on its server, when the upload starts:
 
 ```typescript
-filefnClient.configure({
-  maxFileSize: 25 * 1024 * 1024,
-  allowedMimes: ["image/*", "application/pdf"],
-});
+// filefn-policies.ts (on the FileFn server)
+import type { Policy } from "@filefn/server";
 
-// In DataFn schema:
-{ name: "size", type: "number", required: true, max: 25 * 1024 * 1024 }
+export const attachmentsPolicy: Policy = {
+  name: "attachments",
+  contentTypes: ["image/*", "application/pdf"],
+  maxSizeBytes: 25 * 1024 * 1024,
+  visibility: "private",
+};
+// createFileFn({ ..., policies: [attachmentsPolicy] })
 ```
 
-The `max` validator on the `size` field gives you a server-side double-check.
+The `max` validator on the schema's `size` field gives you a matching check on the DataFn side.
 
 ## Searching by file metadata
 
-If you need to search by filename or mime type, index those fields:
-
-```typescript
-indices: { base: ["ownerType", "ownerId", "filename"], search: ["filename"] },
-```
+If you need to search by filename, index it as the schema above does: `filename` is in `indices.search`. Add `mime` to `indices.base` to filter by type.
 
 For full-text search across file *contents*, you need a search provider that indexes file bodies (Tantivy via a worker, ElasticSearch). See [SearchFn integration](/docs/recipes/searchfn-integration).
 

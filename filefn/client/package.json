@@ -1,6 +1,6 @@
 {
   "name": "@filefn/client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "FileFn client SDK for browser file uploads",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,10 +12,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.test.*"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

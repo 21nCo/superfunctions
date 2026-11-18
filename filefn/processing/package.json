@@ -1,6 +1,6 @@
 {
   "name": "@filefn/processing",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "FileFn file processing pipelines",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,10 +16,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.test.*"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
