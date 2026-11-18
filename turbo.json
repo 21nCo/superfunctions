@@ -14,7 +14,9 @@
     "!scripts/uifn-docs-cli-resolution.*",
     "package.json",
     "tsconfig*.json",
-    "vitest.config.*"
+    "vitest.config.*",
+    "*/tsconfig*.json",
+    "*/vitest.config.*"
   ],
   "tasks": {
     "build": {

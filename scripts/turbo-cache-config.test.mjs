@@ -14,12 +14,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, before, test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // SFNS-307: Turbo replays a CI task from cache only when nothing it reads changed. Workspace packages read root scripts
 // Turbo cannot see, so turbo.json makes every scripts/ path a global input except the standalone scripts the CI planner
-// lists. These tests ask Turbo for real task hashes and check the standalone list against every tracked file.
+// lists. These tests ask Turbo for real task hashes and check the standalone list against every tracked file. The plan
+// job runs only the "standalone list: " tests, which need no Turbo, on every pull request.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const turboBin = path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "turbo.cmd" : "turbo");
@@ -43,23 +44,30 @@ const standaloneGlobs = JSON.parse(
 // Pathspec glob magic keeps `*` inside one path segment, as Turbo's globs and the planner's patterns do.
 const standaloneFiles = gitLines(["ls-files", "-z", "--", ...standaloneGlobs.map((glob) => `:(glob)${glob}`)]);
 
-test("turbo.json excludes exactly the planner's standalone scripts from its scripts/** global input", () => {
+test("standalone list: turbo.json excludes exactly the planner's standalone scripts from its scripts/** global input", () => {
   const { globalDependencies } = JSON.parse(readFileSync(path.join(repoRoot, "turbo.json"), "utf8"));
   const excluded = globalDependencies.filter((glob) => glob.startsWith("!")).map((glob) => glob.slice(1));
   assert.deepEqual([...excluded].sort(), [...standaloneGlobs].sort());
-  for (const glob of ["scripts/**", "package.json", "tsconfig*.json", "vitest.config.*"]) {
+  for (const glob of [
+    "scripts/**",
+    "package.json",
+    "tsconfig*.json",
+    "vitest.config.*",
+    "*/tsconfig*.json",
+    "*/vitest.config.*",
+  ]) {
     assert.ok(globalDependencies.includes(glob), `turbo.json globalDependencies must include ${glob}`);
   }
 });
 
-test("every standalone glob names files directly under scripts/, never a directory", () => {
+test("standalone list: every standalone glob names files directly under scripts/, never a directory", () => {
   assert.ok(standaloneFiles.length >= standaloneGlobs.length, "each standalone glob matches a tracked script");
   const nested = gitLines(["ls-files", "-z", "--", ...standaloneGlobs.map((glob) => `:(glob)${glob}/**`)]);
   assert.deepEqual(nested, [], "a standalone glob must not match a directory of scripts");
 });
 
 // A package that uses a standalone script would read a file Turbo does not hash, and its cached results would go stale.
-test("no tracked file outside scripts/ and .github/workflows/, Markdown aside, references a standalone script", () => {
+test("standalone list: no tracked file outside scripts/ and .github/workflows/, Markdown aside, references a standalone script", () => {
   const names = [...new Set(standaloneFiles.map((file) => path.posix.basename(file)))];
   let matches = "";
   try {
@@ -83,7 +91,11 @@ test("no tracked file outside scripts/ and .github/workflows/, Markdown aside, r
 
 let copyRoot = "";
 
-before(() => {
+// A copy of every tracked file as it is in this working tree, made on first use so the standalone list tests need none.
+function repositoryCopy() {
+  if (copyRoot) {
+    return copyRoot;
+  }
   assert.ok(existsSync(turboBin), `Turbo is not installed at ${turboBin}; run npm ci first`);
   copyRoot = mkdtempSync(path.join(tmpdir(), "turbo-cache-config-"));
   for (const file of gitLines(["ls-files", "-z"])) {
@@ -102,7 +114,8 @@ before(() => {
       copyFileSync(source, target);
     }
   }
-});
+  return copyRoot;
+}
 
 after(() => {
   if (copyRoot) {
@@ -112,7 +125,7 @@ after(() => {
 
 function probeHash() {
   const output = execFileSync(turboBin, ["run", "build", `--filter=${PROBE_PACKAGE}`, "--dry=json"], {
-    cwd: copyRoot,
+    cwd: repositoryCopy(),
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, TURBO_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1", TURBO_NO_UPDATE_NOTIFIER: "1" },
@@ -126,7 +139,7 @@ function probeHash() {
 // The probe's build hash after appending a newline to each file (creating it when missing), then the files restored.
 function hashWithEdits(files) {
   const originals = files.map((file) => {
-    const target = path.join(copyRoot, file);
+    const target = path.join(repositoryCopy(), file);
     return [target, existsSync(target) ? readFileSync(target) : null];
   });
   try {
@@ -167,6 +180,8 @@ test("editing a root file a package may read changes every task's hash", () => {
     "package.json",
     "tsconfig.base.json",
     "vitest.config.ts",
+    "mdfn/tsconfig.json", // A product's shared config, which its packages' tsconfigs extend.
+    "botfn/vitest.config.ts",
   ]) {
     assert.notEqual(hashWithEdits([file]), baseline, `${file} must invalidate cached tasks`);
   }
