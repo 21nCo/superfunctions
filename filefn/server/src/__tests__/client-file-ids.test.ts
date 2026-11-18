@@ -3010,7 +3010,8 @@ describe('upload completion fencing (FILE-19)', () => {
     await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString(), completionClaim: await agedClaim(shared, staged.uploadSessionId) });
     await holder.fileFn.services.uploads.cleanupExpiredSessions();
     expect(storageFixture.objects.has(retakeKey)).toBe(false);
-    expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
+    // The refused publication's record stays for good.
+    expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('refused');
     expect(await rival.readBytes(CLIENT_ID, 'user_b')).toBe('rival bytes');
   });
 
@@ -3070,13 +3071,13 @@ describe('upload completion fencing (FILE-19)', () => {
     if (swept) {
       await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString(), completionClaim: await agedClaim(shared, staged.uploadSessionId) });
       await other.fileFn.services.uploads.cleanupExpiredSessions();
-      expect(await rawSession(shared, staged.uploadSessionId)).toBeNull();
+      expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('refused');
     }
     expect((await other.call('DELETE', `/${CLIENT_ID}`, { user: 'user_b' })).status).toBe(200);
     gate.resume();
     const resumed = await holderDone;
 
-    expect(resumed.status).toBe(swept ? 404 : 410);
+    expect(resumed.status).toBe(410);
     expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
     expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
   });
@@ -3422,7 +3423,7 @@ describe('upload completion fencing (FILE-19)', () => {
       expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
     });
 
-    it('the sweep stops checking a deleted file\'s publication once no completion call of it can still be running', async () => {
+    it('the sweep keeps checking a deleted file\'s publication after the completion timeout', async () => {
       const database = memoryAdapter();
       const app = createApp({ mode: 'multipart', database });
       const staged = await app.stage('user_a', CLIENT_ID, 'deleted');
@@ -3436,8 +3437,115 @@ describe('upload completion fencing (FILE-19)', () => {
         completionPublication: { ...session.completionPublication, fileDeletedAt: new Date(Date.now() - 901_000).toISOString() },
       });
       await app.fileFn.services.uploads.cleanupExpiredSessions();
-      expect((await rawSession(database, staged.uploadSessionId))!.completionClaim).toBeNull();
+      expect((await rawSession(database, staged.uploadSessionId))!.completionClaim).toBe('file-deleted');
       expect((await staged.complete()).status).toBe(200);
     });
+
+    // Owner amendment 2026-11-18 (PR review round 3): permanent tombstones,
+    // the legacy retained-bytes check and stitch-before-row expiry cleanup.
+    it('a write landing after the completion timeout, past a sweep, is still removed and the deleted file stays deleted', async () => {
+      const { shared, database, failNext, storageFixture, stall, dbH } = lateInsertSetup(3);
+      const p0 = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+      const pH = createApp({ mode: 'multipart', database: dbH, storageFixture, createFileFn: await loadProcess() });
+      const pS = createApp({ mode: 'multipart', database: shared, storageFixture, createFileFn: await loadProcess() });
+      const staged = await p0.stage('user_a', CLIENT_ID, 'deleted long ago');
+      failNext('files');
+      await expect(staged.complete()).rejects.toThrow('files insert failed');
+      stall.arm();
+      const H = pH.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }).catch((err: unknown) => ({ status: -1, json: String(err) }));
+      await stall.reached;
+      expect((await pS.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(200);
+      expect((await pS.call('DELETE', `/${CLIENT_ID}`, { user: 'user_a' })).status).toBe(200);
+      // The helper stays paused past the completion timeout, and a sweep runs then.
+      const session = (await rawSession(shared, staged.uploadSessionId))!;
+      await setSession(shared, staged.uploadSessionId, {
+        completionPublication: { ...session.completionPublication, fileDeletedAt: new Date(Date.now() - 901_000).toISOString() },
+      });
+      await pS.fileFn.services.uploads.cleanupExpiredSessions();
+      stall.resume();
+      expect((await H).status).toBe(-1);
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(1);
+
+      await pS.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
+      expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
+      await expect(pS.readBytes(CLIENT_ID, 'user_a')).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('a refused publication\'s write landing after its record was swept past the timeout is still removed', async () => {
+      const { shared, storageFixture, stall, dbH } = lateInsertSetup(3);
+      const pH = createApp({ mode: 'multipart', database: dbH, storageFixture, createFileFn: await loadProcess() });
+      const pS = createApp({ mode: 'multipart', database: shared, storageFixture, createFileFn: await loadProcess() });
+      const staged = await pS.stage('user_a', CLIENT_ID, 'refused late');
+      stall.arm();
+      const H = pH.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }).catch((err: unknown) => ({ status: -1, json: String(err) }));
+      await stall.reached;
+      expect((await (await pS.stage('user_b', CLIENT_ID, 'rival bytes')).complete()).status).toBe(200);
+      expect((await pS.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(403);
+      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString(), completionClaim: await agedClaim(shared, staged.uploadSessionId) });
+      await pS.fileFn.services.uploads.cleanupExpiredSessions();
+      expect((await pS.call('DELETE', `/${CLIENT_ID}`, { user: 'user_b' })).status).toBe(200);
+      stall.resume();
+      expect((await H).status).toBe(-1);
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(1);
+
+      await pS.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await fileRows(shared, CLIENT_ID)).toHaveLength(0);
+      expect(await versionRows(shared, CLIENT_ID)).toHaveLength(0);
+      // The refused publication's record stays for good.
+      expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('refused');
+    });
+
+    it('an old partly published session whose own object is gone is never completed, aborted or expired, and runs no effects', async () => {
+      const { shared, storageFixture, staged, v } = await legacyCrashState();
+      // Base dedup deleted the session's own object before creating the file.
+      storageFixture.objects.delete((await rawSession(shared, staged.uploadSessionId))!.storageKey);
+      const usage: number[] = [];
+      const quota: QuotaProvider = {
+        async checkQuota() { return { allowed: true, current: 0, limit: 100 }; },
+        async recordUsage(input) { usage.push(input.bytes); },
+      };
+      const other = createApp({ mode: 'multipart', database: shared, storageFixture, quota, createFileFn: await loadProcess() });
+      const uploaded: string[] = [];
+      other.fileFn.events.on('file:uploaded', (event) => uploaded.push(event.versionId));
+
+      expect((await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(409);
+      expect((await other.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a' })).status).toBe(409);
+      await setSession(shared, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+      await other.fileFn.services.uploads.cleanupExpiredSessions();
+      expect((await other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' })).status).toBe(409);
+
+      expect((await rawSession(shared, staged.uploadSessionId))!.status).toBe('in_progress');
+      expect(usage).toEqual([]);
+      expect(uploaded).toEqual([]);
+      expect(await versionIds(shared)).toEqual([]);
+      expect(await currentOf(shared)).toBe(v);
+    });
+
+    for (const first of ['sweep', 'abort'] as const) {
+      it(`proxy: a retake object whose delete fails in ${first === 'abort' ? 'an abort and ' : ''}the expiry sweep keeps the session row until a later sweep deletes it`, async () => {
+        const database = memoryAdapter();
+        const app = createApp({ mode: 'proxy', database });
+        const staged = await app.stage('user_a', CLIENT_ID, 'expired retake');
+        const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+        const retakeKey = `${key}.cnA`;
+        // A released retake left its stitched object.
+        app.fixture.objects.set(retakeKey, Buffer.from('expired retake'));
+        await setSession(database, staged.uploadSessionId, { status: 'in_progress', completionClaim: `${new Date(Date.now() - 901_000).toISOString()} nA retake` });
+        app.fixture.deleteFailures.set(retakeKey, first === 'abort' ? 2 : 1);
+        if (first === 'abort') {
+          expect((await app.call('POST', `/upload/${staged.uploadSessionId}/abort`, { user: 'user_a', token: staged.token })).status).toBe(200);
+          expect(app.fixture.objects.has(retakeKey)).toBe(true);
+        }
+        await setSession(database, staged.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+
+        await app.fileFn.services.uploads.cleanupExpiredSessions();
+        expect(app.fixture.objects.has(retakeKey)).toBe(true);
+        expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('aborted');
+        await app.fileFn.services.uploads.cleanupExpiredSessions();
+        expect(app.fixture.objects.has(retakeKey)).toBe(false);
+        expect(await rawSession(database, staged.uploadSessionId)).toBeNull();
+      });
+    }
   });
 });

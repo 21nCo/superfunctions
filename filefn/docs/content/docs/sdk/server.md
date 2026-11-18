@@ -96,7 +96,8 @@ completing, aborting their multipart uploads and proxy part objects (it leaves
 sessions held by a running completion, and finishes expired `publishing` ones,
 and sessions an earlier version left partly published, as their owner's
 completion call would), deletes part rows a completed session's cleanup left and
-rows a late completion call wrote for a deleted file, and returns
+rows a late completion call wrote for a deleted file or a refused publication
+(whose session records it keeps for good), and returns
 `{ deletedSessions, abortedMultipart }`. Call it from a scheduled job such as a
 Workers cron trigger; filefn does not schedule it.
 

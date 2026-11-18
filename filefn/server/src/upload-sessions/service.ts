@@ -565,21 +565,31 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // that publication or version (or a read failure, or a session from before
   // per-session keys) leaves it in doubt. Returns whether it was deleted.
   async function deleteAttemptObject(session: UploadSession, key: string, target: StorageTargetName | undefined): Promise<boolean> {
-    if (session.uploadMode !== 'proxy' || !storage.deleteObject || !session.completionVersionId) return false;
+    return (await removeAttemptObject(session, key, target)) === 'deleted';
+  }
+
+  // deleteAttemptObject's outcome: 'kept' when the object is not this
+  // cleanup's to delete, 'failed' when a read or the delete failed (the
+  // object may be left behind unreferenced).
+  async function removeAttemptObject(
+    session: UploadSession,
+    key: string,
+    target: StorageTargetName | undefined,
+  ): Promise<'deleted' | 'kept' | 'failed'> {
+    if (session.uploadMode !== 'proxy' || !storage.deleteObject || !session.completionVersionId) return 'kept';
     try {
       const now = await readSession(session.uploadSessionId);
-      if (now?.completionPublication?.storageKey === key) return false;
+      if (now?.completionPublication?.storageKey === key) return 'kept';
       const version = await db.findOne<{ storageKey: string }>({
         model: 'fileVersions',
         where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
         namespace,
       });
-      if (version?.storageKey === key) return false;
+      if (version?.storageKey === key) return 'kept';
       await storage.deleteObject({ key, target });
-      return true;
+      return 'deleted';
     } catch {
-      // Left behind; the object is unreferenced.
-      return false;
+      return 'failed';
     }
   }
 
@@ -784,14 +794,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     await endSessionAborted(session.uploadSessionId);
   }
 
-  // Deletes the object the session's last claim stitched, for a session no
-  // completion can publish any more (aborted, or deleted by the sweep).
-  async function deleteClaimStitch(session: UploadSession): Promise<void> {
-    if (!session.completionClaim) return;
+  // Deletes the objects the session's claims stitched, for a session no
+  // completion can publish any more (aborted). Returns false when a delete
+  // failed: the session row, which records them, is then kept for the sweep.
+  async function deleteClaimStitch(session: UploadSession): Promise<boolean> {
+    if (!session.completionClaim) return true;
     const target = resolveStorageTarget(policies.get(session.policy) ?? {});
+    let allDeleted = true;
     for (const key of claimStitchKeys(session, session.completionClaim)) {
-      await deleteAttemptObject(session, key, target);
+      if ((await removeAttemptObject(session, key, target)) === 'failed') allDeleted = false;
     }
+    return allDeleted;
   }
 
   // A session an earlier FileFn (before the publication record) left partly
@@ -826,6 +839,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
     if (file?.currentVersionId !== versionId) return undefined;
+    // Without its version row, the version's bytes are the session's own
+    // object, which an earlier FileFn's dedup may have deleted before it
+    // created the file. Unless that object is confirmed in storage at its full
+    // size, the session stays as it is (no completion, effects, abort or
+    // expiry): a 409 to its callers, and the sweep checks it again.
+    if (!version && !(await isStorageFinalized(session, resolveStorageTarget(policies.get(session.policy) ?? {})))) {
+      throw errors.uploadCompletionInProgress();
+    }
     const claim = revisedClaim(session.completionClaim ?? null);
     const adopted: Partial<UploadSession> = {
       status: 'publishing',
@@ -2095,9 +2116,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 continue;
             }
             if (session.status === 'completing' && !isStaleClaim(session)) continue;
-            // A refused publication's record stays until no write a completion
-            // call started before the refusal can still land (its claim time is
-            // the refusal's, see rollForward).
+            // A refused publication is cleaned up once the completion timeout
+            // has passed since the refusal (its claim time, see rollForward);
+            // its record is kept for good (see below).
             if (session.status === 'refused' && session.completionPublication && !isStaleClaim(session)) continue;
             let adopted: UploadSession | null | undefined;
             try {
@@ -2139,7 +2160,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         for (const session of expiredSessions) {
             const policy = policies.get(session.policy);
             const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
-            if (session.storageUploadId && storage.abortMultipartUpload) {
+            // A refused publication's storage was finalized before its move to
+            // 'publishing': no multipart upload is left to abort.
+            if (session.storageUploadId && storage.abortMultipartUpload && !(session.status === 'refused' && session.completionPublication)) {
                 try {
                     await storage.abortMultipartUpload({
                         key: session.storageKey,
@@ -2168,16 +2191,47 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             if (!partsDeleted || !objectDeleted) {
                 continue;
             }
-            // Only while it still has the status this sweep read: a session
-            // refused meanwhile keeps its row, the record of what to delete,
-            // and so does one a completion moved on (to 'publishing' or
-            // 'completed'). An expired session is never claimed anew, so a
-            // completion of it that loses its row here writes nothing.
+            // A refused publication's record is never deleted: a completion
+            // call may resume after any delay and write its rows, which every
+            // later sweep removes (above). Its parts and objects are deleted.
+            if (session.status === 'refused' && session.completionPublication) {
+                await db.deleteMany({
+                    model: 'uploadParts',
+                    where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+                    namespace
+                });
+                continue;
+            }
+            // A proxy session's claims may have stitched objects, which its
+            // row records. It is first ended as aborted while it still has the
+            // status and claim this sweep read (a stale holder that moved it on
+            // meanwhile keeps it, and one that did not can no longer publish),
+            // then those objects are deleted; the row stays for the next sweep
+            // while a delete fails.
+            let status = session.status;
+            if (status !== 'refused' && session.uploadMode === 'proxy' && session.completionClaim) {
+                if (status !== 'aborted') {
+                    const fenced = await updateSessionIf(
+                        session.uploadSessionId,
+                        { status, completionClaim: session.completionClaim },
+                        { status: 'aborted' },
+                        (row) => row.status === 'aborted',
+                    ).catch(() => ({ applied: false as const }));
+                    if (!fenced.applied) continue;
+                    status = 'aborted';
+                }
+                if (!(await deleteClaimStitch(session))) continue;
+            }
+            // Only while it still has the status this sweep read (or ended it
+            // with): a session refused meanwhile keeps its row, the record of
+            // what to delete, and so does one a completion moved on (to
+            // 'publishing' or 'completed'). An expired session is never claimed
+            // anew, so a completion of it that loses its row here writes nothing.
             const removed = await db.deleteMany({
                 model: 'uploadSessions',
                 where: [
                     { field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId },
-                    { field: 'status', operator: 'eq', value: session.status },
+                    { field: 'status', operator: 'eq', value: status },
                 ],
                 namespace
             });
@@ -2189,16 +2243,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
                 namespace
             });
-            // No completion can publish it now: delete what its last claim stitched.
-            if (session.status !== 'refused') await deleteClaimStitch(session);
             deletedSessions++;
         }
 
         // Rows a completion call resuming late wrote for a completed
         // publication whose file was deleted since, and did not remove again
-        // (see rollForward). deleteFile records such a session (its claim);
-        // the record is dropped once no completion call of it can still be
-        // running, the completion timeout after the delete.
+        // (see rollForward). deleteFile records such a session (its claim),
+        // and the record is kept: a completion call may resume after any
+        // delay, so every sweep removes such rows again.
         const deletedPublications = await db.findMany<UploadSession>({
             model: 'uploadSessions',
             where: [
@@ -2211,18 +2263,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             const publication = session.completionPublication;
             try {
                 if (publication && session.fileId) await deletePublicationRows(session.fileId, publication.versionId);
-                const deletedAtMs = Date.parse(publication?.fileDeletedAt ?? '');
-                if (Number.isNaN(deletedAtMs) || Date.now() - deletedAtMs >= completionTimeoutMs) {
-                    await db.updateMany({
-                        model: 'uploadSessions',
-                        where: [
-                            { field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId },
-                            { field: 'completionClaim', operator: 'eq', value: FILE_DELETED_CLAIM },
-                        ],
-                        data: { completionClaim: null },
-                        namespace
-                    });
-                }
             } catch (err) {
                 logger?.warn('Deleted file\'s late publication rows not removed; the next sweep retries it', {
                     uploadSessionId: session.uploadSessionId,
