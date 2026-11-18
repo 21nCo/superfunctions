@@ -3,7 +3,7 @@ title: Regions and webhook ingress
 description: Run BillFn in several regions behind one public webhook URL per provider.
 ---
 
-When BillFn runs inside each regional service, each provider still calls one public webhook URL. `createWebhookIngress` serves that URL and forwards every delivery to the region that owns it.
+When BillFn runs inside each regional service, each provider still calls one public webhook URL. `createWebhookIngress` serves that URL and forwards every delivery to the region that owns it. The [multi-region Workers recipe](/docs/recipes/multi-region-workers) wires a complete deployment.
 
 ## Region configuration
 

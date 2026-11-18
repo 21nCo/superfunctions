@@ -110,3 +110,5 @@ If you provide `queue`, webhook ingestion and manual ops jobs both enqueue `bill
 `config.queue` must be a lease-based `QueueAdapter` from `@superfunctions/queue` 0.2, such as `MemoryQueueAdapter` or the durable `DatabaseQueueAdapter`. `FlowFnQueueAdapter` no longer implements that interface and cannot be used here.
 
 Each `runNext()` call claims one message with a 15-minute lease and returns `null` when none is available. The queue lease is extended whenever the job's own processing lease is renewed. On success the message is acked. When another runner holds the job's lease, the message is released for retry, up to 5 deliveries. Any other failure dead-letters the message and `runNext()` rethrows the run's error. BillFn does not run a loop: callers drive `runNext()` and should catch its errors.
+
+On Cloudflare Workers, a cron trigger can schedule the `lifecycle-events` job and drain the queue with `runNext()`; see the [multi-region Workers recipe](/docs/recipes/multi-region-workers#worker-and-cron-reconciliation).
