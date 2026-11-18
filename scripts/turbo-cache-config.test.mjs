@@ -24,7 +24,9 @@ import { fileURLToPath } from "node:url";
 // yet (SFNS-312), so the task-hash tests guard the local cache and the cache CI will restore.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-const turboBin = path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "turbo.cmd" : "turbo");
+// Turbo's npm bin is a Node script, so it runs under this Node on every platform. Windows cannot spawn the turbo.cmd
+// shim without a shell (CVE-2024-27980 makes that throw EINVAL), so the shim is never used.
+const turboBin = path.join(repoRoot, "node_modules", "turbo", "bin", "turbo");
 // A small package with no workspace dependencies and no turbo.json of its own: its build hash moves only with its own
 // files and the global inputs.
 const PROBE_TASK = "@superfunctions/errors#build";
@@ -163,7 +165,7 @@ after(() => {
 });
 
 function probeHash() {
-  const output = execFileSync(turboBin, ["run", "build", `--filter=${PROBE_PACKAGE}`, "--dry=json"], {
+  const output = execFileSync(process.execPath, [turboBin, "run", "build", `--filter=${PROBE_PACKAGE}`, "--dry=json"], {
     cwd: repositoryCopy(),
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
