@@ -47,13 +47,14 @@ func restorePurchasesTapped() async throws {
   pending one's checkout, and a cancelled or finished attempt removes only its own checkout.
 - As soon as a transaction is bound to a checkout, before BillFn is asked to verify it, the store
   records the binding; it is removed once the transaction is finished. Binding is one atomic step
-  for every `BillFnStoreKit` sharing the store: a checkout is bound to at most one transaction and a
-  transaction to at most one checkout (a purchase's own checkout takes its transaction from any other).
-  So a transaction whose verify call failed, or that the app stopped before finishing, is verified
-  against the same checkout on a later launch however late, and no other transaction can take it.
-  StoreKit can leave an unfinished transaction out of `Transaction.unfinished`, so its absence is
-  never taken as finished: the transaction is recorded finished once `finish()` returns, and its
-  checkout is removed only on that record.
+  for every `BillFnStoreKit` sharing the store, and is never undone: a checkout is bound to at most
+  one transaction (a transaction gets a second checkout only as its purchase's own one), and each
+  binding records whether BillFn confirmed the transaction against it. So a transaction whose verify
+  call failed, or that the app stopped before finishing, is verified against the same checkout on a
+  later launch however late, and no other transaction can take it. StoreKit can leave an unfinished
+  transaction out of `Transaction.unfinished`, so its absence is never taken as finished: the
+  transaction is recorded finished once `finish()` returns, and a checkout is removed only once BillFn
+  confirmed the transaction against it and that record exists.
 - An outstanding checkout is claimed only by a transaction purchased after its attempt started
   (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
@@ -79,8 +80,9 @@ func restorePurchasesTapped() async throws {
   (such as a network failure) keeps it, since the purchase may still complete, and so does time:
   StoreKit gives no evidence that an Ask to Buy request or an interrupted purchase never completes.
   `processUnfinishedTransactions()` (run by `start()`) also confirms each transaction in
-  `Transaction.all` that still waits for BillFn (pending, bound and not finished, or able to claim
-  an outstanding checkout), since StoreKit can leave an unfinished one out of `Transaction.unfinished`.
+  `Transaction.all` that still waits for BillFn (pending or not finished, bound to a checkout BillFn
+  has not confirmed it against, or able to claim an outstanding one), since StoreKit can leave an
+  unfinished one out of `Transaction.unfinished`.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
   `processUnfinishedTransactions(_:history:)` the unfinished transactions and the history in place of
   `Transaction.unfinished` and `Transaction.all`,

@@ -186,14 +186,17 @@ public actor BillFnStoreKit {
     }
 
     /// Whether the transaction still waits for BillFn's confirmation: BillFn was asked and has not confirmed it, or
-    /// confirmed it and `finish()` did not return (a renewal or a restored purchase too, with no checkout); or, never
-    /// asked, a checkout is bound to it or it may claim an outstanding one.
+    /// confirmed it and `finish()` did not return (a renewal or a restored purchase too, with no checkout); a checkout
+    /// is bound to it that BillFn has not confirmed it against (such as its purchase's own one, after another pass
+    /// confirmed it against an older checkout); or, never asked, it may claim an outstanding checkout.
     private func awaitsConfirmation(_ transaction: Transaction) -> Bool {
         let facts = Self.facts(transaction)
+        let kept = checkouts.keptCheckouts()
+        if kept.contains(where: { $0.transactionId == facts.transactionId && !$0.confirmed }) { return true }
         if let record = checkouts.record(transactionId: facts.transactionId) {
             return record.state < .finished
         }
-        return checkouts.keptCheckouts().contains { $0.transactionId == facts.transactionId || facts.mayClaim($0) }
+        return kept.contains { $0.transactionId == facts.transactionId || facts.mayClaim($0) }
     }
 
     public func purchase(planKey: String, priceId: String? = nil, interval: String? = nil) async throws -> BillFnStoreKitPurchaseResult {
@@ -333,7 +336,7 @@ public actor BillFnStoreKit {
             )
         }
         // Until BillFn confirms it, the pending record makes every launch retry it, from `Transaction.all` too.
-        checkouts.record(facts, state: .pending)
+        checkouts.record(facts, state: .pending, against: nil)
         do {
             let billing: BillFnJSONValue
             if let checkout {
@@ -343,13 +346,16 @@ public actor BillFnStoreKit {
             }
             // Recorded before `finish()`: once StoreKit no longer offers it as unfinished, a redelivered or restored
             // copy must not claim an outstanding checkout.
-            checkouts.record(facts, state: .confirmed)
+            checkouts.record(facts, state: .confirmed, against: checkout?.checkoutSessionId)
             await transaction.finish()
             // The only evidence the transaction was finished: StoreKit leaving it out of `Transaction.unfinished` is
             // none. A launch that stops before removing the checkout leaves it to `removeUnneededCheckouts()`.
-            checkouts.record(facts, state: .finished)
-            // Only the checkout bound to it: another attempt on the product may have saved its own meanwhile.
-            checkouts.removeCheckout(boundTo: reference.transactionId)
+            checkouts.record(facts, state: .finished, against: checkout?.checkoutSessionId)
+            // Only the checkout BillFn confirmed it against: another attempt on the product may have saved its own
+            // meanwhile, and the purchase's own checkout, bound to it by another pass, has its own confirmation.
+            if let checkout {
+                checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId, boundTo: reference.transactionId)
+            }
             return BillFnStoreKitTransactionOutcome(transaction: reference, status: .confirmed(billing))
         } catch {
             return BillFnStoreKitTransactionOutcome(transaction: reference, status: .failed(BillFnStoreKitFailure(error: error)))

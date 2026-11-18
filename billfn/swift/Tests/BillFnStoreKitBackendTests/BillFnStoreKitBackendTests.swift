@@ -249,7 +249,7 @@ struct BillFnStoreKitBackendTests {
         #expect(store.claim(facts("2000000001"), purchasedWith: nil) == first)
         store.removeOutstandingCheckout(checkoutSessionId: "chk_1")
         #expect(store.keptCheckouts().map(\.transactionId) == ["2000000001", nil])
-        store.removeCheckout(boundTo: "2000000001")
+        store.removeCheckout(checkoutSessionId: "chk_1", boundTo: "2000000001")
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
         #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
     }
@@ -264,7 +264,7 @@ struct BillFnStoreKitBackendTests {
         for (id, state) in [("1", BillFnStoreKitConfirmationState.pending), ("2", .confirmed), ("3", .finished)] {
             store.save(checkout("chk_\(id)"))
             #expect(store.claim(facts(id, purchased: clock.now), purchasedWith: checkout("chk_\(id)")) == checkout("chk_\(id)"))
-            store.record(facts(id, purchased: clock.now), state: state)
+            store.record(facts(id, purchased: clock.now), state: state, against: "chk_\(id)")
         }
 
         // Two reconciliations a grace period apart, a year on, with no transaction listed: only the finished one goes.
@@ -301,14 +301,17 @@ struct BillFnStoreKitBackendTests {
         #expect(stores[1].claim(facts(winner, purchased: clock.now.addingTimeInterval(60)), purchasedWith: nil) == checkout("chk_shared"))
         #expect(stores[0].claim(facts("4000", purchased: clock.now.addingTimeInterval(60)), purchasedWith: checkout("chk_shared")) == nil)
         // Another transaction finishing removes only its own checkout: the winner's binding survives.
-        stores[0].removeCheckout(boundTo: "4000")
-        stores[0].record(facts("4000", purchased: clock.now), state: .finished)
+        stores[0].record(facts("4000", purchased: clock.now), state: .finished, against: "chk_shared")
+        stores[0].removeCheckout(checkoutSessionId: "chk_shared", boundTo: "4000")
         stores[1].removeUnneededCheckouts()
         #expect(stores[0].keptCheckouts().map(\.transactionId) == [winner])
     }
 
-    @Test("A purchase's own checkout takes its transaction from the checkout it was bound to without it")
-    func purchaseCheckoutRebindsItsTransaction() throws {
+    /// Another pass bound the transaction to an older checkout and is verifying against it when the purchase's own
+    /// checkout is bound too. Each binding keeps its own confirmation: the older checkout never becomes outstanding,
+    /// confirming and finishing against it removes only it, and the purchase's checkout, not confirmed, still waits.
+    @Test("A purchase's own checkout is bound to its transaction beside another binding, each confirmed on its own")
+    func purchaseCheckoutBindsBesideAnotherBinding() throws {
         let clock = TestClock()
         let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
         store.save(checkout("chk_a"))
@@ -317,7 +320,14 @@ struct BillFnStoreKitBackendTests {
         let transaction = facts("5", purchased: clock.now)
         #expect(store.claim(transaction, purchasedWith: nil) == checkout("chk_a"))
         #expect(store.claim(transaction, purchasedWith: checkout("chk_b")) == checkout("chk_b"))
-        #expect(store.keptCheckouts().map(\.transactionId) == [nil, "5"])
+        #expect(store.keptCheckouts().map(\.transactionId) == ["5", "5"])
+
+        store.record(transaction, state: .finished, against: "chk_a")
+        store.removeCheckout(checkoutSessionId: "chk_a", boundTo: "5")
+        store.removeUnneededCheckouts()
+        #expect(store.keptCheckouts() == [BillFnStoreKitKeptCheckout(checkout: checkout("chk_b"), savedAt: clock.now, transactionId: "5")])
+        // A retry of the transaction without its purchase verifies against the binding BillFn has not confirmed.
+        #expect(store.claim(transaction, purchasedWith: nil) == checkout("chk_b"))
     }
 
     @Test("A confirmed, renewed or older transaction claims no outstanding checkout")
@@ -330,7 +340,7 @@ struct BillFnStoreKitBackendTests {
         #expect(store.claim(facts("6", purchased: purchased), purchasedWith: nil) == nil)
         #expect(store.claim(facts("7", purchased: clock.now, isPurchase: false), purchasedWith: nil) == nil)
         #expect(store.claim(facts("8", purchased: clock.now, isPurchase: nil), purchasedWith: nil) == nil)
-        store.record(facts("9", purchased: clock.now), state: .confirmed)
+        store.record(facts("9", purchased: clock.now), state: .confirmed, against: nil)
         #expect(store.claim(facts("9", purchased: clock.now), purchasedWith: nil) == nil)
         #expect(store.keptCheckouts().map(\.transactionId) == [nil])
     }
@@ -340,21 +350,21 @@ struct BillFnStoreKitBackendTests {
         let clock = TestClock()
         let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
         let confirmed = facts("10", purchased: clock.now)
-        store.record(confirmed, state: .finished)
+        store.record(confirmed, state: .finished, against: nil)
         clock.advance(by: 5 * 60)
         store.save(checkout("chk_newer"))
         clock.advance(by: day)
         for index in 0...BillFnUserDefaultsCheckoutStore.confirmedTransactionLimit {
-            store.record(facts("6\(index)", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished)
+            store.record(facts("6\(index)", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished, against: nil)
         }
         // A replay of the confirmed transaction still claims nothing.
         #expect(store.isFinished(transactionId: "10"))
         #expect(store.claim(confirmed, purchasedWith: nil) == nil)
         #expect(store.keptCheckouts().map(\.transactionId) == [nil])
         // Once nothing could claim the checkout, the oldest records beyond the limit go; pending ones never do.
-        store.record(facts("11", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .pending)
+        store.record(facts("11", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .pending, against: nil)
         store.removeOutstandingCheckout(checkoutSessionId: "chk_newer")
-        store.record(facts("12", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished)
+        store.record(facts("12", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished, against: nil)
         #expect(store.record(transactionId: "10") == nil)
         #expect(store.record(transactionId: "60") == nil)
         #expect(store.record(transactionId: "11")?.state == .pending)
@@ -365,8 +375,8 @@ struct BillFnStoreKitBackendTests {
     func recordsAcrossStores() throws {
         let defaults = try freshDefaults()
         let stores = [BillFnUserDefaultsCheckoutStore(defaults: defaults), BillFnUserDefaultsCheckoutStore(defaults: defaults)]
-        stores[0].record(facts("20", purchased: Date()), state: .confirmed)
-        stores[1].record(facts("20", purchased: Date()), state: .pending)
+        stores[0].record(facts("20", purchased: Date()), state: .confirmed, against: nil)
+        stores[1].record(facts("20", purchased: Date()), state: .pending, against: nil)
         #expect(stores[0].isConfirmed(transactionId: "20"))
         #expect(!stores[0].isFinished(transactionId: "20"))
 
@@ -375,7 +385,7 @@ struct BillFnStoreKitBackendTests {
             let store = stores[index % 2]
             store.save(checkout("chk_\(index)"))
             _ = store.claim(facts("2\(index)", purchased: Date()), purchasedWith: checkout("chk_\(index)"))
-            store.record(facts("2\(index)", purchased: Date()), state: .confirmed)
+            store.record(facts("2\(index)", purchased: Date()), state: .confirmed, against: nil)
         }
 
         let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults)

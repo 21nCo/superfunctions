@@ -19,6 +19,8 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
     private(set) var verifications: [(checkoutSessionId: String, transaction: BillFnStoreKitTransactionReference)] = []
     private(set) var restores: [(plan: BillFnStoreKitPlan, transaction: BillFnStoreKitTransactionReference)] = []
     var verifyError: (any Error)?
+    /// Verifications against these checkouts fail with a network error.
+    var unreachableCheckouts: Set<String> = []
     /// While set, each checkout BillFn opens has this session id.
     var checkoutSessionIdOverride: String?
     var restoreError: (any Error)?
@@ -33,6 +35,10 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
 
     func holdRestores(_ gate: (@Sendable () async -> Void)?) {
         restoreGate = gate
+    }
+
+    func failVerifications(against checkoutSessionIds: Set<String>) {
+        unreachableCheckouts = checkoutSessionIds
     }
 
     func openCheckouts(withSessionId id: String?) {
@@ -58,6 +64,7 @@ actor FakeBillFnBackend: BillFnStoreKitBackend {
         verifications.append((checkoutSessionId, transaction))
         if let verifyGate { await verifyGate() }
         if let verifyError { throw verifyError }
+        if unreachableCheckouts.contains(checkoutSessionId) { throw URLError(.notConnectedToInternet) }
         return .object(["checkoutSession": .object(["checkoutSessionId": .string(checkoutSessionId), "status": "succeeded"])])
     }
 
@@ -903,7 +910,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let claimed = BillFnStoreKitTransactionOutcome(transaction: reference, status: .confirmed(.null))
         // As a launch leaves it that BillFn confirmed and that stopped before finish() returned.
         XCTAssertEqual(checkoutStore.claim(BillFnStoreKit.facts(leftUnfinished), purchasedWith: attempt), attempt)
-        checkoutStore.record(BillFnStoreKit.facts(leftUnfinished), state: .confirmed)
+        checkoutStore.record(BillFnStoreKit.facts(leftUnfinished), state: .confirmed, against: attempt.checkoutSessionId)
         let missing = await missingFinishEvidence(claimed)
         XCTAssertEqual(missing, "it is not recorded finished", "A transaction left unfinished was taken as finished")
 
@@ -1101,7 +1108,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         ] {
             checkoutStore.save(checkout)
             XCTAssertEqual(checkoutStore.claim(facts, purchasedWith: checkout), checkout)
-            checkoutStore.record(facts, state: state)
+            checkoutStore.record(facts, state: state, against: checkout.checkoutSessionId)
         }
 
         let later = Date().addingTimeInterval(longAfter)
@@ -1167,6 +1174,46 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         XCTAssertTrue(restores.isEmpty)
         try await assertFinished(outcome)
         XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [abandoned])
+    }
+
+    /// Two `BillFnStoreKit`s sharing one store confirm one transaction at once: one from a background pass, which binds
+    /// the older outstanding checkout, the other from the purchase, with its own checkout. BillFn confirms the first and
+    /// cannot be reached for the second. Finishing the first removes only the checkout it was confirmed against; the
+    /// purchase's checkout stays bound and unconfirmed, so the next launch, finding the finished transaction only in its
+    /// history, verifies it against that checkout and removes it once BillFn confirms.
+    func testTwoInstancesConfirmingOneTransactionAgainstTwoCheckoutsKeepTheFailedOne() async throws {
+        let backend = FakeBillFnBackend()
+        let gate = Gate()
+        await backend.holdVerifications { await gate.wait() }
+        await backend.failVerifications(against: ["chk_own"])
+        let older = BillFnStoreKitCheckout(checkoutSessionId: "chk_older", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        let own = BillFnStoreKitCheckout(checkoutSessionId: "chk_own", productId: proLifetime, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(older)
+        let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
+        checkoutStore.save(own)
+        let observed = try await listedTransaction(bought.id)
+
+        let background = Task { await self.launch(backend, plans: []).process(observed) }
+        try await waitUntil("the background pass's verify call") { await gate.arrivals == 1 }
+        let purchase = Task { await self.launch(backend, plans: []).process(observed, checkout: own) }
+        try await waitUntil("the purchase's verify call") { await gate.arrivals == 2 }
+        await gate.release()
+        let backgroundOutcome = await background.value
+        let purchaseOutcome = await purchase.value
+
+        XCTAssertTrue(backgroundOutcome.finished)
+        XCTAssertFalse(purchaseOutcome.finished)
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [
+            BillFnStoreKitKeptCheckout(checkout: own, savedAt: try XCTUnwrap(checkoutStore.keptCheckouts().first).savedAt, transactionId: String(bought.id)),
+        ])
+
+        await backend.failVerifications(against: [])
+        let retried = await launch(backend, plans: []).processUnfinishedTransactions(noTransactions(), history: transactions([observed]))
+        XCTAssertEqual(retried.map(\.finished), [true])
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId).sorted(), ["chk_older", "chk_own", "chk_own"])
+        XCTAssertEqual(verifications.last?.checkoutSessionId, "chk_own")
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [])
     }
 
     /// A purchase's own result overlaps a background pass (an update) that bound its transaction to an older
