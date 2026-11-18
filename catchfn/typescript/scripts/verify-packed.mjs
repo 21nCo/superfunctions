@@ -28,24 +28,37 @@ function run(command, args, cwd) {
 
 const esmConsumer = `
 import assert from "node:assert/strict";
-import { BreadcrumbCollector, ConsoleCollector, NetworkCollector, validateEvidenceEvent, redactUrl, EVIDENCE_SCHEMA_VERSION } from "catchfn";
+import { BreadcrumbCollector, ConsoleCollector, ErrorCollector, NetworkCollector, WebSocketCollector, validateEvidenceEvent, redactUrl, EVIDENCE_SCHEMA_VERSION } from "catchfn";
 assert.equal(EVIDENCE_SCHEMA_VERSION, 1);
 const page = globalThis.fetch = async () => new Response("ok", { status: 200 });
 const original = console.info;
 const consoleCollector = new ConsoleCollector(5);
 const network = new NetworkCollector(5);
 const breadcrumbs = new BreadcrumbCollector(5);
+const pageSocket = globalThis.WebSocket = class extends EventTarget { get url() { return "wss://packed.example/s?token=packed-secret"; } send() {} };
+const sockets = new WebSocketCollector(5);
+const errors = new ErrorCollector(5); // Plain Node has no window events: it records nothing.
 consoleCollector.start();
 network.start();
+sockets.start();
+errors.start();
 console.info("packed", { nested: true });
 await fetch("/api?token=packed-secret&safe=1");
 breadcrumbs.addUser("click", "save");
+const socket = new WebSocket("wss://packed.example/s");
+socket.dispatchEvent(new Event("open"));
+socket.send("abc");
 consoleCollector.stop();
 network.stop();
+sockets.stop();
+errors.stop();
 assert.equal(console.info, original);
 assert.equal(globalThis.fetch, page);
-const events = [...consoleCollector.collect(), ...network.collect(), ...breadcrumbs.collect({ since: 0 })];
-assert.deepEqual(events.map((event) => event.kind), ["console", "network", "breadcrumb"]);
+assert.equal(globalThis.WebSocket, pageSocket);
+assert.equal(errors.size(), 0);
+const events = [...consoleCollector.collect(), ...network.collect(), ...breadcrumbs.collect({ since: 0 }), ...sockets.collect()];
+assert.deepEqual(events.map((event) => event.kind), ["console", "network", "breadcrumb", "websocket", "websocket"]);
+assert.equal(events.at(-1).size, 3);
 for (const event of events) assert.deepEqual(validateEvidenceEvent(JSON.parse(JSON.stringify(event))), []);
 assert.ok(!JSON.stringify(events).includes("packed-secret"));
 assert.ok(!redactUrl("/x?token=t-secret").includes("t-secret"));
@@ -72,8 +85,8 @@ export const all: EvidenceEvent[] = events;
 `;
 
 const browserConsumer = `
-import { BreadcrumbCollector, ConsoleCollector, NetworkCollector, evidenceEventSchema } from "catchfn";
-const collectors = [new ConsoleCollector(), new NetworkCollector()];
+import { BreadcrumbCollector, ConsoleCollector, ErrorCollector, NetworkCollector, WebSocketCollector, evidenceEventSchema } from "catchfn";
+const collectors = [new ConsoleCollector(), new NetworkCollector(), new ErrorCollector(), new WebSocketCollector()];
 for (const collector of collectors) collector.start();
 new BreadcrumbCollector().addNavigation(location.pathname, "/next");
 globalThis.__catchfn = { collectors, schema: evidenceEventSchema };

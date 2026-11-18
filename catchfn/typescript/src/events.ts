@@ -10,7 +10,7 @@ import type { SerializedValue } from "./utils/serialization.js";
 
 export const EVIDENCE_SCHEMA_VERSION = 1 as const;
 
-export const EVIDENCE_KINDS = ["console", "network", "breadcrumb"] as const;
+export const EVIDENCE_KINDS = ["console", "network", "breadcrumb", "error", "websocket"] as const;
 export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 
 export const CONSOLE_LEVELS = ["log", "info", "warn", "error", "debug"] as const;
@@ -24,6 +24,15 @@ export type BreadcrumbType = (typeof BREADCRUMB_TYPES)[number];
 
 export const BREADCRUMB_LEVELS = ["debug", "info", "warning", "error"] as const;
 export type BreadcrumbLevel = (typeof BREADCRUMB_LEVELS)[number];
+
+export const ERROR_SOURCES = ["error", "unhandledrejection"] as const;
+export type ErrorSource = (typeof ERROR_SOURCES)[number];
+
+export const WEBSOCKET_EVENT_TYPES = ["open", "message", "close", "error"] as const;
+export type WebSocketEventType = (typeof WEBSOCKET_EVENT_TYPES)[number];
+
+export const WEBSOCKET_DIRECTIONS = ["sent", "received"] as const;
+export type WebSocketDirection = (typeof WEBSOCKET_DIRECTIONS)[number];
 
 export interface EvidenceEventBase {
   schemaVersion: typeof EVIDENCE_SCHEMA_VERSION;
@@ -66,7 +75,42 @@ export interface BreadcrumbEvidenceEvent extends EvidenceEventBase {
   level?: BreadcrumbLevel;
 }
 
-export type EvidenceEvent = ConsoleEvidenceEvent | NetworkEvidenceEvent | BreadcrumbEvidenceEvent;
+export interface ErrorEvidenceEvent extends EvidenceEventBase {
+  kind: "error";
+  /** The window event that reported it: an uncaught error or an unhandled rejection. */
+  source: ErrorSource;
+  message: string;
+  /** Present when the thrown value or rejection reason is an `Error`. */
+  name?: string;
+  stack?: string;
+  /** Script URL of an uncaught error, redacted with `redactUrl`. */
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  /** The thrown value or rejection reason when it is not an `Error`, serialized. */
+  value?: SerializedValue;
+}
+
+export interface WebSocketEvidenceEvent extends EvidenceEventBase {
+  kind: "websocket";
+  type: WebSocketEventType;
+  /** Redacted with `redactUrl`; never the application's raw URL. */
+  url: string;
+  /** Message events only: whether the page sent or received it. */
+  direction?: WebSocketDirection;
+  /** Message events only: the payload size in bytes. The payload itself is never recorded. */
+  size?: number;
+  /** Close events only. */
+  code?: number;
+  wasClean?: boolean;
+}
+
+export type EvidenceEvent =
+  | ConsoleEvidenceEvent
+  | NetworkEvidenceEvent
+  | BreadcrumbEvidenceEvent
+  | ErrorEvidenceEvent
+  | WebSocketEvidenceEvent;
 
 // Integers are JavaScript safe integers, as `validateEvidenceEvent` checks.
 const safeInteger = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const;
@@ -125,6 +169,38 @@ export const evidenceEventSchema = {
         data: { type: "object" },
         category: { type: "string" },
         level: { enum: [...BREADCRUMB_LEVELS] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["schemaVersion", "kind", "seq", "timestamp", "source", "message"],
+      properties: {
+        ...base,
+        kind: { const: "error" },
+        source: { enum: [...ERROR_SOURCES] },
+        message: { type: "string" },
+        name: { type: "string" },
+        stack: { type: "string" },
+        filename: { type: "string" },
+        lineno: safeInteger,
+        colno: safeInteger,
+        value: {},
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["schemaVersion", "kind", "seq", "timestamp", "type", "url"],
+      properties: {
+        ...base,
+        kind: { const: "websocket" },
+        type: { enum: [...WEBSOCKET_EVENT_TYPES] },
+        url: { type: "string" },
+        direction: { enum: [...WEBSOCKET_DIRECTIONS] },
+        size: safeInteger,
+        code: safeInteger,
+        wasClean: { type: "boolean" },
       },
     },
   ],
@@ -189,6 +265,26 @@ const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: 
       data: (value) => isPlainRecord(value) && isJsonValue(value),
       category: isString,
       level: oneOf(BREADCRUMB_LEVELS),
+    },
+  },
+  error: {
+    required: { ...common, source: oneOf(ERROR_SOURCES), message: isString },
+    optional: {
+      name: isString,
+      stack: isString,
+      filename: isString,
+      lineno: isNonNegativeInteger,
+      colno: isNonNegativeInteger,
+      value: isJsonValue,
+    },
+  },
+  websocket: {
+    required: { ...common, type: oneOf(WEBSOCKET_EVENT_TYPES), url: isString },
+    optional: {
+      direction: oneOf(WEBSOCKET_DIRECTIONS),
+      size: isNonNegativeInteger,
+      code: isNonNegativeInteger,
+      wasClean: (value) => typeof value === "boolean",
     },
   },
 };

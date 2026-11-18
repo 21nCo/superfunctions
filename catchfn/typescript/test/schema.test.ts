@@ -7,12 +7,16 @@ const valid = {
   console: { schemaVersion: 1, kind: "console", seq: 0, timestamp: 1, level: "warn", args: ["x", { a: [1] }] },
   network: { schemaVersion: 1, kind: "network", seq: 1, timestamp: 2, transport: "fetch", method: "GET", url: "/a", status: 200, statusText: "OK", duration: 3.5, requestHeaders: { a: "b" } },
   breadcrumb: { schemaVersion: 1, kind: "breadcrumb", seq: 2, timestamp: 3, type: "user", message: "m", data: { k: null }, category: "c", level: "warning" },
+  error: { schemaVersion: 1, kind: "error", seq: 3, timestamp: 4, source: "error", message: "boom", name: "TypeError", stack: "TypeError: boom", filename: "/app.js", lineno: 1, colno: 0 },
+  rejection: { schemaVersion: 1, kind: "error", seq: 4, timestamp: 5, source: "unhandledrejection", message: '{"a":[1]}', value: { a: [1] } },
+  websocket: { schemaVersion: 1, kind: "websocket", seq: 5, timestamp: 6, type: "message", url: "wss://example.com/", direction: "received", size: 12 },
+  websocketClose: { schemaVersion: 1, kind: "websocket", seq: 6, timestamp: 7, type: "close", url: "wss://example.com/", code: 1000, wasClean: true },
 };
 
 const invalid: Array<[string, unknown]> = [
   ["a non-object", "event"],
   ["another schema version", { ...valid.console, schemaVersion: 2 }],
-  ["an unknown kind", { ...valid.console, kind: "error" }],
+  ["an unknown kind", { ...valid.console, kind: "trace" }],
   ["a missing required field", { ...valid.console, args: undefined }],
   ["an extra field", { ...valid.console, extra: true }],
   ["a field of another kind", { ...valid.console, url: "/a" }],
@@ -24,6 +28,15 @@ const invalid: Array<[string, unknown]> = [
   ["a negative duration", { ...valid.network, duration: -1 }],
   ["breadcrumb data that is not an object", { ...valid.breadcrumb, data: ["x"] }],
   ["an unknown breadcrumb type", { ...valid.breadcrumb, type: "click" }],
+  ["an unknown error source", { ...valid.error, source: "rejectionhandled" }],
+  ["an error event without a message", { ...valid.error, message: undefined }],
+  ["a fractional line number", { ...valid.error, lineno: 1.5 }],
+  ["an unknown websocket event type", { ...valid.websocket, type: "ping" }],
+  ["a websocket event without a url", { ...valid.websocket, url: undefined }],
+  ["an unknown message direction", { ...valid.websocket, direction: "both" }],
+  ["a negative message size", { ...valid.websocket, size: -1 }],
+  ["a websocket payload field", { ...valid.websocket, data: "payload" }],
+  ["a non-boolean wasClean", { ...valid.websocketClose, wasClean: "yes" }],
 ];
 
 const strip = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -69,6 +82,7 @@ describe("evidence event v1 schema", () => {
       ["a class instance as breadcrumb data", { ...valid.breadcrumb, data: new Box() }],
       ["a Date nested in breadcrumb data", { ...valid.breadcrumb, data: { when: new Date(0) } }],
       ["a Map nested in console args", { ...valid.console, args: [new Map([["a", 1]])] }],
+      ["a class instance as an error value", { ...valid.rejection, value: new Box() }],
       ["a class instance as response headers", { ...valid.network, responseHeaders: new Box() }],
     ];
     for (const [label, event] of nonPlain) expect(validateEvidenceEvent(event), label).not.toEqual([]);
@@ -113,6 +127,10 @@ describe("evidence event v1 schema", () => {
       ["seq", valid.console],
       ["timestamp", valid.console],
       ["status", valid.network],
+      ["lineno", valid.error],
+      ["colno", valid.error],
+      ["size", valid.websocket],
+      ["code", valid.websocketClose],
     ];
     for (const [field, event] of cases) {
       const atBound = { ...event, [field]: Number.MAX_SAFE_INTEGER };
@@ -142,7 +160,7 @@ describe("evidence event v1 schema", () => {
   it("is exported with its validator from the package entry", () => {
     expect(api.evidenceEventSchema).toBe(evidenceEventSchema);
     expect(api.EVIDENCE_SCHEMA_VERSION).toBe(1);
-    expect([...api.EVIDENCE_KINDS]).toEqual(["console", "network", "breadcrumb"]);
+    expect([...api.EVIDENCE_KINDS]).toEqual(["console", "network", "breadcrumb", "error", "websocket"]);
     expect(typeof api.validateEvidenceEvent).toBe("function");
   });
 });
