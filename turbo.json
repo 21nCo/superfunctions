@@ -1,6 +1,23 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["**/.env.*local"],
+  "globalDependencies": [
+    "**/.env.*local",
+    "scripts/**",
+    "!scripts/promote.*",
+    "!scripts/verify-public-boundary.*",
+    "!scripts/public-boundary.allow.json",
+    "!scripts/verify-owners.*",
+    "!scripts/owners.*",
+    "!scripts/workspaces.*",
+    "!scripts/verify-package-lockfiles.*",
+    "!scripts/resolve-release-tag.*",
+    "!scripts/uifn-docs-cli-resolution.*",
+    "package.json",
+    "tsconfig*.json",
+    "vitest.config.*",
+    "*/tsconfig*.json",
+    "*/vitest.config.*"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

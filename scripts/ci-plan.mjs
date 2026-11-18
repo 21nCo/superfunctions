@@ -19,9 +19,31 @@ const JS_GLOBAL_PATTERNS = [
   /^turbo\.json$/,
   /^vitest\.config\.[cm]?[jt]s$/,
   /^tsconfig(?:\..+)?\.json$/,
-  /^\.github\/workflows\//,
-  /^scripts\//,
+  /^\.github\/workflows\/ci\.yml$/,
 ];
+
+// Root scripts that no workspace package uses and that run only in non-JavaScript jobs (SFNS-307). A change to one
+// neither forces a full JavaScript run nor, since turbo.json's globalDependencies exclude exactly these globs,
+// invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path segment, as in
+// Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/,
+// Markdown and turbo.json aside, names one of them by file name, or names a script that reaches one through other
+// scripts (the root package.json and the data files the test lists may name those), so the list cannot grow to cover
+// a script a package uses.
+const STANDALONE_SCRIPTS = [
+  "scripts/promote.*",
+  "scripts/verify-public-boundary.*",
+  "scripts/public-boundary.allow.json",
+  "scripts/verify-owners.*",
+  "scripts/owners.*",
+  "scripts/workspaces.*",
+  "scripts/verify-package-lockfiles.*",
+  "scripts/resolve-release-tag.*",
+  "scripts/uifn-docs-cli-resolution.*",
+];
+
+const STANDALONE_SCRIPT_PATTERNS = STANDALONE_SCRIPTS.map(
+  (glob) => new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*")}$`)
+);
 
 const PYTHON_GLOBAL_PATTERNS = [
   /^\.github\/workflows\/ci\.yml$/,
@@ -230,6 +252,13 @@ function matchesAny(patterns, value) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+function isJsGlobal(changedPath) {
+  return (
+    matchesAny(JS_GLOBAL_PATTERNS, changedPath) ||
+    (changedPath.startsWith("scripts/") && !matchesAny(STANDALONE_SCRIPT_PATTERNS, changedPath))
+  );
+}
+
 // Code-unit order, the same order a bare sort() gives strings; localeCompare would reorder them.
 function compareStrings(left, right) {
   if (left < right) {
@@ -354,6 +383,12 @@ function collectPythonDependents(seedNames, manifestsByName) {
   return selected;
 }
 
+// The standalone list for scripts/turbo-cache-config.test.mjs, which checks it against turbo.json.
+if (process.argv.includes("--print-standalone-scripts")) {
+  console.log(JSON.stringify(STANDALONE_SCRIPTS));
+  process.exit(0);
+}
+
 const event = loadGitHubEvent();
 const baseRef = resolveDiffBase(event);
 const changedEntries = parseChangedEntries(baseRef);
@@ -381,7 +416,7 @@ const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, c
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
-    if (matchesAny(JS_GLOBAL_PATTERNS, changedPath)) {
+    if (isJsGlobal(changedPath)) {
       fullJs = true;
     }
 
