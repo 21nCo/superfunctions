@@ -77,12 +77,11 @@ public actor BillFnStoreKit {
     private let backend: any BillFnStoreKitBackend
     private let plans: [String: BillFnStoreKitPlan]
     private let checkouts: any BillFnStoreKitCheckoutStore
-    /// The confirmation pass running for each transaction, with the observation of it that pass sends BillFn.
-    private var inFlight: [UInt64: (observation: BillFnStoreKitTransactionReference, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
+    /// The confirmation pass running for each transaction, with what that pass confirms: the observation it sends
+    /// BillFn and the checkout of the purchase that produced it, when known.
+    private var inFlight: [UInt64: (context: PassContext, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
     /// How many callers are waiting for a running pass on the same transaction to end (tests wait on it).
     private(set) var callersWaitingForARunningPass = 0
-    /// Checkouts a transaction is being verified against, so a concurrent one does not use the same checkout.
-    private var claimedCheckouts: Set<String> = []
     private var listener: Task<Void, Never>?
     private let outcomeContinuation: AsyncStream<BillFnStoreKitTransactionOutcome>.Continuation
 
@@ -149,9 +148,8 @@ public actor BillFnStoreKit {
     }
 
     /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then those `Transaction.all`
-    /// lists that a kept checkout waits for (`awaitsConfirmation`), and reconciles the checkout store
-    /// (`removeUnneededCheckouts(excluding:)`): drops matched checkouts whose transaction is recorded finished and,
-    /// only now that every transaction found has been offered the checkouts it could claim, expired outstanding ones.
+    /// lists that still wait for confirmation (`awaitsConfirmation`), and drops each checkout whose transaction is
+    /// recorded finished (`removeUnneededCheckouts()`).
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
         await processUnfinishedTransactions(Transaction.unfinished, history: Transaction.all)
@@ -160,8 +158,9 @@ public actor BillFnStoreKit {
     /// `processUnfinishedTransactions()` with the unfinished transactions to confirm and the transaction history to
     /// look through; it passes `Transaction.unfinished` and `Transaction.all`.
     /// StoreKit can leave an unfinished transaction out of `Transaction.unfinished`, so a transaction missing from it is
-    /// never taken as finished: one `history` lists that a kept checkout waits for is confirmed here instead, and BillFn
-    /// decides; its matched checkout stays until the transaction is recorded finished.
+    /// never taken as finished: one `history` lists that still waits for confirmation is confirmed here instead, and
+    /// BillFn decides; its checkout stays until the transaction is recorded finished. A history observation this call
+    /// already confirmed from `unfinished` is not confirmed again; a changed one (refunded since) is.
     @discardableResult
     public func processUnfinishedTransactions<Unfinished: AsyncSequence & Sendable, History: AsyncSequence & Sendable>(
         _ unfinished: Unfinished,
@@ -174,43 +173,37 @@ public actor BillFnStoreKit {
                 results.append(await process(transaction))
             }
             for try await verification in history {
-                let transaction = verification.unsafePayloadValue
-                guard !results.contains(where: { $0.transaction.transactionId == String(transaction.id) }),
-                      awaitsConfirmation(transaction) else { continue }
+                let reference = Self.reference(verification.unsafePayloadValue)
+                guard !results.contains(where: { $0.transaction == reference }),
+                      awaitsConfirmation(verification.unsafePayloadValue) else { continue }
                 results.append(await process(verification))
             }
         } catch {
-            // A transaction the failed enumeration did not reach may still claim an expired checkout, so none is
-            // removed. Neither `Transaction.unfinished` nor `Transaction.all` throws.
-            return results
+            // Neither `Transaction.unfinished` nor `Transaction.all` throws.
         }
-        // A checkout being verified against right now is claimed, and kept.
-        checkouts.removeUnneededCheckouts(excluding: claimedCheckouts)
+        checkouts.removeUnneededCheckouts()
         return results
     }
 
-    /// Whether a kept checkout waits for the transaction: one matched to it while the transaction is not recorded
-    /// finished (BillFn has not confirmed it, or the app stopped before finishing it), or an outstanding one it may
-    /// claim (`claimCheckout`'s rule) while BillFn has not confirmed it.
+    /// Whether the transaction still waits for BillFn's confirmation: BillFn was asked and has not confirmed it, or
+    /// confirmed it and `finish()` did not return (a renewal or a restored purchase too, with no checkout); or, never
+    /// asked, a checkout is bound to it or it may claim an outstanding one.
     private func awaitsConfirmation(_ transaction: Transaction) -> Bool {
-        let id = String(transaction.id)
-        let facts = BillFnStoreKitAttemptFacts(transaction)
-        let kept = checkouts.keptCheckouts().filter {
-            $0.checkout.productId == facts.productId && $0.checkout.appAccountToken == facts.appAccountToken
+        let facts = Self.facts(transaction)
+        if let record = checkouts.record(transactionId: facts.transactionId) {
+            return record.state < .finished
         }
-        guard !kept.isEmpty, !checkouts.isFinished(transactionId: id) else { return false }
-        if kept.contains(where: { $0.transactionId == id }) { return true }
-        guard !checkouts.isConfirmed(transactionId: id) else { return false }
-        let reasonIsPurchase = Self.reasonIsPurchase(transaction)
-        return kept.contains {
-            $0.transactionId == nil && Self.mayClaimOutstanding(facts, reasonIsPurchase: reasonIsPurchase, savedAt: $0.savedAt)
-        }
+        return checkouts.keptCheckouts().contains { $0.transactionId == facts.transactionId || facts.mayClaim($0) }
     }
 
     public func purchase(planKey: String, priceId: String? = nil, interval: String? = nil) async throws -> BillFnStoreKitPurchaseResult {
         let checkout = try await backend.createCheckout(
             BillFnStoreKitCheckoutRequest(planKey: planKey, priceId: priceId, interval: interval)
         )
+        // A transaction could never be verified against it, so nothing is bought.
+        guard !checkout.checkoutSessionId.isEmpty else {
+            throw BillFnStoreKitError.invalidCheckout("missing checkoutSessionId")
+        }
         guard let product = try await Product.products(for: [checkout.productId]).first else {
             throw BillFnStoreKitError.productNotFound(checkout.productId)
         }
@@ -221,22 +214,22 @@ public actor BillFnStoreKit {
             result = try await product.purchase(options: [.appAccountToken(checkout.appAccountToken)])
         } catch StoreKitError.userCancelled {
             // StoreKit reports some cancellations as an error rather than as `.userCancelled`.
-            checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
+            checkouts.removeOutstandingCheckout(checkoutSessionId: checkout.checkoutSessionId)
             return .cancelled(checkout)
         } catch let error as Product.PurchaseError {
             // StoreKit refused the purchase before sending it to the App Store, so it cannot produce a transaction.
-            checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
+            checkouts.removeOutstandingCheckout(checkoutSessionId: checkout.checkoutSessionId)
             throw error
         }
         // Any other error (network, system) may come after the App Store took the purchase, so the checkout stays
-        // kept until its transaction arrives or the store's retention expires it.
+        // kept until a transaction claims it.
         switch result {
         case .success(let verification):
             return .purchased(checkout, await process(verification, checkout: checkout))
         case .pending:
             return .pending(checkout)
         case .userCancelled:
-            checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
+            checkouts.removeOutstandingCheckout(checkoutSessionId: checkout.checkoutSessionId)
             return .cancelled(checkout)
         @unknown default:
             throw BillFnStoreKitError.unknownPurchaseResult
@@ -265,10 +258,10 @@ public actor BillFnStoreKit {
     }
 
     /// Confirms one transaction with BillFn and finishes it if BillFn confirms it; `start()` passes each
-    /// `Transaction.updates` element here. A transaction with a kept checkout for its product and `appAccountToken`
-    /// (the one it was already matched to, else the oldest outstanding one its purchase attempt may have saved, see
-    /// `mayClaimOutstanding`) is verified against that checkout; any other one (a renewal, a restored purchase, a
-    /// transaction BillFn already confirmed) is restored onto the plan its product maps to.
+    /// `Transaction.updates` element here. A transaction the checkout store binds to a checkout (the one already bound
+    /// to it, else the oldest outstanding one its purchase attempt may have saved, see
+    /// `BillFnStoreKitCheckoutStore.claim(_:purchasedWith:)`) is verified against that checkout; any other one (a
+    /// renewal, a restored purchase, a transaction BillFn already confirmed) is restored onto the plan its product maps to.
     ///
     /// StoreKit's own signature check is not the trust boundary: BillFn reads the transaction from the App Store
     /// Server API and checks its `appAccountToken`, so a transaction StoreKit could not verify is still sent to
@@ -278,26 +271,29 @@ public actor BillFnStoreKit {
         await process(verification, checkout: nil)
     }
 
+    /// What one confirmation pass confirms: the observation sent to BillFn, and the checkout of the purchase that
+    /// produced the transaction when known (a pass without one may verify it against another checkout).
+    struct PassContext: Equatable {
+        let observation: BillFnStoreKitTransactionReference
+        let purchaseCheckoutSessionId: String?
+    }
+
     /// `checkout` is the one the purchase that produced this transaction opened, when known.
-    private func process(
+    func process(
         _ verification: VerificationResult<Transaction>,
         checkout: BillFnStoreKitCheckout?
     ) async -> BillFnStoreKitTransactionOutcome {
         let transaction = verification.unsafePayloadValue
-        let reference = BillFnStoreKitTransactionReference(
-            transactionId: String(transaction.id),
-            originalTransactionId: String(transaction.originalID),
-            productId: transaction.productID,
-            appAccountToken: transaction.appAccountToken,
-            revoked: transaction.revocationDate != nil
-        )
-        // The same observation joins the running pass and gets its outcome. A changed one (revoked while the running
-        // pass confirms the unrevoked transaction) waits for that pass to end, then BillFn confirms it in its own pass.
+        let reference = Self.reference(transaction)
+        let context = PassContext(observation: reference, purchaseCheckoutSessionId: checkout?.checkoutSessionId)
+        // The same observation with the same purchase checkout joins the running pass and gets its outcome. A changed
+        // one (revoked while the running pass confirms the unrevoked transaction, or a purchase's own checkout while a
+        // pass without it runs) waits for that pass to end, then BillFn confirms it in its own pass.
         while let running = inFlight[transaction.id] {
             callersWaitingForARunningPass += 1
             let outcome = await running.task.value
             callersWaitingForARunningPass -= 1
-            if running.observation == reference {
+            if running.context == context {
                 return outcome
             }
             if inFlight[transaction.id]?.task == running.task {
@@ -311,7 +307,7 @@ public actor BillFnStoreKit {
             self.outcomeContinuation.yield(outcome)
             return outcome
         }
-        inFlight[transaction.id] = (reference, task)
+        inFlight[transaction.id] = (context, task)
         let outcome = await task.value
         if inFlight[transaction.id]?.task == task {
             inFlight[transaction.id] = nil
@@ -324,37 +320,36 @@ public actor BillFnStoreKit {
         reference: BillFnStoreKitTransactionReference,
         purchasedWith purchaseCheckout: BillFnStoreKitCheckout?
     ) async -> BillFnStoreKitTransactionOutcome {
-        let facts = BillFnStoreKitAttemptFacts(transaction)
-        let checkout = claimCheckout(for: facts, reasonIsPurchase: Self.reasonIsPurchase(transaction), purchasedWith: purchaseCheckout)
-        defer {
-            if let checkout { claimedCheckouts.remove(checkout.checkoutSessionId) }
+        let facts = Self.facts(transaction)
+        // The store binds the checkout to this transaction before BillFn is asked, atomically for every store and
+        // actor sharing it: if the verify call fails or the app stops before `finish()`, the binding stays and the next
+        // pass verifies against the same checkout; no other transaction can take it meanwhile.
+        let checkout = checkouts.claim(facts, purchasedWith: purchaseCheckout)
+        let plan = plans[transaction.productID]
+        guard checkout != nil || plan != nil else {
+            return BillFnStoreKitTransactionOutcome(
+                transaction: reference,
+                status: .skipped("No BillFn checkout or plan for product \(transaction.productID)")
+            )
         }
+        // Until BillFn confirms it, the pending record makes every launch retry it, from `Transaction.all` too.
+        checkouts.record(facts, state: .pending)
         do {
             let billing: BillFnJSONValue
             if let checkout {
-                // Recorded before BillFn is asked: if the verify call fails or the app stops before `finish()`, the
-                // checkout stays kept (it no longer expires) and the next launch verifies against it again.
-                checkouts.markMatched(checkout, transactionId: reference.transactionId)
                 billing = try await verify(reference, against: checkout)
-            } else if let plan = plans[transaction.productID] {
-                billing = try await backend.restorePurchase(plan: plan, transaction: reference)
             } else {
-                return BillFnStoreKitTransactionOutcome(
-                    transaction: reference,
-                    status: .skipped("No BillFn checkout or plan for product \(transaction.productID)")
-                )
+                billing = try await backend.restorePurchase(plan: plan!, transaction: reference)
             }
             // Recorded before `finish()`: once StoreKit no longer offers it as unfinished, a redelivered or restored
             // copy must not claim an outstanding checkout.
-            checkouts.recordConfirmed(transactionId: reference.transactionId)
+            checkouts.record(facts, state: .confirmed)
             await transaction.finish()
             // The only evidence the transaction was finished: StoreKit leaving it out of `Transaction.unfinished` is
-            // none. A launch that stops before removing the checkout leaves it to reconciliation.
-            checkouts.recordFinished(transactionId: reference.transactionId)
-            if let checkout {
-                // Only this checkout: another attempt on the product may have saved its own meanwhile.
-                checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId)
-            }
+            // none. A launch that stops before removing the checkout leaves it to `removeUnneededCheckouts()`.
+            checkouts.record(facts, state: .finished)
+            // Only the checkout bound to it: another attempt on the product may have saved its own meanwhile.
+            checkouts.removeCheckout(boundTo: reference.transactionId)
             return BillFnStoreKitTransactionOutcome(transaction: reference, status: .confirmed(billing))
         } catch {
             return BillFnStoreKitTransactionOutcome(transaction: reference, status: .failed(BillFnStoreKitFailure(error: error)))
@@ -374,20 +369,24 @@ public actor BillFnStoreKit {
         }
     }
 
-    /// How much earlier than a checkout was saved a transaction's purchase date may be and still claim it, for a
-    /// device clock ahead of the App Store's.
-    static let checkoutClockTolerance: TimeInterval = 15 * 60
+    static func reference(_ transaction: Transaction) -> BillFnStoreKitTransactionReference {
+        BillFnStoreKitTransactionReference(
+            transactionId: String(transaction.id),
+            originalTransactionId: String(transaction.originalID),
+            productId: transaction.productID,
+            appAccountToken: transaction.appAccountToken,
+            revoked: transaction.revocationDate != nil
+        )
+    }
 
-    /// Whether the transaction can be the one the purchase attempt that saved an outstanding checkout at `savedAt`
-    /// produced, so it may claim that checkout. It must have been purchased after the attempt started (within the
-    /// clock tolerance): an older one is a restored purchase and would take a pending attempt's checkout. It must be a
-    /// purchase, not a renewal: every renewal carries the billing account's `appAccountToken`, so it would take a
-    /// leftover checkout (an attempt that failed on the network or was declined) and send BillFn's verify a renewal id.
-    /// A first purchase, an upgrade or crossgrade and a resubscription are purchases; a renewal, including one that
-    /// recovers from billing retry, is not. When the reason is unknown (`reasonIsPurchase` nil) it claims nothing.
-    static func mayClaimOutstanding(_ transaction: BillFnStoreKitAttemptFacts, reasonIsPurchase: Bool?, savedAt: Date) -> Bool {
-        guard savedAt <= transaction.purchaseDate.addingTimeInterval(checkoutClockTolerance) else { return false }
-        return reasonIsPurchase ?? false
+    static func facts(_ transaction: Transaction) -> BillFnStoreKitTransactionFacts {
+        BillFnStoreKitTransactionFacts(
+            transactionId: String(transaction.id),
+            productId: transaction.productID,
+            appAccountToken: transaction.appAccountToken,
+            purchaseDate: transaction.purchaseDate,
+            isPurchase: reasonIsPurchase(transaction)
+        )
     }
 
     /// Whether StoreKit says the transaction is a purchase rather than a renewal: `Transaction.reason` from iOS 17 and
@@ -411,34 +410,6 @@ public actor BillFnStoreKit {
         }
     }
 
-    /// The checkout to verify the transaction against: the purchase's own one, else the kept checkout this transaction
-    /// was already matched to, else the oldest outstanding kept checkout for its product and `appAccountToken` that
-    /// it may claim (`mayClaimOutstanding`). Never one matched to another transaction or one another transaction is
-    /// being verified against, and never an outstanding one for a transaction BillFn already confirmed.
-    private func claimCheckout(
-        for transaction: BillFnStoreKitAttemptFacts,
-        reasonIsPurchase: Bool?,
-        purchasedWith purchaseCheckout: BillFnStoreKitCheckout?
-    ) -> BillFnStoreKitCheckout? {
-        let transactionId = String(transaction.id)
-        let kept = checkouts.keptCheckouts()
-        let available: (BillFnStoreKitCheckout) -> Bool = { checkout in
-            guard checkout.productId == transaction.productId, checkout.appAccountToken == transaction.appAccountToken,
-                  !self.claimedCheckouts.contains(checkout.checkoutSessionId) else { return false }
-            let matchedTo = kept.first(where: { $0.checkout.checkoutSessionId == checkout.checkoutSessionId })?.transactionId
-            return matchedTo == nil || matchedTo == transactionId
-        }
-        let mayClaimOutstanding = { (savedAt: Date) in
-            !self.checkouts.isConfirmed(transactionId: transactionId)
-                && Self.mayClaimOutstanding(transaction, reasonIsPurchase: reasonIsPurchase, savedAt: savedAt)
-        }
-        let candidate = purchaseCheckout.flatMap { available($0) ? $0 : nil }
-            ?? kept.first(where: { $0.transactionId == transactionId && available($0.checkout) })?.checkout
-            ?? kept.first(where: { $0.transactionId == nil && available($0.checkout) && mayClaimOutstanding($0.savedAt) })?.checkout
-        if let candidate { claimedCheckouts.insert(candidate.checkoutSessionId) }
-        return candidate
-    }
-
     public static func manageSubscriptionsURL() -> URL {
         URL(string: "https://apps.apple.com/account/subscriptions")!
     }
@@ -448,30 +419,6 @@ public actor BillFnStoreKit {
             type: "manage-subscription",
             url: manageSubscriptionsURL().absoluteString,
             metadata: ["provider": "apple"]
-        )
-    }
-}
-
-/// What `BillFnStoreKit.mayClaimOutstanding` and the checkout match read from a StoreKit transaction.
-struct BillFnStoreKitAttemptFacts: Sendable, Equatable {
-    let id: UInt64
-    let productId: String
-    let appAccountToken: UUID?
-    let purchaseDate: Date
-
-    init(id: UInt64, productId: String, appAccountToken: UUID? = nil, purchaseDate: Date) {
-        self.id = id
-        self.productId = productId
-        self.appAccountToken = appAccountToken
-        self.purchaseDate = purchaseDate
-    }
-
-    init(_ transaction: Transaction) {
-        self.init(
-            id: transaction.id,
-            productId: transaction.productID,
-            appAccountToken: transaction.appAccountToken,
-            purchaseDate: transaction.purchaseDate
         )
     }
 }

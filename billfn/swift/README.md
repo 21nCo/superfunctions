@@ -27,7 +27,10 @@ case .pending: break // Ask to Buy or another approval; arrives later through Tr
 case .cancelled: break
 }
 
-let restored = try await storeKit.restore()
+// Only from an explicit Restore Purchases action: syncing with the App Store may ask the user to sign in.
+func restorePurchasesTapped() async throws {
+    let restored = try await storeKit.restore()
+}
 ```
 
 - `purchase` opens a BillFn Apple checkout (`POST /checkouts`) and buys its product with
@@ -42,14 +45,15 @@ let restored = try await storeKit.restore()
   `checkoutSessionId`) until its transaction is finished, so a purchase that completes after the
   app quits still verifies against it. A second attempt on the same product does not replace a
   pending one's checkout, and a cancelled or finished attempt removes only its own checkout.
-- As soon as a transaction is matched to a checkout, before BillFn is asked to verify it, the
-  checkout records the transaction id; it is removed once the transaction is finished. So a
-  transaction whose verify call failed, or that the app stopped before finishing, is verified
+- As soon as a transaction is bound to a checkout, before BillFn is asked to verify it, the store
+  records the binding; it is removed once the transaction is finished. Binding is one atomic step
+  for every `BillFnStoreKit` sharing the store: a checkout is bound to at most one transaction and a
+  transaction to at most one checkout (a purchase's own checkout takes its transaction from any other).
+  So a transaction whose verify call failed, or that the app stopped before finishing, is verified
   against the same checkout on a later launch however late, and no other transaction can take it.
   StoreKit can leave an unfinished transaction out of `Transaction.unfinished`, so its absence is
-  never taken as finished: the transaction is recorded finished once `finish()` returns, and a
-  matched checkout is removed only on that record (by the next launch, when the app stopped between
-  finishing the transaction and removing the checkout).
+  never taken as finished: the transaction is recorded finished once `finish()` returns, and its
+  checkout is removed only on that record.
 - An outstanding checkout is claimed only by a transaction purchased after its attempt started
   (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
@@ -59,26 +63,24 @@ let restored = try await storeKit.restore()
   and macOS 13. A first purchase, an upgrade, a crossgrade or a resubscription bought through its own
   checkout claims it; a renewal, including one that recovers from billing retry, is restored onto its
   plan (or skipped if none maps). A transaction whose reason is unknown claims no outstanding checkout.
-- Each transaction BillFn confirms is recorded (the newest 256) before it is finished, so when
-  StoreKit offers it again (a redelivered update, `restore()`) it never claims an outstanding checkout.
+- Each transaction BillFn is asked to confirm is recorded as pending, then confirmed before it is
+  finished, then finished. A pending or unfinished one is retried on every launch, from
+  `Transaction.all` too, renewals and restored purchases included. A confirmed one offered again (a
+  redelivered update, `restore()`) never claims an outstanding checkout. Confirmed records beyond the
+  newest 256 are dropped only once no kept checkout could be claimed by their transaction.
 - When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error
   with a BillFn error code, such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is
   restored onto that plan instead and finished. A `BILLFN_HTTP_ERROR` (a gateway or proxy answered
   without a BillFn error envelope) never falls back: the transaction stays unfinished with its checkout. With no plan, it stays unfinished with its checkout and every launch reports
   the same non-retryable failure; resolve it on the BillFn side.
-- An outstanding checkout (no transaction yet) is kept for 30 days (`BillFnUserDefaultsCheckoutStore(retention:)`),
-  however many other attempts come and go: longer than the App Store keeps an Ask to Buy request
-  or an interrupted purchase waiting. Retention takes effect at the next
-  `processUnfinishedTransactions()` (run by `start()`), after every unfinished transaction has been
-  offered the checkouts it could claim: an expired checkout stays claimable until then, so a purchase
-  that completed while the app was not running is still verified against it. StoreKit can leave an
-  unfinished transaction out of `Transaction.unfinished`, so that pass also confirms each transaction
-  in `Transaction.all` that a kept checkout waits for (matched to it and not finished, or one it could
-  claim that BillFn has not confirmed). An expired checkout still unclaimed after that is marked, and
-  removed by a launch at least a day later, so one launch whose StoreKit cache is incomplete never
-  drops it. A purchase StoreKit refuses before it reaches the App Store
-  (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
-  (such as a network failure) keeps it, since the purchase may still complete.
+- An outstanding checkout (no transaction yet) is removed only on evidence that its attempt
+  produced no transaction: a purchase StoreKit refuses before it reaches the App Store
+  (`Product.PurchaseError`) or the user cancels drops its checkout at once. Any other thrown error
+  (such as a network failure) keeps it, since the purchase may still complete, and so does time:
+  StoreKit gives no evidence that an Ask to Buy request or an interrupted purchase never completes.
+  `processUnfinishedTransactions()` (run by `start()`) also confirms each transaction in
+  `Transaction.all` that still waits for BillFn (pending, bound and not finished, or able to claim
+  an outstanding checkout), since StoreKit can leave an unfinished one out of `Transaction.unfinished`.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
   `processUnfinishedTransactions(_:history:)` the unfinished transactions and the history in place of
   `Transaction.unfinished` and `Transaction.all`,
@@ -86,8 +88,9 @@ let restored = try await storeKit.restore()
   for example in tests.
 - `outcomes` streams every transaction outcome, for example to refresh entitlements: one per
   confirmation pass, in the order the passes end. A transaction offered again while BillFn confirms it
-  (an update during a purchase) joins that pass; one that changed meanwhile (refunded) is confirmed in
-  its own pass after it, so its outcome comes last.
+  (an update during a purchase) joins that pass; one that changed meanwhile (refunded), or a purchase's
+  own result while a pass without its checkout runs, is confirmed in its own pass after it, so its
+  outcome comes last.
 
 ## Test
 

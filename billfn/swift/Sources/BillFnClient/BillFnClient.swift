@@ -102,10 +102,14 @@ public final class BillFnClient: @unchecked Sendable {
         if case .bool(true)? = envelope?["ok"], (200..<300).contains(status), let payload = envelope?["data"] {
             return payload
         }
-        if case .bool(false)? = envelope?["ok"], case .object(let error)? = envelope?["error"] {
+        // A BillFn rejection names its code and message; an `ok: false` envelope without them is not one, so it is
+        // reported below like any other response that is not a BillFn envelope.
+        if case .bool(false)? = envelope?["ok"], case .object(let error)? = envelope?["error"],
+           let code = error["code"]?.stringValue, !code.isEmpty,
+           let message = error["message"]?.stringValue, !message.isEmpty {
             throw BillFnClientError.server(
-                code: error["code"]?.stringValue ?? "BILLFN_ERROR",
-                message: error["message"]?.stringValue ?? "BillFn request failed",
+                code: code,
+                message: message,
                 status: status,
                 retryable: error["retryable"]?.boolValue ?? Self.isRetryable(status: status)
             )

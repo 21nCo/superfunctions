@@ -100,6 +100,15 @@ struct BillFnStoreKitBackendTests {
         }
     }
 
+    @Test("Rejects a checkout with an empty checkoutSessionId, which no transaction could be verified against")
+    func rejectsAnEmptyCheckoutSessionId() async throws {
+        let body = #"{"ok":true,"data":{"checkoutSession":{"checkoutSessionId":"","status":"requires_action","clientAction":{"type":"apple-purchase","productId":"apple.pro.month","metadata":{"appAccountToken":"00000000-0000-4000-8000-00000000000a"}}}}}"#
+
+        await #expect(throws: BillFnStoreKitError.invalidCheckout("missing checkoutSessionId")) {
+            _ = try await backend(body: body).createCheckout(BillFnStoreKitCheckoutRequest(planKey: "pro"))
+        }
+    }
+
     @Test("Verifies a transaction against its checkout session")
     func verifiesCheckout() async throws {
         let backend = backend(body: #"{"ok":true,"data":{"subscription":{"status":"active"}}}"#)
@@ -162,6 +171,20 @@ struct BillFnStoreKitBackendTests {
         }
     }
 
+    @Test("An ok:false envelope without a BillFn error code and message keeps the HTTP error", arguments: [
+        #"{"ok":false,"error":{}}"#,
+        #"{"ok":false,"error":{"code":"","message":""}}"#,
+        #"{"ok":false,"error":{"code":"BILLFN_CONFLICT"}}"#,
+        #"{"ok":false,"error":{"code":7,"message":"Conflict"}}"#,
+    ])
+    func malformedErrorEnvelopeKeepsTheHTTPError(body: String) async throws {
+        await #expect(throws: BillFnClientError.server(
+            code: "BILLFN_HTTP_ERROR", message: "BillFn request failed with HTTP 403", status: 403, retryable: false
+        )) {
+            _ = try await backend(status: 403, body: body).verifyCheckout(checkoutSessionId: "chk_1", transaction: transaction)
+        }
+    }
+
     @Test("Keeps the HTTP status of an error response that is not a BillFn envelope", arguments: [
         (502, "<html>Bad Gateway</html>", true),
         (503, "", true),
@@ -206,13 +229,11 @@ struct BillFnStoreKitBackendTests {
         #expect(BillFnStoreKitFailure(error: BillFnStoreKitError.productNotFound("apple.pro.month")).code == "BILLFN_STOREKIT_ERROR")
     }
 
-    @Test("Keeps each checkout by its session until that session is removed")
+    @Test("Keeps each checkout by its session; a cancelled attempt removes only its own outstanding checkout")
     func storesCheckouts() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
-        let account = UUID(uuidString: token)!
-        let first = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
-        let second = BillFnStoreKitCheckout(checkoutSessionId: "chk_2", productId: "apple.pro.month", appAccountToken: account)
+        let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults())
+        let first = checkout("chk_1")
+        let second = checkout("chk_2")
         let yearly = BillFnStoreKitCheckout(checkoutSessionId: "chk_3", productId: "apple.pro.year", appAccountToken: account)
 
         store.save(first)
@@ -220,155 +241,141 @@ struct BillFnStoreKitBackendTests {
         store.save(yearly)
 
         // A second attempt on the same product does not replace the first one's checkout.
-        #expect(BillFnUserDefaultsCheckoutStore(defaults: defaults).checkouts(forProductId: "apple.pro.month") == [first, second])
+        #expect(store.checkouts(forProductId: "apple.pro.month") == [first, second])
         #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
-        // Removing (cancelling or confirming) the second attempt keeps the first.
-        store.removeCheckout(checkoutSessionId: "chk_2")
+        store.removeOutstandingCheckout(checkoutSessionId: "chk_2")
         #expect(store.checkouts(forProductId: "apple.pro.month") == [first])
-        store.removeCheckout(checkoutSessionId: "chk_1")
+        // A transaction bound to the checkout meanwhile keeps it: the attempt's cancel is no evidence about it.
+        #expect(store.claim(facts("2000000001"), purchasedWith: nil) == first)
+        store.removeOutstandingCheckout(checkoutSessionId: "chk_1")
+        #expect(store.keptCheckouts().map(\.transactionId) == ["2000000001", nil])
+        store.removeCheckout(boundTo: "2000000001")
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
         #expect(store.checkouts(forProductId: "apple.pro.year") == [yearly])
     }
 
-    @Test("Keeps an outstanding checkout for its retention however many attempts are saved and cancelled meanwhile")
-    func keepsOutstandingCheckoutsForTheirRetention() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+    @Test("Never removes an outstanding checkout because time passed, and removes a bound one only once its transaction is finished")
+    func removesCheckoutsOnlyOnEvidence() throws {
+        let defaults = try freshDefaults()
         let clock = TestClock()
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        let account = UUID(uuidString: token)!
-        let pending = BillFnStoreKitCheckout(checkoutSessionId: "chk_pending", productId: "apple.pro.month", appAccountToken: account)
-        store.save(pending)
-
-        // Many later attempts, most cancelled and some left behind, do not push the pending one out.
-        for index in 0..<200 {
-            clock.advance(by: 60)
-            store.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: account))
-            if index % 4 != 0 { store.removeCheckout(checkoutSessionId: "chk_\(index)") }
-        }
-        clock.advance(by: 6 * day)
-        #expect(store.checkouts(forProductId: "apple.pro.month").first == pending)
-        #expect(store.checkouts(forProductId: "apple.pro.month").count == 51)
-
-        // 30 seconds past its retention, with no listed purchase that could claim it, the first reconciliation only
-        // marks the pending attempt; one a grace period later drops it. The attempts saved a minute or more after it stay.
-        clock.advance(by: day - 200 * 60 + 30)
-        let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        later.removeUnneededCheckouts(excluding: [])
-        #expect(later.keptCheckouts().first?.checkout == pending)
-        #expect(later.keptCheckouts().first?.unclaimedSince == clock.now)
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        later.removeUnneededCheckouts(excluding: [])
-        let kept = later.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
-        #expect(!kept.contains("chk_pending"))
-        #expect(kept.first == "chk_0")
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        store.removeUnneededCheckouts(excluding: [])
-        #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
-    }
-
-    @Test("Reads an expired outstanding checkout until it is pruned, and pruning keeps matched and excluded ones")
-    func prunesExpiredOutstandingCheckoutsOnlyWhenAsked() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let clock = TestClock()
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        let account = UUID(uuidString: token)!
-        let expired = BillFnStoreKitCheckout(checkoutSessionId: "chk_expired", productId: "apple.pro.month", appAccountToken: account)
-        let claimed = BillFnStoreKitCheckout(checkoutSessionId: "chk_claimed", productId: "apple.pro.month", appAccountToken: account)
-        let matched = BillFnStoreKitCheckout(checkoutSessionId: "chk_matched", productId: "apple.pro.year", appAccountToken: account)
-        let young = BillFnStoreKitCheckout(checkoutSessionId: "chk_young", productId: "apple.pro.year", appAccountToken: account)
-        store.save(expired)
-        store.save(claimed)
-        store.save(matched)
-        store.markMatched(matched, transactionId: "2000000001")
-        clock.advance(by: 7 * day - 60)
-        store.save(young)
-        clock.advance(by: 2 * day)
-
-        // Past its retention, an outstanding checkout is still read (and so still claimable by a transaction that
-        // completed while the app was not running) by this and any other store, until a prune removes it.
-        let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        #expect(reread.keptCheckouts().map(\.checkout) == [expired, claimed, matched, young])
-        #expect(store.checkouts(forProductId: "apple.pro.month") == [expired, claimed])
-
-        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
-        #expect(reread.keptCheckouts().map(\.checkout) == [expired, claimed, matched, young])
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
-
-        let kept = reread.keptCheckouts()
-        #expect(kept.map(\.checkout) == [claimed, matched, young])
-        #expect(kept.map(\.transactionId) == [nil, "2000000001", nil])
-    }
-
-    @Test("Marks an expired outstanding checkout on the first reconciliation and removes it a grace period later")
-    func expiresOutstandingCheckoutsOnASecondReconciliation() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let clock = TestClock()
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        let account = UUID(uuidString: token)!
-        let checkout = { (id: String) in BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account) }
-        store.save(checkout("chk_unclaimed"))
-        store.save(checkout("chk_claimed"))
-        clock.advance(by: 8 * day)
-        let marked = clock.now
-        let sessionIds = { store.keptCheckouts().map(\.checkout.checkoutSessionId) }
-
-        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
-        #expect(sessionIds() == ["chk_unclaimed", "chk_claimed"])
-        #expect(store.keptCheckouts().map(\.unclaimedSince) == [marked, nil])
-
-        // Within the grace period a reconciliation keeps it, marked when first found unclaimed.
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace - 60)
-        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
-        #expect(sessionIds() == ["chk_unclaimed", "chk_claimed"])
-        #expect(store.keptCheckouts().map(\.unclaimedSince) == [marked, nil])
-
-        // A grace period after marking it, it goes; the claimed one is marked only now.
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, now: { clock.now })
+        store.save(checkout("chk_outstanding"))
         clock.advance(by: 60)
-        store.removeUnneededCheckouts(excluding: [])
-        #expect(sessionIds() == ["chk_claimed"])
-        #expect(store.keptCheckouts().map(\.unclaimedSince) == [clock.now])
-    }
-
-    @Test("Records the newest confirmed transactions across stores")
-    func recordsConfirmedTransactions() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults)
-        store.recordConfirmed(transactionId: "2000000001")
-        store.recordConfirmed(transactionId: "2000000002")
-        store.recordConfirmed(transactionId: "2000000001")
-
-        let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults)
-        #expect(reread.isConfirmed(transactionId: "2000000001"))
-        #expect(reread.isConfirmed(transactionId: "2000000002"))
-        #expect(!reread.isConfirmed(transactionId: "2000000003"))
-        // A separate key: confirmed transactions are not kept checkouts.
-        #expect(reread.keptCheckouts().isEmpty)
-
-        for index in 1..<BillFnUserDefaultsCheckoutStore.confirmedTransactionLimit {
-            store.recordConfirmed(transactionId: "3\(index)")
+        for (id, state) in [("1", BillFnStoreKitConfirmationState.pending), ("2", .confirmed), ("3", .finished)] {
+            store.save(checkout("chk_\(id)"))
+            #expect(store.claim(facts(id, purchased: clock.now), purchasedWith: checkout("chk_\(id)")) == checkout("chk_\(id)"))
+            store.record(facts(id, purchased: clock.now), state: state)
         }
-        // The re-recorded 2000000001 is newer than 2000000002, so only 2000000002 is forgotten.
-        #expect(!reread.isConfirmed(transactionId: "2000000002"))
-        #expect(reread.isConfirmed(transactionId: "2000000001"))
-        #expect(reread.isConfirmed(transactionId: "31"))
+
+        // Two reconciliations a grace period apart, a year on, with no transaction listed: only the finished one goes.
+        clock.advance(by: 365 * day)
+        store.removeUnneededCheckouts()
+        clock.advance(by: 2 * day)
+        BillFnUserDefaultsCheckoutStore(defaults: defaults, now: { clock.now }).removeUnneededCheckouts()
+        #expect(store.keptCheckouts().map(\.checkout.checkoutSessionId) == ["chk_outstanding", "chk_1", "chk_2"])
+        #expect(store.keptCheckouts().map(\.transactionId) == [nil, "1", "2"])
+        // A purchase that completed while the app was stopped still claims the outstanding checkout.
+        #expect(store.claim(facts("4", purchased: clock.now), purchasedWith: nil) == checkout("chk_outstanding"))
     }
 
-    @Test("Two stores on the same defaults changing them at once lose no checkout or confirmed transaction")
-    func storesOnSharedDefaultsLoseNothing() throws {
-        let suiteName = "billfn.storekit.backend-tests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        // As two `BillFnStoreKit`s with default stores share UserDefaults.standard and the key.
-        let stores = [BillFnUserDefaultsCheckoutStore(defaults: defaults), BillFnUserDefaultsCheckoutStore(defaults: defaults)]
-        let account = UUID(uuidString: token)!
-        let count = 120
+    @Test("Binds one checkout to at most one transaction across stores sharing the defaults")
+    func claimsAtomicallyAcrossStores() throws {
+        let defaults = try freshDefaults()
+        let clock = TestClock()
+        let stores = [
+            BillFnUserDefaultsCheckoutStore(defaults: defaults, now: { clock.now }),
+            BillFnUserDefaultsCheckoutStore(defaults: defaults, now: { clock.now }),
+        ]
+        stores[0].save(checkout("chk_shared"))
+        let count = 64
+        let winners = Winners()
+        DispatchQueue.concurrentPerform(iterations: count) { index in
+            if stores[index % 2].claim(facts("3\(index)", purchased: clock.now.addingTimeInterval(60)), purchasedWith: nil) != nil {
+                winners.add("3\(index)")
+            }
+        }
+        #expect(winners.ids.count == 1)
+        let winner = try #require(winners.ids.first)
+        #expect(stores[1].keptCheckouts().map(\.transactionId) == [winner])
+        // The winner is offered it again; another transaction is not, not even as its purchase's own checkout.
+        #expect(stores[1].claim(facts(winner, purchased: clock.now.addingTimeInterval(60)), purchasedWith: nil) == checkout("chk_shared"))
+        #expect(stores[0].claim(facts("4000", purchased: clock.now.addingTimeInterval(60)), purchasedWith: checkout("chk_shared")) == nil)
+        // Another transaction finishing removes only its own checkout: the winner's binding survives.
+        stores[0].removeCheckout(boundTo: "4000")
+        stores[0].record(facts("4000", purchased: clock.now), state: .finished)
+        stores[1].removeUnneededCheckouts()
+        #expect(stores[0].keptCheckouts().map(\.transactionId) == [winner])
+    }
 
+    @Test("A purchase's own checkout takes its transaction from the checkout it was bound to without it")
+    func purchaseCheckoutRebindsItsTransaction() throws {
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
+        store.save(checkout("chk_a"))
+        clock.advance(by: 60)
+        store.save(checkout("chk_b"))
+        let transaction = facts("5", purchased: clock.now)
+        #expect(store.claim(transaction, purchasedWith: nil) == checkout("chk_a"))
+        #expect(store.claim(transaction, purchasedWith: checkout("chk_b")) == checkout("chk_b"))
+        #expect(store.keptCheckouts().map(\.transactionId) == [nil, "5"])
+    }
+
+    @Test("A confirmed, renewed or older transaction claims no outstanding checkout")
+    func claimsOnlyEligibleOutstandingCheckouts() throws {
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
+        let purchased = clock.now
+        clock.advance(by: 60 * 60)
+        store.save(checkout("chk_later"))
+        #expect(store.claim(facts("6", purchased: purchased), purchasedWith: nil) == nil)
+        #expect(store.claim(facts("7", purchased: clock.now, isPurchase: false), purchasedWith: nil) == nil)
+        #expect(store.claim(facts("8", purchased: clock.now, isPurchase: nil), purchasedWith: nil) == nil)
+        store.record(facts("9", purchased: clock.now), state: .confirmed)
+        #expect(store.claim(facts("9", purchased: clock.now), purchasedWith: nil) == nil)
+        #expect(store.keptCheckouts().map(\.transactionId) == [nil])
+    }
+
+    @Test("Keeps a confirmed record while a kept checkout could be claimed by its transaction, however many follow")
+    func keepsRecordsWhileTheyMatter() throws {
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: try freshDefaults(), now: { clock.now })
+        let confirmed = facts("10", purchased: clock.now)
+        store.record(confirmed, state: .finished)
+        clock.advance(by: 5 * 60)
+        store.save(checkout("chk_newer"))
+        clock.advance(by: day)
+        for index in 0...BillFnUserDefaultsCheckoutStore.confirmedTransactionLimit {
+            store.record(facts("6\(index)", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished)
+        }
+        // A replay of the confirmed transaction still claims nothing.
+        #expect(store.isFinished(transactionId: "10"))
+        #expect(store.claim(confirmed, purchasedWith: nil) == nil)
+        #expect(store.keptCheckouts().map(\.transactionId) == [nil])
+        // Once nothing could claim the checkout, the oldest records beyond the limit go; pending ones never do.
+        store.record(facts("11", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .pending)
+        store.removeOutstandingCheckout(checkoutSessionId: "chk_newer")
+        store.record(facts("12", purchased: clock.now.addingTimeInterval(-day), product: "apple.pro.year"), state: .finished)
+        #expect(store.record(transactionId: "10") == nil)
+        #expect(store.record(transactionId: "60") == nil)
+        #expect(store.record(transactionId: "11")?.state == .pending)
+        #expect(store.isFinished(transactionId: "12"))
+    }
+
+    @Test("A recorded state never moves back, and stores on the same defaults lose no change")
+    func recordsAcrossStores() throws {
+        let defaults = try freshDefaults()
+        let stores = [BillFnUserDefaultsCheckoutStore(defaults: defaults), BillFnUserDefaultsCheckoutStore(defaults: defaults)]
+        stores[0].record(facts("20", purchased: Date()), state: .confirmed)
+        stores[1].record(facts("20", purchased: Date()), state: .pending)
+        #expect(stores[0].isConfirmed(transactionId: "20"))
+        #expect(!stores[0].isFinished(transactionId: "20"))
+
+        let count = 120
         DispatchQueue.concurrentPerform(iterations: count) { index in
             let store = stores[index % 2]
-            let checkout = BillFnStoreKitCheckout(checkoutSessionId: "chk_\(index)", productId: "apple.pro.month", appAccountToken: account)
-            store.save(checkout)
-            store.markMatched(checkout, transactionId: "2\(index)")
-            store.recordConfirmed(transactionId: "2\(index)")
+            store.save(checkout("chk_\(index)"))
+            _ = store.claim(facts("2\(index)", purchased: Date()), purchasedWith: checkout("chk_\(index)"))
+            store.record(facts("2\(index)", purchased: Date()), state: .confirmed)
         }
 
         let reread = BillFnUserDefaultsCheckoutStore(defaults: defaults)
@@ -377,68 +384,30 @@ struct BillFnStoreKitBackendTests {
         #expect(kept.allSatisfy { $0.transactionId == "2\($0.checkout.checkoutSessionId.dropFirst(4))" })
         #expect((0..<count).allSatisfy { reread.isConfirmed(transactionId: "2\($0)") })
     }
+}
 
-    @Test("Keeps a checkout matched to a transaction past its retention until it is removed")
-    func keepsMatchedCheckouts() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let clock = TestClock()
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        let account = UUID(uuidString: token)!
-        let matched = BillFnStoreKitCheckout(checkoutSessionId: "chk_1", productId: "apple.pro.month", appAccountToken: account)
-        let outstanding = BillFnStoreKitCheckout(checkoutSessionId: "chk_2", productId: "apple.pro.month", appAccountToken: account)
-        // A checkout another store dropped is kept again once a transaction is matched to it.
-        let unkept = BillFnStoreKitCheckout(checkoutSessionId: "chk_3", productId: "apple.pro.year", appAccountToken: account)
-        store.save(matched)
-        store.save(outstanding)
-        // Recorded before BillFn verifies the transaction, so a verify call that fails leaves the checkout kept.
-        store.markMatched(matched, transactionId: "2000000001")
-        store.markMatched(unkept, transactionId: "2000000002")
+private let account = UUID(uuidString: token)!
 
-        clock.advance(by: 30 * day)
-        let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        later.removeUnneededCheckouts(excluding: [])
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        later.removeUnneededCheckouts(excluding: [])
-        let kept = later.keptCheckouts()
-        #expect(kept.map(\.checkout) == [matched, unkept])
-        #expect(kept.map(\.transactionId) == ["2000000001", "2000000002"])
-        #expect(kept.first?.savedAt == Date(timeIntervalSince1970: 1_800_000_000))
-        store.removeCheckout(checkoutSessionId: "chk_1")
-        #expect(store.keptCheckouts().map(\.checkout) == [unkept])
-    }
+private final class Winners: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed: [String] = []
+    var ids: [String] { lock.withLock { claimed } }
+    func add(_ id: String) { lock.withLock { claimed.append(id) } }
+}
 
-    @Test("Removes a matched checkout only once its transaction is recorded finished, however old")
-    func removesMatchedCheckoutsOnlyWhenFinished() throws {
-        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
-        let clock = TestClock()
-        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        let account = UUID(uuidString: token)!
-        let checkout = { (id: String) in BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account) }
-        // BillFn has not confirmed its transaction (a failed verify call).
-        store.markMatched(checkout("chk_unconfirmed"), transactionId: "1")
-        // Confirmed, but the launch stopped before finish() returned: the transaction may still be unfinished.
-        store.markMatched(checkout("chk_confirmed"), transactionId: "2")
-        store.recordConfirmed(transactionId: "2")
-        // Finished, but the launch stopped before removing the checkout.
-        store.markMatched(checkout("chk_finished"), transactionId: "3")
-        store.recordConfirmed(transactionId: "3")
-        store.recordFinished(transactionId: "3")
-        // Finished, but a transaction is being verified against it right now.
-        store.markMatched(checkout("chk_claimed"), transactionId: "4")
-        store.recordFinished(transactionId: "4")
+private func freshDefaults() throws -> UserDefaults {
+    try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+}
 
-        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
-        #expect(store.keptCheckouts().map(\.checkout.checkoutSessionId) == ["chk_unconfirmed", "chk_confirmed", "chk_claimed"])
+private func checkout(_ id: String) -> BillFnStoreKitCheckout {
+    BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account)
+}
 
-        // Long past retention, a checkout whose transaction is not recorded finished still stays.
-        clock.advance(by: 30 * day)
-        let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        later.removeUnneededCheckouts(excluding: [])
-        #expect(later.keptCheckouts().map(\.transactionId) == ["1", "2"])
-        #expect(later.isFinished(transactionId: "3"))
-        #expect(!later.isFinished(transactionId: "2"))
-        #expect(later.isConfirmed(transactionId: "2"))
-    }
+/// A purchase of apple.pro.month on the test account, `purchased` at the given time (now by default).
+private func facts(
+    _ id: String, purchased: Date = Date(), isPurchase: Bool? = true, product: String = "apple.pro.month"
+) -> BillFnStoreKitTransactionFacts {
+    BillFnStoreKitTransactionFacts(transactionId: id, productId: product, appAccountToken: account, purchaseDate: purchased, isPurchase: isPurchase)
 }
 
 private let day: TimeInterval = 24 * 60 * 60

@@ -2,14 +2,17 @@ import Foundation
 import Testing
 @testable import BillFnStoreKit
 
-/// `BillFnStoreKit.mayClaimOutstanding`, which decides whether a transaction may claim an outstanding checkout, and
+/// `BillFnStoreKitTransactionFacts.mayClaimOutstanding(savedAt:)`, which decides whether a transaction may claim an outstanding checkout, and
 /// `reasonIsPurchase(transactionJSON:)`, which gives it StoreKit's reason on iOS 16 and macOS 13.
 @Suite("BillFn StoreKit attempt discriminator")
 struct BillFnStoreKitAttemptTests {
     private let savedAt = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func transaction(purchasedAfterSave offset: TimeInterval) -> BillFnStoreKitAttemptFacts {
-        BillFnStoreKitAttemptFacts(id: 101, productId: "pro.month", purchaseDate: savedAt.addingTimeInterval(offset))
+    private func mayClaim(purchasedAfterSave offset: TimeInterval, reasonIsPurchase: Bool?) -> Bool {
+        BillFnStoreKitTransactionFacts(
+            transactionId: "101", productId: "pro.month", appAccountToken: nil,
+            purchaseDate: savedAt.addingTimeInterval(offset), isPurchase: reasonIsPurchase
+        ).mayClaimOutstanding(savedAt: savedAt)
     }
 
     private func signed(_ fields: [String: Any]) throws -> Data {
@@ -18,19 +21,19 @@ struct BillFnStoreKitAttemptTests {
 
     @Test("A purchase completed after its attempt started claims the checkout")
     func purchaseClaims() {
-        #expect(BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: 60 * 60), reasonIsPurchase: true, savedAt: savedAt))
+        #expect(mayClaim(purchasedAfterSave: 60 * 60, reasonIsPurchase: true))
     }
 
     @Test("A purchase made before its attempt started claims it only within the clock tolerance")
     func olderPurchaseDoesNotClaim() {
-        #expect(!BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: -60 * 60), reasonIsPurchase: true, savedAt: savedAt))
-        #expect(BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: -10 * 60), reasonIsPurchase: true, savedAt: savedAt))
+        #expect(!mayClaim(purchasedAfterSave: -60 * 60, reasonIsPurchase: true))
+        #expect(mayClaim(purchasedAfterSave: -10 * 60, reasonIsPurchase: true))
     }
 
     @Test("A renewal does not claim the checkout, nor does a transaction whose reason is unknown")
     func renewalAndUnknownReasonDoNotClaim() {
-        #expect(!BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: 60 * 60), reasonIsPurchase: false, savedAt: savedAt))
-        #expect(!BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: 60 * 60), reasonIsPurchase: nil, savedAt: savedAt))
+        #expect(!mayClaim(purchasedAfterSave: 60 * 60, reasonIsPurchase: false))
+        #expect(!mayClaim(purchasedAfterSave: 60 * 60, reasonIsPurchase: nil))
     }
 
     /// On iOS 16 and macOS 13 a renewal that recovers from billing retry after the subscription lapsed, bought after
@@ -43,7 +46,7 @@ struct BillFnStoreKitAttemptTests {
         ])
         let reason = BillFnStoreKit.reasonIsPurchase(transactionJSON: recovery)
         #expect(reason == false)
-        #expect(!BillFnStoreKit.mayClaimOutstanding(transaction(purchasedAfterSave: 60 * 60), reasonIsPurchase: reason, savedAt: savedAt))
+        #expect(!mayClaim(purchasedAfterSave: 60 * 60, reasonIsPurchase: reason))
     }
 
     @Test("The signed transaction's reason is read, and is unknown when missing or unrecognised")
