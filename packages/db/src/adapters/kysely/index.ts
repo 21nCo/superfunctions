@@ -267,26 +267,48 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         return Number(result?.numDeletedRows ?? 0);
       },
 
-      async upsert<T = any>({ model, where, create, update, select }: UpsertParams): Promise<T> {
+      async upsert<T = any>({ model, where, create, update, select, conflictTarget }: UpsertParams): Promise<T> {
         const table = resolveTable(model);
 
         const hasUpdate = update && Object.keys(update).length > 0;
 
         // Kysely doesn't have native upsert; use insert...onConflict or fallback to update/insert
         if (dialect === 'postgres' || dialect === 'sqlite') {
-          const conflictColumn = where.length > 0 ? where[0].field : 'id';
+          const target = conflictTarget ?? (where.length > 0 ? where[0].field : 'id');
+          const conflictColumns = Array.isArray(target) ? target : [target];
+          if (conflictColumns.length === 0 || conflictColumns.some(column => typeof column !== 'string' || column.length === 0)) {
+            throw new TypeError('conflictTarget must contain at least one nonempty column');
+          }
           let qb = hasUpdate
             ? db.insertInto(table).values(create)
-                .onConflict((oc: any) => oc.column(conflictColumn).doUpdateSet(update))
+                .onConflict((oc: any) => oc.columns(conflictColumns).doUpdateSet(update))
             : db.insertInto(table).values(create)
-                .onConflict((oc: any) => oc.column(conflictColumn).doNothing());
+                .onConflict((oc: any) => oc.columns(conflictColumns).doNothing());
 
           qb = applyReturning(qb, select);
           const result = await qb.executeTakeFirst();
-          // doNothing returns no rows on conflict; fall back to findOne
+          // doNothing returns no rows on conflict; find the conflicting row by
+          // the conflict columns' values (from create, else from where), since
+          // the conflict target can name columns that where does not filter on.
           if (!result && !hasUpdate) {
-            const row = await this.findOne<T>({ model, where, select });
-            return row as T;
+            const conflictWhere = conflictColumns
+              .map((field): WhereClause | null => {
+                if (Object.prototype.hasOwnProperty.call(create, field) && create[field] !== undefined) {
+                  return { field, operator: 'eq', value: create[field] };
+                }
+                const fromWhere = where.find((clause) => clause.field === field && clause.operator === 'eq');
+                return fromWhere ? { field, operator: 'eq', value: fromWhere.value } : null;
+              })
+              .filter((clause): clause is WhereClause => clause !== null);
+            // Keep every caller clause (tenant or owner scope included) and AND
+            // the conflict columns' values onto it.
+            const reselectWhere = conflictWhere.length === conflictColumns.length ? [...where, ...conflictWhere] : where;
+            const row = await this.findOne<T>({ model, where: reselectWhere, select });
+            if (row || reselectWhere === where) return row as T;
+            // A unique index can compare differently from column equality (for
+            // example SQLite COLLATE NOCASE or RTRIM); without an exact match,
+            // fall back to the caller's where as before.
+            return (await this.findOne<T>({ model, where, select })) as T;
           }
           return result as T;
         } else {
@@ -419,7 +441,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       debug: config.debug ?? false,
       namespace: config.namespace,
       capabilities: {
-        types: { json: true, dates: true, booleans: true, bigint: true, uuid: true, enum: true },
+        types: { json: true, dates: true, booleans: config.dialect !== 'sqlite', bigint: true, uuid: true, enum: true },
         operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
         transactions: { supported: true, nested: false, isolation: undefined },
         performance: { supportsJoins: true, supportsPreparedStatements: true },

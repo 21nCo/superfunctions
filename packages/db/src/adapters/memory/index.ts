@@ -27,7 +27,7 @@ import type {
   InternalCrud,
   InternalColumnDef,
 } from '../../adapter/types.js';
-import { normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
+import { inheritAdapterCodecs, normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
 export {
   createMemoryAtomicKVStore,
   createMemoryIndexedDirectoryStore,
@@ -603,7 +603,7 @@ export function memoryAdapter(config?: MemoryAdapterConfig): Adapter {
           ) as unknown as TransactionAdapter;
 
           try {
-            return await callback(transactionAdapter);
+            return await callback(inheritAdapterCodecs(adapter, transactionAdapter));
           } catch (error) {
             if (!rolledBack) {
               restoreStore(storeSnapshot, schemaVersionsSnapshot);

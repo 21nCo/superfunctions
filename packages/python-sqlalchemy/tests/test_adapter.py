@@ -258,6 +258,8 @@ async def test_update_many_preserves_constraint_errors(adapter) -> None:
 
 @pytest.mark.asyncio
 async def test_update_preserves_connection_errors(adapter, monkeypatch) -> None:
+    # The execution-only fake below is not a SQLAlchemy reflection connection.
+    adapter._get_table("users")
     def fake_fetch_one_by_clause(*_args, **_kwargs):
         return {"id": 1, "email": "alice@example.com", "name": "Alice"}
 
@@ -368,6 +370,8 @@ async def test_delete_many_preserves_constraint_errors(referential_adapter) -> N
 
 @pytest.mark.asyncio
 async def test_delete_preserves_connection_errors(adapter, monkeypatch) -> None:
+    # The execution-only fake below is not a SQLAlchemy reflection connection.
+    adapter._get_table("users")
     def fake_fetch_one_by_clause(*_args, **_kwargs):
         return {"id": 1, "email": "alice@example.com", "name": "Alice"}
 
@@ -389,6 +393,8 @@ async def test_delete_preserves_connection_errors(adapter, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_update_does_not_treat_no_op_rowcount_as_missing(adapter, monkeypatch) -> None:
+    # The execution-only fake below is not a SQLAlchemy reflection connection.
+    adapter._get_table("users")
     def fake_fetch_one_by_clause(*_args, **_kwargs):
         return {"id": 1, "email": "alice@example.com", "name": "Alice"}
 
@@ -412,3 +418,116 @@ async def test_update_does_not_treat_no_op_rowcount_as_missing(adapter, monkeypa
     )
 
     assert updated == {"id": 1, "email": "alice@example.com", "name": "Alice"}
+
+
+@pytest.mark.asyncio
+async def test_transaction_update_many_cas_rollback_and_predicates(adapter):
+    from superfunctions.db import UpdateManyParams
+    await adapter.create(model="users", data={"id": 1, "name": "old", "email": "one@example.test"})
+    await adapter.create(model="users", data={"id": 2, "name": "old", "email": "two@example.test"})
+    async def rollback(tx):
+        assert await tx.update_many(UpdateManyParams(model="users", where=[WhereClause(field="id", value=1), WhereClause(field="name", value="old")], data={"name": "new"})) == 1
+        assert await tx.update_many(model="users", where=[WhereClause(field="id", value=1), WhereClause(field="name", value="old")], data={"name": "lost"}) == 0
+        assert (await tx.find_one(model="users", where=[WhereClause(field="id", value=2)]))["name"] == "old"
+        raise RuntimeError("rollback")
+    with pytest.raises(RuntimeError, match="rollback"):
+        await adapter.transaction(rollback)
+    assert (await adapter.find_one(model="users", where=[WhereClause(field="id", value=1)]))["name"] == "old"
+    async def invalid(tx):
+        with pytest.raises(QueryFailedError):
+            await tx.update_many(model="users", where=[], data={"name": "all"})
+        with pytest.raises(QueryFailedError):
+            await tx.update_many(model="users", where=[WhereClause(field="missing", value=1)], data={"name": "all"})
+    await adapter.transaction(invalid)
+
+
+def test_transaction_update_many_independent_sqlite_writers(tmp_path):
+    import asyncio
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    path = "sqlite:///" + str(tmp_path / "cas.sqlite")
+    engine = create_engine(path)
+    metadata = MetaData()
+    table = Table("claims", metadata, Column("id", Integer, primary_key=True), Column("revision", Integer), Column("owner", String))
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(table.insert().values(id=1, revision=0, owner="none"))
+    engine.dispose()
+    ready = threading.Barrier(2)
+    def writer(owner):
+        worker_engine = create_engine(path)
+        worker = create_adapter(worker_engine)
+        async def run():
+            # Both independent workers begin from the same observed revision.
+            observed = await worker.find_one(model="claims", where=[WhereClause(field="id", value=1)])
+            ready.wait(timeout=5)
+            async def claim(tx):
+                return await tx.update_many(model="claims", where=[WhereClause(field="id", value=1), WhereClause(field="revision", value=observed["revision"])], data={"revision": 1, "owner": owner})
+            return await worker.transaction(claim)
+        try:
+            return asyncio.run(run())
+        finally:
+            worker_engine.dispose()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(writer, ["one", "two"]))
+    assert sorted(results) == [0, 1]
+    engine = create_engine(path)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(table.select()).mappings().one()
+            assert row["revision"] == 1 and row["owner"] in ("one", "two")
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('operation', ['create', 'find_one', 'find_many', 'update', 'update_many', 'delete', 'count'])
+@pytest.mark.parametrize('rollback', [False, True])
+async def test_first_use_reflection_preserves_transaction(operation, rollback):
+    """Reflecting a second table must not roll back an earlier insert."""
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine('sqlite://', poolclass=StaticPool)
+    metadata = MetaData()
+    markers = Table('markers', metadata, Column('id', Integer, primary_key=True))
+    target = Table('target', metadata, Column('id', Integer, primary_key=True), Column('value', String))
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(target.insert().values(id=1, value='before'))
+    adapter = create_adapter(engine)
+
+    async def action(tx):
+        await tx.create(model='markers', data={'id': 1})
+        where = [WhereClause(field='id', value=1)]
+        if operation == 'create':
+            await tx.create(model='target', data={'id': 2, 'value': 'after'})
+        elif operation in ('update', 'update_many'):
+            await getattr(tx, operation)(model='target', where=where, data={'value': 'after'})
+        elif operation == 'delete':
+            await tx.delete(model='target', where=where)
+        else:
+            result = await getattr(tx, operation)(model='target', where=where)
+            assert result
+        assert await tx.count(model='markers') == 1
+        if rollback:
+            raise RuntimeError('owned callback failure')
+
+    try:
+        if rollback:
+            with pytest.raises(RuntimeError, match='owned callback failure'):
+                await adapter.transaction(action)
+        else:
+            await adapter.transaction(action)
+        with engine.connect() as conn:
+            assert len(conn.execute(markers.select()).all()) == (0 if rollback else 1)
+            rows = [(row.id, row.value) for row in conn.execute(target.select().order_by(target.c.id))]
+            expected = [(1, 'before')]
+            if not rollback:
+                if operation == 'create':
+                    expected.append((2, 'after'))
+                elif operation in ('update', 'update_many'):
+                    expected = [(1, 'after')]
+                elif operation == 'delete':
+                    expected = []
+            assert rows == expected
+    finally:
+        engine.dispose()

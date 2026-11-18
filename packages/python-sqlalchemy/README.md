@@ -98,6 +98,24 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Atomic conditional updates inside transactions
+
+The SQLAlchemy transaction adapter supports `update_many(UpdateManyParams(...))`
+(or equivalent keyword arguments) on its existing transaction connection. Every
+WHERE predicate remains in one SQL UPDATE, and the method returns the driver's
+row count. For optimistic concurrency, include the expected revision and update
+that revision; require a reported count of exactly one before creating related records in the
+same transaction, and treat every other count as a conflict. A stale revision
+matches no rows; the reported row count remains driver-dependent. Raising from the callback
+rolls back both the conditional update and other transaction writes.
+
+`superfunctions.db.AtomicUpdateTransactionAdapter` describes this optional
+extension without changing the existing `TransactionAdapter` protocol. Consumers
+must feature-detect `callable(getattr(transaction, 'update_many', None))` and reject
+adapters that lack it. Do not emulate a conditional update using a read followed
+by an ordinary update. Driver no-op/unknown row-count behavior is unchanged;
+revision-changing CAS must fail closed unless the result is exactly one.
+
 ## License
 
 MIT

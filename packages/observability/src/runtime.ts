@@ -23,10 +23,7 @@ type GlobalScopeLike = {
  */
 export function isBrowserScope(scope: object = globalThis): boolean {
   const candidate = scope as GlobalScopeLike;
-  if (candidate.process?.versions?.node || candidate.Deno !== undefined || candidate.Bun !== undefined) {
-    return false;
-  }
-  if (candidate.navigator?.userAgent === "Cloudflare-Workers" || candidate.WebSocketPair !== undefined) {
+  if (serverRuntime(scope) !== undefined) {
     return false;
   }
   return (
@@ -35,4 +32,25 @@ export function isBrowserScope(scope: object = globalThis): boolean {
     typeof candidate.WorkerGlobalScope !== "undefined" ||
     typeof candidate.importScripts === "function"
   );
+}
+
+/**
+ * Names the server runtime behind the global scope: `"node"` when it reports a
+ * Node version (Node itself, and Bun or Deno with their Node compatibility
+ * layer), `"server"` for Deno, Bun and Cloudflare Workers without one, and
+ * `undefined` for browser pages, web workers and scopes that identify no
+ * runtime.
+ */
+export function serverRuntime(scope: object = globalThis): "node" | "server" | undefined {
+  const candidate = scope as GlobalScopeLike;
+  if (candidate.process?.versions?.node) {
+    return "node";
+  }
+  if (candidate.Deno !== undefined || candidate.Bun !== undefined) {
+    return "server";
+  }
+  if (candidate.navigator?.userAgent === "Cloudflare-Workers" || candidate.WebSocketPair !== undefined) {
+    return "server";
+  }
+  return undefined;
 }

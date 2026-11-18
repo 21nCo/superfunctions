@@ -55,8 +55,8 @@ def create_namespace_manager(
     """Create a namespace manager with the given configuration."""
     config = NamespaceConfig(
         separator=separator,
-        use_schema=use_schema,
-        default_namespace=default_namespace,
-        known_namespaces=known_namespaces,
+        useSchema=use_schema,
+        defaultNamespace=default_namespace,
+        knownNamespaces=known_namespaces,
     )
     return NamespaceManager(config)
