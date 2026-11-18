@@ -69,9 +69,10 @@ function utf8Size(value: string): number {
  * code. Undefined for anything else.
  */
 function binarySize(data: unknown): number | undefined {
-  for (const get of BINARY_SIZE_GETTERS) {
-    const size = platformRead(get, data);
-    if (Number.isSafeInteger(size) && (size as number) >= 0) return size as number;
+  // An index loop and a typeof test: no iterator or Number method the page can replace.
+  for (let index = 0; index < BINARY_SIZE_GETTERS.length; index += 1) {
+    const size = platformRead(BINARY_SIZE_GETTERS[index], data);
+    if (typeof size === "number") return size; // The platform getters return byte counts.
   }
   return undefined;
 }
@@ -322,33 +323,38 @@ function install(current: Set<Listener>): (() => void) | undefined {
     // The send() sockets of the global class actually inherit, wrapped where it is defined.
     const send = sendOwner
       ? function (this: unknown, ...args: unknown[]) {
-          // A socket constructed while no collector ran gets the plain send.
-          const url = live() && typeof this === "object" && this !== null ? sockets.get(this) : undefined;
-          if (url === undefined) return apply(sendOwner.original, this, args);
-          const timestamp = Date.now();
-          const deliver = receivers();
           // The send always gets the caller's arguments unchanged, and
           // nothing the page can replace runs on them before it: binary data
           // is recognized through the captured brand-checked getters only.
           const data = args[0];
-          const binary = binarySize(data);
-          // Strings, binary data and other primitives reach the platform as
-          // they are or convert without page code. Any other object is
-          // converted by the send (the platform's to a string, a library's
-          // in its own way), which can run page code that closes the socket.
-          const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
-          // Only a send() on an open socket transmits: the platform throws
-          // while connecting and discards the data once closing or closed. A
-          // send that closes the socket after transmitting still sent it.
-          const openBefore = readyState(this) === OPEN;
+          let before: { url: string; timestamp: number; deliver: Deliver; binary: number | undefined; converted: boolean } | undefined;
+          try {
+            // A socket constructed while no collector ran gets the plain send.
+            const url = live() && typeof this === "object" && this !== null ? sockets.get(this) : undefined;
+            // Only a send() on an open socket transmits: the platform throws
+            // while connecting and discards the data once closing or closed. A
+            // send that closes the socket after transmitting still sent it.
+            if (url !== undefined && readyState(this) === OPEN) {
+              const binary = typeof data === "object" ? binarySize(data) : undefined;
+              // Strings, binary data and other primitives reach the platform
+              // as they are or convert without page code. Any other object is
+              // converted by the send (the platform's to a string, a library's
+              // in its own way), which can run page code that closes the socket.
+              const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
+              before = { url, timestamp: Date.now(), deliver: receivers(), binary, converted };
+            }
+          } catch {
+            before = undefined; // Observation never stops the send.
+          }
           const result = apply(sendOwner.original, this, args);
           // The platform's own send never closes the socket, so one no
           // longer open after it means converting the data closed it and the
           // data was discarded. A library's send may transmit and then close,
           // which the wrapper cannot tell from that: it is recorded by the
           // state before its call.
-          if (openBefore && (!converted || sendOwner.original !== PLATFORM_SEND || readyState(this) === OPEN)) {
+          if (before && (!before.converted || sendOwner.original !== PLATFORM_SEND || readyState(this) === OPEN)) {
             try {
+              const { url, timestamp, deliver, binary } = before;
               const size = typeof data === "string" ? utf8Size(data) : binary;
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             } catch {

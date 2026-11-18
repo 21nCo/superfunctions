@@ -348,6 +348,48 @@ describe("WebSocketCollector", () => {
     ]);
   });
 
+  it("runs no replaced Number or Array method before the send, and a throwing one never stops it", () => {
+    // Armed until the page's send runs: what runs after it cannot change the transmission.
+    let armed = false;
+    PageSocket.prototype.send = function (this: PageSocket, data: unknown) {
+      armed = false;
+      pageSend.call(this, data);
+    };
+    collector.start();
+    const socket = openSocket("wss://example.com/predicates");
+    socket.serverOpens();
+    const { isSafeInteger } = Number;
+    const iterator = Array.prototype[Symbol.iterator];
+    let calls = 0;
+    let closes = false;
+    const before = () => {
+      if (!armed) return;
+      calls += 1;
+      if (closes) socket.close();
+      else throw new Error("patched");
+    };
+    Number.isSafeInteger = (value: unknown) => (before(), isSafeInteger(value));
+    Array.prototype[Symbol.iterator] = function (this: unknown[]) {
+      before();
+      return iterator.call(this);
+    };
+    try {
+      for (const closing of [false, true]) {
+        closes = closing;
+        for (const data of ["text", new Uint8Array(3), { toString: () => "object" }]) {
+          armed = true;
+          socket.send(data);
+        }
+      }
+    } finally {
+      Number.isSafeInteger = isSafeInteger;
+      Array.prototype[Symbol.iterator] = iterator;
+    }
+    expect(calls).toBe(0);
+    expect(socket.sent).toEqual(["text", new Uint8Array(3), "object", "text", new Uint8Array(3), "object"]);
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([4, 3, undefined, 4, 3, undefined]);
+  });
+
   it("passes a send() on a socket it does not observe straight through, without sizing or converting", () => {
     const early = new PageSocket("wss://example.com/early");
     early.serverOpens();
