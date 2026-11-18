@@ -428,9 +428,10 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
 
     /// The production `restore()`: it syncs with the App Store and confirms each transaction
     /// `Transaction.currentEntitlements` reports. StoreKit testing reports none for these verified, unrevoked and
-    /// unexpired purchases on macOS 26 and 27 (`Transaction.currentEntitlement(for:)` and the subscription's status
-    /// are empty too), so this checks that `restore()` confirms exactly what StoreKit reports and prints it; the
-    /// restore tests above feed the same purchases through `restore(entitlements:)`.
+    /// unexpired purchases on macOS 26 and 27 (also with no team or app ID in the configuration, and after
+    /// `AppStore.sync()`), so this is not evidence that `restore()` finds them: the test records that as an expected
+    /// failure, and the App Store sandbox (BILL-15) verifies it. Whatever StoreKit reports, `restore()` must confirm
+    /// exactly that: the subscription restored onto its plan and finished, the unmapped product skipped.
     func testRestoreConfirmsTheCurrentEntitlementsStoreKitReports() async throws {
         let backend = FakeBillFnBackend()
         let subscription = try await buyOutsideBillFn(proMonthly, appAccountToken: backend.appAccountToken)
@@ -443,7 +444,11 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         for await result in Transaction.currentEntitlements {
             reported.append(result.unsafePayloadValue.id)
         }
-        print("StoreKit testing reported current entitlements \(reported.sorted()) for purchases \([subscription.id, other.id])")
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        XCTExpectFailure("StoreKit testing reports no current entitlements on macOS 26 and 27", options: options) {
+            XCTAssertEqual(Set(reported), [subscription.id, other.id], "Transaction.currentEntitlements")
+        }
         XCTAssertTrue(Set(reported).isSubset(of: [subscription.id, other.id]))
         XCTAssertEqual(outcomes.map(\.transaction.transactionId).sorted(), reported.map(String.init).sorted())
         for outcome in outcomes {
@@ -451,8 +456,13 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         }
         let restores = await backend.restores
         XCTAssertEqual(restores.map(\.transaction.transactionId), outcomes.filter { $0.transaction.productId == proMonthly }.map(\.transaction.transactionId))
+        XCTAssertEqual(restores.map(\.plan.planKey), outcomes.filter { $0.transaction.productId == proMonthly }.map { _ in "pro" })
         let verifications = await backend.verifications
         XCTAssertTrue(verifications.isEmpty)
+        let unfinished = await unfinishedTransactionIds()
+        for outcome in outcomes where outcome.finished {
+            XCTAssertFalse(unfinished.contains(try XCTUnwrap(UInt64(outcome.transaction.transactionId))))
+        }
     }
 
     func testRenewalIsRestoredOntoItsPlanAndFinished() async throws {

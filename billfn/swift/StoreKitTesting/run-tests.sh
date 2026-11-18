@@ -4,16 +4,17 @@
 # StoreKit testing reaches the host app through LaunchServices, which does not find an app under the temporary
 # folder (/var/folders): there storekitagent fails every push for it (kLSApplicationNotFoundErr), so the app never
 # sees Transaction.updates or a renewal and its transaction caches go stale. The derived data therefore goes under
-# Xcode's DerivedData folder, and is removed afterwards unless BILLFN_STOREKIT_DERIVED_DATA names it.
+# Xcode's DerivedData folder, and is removed afterwards unless BILLFN_STOREKIT_DERIVED_DATA names it (CI names one,
+# which its runner discards).
 #
 # StoreKit testing keeps a simulated purchase error, Ask to Buy and finished transactions offered again between
 # tests, so the tests that use them run in their own host processes. The other tests share one process.
 set -euo pipefail
 
-# StoreKit testing on macOS 26 writes the host app's receipt (Contents/_MASReceipt) so that this user cannot delete
-# it. The cleanup then lifts the write protection on what it can, retries, and leaves only such receipts behind,
-# listed with their owner and permissions. Anything else it cannot remove fails the script; it never hides the
-# tests' own status.
+# Removes the derived data this script created, keeping the tests' exit status. StoreKit testing on macOS 26 writes
+# the host app's receipt (Contents/_MASReceipt) so that this user cannot delete it, so a failed removal lifts the
+# write protection it can and retries. Whatever is still left is listed with its owner, flags and ACL, and fails
+# the script even when the tests passed.
 remove_derived_data() {
   local status=$?
   rm -rf "$derived_data" 2>/dev/null && exit "$status"
@@ -21,14 +22,9 @@ remove_derived_data() {
   chmod -R -N "$derived_data" 2>/dev/null || true
   chmod -R u+w "$derived_data" 2>/dev/null || true
   rm -rf "$derived_data" 2>/dev/null && exit "$status"
-  local leftover
-  leftover="$(find "$derived_data" ! -type d 2>/dev/null || true)"
-  echo "Could not remove $derived_data as $(id -un); left behind:"
-  find "$derived_data" ! -type d -exec ls -ldeO {} + 2>&1 || true
-  if [[ -z "$leftover" ]] || grep -qv '/Contents/_MASReceipt/' <<<"$leftover"; then
-    exit 1
-  fi
-  exit "$status"
+  echo "Could not remove $derived_data as $(id -un) after the tests exited $status; left behind:" >&2
+  find "$derived_data" ! -type d -exec ls -ldeO {} + >&2 || true
+  exit 1
 }
 
 cd "$(dirname "$0")"

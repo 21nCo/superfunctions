@@ -133,7 +133,7 @@ export function createWKWebViewBridgeBus(
               createBridgeErrorResponse(
                 message.id,
                 'BRIDGE_PROCESSING_TIMEOUT',
-                'The native host is still confirming transactions with BillFn; each outcome arrives as a transaction.updated event',
+                'storekit.transactions did not finish before the timeout; the native host may still be confirming transactions with BillFn, and reports each outcome as a transaction.updated event',
                 { method: message.method, timeoutMs: waitMs }
               )
             );

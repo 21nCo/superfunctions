@@ -38,8 +38,9 @@ arrives as a `transaction.updated` event, so keep listening rather than treating
 
 `transactions` waits up to the 30-second `timeoutMs` while the native app confirms each unfinished
 transaction with BillFn. When that runs out, the call rejects with `BRIDGE_PROCESSING_TIMEOUT`:
-the native app keeps confirming and finishing the transactions, and each outcome arrives as a
-`transaction.updated` event.
+the native app may still be confirming and finishing the transactions, and reports each outcome as a
+`transaction.updated` event when it forwards `BillFnStoreKit.outcomes` to the web view (as the Swift
+package's embedded web example does).
 
 ## Build and test
 

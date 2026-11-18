@@ -300,7 +300,7 @@ describe('StoreKit requests over the WKWebView bus', () => {
         ok: false,
         error: {
           code: 'BRIDGE_PROCESSING_TIMEOUT',
-          message: 'The native host is still confirming transactions with BillFn; each outcome arrives as a transaction.updated event',
+          message: 'storekit.transactions did not finish before the timeout; the native host may still be confirming transactions with BillFn, and reports each outcome as a transaction.updated event',
           details: { method: 'storekit.transactions', timeoutMs: 30_000 }
         }
       });

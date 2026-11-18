@@ -53,8 +53,8 @@ export type BillFnBridgeErrorCode =
   /** An interactive StoreKit request timed out; the purchase may still complete and arrive as `transaction.updated`. */
   | 'BRIDGE_INTERACTIVE_TIMEOUT'
   /**
-   * `storekit.transactions` timed out while the native host was still confirming transactions with BillFn; it keeps
-   * confirming and finishing them, and each outcome arrives as `transaction.updated`.
+   * `storekit.transactions` timed out. The native host may still be confirming transactions with BillFn; a host that
+   * forwards `BillFnStoreKit.outcomes` reports each outcome as `transaction.updated`.
    */
   | 'BRIDGE_PROCESSING_TIMEOUT'
   | 'BRIDGE_HANDSHAKE_REQUIRED'
@@ -100,8 +100,8 @@ export interface CreateWKWebViewBridgeBusOptions {
   handlerName?: string;
   /**
    * How long a request waits for the native host. Defaults to 30 seconds. When `storekit.transactions` runs out of it,
-   * the call fails with `BRIDGE_PROCESSING_TIMEOUT`: the native host keeps confirming the transactions, and each
-   * outcome arrives as a `transaction.updated` event.
+   * the call fails with `BRIDGE_PROCESSING_TIMEOUT`: the native host may still be confirming the transactions, and
+   * reports each outcome as a `transaction.updated` event.
    */
   timeoutMs?: number;
   /**
@@ -114,7 +114,7 @@ export interface CreateWKWebViewBridgeBusOptions {
 /** The bridge methods that wait on the user in the App Store purchase sheet or sign-in. */
 export const BILLFN_BRIDGE_INTERACTIVE_METHODS: readonly BillFnBridgeMethod[] = ['storekit.checkout', 'storekit.restore'];
 
-/** The bridge methods whose native work goes on after a timeout, reporting each outcome as `transaction.updated`. */
+/** The bridge methods whose native work may go on after a timeout, reporting each outcome as `transaction.updated`. */
 export const BILLFN_BRIDGE_PROCESSING_METHODS: readonly BillFnBridgeMethod[] = ['storekit.transactions'];
 
 export interface BillFnBridgeHandshakePayload {
