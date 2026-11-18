@@ -1,54 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthFnRuntimeConfig, AuthFnSession } from 'authfn';
+import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
+import { authfn, type AuthFnRuntimeConfig } from 'authfn';
+import { createApiKey } from 'authfn/core/api-keys';
+import { issueSession } from 'authfn/core/sessions';
+import { createUser } from 'authfn/core/users';
+import { createAuthFnOperatorAuth, type AuthFnOperatorPrincipal } from '../superconsole.js';
 
-// @authfn/admin resolves authfn from npm; stub the provider so the guard is
-// checked against the authfn 0.5.0 owned-key session shape directly.
-const stubSession = vi.hoisted(() => ({ current: null as unknown }));
+const principal: AuthFnOperatorPrincipal = {
+  actor: { type: 'user', id: 'operator' },
+  displayName: 'Operator',
+  role: 'admin',
+  defaultScope: { namespace: 'authfn' }
+};
 
-vi.mock('authfn', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('authfn')>();
-  return {
-    ...actual,
-    authfn: () => ({
-      createServer: () => ({
-        provider: { authenticate: async () => stubSession.current }
-      })
-    })
-  };
-});
+const consoleUrl = 'https://console.example.com/admin';
 
-const { createAuthFnOperatorAuth } = await import('../superconsole.js');
+// No stub: the workspace authfn core authenticates the key, so the owned-key
+// session shape is whatever the current core produces.
+describe('createAuthFnOperatorAuth with an owned API key from the current core', () => {
+  it('rejects the owned key before resolveOperator and still resolves the owner\'s cookie session', async () => {
+    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] };
+    const user = await createUser(config, { primaryEmail: 'operator@example.com' });
+    const key = await createApiKey(config, { userId: user.id, name: 'operator-cli' });
+    const keyRequest = () => new Request(consoleUrl, { headers: { authorization: `Bearer ${key.secret}` } });
 
-const ownedKeySession = {
-  id: 'key_owned',
-  type: 'api-key',
-  subject: { actorId: 'user_operator', actorType: 'user' },
-  actorId: 'user_operator',
-  actorType: 'user',
-  credential: { type: 'api-key', id: 'key_owned' },
-  resourceIds: [],
-  methods: ['api-key'],
-  metadata: { ownerUserId: 'user_operator', scopes: [] }
-} as unknown as AuthFnSession;
+    // The core accepts the owned key as its owner, so only the operator guard keeps it out.
+    const core = authfn(config).createServer(config);
+    await expect(core.provider.authenticate(keyRequest())).resolves.toMatchObject({
+      type: 'api-key',
+      actorId: user.id,
+      credential: { type: 'api-key', id: key.keyId }
+    });
 
-describe('createAuthFnOperatorAuth with an owned-key session', () => {
-  it('rejects a session whose actor is the operator user when an API key authenticated it', async () => {
-    stubSession.current = ownedKeySession;
-    const resolveOperator = vi.fn(() => ({
-      actor: { type: 'user' as const, id: 'user_operator' },
-      displayName: 'Operator',
-      role: 'admin',
-      defaultScope: { namespace: 'authfn' }
-    }));
+    const resolveOperator = vi.fn(() => principal);
     const operatorAuth = createAuthFnOperatorAuth({
-      config: { namespace: 'authfn', plugins: [] } as unknown as AuthFnRuntimeConfig,
+      config,
       resolveOperator,
       authorizeScope: ({ requested }) => requested
     });
 
-    await expect(operatorAuth.authenticate(new Request('https://console.example.com/admin', {
-      headers: { authorization: 'Bearer ak_owned' }
-    }))).resolves.toBeNull();
+    await expect(operatorAuth.authenticate(keyRequest())).resolves.toBeNull();
     expect(resolveOperator).not.toHaveBeenCalled();
+
+    const issued = await issueSession(config, {}, { userId: user.id, methods: ['password'] });
+    const { sessionCookieName, csrfCookieName } = await core.cookieNamesForRequest(new Request(consoleUrl));
+    const cookieRequest = new Request(consoleUrl, {
+      headers: { cookie: `${sessionCookieName}=${issued.sessionToken}` }
+    });
+
+    await expect(operatorAuth.authenticate(cookieRequest)).resolves.toMatchObject({
+      displayName: 'Operator',
+      authentication: { csrfCookieName }
+    });
+    expect(resolveOperator).toHaveBeenCalledOnce();
+    expect(resolveOperator).toHaveBeenCalledWith(expect.objectContaining({
+      session: expect.objectContaining({ type: 'session', actorId: user.id })
+    }));
   });
 });
