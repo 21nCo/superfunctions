@@ -1,5 +1,5 @@
 import BillFnClient
-import BillFnStoreKit
+@testable import BillFnStoreKit
 import Foundation
 import StoreKit
 import StoreKitTest
@@ -112,8 +112,12 @@ class BillFnStoreKitTestCase: XCTestCase {
         session.disableDialogs = true
         session.clearTransactions()
         defaults = UserDefaults(suiteName: "billfn.storekit.tests.\(UUID().uuidString)")
-        // A clear that reached the app's cache late would drop this test's purchases from it.
-        try await waitForStoreKit("the cleared transactions to leave Transaction.all") { all, _ in all.isEmpty }
+        // A clear that reached the app's cache or the StoreKit testing session late (this one, or the previous test's
+        // or host process's) would drop this test's purchases, or leave a transaction this test would take as its own,
+        // such as an Ask to Buy request, which Transaction.all never lists.
+        try await waitForStoreKit("the cleared transactions to leave Transaction.all and the session") { all, _ in
+            all.isEmpty && self.session.allTransactions().isEmpty
+        }
     }
 
     override func tearDown() async throws {
@@ -192,8 +196,17 @@ class BillFnStoreKitTestCase: XCTestCase {
         }
         let all = await allTransactionIds().sorted()
         let unfinished = await unfinishedTransactionIds().sorted()
-        let held = session.allTransactions().map(\.identifier).sorted()
-        throw TimedOut(waitingFor: "\(what): Transaction.all \(all), Transaction.unfinished \(unfinished), SKTestSession \(held)")
+        throw TimedOut(waitingFor: "\(what): Transaction.all \(all), Transaction.unfinished \(unfinished), SKTestSession \(describeSession())")
+    }
+
+    /// Every transaction the StoreKit testing session holds, with the state that decides renewals and Ask to Buy.
+    func describeSession() -> String {
+        let held = session.allTransactions().sorted { $0.identifier < $1.identifier }.map { held in
+            "\(held.identifier) \(held.productIdentifier) (original \(held.originalTransactionIdentifier), state \(held.state.rawValue), "
+                + "purchased \(held.purchaseDate), expires \(held.expirationDate.map { "\($0)" } ?? "never"), "
+                + "autoRenewing \(held.autoRenewingEnabled), askToBuy \(held.pendingAskToBuyConfirmation), issue \(held.hasPurchaseIssue))"
+        }
+        return "[\(held.joined(separator: "; "))]"
     }
 
     /// Waits until the transactions the cache lists satisfy `condition`.
@@ -222,8 +235,8 @@ class BillFnStoreKitTestCase: XCTestCase {
     }
 
     /// Waits until StoreKit lists transaction `id`, and lists it as unfinished when `unfinished` is true.
-    func waitUntilStoreKitLists(_ id: UInt64, unfinished: Bool) async throws {
-        try await waitForStoreKit("transaction \(id) in Transaction.all\(unfinished ? " and .unfinished" : "")") { all, unfinishedIds in
+    func waitUntilStoreKitLists(_ id: UInt64, unfinished: Bool, timeout: TimeInterval = 20) async throws {
+        try await waitForStoreKit("transaction \(id) in Transaction.all\(unfinished ? " and .unfinished" : "")", timeout: timeout) { all, unfinishedIds in
             all.contains(id) && (!unfinished || unfinishedIds.contains(id))
         }
     }
@@ -232,20 +245,27 @@ class BillFnStoreKitTestCase: XCTestCase {
         try await waitUntilStoreKitLists(try XCTUnwrap(UInt64(outcome.transaction.transactionId)), unfinished: !outcome.finished)
     }
 
-    /// Waits until StoreKit lists transaction `id` in `Transaction.all` and not in `Transaction.unfinished`. A
-    /// transaction the cache does not list yet is not taken as finished: waiting for it times out.
-    func waitUntilStoreKitListsFinished(_ id: UInt64, timeout: TimeInterval = 20) async throws {
-        try await waitForStoreKit("transaction \(id) in Transaction.all and not in .unfinished", timeout: timeout) { all, unfinished in
-            all.contains(id) && !unfinished.contains(id)
+    /// What is missing to show that BillFnStoreKit finished the transaction, nil when nothing is. StoreKit gives no
+    /// evidence that a transaction was finished: absence from `Transaction.unfinished` is none, since on macOS 26
+    /// StoreKit testing leaves out transactions that are still unfinished. The evidence is the finished outcome, BillFn's
+    /// confirmation the checkout store records right before `finish()`, and StoreKit listing the transaction.
+    func missingFinishEvidence(_ outcome: BillFnStoreKitTransactionOutcome) async -> String? {
+        guard outcome.finished else { return "its outcome is \(outcome.status)" }
+        guard checkoutStore.isConfirmed(transactionId: outcome.transaction.transactionId) else {
+            return "BillFn's confirmation of it is not recorded"
         }
+        guard let id = UInt64(outcome.transaction.transactionId) else { return "it has no StoreKit id" }
+        do {
+            try await waitUntilStoreKitLists(id, unfinished: false)
+        } catch {
+            return "\(error)"
+        }
+        return nil
     }
 
     func assertFinished(_ outcome: BillFnStoreKitTransactionOutcome, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let id = try XCTUnwrap(UInt64(outcome.transaction.transactionId), file: file, line: line)
-        do {
-            try await waitUntilStoreKitListsFinished(id)
-        } catch let error as TimedOut {
-            XCTFail("Transaction \(id) is not finished: \(error.waitingFor)", file: file, line: line)
+        if let missing = await missingFinishEvidence(outcome) {
+            XCTFail("Transaction \(outcome.transaction.transactionId) is not shown finished: \(missing)", file: file, line: line)
         }
     }
 
@@ -257,9 +277,19 @@ class BillFnStoreKitTestCase: XCTestCase {
         }
     }
 
-    /// The subscription's newest transaction once StoreKit testing has recorded one after `purchase`.
+    /// The subscription's renewal after `purchase`: the StoreKit testing session records it (else the error shows
+    /// what the session holds), then the app's cache reports it as the newest transaction.
     func latestTransaction(after purchase: BillFnStoreKitTransactionOutcome) async throws -> VerificationResult<Transaction> {
-        try await waitForTransaction("a \(proMonthly) transaction after \(purchase.transaction.transactionId)", read: {
+        do {
+            try await waitUntil("the session to record a \(proMonthly) renewal after \(purchase.transaction.transactionId)") {
+                self.session.allTransactions().contains {
+                    $0.productIdentifier == proMonthly && String($0.identifier) != purchase.transaction.transactionId
+                }
+            }
+        } catch let error as TimedOut {
+            throw TimedOut(waitingFor: "\(error.waitingFor); the session holds \(describeSession())")
+        }
+        return try await waitForTransaction("a \(proMonthly) transaction after \(purchase.transaction.transactionId)", read: {
             await Transaction.latest(for: proMonthly)
         }, where: { String($0.id) != purchase.transaction.transactionId })
     }
@@ -272,6 +302,11 @@ class BillFnStoreKitTestCase: XCTestCase {
             }
             return nil
         }, where: accept)
+    }
+
+    /// An enumeration that leaves every transaction out, as StoreKit can leave out an unfinished one.
+    func noTransactions() -> AsyncStream<VerificationResult<Transaction>> {
+        AsyncStream { $0.finish() }
     }
 
     func record(_ kit: BillFnStoreKit) -> OutcomeRecorder {
@@ -373,7 +408,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         XCTAssertEqual(retried.map(\.finished), [true])
         let verifications = await backend.verifications
         XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_1", "chk_1"])
-        try await assertFinished(outcome)
+        try await assertFinished(try XCTUnwrap(retried.first))
     }
 
     /// BillFn could not verify a purchase that maps to no plan. Its checkout records the transaction before the verify
@@ -393,6 +428,11 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
 
         await backend.failVerification(with: nil)
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
+        // A launch whose enumeration leaves the unfinished transaction out does not take it as finished: BillFn has not
+        // confirmed it, so its checkout stays past its retention.
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions())
+        XCTAssertTrue(omitted.isEmpty)
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
         let nextLaunch = launch(backend, plans: [], now: later)
         let outcomes = await nextLaunch.start()
 
@@ -687,7 +727,7 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
         let unfinished = await unfinishedTransactionIds()
         XCTAssertEqual(unfinished, unfinishedBefore)
         // The session, not the app's cache, shows that StoreKit made no transaction.
-        XCTAssertTrue(session.allTransactions().isEmpty)
+        XCTAssertTrue(session.allTransactions().isEmpty, "The session holds \(describeSession())")
     }
 
     /// A pending purchase's checkout survives a second attempt on the same product that the user cancels, so
@@ -781,28 +821,38 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         XCTAssertEqual(keptCheckoutIds(proMonthly), ["chk_newer"])
     }
 
-    /// The store-state assertions judge only transactions StoreKit lists: an id the app's cache does not list is not
-    /// taken as finished (the wait for it times out), nor is a listed transaction left unfinished on purpose.
-    func testStoreStateAssertionsNeedAListedFinishedTransaction() async throws {
+    /// The store-state assertions rest only on evidence: an id StoreKit does not list is never taken as listed, and a
+    /// listed transaction left unfinished on purpose, even with an outcome claiming it finished, has no finish evidence
+    /// (BillFn's confirmation of it is not recorded); whether `Transaction.unfinished` lists it is not consulted. Once
+    /// BillFn confirms it through a launch, it has.
+    func testStoreStateAssertionsRestOnlyOnEvidence() async throws {
         let backend = FakeBillFnBackend()
+        checkoutStore.save(BillFnStoreKitCheckout(checkoutSessionId: "chk_attempt", productId: proLifetime, appAccountToken: backend.appAccountToken))
         let leftUnfinished = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
 
         do {
-            try await waitUntilStoreKitListsFinished(leftUnfinished.id + 1, timeout: 3)
-            XCTFail("A transaction StoreKit does not list was taken as finished")
+            try await waitUntilStoreKitLists(leftUnfinished.id + 1, unfinished: false, timeout: 3)
+            XCTFail("A transaction StoreKit does not list was taken as listed")
         } catch is TimedOut {}
-        do {
-            try await waitUntilStoreKitListsFinished(leftUnfinished.id, timeout: 3)
-            XCTFail("A transaction left unfinished was taken as finished")
-        } catch is TimedOut {}
+        let reference = BillFnStoreKitTransactionReference(
+            transactionId: String(leftUnfinished.id), originalTransactionId: String(leftUnfinished.originalID),
+            productId: proLifetime, appAccountToken: backend.appAccountToken
+        )
+        let claimed = BillFnStoreKitTransactionOutcome(transaction: reference, status: .confirmed(.null))
+        let missing = await missingFinishEvidence(claimed)
+        XCTAssertEqual(missing, "BillFn's confirmation of it is not recorded", "A transaction left unfinished was taken as finished")
 
-        await leftUnfinished.finish()
-        try await waitUntilStoreKitListsFinished(leftUnfinished.id)
+        let confirmed = await launch(backend, plans: []).process(try await listedTransaction(leftUnfinished.id))
+        let verifications = await backend.verifications
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_attempt"])
+        try await assertFinished(confirmed)
     }
 
     /// A transaction refunded while BillFn confirms its earlier observation is not answered with that pass's stale
-    /// outcome: once the pass ends, BillFn confirms the revoked transaction in its own pass, and both outcomes are
-    /// reported. The same observation offered meanwhile joins the running pass.
+    /// outcome: once the pass ends, BillFn confirms the revoked transaction in its own pass, and each pass publishes
+    /// its outcome once, the stale one first. The same observation offered meanwhile joins the running pass and
+    /// publishes nothing. Repeated with the original caller at background priority and the changed one at high
+    /// priority, the revoked outcome is still published last.
     func testRevocationDuringConfirmationIsConfirmedInItsOwnPass() async throws {
         let backend = FakeBillFnBackend()
         let gate = Gate()
@@ -818,7 +868,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let revoked = try await listedTransaction(bought.id) { $0.revocationDate != nil }
         let same = Task { await kit.process(observed) }
         let changed = Task { await kit.process(revoked) }
-        try await Task.sleep(nanoseconds: 500_000_000)
+        try await waitUntil("both callers to wait for the running pass") { await kit.callersWaitingForARunningPass == 2 }
         let arrivalsWhileHeld = await gate.arrivals
         XCTAssertEqual(arrivalsWhileHeld, 1, "Only one pass runs for the transaction at a time")
         await gate.release()
@@ -832,8 +882,28 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         XCTAssertTrue(changedOutcome.finished)
         let restores = await backend.restores
         XCTAssertEqual(restores.map(\.transaction.revoked), [false, true])
-        let outcomes = try await waitForOutcomes(recorder, count: 2)
-        XCTAssertEqual(outcomes.map(\.transaction.revoked), [false, true])
+        // A later pass publishes after anything the three calls published, so a third outcome here would be the
+        // joined call's.
+        let later = await kit.process(revoked)
+        let outcomes = try await waitForOutcomes(recorder, count: 3)
+        XCTAssertEqual(outcomes, [firstOutcome, changedOutcome, later])
+
+        for run in 1...25 {
+            let runBackend = FakeBillFnBackend()
+            let runGate = Gate()
+            await runBackend.holdRestores { await runGate.wait() }
+            let runKit = launch(runBackend)
+            let runRecorder = record(runKit)
+            let original = Task(priority: .background) { await runKit.process(observed) }
+            try await waitUntil("run \(run)'s restore call") { await runGate.arrivals == 1 }
+            let refunded = Task(priority: .high) { await runKit.process(revoked) }
+            try await waitUntil("run \(run)'s changed caller to wait") { await runKit.callersWaitingForARunningPass == 1 }
+            await runGate.release()
+            _ = await original.value
+            _ = await refunded.value
+            let published = try await waitForOutcomes(runRecorder, count: 2)
+            XCTAssertEqual(published.map(\.transaction.revoked), [false, true], "Run \(run) published out of order")
+        }
     }
 
     /// `start(updates:)` confirms each update it is given, here StoreKit testing transactions fed through a stream in
@@ -876,20 +946,30 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         }
     }
 
-    /// BillFn confirmed a transaction matched to a checkout but the app stopped before finishing it. The next launch,
-    /// a retention period later, still verifies it against that checkout and finishes it, with no plans, so without
-    /// that checkout it would be skipped for good. A matched checkout whose transaction is finished and an expired
-    /// outstanding one are dropped.
+    /// BillFn confirmed a transaction matched to a checkout but the app stopped before finishing it. A launch whose
+    /// enumeration leaves the transaction out keeps every matched checkout. The next launch, a retention period later,
+    /// still verifies the transaction against its checkout and finishes it, with no plans, so without that checkout it
+    /// would be skipped for good. It drops an expired outstanding checkout and one matched to a confirmed transaction it
+    /// was not offered (the app stopped between finishing it and removing the checkout), and keeps one matched to a
+    /// transaction BillFn never confirmed.
     func testConfirmedTransactionLeftUnfinishedIsVerifiedAndFinishedOnTheNextLaunch() async throws {
         let backend = FakeBillFnBackend()
         let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
         let outstanding = BillFnStoreKitCheckout(checkoutSessionId: "chk_outstanding", productId: proLifetime, appAccountToken: backend.appAccountToken)
         let confirmed = BillFnStoreKitCheckout(checkoutSessionId: "chk_confirmed", productId: proLifetime, appAccountToken: backend.appAccountToken)
         let finished = BillFnStoreKitCheckout(checkoutSessionId: "chk_finished", productId: proMonthly, appAccountToken: backend.appAccountToken)
+        let unconfirmed = BillFnStoreKitCheckout(checkoutSessionId: "chk_unconfirmed", productId: proMonthly, appAccountToken: backend.appAccountToken)
         checkoutStore.save(outstanding)
         checkoutStore.save(confirmed)
         checkoutStore.markMatched(confirmed, transactionId: String(bought.id))
+        checkoutStore.recordConfirmed(transactionId: String(bought.id))
         checkoutStore.markMatched(finished, transactionId: "987654321")
+        checkoutStore.recordConfirmed(transactionId: "987654321")
+        checkoutStore.markMatched(unconfirmed, transactionId: "987654322")
+
+        let omitted = await launch(backend, plans: []).processUnfinishedTransactions(noTransactions())
+        XCTAssertTrue(omitted.isEmpty)
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [outstanding, confirmed, finished, unconfirmed])
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
         let nextLaunch = launch(backend, plans: [], now: later)
@@ -902,7 +982,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let restores = await backend.restores
         XCTAssertTrue(restores.isEmpty)
         try await assertFinished(outcome)
-        XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
+        XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [unconfirmed])
     }
 
     /// A purchase completed while the app was not running (an approved Ask to Buy request, an interrupted purchase),

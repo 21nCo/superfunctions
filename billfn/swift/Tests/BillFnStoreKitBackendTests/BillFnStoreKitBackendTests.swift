@@ -253,12 +253,12 @@ struct BillFnStoreKitBackendTests {
         // attempts saved a minute or more after it stay.
         clock.advance(by: day - 200 * 60 + 30)
         let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        later.removeExpiredOutstandingCheckouts(excluding: [])
+        later.removeExpiredCheckouts(excluding: [], offeredTransactionIds: [])
         let kept = later.checkouts(forProductId: "apple.pro.month").map(\.checkoutSessionId)
         #expect(!kept.contains("chk_pending"))
         #expect(kept.first == "chk_0")
         clock.advance(by: day)
-        store.removeExpiredOutstandingCheckouts(excluding: [])
+        store.removeExpiredCheckouts(excluding: [], offeredTransactionIds: [])
         #expect(store.checkouts(forProductId: "apple.pro.month").isEmpty)
     }
 
@@ -286,7 +286,7 @@ struct BillFnStoreKitBackendTests {
         #expect(reread.keptCheckouts().map(\.checkout) == [expired, claimed, matched, young])
         #expect(store.checkouts(forProductId: "apple.pro.month") == [expired, claimed])
 
-        store.removeExpiredOutstandingCheckouts(excluding: ["chk_claimed"])
+        store.removeExpiredCheckouts(excluding: ["chk_claimed"], offeredTransactionIds: [])
 
         let kept = reread.keptCheckouts()
         #expect(kept.map(\.checkout) == [claimed, matched, young])
@@ -359,13 +359,45 @@ struct BillFnStoreKitBackendTests {
 
         clock.advance(by: 30 * day)
         let later = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
-        later.removeExpiredOutstandingCheckouts(excluding: [])
+        later.removeExpiredCheckouts(excluding: [], offeredTransactionIds: [])
         let kept = later.keptCheckouts()
         #expect(kept.map(\.checkout) == [matched, unkept])
         #expect(kept.map(\.transactionId) == ["2000000001", "2000000002"])
         #expect(kept.first?.savedAt == Date(timeIntervalSince1970: 1_800_000_000))
         store.removeCheckout(checkoutSessionId: "chk_1")
         #expect(store.keptCheckouts().map(\.checkout) == [unkept])
+    }
+
+    @Test("Expires a matched checkout only once BillFn's confirmation of its transaction is recorded and it was not offered")
+    func expiresMatchedCheckoutsOnlyOnConfirmation() throws {
+        let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
+        let clock = TestClock()
+        let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
+        let account = UUID(uuidString: token)!
+        let checkout = { (id: String) in BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account) }
+        // Unconfirmed: BillFn has not confirmed its transaction (a failed verify call), whatever StoreKit enumerates.
+        store.markMatched(checkout("chk_unconfirmed"), transactionId: "1")
+        // Finished: confirmed, and the launch stopped before removing the checkout.
+        store.markMatched(checkout("chk_finished"), transactionId: "2")
+        store.recordConfirmed(transactionId: "2")
+        // Confirmed but offered again as unfinished in this pass: the launch stopped before finishing it.
+        store.markMatched(checkout("chk_offered"), transactionId: "3")
+        store.recordConfirmed(transactionId: "3")
+        // Confirmed, not offered, but a transaction is being verified against it right now.
+        store.markMatched(checkout("chk_claimed"), transactionId: "4")
+        store.recordConfirmed(transactionId: "4")
+
+        // Within retention, a confirmed matched checkout whose transaction this pass did not offer stays: StoreKit may
+        // have left the unfinished transaction out, and the next launch still verifies it against its checkout.
+        clock.advance(by: 7 * day - 60)
+        store.removeExpiredCheckouts(excluding: [], offeredTransactionIds: [])
+        #expect(store.keptCheckouts().map(\.checkout.checkoutSessionId) == ["chk_unconfirmed", "chk_finished", "chk_offered", "chk_claimed"])
+
+        clock.advance(by: 120)
+        store.removeExpiredCheckouts(excluding: ["chk_claimed"], offeredTransactionIds: ["3"])
+        let kept = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now }).keptCheckouts()
+        #expect(kept.map(\.checkout.checkoutSessionId) == ["chk_unconfirmed", "chk_offered", "chk_claimed"])
+        #expect(kept.map(\.transactionId) == ["1", "3", "4"])
     }
 }
 

@@ -79,12 +79,15 @@ public actor BillFnStoreKit {
     private let checkouts: any BillFnStoreKitCheckoutStore
     /// The confirmation pass running for each transaction, with the observation of it that pass sends BillFn.
     private var inFlight: [UInt64: (observation: BillFnStoreKitTransactionReference, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
+    /// How many callers are waiting for a running pass on the same transaction to end (tests wait on it).
+    private(set) var callersWaitingForARunningPass = 0
     /// Checkouts a transaction is being verified against, so a concurrent one does not use the same checkout.
     private var claimedCheckouts: Set<String> = []
     private var listener: Task<Void, Never>?
     private let outcomeContinuation: AsyncStream<BillFnStoreKitTransactionOutcome>.Continuation
 
-    /// Every transaction outcome, whether it came from a purchase, an update, a retry or a restore.
+    /// Every transaction outcome, whether it came from a purchase, an update, a retry or a restore: one per
+    /// confirmation pass, published as the pass ends, so a call that joins a running pass adds none.
     /// It keeps the newest 64 outcomes until read; iterate it from a single task.
     public nonisolated let outcomes: AsyncStream<BillFnStoreKitTransactionOutcome>
 
@@ -145,34 +148,35 @@ public actor BillFnStoreKit {
         listener = nil
     }
 
-    /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then reconciles the checkout
-    /// store: drops matched checkouts whose transaction is finished and, only now that every unfinished transaction
-    /// has been offered the checkouts it could claim, outstanding checkouts past the store's retention.
+    /// Confirms every unfinished transaction with BillFn and finishes those it confirms, then, only now that every
+    /// unfinished transaction has been offered the checkouts it could claim, removes the checkouts past the store's
+    /// retention that no transaction can still need (`removeExpiredCheckouts(excluding:offeredTransactionIds:)`).
     @discardableResult
     public func processUnfinishedTransactions() async -> [BillFnStoreKitTransactionOutcome] {
-        // Only checkouts matched before reading the unfinished transactions are swept: a transaction matched while
-        // they are read (a purchase completing meanwhile) may be missing from what was read.
-        let matchedBefore = checkouts.keptCheckouts().filter { $0.transactionId != nil }
+        await processUnfinishedTransactions(Transaction.unfinished)
+    }
+
+    /// `processUnfinishedTransactions()` with the unfinished transactions to confirm; it passes `Transaction.unfinished`.
+    /// StoreKit can leave an unfinished transaction out of an enumeration, so a transaction missing from `unfinished`
+    /// is not taken as finished: a checkout matched to it expires only once BillFn's confirmation of it is recorded.
+    @discardableResult
+    public func processUnfinishedTransactions<Unfinished: AsyncSequence & Sendable>(
+        _ unfinished: Unfinished
+    ) async -> [BillFnStoreKitTransactionOutcome] where Unfinished.Element == VerificationResult<Transaction> {
         var results: [BillFnStoreKitTransactionOutcome] = []
-        var unfinished: Set<String> = []
-        for await transaction in Transaction.unfinished {
-            unfinished.insert(String(transaction.unsafePayloadValue.id))
-            results.append(await process(transaction))
+        var offered: Set<String> = []
+        do {
+            for try await transaction in unfinished {
+                offered.insert(String(transaction.unsafePayloadValue.id))
+                results.append(await process(transaction))
+            }
+        } catch {
+            // A transaction the failed enumeration did not reach may still claim an expired checkout, so none is
+            // removed. `Transaction.unfinished` never throws.
+            return results
         }
-        // A matched checkout whose transaction is no longer unfinished was left by a launch that stopped between
-        // finishing the transaction and removing the checkout. One being verified right now is claimed.
-        let keptNow = checkouts.keptCheckouts()
-        for kept in matchedBefore {
-            let checkoutSessionId = kept.checkout.checkoutSessionId
-            guard let transactionId = kept.transactionId, !unfinished.contains(transactionId),
-                  !claimedCheckouts.contains(checkoutSessionId),
-                  keptNow.contains(where: { $0.checkout.checkoutSessionId == checkoutSessionId && $0.transactionId == transactionId })
-            else { continue }
-            checkouts.removeCheckout(checkoutSessionId: checkoutSessionId)
-        }
-        // An expired outstanding checkout no unfinished transaction claimed belongs to an attempt that never produced
-        // a transaction. The store removes it only if it is still outstanding; one being verified against is kept.
-        checkouts.removeExpiredOutstandingCheckouts(excluding: claimedCheckouts)
+        // A checkout being verified against right now is claimed, and kept.
+        checkouts.removeExpiredCheckouts(excluding: claimedCheckouts, offeredTransactionIds: offered)
         return results
     }
 
@@ -260,24 +264,31 @@ public actor BillFnStoreKit {
             appAccountToken: transaction.appAccountToken,
             revoked: transaction.revocationDate != nil
         )
-        // The same observation joins the running pass. A changed one (revoked while the running pass confirms the
-        // unrevoked transaction) waits for that pass to end, then BillFn confirms it in its own pass.
+        // The same observation joins the running pass and gets its outcome. A changed one (revoked while the running
+        // pass confirms the unrevoked transaction) waits for that pass to end, then BillFn confirms it in its own pass.
         while let running = inFlight[transaction.id] {
+            callersWaitingForARunningPass += 1
+            let outcome = await running.task.value
+            callersWaitingForARunningPass -= 1
             if running.observation == reference {
-                return await running.task.value
+                return outcome
             }
-            _ = await running.task.value
             if inFlight[transaction.id]?.task == running.task {
                 inFlight[transaction.id] = nil
             }
         }
-        let task = Task { await self.confirmNow(transaction, reference: reference, purchasedWith: checkout) }
+        // Each pass publishes its outcome before its task ends, so a changed observation's pass, which starts only after
+        // it, publishes after it; a caller that joined a pass publishes nothing.
+        let task = Task {
+            let outcome = await self.confirmNow(transaction, reference: reference, purchasedWith: checkout)
+            self.outcomeContinuation.yield(outcome)
+            return outcome
+        }
         inFlight[transaction.id] = (reference, task)
         let outcome = await task.value
         if inFlight[transaction.id]?.task == task {
             inFlight[transaction.id] = nil
         }
-        outcomeContinuation.yield(outcome)
         return outcome
     }
 

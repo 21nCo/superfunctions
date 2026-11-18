@@ -43,9 +43,13 @@ let restored = try await storeKit.restore()
   app quits still verifies against it. A second attempt on the same product does not replace a
   pending one's checkout, and a cancelled or finished attempt removes only its own checkout.
 - As soon as a transaction is matched to a checkout, before BillFn is asked to verify it, the
-  checkout records the transaction id; it is removed only after the transaction is finished. So a
+  checkout records the transaction id; it is removed once the transaction is finished. So a
   transaction whose verify call failed, or that the app stopped before finishing, is verified
   against the same checkout on a later launch however late, and no other transaction can take it.
+  StoreKit can leave an unfinished transaction out of `Transaction.unfinished`, so its absence is
+  never taken as finished: a matched checkout expires (30 days after its attempt started) only once
+  BillFn's confirmation of its transaction is recorded and a launch's unfinished transactions did not
+  include it, as when a launch stopped between finishing the transaction and removing the checkout.
 - An outstanding checkout is claimed only by a transaction purchased after its attempt started
   (allowing 15 minutes of clock difference), so restoring an older purchase never takes a pending
   attempt's checkout. A renewal never claims one: renewals carry the same `appAccountToken`, so a
@@ -70,10 +74,14 @@ let restored = try await storeKit.restore()
   that completed while the app was not running is still verified against it. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
   (such as a network failure) keeps it, since the purchase may still complete.
-- `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`, and
-  `restore(entitlements:)` the entitlements to confirm in place of `Transaction.currentEntitlements`,
+- `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,
+  `processUnfinishedTransactions(_:)` the unfinished transactions in place of `Transaction.unfinished`,
+  and `restore(entitlements:)` the entitlements to confirm in place of `Transaction.currentEntitlements`,
   for example in tests.
-- `outcomes` streams every transaction outcome, for example to refresh entitlements.
+- `outcomes` streams every transaction outcome, for example to refresh entitlements: one per
+  confirmation pass, in the order the passes end. A transaction offered again while BillFn confirms it
+  (an update during a purchase) joins that pass; one that changed meanwhile (refunded) is confirmed in
+  its own pass after it, so its outcome comes last.
 
 ## Test
 

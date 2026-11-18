@@ -50,14 +50,26 @@ isolated=(
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet
 
 status=0
+results=()
+# Runs one test invocation, recording its exit status for the summary.
+run_tests() {
+  local name=$1 code=0
+  shift
+  echo "=== $name"
+  xcodebuild test-without-building "${common[@]}" "$@" || code=$?
+  results+=("exit $code: $name")
+  [[ $code -eq 0 ]] || status=1
+}
 skip=()
 for test in "${isolated[@]}"; do
   skip+=(-skip-testing:"$test")
 done
-echo "=== BillFnStoreKitTests (shared process)"
-xcodebuild test-without-building "${common[@]}" "${skip[@]}" || status=1
+run_tests "BillFnStoreKitTests (shared process)" "${skip[@]}"
 for test in "${isolated[@]}"; do
-  echo "=== $test"
-  xcodebuild test-without-building "${common[@]}" -only-testing:"$test" || status=1
+  run_tests "$test" -only-testing:"$test"
 done
+# Which invocation failed, who ran it, and who owns the StoreKit testing processes it talked to.
+echo "=== Summary: run as $(id -un) on $(sw_vers -productVersion) with $(xcodebuild -version | head -1)"
+printf '%s\n' "${results[@]}"
+ps -axo user,pid,comm | awk 'NR == 1 || /storekitagent|BillFnStoreKitTestHost/' || true
 exit "$status"
