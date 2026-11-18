@@ -47,6 +47,7 @@ isolated=(
   BillFnStoreKitTests/BillFnStoreKitUpdateTests/testRevocationDuringConfirmationIsConfirmedInItsOwnPass
   BillFnStoreKitTests/BillFnStoreKitUpdateTests/testFailedObservationThenRefundedInTheHistoryIsConfirmedInItsOwnPass
   BillFnStoreKitTests/BillFnStoreKitUpdateTests/testTwoInstancesRacingForOneCheckoutBindItOnce
+  BillFnStoreKitTests/BillFnStoreKitUpdateTests/testRefundAfterFinishIsConfirmedFromTheHistory
 )
 
 xcodebuild build-for-testing "${common[@]}" -onlyUsePackageVersionsFromResolvedFile -quiet

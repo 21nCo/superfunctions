@@ -78,8 +78,11 @@ public actor BillFnStoreKit {
     private let plans: [String: BillFnStoreKitPlan]
     private let checkouts: any BillFnStoreKitCheckoutStore
     /// The confirmation pass running for each transaction, with what that pass confirms: the observation it sends
-    /// BillFn and the checkout of the purchase that produced it, when known.
+    /// BillFn and the checkout it verifies against.
     private var inFlight: [UInt64: (context: PassContext, task: Task<BillFnStoreKitTransactionOutcome, Never>)] = [:]
+    /// The newest passes BillFn confirmed, so a purchase whose transaction a background pass already confirmed against
+    /// the purchase's own checkout gets that outcome instead of verifying again.
+    private var confirmedPasses: [(context: PassContext, outcome: BillFnStoreKitTransactionOutcome)] = []
     /// How many callers are waiting for a running pass on the same transaction to end (tests wait on it).
     private(set) var callersWaitingForARunningPass = 0
     private var listener: Task<Void, Never>?
@@ -185,17 +188,20 @@ public actor BillFnStoreKit {
         return results
     }
 
-    /// Whether the transaction still waits for BillFn's confirmation: BillFn was asked and has not confirmed it, or
-    /// confirmed it and `finish()` did not return (a renewal or a restored purchase too, with no checkout); a checkout
-    /// is bound to it that BillFn has not confirmed it against (such as its purchase's own one, after another pass
-    /// confirmed it against an older checkout); or, never asked, it may claim an outstanding checkout.
+    /// Whether this observation of the transaction still waits for BillFn's confirmation: BillFn was asked and has not
+    /// confirmed it, or confirmed it and `finish()` did not return (a renewal or a restored purchase too, with no
+    /// checkout); it is a refund of a transaction BillFn confirmed unrevoked; a checkout is bound to it that BillFn has
+    /// not resolved (such as its purchase's own one, after another pass confirmed it against an older checkout); or,
+    /// never asked, it may claim an outstanding checkout.
     private func awaitsConfirmation(_ transaction: Transaction) -> Bool {
         let facts = Self.facts(transaction)
         let kept = checkouts.keptCheckouts()
-        if kept.contains(where: { $0.transactionId == facts.transactionId && !$0.confirmed }) { return true }
-        if let record = checkouts.record(transactionId: facts.transactionId) {
-            return record.state < .finished
+        if kept.contains(where: { $0.transactionId == facts.transactionId && !$0.settled }) { return true }
+        let records = checkouts.records(transactionId: facts.transactionId)
+        if let own = records.first(where: { $0.facts.revoked == facts.revoked }) {
+            return own.state < .finished
         }
+        if !records.isEmpty { return facts.revoked }
         return kept.contains { $0.transactionId == facts.transactionId || facts.mayClaim($0) }
     }
 
@@ -274,41 +280,60 @@ public actor BillFnStoreKit {
         await process(verification, checkout: nil)
     }
 
-    /// What one confirmation pass confirms: the observation sent to BillFn, and the checkout of the purchase that
-    /// produced the transaction when known (a pass without one may verify it against another checkout).
+    /// What one confirmation pass confirms: the observation sent to BillFn, and the checkout the store bound it to
+    /// for this pass (nil when it is restored onto its plan).
     struct PassContext: Equatable {
         let observation: BillFnStoreKitTransactionReference
-        let purchaseCheckoutSessionId: String?
+        let checkoutSessionId: String?
     }
 
-    /// `checkout` is the one the purchase that produced this transaction opened, when known.
+    /// `purchaseCheckout` is the one the purchase that produced this transaction opened, when known.
     func process(
         _ verification: VerificationResult<Transaction>,
-        checkout: BillFnStoreKitCheckout?
+        checkout purchaseCheckout: BillFnStoreKitCheckout?
     ) async -> BillFnStoreKitTransactionOutcome {
         let transaction = verification.unsafePayloadValue
         let reference = Self.reference(transaction)
-        let context = PassContext(observation: reference, purchaseCheckoutSessionId: checkout?.checkoutSessionId)
-        // The same observation joins the running pass and gets its outcome, unless it comes with a purchase checkout
-        // that pass is not verifying against: a caller without one could only reuse the transaction's binding. A changed
-        // one (revoked while the running pass confirms the unrevoked transaction, or a purchase's own checkout while a
-        // pass without it runs) waits for that pass to end, then BillFn confirms it in its own pass.
+        let facts = Self.facts(transaction)
+        // A caller joins a pass on the same observation and gets its outcome, unless it comes with a purchase checkout
+        // that pass is not verifying against. A changed one (revoked meanwhile, or a purchase's own checkout) waits for
+        // that pass to end, then BillFn confirms it in its own pass.
+        func joins(_ context: PassContext) -> Bool {
+            context.observation == reference
+                && (purchaseCheckout == nil || context.checkoutSessionId == purchaseCheckout?.checkoutSessionId)
+        }
+        if purchaseCheckout != nil, let done = confirmedPasses.last(where: { joins($0.context) }) {
+            return done.outcome
+        }
+        // The purchase's own checkout is bound before anything suspends, so a launch that stops while this waits still
+        // verifies the transaction against it.
+        if let purchaseCheckout {
+            _ = checkouts.claim(facts, purchasedWith: purchaseCheckout)
+        }
         while let running = inFlight[transaction.id] {
             callersWaitingForARunningPass += 1
             let outcome = await running.task.value
             callersWaitingForARunningPass -= 1
-            if running.context.observation == reference
-                && (checkout == nil || running.context.purchaseCheckoutSessionId == checkout?.checkoutSessionId) {
+            if joins(running.context) {
                 return outcome
             }
             if inFlight[transaction.id]?.task == running.task {
                 inFlight[transaction.id] = nil
             }
         }
+        // The store binds the checkout to this transaction before BillFn is asked, atomically for every store and actor
+        // sharing it: if the verify call fails or the app stops before `finish()`, the binding stays and the next pass
+        // verifies against the same checkout; no other transaction can take it meanwhile. Nothing suspends between the
+        // binding and registering the pass, so a caller arriving meanwhile sees what it verifies against.
+        let checkout = checkouts.claim(facts, purchasedWith: purchaseCheckout)
+        let context = PassContext(observation: reference, checkoutSessionId: checkout?.checkoutSessionId)
         // Each pass publishes its outcome before its task ends, so a changed observation's pass, which starts only after
         // it, publishes after it; a caller that joined a pass publishes nothing.
         let task = Task {
-            let outcome = await self.confirmNow(transaction, reference: reference, purchasedWith: checkout)
+            let outcome = await self.confirmNow(transaction, reference: reference, facts: facts, checkout: checkout)
+            if outcome.finished {
+                self.confirmedPasses = Array((self.confirmedPasses + [(context, outcome)]).suffix(16))
+            }
             self.outcomeContinuation.yield(outcome)
             return outcome
         }
@@ -323,13 +348,9 @@ public actor BillFnStoreKit {
     private func confirmNow(
         _ transaction: Transaction,
         reference: BillFnStoreKitTransactionReference,
-        purchasedWith purchaseCheckout: BillFnStoreKitCheckout?
+        facts: BillFnStoreKitTransactionFacts,
+        checkout: BillFnStoreKitCheckout?
     ) async -> BillFnStoreKitTransactionOutcome {
-        let facts = Self.facts(transaction)
-        // The store binds the checkout to this transaction before BillFn is asked, atomically for every store and
-        // actor sharing it: if the verify call fails or the app stops before `finish()`, the binding stays and the next
-        // pass verifies against the same checkout; no other transaction can take it meanwhile.
-        let checkout = checkouts.claim(facts, purchasedWith: purchaseCheckout)
         let plan = plans[transaction.productID]
         guard checkout != nil || plan != nil else {
             return BillFnStoreKitTransactionOutcome(
@@ -338,23 +359,18 @@ public actor BillFnStoreKit {
             )
         }
         // Until BillFn confirms it, the pending record makes every launch retry it, from `Transaction.all` too.
-        checkouts.record(facts, state: .pending, against: nil)
+        checkouts.record(facts, state: .pending, resolution: nil)
         do {
-            let billing: BillFnJSONValue
-            if let checkout {
-                billing = try await verify(reference, against: checkout)
-            } else {
-                billing = try await backend.restorePurchase(plan: plan!, transaction: reference)
-            }
+            let (billing, resolution) = try await confirm(reference, checkout: checkout, plan: plan)
             // Recorded before `finish()`: once StoreKit no longer offers it as unfinished, a redelivered or restored
             // copy must not claim an outstanding checkout.
-            checkouts.record(facts, state: .confirmed, against: checkout?.checkoutSessionId)
+            checkouts.record(facts, state: .confirmed, resolution: resolution)
             await transaction.finish()
             // The only evidence the transaction was finished: StoreKit leaving it out of `Transaction.unfinished` is
             // none. A launch that stops before removing the checkout leaves it to `removeUnneededCheckouts()`.
-            checkouts.record(facts, state: .finished, against: checkout?.checkoutSessionId)
-            // Only the checkout BillFn confirmed it against: another attempt on the product may have saved its own
-            // meanwhile, and the purchase's own checkout, bound to it by another pass, has its own confirmation.
+            checkouts.record(facts, state: .finished, resolution: resolution)
+            // Only the checkout this pass resolved: another attempt on the product may have saved its own meanwhile,
+            // and the purchase's own checkout, bound to it by another pass, has its own resolution.
             if let checkout {
                 checkouts.removeCheckout(checkoutSessionId: checkout.checkoutSessionId, boundTo: reference.transactionId)
             }
@@ -364,16 +380,26 @@ public actor BillFnStoreKit {
         }
     }
 
-    /// Verifies the transaction against its checkout. When BillFn rejects that for good (a non-retryable error, such
-    /// as `BILLFN_CONFLICT` once a later renewal superseded the transaction, but not an HTTP error from something in
-    /// front of BillFn) and a plan maps the product, the transaction is restored onto the plan instead (by its original
-    /// transaction id), so it is not retried against the checkout forever. With no plan, the rejection is the outcome: the transaction stays unfinished and its
-    /// checkout kept, and each launch reports it again as a non-retryable failure.
-    private func verify(_ reference: BillFnStoreKitTransactionReference, against checkout: BillFnStoreKitCheckout) async throws -> BillFnJSONValue {
+    /// Verifies the transaction against its checkout, or restores it onto its plan when it has none, and says which.
+    /// When BillFn rejects the checkout verification for good (`BILLFN_CONFLICT`, such as once a later renewal superseded
+    /// the transaction) and a plan maps the product, the transaction is restored onto the plan instead (by its original
+    /// transaction id), so it is not retried against the checkout forever; that resolves the binding without confirming
+    /// the checkout. Any other error (an internal or HTTP error, a network failure) leaves the transaction unfinished and
+    /// its checkout bound for the next launch. With no plan, the rejection is the outcome.
+    private func confirm(
+        _ reference: BillFnStoreKitTransactionReference,
+        checkout: BillFnStoreKitCheckout?,
+        plan: BillFnStoreKitPlan?
+    ) async throws -> (BillFnJSONValue, BillFnStoreKitResolution) {
+        guard let checkout else {
+            return (try await backend.restorePurchase(plan: plan!, transaction: reference), .restore(rejectedCheckout: nil))
+        }
         do {
-            return try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
-        } catch BillFnClientError.server(let code, _, _, false) where code != "BILLFN_HTTP_ERROR" && plans[reference.productId] != nil {
-            return try await backend.restorePurchase(plan: plans[reference.productId]!, transaction: reference)
+            let billing = try await backend.verifyCheckout(checkoutSessionId: checkout.checkoutSessionId, transaction: reference)
+            return (billing, .checkout(checkout.checkoutSessionId))
+        } catch BillFnClientError.server("BILLFN_CONFLICT", _, _, _) where plan != nil {
+            let billing = try await backend.restorePurchase(plan: plan!, transaction: reference)
+            return (billing, .restore(rejectedCheckout: checkout.checkoutSessionId))
         }
     }
 
@@ -393,7 +419,8 @@ public actor BillFnStoreKit {
             productId: transaction.productID,
             appAccountToken: transaction.appAccountToken,
             purchaseDate: transaction.purchaseDate,
-            isPurchase: reasonIsPurchase(transaction)
+            isPurchase: reasonIsPurchase(transaction),
+            revoked: transaction.revocationDate != nil
         )
     }
 

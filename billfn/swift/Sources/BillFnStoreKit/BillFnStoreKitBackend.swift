@@ -104,11 +104,17 @@ public struct BillFnHTTPStoreKitBackend: BillFnStoreKitBackend {
         return BillFnStoreKitCheckout(checkoutSessionId: checkoutSessionId, productId: productId, appAccountToken: token)
     }
 
+    /// Throws `BillFnClientError.invalidResponse` unless BillFn returns the checkout it verified (the requested one) and a
+    /// subscription, so a transaction is never finished on a response that carries no billing state.
     public func verifyCheckout(checkoutSessionId: String, transaction: BillFnStoreKitTransactionReference) async throws -> BillFnJSONValue {
-        try await client.send(path: "checkouts/verify", body: .object([
+        let data = try await client.send(path: "checkouts/verify", body: .object([
             "checkoutSessionId": .string(checkoutSessionId),
             "payload": Self.payload(transaction),
         ]))
+        guard data["checkoutSession"]?["checkoutSessionId"]?.stringValue == checkoutSessionId else {
+            throw BillFnClientError.invalidResponse
+        }
+        return try Self.billingState(data)
     }
 
     public func restorePurchase(plan: BillFnStoreKitPlan, transaction: BillFnStoreKitTransactionReference) async throws -> BillFnJSONValue {
@@ -119,7 +125,13 @@ public struct BillFnHTTPStoreKitBackend: BillFnStoreKitBackend {
             "payload": Self.payload(transaction),
         ]
         if let priceId = plan.priceId { body["priceId"] = .string(priceId) }
-        return try await client.send(path: "purchases/restore", body: .object(body))
+        return try Self.billingState(try await client.send(path: "purchases/restore", body: .object(body)))
+    }
+
+    /// The response if it carries a subscription object (whose own fields may be null).
+    private static func billingState(_ data: BillFnJSONValue) throws -> BillFnJSONValue {
+        guard case .object = data["subscription"] else { throw BillFnClientError.invalidResponse }
+        return data
     }
 
     private static func payload(_ transaction: BillFnStoreKitTransactionReference) -> BillFnJSONValue {
@@ -144,16 +156,31 @@ public struct BillFnStoreKitKeptCheckout: Codable, Sendable, Equatable {
     public let transactionId: String?
     /// Whether BillFn confirmed the bound transaction against this checkout.
     public let confirmed: Bool
+    /// Whether BillFn rejected the bound transaction against this checkout for good and restored it onto its plan
+    /// instead: a terminal resolution of the binding, not a confirmation against the checkout.
+    public let restored: Bool
 
-    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, transactionId: String? = nil, confirmed: Bool = false) {
+    public init(checkout: BillFnStoreKitCheckout, savedAt: Date, transactionId: String? = nil, confirmed: Bool = false, restored: Bool = false) {
         self.checkout = checkout
         self.savedAt = savedAt
         self.transactionId = transactionId
         self.confirmed = confirmed
+        self.restored = restored
     }
 
-    func bound(to transactionId: String, confirmed: Bool = false) -> BillFnStoreKitKeptCheckout {
-        BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, transactionId: transactionId, confirmed: confirmed)
+    /// Whether BillFn has resolved the binding, by confirming against the checkout or by restoring.
+    public var settled: Bool { confirmed || restored }
+
+    func bound(to transactionId: String) -> BillFnStoreKitKeptCheckout {
+        BillFnStoreKitKeptCheckout(checkout: checkout, savedAt: savedAt, transactionId: transactionId)
+    }
+
+    func resolved(by resolution: BillFnStoreKitResolution) -> BillFnStoreKitKeptCheckout {
+        BillFnStoreKitKeptCheckout(
+            checkout: checkout, savedAt: savedAt, transactionId: transactionId,
+            confirmed: confirmed || resolution == .checkout(checkout.checkoutSessionId),
+            restored: restored || resolution == .restore(rejectedCheckout: checkout.checkoutSessionId)
+        )
     }
 }
 
@@ -166,13 +193,22 @@ public struct BillFnStoreKitTransactionFacts: Codable, Sendable, Equatable {
     /// Whether StoreKit says the transaction is a purchase (a first purchase, an upgrade or crossgrade, a
     /// resubscription) rather than a renewal; nil when it does not say.
     public let isPurchase: Bool?
+    /// Whether this observation of the transaction is revoked (refunded): BillFn confirms each observation on its own.
+    public let revoked: Bool
 
-    public init(transactionId: String, productId: String, appAccountToken: UUID?, purchaseDate: Date, isPurchase: Bool?) {
+    public init(transactionId: String, productId: String, appAccountToken: UUID?, purchaseDate: Date, isPurchase: Bool?, revoked: Bool = false) {
         self.transactionId = transactionId
         self.productId = productId
         self.appAccountToken = appAccountToken
         self.purchaseDate = purchaseDate
         self.isPurchase = isPurchase
+        self.revoked = revoked
+    }
+
+    /// Whether the checkout was opened for this transaction's product and billing account. A transaction without an
+    /// `appAccountToken` matches none.
+    func matches(_ checkout: BillFnStoreKitCheckout) -> Bool {
+        checkout.productId == productId && appAccountToken == checkout.appAccountToken
     }
 
     /// How much earlier than a checkout was saved a transaction's purchase date may be and still claim it, for a
@@ -192,12 +228,11 @@ public struct BillFnStoreKitTransactionFacts: Codable, Sendable, Equatable {
     /// Whether the transaction may claim the outstanding checkout: same product and `appAccountToken`, and
     /// `mayClaimOutstanding(savedAt:)`.
     func mayClaim(_ kept: BillFnStoreKitKeptCheckout) -> Bool {
-        kept.transactionId == nil && kept.checkout.productId == productId
-            && kept.checkout.appAccountToken == appAccountToken && mayClaimOutstanding(savedAt: kept.savedAt)
+        kept.transactionId == nil && matches(kept.checkout) && mayClaimOutstanding(savedAt: kept.savedAt)
     }
 }
 
-/// How far BillFn has confirmed a transaction. A state only moves forward.
+/// How far BillFn has confirmed one observation of a transaction. A state only moves forward.
 public enum BillFnStoreKitConfirmationState: Int, Codable, Sendable, Comparable {
     /// BillFn was asked to confirm it and has not (yet): it is retried, also from `Transaction.all`.
     case pending
@@ -209,14 +244,30 @@ public enum BillFnStoreKitConfirmationState: Int, Codable, Sendable, Comparable 
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
-/// What the store records of a transaction BillFnStoreKit has asked BillFn to confirm.
+/// How BillFn confirmed a transaction.
+public enum BillFnStoreKitResolution: Codable, Sendable, Equatable {
+    /// BillFn verified it against this checkout.
+    case checkout(String)
+    /// BillFn restored it onto its plan, after rejecting it for good against `rejectedCheckout` when there was one.
+    case restore(rejectedCheckout: String?)
+}
+
+/// What the store records of one observation (unrevoked or revoked) of a transaction BillFnStoreKit has asked BillFn
+/// to confirm.
 public struct BillFnStoreKitTransactionRecord: Codable, Sendable, Equatable {
     public let facts: BillFnStoreKitTransactionFacts
     public let state: BillFnStoreKitConfirmationState
+    /// How BillFn confirmed it, once it did.
+    public let resolution: BillFnStoreKitResolution?
 
-    public init(facts: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState) {
+    public init(facts: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState, resolution: BillFnStoreKitResolution? = nil) {
         self.facts = facts
         self.state = state
+        self.resolution = resolution
+    }
+
+    func isObservation(of transaction: BillFnStoreKitTransactionFacts) -> Bool {
+        facts.transactionId == transaction.transactionId && facts.revoked == transaction.revoked
     }
 }
 
@@ -226,7 +277,8 @@ public struct BillFnStoreKitTransactionRecord: Codable, Sendable, Equatable {
 /// the binding is never undone; a transaction is bound to a second checkout only as its purchase's own one. A checkout
 /// is removed only on positive evidence: the attempt that saved it ended without a transaction
 /// (`removeOutstandingCheckout(checkoutSessionId:)`), or BillFn confirmed the bound transaction against it and the
-/// transaction is recorded finished (`removeCheckout(checkoutSessionId:boundTo:)`, `removeUnneededCheckouts()`). Never
+/// transaction is recorded finished (`removeCheckout(checkoutSessionId:boundTo:)`, `removeUnneededCheckouts()`); a binding
+/// BillFn resolved by restoring instead is recorded as such, never as confirmed against the checkout. Never
 /// because time passed or StoreKit left a transaction out of an enumeration.
 public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// Every kept checkout, oldest first.
@@ -236,8 +288,9 @@ public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// Binds the transaction to the checkout to verify it against, in one step no other store or actor sharing the
     /// storage can interleave with, and returns it. In order: `purchaseCheckout` (the purchase that produced the
     /// transaction opened it; kept again if it was not), else a checkout already bound to the transaction (one BillFn
-    /// has not confirmed it against first), else, unless BillFn has confirmed the transaction, the oldest outstanding
-    /// checkout it may claim (`mayClaim`). Never a checkout bound to another transaction. Nil when there is none.
+    /// has not resolved first), else, unless BillFn has confirmed any observation of the transaction, the oldest
+    /// outstanding checkout it may claim (`mayClaim`). Never a checkout bound to another transaction, nor a purchase
+    /// checkout for another product or `appAccountToken` (then it binds nothing and returns nil). Nil when there is none.
     func claim(_ transaction: BillFnStoreKitTransactionFacts, purchasedWith purchaseCheckout: BillFnStoreKitCheckout?) -> BillFnStoreKitCheckout?
     /// Removes the checkout if it is still outstanding: its attempt was cancelled or refused, so produced no
     /// transaction. One a transaction was bound to meanwhile stays.
@@ -245,13 +298,15 @@ public protocol BillFnStoreKitCheckoutStore: Sendable {
     /// Removes the checkout BillFn confirmed the transaction against, once the transaction is finished, if it is still
     /// bound to that transaction.
     func removeCheckout(checkoutSessionId: String, boundTo transactionId: String)
-    /// Records how far BillFn has confirmed the transaction; a recorded state never moves back. With `checkoutSessionId`
-    /// (the checkout BillFn confirmed it against), a confirmed or finished state also marks that binding confirmed.
-    func record(_ transaction: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState, against checkoutSessionId: String?)
-    func record(transactionId: String) -> BillFnStoreKitTransactionRecord?
-    /// Removes each checkout BillFn confirmed a transaction recorded finished against (the app stopped between finishing
-    /// it and removing the checkout). It never removes an outstanding checkout, nor one whose binding BillFn has not
-    /// confirmed.
+    /// Records how far BillFn has confirmed this observation of the transaction; a recorded state never moves back.
+    /// With a resolution, a confirmed or finished state also marks the binding it names: confirmed for `.checkout`,
+    /// restored for `.restore(rejectedCheckout:)`.
+    func record(_ transaction: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState, resolution: BillFnStoreKitResolution?)
+    /// The records of every observation of the transaction.
+    func records(transactionId: String) -> [BillFnStoreKitTransactionRecord]
+    /// Removes each checkout whose binding BillFn resolved, once its transaction is recorded finished (the app stopped
+    /// between finishing it and removing the checkout). It never removes an outstanding checkout, nor one whose binding
+    /// BillFn has not resolved.
     func removeUnneededCheckouts()
 }
 
@@ -261,6 +316,12 @@ extension BillFnStoreKitCheckoutStore {
         keptCheckouts().filter { $0.checkout.productId == productId }.map(\.checkout)
     }
 
+    /// The record of the observation of the transaction BillFn has confirmed furthest.
+    public func record(transactionId: String) -> BillFnStoreKitTransactionRecord? {
+        records(transactionId: transactionId).max { $0.state < $1.state }
+    }
+
+    /// Whether BillFn has confirmed any observation of the transaction.
     public func isConfirmed(transactionId: String) -> Bool {
         (record(transactionId: transactionId)?.state ?? .pending) >= .confirmed
     }
@@ -270,17 +331,18 @@ extension BillFnStoreKitCheckoutStore {
     }
 }
 
-/// Keeps checkouts and transaction records in `UserDefaults`. An outstanding checkout stays until its attempt is
+/// Keeps checkouts and transaction records in `UserDefaults`. The target's privacy manifest declares that use
+/// (`NSPrivacyAccessedAPICategoryUserDefaults`, reason CA92.1: the app's own defaults). An outstanding checkout stays until its attempt is
 /// cancelled or refused or a transaction bound to it is finished: StoreKit gives no evidence that an attempt (a
 /// purchase whose result was lost to a network error, an Ask to Buy request) will never produce a transaction.
-/// A pending record stays until BillFn confirms the transaction. Confirmed and finished records beyond the newest
+/// Pending and confirmed records stay until `finish()` returns. Finished records beyond the newest
 /// `confirmedTransactionLimit` are dropped, oldest first, but only once no kept checkout is bound to the transaction or
 /// could be claimed by it, and its purchase is older than the clock tolerance (so no checkout saved later could be).
 ///
 /// Every instance in the process serializes its reads and changes through one lock, so stores on the same defaults
 /// and key (each `BillFnStoreKit` makes its own by default) never lose each other's changes or both bind one checkout.
 public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore, @unchecked Sendable {
-    /// How many confirmed or finished transaction records the store keeps once none is still needed.
+    /// How many finished transaction records the store keeps once none is still needed.
     public static let confirmedTransactionLimit = 256
 
     private let defaults: UserDefaults
@@ -317,6 +379,7 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         var claimed: BillFnStoreKitCheckout?
         update { kept, records in
             if let purchaseCheckout {
+                guard transaction.matches(purchaseCheckout) else { return }
                 let index = kept.firstIndex { $0.checkout.checkoutSessionId == purchaseCheckout.checkoutSessionId }
                 if let index, kept[index].transactionId == nil {
                     kept[index] = kept[index].bound(to: id)
@@ -328,11 +391,11 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
                     return
                 }
             }
-            if let bound = kept.first(where: { $0.transactionId == id && !$0.confirmed }) ?? kept.first(where: { $0.transactionId == id }) {
+            if let bound = kept.first(where: { $0.transactionId == id && !$0.settled }) ?? kept.first(where: { $0.transactionId == id }) {
                 claimed = bound.checkout
                 return
             }
-            guard (records.first { $0.facts.transactionId == id }?.state ?? .pending) < .confirmed,
+            guard !records.contains(where: { $0.facts.transactionId == id && $0.state >= .confirmed }),
                   let index = kept.firstIndex(where: transaction.mayClaim) else { return }
             kept[index] = kept[index].bound(to: id)
             claimed = kept[index].checkout
@@ -352,39 +415,43 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
         }
     }
 
-    public func record(_ transaction: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState, against checkoutSessionId: String?) {
+    public func record(_ transaction: BillFnStoreKitTransactionFacts, state: BillFnStoreKitConfirmationState, resolution: BillFnStoreKitResolution?) {
         update { kept, records in
-            if state >= .confirmed, let index = kept.firstIndex(where: {
-                $0.checkout.checkoutSessionId == checkoutSessionId && $0.transactionId == transaction.transactionId
-            }) {
-                kept[index] = kept[index].bound(to: transaction.transactionId, confirmed: true)
+            if state >= .confirmed, let resolution {
+                for index in kept.indices where kept[index].transactionId == transaction.transactionId {
+                    kept[index] = kept[index].resolved(by: resolution)
+                }
             }
-            let previous = records.first { $0.facts.transactionId == transaction.transactionId }?.state
-            records.removeAll { $0.facts.transactionId == transaction.transactionId }
-            records.append(BillFnStoreKitTransactionRecord(facts: transaction, state: max(previous ?? state, state)))
+            let previous = records.first { $0.isObservation(of: transaction) }
+            records.removeAll { $0.isObservation(of: transaction) }
+            records.append(BillFnStoreKitTransactionRecord(
+                facts: transaction, state: max(previous?.state ?? state, state),
+                resolution: state >= .confirmed ? resolution ?? previous?.resolution : previous?.resolution
+            ))
             prune(&records, keeping: kept)
         }
     }
 
-    public func record(transactionId: String) -> BillFnStoreKitTransactionRecord? {
-        lock.withLock { loadRecords().first { $0.facts.transactionId == transactionId } }
+    public func records(transactionId: String) -> [BillFnStoreKitTransactionRecord] {
+        lock.withLock { loadRecords().filter { $0.facts.transactionId == transactionId } }
     }
 
     public func removeUnneededCheckouts() {
         update { kept, records in
             let finished = Set(records.filter { $0.state == .finished }.map(\.facts.transactionId))
-            kept.removeAll { $0.confirmed && ($0.transactionId.map(finished.contains) ?? false) }
+            kept.removeAll { $0.settled && ($0.transactionId.map(finished.contains) ?? false) }
             prune(&records, keeping: kept)
         }
     }
 
-    /// Drops the oldest confirmed and finished records beyond the limit that nothing needs any more.
+    /// Drops the oldest finished records beyond the limit that nothing needs any more. A pending or confirmed one
+    /// (`finish()` has not returned) is never dropped: the next launch retries it, from `Transaction.all` too.
     private func prune(_ records: inout [BillFnStoreKitTransactionRecord], keeping kept: [BillFnStoreKitKeptCheckout]) {
-        var excess = records.filter { $0.state >= .confirmed }.count - Self.confirmedTransactionLimit
+        var excess = records.filter { $0.state == .finished }.count - Self.confirmedTransactionLimit
         guard excess > 0 else { return }
         let recent = now().addingTimeInterval(-BillFnStoreKitTransactionFacts.checkoutClockTolerance)
         records.removeAll { record in
-            guard excess > 0, record.state >= .confirmed, record.facts.purchaseDate < recent,
+            guard excess > 0, record.state == .finished, record.facts.purchaseDate < recent,
                   !kept.contains(where: { $0.transactionId == record.facts.transactionId || record.facts.mayClaim($0) })
             else { return false }
             excess -= 1
@@ -415,4 +482,9 @@ public final class BillFnUserDefaultsCheckoutStore: BillFnStoreKitCheckoutStore,
               let records = try? JSONDecoder().decode([BillFnStoreKitTransactionRecord].self, from: data) else { return [] }
         return records
     }
+}
+
+enum BillFnStoreKitResources {
+    /// The privacy manifest bundled with the target.
+    static var privacyManifest: URL? { Bundle.module.url(forResource: "PrivacyInfo", withExtension: "xcprivacy") }
 }

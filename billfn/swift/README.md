@@ -40,7 +40,10 @@ func restorePurchasesTapped() async throws {
   checkout (`POST /checkouts/verify`); a renewal, an approved Ask to Buy request or a restored
   purchase is restored onto the plan its product maps to (`POST /purchases/restore`). A transaction
   BillFn does not confirm stays unfinished, so StoreKit offers it again and `start()` retries it
-  on the next launch.
+  on the next launch. BillFn's answer must carry the billing state: the verified checkout (the
+  requested `checkoutSessionId`) and a `subscription` object for a verification, a `subscription`
+  object for a restore. Any other success response is `BILLFN_INVALID_RESPONSE`, and the
+  transaction stays unfinished.
 - The checkout each purchase attempt opened is kept (in `UserDefaults` by default, by its
   `checkoutSessionId`) until its transaction is finished, so a purchase that completes after the
   app quits still verifies against it. A second attempt on the same product does not replace a
@@ -49,7 +52,10 @@ func restorePurchasesTapped() async throws {
   records the binding; it is removed once the transaction is finished. Binding is one atomic step
   for every `BillFnStoreKit` sharing the store, and is never undone: a checkout is bound to at most
   one transaction (a transaction gets a second checkout only as its purchase's own one), and each
-  binding records whether BillFn confirmed the transaction against it. So a transaction whose verify
+  binding records how BillFn resolved it: confirmed against the checkout, or restored onto the
+  plan after rejecting the checkout. A purchase's own checkout is bound only to a transaction of
+  its product and `appAccountToken`, and before the purchase waits for any other confirmation of
+  that transaction. So a transaction whose verify
   call failed, or that the app stopped before finishing, is verified against the same checkout on a
   later launch however late, and no other transaction can take it. StoreKit can leave an unfinished
   transaction out of `Transaction.unfinished`, so its absence is never taken as finished: the
@@ -64,16 +70,21 @@ func restorePurchasesTapped() async throws {
   and macOS 13. A first purchase, an upgrade, a crossgrade or a resubscription bought through its own
   checkout claims it; a renewal, including one that recovers from billing retry, is restored onto its
   plan (or skipped if none maps). A transaction whose reason is unknown claims no outstanding checkout.
-- Each transaction BillFn is asked to confirm is recorded as pending, then confirmed before it is
-  finished, then finished. A pending or unfinished one is retried on every launch, from
-  `Transaction.all` too, renewals and restored purchases included. A confirmed one offered again (a
-  redelivered update, `restore()`) never claims an outstanding checkout. Confirmed records beyond the
-  newest 256 are dropped only once no kept checkout could be claimed by their transaction.
-- When BillFn rejects verifying a transaction against its checkout for good (a non-retryable error
-  with a BillFn error code, such as `BILLFN_CONFLICT`) and a plan maps the product, the transaction is
-  restored onto that plan instead and finished. A `BILLFN_HTTP_ERROR` (a gateway or proxy answered
-  without a BillFn error envelope) never falls back: the transaction stays unfinished with its checkout. With no plan, it stays unfinished with its checkout and every launch reports
-  the same non-retryable failure; resolve it on the BillFn side.
+- Each observation of a transaction BillFn is asked to confirm (unrevoked, or revoked once
+  refunded) is recorded as pending, then confirmed before it is finished, then finished. A pending or
+  unfinished one is retried on every launch, from `Transaction.all` too, renewals and restored
+  purchases included, and so is a refund of a transaction BillFn confirmed unrevoked. A transaction
+  BillFn confirmed offered again (a redelivered update, `restore()`) never claims an outstanding
+  checkout. Finished records beyond the newest 256 are dropped only once no kept checkout could be
+  claimed by their transaction; pending and confirmed ones never are.
+- When BillFn rejects verifying a transaction against its checkout for good (`BILLFN_CONFLICT`, such
+  as once a later renewal superseded it) and a plan maps the product, the transaction is restored
+  onto that plan instead and finished; the store records that restore as the binding's resolution,
+  not as a confirmation against the checkout. Any other error (`BILLFN_INTERNAL_ERROR`, a
+  `BILLFN_HTTP_ERROR` from a gateway, a network failure) never falls back: the transaction stays
+  unfinished with its checkout and is verified again on the next launch. With no plan, a
+  `BILLFN_CONFLICT` also leaves it unfinished with its checkout, and every launch reports the same
+  failure; resolve it on the BillFn side.
 - An outstanding checkout (no transaction yet) is removed only on evidence that its attempt
   produced no transaction: a purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once. Any other thrown error
@@ -93,6 +104,14 @@ func restorePurchasesTapped() async throws {
   (an update during a purchase) joins that pass; one that changed meanwhile (refunded), or a purchase's
   own result while a pass without its checkout runs, is confirmed in its own pass after it, so its
   outcome comes last.
+
+## Privacy manifest
+
+`BillFnStoreKit` bundles a privacy manifest declaring its `UserDefaults` use
+(`NSPrivacyAccessedAPICategoryUserDefaults`, reason `CA92.1`: data only the app reads). A host that
+passes `BillFnUserDefaultsCheckoutStore` an App Group suite shared with other apps or extensions
+declares reason `1C8F.1` in its own app's privacy manifest. The host app also declares in its own
+manifest the purchase data its BillFn server collects.
 
 ## Test
 

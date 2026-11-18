@@ -22,7 +22,8 @@ let package = Package(
         .target(name: "BillFnClient"),
         .target(
             name: "BillFnStoreKit",
-            dependencies: ["BillFnClient"]
+            dependencies: ["BillFnClient"],
+            resources: [.copy("PrivacyInfo.xcprivacy")]
         ),
         .target(
             name: "BillFnWebViewBridgeHost",
