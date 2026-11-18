@@ -300,48 +300,34 @@ struct BillFnStoreKitBackendTests {
         #expect(kept.map(\.transactionId) == [nil, "2000000001", nil])
     }
 
-    @Test("Keeps an expired outstanding checkout while a recent listed purchase could claim it, else removes it a grace period after marking it")
-    func expiresOutstandingCheckoutsOnlyOnRepeatedEvidence() throws {
+    @Test("Marks an expired outstanding checkout on the first reconciliation and removes it a grace period later")
+    func expiresOutstandingCheckoutsOnASecondReconciliation() throws {
         let defaults = try #require(UserDefaults(suiteName: "billfn.storekit.backend-tests.\(UUID().uuidString)"))
         let clock = TestClock()
         let store = BillFnUserDefaultsCheckoutStore(defaults: defaults, retention: 7 * day, now: { clock.now })
         let account = UUID(uuidString: token)!
         let checkout = { (id: String) in BillFnStoreKitCheckout(checkoutSessionId: id, productId: "apple.pro.month", appAccountToken: account) }
-        for id in ["chk_listed", "chk_listed_long_ago", "chk_unlisted"] {
-            store.save(checkout(id))
-        }
+        store.save(checkout("chk_unclaimed"))
+        store.save(checkout("chk_claimed"))
         clock.advance(by: 8 * day)
-        let sessionIds = { store.keptCheckouts().map(\.checkout.checkoutSessionId) }
-        let unclaimedSince = { (id: String) in store.keptCheckouts().first { $0.checkout.checkoutSessionId == id }?.unclaimedSince }
-        // A purchase from within the retention keeps its checkout; one older than that (finished on another device
-        // long ago) does not, so that checkout, like the unlisted one, is only marked.
-        let listed = ["chk_listed": clock.now.addingTimeInterval(-day), "chk_listed_long_ago": clock.now.addingTimeInterval(-8 * day)]
         let marked = clock.now
-        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
-        #expect(sessionIds() == ["chk_listed", "chk_listed_long_ago", "chk_unlisted"])
-        #expect(unclaimedSince("chk_listed") == nil)
-        #expect(unclaimedSince("chk_unlisted") == marked)
+        let sessionIds = { store.keptCheckouts().map(\.checkout.checkoutSessionId) }
 
-        // A launch whose history lists nothing marks the listed one, and keeps the marked ones within the grace period.
+        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
+        #expect(sessionIds() == ["chk_unclaimed", "chk_claimed"])
+        #expect(store.keptCheckouts().map(\.unclaimedSince) == [marked, nil])
+
+        // Within the grace period a reconciliation keeps it, marked when first found unclaimed.
         clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace - 60)
-        store.removeUnneededCheckouts(excluding: [], listedPurchases: [:])
-        #expect(sessionIds() == ["chk_listed", "chk_listed_long_ago", "chk_unlisted"])
-        #expect(unclaimedSince("chk_listed") == clock.now)
-        #expect(unclaimedSince("chk_unlisted") == marked)
+        store.removeUnneededCheckouts(excluding: ["chk_claimed"])
+        #expect(sessionIds() == ["chk_unclaimed", "chk_claimed"])
+        #expect(store.keptCheckouts().map(\.unclaimedSince) == [marked, nil])
 
-        // Listed again, its mark is cleared; the grace period after marking them, the others are removed.
+        // A grace period after marking it, it goes; the claimed one is marked only now.
         clock.advance(by: 60)
-        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
-        #expect(sessionIds() == ["chk_listed"])
-        #expect(unclaimedSince("chk_listed") == nil)
-
-        // Once its purchase is older than the retention it is marked, then removed a grace period later.
-        clock.advance(by: 7 * day)
-        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
-        #expect(unclaimedSince("chk_listed") == clock.now)
-        clock.advance(by: BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        store.removeUnneededCheckouts(excluding: [], listedPurchases: listed)
-        #expect(sessionIds().isEmpty)
+        store.removeUnneededCheckouts(excluding: [])
+        #expect(sessionIds() == ["chk_claimed"])
+        #expect(store.keptCheckouts().map(\.unclaimedSince) == [clock.now])
     }
 
     @Test("Records the newest confirmed transactions across stores")

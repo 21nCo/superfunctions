@@ -71,11 +71,12 @@ let restored = try await storeKit.restore()
   or an interrupted purchase waiting. Retention takes effect at the next
   `processUnfinishedTransactions()` (run by `start()`), after every unfinished transaction has been
   offered the checkouts it could claim: an expired checkout stays claimable until then, so a purchase
-  that completed while the app was not running is still verified against it. After that, an expired
-  checkout stays while `Transaction.all` lists a purchase from the last 30 days that could claim it
-  (StoreKit can leave that transaction out of `Transaction.unfinished`); otherwise the first launch
-  that finds it unclaimed marks it, and a launch at least a day later removes it, so one launch whose
-  StoreKit cache is incomplete never drops it. A purchase StoreKit refuses before it reaches the App Store
+  that completed while the app was not running is still verified against it. StoreKit can leave an
+  unfinished transaction out of `Transaction.unfinished`, so that pass also confirms each transaction
+  in `Transaction.all` that a kept checkout waits for (matched to it and not finished, or one it could
+  claim that BillFn has not confirmed). An expired checkout still unclaimed after that is marked, and
+  removed by a launch at least a day later, so one launch whose StoreKit cache is incomplete never
+  drops it. A purchase StoreKit refuses before it reaches the App Store
   (`Product.PurchaseError`) or the user cancels drops its checkout at once; any other thrown error
   (such as a network failure) keeps it, since the purchase may still complete.
 - `start(updates:)` takes the transaction updates to listen to in place of `Transaction.updates`,

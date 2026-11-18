@@ -428,9 +428,9 @@ final class BillFnStoreKitTests: BillFnStoreKitTestCase {
 
         await backend.failVerification(with: nil)
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
-        // A launch whose enumeration leaves the unfinished transaction out does not take it as finished: BillFn has not
-        // confirmed it, so its checkout stays past its retention.
-        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
+        // A launch whose StoreKit cache leaves the unfinished transaction out of every enumeration does not take it as
+        // finished: BillFn has not confirmed it, so its checkout stays past its retention.
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: noTransactions())
         XCTAssertTrue(omitted.isEmpty)
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.transactionId), [failed.transaction.transactionId])
         let nextLaunch = launch(backend, plans: [], now: later)
@@ -961,12 +961,11 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
     }
 
     /// BillFn confirmed a transaction matched to a checkout but the app stopped before finishing it. A launch a
-    /// retention period later whose enumeration leaves the transaction out keeps its checkout, and that of a transaction
-    /// BillFn never confirmed; it drops one whose transaction is recorded finished (the app stopped between finishing it
-    /// and removing the checkout), and marks an expired outstanding checkout no listed purchase could claim (the only
-    /// listed one is confirmed). The next launch, a grace period later, still verifies the transaction against its
-    /// checkout and finishes it, with no plans, so without that checkout it would be skipped for good, and drops the
-    /// marked checkout.
+    /// retention period later whose StoreKit cache leaves the transaction out of every enumeration keeps its checkout,
+    /// and that of a transaction BillFn never confirmed; it drops one whose transaction is recorded finished (the app
+    /// stopped between finishing it and removing the checkout), and only marks an expired outstanding checkout. The next
+    /// launch, a grace period later, still verifies the transaction against its checkout and finishes it, with no
+    /// plans, so without that checkout it would be skipped for good, and drops the marked checkout.
     func testConfirmedTransactionLeftUnfinishedIsVerifiedAndFinishedOnTheNextLaunch() async throws {
         let backend = FakeBillFnBackend()
         let bought = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
@@ -984,7 +983,7 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         checkoutStore.markMatched(unconfirmed, transactionId: "987654322")
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
-        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
+        let omitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: noTransactions())
         XCTAssertTrue(omitted.isEmpty)
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [outstanding, confirmed, unconfirmed])
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().first?.unclaimedSince, later)
@@ -1002,54 +1001,56 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         XCTAssertEqual(checkoutStore(now: later).keptCheckouts().map(\.checkout), [unconfirmed])
     }
 
-    /// A purchase completed while the app was not running (an approved Ask to Buy request, an interrupted purchase),
-    /// so it was never matched to its outstanding checkout, and its attempt started more than a retention period ago. A
-    /// launch whose `Transaction.unfinished` leaves the transaction out keeps that expired checkout, since
-    /// `Transaction.all` lists a recent purchase that could claim it, and only marks an abandoned attempt no listed
-    /// purchase could claim. A launch whose StoreKit cache leaves the transaction out of both enumerations does not
-    /// drop the checkout either. The next launch that offers the transaction, a grace period later, still verifies it
-    /// against the checkout, with no plans (without the checkout it would be skipped for good), finishes it, and drops
-    /// the abandoned attempt.
+    /// A purchase completed while the app was not running (an approved Ask to Buy request, an interrupted purchase), so
+    /// it was never matched to its outstanding checkout, and the app is next launched more than a retention period
+    /// later. A launch whose StoreKit cache leaves the transaction out of every enumeration only marks the expired
+    /// checkouts. A launch a grace period later whose `Transaction.unfinished` still leaves it out finds it in
+    /// `Transaction.all`, as the checkout waits for it: it verifies it against that checkout, with no plans (without the
+    /// checkout it would be skipped for good), keeps it unfinished while BillFn cannot confirm it, and drops the
+    /// abandoned attempt. The next such launch finishes it once BillFn confirms it.
     func testTransactionCompletedWhileStoppedIsVerifiedAgainstItsExpiredCheckout() async throws {
         let backend = FakeBillFnBackend()
         let attempt = BillFnStoreKitCheckout(checkoutSessionId: "chk_attempt", productId: proLifetime, appAccountToken: backend.appAccountToken)
         let abandoned = BillFnStoreKitCheckout(checkoutSessionId: "chk_abandoned", productId: proMonthly, appAccountToken: backend.appAccountToken)
-        let started = Date().addingTimeInterval(-BillFnUserDefaultsCheckoutStore.defaultRetention - 24 * 60 * 60)
-        checkoutStore(now: started).save(abandoned)
-        checkoutStore(now: started).save(attempt)
+        checkoutStore.save(abandoned)
+        checkoutStore.save(attempt)
         // StoreKit completes the attempt's purchase; no BillFnStoreKit sees it before the next launch.
         let completed = try await buyOutsideBillFn(proLifetime, appAccountToken: backend.appAccountToken)
 
-        let now = Date()
-        let unfinishedOmitted = await launch(backend, plans: [], now: now).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
-        XCTAssertTrue(unfinishedOmitted.isEmpty)
+        let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
+        let allOmitted = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: noTransactions())
+        XCTAssertTrue(allOmitted.isEmpty)
         XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [abandoned, attempt])
-        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.unclaimedSince), [now, nil])
-        let bothOmitted = await launch(backend, plans: [], now: now).processUnfinishedTransactions(noTransactions(), history: noTransactions())
-        XCTAssertTrue(bothOmitted.isEmpty)
-        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [abandoned, attempt])
-        let verificationsWhileOmitted = await backend.verifications
-        XCTAssertTrue(verificationsWhileOmitted.isEmpty)
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.unclaimedSince), [later, later])
 
-        let later = now.addingTimeInterval(BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        let outcomes = await launch(backend, plans: [], now: later).processUnfinishedTransactions()
+        await backend.failVerification(with: URLError(.notConnectedToInternet))
+        let graceLater = later.addingTimeInterval(BillFnUserDefaultsCheckoutStore.unclaimedGrace)
+        let failed = await launch(backend, plans: [], now: graceLater).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
+        XCTAssertEqual(failed.map(\.transaction.transactionId), [String(completed.id)])
+        XCTAssertEqual(failed.map(\.finished), [false])
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [attempt])
+        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.transactionId), [String(completed.id)])
+        try await assertUnfinished(completed.id)
+
+        await backend.failVerification(with: nil)
+        let nextLater = graceLater.addingTimeInterval(BillFnUserDefaultsCheckoutStore.unclaimedGrace)
+        let outcomes = await launch(backend, plans: [], now: nextLater).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
 
         let outcome = try XCTUnwrap(outcomes.first { $0.transaction.transactionId == String(completed.id) })
         XCTAssertTrue(outcome.finished)
         let verifications = await backend.verifications
-        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_attempt"])
-        XCTAssertEqual(verifications.first?.transaction.transactionId, String(completed.id))
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_attempt", "chk_attempt"])
+        XCTAssertEqual(verifications.map(\.transaction.transactionId), [String(completed.id), String(completed.id)])
         let restores = await backend.restores
         XCTAssertTrue(restores.isEmpty)
         try await assertFinished(outcome)
-        XCTAssertEqual(checkoutStore(now: later).keptCheckouts(), [])
+        XCTAssertEqual(checkoutStore.keptCheckouts(), [])
     }
 
-    /// A purchase on the billing account finished on another device: this device never confirms it, and
-    /// `Transaction.all` keeps listing it. Once it is older than the retention it no longer keeps an expired checkout
-    /// it could claim: a launch marks the checkout and one a grace period later drops it, so the transaction, offered
-    /// again, claims nothing and with no plans is skipped.
-    func testPurchaseFinishedElsewhereLetsAnExpiredCheckoutGo() async throws {
+    /// A purchase on the billing account finished on another device: this device has not confirmed it, so the first
+    /// launch whose `Transaction.all` lists it verifies it against the expired checkout it could claim, and BillFn
+    /// decides. Once BillFn confirms it, the checkout goes, and the transaction, offered again, claims nothing.
+    func testPurchaseFinishedElsewhereIsConfirmedAgainstTheCheckoutItCouldClaim() async throws {
         let backend = FakeBillFnBackend()
         let leftover = BillFnStoreKitCheckout(checkoutSessionId: "chk_leftover", productId: proLifetime, appAccountToken: backend.appAccountToken)
         checkoutStore.save(leftover)
@@ -1058,18 +1059,15 @@ final class BillFnStoreKitUpdateTests: BillFnStoreKitTestCase {
         let listed = try await listedTransaction(elsewhere.id)
 
         let later = Date().addingTimeInterval(BillFnUserDefaultsCheckoutStore.defaultRetention + 24 * 60 * 60)
-        let marking = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
-        XCTAssertTrue(marking.isEmpty)
-        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.checkout), [leftover])
-        XCTAssertEqual(checkoutStore.keptCheckouts().map(\.unclaimedSince), [later])
-        let graceLater = later.addingTimeInterval(BillFnUserDefaultsCheckoutStore.unclaimedGrace)
-        let dropping = await launch(backend, plans: [], now: graceLater).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
-        XCTAssertTrue(dropping.isEmpty)
+        let outcomes = await launch(backend, plans: [], now: later).processUnfinishedTransactions(noTransactions(), history: Transaction.all)
+        XCTAssertEqual(outcomes.map(\.transaction.transactionId), [String(elsewhere.id)])
+        XCTAssertEqual(outcomes.map(\.finished), [true])
         XCTAssertEqual(checkoutStore.keptCheckouts(), [])
+        XCTAssertTrue(checkoutStore.isFinished(transactionId: String(elsewhere.id)))
 
-        let offeredAgain = await launch(backend, plans: [], now: graceLater).process(listed)
+        let offeredAgain = await launch(backend, plans: [], now: later).process(listed)
         XCTAssertEqual(offeredAgain.status, .skipped("No BillFn checkout or plan for product \(proLifetime)"))
         let verifications = await backend.verifications
-        XCTAssertTrue(verifications.isEmpty)
+        XCTAssertEqual(verifications.map(\.checkoutSessionId), ["chk_leftover"])
     }
 }
