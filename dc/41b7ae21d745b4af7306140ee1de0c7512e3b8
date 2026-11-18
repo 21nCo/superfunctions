@@ -1,0 +1,21 @@
+billfn/docs/content/docs/recipes/multi-region-workers.mdx
+  s_ed2d5292128f39::t_f73132ff45e6a2 500-507,538
+billfn/docs/scripts/check-recipe-types.test.mjs
+  s_ed2d5292128f39::t_d1cc8a06e5599e 442,477-504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc41b7ae21d745b4af7306140ee1de0c7512e3b8",
+  "prompts": {},
+  "sessions": {
+    "s_ed2d5292128f39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4150e63b-836c-4200-b50c-5e0904549cfe",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
