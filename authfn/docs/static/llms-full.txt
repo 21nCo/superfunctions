@@ -11269,7 +11269,7 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`auth.provider.authenticate` checks the cookie session first: a valid cookie session is returned even when the request also has an `Authorization` header. Otherwise it returns `None` for a request with no credentials and raises an `AuthFnError` subclass for an `Authorization` header that does not authenticate.
+`auth.provider.authenticate` checks the cookie session first: a valid cookie session is returned even when the request also has an `Authorization` header. Otherwise it returns `None` when the request has no `Authorization` header (including a missing, revoked or expired session cookie) and raises an `AuthFnError` subclass for an `Authorization` header that does not authenticate.
 
 `AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `credential`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions follow the TypeScript rules (`authfn` 0.5.0 and later); see below.
 
