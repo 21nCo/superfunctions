@@ -1,0 +1,31 @@
+.github/workflows/swift.yml
+  s_3ce9228458d921::t_071665f1a64bc3 152-153,157-164
+billfn/swift-bridge/README.md
+  s_3ce9228458d921::t_15c447700401f9 41-43
+billfn/swift-bridge/src/__tests__/storekit.test.ts
+  s_3ce9228458d921::t_554ed980d49573 303
+billfn/swift-bridge/src/protocol.ts
+  s_3ce9228458d921::t_aae23f5e4eab99 56-57,103-104,117
+billfn/swift-bridge/src/wkwebviewBus.ts
+  s_3ce9228458d921::t_c0d6aa30f83a05 136
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_3ce9228458d921::t_a0ffa65dcc5e89 431-434,447-451,459,462-465
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_3ce9228458d921::t_df9f32b8001816 7-8,14-17,25-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a724b8adacd048586cd30f19ba8e1a92c60bbd1",
+  "prompts": {},
+  "sessions": {
+    "s_3ce9228458d921": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3ce9228458d921",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
