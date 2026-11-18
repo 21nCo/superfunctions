@@ -1,0 +1,23 @@
+filefn/processing/container/package.json
+  s_95836cb080755a::t_01b4752b7e863d 17
+filefn/processing/package.json
+  s_95836cb080755a::t_7c408b186356bc 3
+package-lock.json
+  s_95836cb080755a::t_732b15513540aa 13348,13366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d40b2607ab1457d123841c4efcfa183df24c0220",
+  "prompts": {},
+  "sessions": {
+    "s_95836cb080755a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee3eb747-698c-4116-ab07-166c3a2865c0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
