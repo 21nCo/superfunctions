@@ -43,6 +43,7 @@ from ..types import (
     UnauthorizedError,
     ValidationError,
 )
+from .api_keys import find_active_api_key_owner
 from .multi_region import MultiRegionPluginConfig
 
 CONTEXT_KIND = "placement-context"
@@ -515,11 +516,9 @@ async def _resolve_api_key_principal(
     user_id = row.get("userId")
     if not user_id:
         raise UnauthorizedError(AUTH_REQUIRED)
-    user = await config.database.find_one(
-        model="users",
-        where=[{"field": "id", "operator": "eq", "value": user_id}],
-        namespace=config.namespace,
-    )
+    # Same owner-eligibility rule as ApiKeyService.authenticate: a deleted or
+    # disabled owner leaves the key authenticating as no one.
+    user = await find_active_api_key_owner(config, user_id)
     if user is None:
         raise UnauthorizedError(AUTH_REQUIRED)
     raw_scopes = row.get("scopes")

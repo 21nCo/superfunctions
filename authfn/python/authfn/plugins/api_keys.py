@@ -64,6 +64,33 @@ def _assert_valid_name(name: str) -> None:
         raise ValidationError("API key name must be 128 UTF-8 bytes or fewer")
 
 
+def is_authfn_user_disabled(user: Dict[str, Any]) -> bool:
+    """AuthFn has no user status column; a host disables a user by setting
+    ``metadata["disabled"]`` to ``True`` on the user record."""
+    metadata = user.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("disabled") is True
+
+
+async def find_active_api_key_owner(
+    config: AuthFnConfig, user_id: str
+) -> Optional[Dict[str, Any]]:
+    """Load the owner an API key acts as.
+
+    Returns ``None`` when the owner was deleted or is disabled, so the key
+    fails authentication. Shared by every API-key authentication path
+    (``ApiKeyService.authenticate`` and the placement-context issuer) so they
+    cannot disagree on owner eligibility.
+    """
+    owner = await config.database.find_one(
+        model="users",
+        where=[{"field": "id", "operator": "eq", "value": user_id}],
+        namespace=config.namespace,
+    )
+    if owner is None or is_authfn_user_disabled(owner):
+        return None
+    return owner
+
+
 @dataclass
 class ApiKeyPluginConfig:
     now: Any = _default_now
@@ -180,6 +207,15 @@ class ApiKeyService:
             now = now.astimezone(timezone.utc)
         if expires_at is not None and expires_at <= now:
             raise ExpiredCredentialsError("API key has expired")
+        # An owned key acts as its owner, so the owner must still be able to
+        # act: with a deleted or disabled owner the key fails authentication,
+        # no session is issued and the key is not touched.
+        owner: Optional[Dict[str, Any]] = None
+        owner_id = row.get("userId")
+        if owner_id is not None:
+            owner = await find_active_api_key_owner(self.config, owner_id)
+            if owner is None:
+                return None
         await self.config.database.update(
             model="api_keys",
             where=[{"field": "id", "operator": "eq", "value": row["id"]}],
@@ -187,19 +223,27 @@ class ApiKeyService:
             namespace=self.config.namespace,
         )
         metadata = dict(row.get("metadata") or {})
+        actor = (
+            {"actorId": owner["id"], "actorType": "user"}
+            if owner is not None
+            else {"actorId": row["id"], "actorType": "api-key"}
+        )
         return AuthFnSession.model_validate(
             {
                 "id": row["id"],
                 "type": "api-key",
-                "actorType": "api-key",
-                "actorId": row["id"],
+                "subject": dict(actor),
+                **actor,
+                "credential": {"type": "api-key", "id": row["id"]},
                 "resourceIds": metadata.get("resourceIds"),
                 "methods": ["api-key"],
                 "expiresAt": expires_at,
+                # Stored key metadata first, so it cannot override the owner
+                # or the stored scopes.
                 "metadata": {
-                    "ownerUserId": row.get("userId"),
-                    "scopes": row.get("scopes") or [],
                     **metadata,
+                    "ownerUserId": owner["id"] if owner is not None else None,
+                    "scopes": row.get("scopes") or [],
                 },
             }
         )
@@ -277,4 +321,6 @@ __all__ = [
     "ApiKeyPluginConfig",
     "ApiKeyService",
     "authfn_api_key_plugin",
+    "find_active_api_key_owner",
+    "is_authfn_user_disabled",
 ]

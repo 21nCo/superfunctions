@@ -61,7 +61,7 @@ In the TypeScript `authfn` package (0.5.0 and later), a user-owned key acts as i
 
 `session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
 
-> **Python SDK:** the Python `authfn` package has not adopted these rules or the scope registry yet. Its API-key sessions keep `actor_type` `'api-key'` with the key ID as `actor_id`, expose the owner only through `metadata.ownerUserId` (which metadata stored on the key can override), have no `credential` field, and do not check whether the owner was deleted or disabled. Disabling a user does not cut off their keys in a Python host; revoke the keys as well. See [SDKs → Python](../sdk/python#api-key-sessions).
+> **Python SDK:** the Python `authfn` package (0.2.0 and later) applies the same actor, `credential` and owner rules: an owned key acts as its owner, and a key whose owner was deleted or disabled fails authentication. It has no scope registry or `require_scopes` yet. See [SDKs → Python](../sdk/python#api-key-sessions).
 
 The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`. In TypeScript (`authfn` 0.7.0 and later), `AuthFnSession` is the union `AuthFnUserSession | AuthFnApiKeySession`: checking `session.type === 'api-key'` narrows `session.credential` to a required `{ type: 'api-key', id }`, and `session.type === 'session'` narrows it to `undefined`. A custom authenticator that returns `type: 'api-key'` without `credential` no longer compiles. To authorize a request, call `requireScopes` (below) on any session rather than branching on its type.
 

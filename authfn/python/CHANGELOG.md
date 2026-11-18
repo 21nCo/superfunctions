@@ -7,18 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Added
 - Placement-bound auth context issuer (`create_placement_context_issuer`) for trusted in-process and private-service consumers.
 
 ### Changed
+- API-key sessions match the TypeScript `authfn` package (0.5.0 and later): a user-owned key authenticates as its owner (`actor_type='user'`, `actor_id` and `subject` = the owner's user ID), and an unowned service key keeps `actor_type='api-key'` with the key ID.
+- `AuthFnSession` has a `credential` field (`AuthFnApiKeyCredential`, `{type: 'api-key', id}`), set for every API-key session.
+- A key whose owner was deleted or is disabled (`metadata["disabled"] is True` on the user record) fails authentication: `ApiKeyService.authenticate` returns `None` without updating `lastUsedAt`, and the placement-context issuer raises `UnauthorizedError`. Both paths share `find_active_api_key_owner`.
+- In an API-key session's `metadata`, `ownerUserId` and `scopes` are written after the key's stored metadata, so stored metadata can no longer override them.
 - Package description now describes the Python kernel rather than an API-key-only library.
 
 ### Removed
 - Standalone-SDK wrapper debris: `setup.py`, interactive `publish.sh` / `Makefile`, unused `black` extra, dead `authfn/adapter.py`, and bootstrap docs (`IMPLEMENTATION_SUMMARY.md`, `PACKAGE_INFO.md`, `COMPARISON.md`, `INSTALLATION.md`, `QUICKSTART.md`, `PUBLISHING.md`).
 - Dead `__getattr__` lazy-import for `SocialOAuth*` names that were already exported at module load.
-
-### Fixed
-- Nothing yet
 
 ## [0.1.0] - 2026-01-12
 
