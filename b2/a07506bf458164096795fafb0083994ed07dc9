@@ -1,0 +1,25 @@
+flowfn/typescript/src/queue/lease-deadline.test.ts
+  s_7b9cb0c1744f3d::t_b2373cb2415b56 67-91
+flowfn/typescript/src/queue/queue.ts
+  s_7b9cb0c1744f3d::t_c4740ae1b16b71 21-23,449-460,480,603-621,701
+flowfn/typescript/src/queue/shutdown-release.test.ts
+  s_7b9cb0c1744f3d::t_3cee7649344a08 1-78
+flowfn/typescript/docs/API.md
+  s_7b9cb0c1744f3d::t_e501b944d4fa51 829,852,868-870
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2a07506bf458164096795fafb0083994ed07dc9",
+  "prompts": {},
+  "sessions": {
+    "s_7b9cb0c1744f3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1176174e-0ec3-4f62-8a16-09ab6a23a889",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
