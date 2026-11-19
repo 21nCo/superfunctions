@@ -1,0 +1,21 @@
+billfn/provider-apple/src/__tests__/provider-builtins.test.ts
+  s_632bb13a162368::t_0329bc9710f817 416-418,426-447
+billfn/provider-apple/src/index.ts
+  s_632bb13a162368::t_40d484dafaa406 21,758,788-797
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36083c352138bb0f8db045955c0fee1cb3772601",
+  "prompts": {},
+  "sessions": {
+    "s_632bb13a162368": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ad19d581-e7f0-49fe-9aa2-e32437ab9294",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
