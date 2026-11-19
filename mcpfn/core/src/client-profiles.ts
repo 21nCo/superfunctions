@@ -630,7 +630,8 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
         reject("Draft-07 $ref assertion siblings are unsupported in projected catalogs");
       }
     }
-    if (!invalid && !Array.isArray(value) && typeof schemaValue.$id === "string") {
+    // An empty $id names no resource, as at runtime: the schema stays anonymous.
+    if (!invalid && !Array.isArray(value) && typeof schemaValue.$id === "string" && schemaValue.$id !== "") {
       let address: URL | undefined;
       let name: string | undefined;
       try { address = new URL(schemaValue.$id, parentBase); }
@@ -645,6 +646,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
               resourceKey(address) !== resourceKey(new URL(parentBase))) {
             reject("Unsupported schema resource ID fragment");
           } else ids.set(`${local}#${name}`, schemaValue);
+        } else if (resourceRoots.has(resourceKey(address)) &&
+            canonicalJson(resourceRoots.get(resourceKey(address))) !== canonicalJson(schemaValue)) {
+          // A different schema already owns this ID; never let it replace the
+          // target of that resource's references.
+          reject("Duplicate schema resource ID");
         } else {
           resource = schemaValue;
           local = resourceKey(address);

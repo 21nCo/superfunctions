@@ -1330,6 +1330,27 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     await expect(buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved(schema("number")) })).rejects.toThrow(/must retain its canonical schema/);
   });
 
+  // An empty $id leaves the root anonymous, and a schema with different content
+  // can never take over an ID another resource already owns.
+  it.each([
+    // Valid schema: the projection changes the root's own definition, so it is asymmetric.
+    ["an empty root $id beside a nested $id \"/\"", { $id: "" }, "/", "MCPFN_PROFILE_ASYMMETRIC"],
+    // A nested schema with different content claiming the root's $id is refused outright.
+    ["an identified root beside a nested duplicate of its $id", { $id: "https://profile.invalid/root" }, "https://profile.invalid/root", "MCPFN_INVALID_PROJECTED_CATALOG"],
+  ])("keeps the root's local references with %s", async (_label, identity, nestedId, code) => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const schema = (type: string) => ({ ...identity, type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: nestedId, definitions: { query: { type: "string" } } } }, definitions: { query: { type } } });
+    const resolved = (projected?: ReturnType<typeof schema>) => ({
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
+    });
+    const canonicalTools = [{ name: "search", inputSchema: schema("string") }];
+    if (code === "MCPFN_PROFILE_ASYMMETRIC") {
+      expect((await buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved() })).tools.map((tool) => tool.name)).toEqual(["search"]);
+    }
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved(schema("number")) })).rejects.toMatchObject({ code });
+  });
+
   it("compares a relative shared target when a projection changes it", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const provider = { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } };
