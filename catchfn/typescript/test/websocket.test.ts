@@ -444,6 +444,36 @@ describe("WebSocketCollector", () => {
     });
   }
 
+  it("never nests installs: a restart during a deferred install keeps one session, and the last stop() restores everything", () => {
+    let step = 0;
+    const global = hookAccess({
+      onWrite: () => {
+        if (step === 1) {
+          step = 2;
+          collector.start(); // During stop()'s restore: deferred.
+        }
+      },
+      onRead: () => {
+        if (step === 2) {
+          step = 3;
+          collector.stop(); // During the deferred install, which reads the global first.
+          collector.start();
+        }
+      },
+    });
+    collector.start();
+    step = 1;
+    collector.stop();
+    expect(step).toBe(3);
+    const socket = new (global.value as typeof PageSocket)("wss://example.com/nested");
+    socket.serverOpens();
+    socket.send("x");
+    expect(collector.collect().map(({ type, size }) => [type, size])).toEqual([["open", undefined], ["message", 1]]);
+    collector.stop();
+    expect(global.value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
   it("records a binary size only when it is a nonnegative safe integer, keeping the event", () => {
     collector.start();
     const socket = openSocket("wss://example.com/sizes");

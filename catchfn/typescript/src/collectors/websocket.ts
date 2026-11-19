@@ -397,39 +397,49 @@ function install(current: Set<Listener>): (() => void) | undefined {
   return undo;
 }
 
-// True while a session's restore runs, and whether page code it ran (a
-// WebSocket getter or setter) started a session that still has to install.
-let tearingDown = false;
+// True while a session installs or restores (either can run page code, a
+// WebSocket getter or setter), and whether a session started meanwhile still
+// has to install. Installs and restores never nest, so `restore` always
+// undoes exactly the wrappers installed.
+let busy = false;
 let installDeferred = false;
 
-/**
- * Installs the wrappers for a new session, or, during a restore, once the
- * restore has finished: never over the constructor being restored.
- */
+function exclusive(step: () => void): void {
+  busy = true;
+  try {
+    step();
+  } finally {
+    busy = false;
+  }
+}
+
+/** Installs the wrappers for a new session, or, while another installs or restores, once it has finished. */
 function installFor(current: Set<Listener>): void {
-  if (tearingDown) {
+  if (busy) {
     installDeferred = true;
     return;
   }
-  restore = install(current);
-  // Page code installing ran may have stopped every collector of the session.
-  if (current === listeners && current.size === 0) teardown();
+  let undo: (() => void) | undefined;
+  exclusive(() => {
+    undo = install(current);
+  });
+  // A session whose collectors all stopped while it installed is removed at once.
+  if (current.size > 0) restore = undo;
+  else if (undo) exclusive(undo);
+  installNext();
 }
 
 function teardown(): void {
   const undo = restore;
   restore = undefined;
-  if (!undo) return;
-  tearingDown = true;
-  try {
-    undo();
-  } finally {
-    tearingDown = false;
-  }
-  if (installDeferred) {
-    installDeferred = false;
-    if (listeners.size > 0) installFor(listeners);
-  }
+  if (undo) exclusive(undo);
+  installNext();
+}
+
+function installNext(): void {
+  if (busy || !installDeferred) return;
+  installDeferred = false;
+  if (listeners.size > 0) installFor(listeners);
 }
 
 function subscribe(listener: Listener): () => void {
