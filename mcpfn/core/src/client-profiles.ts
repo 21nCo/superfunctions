@@ -574,7 +574,16 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const seen = new Set<unknown>();
   // Keep resource roots separate from named aliases. In draft-07, $id: "#node"
   // names a subschema but does not make it the root for JSON Pointer fragments.
-  const initialBase = "https://mcpfn.invalid/schema";
+  // Every anonymous resource (this root and each anonymous sibling) gets its own
+  // synthetic base. The host carries a digest of the whole schema graph, so no
+  // authored $id in that graph can name it: a sibling's IDs and anchors can
+  // never take over this root's local references, or another sibling's.
+  const siblings = profileSchemaResources(root, schemaResources).slice(0, -1);
+  const namespace = sha256([root, siblings]).slice(0, 32);
+  const syntheticBase = (label: string) => `https://${label}.${namespace}.mcpfn.invalid/schema`;
+  const initialBase = syntheticBase("root");
+  const siblingBases = siblings.map((_, position) => syntheticBase(`resource-${position}`));
+  const syntheticKeys = new Set([initialBase, ...siblingBases]);
   const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string }>();
   const resourceRoots = new Map<string, Record<string, unknown>>([[initialBase, root]]);
   const ids = new Map<string, Record<string, unknown>>();
@@ -628,6 +637,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
               resourceKey(address) !== resourceKey(new URL(parentBase))) {
             reject("Unsupported schema resource ID fragment");
           } else ids.set(`${resourceKey(address)}#${name}`, schemaValue);
+        } else if (syntheticKeys.has(resourceKey(address)) && resourceRoots.get(resourceKey(address)) !== schemaValue) {
+          // A relative $id that resolves back onto an anonymous resource's own
+          // base would otherwise replace that resource's root for "#/..." refs.
+          reject("Schema resource ID collides with an anonymous schema scope");
         } else {
           resource = schemaValue;
           resourceRoots.set(resourceKey(address), resource);
@@ -645,9 +658,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       mapSchemaKeyword(key, child, item => { index(item, resource, base, strict, value); return item; }, modernDialect(resource));
     }
   };
-  for (const resource of profileSchemaResources(root, schemaResources).slice(0, -1)) {
+  for (const [position, resource] of siblings.entries()) {
     const detached = JSON.parse(JSON.stringify(resource)) as Record<string, unknown>;
-    index(detached, detached, initialBase, false);
+    resourceRoots.set(siblingBases[position]!, detached);
+    index(detached, detached, siblingBases[position]!, false);
   }
   index(root, root, initialBase, true);
   const assertReachable = (target: unknown): unknown => {

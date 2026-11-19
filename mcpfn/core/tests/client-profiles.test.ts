@@ -1252,3 +1252,43 @@ it("rejects a visible tool that references an unsupported construct in another t
     await expect(client.listTools()).rejects.toThrow(/Dynamic and recursive references/);
   } finally { await client.close(); await server.close(); }
 });
+
+describe("anonymous schema scopes beside registered schema resources", () => {
+  // The canonical tool's local references must resolve inside its own schema.
+  // Before each anonymous resource got its own synthetic base, a sibling could
+  // claim the shared base and both projections resolved into the sibling, so a
+  // changed model-owned type compared as unchanged.
+  async function projectBeside(sibling: Record<string, unknown>) {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const schema = (type: string, owned: boolean) => ({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object" as const,
+      additionalProperties: false,
+      properties: { ...(owned ? { tenantId: { type: "string" } } : {}), query: { $ref: "#/definitions/query" } },
+      ...(owned ? { required: ["tenantId"] } : {}),
+      definitions: { query: { type } },
+    });
+    const tool = { name: "search", inputSchema: schema("string", true) };
+    return buildMcpFnEffectiveCatalog({ canonicalTools: [tool], schemaResources: [sibling, tool.inputSchema], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true,
+        serverOwnedArguments: { search: ["tenantId"] }, enrichArguments: ({ arguments: args }) => ({ ...args, tenantId: "trusted" }),
+        projectCatalog: () => [{ name: "search", inputSchema: schema("number", false) }],
+      },
+    } });
+  }
+
+  it("rejects a changed local reference beside a sibling whose authored $id equals the former synthetic root", async () => {
+    const sibling = { $id: "https://mcpfn.invalid/schema", type: "object", definitions: { query: { type: "string" } } };
+    await expect(projectBeside(sibling)).rejects.toThrow(/must retain its canonical schema/);
+  });
+
+  it("rejects a nested relative $id that resolves back onto its anonymous root", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const inputSchema = { type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: "schema", definitions: { query: { type: "number" } } } }, definitions: { query: { type: "string" } } };
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "noop", version: "1", matches: () => true },
+    } })).rejects.toThrow(/anonymous schema scope/);
+  });
+});

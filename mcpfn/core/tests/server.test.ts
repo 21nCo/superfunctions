@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ErrorCode, ListToolsRequestSchema, LoggingMessageNotificationSchema, McpError, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ErrorCode, ListToolsRequestSchema, LoggingMessageNotificationSchema, McpError, ResourceUpdatedNotificationSchema, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -799,7 +799,7 @@ describe("McpFnServer", () => {
     ])).resolves.toBe("received");
   });
 
-  it("honors each HTTP session's logging level for broadcast log messages", async () => {
+  it("delivers log messages only to the named HTTP session at its logging level", async () => {
     const server = createMcpFnServer({
       info: { name: "log-test", version: "1.0.0" },
       additionalCapabilities: { logging: {} },
@@ -814,23 +814,88 @@ describe("McpFnServer", () => {
     const handler = await server.createWebStandardHandler({
       sessionIdGenerator: () => `session-${++nextSession}`,
     });
-    const client = new Client({ name: "log-client", version: "1.0.0" });
-    const levels: string[] = [];
-    client.setNotificationHandler(LoggingMessageNotificationSchema, async (notification) => {
-      levels.push(notification.params.level);
-    });
-    const transport = new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
-      fetch: (input, init) => handler(new Request(input, init)),
-    });
-    closeables.push(client, server);
-    await client.connect(transport);
-    await client.setLoggingLevel("error");
+    const open = async (name: string) => {
+      const client = new Client({ name, version: "1.0.0" });
+      const messages: unknown[] = [];
+      client.setNotificationHandler(LoggingMessageNotificationSchema, async (notification) => {
+        messages.push(notification.params.data);
+      });
+      const transport = new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+        fetch: (input, init) => handler(new Request(input, init)),
+      });
+      closeables.push(client);
+      await client.connect(transport);
+      return { client, messages, sessionId: transport.sessionId! };
+    };
+    closeables.push(server);
+    const first = await open("first");
+    const second = await open("second");
+    await first.client.setLoggingLevel("error");
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    await server.sendLoggingMessage({ level: "debug", data: "below the client's level" });
-    await server.sendLoggingMessage({ level: "error", data: "at the client's level" });
+    await server.sendLoggingMessage({ level: "error", data: "no session named" });
+    await server.sendLoggingMessage({ level: "debug", data: "below first's level" }, first.sessionId);
+    await server.sendLoggingMessage({ level: "error", data: "for first" }, first.sessionId);
+    await server.sendLoggingMessage({ level: "info", data: "for second" }, second.sessionId);
     await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(levels).toEqual(["error"]);
+    expect(first.messages).toEqual(["for first"]);
+    expect(second.messages).toEqual(["for second"]);
+  });
+
+  it("delivers resource updates only to HTTP sessions subscribed to that URI", async () => {
+    const resource = (uri: string) => ({
+      uri,
+      name: uri.slice("memory://".length),
+      read: async () => ({ contents: [{ uri, text: "ready" }] }),
+      subscribe: async () => undefined,
+      unsubscribe: async () => undefined,
+    });
+    const server = createMcpFnServer({
+      info: { name: "subscription-test", version: "1.0.0" },
+      registry: new McpFnRegistry()
+        .registerResource(resource("memory://status"))
+        .registerResource(resource("memory://other"))
+        .registerResource({
+          ...resource("memory://refused"),
+          subscribe: async () => { throw new Error("subscription refused"); },
+        }),
+    });
+    let nextSession = 0;
+    const handler = await server.createWebStandardHandler({
+      sessionIdGenerator: () => `session-${++nextSession}`,
+    });
+    const open = async (name: string) => {
+      const client = new Client({ name, version: "1.0.0" });
+      const updates: string[] = [];
+      client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notification) => {
+        updates.push(notification.params.uri);
+      });
+      closeables.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+        fetch: (input, init) => handler(new Request(input, init)),
+      }));
+      return { client, updates };
+    };
+    closeables.push(server);
+    const subscriber = await open("subscriber");
+    const bystander = await open("bystander");
+    await subscriber.client.subscribeResource({ uri: "memory://status" });
+    await bystander.client.subscribeResource({ uri: "memory://other" });
+    await expect(bystander.client.subscribeResource({ uri: "memory://refused" })).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await server.sendResourceUpdated({ uri: "memory://status" });
+    await server.sendResourceUpdated({ uri: "memory://refused" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(subscriber.updates).toEqual(["memory://status"]);
+    expect(bystander.updates).toEqual([]);
+
+    await subscriber.client.unsubscribeResource({ uri: "memory://status" });
+    await server.sendResourceUpdated({ uri: "memory://status" });
+    await server.sendResourceUpdated({ uri: "memory://other" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(subscriber.updates).toEqual(["memory://status"]);
+    expect(bystander.updates).toEqual(["memory://other"]);
   });
 
   it("keeps broadcasting when one HTTP session's transport fails", async () => {
