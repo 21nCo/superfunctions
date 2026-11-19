@@ -140,8 +140,13 @@ jobs:
           run_tests --skip '^UIFnSwiftUITests\.' || status=$?
           run_tests --filter '^UIFnSwiftUITests\.' || status=$?
           exit "$status"
-      # BillFnSwift is its own package (billfn/swift), outside the root Package.swift.
+      # The root Package.swift builds the BillFn sources above; their tests need swift-testing, so they
+      # run in billfn/swift's own package, which still builds on its own.
       # The BillFn steps run even when an earlier step of this job failed, so BillFn results are always reported.
+      - name: BillFn products build for a package that depends on the repository root
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: swift build --package-path billfn/swift/Fixtures/RootConsumer
       - name: BillFn Swift package tests
         if: ${{ !cancelled() }}
         timeout-minutes: 10
