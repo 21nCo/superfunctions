@@ -604,21 +604,25 @@ describe('createAppleProvider binds each price to its app with several bundle ID
     const subscription = (reference: string, metadata?: Record<string, unknown>) =>
       ({ billingAccountId: 'acct_1', providerSubscriptionId: reference, ...(metadata ? { metadata } : {}) }) as never;
 
-    it("syncs the price's own app's subscription and rejects another app's", async () => {
+    it("keeps syncing a subscription BillFn moved to another app's price of the same product, as after a plan change", async () => {
       const { bids, provider } = await storeKit();
-      await expect(provider.fetchSubscription!({ subscription: subscription('txn_one'), price: boundToOne('subscription') } as never)).resolves.toMatchObject({
+      // BillFn picks a price by product alone, so app two's subscription can arrive with app one's price of that product.
+      await expect(provider.fetchSubscription!({ subscription: subscription('txn_two'), price: boundToOne('subscription') } as never)).resolves.toMatchObject({
+        providerSubscriptionId: 'txn_two',
+        providerProductId: productId,
+        subscriptionStatus: 'active'
+      });
+      expect(bids.at(-1)).toBe('com.example.two');
+      await expect(provider.fetchSubscription!({ subscription: subscription('txn_one'), price: priceFor('subscription') } as never)).resolves.toMatchObject({
         providerSubscriptionId: 'txn_one'
       });
-      await expect(provider.fetchSubscription!({ subscription: subscription('txn_two'), price: boundToOne('subscription') } as never)).rejects.toMatchObject({
-        code: 'BILLFN_PROVIDER_ERROR'
-      });
-      expect(new Set(bids)).toEqual(new Set(['com.example.one']));
     });
 
-    it("rejects a price that names no app", async () => {
+    it("still requires the billing account's token on a synced subscription", async () => {
       const { provider } = await storeKit();
-      await expect(provider.fetchSubscription!({ subscription: subscription('txn_one'), price: priceFor('subscription') } as never)).rejects.toMatchObject({
-        code: 'BILLFN_VALIDATION_ERROR'
+      const otherAccount = { billingAccountId: 'acct_2', providerSubscriptionId: 'txn_two' } as never;
+      await expect(provider.fetchSubscription!({ subscription: otherAccount, price: boundToOne('subscription') } as never)).rejects.toMatchObject({
+        code: 'BILLFN_CONFLICT'
       });
     });
 

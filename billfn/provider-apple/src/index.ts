@@ -184,16 +184,17 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           message: 'Apple subscription sync requires a provider subscription reference'
         });
       }
-      // An imported purchase was made outside BillFn, so its token is not derived from the billing account, and BillFn
-      // chose its price by product alone: it is read from whichever listed app owns it, as importSubscription found it.
+      // Sync reads a stored subscription whose reference verification, restore or an operator's import already bound to
+      // its app, so it grants no new price. BillFn picks the price it passes by product alone, which with several apps may
+      // be another app's price of the same product, so the subscription is read from whichever listed app owns it.
+      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
-      const bundleId = imported ? null : readPriceBundleId(config, input.price);
-      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
       return mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
         appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId),
-        bundleId
+        bundleId: null
       });
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
