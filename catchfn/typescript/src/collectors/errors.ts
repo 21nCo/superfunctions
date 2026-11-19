@@ -178,9 +178,13 @@ function listenOnGlobal(entries: Array<[string, (event: unknown) => void]>): (()
 }
 
 function subscribe(listener: Listener): () => void {
-  if (listeners.size === 0) {
-    listeners = new Set();
-    const current = listeners;
+  const first = listeners.size === 0;
+  if (first) listeners = new Set();
+  const current = listeners;
+  // Subscribed before installing: page code that installing runs (a replaced
+  // addEventListener) and that starts another collector joins this session.
+  current.add(listener);
+  if (first) {
     const observe = (read: (event: unknown, timestamp: number) => Observation | undefined) => (event: unknown) => {
       if (current.size === 0) return;
       // Reading the event can run page code (an error's getters) that stops or
@@ -209,8 +213,6 @@ function subscribe(listener: Listener): () => void {
       ["unhandledrejection", onRejection],
     ]);
   }
-  const current = listeners;
-  current.add(listener);
   return () => {
     current.delete(listener);
     if (current === listeners && current.size === 0) {
@@ -218,6 +220,12 @@ function subscribe(listener: Listener): () => void {
       restore = undefined;
     }
   };
+}
+
+/** One start() of a collector: pending until subscribe() returns, cancelled by stop(). */
+interface Subscription {
+  cancelled: boolean;
+  unsubscribe?: () => void;
 }
 
 /**
@@ -229,7 +237,7 @@ function subscribe(listener: Listener): () => void {
  */
 export class ErrorCollector {
   private readonly events: RingBuffer<ErrorEvidenceEvent>;
-  private unsubscribe?: () => void;
+  private subscription?: Subscription;
 
   constructor(maxSize = 50) {
     assertCapacity(maxSize);
@@ -237,9 +245,14 @@ export class ErrorCollector {
   }
 
   start(): void {
-    if (this.unsubscribe) return;
-    this.unsubscribe = subscribe((observation) => {
-      if (this.events.capacity === 0) return;
+    // Set before subscribing: page code that installing runs and that calls
+    // start() again finds it pending, a no-op.
+    if (this.subscription) return;
+    const subscription: Subscription = { cancelled: false };
+    this.subscription = subscription;
+    const unsubscribe = subscribe((observation) => {
+      // A stop() during installation cancels it: nothing is recorded after that.
+      if (subscription.cancelled || this.events.capacity === 0) return;
       const event: ErrorEvidenceEvent = {
         schemaVersion: EVIDENCE_SCHEMA_VERSION,
         kind: "error",
@@ -254,11 +267,17 @@ export class ErrorCollector {
       }
       this.events.push(freezeEvent(event));
     });
+    // Stopped while installing: leave the session now that its handle exists.
+    if (subscription.cancelled) unsubscribe();
+    else subscription.unsubscribe = unsubscribe;
   }
 
   stop(): void {
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+    const subscription = this.subscription;
+    this.subscription = undefined;
+    if (!subscription) return;
+    subscription.cancelled = true;
+    subscription.unsubscribe?.();
   }
 
   /** Captured events, oldest first, optionally limited to a time window. */

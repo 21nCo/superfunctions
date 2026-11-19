@@ -37,6 +37,7 @@ const BLOB_SIZE = intrinsic(prototypeOf(platform.Blob), "size");
 const BINARY_SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
 // Sizing a string never runs a String.prototype method the page replaced.
 const CHAR_CODE_AT = intrinsic(String.prototype, "charCodeAt", "value") as Intrinsic;
+const MAX_SAFE_INTEGER = 9007199254740991;
 // `isTrusted`: an unforgeable own accessor of each browser event, else Event.prototype's.
 const EVENT_IS_TRUSTED = isTrustedGetter();
 // A browser window or worker fires its socket events trusted, so an untrusted
@@ -72,14 +73,23 @@ function binarySize(data: unknown): number | undefined {
   // An index loop and a typeof test: no iterator or Number method the page can replace.
   for (let index = 0; index < BINARY_SIZE_GETTERS.length; index += 1) {
     const size = platformRead(BINARY_SIZE_GETTERS[index], data);
-    if (typeof size === "number") return size; // The platform getters return byte counts.
+    if (typeof size === "number") return size; // A brand check passed; see byteCount() for its value.
   }
   return undefined;
 }
 
+/**
+ * A size v1 can record: a nonnegative safe integer, checked with primitive
+ * comparisons only (no Number method the page can replace). A getter can be
+ * fooled into another number (a Proxy of a Node Blob), recorded without size.
+ */
+function byteCount(size: number | undefined): number | undefined {
+  return typeof size === "number" && size >= 0 && size <= MAX_SAFE_INTEGER && size % 1 === 0 ? size + 0 : undefined; // + 0: -0 as 0.
+}
+
 /** Payload size in bytes: a string's UTF-8 length or a binary payload's size. The payload itself is never kept. */
 function payloadSize(data: unknown): number | undefined {
-  return typeof data === "string" ? utf8Size(data) : binarySize(data);
+  return typeof data === "string" ? utf8Size(data) : byteCount(binarySize(data));
 }
 
 function isTrustedGetter(): Intrinsic | undefined {
@@ -355,7 +365,7 @@ function install(current: Set<Listener>): (() => void) | undefined {
           if (before && (!before.converted || sendOwner.original !== PLATFORM_SEND || readyState(this) === OPEN)) {
             try {
               const { url, timestamp, deliver, binary } = before;
-              const size = typeof data === "string" ? utf8Size(data) : binary;
+              const size = typeof data === "string" ? utf8Size(data) : byteCount(binary);
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
             } catch {
               /* Observation never changes what send() returns. */
@@ -405,6 +415,12 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
+/** One start() of a collector: pending until subscribe() returns, cancelled by stop(). */
+interface Subscription {
+  cancelled: boolean;
+  unsubscribe?: () => void;
+}
+
 /**
  * Records the `open`, `message`, `close` and `error` events of WebSocket
  * connections as websocket evidence events in a bounded buffer: messages in
@@ -414,7 +430,7 @@ function subscribe(listener: Listener): () => void {
  */
 export class WebSocketCollector {
   private readonly events: RingBuffer<WebSocketEvidenceEvent>;
-  private unsubscribe?: () => void;
+  private subscription?: Subscription;
 
   constructor(maxSize = 100) {
     assertCapacity(maxSize);
@@ -422,9 +438,14 @@ export class WebSocketCollector {
   }
 
   start(): void {
-    if (this.unsubscribe) return;
-    this.unsubscribe = subscribe((observation) => {
-      if (this.events.capacity === 0) return;
+    // Set before subscribing: page code that installing runs (a WebSocket
+    // getter) and that calls start() again finds it pending, a no-op.
+    if (this.subscription) return;
+    const subscription: Subscription = { cancelled: false };
+    this.subscription = subscription;
+    const unsubscribe = subscribe((observation) => {
+      // A stop() during installation cancels it: nothing is recorded after that.
+      if (subscription.cancelled || this.events.capacity === 0) return;
       const event: WebSocketEvidenceEvent = {
         schemaVersion: EVIDENCE_SCHEMA_VERSION,
         kind: "websocket",
@@ -440,11 +461,17 @@ export class WebSocketCollector {
       if (observation.wasClean !== undefined) event.wasClean = observation.wasClean;
       this.events.push(freezeEvent(event));
     });
+    // Stopped while installing: leave the session now that its handle exists.
+    if (subscription.cancelled) unsubscribe();
+    else subscription.unsubscribe = unsubscribe;
   }
 
   stop(): void {
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+    const subscription = this.subscription;
+    this.subscription = undefined;
+    if (!subscription) return;
+    subscription.cancelled = true;
+    subscription.unsubscribe?.();
   }
 
   /** Captured events, oldest first, optionally limited to a time window. */

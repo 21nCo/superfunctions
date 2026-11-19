@@ -248,6 +248,23 @@ constructs through the page's own class and is not observed.
 - A refused handshake fires `error`; browsers and Node 24 then fire a
   `close` with code 1006, which Node 22 omits. The collector records what
   the runtime emits.
+- A recorded `size` is always a nonnegative safe integer; a size a platform
+  getter reports as anything else (a `Proxy` of a `Blob` can fool Node's) is
+  omitted and the event kept.
+- `start()` reentered while it installs (page code run by reading the global
+  or adding a listener) is a no-op, and a `stop()` during that install cancels
+  it: each collector holds at most one subscription.
+
+Known limit, deferred to SFNS-60 (SFNS-57 owner decision of 2026-11-19):
+against hostile same-realm page code (patched intrinsics such as `Date.now`
+or `Set` methods, accessor-backed sockets or payloads, Proxies, forwarding
+library `send` methods), WebSocket send evidence is best-effort. Such code
+can make a `send` the platform discarded be recorded as sent, run while a
+send is observed, start a collector that then receives a send already under
+way, or report a binary size that differs from what the platform sent. These
+stay guaranteed: `send()` behaves as without the collector, collectors never
+throw, every event is valid v1, `stop()` restores everything, and each
+instance holds one subscription.
 
 ## Serialization
 

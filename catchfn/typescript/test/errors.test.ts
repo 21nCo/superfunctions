@@ -181,6 +181,37 @@ describe("ErrorCollector", () => {
     }
   });
 
+  it("subscribes once when installing reenters start() or stop() of the same collector", () => {
+    const original = window.addEventListener;
+    const ours = (calls: unknown[][]) => calls.filter(([type]) => type === "error" || type === "unhandledrejection").map(([type, listener]) => [type, listener]);
+    // Page code in a replaced addEventListener that restarts the collector while it installs.
+    const add = vi.spyOn(window, "addEventListener").mockImplementationOnce(function (this: Window, ...args: Parameters<Window["addEventListener"]>) {
+      collector.start();
+      return original.apply(this, args);
+    });
+    const remove = vi.spyOn(window, "removeEventListener");
+    collector.start();
+    reject("once");
+    collector.stop();
+    reject("after stop");
+    expect(collector.collect().map((event) => event.message)).toEqual(["once"]);
+    expect(ours(add.mock.calls)).toHaveLength(2);
+    expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+    // Stopped while installing: nothing stays installed, and a later start() records once.
+    add.mockImplementationOnce(function (this: Window, ...args: Parameters<Window["addEventListener"]>) {
+      collector.stop();
+      return original.apply(this, args);
+    });
+    collector.start();
+    reject("cancelled");
+    expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+    collector.start();
+    reject("restarted");
+    collector.stop();
+    expect(collector.collect().map((event) => event.message)).toEqual(["once", "restarted"]);
+    expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+  });
+
   it("lets overlapping collectors each see only what happened while they ran", () => {
     const other = new ErrorCollector(10);
     collector.start();

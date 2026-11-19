@@ -305,6 +305,115 @@ describe("WebSocketCollector", () => {
     }
   });
 
+  /** Makes the global WebSocket an accessor whose first read runs `hook` (page code run by installing). */
+  function hookFirstRead(hook: () => void): { readonly value: unknown } {
+    const state = { value: PageSocket as unknown };
+    let reads = 0;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get() {
+        reads += 1;
+        if (reads === 1) hook();
+        return state.value;
+      },
+      set(value) {
+        state.value = value;
+      },
+    });
+    return state;
+  }
+
+  const sentSizes = (each: WebSocketCollector) => each.collect().filter((event) => event.type === "message").map(({ size }) => size);
+
+  it("subscribes once when installing reenters start() of the same collector, and one stop() restores everything", () => {
+    const global = hookFirstRead(() => collector.start());
+    collector.start();
+    const socket = new (global.value as typeof PageSocket)("wss://example.com/reenter");
+    socket.serverOpens();
+    socket.send("x");
+    expect(socket.sent).toEqual(["x"]);
+    expect(collector.collect().map(({ type, size }) => ({ type, size }))).toEqual([
+      { type: "open", size: undefined },
+      { type: "message", size: 1 },
+    ]);
+    collector.stop();
+    expect(global.value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("cancels a start() that stop() interrupts while installing: nothing stays installed and a later start() captures once", () => {
+    const global = hookFirstRead(() => collector.stop());
+    collector.start();
+    expect(global.value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+    const unobserved = new (global.value as typeof PageSocket)("wss://example.com/cancelled");
+    unobserved.serverOpens();
+    unobserved.send("lost");
+    expect(collector.collect()).toEqual([]);
+    collector.start();
+    const socket = new (global.value as typeof PageSocket)("wss://example.com/after-cancel");
+    socket.serverOpens();
+    socket.send("once");
+    expect(sentSizes(collector)).toEqual([4]);
+    collector.stop();
+    expect(global.value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("keeps the session of a collector that joined while a stopped install was pending, and restarts once", () => {
+    const other = new WebSocketCollector(5);
+    const global = hookFirstRead(() => {
+      other.start();
+      collector.stop();
+      collector.start(); // Restarted while the first start() is still installing.
+    });
+    try {
+      collector.start();
+      expect(global.value).not.toBe(PageSocket);
+      const socket = new (global.value as typeof PageSocket)("wss://example.com/joined");
+      socket.serverOpens();
+      socket.send("ab");
+      expect(sentSizes(collector)).toEqual([2]);
+      expect(sentSizes(other)).toEqual([2]);
+      collector.stop();
+      expect(global.value).not.toBe(PageSocket); // other still runs.
+      socket.send("c");
+      expect(sentSizes(collector)).toEqual([2]);
+      expect(sentSizes(other)).toEqual([2, 1]);
+      other.stop();
+      expect(global.value).toBe(PageSocket);
+      expect(PageSocket.prototype.send).toBe(pageSend);
+      expectValidEvents(other.collect());
+    } finally {
+      other.stop();
+    }
+  });
+
+  it("records a binary size only when it is a nonnegative safe integer, keeping the event", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/sizes");
+    socket.serverOpens();
+    // A Proxy of a Blob can make the platform's own size getter report any number.
+    const fooled = (size: number) =>
+      new Proxy(new Blob(["abc"]), { get: (target, key) => (typeof key === "symbol" && key !== Symbol.toPrimitive && key !== Symbol.toStringTag ? size : Reflect.get(target, key)) });
+    const invalid = [2.5, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53];
+    for (const size of invalid) socket.send(fooled(size));
+    for (const size of invalid) socket.serverSends(fooled(size));
+    socket.send(new Uint8Array(3));
+    socket.serverSends(new Blob(["abcd"]));
+    socket.send("é");
+    const messages = collector.collect().filter((event) => event.type === "message");
+    expect(messages.map(({ direction, size }) => [direction, size])).toEqual([
+      ...invalid.map(() => ["sent", undefined]),
+      ...invalid.map(() => ["received", undefined]),
+      ["sent", 3],
+      ["received", 4],
+      ["sent", 2],
+    ]);
+    for (const event of messages) expect(event).not.toHaveProperty("size", undefined);
+    expectValidEvents(messages);
+  });
+
   it("removes every listener when adding one stops the last collector", async () => {
     const hooks: { onAdd?: () => void } = {};
     const { fresh, added, removed } = await loadRecordingListeners(hooks);
