@@ -579,16 +579,22 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const seen = new Set<unknown>();
   // Keep resource roots separate from named aliases. In draft-07, $id: "#node"
   // names a subschema but does not make it the root for JSON Pointer fragments.
-  // Mirror the runtime resolver (validation.ts): every resource resolves authored
-  // relative $id and $ref values against one shared base, while each anonymous
-  // resource (this root and each anonymous sibling) keeps a private key used
-  // only for its own fragment references and anchors. Both hosts carry a digest
-  // of the whole schema graph, so no authored $id in that graph can name them:
-  // a sibling can never take over this root's local references, or another
-  // sibling's, and relative references still reach their registered resource.
+  // Resource identity follows the active validator, so the comparison never
+  // folds IDs the validator keeps apart, or splits IDs it folds. Ajv keys a
+  // top-level $id by its literal text ("shared", "/shared" and "./shared" are
+  // three resources) and resolves nested IDs and references against it, in a
+  // relative namespace whose anonymous base is "". The edge runtime
+  // (validation.ts) resolves every ID against one absolute base, where "shared"
+  // and "/shared" name one resource. Each anonymous resource (this root and each
+  // anonymous sibling) keeps a private key used only for its own fragment
+  // references and anchors. The keys carry a digest of the whole schema graph,
+  // so no authored $id in that graph can name them: a sibling can never take
+  // over this root's local references, or another sibling's, and relative
+  // references still reach their registered resource.
   const siblings = profileSchemaResources(root, schemaResources).slice(0, -1);
   const namespace = sha256([root, siblings]).slice(0, 32);
-  const sharedBase = `https://${namespace}.relative.mcpfn.invalid/`;
+  const literalRootIds = schemaEngine !== "cfworker";
+  const sharedBase = literalRootIds ? "" : `https://${namespace}.relative.mcpfn.invalid/`;
   const privateKey = (label: string) => `https://${label}.${namespace}.mcpfn.invalid/schema`;
   const rootKey = privateKey("root");
   const privateKeys = new Set([rootKey, ...siblings.map((_, position) => privateKey(`resource-${position}`))]);
@@ -604,10 +610,17 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const ambiguousKeys = new Set<string>();
-  const resourceKey = (address: URL) => address.href.split("#", 1)[0]!;
-  const fragment = (address: URL) => {
-    try { return decodeURIComponent(address.hash.slice(1)); }
+  const resourceKey = (address: string) => address.split("#", 1)[0]!;
+  const fragment = (address: string) => {
+    const hash = address.indexOf("#");
+    try { return hash < 0 ? "" : decodeURIComponent(address.slice(hash + 1)); }
     catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference encoding"); }
+  };
+  // RFC 3986 resolution, as both engines use (schema-uri.ts); undefined when the
+  // URI cannot be parsed.
+  const resolveUri = (base: string, reference: string) => {
+    try { return schemaUriResolver.resolve(base, reference); }
+    catch { return undefined; }
   };
   const modernDialect = (schema: object) => {
     const resource = scopes.get(schema)?.resource ?? schema as Record<string, unknown>;
@@ -647,25 +660,25 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       reject("Schema resource ID collides with an anonymous schema scope");
     }
     if (!invalid && authoredId !== undefined) {
-      let address: URL | undefined;
       let name: string | undefined;
-      try { address = new URL(authoredId, parentBase); }
-      catch { reject("Invalid schema resource ID"); }
-      if (address) {
+      // Ajv keys a top-level $id by its literal text (less one trailing "#").
+      const address = parent === undefined && literalRootIds ? authoredId : resolveUri(parentBase, authoredId);
+      if (address === undefined) reject("Invalid schema resource ID");
+      else {
         try { name = fragment(address); }
         catch (error) { if (strict) throw error; reject("Invalid schema reference encoding"); }
       }
-      if (address && name !== undefined) {
+      if (address !== undefined && name !== undefined) {
         if (name) {
           if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
-              resourceKey(address) !== resourceKey(new URL(parentBase))) {
+              resourceKey(address) !== resourceKey(parentBase)) {
             reject("Unsupported schema resource ID fragment");
           } else ids.set(`${local}#${name}`, schemaValue);
         } else if (resourceRoots.has(resourceKey(address)) &&
             canonicalJson(resourceRoots.get(resourceKey(address))) !== canonicalJson(schemaValue)) {
-          // A different schema already owns this ID (Ajv may still tell the
-          // two spellings apart, e.g. "shared" and "/shared"). Neither may
-          // stand in for the other, so references to it are refused.
+          // A different schema already owns this key under the active
+          // validator's identity, which then refuses or cannot register it.
+          // Neither may stand in for the other, so references to it are refused.
           ambiguousKeys.add(resourceKey(address));
           reject("Duplicate schema resource ID");
         } else {
@@ -673,7 +686,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           local = resourceKey(address);
           resourceRoots.set(local, resource);
         }
-        if (!invalid) base = address.href.replace(/#$/, "");
+        if (!invalid) base = address.replace(/#$/, "");
       }
     }
     if (schemaValue.$dynamicRef !== undefined || schemaValue.$recursiveRef !== undefined) {
@@ -713,14 +726,14 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   };
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
-    let address: URL;
-    // Fragment-only and anonymous self references stay in the current resource;
-    // anything with a resource part resolves in the shared namespace, as the
-    // runtime does.
+    // Fragment-only and anonymous self references stay in the current resource,
+    // even one whose literal $id normalizes onto another resource (Ajv binds
+    // them the same way); anything with a resource part resolves in the shared
+    // namespace, as the runtime does.
     const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey };
-    const self = selfReference(reference, scope.local);
-    try { address = self !== undefined ? new URL(self, scope.local) : new URL(reference, scope.base); }
-    catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI"); }
+    const self = reference.startsWith("#") ? reference : selfReference(reference, scope.local);
+    const address = self !== undefined ? `${scope.local}${self}` : resolveUri(scope.base, reference);
+    if (address === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI");
     const pointer = fragment(address);
     const key = resourceKey(address);
     if (ambiguousKeys.has(key)) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");

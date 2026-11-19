@@ -17,6 +17,7 @@ import {
   type McpFnObjectSchema,
   type McpFnRequestExtra,
 } from "../src/index.js";
+import { createSchemaCompiler } from "../src/validation.js";
 
 interface RequestContext {
   subject?: string;
@@ -64,6 +65,27 @@ describe("McpFn client profiles", () => {
     expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["a_consumer", "z_provider"]);
     expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: "valid" } } })).isError).not.toBe(true);
     expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: 42 } } })).isError).toBe(true);
+  });
+
+  // Ajv registers root IDs "shared" and "/shared" as two resources, so the
+  // profiled catalog check before tools/list and tools/call must as well.
+  it.each([["\"shared\" first", false], ["\"/shared\" first", true]])("lists and calls tools whose root IDs are \"shared\" and \"/shared\" (%s)", async (_label, reversed) => {
+    const handler = async () => structuredResult({ ok: true });
+    const text = { name: "text_tool", description: "Text", inputSchema: { $id: "shared", type: "object" as const, properties: { v: { type: "string" } }, required: ["v"] }, handler };
+    const number = { name: "number_tool", description: "Number", inputSchema: { $id: "/shared", type: "object" as const, properties: { v: { type: "number" } }, required: ["v"] }, handler };
+    const consumer = { name: "consumer", description: "Uses both spellings", inputSchema: { type: "object" as const, properties: { text: { $ref: "shared" }, number: { $ref: "/shared" } }, required: ["text", "number"] }, handler };
+    const registry = new McpFnRegistry<RequestContext>();
+    for (const tool of reversed ? [number, text, consumer] : [text, number, consumer]) registry.register(tool);
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["consumer", "number_tool", "text_tool"]);
+    for (const [name, valid, invalid] of [
+      ["text_tool", { v: "x" }, { v: 1 }],
+      ["number_tool", { v: 1 }, { v: "x" }],
+      ["consumer", { text: { v: "x" }, number: { v: 1 } }, { text: { v: 1 }, number: { v: "x" } }],
+    ] as const) {
+      expect((await client.callTool({ name, arguments: valid })).isError).not.toBe(true);
+      expect((await client.callTool({ name, arguments: invalid })).isError).toBe(true);
+    }
   });
 
   const closeables: Array<{ close(): Promise<void> }> = [];
@@ -1395,19 +1417,63 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     expect(catalog.tools.map((tool) => tool.name)).toEqual(["search"]);
   });
 
-  // Ajv keeps "shared" and "/shared" apart; one shared base cannot, so a
-  // projection must not swap one for the other.
-  it("refuses a reference to a schema ID that two different schemas claim", async () => {
+  // Resource identity follows the active validator. Ajv keys a top-level $id by
+  // its literal text, so "shared", "/shared" and "./shared" are three resources;
+  // the edge runtime resolves every ID against one base, where "shared" and
+  // "/shared" are one. The structural comparison must agree with each engine.
+  describe.each(["ajv", "cfworker"] as const)("relative resource ID spellings (%s)", (engine) => {
+    afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+    const load = async () => {
+      if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
+      vi.resetModules();
+      return import("../src/client-profiles.js");
+    };
+    const resolved = (projectCatalog?: () => Array<{ name: string; inputSchema: McpFnObjectSchema }>) => ({
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projectCatalog ? { projectCatalog } : {}) },
+    });
+
+    it.each(["/shared", "./shared"])("lists root IDs \"shared\" and %s exactly when the engine registers both", async (other) => {
+      const { buildMcpFnEffectiveCatalog } = await load();
+      const text = { $id: "shared", type: "object" as const, properties: { v: { type: "string" } } };
+      const number = { $id: other, type: "object" as const, properties: { v: { type: "number" } } };
+      for (const order of [[text, number], [number, text]]) {
+        // Oracle: the runtime compiler of this engine, independent of the profile code.
+        let registered = true;
+        try { const compiler = createSchemaCompiler(engine); for (const schema of order) compiler.compile(schema); }
+        catch { registered = false; }
+        expect(registered).toBe(engine === "ajv");
+        const run = buildMcpFnEffectiveCatalog({ canonicalTools: order.map((inputSchema, index) => ({ name: `tool_${index}`, inputSchema })), resolved: resolved() });
+        if (registered) expect((await run).tools.map((tool) => tool.name).sort()).toEqual(["tool_0", "tool_1"]);
+        else await expect(run).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+      }
+    });
+
+    it("refuses a reference to a schema ID that two different schemas claim", async () => {
+      const { buildMcpFnEffectiveCatalog } = await load();
+      const text = { $id: "shared", type: "string" };
+      const number = { $id: "/shared", type: "number" };
+      const consumer = (reference: string) => ({ type: "object" as const, properties: { value: { $ref: reference } } });
+      for (const schemaResources of [[text, number, consumer("/shared")], [number, text, consumer("/shared")]]) {
+        await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer("/shared") }], schemaResources,
+          resolved: resolved(() => [{ name: "consumer", inputSchema: consumer("shared") }]),
+        })).rejects.toMatchObject({ code: engine === "ajv" ? "MCPFN_PROFILE_ASYMMETRIC" : "MCPFN_INVALID_PROJECTED_CATALOG" });
+      }
+    });
+  });
+
+  // Inside a resource whose literal $id normalizes onto another resource, Ajv
+  // still binds "#/..." to the resource it appears in.
+  it("keeps fragment references on a root whose literal $id normalizes onto another resource", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
-    const text = { $id: "shared", type: "string" };
-    const number = { $id: "/shared", type: "number" };
-    const consumer = (reference: string) => ({ type: "object" as const, properties: { value: { $ref: reference } } });
-    for (const schemaResources of [[text, number, consumer("/shared")], [number, text, consumer("/shared")]]) {
-      await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer("/shared") }], schemaResources, resolved: {
-        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
-        profile: { id: "swap", version: "1", matches: () => true, projectCatalog: () => [{ name: "consumer", inputSchema: consumer("shared") }] },
-      } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
-    }
+    const other = { $id: "shared", type: "object", definitions: { query: { type: "number" } } };
+    const schema = (type: string) => ({ $id: "./shared", type: "object" as const, properties: { query: { $ref: "#/definitions/query" } }, definitions: { query: { type } } });
+    const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [other, schema("string")], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
+    } });
+    expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
+    await expect(run(schema("number"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
   });
 
   it("compares a relative shared target when a projection changes it", async () => {
