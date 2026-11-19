@@ -34,8 +34,11 @@ export interface JwsHeader {
   readonly [parameter: string]: unknown;
 }
 
-/** Payload bytes, a UTF-8 string, or a JSON value (object or array) that is serialized with `JSON.stringify`. */
-export type JwsPayload = Uint8Array | string | Record<string, unknown> | readonly unknown[];
+/**
+ * Payload bytes (an `ArrayBuffer` or any `ArrayBufferView`, signed as its viewed bytes), a UTF-8 string, or a JSON
+ * value (object or array) that is serialized with `JSON.stringify`.
+ */
+export type JwsPayload = ArrayBuffer | ArrayBufferView | string | Record<string, unknown> | readonly unknown[];
 
 export interface VerifiedJws {
   readonly kid: string;
@@ -46,7 +49,10 @@ export interface VerifiedJws {
 
 export interface SigningKeyRing {
   readonly activeKid: string;
-  /** Signs a compact JWS (RFC 7515 §7.1) with the active key; the protected header always carries `alg` and `kid`. */
+  /**
+   * Signs a compact JWS (RFC 7515 §7.1) with the active key; the protected header always carries `alg` and `kid`.
+   * Rejects with `invalid-sign-input`, before the signer runs, when the token would exceed `MAX_JWS_LENGTH`.
+   */
   sign(header: JwsHeader, payload: JwsPayload): Promise<string>;
   /** Verifies a compact JWS against the active and verify-only keys; throws `KeyRingError` when it does not. */
   verify(jws: string): Promise<VerifiedJws>;
@@ -61,8 +67,14 @@ interface RingKey {
   readonly publicJwk: Es256PublicJwk | undefined;
 }
 
-/** Upper bound on the compact JWS length `verify` parses, so an oversized input fails before any decoding. */
-const MAX_JWS_LENGTH = 256 * 1024;
+/**
+ * Upper bound, in characters, on a compact JWS: `verify` rejects a longer input before any decoding, and `sign`
+ * refuses to produce one, so every token the ring signs is one it can verify.
+ */
+export const MAX_JWS_LENGTH = 256 * 1024;
+
+/** Length of the base64url encoding of a 64-byte ES256 signature. */
+const ENCODED_SIGNATURE_LENGTH = Math.ceil((2 * P256_FIELD_BYTES * 4) / 3);
 
 /**
  * Creates an ES256 key ring for staged rotation. The key set is validated here, before any key is used: exactly
@@ -100,6 +112,9 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
   const sign = async (header: JwsHeader, payload: JwsPayload): Promise<string> => {
     const protectedHeader = buildHeader(header, activeKey.kid);
     const signingInput = `${base64UrlEncode(utf8Encode(protectedHeader))}.${base64UrlEncode(payloadBytes(payload))}`;
+    if (signingInput.length + 1 + ENCODED_SIGNATURE_LENGTH > MAX_JWS_LENGTH) {
+      throw new KeyRingError('invalid-sign-input', `JWS would exceed the ${MAX_JWS_LENGTH}-character limit verify accepts`);
+    }
     let signature: unknown;
     try {
       signature = await activeKey.signer.sign(utf8Encode(signingInput));
@@ -190,25 +205,35 @@ function toRingKey(entry: unknown, index: number): RingKey {
   return { kid, status, signer: signer as unknown as Es256Signer, publicJwk };
 }
 
+/**
+ * Serializes the caller's header once and validates that serialization, not the live object: a `toJSON` method,
+ * getter or nested value cannot change the header after the checks. `alg` and the active `kid` are written last.
+ */
 function buildHeader(header: JwsHeader, activeKid: string): string {
   if (!isRecord(header)) throw new KeyRingError('invalid-sign-input', 'JWS header must be an object');
-  if (header.alg !== undefined && header.alg !== ES256) {
-    throw new KeyRingError('unsupported-algorithm', 'JWS header alg must be ES256 when given');
-  }
-  if (header.kid !== undefined && header.kid !== activeKid) {
-    throw new KeyRingError('kid-mismatch', `JWS header kid must be the active kid ${describeKid(activeKid)} when given`);
-  }
-  if (Object.hasOwn(header, 'crit')) throw new KeyRingError('unsupported-header', 'JWS crit header parameters are not supported');
-  const rest = Object.fromEntries(Object.entries(header).filter(([name]) => name !== 'alg' && name !== 'kid'));
+  let parsed: unknown;
   try {
-    return JSON.stringify({ alg: ES256, kid: activeKid, ...rest });
+    parsed = JSON.parse(JSON.stringify(header));
   } catch {
     throw new KeyRingError('invalid-sign-input', 'JWS header must be JSON-serializable');
   }
+  if (!isRecord(parsed)) throw new KeyRingError('invalid-sign-input', 'JWS header must serialize to a JSON object');
+  if (parsed.alg !== undefined && parsed.alg !== ES256) {
+    throw new KeyRingError('unsupported-algorithm', 'JWS header alg must be ES256 when given');
+  }
+  if (parsed.kid !== undefined && parsed.kid !== activeKid) {
+    throw new KeyRingError('kid-mismatch', `JWS header kid must be the active kid ${describeKid(activeKid)} when given`);
+  }
+  if (Object.hasOwn(parsed, 'crit')) throw new KeyRingError('unsupported-header', 'JWS crit header parameters are not supported');
+  // `parsed` is plain JSON data, so this second serialization has no caller code left to run.
+  const rest = Object.fromEntries(Object.entries(parsed).filter(([name]) => name !== 'alg' && name !== 'kid'));
+  return JSON.stringify({ alg: ES256, kid: activeKid, ...rest });
 }
 
 function payloadBytes(payload: JwsPayload): Uint8Array {
   if (payload instanceof Uint8Array) return payload;
+  if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (isArrayBuffer(payload)) return new Uint8Array(payload);
   if (typeof payload === 'string') return utf8Encode(payload);
   if (typeof payload === 'object' && payload !== null) {
     let json: string | undefined;
@@ -220,6 +245,12 @@ function payloadBytes(payload: JwsPayload): Uint8Array {
     if (json !== undefined) return utf8Encode(json);
   }
   throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string or a JSON-serializable object');
+}
+
+function isArrayBuffer(value: unknown): value is ArrayBufferLike {
+  return (
+    value instanceof ArrayBuffer || (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer)
+  );
 }
 
 function decodeHeader(encoded: string): Record<string, unknown> {

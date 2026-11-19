@@ -38,8 +38,12 @@ signer, or has a signer whose own `kid` (from its JWK or the `kid` option) diffe
 ## Signing and verification
 
 - `sign(header, payload)` always writes `alg: "ES256"` and the active `kid` into the protected header. A header
-  that gives another `alg` or `kid`, or a `crit` parameter, is rejected. The payload is bytes, a UTF-8 string, or a
-  JSON value serialized with `JSON.stringify`.
+  that gives another `alg` or `kid`, or a `crit` parameter, is rejected. The header is serialized once with
+  `JSON.stringify` and those checks run on that serialization, so a `toJSON` method or getter cannot change the
+  signed header after validation. The payload is bytes (an `ArrayBuffer` or any typed array or `DataView`, signed as
+  the bytes it views), a UTF-8 string, or a JSON value serialized with `JSON.stringify`. A token longer than
+  `MAX_JWS_LENGTH` (256 KiB) is rejected with `invalid-sign-input` before the signer runs, because `verify` would
+  reject it.
 - `verify(jws)` accepts only the compact serialization with strict unpadded base64url, `alg: "ES256"`, a `kid` of an
   `active` or `verify-only` key, no `crit` parameter, and a 64-byte (r || s) signature. It returns
   `{ kid, header, payload }` or throws a `KeyRingError` whose `code` says why. It does not check JWT claims such as

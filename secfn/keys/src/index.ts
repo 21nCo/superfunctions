@@ -5,6 +5,7 @@ export {
   type JwsHeader,
   type JwsPayload,
   type KeyStatus,
+  MAX_JWS_LENGTH,
   type SigningKeyEntry,
   type SigningKeyRing,
   type SigningKeyRingOptions,

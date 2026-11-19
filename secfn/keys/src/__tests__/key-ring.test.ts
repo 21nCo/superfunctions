@@ -1,6 +1,6 @@
 import { compactVerify, CompactSign, createLocalJWKSet, importJWK, type JWK } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { createSigningKeyRing, type Es256Signer, KeyRingError, type SigningKeyEntry } from '../index.js';
+import { createSigningKeyRing, type Es256Signer, KeyRingError, MAX_JWS_LENGTH, type SigningKeyEntry } from '../index.js';
 import { base64Url, base64UrlJson, exposedText, generateKey, replacePart } from './helpers.js';
 
 const decoder = new TextDecoder();
@@ -71,6 +71,60 @@ describe('sign and verify', () => {
     const empty = await ring.sign({}, '');
     expect(empty.split('.')[1]).toBe('');
     expect((await ring.verify(empty)).payload).toEqual(new Uint8Array());
+  });
+
+  it('signs ArrayBuffer, DataView and other typed-array payloads as the bytes they view', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const backing = new Uint8Array([9, 9, 1, 2, 3, 4, 9, 9]);
+    const viewed = new Uint8Array([1, 2, 3, 4]);
+    expect((await ring.verify(await ring.sign({}, viewed.buffer))).payload).toEqual(viewed);
+    expect((await ring.verify(await ring.sign({}, new DataView(backing.buffer, 2, 4)))).payload).toEqual(viewed);
+    expect((await ring.verify(await ring.sign({}, new Uint16Array(backing.buffer, 2, 2)))).payload).toEqual(viewed);
+    expect((await ring.verify(await ring.sign({}, new ArrayBuffer(0)))).payload).toEqual(new Uint8Array());
+  });
+
+  it('rejects a payload whose token would exceed the length verify accepts, before calling the signer', async () => {
+    const key = await generateKey();
+    let calls = 0;
+    const signer: Es256Signer = { ...key.signer, sign: (bytes) => ((calls += 1), key.signer.sign(bytes)) };
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer }] });
+    expect((await rejection(ring.sign({}, 'x'.repeat(200 * 1024)))).code).toBe('invalid-sign-input');
+    expect((await rejection(ring.sign({ typ: 'x'.repeat(200 * 1024) }, 'payload'))).code).toBe('invalid-sign-input');
+    expect(calls).toBe(0);
+
+    const fixed = (await ring.sign({}, '')).length;
+    const largest = await ring.sign({}, new Uint8Array(Math.floor(((MAX_JWS_LENGTH - fixed) * 3) / 4)));
+    expect(largest.length).toBeLessThanOrEqual(MAX_JWS_LENGTH);
+    expect(largest.length).toBeGreaterThan(MAX_JWS_LENGTH - 4);
+    expect((await ring.verify(largest)).kid).toBe('key-1');
+  });
+
+  it('validates the serialized header, so toJSON or a getter cannot replace alg, kid or crit after the checks', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const swapped = { typ: 'JWT', toJSON: () => ({ alg: 'none', kid: 'other' }) };
+    expect((await rejection(ring.sign(swapped, 'x'))).code).toBe('unsupported-algorithm');
+    const otherKid = { toJSON: () => ({ kid: 'other' }) };
+    expect((await rejection(ring.sign(otherKid, 'x'))).code).toBe('kid-mismatch');
+    const crit = { toJSON: () => ({ crit: ['exp'], exp: 1 }) };
+    expect((await rejection(ring.sign(crit, 'x'))).code).toBe('unsupported-header');
+    const notObject = { toJSON: () => 'header' };
+    expect((await rejection(ring.sign(notObject, 'x'))).code).toBe('invalid-sign-input');
+    const nothing = { toJSON: () => undefined };
+    expect((await rejection(ring.sign(nothing, 'x'))).code).toBe('invalid-sign-input');
+
+    let reads = 0;
+    const getter = Object.defineProperty({}, 'alg', {
+      enumerable: true,
+      get: () => (reads++ === 0 ? undefined : 'none'),
+    });
+    expect(decodePart(await ring.sign(getter, 'x'), 0)).toEqual({ alg: 'ES256', kid: 'key-1' });
+
+    const benign = { toJSON: () => ({ typ: 'JWT', nested: { toJSON: () => 'n' } }) };
+    const jws = await ring.sign(benign, 'x');
+    expect(decodePart(jws, 0)).toEqual({ alg: 'ES256', kid: 'key-1', typ: 'JWT', nested: 'n' });
+    expect((await ring.verify(jws)).header).toEqual({ alg: 'ES256', kid: 'key-1', typ: 'JWT', nested: 'n' });
   });
 
   it('accepts an explicit alg ES256 and the active kid in the header, and rejects other values', async () => {
