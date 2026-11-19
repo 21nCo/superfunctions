@@ -1,0 +1,19 @@
+mcpfn/core/tests/client-profiles.test.ts
+  s_3126a7d443b5f0::t_fca70f67d9e0a1 1594
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0134cc36c103ef81cf4a20ba6a42eabec8d7aa3a",
+  "prompts": {},
+  "sessions": {
+    "s_3126a7d443b5f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3126a7d443b5f0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
