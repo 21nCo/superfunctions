@@ -413,12 +413,37 @@ describe('createAppleProvider with several bundle IDs', () => {
       for (const configured of [{ bundleIds }, { bundleId: 'com.example.one' }]) {
         for (const cursor of [
           'billfn-apple-history:not-json',
+          'billfn-apple-history:not*base64url',
+          'billfn-apple-history:abcde',
+          `billfn-apple-history:${Buffer.from([0xff, 0xfe, 0x7b]).toString('base64url')}`,
           historyCursor({ bundleId: '' }),
           historyCursor({ bundleId: 'com.example.one', paginationToken: '' })
         ]) {
           await expect(readPage(configured, cursor)).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
         }
       }
+    });
+
+    it('reads and writes cursors without Node Buffer, as on Workers', async () => {
+      const cursor = historyCursor({ bundleId: 'com.example.one', paginationToken: 'one-page-2' });
+      const expectedNextCursor = historyCursor({ bundleId: 'com.example.two' });
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ url: String(url), init });
+        // Node's own Response reads its body through Buffer, so the stand-in answers with text alone.
+        return { ok: true, status: 200, text: async () => JSON.stringify({ notificationHistory: [] }) } as Response;
+      });
+      const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+      vi.stubGlobal('Buffer', undefined);
+      let nextCursor: string | undefined;
+      try {
+        ({ nextCursor } = await provider.fetchNotificationHistory!({ cursor }));
+      } finally {
+        vi.unstubAllGlobals();
+      }
+      expect(nextCursor).toBe(expectedNextCursor);
+      expect(calls.map(({ url, init }) => ({ bid: claimsOf(init).bid, paginationToken: new URL(url).searchParams.get('paginationToken') })))
+        .toEqual([{ bid: 'com.example.one', paginationToken: 'one-page-2' }]);
     });
   });
 

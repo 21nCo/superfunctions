@@ -18,6 +18,7 @@ import type {
 } from '@billfn/core';
 import { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnError } from '@billfn/core';
 import { createAppStoreServerApiTokenSigner, type AppStoreServerApiKey } from './api-token-signer.js';
+import { base64UrlToBytes, utf8ToBase64Url } from './encoding.js';
 import {
   AppleSignedDataVerificationError,
   createAppleSignedDataVerifier,
@@ -754,7 +755,7 @@ function readNotificationHistoryCursor(bundleIds: readonly string[], cursor: str
   if (!cursor?.startsWith(NOTIFICATION_HISTORY_CURSOR_PREFIX)) {
     return { bundleId: bundleIds[0], paginationToken: cursor || undefined };
   }
-  const position = parseJsonRecord(Buffer.from(cursor.slice(NOTIFICATION_HISTORY_CURSOR_PREFIX.length), 'base64url').toString('utf8'));
+  const position = parseJsonRecord(decodeBase64UrlText(cursor.slice(NOTIFICATION_HISTORY_CURSOR_PREFIX.length)));
   const bundleId = position?.bundleId;
   const paginationToken = position?.paginationToken;
   if (
@@ -784,7 +785,16 @@ function buildNextNotificationHistoryCursor(
   }
   const nextBundleId = bundleIds[bundleIds.indexOf(bundleId as string) + 1];
   const next = paginationToken ? { bundleId, paginationToken } : nextBundleId === undefined ? undefined : { bundleId: nextBundleId };
-  return next && NOTIFICATION_HISTORY_CURSOR_PREFIX + Buffer.from(JSON.stringify(next), 'utf8').toString('base64url');
+  return next && NOTIFICATION_HISTORY_CURSOR_PREFIX + utf8ToBase64Url(JSON.stringify(next));
+}
+
+/** Decodes base64url UTF-8 text without Buffer, so it runs on Workers; undecodable input reads as empty text. */
+function decodeBase64UrlText(value: string): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(base64UrlToBytes(value));
+  } catch {
+    return '';
+  }
 }
 
 function parseJsonRecord(text: string): Record<string, unknown> | null {
