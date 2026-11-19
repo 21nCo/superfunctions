@@ -1591,7 +1591,7 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     ["./shared", "shared", "#node", "shared#node", "consumer"],
     ["./shared", "shared", "#node", "./shared#node", "consumer"],
     ["shared", "other", "#node", "shared#node", "provider"],
-  ] as const)("compares a provider %s with nested $id %3$s from a consumer %2$s as Ajv does", async (providerId, consumerId, nestedId, reference, decides) => {
+  ] as const)("compares provider %s and consumer %s, nested $id %s referenced as %s (%s decides), as Ajv does", async (providerId, consumerId, nestedId, reference, decides) => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const provider = { ...(providerId ? { $id: providerId } : {}), type: "object" as const, definitions: { inner: { $id: nestedId, type: "string" } } };
     const consumer = (type: string) => ({ ...(consumerId ? { $id: consumerId } : {}), type: "object" as const, properties: { value: { $ref: reference } }, definitions: { inner: { type } } });
