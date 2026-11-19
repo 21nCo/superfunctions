@@ -1,4 +1,4 @@
-import { copyBytes, isArrayBuffer, utf8Encode } from './encoding.js';
+import { copyBytes, isArrayBuffer, isUint8Array, utf8Encode } from './encoding.js';
 import { KeyRingError } from './errors.js';
 import {
   checkEcJwkMembers,
@@ -10,6 +10,7 @@ import {
   isEncodedBytes,
   isRecord,
   P256_FIELD_BYTES,
+  snapshotEcJwk,
   toPublicJwk,
 } from './jwk.js';
 
@@ -64,30 +65,35 @@ interface ImportedKeyPair {
  * Creates an ES256 signer from a P-256 private key using WebCrypto only, so it runs on Node and on Workers. The
  * private key is imported as non-extractable and kept out of the returned object; the signer is checked to
  * produce signatures its published public key verifies before it is returned.
+ *
+ * The options, each private JWK member and the PKCS #8 bytes are read exactly once, before the first `await`:
+ * validation, import, the published public key and the returned `kid` all come from that snapshot, so getters or
+ * mutations of the caller's objects while the key is imported cannot change the result.
  */
 export async function createWebCryptoSigner(options: WebCryptoSignerOptions): Promise<Es256Signer> {
   if (!isRecord(options)) throw new KeyRingError('invalid-options', 'createWebCryptoSigner needs an options object');
-  const hasJwk = options.privateJwk !== undefined;
-  const hasPkcs8 = options.pkcs8 !== undefined;
-  if (hasJwk === hasPkcs8) {
+  const { privateJwk, pkcs8, kid: optionKid } = options as Record<string, unknown>;
+  if ((privateJwk !== undefined) === (pkcs8 !== undefined)) {
     throw new KeyRingError('invalid-options', 'createWebCryptoSigner needs exactly one of privateJwk or pkcs8');
   }
-  if (options.kid !== undefined && (typeof options.kid !== 'string' || options.kid === '')) {
+  if (optionKid !== undefined && (typeof optionKid !== 'string' || optionKid === '')) {
     throw new KeyRingError('invalid-options', 'createWebCryptoSigner kid must be a non-empty string when present');
   }
 
-  const imported = hasJwk ? await importPrivateJwk(options.privateJwk) : await importPkcs8(options.pkcs8 as Pkcs8SignerOptions['pkcs8']);
-  if (options.kid !== undefined && imported.jwkKid !== undefined && imported.jwkKid !== options.kid) {
+  const imported = privateJwk !== undefined ? await importPrivateJwk(privateJwk) : await importPkcs8(pkcs8);
+  if (optionKid !== undefined && imported.jwkKid !== undefined && imported.jwkKid !== optionKid) {
     throw new KeyRingError('kid-mismatch', 'createWebCryptoSigner kid differs from the kid of the private key JWK');
   }
   await assertKeyPair(imported.privateKey, imported.publicJwk);
 
   const { privateKey } = imported;
-  const kid = options.kid ?? imported.jwkKid;
+  const kid = optionKid ?? imported.jwkKid;
   const sign = async (data: Uint8Array): Promise<Uint8Array> => {
-    if (!(data instanceof Uint8Array)) throw new KeyRingError('invalid-sign-input', 'signer input must be a Uint8Array');
+    // A brand check, not `instanceof`, so a Uint8Array from another realm is accepted; the bytes signed are one
+    // copy taken through the built-in accessors.
+    if (!isUint8Array(data)) throw new KeyRingError('invalid-sign-input', 'signer input must be a Uint8Array');
     const bytes = copyBytes(data);
-    if (!bytes) throw new KeyRingError('invalid-sign-input', 'signer input buffer is detached');
+    if (typeof bytes === 'string') throw new KeyRingError('invalid-sign-input', 'signer input buffer is detached or out of bounds');
     try {
       return new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, privateKey, bytes));
     } catch {
@@ -99,25 +105,26 @@ export async function createWebCryptoSigner(options: WebCryptoSignerOptions): Pr
 
 async function importPrivateJwk(value: unknown): Promise<ImportedKeyPair> {
   if (!isRecord(value)) throw new KeyRingError('invalid-private-key', 'privateJwk must be a JWK object');
-  checkEcJwkMembers(value, 'invalid-private-key', 'privateJwk');
-  if (!isEncodedBytes(value.d, P256_FIELD_BYTES)) {
+  // Synchronous up to the import, so the snapshot is taken before createWebCryptoSigner first yields.
+  const snapshot = snapshotEcJwk(value);
+  const d = value.d;
+  checkEcJwkMembers(snapshot, 'invalid-private-key', 'privateJwk');
+  if (!isEncodedBytes(d, P256_FIELD_BYTES)) {
     throw new KeyRingError('invalid-private-key', 'privateJwk must have d as an unpadded base64url encoding of 32 bytes');
   }
-  const jwk: JsonWebKey = { kty: 'EC', crv: 'P-256', x: value.x as string, y: value.y as string, d: value.d, ext: false };
+  const x = snapshot.x as string;
+  const y = snapshot.y as string;
+  const publicJwk: Es256PublicJwk = Object.freeze({ kty: 'EC', crv: 'P-256', x, y });
   let privateKey: CryptoKey;
   try {
-    privateKey = await crypto.subtle.importKey('jwk', jwk, ECDSA_P256, false, ['sign']);
+    privateKey = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x, y, d, ext: false }, ECDSA_P256, false, ['sign']);
   } catch {
     throw new KeyRingError('invalid-private-key', 'privateJwk could not be imported as a P-256 ECDSA signing key');
   }
-  return {
-    privateKey,
-    publicJwk: toPublicJwk({ kty: 'EC', crv: 'P-256', x: value.x, y: value.y }, 'privateJwk public members'),
-    jwkKid: value.kid as string | undefined,
-  };
+  return { privateKey, publicJwk, jwkKid: snapshot.kid as string | undefined };
 }
 
-async function importPkcs8(value: Pkcs8SignerOptions['pkcs8']): Promise<ImportedKeyPair> {
+async function importPkcs8(value: unknown): Promise<ImportedKeyPair> {
   const der = pkcs8Bytes(value);
   try {
     let extractable: CryptoKey;
@@ -146,10 +153,10 @@ async function importPkcs8(value: Pkcs8SignerOptions['pkcs8']): Promise<Imported
   }
 }
 
-function pkcs8Bytes(value: Pkcs8SignerOptions['pkcs8']): Uint8Array<ArrayBuffer> {
+function pkcs8Bytes(value: unknown): Uint8Array<ArrayBuffer> {
   if (isArrayBuffer(value) || ArrayBuffer.isView(value)) {
     const der = copyBytes(value);
-    if (!der) throw new KeyRingError('invalid-private-key', 'pkcs8 buffer is detached');
+    if (typeof der === 'string') throw new KeyRingError('invalid-private-key', 'pkcs8 buffer is detached or out of bounds');
     return der;
   }
   if (typeof value !== 'string') {

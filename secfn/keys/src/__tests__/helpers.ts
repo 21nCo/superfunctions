@@ -88,3 +88,40 @@ export function emptyViews(): ArrayBufferView[] {
   shrunk.resize(0);
   return [new Uint8Array(0), new Uint8Array(new ArrayBuffer(8), 8, 0), new DataView(new ArrayBuffer(4), 4), tracking];
 }
+
+type GrowableSharedArrayBuffer = SharedArrayBuffer & { grow(byteLength: number): void };
+const GrowableSharedArrayBufferConstructor = SharedArrayBuffer as unknown as new (
+  byteLength: number,
+  options: { maxByteLength: number },
+) => GrowableSharedArrayBuffer;
+
+/** A growable SharedArrayBuffer holding `bytes`, which may grow to 64 bytes more. */
+export function growableShared(bytes: readonly number[]): GrowableSharedArrayBuffer {
+  const buffer = new GrowableSharedArrayBufferConstructor(bytes.length, { maxByteLength: bytes.length + 64 });
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
+/**
+ * Runs `action` while the global `Uint8Array` grows `buffer` by `extra` bytes the first time code calling it allocates
+ * one by length: the moment between a copy observing a buffer's length and copying into its destination.
+ */
+export async function growingOnAllocation<T>(buffer: GrowableSharedArrayBuffer, extra: number, action: () => Promise<T>): Promise<T> {
+  const Intrinsic = globalThis.Uint8Array;
+  let armed = true;
+  class Racing extends Intrinsic {
+    constructor(...args: unknown[]) {
+      super(...(args as [ArrayBuffer]));
+      if (armed && typeof args[0] === 'number') {
+        armed = false;
+        buffer.grow(buffer.byteLength + extra);
+      }
+    }
+  }
+  globalThis.Uint8Array = Racing as unknown as Uint8ArrayConstructor;
+  try {
+    return await action();
+  } finally {
+    globalThis.Uint8Array = Intrinsic;
+  }
+}

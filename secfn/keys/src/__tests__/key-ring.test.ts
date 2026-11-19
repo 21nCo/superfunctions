@@ -2,7 +2,7 @@ import { compactVerify, CompactSign, createLocalJWKSet, importJWK, type JWK } fr
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, type Es256Signer, KeyRingError, MAX_JWS_LENGTH, type SigningKeyEntry } from '../index.js';
-import { base64Url, base64UrlJson, emptyViews, exposedText, generateKey, replacePart, unusableBuffers } from './helpers.js';
+import { base64Url, base64UrlJson, emptyViews, exposedText, generateKey, growableShared, growingOnAllocation, replacePart, unusableBuffers } from './helpers.js';
 
 const decoder = new TextDecoder();
 
@@ -120,6 +120,36 @@ describe('sign and verify', () => {
     }
   });
 
+  it('signs the bytes a growable shared buffer holds when observed, even if it grows during the copy', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const direct = growableShared([1, 2, 3, 4]);
+    const signedDirect = await growingOnAllocation(direct, 8, () => ring.sign({}, direct));
+    expect((await ring.verify(signedDirect)).payload).toEqual(new Uint8Array([1, 2, 3, 4]));
+    const tracked = growableShared([5, 6]);
+    const signedView = await growingOnAllocation(tracked, 8, () => ring.sign({}, new Uint8Array(tracked)));
+    expect((await ring.verify(signedView)).payload).toEqual(new Uint8Array([5, 6]));
+  });
+
+  it('accepts plain objects of any realm and null-prototype objects, and rejects custom null-rooted prototypes', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const nullRooted = Object.assign(Object.create(Object.create(null) as object) as Record<string, unknown>, { a: 1 });
+    const fakeRoot = Object.create(null) as { constructor?: unknown; prototype?: unknown };
+    fakeRoot.constructor = function Object() {};
+    (fakeRoot.constructor as { prototype: unknown }).prototype = fakeRoot;
+    const borrowedRoot = Object.assign(Object.create(null) as object, { constructor: Object });
+    for (const prototype of [Object.create(null) as object, fakeRoot, borrowedRoot]) {
+      const payload = Object.assign(Object.create(prototype) as Record<string, unknown>, { a: 1 });
+      expect((await rejection(ring.sign({}, payload))).code).toBe('invalid-sign-input');
+    }
+    expect((await rejection(ring.sign({}, nullRooted))).code).toBe('invalid-sign-input');
+    const accepted = [{ a: 1 }, Object.assign(Object.create(null) as object, { a: 1 }), runInNewContext('({ a: 1 })') as object];
+    for (const payload of accepted) {
+      expect(decoder.decode((await ring.verify(await ring.sign({}, payload as Record<string, unknown>))).payload)).toBe('{"a":1}');
+    }
+  });
+
   it('rejects non-plain object payloads instead of signing them as {} or a JSON string', async () => {
     const key = await generateKey();
     const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
@@ -146,11 +176,27 @@ describe('sign and verify', () => {
     expect((await rejection(ring.sign({ typ: 'x'.repeat(200 * 1024) }, 'payload'))).code).toBe('invalid-sign-input');
     expect(calls).toBe(0);
 
+    // An oversized binary payload is rejected by its length, before any of it is copied or base64url-encoded.
+    const fromCharCode = String.fromCharCode;
+    let encodedChars = 0;
+    String.fromCharCode = (...codes: number[]) => ((encodedChars += codes.length), fromCharCode(...codes));
+    try {
+      expect((await rejection(ring.sign({}, new Uint8Array(1024 * 1024)))).code).toBe('invalid-sign-input');
+      expect((await rejection(ring.sign({}, new SharedArrayBuffer(1024 * 1024)))).code).toBe('invalid-sign-input');
+    } finally {
+      String.fromCharCode = fromCharCode;
+    }
+    expect(encodedChars).toBeLessThan(256);
+    expect(calls).toBe(0);
+
     const fixed = (await ring.sign({}, '')).length;
-    const largest = await ring.sign({}, new Uint8Array(Math.floor(((MAX_JWS_LENGTH - fixed) * 3) / 4)));
+    const largestBytes = Math.floor(((MAX_JWS_LENGTH - fixed) * 3) / 4);
+    const largest = await ring.sign({}, new Uint8Array(largestBytes));
     expect(largest.length).toBeLessThanOrEqual(MAX_JWS_LENGTH);
     expect(largest.length).toBeGreaterThan(MAX_JWS_LENGTH - 4);
     expect((await ring.verify(largest)).kid).toBe('key-1');
+    expect((await rejection(ring.sign({}, new Uint8Array(largestBytes + 1)))).code).toBe('invalid-sign-input');
+    expect((await rejection(ring.sign({}, 'x'.repeat(largestBytes + 1)))).code).toBe('invalid-sign-input');
   });
 
   it('validates the serialized header, so toJSON or a getter cannot replace alg, kid or crit after the checks', async () => {
@@ -429,7 +475,70 @@ describe('construction rejects misconfigured key sets', () => {
   });
 });
 
+describe('key ring entries are captured once at construction', () => {
+  it('keeps the kid, sign function and public key it validated, whatever the entry and signer report later', async () => {
+    const key = await generateKey();
+    const other = await generateKey();
+    let kidReads = 0;
+    let xReads = 0;
+    const publicJwk = {
+      kty: 'EC',
+      crv: 'P-256',
+      y: key.signer.publicJwk.y,
+      get x() {
+        xReads += 1;
+        return xReads === 1 ? key.signer.publicJwk.x : 'not-a-coordinate';
+      },
+    };
+    const signer = { alg: 'ES256', publicJwk, sign: (data: Uint8Array) => key.signer.sign(data) } as unknown as Es256Signer;
+    const entry = {
+      alg: 'ES256',
+      status: 'active',
+      signer,
+      get kid() {
+        kidReads += 1;
+        return kidReads === 1 ? 'key-1' : 'key-2';
+      },
+    } as unknown as SigningKeyEntry;
+    const ring = createSigningKeyRing({ keys: [entry] });
+    (signer as { sign: Es256Signer['sign'] }).sign = (data) => other.signer.sign(data);
+    expect([kidReads, xReads]).toEqual([1, 1]);
+    expect(ring.activeKid).toBe('key-1');
+    expect(ring.jwks().keys[0]).toMatchObject({ kid: 'key-1', x: key.signer.publicJwk.x });
+    const jws = await ring.sign({}, 'x');
+    expect(decodePart(jws, 0)).toEqual({ alg: 'ES256', kid: 'key-1' });
+    expect((await ring.verify(jws)).kid).toBe('key-1');
+  });
+});
+
 describe('signers that misbehave', () => {
+  it('accepts a Uint8Array signature from another realm, and checks and encodes one copy of the signature bytes', async () => {
+    const key = await generateKey();
+    const ringWith = (sign: (data: Uint8Array) => Promise<unknown>) =>
+      createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: { ...key.signer, sign } as Es256Signer }] });
+    const toForeign = runInNewContext('(bytes) => new Uint8Array(bytes)') as (bytes: number[]) => Uint8Array;
+    const foreign = ringWith(async (data) => toForeign(Array.from(await key.signer.sign(data))));
+    expect((await foreign.verify(await foreign.sign({}, 'x'))).kid).toBe('key-1');
+
+    class ShortIterator extends Uint8Array {
+      override *[Symbol.iterator](): ArrayIterator<number> {
+        yield 1;
+      }
+    }
+    const iterated = await ringWith(async () => new ShortIterator(64)).sign({}, 'x');
+    expect(iterated.split('.')[2]).toBe('A'.repeat(86));
+    class LongLength extends Uint8Array {
+      override get length(): number {
+        return 64;
+      }
+    }
+    const detached = new Uint8Array(64);
+    structuredClone(detached.buffer, { transfer: [detached.buffer] });
+    for (const returned of [new LongLength(1), detached, new Uint16Array(32), new DataView(new ArrayBuffer(64)), Array.from(new Uint8Array(64))]) {
+      expect((await rejection(ringWith(async () => returned).sign({}, 'x'))).code).toBe('signing-failed');
+    }
+  });
+
   it('rejects a non-64-byte signature and hides the signer error message', async () => {
     const key = await generateKey();
     const der: Es256Signer = { alg: 'ES256', publicJwk: key.signer.publicJwk, sign: async () => new Uint8Array(70) };

@@ -1,4 +1,4 @@
-import { base64UrlDecode, base64UrlEncode, copyBytes, isArrayBuffer, utf8Decode, utf8Encode } from './encoding.js';
+import { base64UrlDecode, base64UrlEncode, copyBytes, isArrayBuffer, isUint8Array, utf8Decode, utf8Encode } from './encoding.js';
 import { describeKid, KeyRingError } from './errors.js';
 import { ECDSA_SHA256, ES256, type Es256PublicJwk, importPublicKey, isRecord, type Jwks, type JwksKey, P256_FIELD_BYTES, toPublicJwk } from './jwk.js';
 import type { Es256Signer } from './signer.js';
@@ -62,10 +62,12 @@ export interface SigningKeyRing {
   jwks(): Jwks;
 }
 
+/** A key ring entry as captured at construction: the entry and its signer are read once and never again. */
 interface RingKey {
   readonly kid: string;
   readonly status: KeyStatus;
-  readonly signer: Es256Signer | undefined;
+  /** The signer's `sign` function as read at construction, bound to the signer. */
+  readonly sign: ((data: Uint8Array) => unknown) | undefined;
   readonly publicJwk: Es256PublicJwk | undefined;
 }
 
@@ -78,17 +80,22 @@ export const MAX_JWS_LENGTH = 256 * 1024;
 /** Length of the base64url encoding of a 64-byte ES256 signature. */
 const ENCODED_SIGNATURE_LENGTH = Math.ceil((2 * P256_FIELD_BYTES * 4) / 3);
 
+/** The largest byte count whose unpadded base64url encoding fits in `characters` characters. */
+function maxEncodableBytes(characters: number): number {
+  return Math.max(0, Math.floor((characters * 3) / 4));
+}
+
 /**
  * Creates an ES256 key ring for staged rotation. The key set is validated here, before any key is used: exactly
  * one `active` key, unique kids, ES256 only, and each signer's own `kid` (if any) equal to its entry's.
  */
 export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKeyRing {
-  if (!isRecord(options) || !Array.isArray(options.keys) || options.keys.length === 0) {
-    throw new KeyRingError('invalid-options', 'createSigningKeyRing needs a non-empty keys array');
-  }
+  const keys: unknown = isRecord(options) ? options.keys : undefined;
+  const count = Array.isArray(keys) ? keys.length : 0;
+  if (count === 0) throw new KeyRingError('invalid-options', 'createSigningKeyRing needs a non-empty keys array');
   const ring = new Map<string, RingKey>();
-  for (const [index, entry] of (options.keys as readonly unknown[]).entries()) {
-    const key = toRingKey(entry, index);
+  for (let index = 0; index < count; index += 1) {
+    const key = toRingKey((keys as readonly unknown[])[index], index);
     if (ring.has(key.kid)) throw new KeyRingError('duplicate-kid', `key ring lists kid ${describeKid(key.kid)} more than once`);
     ring.set(key.kid, key);
   }
@@ -96,7 +103,7 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
   if (active.length !== 1) {
     throw new KeyRingError('active-key-count', `key ring needs exactly one active key, found ${active.length}`);
   }
-  const activeKey = active[0] as RingKey & { signer: Es256Signer };
+  const activeKey = active[0] as RingKey & { sign: (data: Uint8Array) => unknown };
   const verificationKeys = new Map<string, Promise<CryptoKey>>();
 
   const verificationKey = (key: RingKey): Promise<CryptoKey> => {
@@ -112,18 +119,24 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
   };
 
   const sign = async (header: JwsHeader, payload: JwsPayload): Promise<string> => {
-    const protectedHeader = buildHeader(header, activeKey.kid);
-    const signingInput = `${base64UrlEncode(utf8Encode(protectedHeader))}.${base64UrlEncode(payloadBytes(payload))}`;
+    const encodedHeader = base64UrlEncode(utf8Encode(buildHeader(header, activeKey.kid)));
+    // The payload budget is what remains of MAX_JWS_LENGTH after the header, two dots and the signature; it is
+    // applied to the payload's bytes before they are copied or encoded, so an oversized payload costs nothing.
+    const payloadBudget = maxEncodableBytes(MAX_JWS_LENGTH - encodedHeader.length - 2 - ENCODED_SIGNATURE_LENGTH);
+    const signingInput = `${encodedHeader}.${base64UrlEncode(payloadBytes(payload, payloadBudget))}`;
     if (signingInput.length + 1 + ENCODED_SIGNATURE_LENGTH > MAX_JWS_LENGTH) {
       throw new KeyRingError('invalid-sign-input', `JWS would exceed the ${MAX_JWS_LENGTH}-character limit verify accepts`);
     }
-    let signature: unknown;
+    let returned: unknown;
     try {
-      signature = await activeKey.signer.sign(utf8Encode(signingInput));
+      returned = await activeKey.sign(utf8Encode(signingInput));
     } catch {
       throw new KeyRingError('signing-failed', `signer for kid ${describeKid(activeKey.kid)} failed`);
     }
-    if (!(signature instanceof Uint8Array) || signature.length !== 2 * P256_FIELD_BYTES) {
+    // Copy the signature once, by its internal slots, and check and encode only that copy: a subclass cannot
+    // report one length and yield different bytes, and a Uint8Array from another realm is accepted.
+    const signature = isUint8Array(returned) ? copyBytes(returned) : undefined;
+    if (typeof signature !== 'object' || signature.length !== 2 * P256_FIELD_BYTES) {
       throw new KeyRingError('signing-failed', `signer for kid ${describeKid(activeKey.kid)} did not return a 64-byte ES256 signature`);
     }
     return `${signingInput}.${base64UrlEncode(signature)}`;
@@ -176,35 +189,42 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
   return Object.freeze({ activeKid: activeKey.kid, sign, verify, jwks });
 }
 
+/**
+ * Captures one entry: each member of the entry and of its signer is read exactly once, and validation, the JWKS,
+ * verification and signing use only those captured values.
+ */
 function toRingKey(entry: unknown, index: number): RingKey {
   const label = `key ring entry ${index}`;
   if (!isRecord(entry)) throw new KeyRingError('invalid-options', `${label} must be an object`);
-  if (typeof entry.kid !== 'string' || entry.kid === '') {
+  const { kid, alg, status, signer } = entry;
+  if (typeof kid !== 'string' || kid === '') {
     throw new KeyRingError('invalid-options', `${label} needs a non-empty string kid`);
   }
-  const kid = entry.kid;
-  if (entry.alg !== ES256) {
+  if (alg !== ES256) {
     throw new KeyRingError('unsupported-algorithm', `kid ${describeKid(kid)} must declare alg ES256`);
   }
-  if (typeof entry.status !== 'string' || !KEY_STATUSES.has(entry.status)) {
+  if (typeof status !== 'string' || !KEY_STATUSES.has(status)) {
     throw new KeyRingError('invalid-options', `kid ${describeKid(kid)} status must be active, verify-only or retired`);
   }
-  const status = entry.status as KeyStatus;
-  if (entry.signer === undefined && status === 'retired') return { kid, status, signer: undefined, publicJwk: undefined };
-  const signer = entry.signer;
-  if (!isRecord(signer) || typeof signer.sign !== 'function') {
+  if (signer === undefined && status === 'retired') return Object.freeze({ kid, status, sign: undefined, publicJwk: undefined });
+  if (!isRecord(signer)) {
     throw new KeyRingError('invalid-options', `kid ${describeKid(kid)} needs a signer with a sign function`);
   }
-  if (signer.alg !== ES256) {
+  const { sign, alg: signerAlg, kid: signerKid, publicJwk: signerPublicJwk } = signer as Partial<Record<keyof Es256Signer, unknown>>;
+  if (typeof sign !== 'function') {
+    throw new KeyRingError('invalid-options', `kid ${describeKid(kid)} needs a signer with a sign function`);
+  }
+  if (signerAlg !== ES256) {
     throw new KeyRingError('unsupported-algorithm', `signer of kid ${describeKid(kid)} must use ES256`);
   }
-  const publicJwk = toPublicJwk(signer.publicJwk, `public key of kid ${describeKid(kid)}`);
-  for (const declared of [signer.kid, publicJwk.kid]) {
+  const publicJwk = toPublicJwk(signerPublicJwk, `public key of kid ${describeKid(kid)}`);
+  for (const declared of [signerKid, publicJwk.kid]) {
     if (declared !== undefined && declared !== kid) {
       throw new KeyRingError('kid-mismatch', `signer of kid ${describeKid(kid)} declares a different kid`);
     }
   }
-  return { kid, status, signer: signer as unknown as Es256Signer, publicJwk };
+  const boundSign = (data: Uint8Array): unknown => Reflect.apply(sign, signer, [data]);
+  return Object.freeze({ kid, status: status as KeyStatus, sign: boundSign, publicJwk });
 }
 
 /**
@@ -232,35 +252,66 @@ function buildHeader(header: JwsHeader, activeKid: string): string {
   return JSON.stringify({ alg: ES256, kid: activeKid, ...rest });
 }
 
-function payloadBytes(payload: JwsPayload): Uint8Array {
-  // `ArrayBuffer.isView` and the `isArrayBuffer` brand checks test internal slots, so they also hold for values from
-  // another realm (node:vm, an iframe, a test environment) where `instanceof` fails.
-  if (ArrayBuffer.isView(payload) || isArrayBuffer(payload)) {
-    const bytes = copyBytes(payload);
-    if (!bytes) throw new KeyRingError('invalid-sign-input', 'JWS payload buffer is detached');
-    return bytes;
-  }
-  if (typeof payload === 'string') return utf8Encode(payload);
-  if (Array.isArray(payload) || isPlainObject(payload)) {
-    let json: string | undefined;
-    try {
-      json = JSON.stringify(payload);
-    } catch {
-      json = undefined;
-    }
-    if (json !== undefined && (json.startsWith('{') || json.startsWith('['))) return utf8Encode(json);
-  }
-  throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string, or a JSON-serializable plain object or array');
+function payloadTooLarge(): KeyRingError {
+  return new KeyRingError('invalid-sign-input', `JWS would exceed the ${MAX_JWS_LENGTH}-character limit verify accepts`);
 }
 
 /**
- * True for an object whose prototype is `null` or an `Object.prototype` (of any realm). Class instances such as
- * `Map`, `Set`, `Date` or a `Blob` are not plain objects: `JSON.stringify` would sign them as `{}` or a string.
+ * The payload as bytes, rejected with `invalid-sign-input` once it is known to exceed `maxBytes`: a binary payload's
+ * observed length is checked before it is copied, and a string (whose UTF-8 form is never shorter than its length in
+ * UTF-16 code units) before it is encoded.
+ */
+function payloadBytes(payload: JwsPayload, maxBytes: number): Uint8Array {
+  // `ArrayBuffer.isView` and the `isArrayBuffer` brand checks test internal slots, so they also hold for values from
+  // another realm (node:vm, an iframe, a test environment) where `instanceof` fails.
+  if (ArrayBuffer.isView(payload) || isArrayBuffer(payload)) {
+    const bytes = copyBytes(payload, maxBytes);
+    if (bytes === 'too-large') throw payloadTooLarge();
+    if (bytes === 'unreadable') throw new KeyRingError('invalid-sign-input', 'JWS payload buffer is detached or out of bounds');
+    return bytes;
+  }
+  let text: string | undefined;
+  if (typeof payload === 'string') {
+    text = payload;
+  } else if (Array.isArray(payload) || isPlainObject(payload)) {
+    try {
+      const json: unknown = JSON.stringify(payload);
+      if (typeof json === 'string' && (json.startsWith('{') || json.startsWith('['))) text = json;
+    } catch {
+      text = undefined;
+    }
+  }
+  if (text === undefined) {
+    throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string, or a JSON-serializable plain object or array');
+  }
+  if (text.length > maxBytes) throw payloadTooLarge();
+  return utf8Encode(text);
+}
+
+const functionToString = Function.prototype.toString;
+const NATIVE_OBJECT_CONSTRUCTOR = /^function Object\(\) \{\s*\[native code\]\s*\}$/;
+
+/**
+ * True for an object whose prototype is `null` or the `Object.prototype` of some realm, recognized by its own
+ * `constructor` data property: the built-in `Object` constructor, whose `prototype` is that same object. A custom
+ * null-rooted prototype (`Object.create(Object.create(null))`) and class instances such as `Map`, `Set`, `Date` or a
+ * `Blob` are not plain objects: `JSON.stringify` would sign them as `{}` or a string.
  */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
-  const prototype: unknown = Object.getPrototypeOf(value);
-  return prototype === null || Object.getPrototypeOf(prototype) === null;
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype === null || prototype === Object.prototype) return true;
+  if (Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor: unknown = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
+  if (typeof constructor !== 'function') return false;
+  try {
+    return (
+      Object.getOwnPropertyDescriptor(constructor, 'prototype')?.value === prototype &&
+      NATIVE_OBJECT_CONSTRUCTOR.test(functionToString.call(constructor))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
