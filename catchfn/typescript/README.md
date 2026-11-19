@@ -1,38 +1,45 @@
 # catchfn
 
-Console, network and breadcrumb collectors that record what happened in a
+Console, network, breadcrumb, error and WebSocket collectors that record what happened in a
 browser or Node process as versioned **evidence events**. The collectors run on
 their own: no reporter client, widget or server is needed.
 
 ```ts
-import { BreadcrumbCollector, ConsoleCollector, NetworkCollector, validateEvidenceEvent } from "catchfn";
+import { BreadcrumbCollector, ConsoleCollector, ErrorCollector, NetworkCollector, WebSocketCollector, validateEvidenceEvent } from "catchfn";
 
 const consoleCollector = new ConsoleCollector(100); // keeps the newest 100 events
 const network = new NetworkCollector(20, { blockUrls: ["/health"] });
 const breadcrumbs = new BreadcrumbCollector(50);
+const errors = new ErrorCollector(50);
+const sockets = new WebSocketCollector(100);
 
 consoleCollector.start();
 network.start();
+errors.start();
+sockets.start();
 breadcrumbs.addNavigation("/cart", "/checkout");
 
 // Later: the last 30 seconds of evidence, oldest first across collectors.
 const since = Date.now() - 30_000;
-const events = [...consoleCollector.collect({ since }), ...network.collect({ since }), ...breadcrumbs.collect({ since })]
+const events = [consoleCollector, network, breadcrumbs, errors, sockets]
+  .flatMap((collector) => collector.collect({ since }))
   .sort((a, b) => a.timestamp - b.timestamp || a.seq - b.seq);
 
 consoleCollector.stop();
 network.stop();
+errors.stop();
+sockets.stop();
 ```
 
 ## Evidence events v1
 
-Every event has `schemaVersion: 1`, a `kind` (`"console"`, `"network"` or
-`"breadcrumb"`), a `seq` capture-order number and a `timestamp` in epoch
+Every event has `schemaVersion: 1`, a `kind` (`"console"`, `"network"`,
+`"breadcrumb"`, `"error"` or `"websocket"`), a `seq` capture-order number and a `timestamp` in epoch
 milliseconds, plus the fields of its kind. The format is closed: extra fields
 are invalid. Check an event with `validateEvidenceEvent(event)` (returns a list
 of problems, empty when valid) or with any JSON Schema 2020-12 validator and
 the exported `evidenceEventSchema`. Integer fields (`seq`, `timestamp`,
-`status`) are safe integers in both, and nested records (`data`, header
+`status`, `lineno`, `colno`, `size`, `code`) are safe integers in both, and nested records (`data`, header
 records, objects in `args`) must be plain or null-prototype objects without a
 callable `toJSON`.
 
@@ -41,6 +48,8 @@ callable `toJSON`.
 | `console` | `level` (`log`, `info`, `warn`, `error`, `debug`), `args` |
 | `network` | `transport` (`fetch`, `xhr`), `method`, `url`, optional `status`, `statusText`, `duration`, `requestHeaders`, `responseHeaders` |
 | `breadcrumb` | `type` (`navigation`, `console`, `network`, `user`, `custom`), optional `message`, `data`, `category`, `level` (`debug`, `info`, `warning`, `error`) |
+| `error` | `source` (`error`, `unhandledrejection`), `message`, optional `name`, `stack`, `filename`, `lineno`, `colno`, `value` |
+| `websocket` | `type` (`open`, `message`, `close`, `error`), `url`, optional `direction` (`sent`, `received`) and `size` (messages), `code` and `wasClean` (close) |
 
 Captured events are frozen.
 
@@ -139,6 +148,136 @@ stopped wrapper reads nothing at all. What observation then records:
 The captured URL goes through `redactUrl` and the captured headers through
 `redactHeaders`.
 
+### Errors
+
+`ErrorCollector` adds `error` and `unhandledrejection` listeners to the
+global (the window, or a worker's global scope) and removes them on the last
+`stop()`; it replaces nothing and never cancels an event, so the page's own
+handlers and the browser's console report run as before. Where the global is
+not an event target (plain Node) it records nothing. The listeners go on
+through the `EventTarget` methods captured at load, or, where the global is
+not a platform event target but has its own `addEventListener` (a test
+environment such as Vitest's jsdom, which copies a window's members onto
+Node's global), through that method. There a running collector counts as a
+page error listener, so the environment no longer fails a test on an
+uncaught error while it runs.
+
+- An uncaught error is read from a platform `ErrorEvent` through the getters
+  captured at load: `message` is the browser's text (`"Uncaught Error: boom"`)
+  when it has one, `filename` goes through `redactUrl`, and `lineno` and
+  `colno` are kept. An `error` event that is not an `ErrorEvent` (one the page
+  dispatches itself) is ignored.
+- An unhandled rejection's reason is read through the captured
+  `PromiseRejectionEvent` getter, and an `unhandledrejection` event that is
+  not a `PromiseRejectionEvent` is ignored. Only on a runtime without that
+  class is the reason read from the event's own `reason` data property.
+- A thrown value or reason that is an `Error` gives `name`, `message` and
+  `stack`, serialized as one entry; reading them can run the error's own
+  getters, as for a console argument. Each URL in the stack goes through
+  `redactUrl`, keeping its `:line:column` suffix. Any other value is serialized into
+  `value`, and `message` holds it as text (a string as is, anything else as
+  its JSON). An uncaught error whose `ErrorEvent.error` is `null` or
+  `undefined` has no `value`: a cross-origin `"Script error."` and an
+  uncaught `throw null` or `throw undefined` look the same there, and only the
+  browser's `message` tells them apart. A rejection keeps a `null` or
+  `undefined` reason in `value`.
+
+### WebSockets
+
+`WebSocketCollector` replaces the global `WebSocket` with a `Proxy` of the
+page's class (statics, `prototype`, `instanceof` and subclassing keep
+working) and wraps the `send` its sockets inherit, on the prototype that
+defines it (`WebSocket.prototype`, also when the global is a subclass); the last `stop()` restores
+both where its own wrapper is still installed, as above. Every target is
+resolved before anything is replaced, so `start()` never throws: a global it
+cannot replace (or a failure part way) is rolled back, a wrapper it cannot
+remove is left inert, and the collector records nothing. Each restore runs on its own, so one that throws
+does not stop the others. Only sockets constructed while a collector runs
+are observed: the constructor adds `open`, `message`, `close` and `error`
+listeners before the page can add its own. They are removed after the
+socket's `close` event and from every socket on the last `stop()`; the
+page's own listeners stay and the socket is never closed. Sockets are held
+only weakly, so a running collector never keeps one alive, also one that
+fails without a `close` event. A restart observes
+new sockets only. A class that extended `WebSocket` before `start()`
+constructs through the page's own class and is not observed.
+
+- Messages record their direction and their size in bytes: a string's UTF-8
+  length (counted with the `String.prototype.charCodeAt` captured at load),
+  or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
+  through the platform getters captured at load, each used only when a
+  probe at load shows its brand check runs no `Proxy` trap. A browser's
+  `Blob` getter qualifies; Node's reads a symbol property, which runs a
+  trap, so on Node a `Blob` is recorded without `size`. Another payload
+  type is recorded without `size`. The payload itself is never recorded.
+- `send()` on a socket constructed while no collector ran is passed straight
+  to the page's `send`, unobserved. On an observed socket the page's `send`
+  always receives the caller's arguments unchanged, and observing it runs
+  no page code. Before it only the socket's membership and `readyState`,
+  the clock, and the length of an `ArrayBuffer`, typed array or `DataView`
+  are read (a library's `send` may transfer the buffer, detaching it). A
+  `Blob` and a string are sized after the `send` returns; `readyState` is
+  read again only for an object the platform's own `send` converts (below).
+- Only a `send()` on an open socket is recorded, its `readyState` read
+  before the call through the getter captured at load: the platform throws
+  while connecting (it still throws) and discards the data once the socket
+  is closing or closed (nothing is recorded). A `send` that transmits and
+  then closes the socket is recorded. An object other than binary data (a
+  bare `SharedArrayBuffer` included) is converted by the `send` itself,
+  which can run page code that closes the socket and discards the data, and
+  is recorded without `size`. Through the platform's own `send` (the one the
+  `WebSocket` at load defines; a replacement installed on its prototype
+  before catchfn loads counts as it), which never closes a socket itself,
+  such an object is recorded only if the socket is still open after the call.
+  Through a library's or subclass's `send` the collector cannot tell that
+  discard from a library that transmits and then closes, so the state
+  before the call decides and such a discard is recorded as sent.
+- Event attributes are read only through the platform getters. A `message`
+  or `close` event the page dispatches on a socket itself, which is not a
+  platform `MessageEvent` or `CloseEvent`, is ignored where the runtime has
+  that class. Only on a runtime without the class (or for a stand-in socket
+  class without a `url` or `readyState` getter) is the attribute read from
+  an own data property; a getter there is never run.
+- In a browser window or worker, which fires socket events trusted, an
+  untrusted event (`isTrusted` false, read through the platform getter) is
+  ignored, whatever its type. Node fires its socket events untrusted, so
+  there `isTrusted` is not checked; instead, on every runtime, an `open` is
+  recorded once and only on a socket whose `readyState` is open (or
+  closing, when an earlier listener closed it during the event), and a
+  `close` only on a socket whose `readyState` is closed. A page-dispatched
+  `error` event is not detected on Node.
+- `url` is the socket's `url` attribute (through the getter captured at load
+  when the global class inherits from the platform's) through `redactUrl`. A close
+  event records `code` and `wasClean` through the `CloseEvent` getters
+  captured at load. On a runtime without a global `CloseEvent` (Node 22),
+  whose close events keep them in getters, they are omitted rather than read
+  through a getter that cannot be verified. Its `reason` is not recorded.
+- A refused handshake fires `error`; browsers and Node 24 then fire a
+  `close` with code 1006, which Node 22 omits. The collector records what
+  the runtime emits.
+- A recorded `size` is always a nonnegative safe integer; a size a platform
+  getter reports as anything else is omitted and the event kept.
+- `start()` reentered while it installs (page code run by reading the global
+  or adding a listener) is a no-op, and a `stop()` during that install leaves
+  the session at once: a socket constructed meanwhile is never observed, also
+  after a restart. Each collector holds at most one subscription.
+- Timestamps of the error and WebSocket collectors come from the `Date.now`
+  captured at load. An observation whose clock gives anything but a
+  nonnegative safe integer is dropped; the event or send itself is unchanged.
+  Loading never throws: with no `Date.now` to capture then (a throwing
+  accessor, or none), every observation is dropped.
+
+Known limit, deferred to SFNS-60 (SFNS-57 owner decision of 2026-11-19):
+against hostile same-realm page code (patched intrinsics such as `Set`
+methods, accessor-backed sockets or payloads, Proxies, forwarding
+library `send` methods), WebSocket send evidence is best-effort. Such code
+can make a `send` the platform discarded be recorded as sent, run while a
+send is observed, start a collector that then receives a send already under
+way, or report a binary size that differs from what the platform sent. These
+stay guaranteed: `send()` behaves as without the collector, collectors never
+throw, every event is valid v1, `stop()` restores everything, and each
+instance holds one subscription.
+
 ## Serialization
 
 Captured values are snapshotted under a closed set of forms:
@@ -158,7 +297,9 @@ early with a `"[Truncated]"` marker (the last array item, or a record key
 whose value counts the omitted keys; `"[Truncated 2]"`, ... when the record
 already holds that key). A console event's argument list is one
 entry, and each argument counts its depth from 1. A breadcrumb's `data` and
-`message`, and a network event's `url` and each header record, are entries.
+`message`, a network event's `url` and each header record, an error event's
+`message`, `filename` and thrown value (an `Error`'s name, message and stack
+together, or `value`), and a websocket event's `url`, are entries.
 
 ## Redaction
 

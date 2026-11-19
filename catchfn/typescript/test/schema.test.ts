@@ -7,12 +7,19 @@ const valid = {
   console: { schemaVersion: 1, kind: "console", seq: 0, timestamp: 1, level: "warn", args: ["x", { a: [1] }] },
   network: { schemaVersion: 1, kind: "network", seq: 1, timestamp: 2, transport: "fetch", method: "GET", url: "/a", status: 200, statusText: "OK", duration: 3.5, requestHeaders: { a: "b" } },
   breadcrumb: { schemaVersion: 1, kind: "breadcrumb", seq: 2, timestamp: 3, type: "user", message: "m", data: { k: null }, category: "c", level: "warning" },
+  error: { schemaVersion: 1, kind: "error", seq: 3, timestamp: 4, source: "error", message: "boom", name: "TypeError", stack: "TypeError: boom", filename: "/app.js", lineno: 1, colno: 0 },
+  rejection: { schemaVersion: 1, kind: "error", seq: 4, timestamp: 5, source: "unhandledrejection", message: '{"a":[1]}', value: { a: [1] } },
+  websocket: { schemaVersion: 1, kind: "websocket", seq: 5, timestamp: 6, type: "message", url: "wss://example.com/", direction: "received", size: 12 },
+  websocketClose: { schemaVersion: 1, kind: "websocket", seq: 6, timestamp: 7, type: "close", url: "wss://example.com/", code: 1000, wasClean: true },
+  websocketOpen: { schemaVersion: 1, kind: "websocket", seq: 7, timestamp: 8, type: "open", url: "wss://example.com/" },
+  websocketCloseWithoutCode: { schemaVersion: 1, kind: "websocket", seq: 8, timestamp: 9, type: "close", url: "wss://example.com/" },
+  websocketSentWithoutSize: { schemaVersion: 1, kind: "websocket", seq: 9, timestamp: 10, type: "message", url: "wss://example.com/", direction: "sent" },
 };
 
 const invalid: Array<[string, unknown]> = [
   ["a non-object", "event"],
   ["another schema version", { ...valid.console, schemaVersion: 2 }],
-  ["an unknown kind", { ...valid.console, kind: "error" }],
+  ["an unknown kind", { ...valid.console, kind: "trace" }],
   ["a missing required field", { ...valid.console, args: undefined }],
   ["an extra field", { ...valid.console, extra: true }],
   ["a field of another kind", { ...valid.console, url: "/a" }],
@@ -24,6 +31,21 @@ const invalid: Array<[string, unknown]> = [
   ["a negative duration", { ...valid.network, duration: -1 }],
   ["breadcrumb data that is not an object", { ...valid.breadcrumb, data: ["x"] }],
   ["an unknown breadcrumb type", { ...valid.breadcrumb, type: "click" }],
+  ["an unknown error source", { ...valid.error, source: "rejectionhandled" }],
+  ["an error event without a message", { ...valid.error, message: undefined }],
+  ["a fractional line number", { ...valid.error, lineno: 1.5 }],
+  ["an unknown websocket event type", { ...valid.websocket, type: "ping" }],
+  ["a websocket event without a url", { ...valid.websocket, url: undefined }],
+  ["an unknown message direction", { ...valid.websocket, direction: "both" }],
+  ["a negative message size", { ...valid.websocket, size: -1 }],
+  ["a websocket payload field", { ...valid.websocket, data: "payload" }],
+  ["a non-boolean wasClean", { ...valid.websocketClose, wasClean: "yes" }],
+  ["a direction on an open event", { ...valid.websocketOpen, direction: "sent" }],
+  ["a size on an error event", { ...valid.websocketOpen, type: "error", size: 3 }],
+  ["a direction on a close event", { ...valid.websocketClose, direction: "received" }],
+  ["a close code on a message event", { ...valid.websocket, code: 1000 }],
+  ["wasClean on an open event", { ...valid.websocketOpen, wasClean: true }],
+  ["a close code on an error event", { ...valid.websocketOpen, type: "error", code: 1006 }],
 ];
 
 const strip = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -69,6 +91,7 @@ describe("evidence event v1 schema", () => {
       ["a class instance as breadcrumb data", { ...valid.breadcrumb, data: new Box() }],
       ["a Date nested in breadcrumb data", { ...valid.breadcrumb, data: { when: new Date(0) } }],
       ["a Map nested in console args", { ...valid.console, args: [new Map([["a", 1]])] }],
+      ["a class instance as an error value", { ...valid.rejection, value: new Box() }],
       ["a class instance as response headers", { ...valid.network, responseHeaders: new Box() }],
     ];
     for (const [label, event] of nonPlain) expect(validateEvidenceEvent(event), label).not.toEqual([]);
@@ -113,6 +136,10 @@ describe("evidence event v1 schema", () => {
       ["seq", valid.console],
       ["timestamp", valid.console],
       ["status", valid.network],
+      ["lineno", valid.error],
+      ["colno", valid.error],
+      ["size", valid.websocket],
+      ["code", valid.websocketClose],
     ];
     for (const [field, event] of cases) {
       const atBound = { ...event, [field]: Number.MAX_SAFE_INTEGER };
@@ -121,6 +148,36 @@ describe("evidence event v1 schema", () => {
       expect(validateEvidenceEvent(atBound), field).toEqual([]);
       expect(validateWithSchema(pastBound), field).toBe(false);
       expect(validateEvidenceEvent(pastBound), field).toEqual([`${field} is invalid`]);
+    }
+  });
+
+  it("rejects accessor-backed fields, so a getter cannot pass as one type and serialize as another", () => {
+    // The type alternates: "message" while pairing direction, "open" otherwise.
+    let reads = 0;
+    const alternating = { ...valid.websocketOpen, direction: "sent" } as Record<string, unknown>;
+    Object.defineProperty(alternating, "type", { enumerable: true, get: () => (reads++ % 2 === 1 ? "message" : "open") });
+    expect(validateEvidenceEvent(alternating)).toEqual(["type must be a data property"]);
+    expect(isEvidenceEvent(alternating)).toBe(false);
+    expect(reads).toBe(0); // Rejected without running the getter.
+    expect(validateWithSchema(strip(alternating))).toBe(false); // An open event with a direction.
+    const kindGetter = Object.defineProperty({ ...valid.console }, "kind", { enumerable: true, get: () => "console" });
+    expect(validateEvidenceEvent(kindGetter)).toEqual(["kind must be a data property"]);
+    const sizeGetter = Object.defineProperty({ ...valid.websocket }, "size", { enumerable: true, get: () => 12 });
+    expect(validateEvidenceEvent(sizeGetter)).toEqual(["size must be a data property"]);
+    // A Proxy whose descriptor and get traps disagree is read as JSON.stringify reads it.
+    const disagreeing = new Proxy(
+      { ...valid.websocketOpen, direction: "sent" },
+      {
+        getOwnPropertyDescriptor: (target, key) => (key === "type" ? { value: "message", writable: true, enumerable: true, configurable: true } : Reflect.getOwnPropertyDescriptor(target, key)),
+        get: (target, key, receiver) => (key === "type" ? "open" : Reflect.get(target, key, receiver)),
+      }
+    );
+    expect(strip(disagreeing).type).toBe("open");
+    expect(validateWithSchema(strip(disagreeing))).toBe(false);
+    expect(validateEvidenceEvent(disagreeing)).toEqual(["direction is only a message websocket event field"]);
+    // The same events with data properties agree with the schema.
+    for (const event of [valid.websocket, valid.websocketOpen, valid.console, { ...valid.websocketOpen, direction: "sent" }]) {
+      expect(validateEvidenceEvent(event).length === 0).toBe(validateWithSchema(strip(event)));
     }
   });
 
@@ -142,7 +199,7 @@ describe("evidence event v1 schema", () => {
   it("is exported with its validator from the package entry", () => {
     expect(api.evidenceEventSchema).toBe(evidenceEventSchema);
     expect(api.EVIDENCE_SCHEMA_VERSION).toBe(1);
-    expect([...api.EVIDENCE_KINDS]).toEqual(["console", "network", "breadcrumb"]);
+    expect([...api.EVIDENCE_KINDS]).toEqual(["console", "network", "breadcrumb", "error", "websocket"]);
     expect(typeof api.validateEvidenceEvent).toBe("function");
   });
 });
