@@ -47,9 +47,18 @@ export interface AppleNotificationVerifierContext {
   signedPayload: string;
 }
 
+/** What a token provider signs for: the bundle ID of the app whose transaction or history is requested. */
+export interface AppleTokenProviderContext {
+  /** Set whenever the provider is configured with bundleId or bundleIds; the token's `bid` must name it. */
+  bundleId: string;
+}
+
+/** Returns an App Store Server API bearer token, for the app `context.bundleId` names when it is given. */
+export type AppleTokenProvider = (context?: AppleTokenProviderContext) => Promise<string>;
+
 export interface AppleAdvancedCommerceConfig {
   /** Defaults to the provider's App Store Server API token provider. */
-  tokenProvider?: () => Promise<string>;
+  tokenProvider?: AppleTokenProvider;
   baseUrl?: string;
   enabled?: boolean;
 }
@@ -62,10 +71,20 @@ export interface AppleProviderConfig {
    * Apple's OIDs, ES256 signature, certificate validity, this bundle ID), and the built-in signer claims it.
    */
   bundleId?: string;
-  /** The in-app purchase key the built-in signer signs App Store Server API tokens with; requires bundleId. */
+  /**
+   * The bundle IDs of several apps of one developer team, served by this one adapter (with `bundleId`, if also given).
+   * The built-in verifier accepts signed data for any listed app and rejects every other app. App Store Server API
+   * requests about a transaction are tried for each listed app in order until one is not StoreKit's not-found answer,
+   * so each request's token claims, as `bid`, the app being asked.
+   */
+  bundleIds?: readonly string[];
+  /** The in-app purchase key the built-in signer signs App Store Server API tokens with; requires bundleId or bundleIds. */
   appStoreServerApiKey?: AppStoreServerApiKey;
-  /** Overrides the built-in signer. Either this or bundleId with appStoreServerApiKey is required. */
-  tokenProvider?: () => Promise<string>;
+  /**
+   * Overrides the built-in signer. Either this or bundleId (or bundleIds) with appStoreServerApiKey is required. When
+   * bundle IDs are configured, it is called with the bundle ID the token must claim as `bid`.
+   */
+  tokenProvider?: AppleTokenProvider;
   /** Overrides the built-in verifier; it returns the verified notification payload, or null to reject it. */
   notificationVerifier?: (context: AppleNotificationVerifierContext) => Promise<Record<string, unknown> | null>;
   advancedCommerce?: AppleAdvancedCommerceConfig;
@@ -73,7 +92,10 @@ export interface AppleProviderConfig {
 
 /** The provider config with its token provider and notification verifier resolved to the host's or the built-in ones. */
 interface ResolvedAppleProviderConfig extends AppleProviderConfig {
-  tokenProvider: () => Promise<string>;
+  /** The configured bundle IDs, `bundleId` first, without duplicates; empty when none is configured. */
+  bundleIds: readonly string[];
+  /** Returns a token for the bundle, or the host's bundle-less token when no bundle ID is configured. */
+  tokenFor: (bundleId: string | undefined) => Promise<string>;
   verifyNotification?: (context: AppleNotificationVerifierContext) => Promise<Record<string, unknown>>;
 }
 
@@ -126,7 +148,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       }
 
       if (input.price.kind === 'subscription') {
-        const response = await requestStoreKitWithFallback(
+        const response = await requestStoreKitForTransaction(
           fetchImpl,
           config,
           `/inApps/v1/subscriptions/${transactionId}`
@@ -138,7 +160,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         });
       }
 
-      const response = await requestStoreKitWithFallback(fetchImpl, config, `/inApps/v2/history/${transactionId}`);
+      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v2/history/${transactionId}`);
       return mapAppleHistoryResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
@@ -153,7 +175,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           message: 'Apple subscription sync requires a provider subscription reference'
         });
       }
-      const response = await requestStoreKitWithFallback(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
       // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
       return mapAppleSubscriptionResponse(response.payload, {
@@ -163,9 +185,9 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       });
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
-      let response: Awaited<ReturnType<typeof requestStoreKitWithFallback>>;
+      let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
       try {
-        response = await requestStoreKitWithFallback(
+        response = await requestStoreKitForTransaction(
           fetchImpl,
           config,
           `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
@@ -215,8 +237,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       }
       const response = await requestAdvancedCommerce(
         fetchImpl,
-        config.advancedCommerce.tokenProvider ?? config.tokenProvider,
-        config.advancedCommerce,
+        config,
+        transactionId,
         `/subscription/cancel/${transactionId}`,
         {
           method: 'POST'
@@ -256,8 +278,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       }
       const response = await requestAdvancedCommerce(
         fetchImpl,
-        config.advancedCommerce.tokenProvider ?? config.tokenProvider,
-        config.advancedCommerce,
+        config,
+        transactionId,
         `/subscription/revoke/${transactionId}`,
         {
           method: 'POST',
@@ -285,7 +307,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       } satisfies BillFnProviderOperationResult;
     },
     async restorePurchases(input: BillFnRestorePurchasesInput) {
-      const response = await requestStoreKitWithFallback(
+      const response = await requestStoreKitForTransaction(
         fetchImpl,
         config,
         input.price.kind === 'subscription'
@@ -331,13 +353,16 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       if (!config.verifyNotification) {
         throw createBillFnError({
           code: 'BILLFN_FEATURE_UNAVAILABLE',
-          message: 'Apple notification history requires bundleId or notificationVerifier'
+          message: 'Apple notification history requires bundleId, bundleIds or notificationVerifier'
         });
       }
+      // Apple keeps each app's notification history apart, so the apps are read one after another.
+      const position = readNotificationHistoryCursor(config.bundleIds, input.cursor);
       const response = await requestStoreKitWithFallback(
         fetchImpl,
         config,
-        buildNotificationHistoryPath(input.cursor),
+        position.bundleId,
+        buildNotificationHistoryPath(position.paginationToken),
         {
           method: 'POST',
           body: JSON.stringify(buildNotificationHistoryRequest())
@@ -368,15 +393,53 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
 
       return {
         events,
-        nextCursor: readString(response.payload, ['paginationToken', 'nextPaginationToken']) ?? undefined
+        nextCursor: buildNextNotificationHistoryCursor(
+          config.bundleIds,
+          position.bundleId,
+          readString(response.payload, ['paginationToken', 'nextPaginationToken']) ?? undefined
+        )
       };
     }
   };
 }
 
+/**
+ * Requests a transaction's StoreKit record. With several bundle IDs the transaction's app is not known up front, so
+ * each app is asked in order, with a token claiming it as `bid`, until StoreKit's answer is not its definitive
+ * not-found: Apple answers only for transactions of the app the token names.
+ */
+async function requestStoreKitForTransaction(
+  fetchImpl: typeof fetch,
+  config: ResolvedAppleProviderConfig,
+  path: string,
+  init: RequestInit = {}
+) {
+  const bundleIds = config.bundleIds.length > 0 ? config.bundleIds : [undefined];
+  let lastError: unknown;
+  for (const bundleId of bundleIds) {
+    try {
+      return await requestStoreKitWithFallback(fetchImpl, config, bundleId, path, init);
+    } catch (error) {
+      lastError = error;
+      if (!isStoreKitNotFound(error)) {
+        throw error;
+      }
+    }
+  }
+  throw lastError;
+}
+
+/** True for StoreKit's definitive answer that the transaction does not exist for the app the token names. */
+function isStoreKitNotFound(error: unknown): boolean {
+  const details = (error as { details?: { status?: unknown; body?: unknown } } | null)?.details;
+  const errorCode = readStoreKitErrorCode(details?.body);
+  return details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode);
+}
+
 async function requestStoreKitWithFallback(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
+  bundleId: string | undefined,
   path: string,
   init: RequestInit = {}
 ) {
@@ -386,9 +449,10 @@ async function requestStoreKitWithFallback(
 
   for (const environment of environments) {
     try {
-      const payload = await requestJson(fetchImpl, buildStoreKitBaseUrl(environment) + path, await config.tokenProvider(), init);
+      const payload = await requestJson(fetchImpl, buildStoreKitBaseUrl(environment) + path, await config.tokenFor(bundleId), init);
       return {
         environment,
+        bundleId,
         payload
       };
     } catch (error) {
@@ -402,18 +466,31 @@ async function requestStoreKitWithFallback(
   throw lastError;
 }
 
+/**
+ * Sends an Advanced Commerce request about a transaction, with a token for the transaction's app. With several bundle
+ * IDs that app is first found by reading the transaction from StoreKit, app by app.
+ */
 async function requestAdvancedCommerce(
   fetchImpl: typeof fetch,
-  tokenProvider: () => Promise<string>,
-  config: AppleAdvancedCommerceConfig,
+  config: ResolvedAppleProviderConfig,
+  transactionId: string,
   path: string,
   init: RequestInit
 ) {
-  const baseUrl = (config.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
+  const advancedCommerce = config.advancedCommerce ?? {};
+  const bundleId = config.bundleIds.length > 1
+    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${encodeURIComponent(transactionId)}`))
+        .bundleId
+    : config.bundleIds[0];
+  const hostTokenProvider = advancedCommerce.tokenProvider;
+  const token = hostTokenProvider
+    ? await (bundleId === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId }))
+    : await config.tokenFor(bundleId);
+  const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
   const response = await fetchImpl(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      authorization: `Bearer ${await tokenProvider()}`,
+      authorization: `Bearer ${token}`,
       'content-type': 'application/json',
       ...(init.headers ?? {})
     }
@@ -484,11 +561,11 @@ function classifyStoreKitImportError(error: unknown): null {
       message: 'Apple returned an unreadable response for the imported reference'
     });
   }
-  const details = (error as { details?: { status?: unknown; body?: unknown } } | null)?.details;
-  const errorCode = readStoreKitErrorCode(details?.body);
-  if (details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode)) {
+  if (isStoreKitNotFound(error)) {
     return null;
   }
+  const details = (error as { details?: { status?: unknown; body?: unknown } } | null)?.details;
+  const errorCode = readStoreKitErrorCode(details?.body);
   if (details?.status === 400 && errorCode !== undefined && STOREKIT_INVALID_REFERENCE_ERROR_CODES.has(errorCode)) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
@@ -544,15 +621,21 @@ function shouldFallbackToSandbox(error: unknown, environment: 'production' | 'sa
 }
 
 function resolveAppleProviderConfig(config: AppleProviderConfig): ResolvedAppleProviderConfig {
-  const bundleId = config.bundleId === undefined ? undefined : requireBundleId(config.bundleId);
-  let tokenProvider = config.tokenProvider;
-  if (!tokenProvider && config.appStoreServerApiKey) {
+  const bundleIds = readProviderBundleIds(config);
+  const bundleId = bundleIds[0];
+  let tokenFor: ResolvedAppleProviderConfig['tokenFor'];
+  const hostTokenProvider = config.tokenProvider;
+  if (hostTokenProvider) {
+    tokenFor = (bundle) => (bundle === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId: bundle }));
+  } else if (config.appStoreServerApiKey) {
     if (!bundleId) {
       throw new TypeError('The Apple provider signs App Store Server API tokens only with a bundleId');
     }
-    tokenProvider = createAppStoreServerApiTokenSigner({ ...config.appStoreServerApiKey, bundleId });
-  }
-  if (!tokenProvider) {
+    // One signer per app: the team key signs every app's tokens, each claiming its own bundle ID as `bid`.
+    const key = config.appStoreServerApiKey;
+    const signers = new Map(bundleIds.map((bundle) => [bundle, createAppStoreServerApiTokenSigner({ ...key, bundleId: bundle })]));
+    tokenFor = (bundle) => signers.get(bundle ?? bundleId)!();
+  } else {
     throw new TypeError('The Apple provider requires tokenProvider, or bundleId with appStoreServerApiKey');
   }
   const hostVerifier = config.notificationVerifier;
@@ -566,14 +649,31 @@ function resolveAppleProviderConfig(config: AppleProviderConfig): ResolvedAppleP
       return verified;
     };
   } else if (bundleId) {
-    verifyNotification = createBuiltInNotificationVerifier(createAppleSignedDataVerifier({ bundleId }));
+    verifyNotification = createBuiltInNotificationVerifier(createAppleSignedDataVerifier({ bundleIds }));
   }
-  return { ...config, bundleId, tokenProvider, verifyNotification };
+  return { ...config, bundleId, bundleIds, tokenFor, verifyNotification };
 }
 
-function requireBundleId(bundleId: unknown): string {
+/** Reads `bundleId` and `bundleIds` into one list, `bundleId` first and without duplicates. */
+function readProviderBundleIds(config: AppleProviderConfig): string[] {
+  const bundleIds: string[] = config.bundleId === undefined ? [] : [requireBundleId(config.bundleId, 'bundleId')];
+  if (config.bundleIds !== undefined) {
+    if (!Array.isArray(config.bundleIds) || config.bundleIds.length === 0) {
+      throw new TypeError('The Apple provider bundleIds must be a non-empty array of bundle IDs');
+    }
+    for (const entry of config.bundleIds) {
+      const bundle = requireBundleId(entry, 'bundleIds entry');
+      if (!bundleIds.includes(bundle)) {
+        bundleIds.push(bundle);
+      }
+    }
+  }
+  return bundleIds;
+}
+
+function requireBundleId(bundleId: unknown, field: string): string {
   if (typeof bundleId !== 'string' || bundleId.trim().length === 0) {
-    throw new TypeError('The Apple provider bundleId must be a non-empty string');
+    throw new TypeError(`The Apple provider ${field} must be a non-empty string`);
   }
   return bundleId;
 }
@@ -631,6 +731,60 @@ function buildNotificationHistoryPath(cursor?: string) {
   }
   const query = params.toString();
   return query ? `/inApps/v1/notifications/history?${query}` : '/inApps/v1/notifications/history';
+}
+
+/**
+ * Marks a notification history cursor that names the app it continues. A cursor without it is Apple's own
+ * pagination token, which a single-app adapter returns unchanged and a multi-app adapter reads as the first app's.
+ */
+const NOTIFICATION_HISTORY_CURSOR_PREFIX = 'billfn-apple-history:';
+
+interface NotificationHistoryPosition {
+  bundleId: string | undefined;
+  paginationToken: string | undefined;
+}
+
+function readNotificationHistoryCursor(bundleIds: readonly string[], cursor: string | undefined): NotificationHistoryPosition {
+  if (bundleIds.length <= 1 || !cursor?.startsWith(NOTIFICATION_HISTORY_CURSOR_PREFIX)) {
+    return { bundleId: bundleIds[0], paginationToken: cursor || undefined };
+  }
+  const position = parseJsonRecord(Buffer.from(cursor.slice(NOTIFICATION_HISTORY_CURSOR_PREFIX.length), 'base64url').toString('utf8'));
+  const bundleId = position?.bundleId;
+  const paginationToken = position?.paginationToken;
+  if (
+    typeof bundleId !== 'string' ||
+    !bundleIds.includes(bundleId) ||
+    (paginationToken !== undefined && (typeof paginationToken !== 'string' || paginationToken.length === 0))
+  ) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'The Apple notification history cursor does not name a configured bundle ID'
+    });
+  }
+  return { bundleId, paginationToken };
+}
+
+/** Continues the app's history while Apple has more, then starts the next app's; undefined after the last app. */
+function buildNextNotificationHistoryCursor(
+  bundleIds: readonly string[],
+  bundleId: string | undefined,
+  paginationToken: string | undefined
+): string | undefined {
+  if (bundleIds.length <= 1) {
+    return paginationToken;
+  }
+  const nextBundleId = bundleIds[bundleIds.indexOf(bundleId as string) + 1];
+  const next = paginationToken ? { bundleId, paginationToken } : nextBundleId === undefined ? undefined : { bundleId: nextBundleId };
+  return next && NOTIFICATION_HISTORY_CURSOR_PREFIX + Buffer.from(JSON.stringify(next), 'utf8').toString('base64url');
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildNotificationHistoryRequest() {
