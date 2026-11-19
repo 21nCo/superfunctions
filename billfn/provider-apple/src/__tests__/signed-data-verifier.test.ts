@@ -275,3 +275,51 @@ describe('generated chains', () => {
     await expectFailure(verifier.verifyNotification(signJws(sampleSubscribedNotification(chain), chain, { x5c: truncated })), 'malformed');
   });
 });
+
+describe('several bundle IDs', () => {
+  const chain = generateAppleChain();
+  const bundleIds = ['com.example.one', 'com.example.two'];
+  const verifier = createAppleSignedDataVerifierForRoot({ bundleIds, rootCertificate: chain.root.base64 });
+  const transaction = (bundleId: string) =>
+    signJws({ bundleId, environment: 'Production', transactionId: '1', originalTransactionId: '1' }, chain);
+
+  it('verifies notifications and transactions of every listed app', async () => {
+    for (const bundleId of bundleIds) {
+      await expect(verifier.verifyNotification(signJws(sampleSubscribedNotification(chain, { bundleId }), chain))).resolves.toMatchObject({
+        environment: 'production',
+        payload: { data: { bundleId } }
+      });
+      await expect(verifier.verifyTransaction(transaction(bundleId))).resolves.toMatchObject({ payload: { bundleId } });
+    }
+  });
+
+  it('accepts bundleId alongside bundleIds', async () => {
+    const both = createAppleSignedDataVerifierForRoot({ bundleId: 'com.example', bundleIds, rootCertificate: chain.root.base64 });
+    await expect(both.verifyTransaction(transaction('com.example'))).resolves.toBeDefined();
+    await expect(both.verifyTransaction(transaction('com.example.two'))).resolves.toBeDefined();
+  });
+
+  it('rejects an unlisted app with the existing bundle ID mismatch', async () => {
+    await expectFailure(
+      verifier.verifyNotification(signJws(sampleSubscribedNotification(chain, { bundleId: 'com.example.other' }), chain)),
+      'bundle_id_mismatch'
+    );
+    await expectFailure(verifier.verifyTransaction(transaction('com.example.other')), 'bundle_id_mismatch');
+  });
+
+  it('rejects a listed bundle ID written over the signed one, and ignores fields outside the signed payload', async () => {
+    const [header, , signature] = transaction('com.example.other').split('.');
+    const forged = Buffer.from(JSON.stringify({ bundleId: 'com.example.one', environment: 'Production', transactionId: '1' })).toString('base64url');
+    await expectFailure(verifier.verifyTransaction(`${header}.${forged}.${signature}`), 'signature_invalid');
+    const headerClaim = signJws(sampleSubscribedNotification(chain, { bundleId: 'com.example.other' }), chain, { bundleId: 'com.example.one' });
+    await expectFailure(verifier.verifyNotification(headerClaim), 'bundle_id_mismatch');
+  });
+
+  it('requires a non-empty list of non-empty bundle IDs', () => {
+    const rootCertificate = chain.root.base64;
+    expect(() => createAppleSignedDataVerifierForRoot({ rootCertificate })).toThrow(/bundleId or bundleIds/);
+    expect(() => createAppleSignedDataVerifierForRoot({ bundleIds: [], rootCertificate })).toThrow(/non-empty array/);
+    expect(() => createAppleSignedDataVerifierForRoot({ bundleIds: ['com.example', ''], rootCertificate })).toThrow(/bundleId or bundleIds/);
+    expect(() => createAppleSignedDataVerifierForRoot({ bundleIds: 'com.example' as never, rootCertificate })).toThrow(/non-empty array/);
+  });
+});

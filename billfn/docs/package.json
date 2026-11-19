@@ -29,7 +29,7 @@
   "devDependencies": {
     "@authfn/password": "0.1.8",
     "@billfn/core": "0.7.1",
-    "@billfn/provider-apple": "0.8.1",
+    "@billfn/provider-apple": "0.9.0",
     "@billfn/provider-dodo": "0.8.1",
     "@billfn/swift-bridge": "0.1.1",
     "@cloudflare/workers-types": "4.20251120.0",

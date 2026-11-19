@@ -32,9 +32,46 @@ const apple = createAppleProvider({
 
 With `bundleId` and `appStoreServerApiKey`, the adapter signs its own App Store Server API tokens (ES256, reused until shortly before they expire) and verifies App Store Server Notifications itself. Both run on WebCrypto, so they work on Workers. `environment` defaults to `"production"`.
 
-A host can still supply either function: `tokenProvider` replaces the built-in signer (it is required when `appStoreServerApiKey` is not set), and `notificationVerifier` replaces the built-in verifier. Advanced Commerce uses its own `tokenProvider` when given one and the adapter's otherwise.
+A host can still supply either function: `tokenProvider` replaces the built-in signer (it is required when `appStoreServerApiKey` is not set), and `notificationVerifier` replaces the built-in verifier. Advanced Commerce uses its own `tokenProvider` when given one and the adapter's otherwise. When the adapter is configured with bundle IDs, it calls a host `tokenProvider` with `{ bundleId }`, the app the token must claim as `bid`.
 
-The verifier and signer are also exported for direct use: `createAppleSignedDataVerifier({ bundleId })` verifies notifications and signed transactions (for example StoreKit 2's `jwsRepresentation`), and `createAppStoreServerApiTokenSigner({ issuerId, keyId, privateKey, bundleId })` returns a token provider.
+The verifier and signer are also exported for direct use: `createAppleSignedDataVerifier({ bundleId })` (or `{ bundleIds }`) verifies notifications and signed transactions (for example StoreKit 2's `jwsRepresentation`), and `createAppStoreServerApiTokenSigner({ issuerId, keyId, privateKey, bundleId })` returns a token provider.
+
+## Several Apps
+
+One adapter can serve several apps of the same developer team. List their bundle IDs in `bundleIds` instead of (or as well as) `bundleId`; one of the two is required, and a configuration with only `bundleId` behaves as before.
+
+```ts
+const catalog = {
+  plans: [
+    {
+      planKey: "pro",
+      prices: [
+        { priceId: "pro-app", provider: "apple", providerProductId: "pro.monthly", metadata: { appleBundleId: "com.example.app" }, /* ... */ },
+        { priceId: "pro-companion", provider: "apple", providerProductId: "pro.monthly", metadata: { appleBundleId: "com.example.companion" }, /* ... */ },
+      ],
+    },
+  ],
+};
+
+const apple = createAppleProvider({
+  bundleIds: ["com.example.app", "com.example.companion"],
+  appStoreServerApiKey: {
+    issuerId: process.env.APPLE_ISSUER_ID!,
+    keyId: process.env.APPLE_KEY_ID!,
+    privateKey: process.env.APPLE_IN_APP_PURCHASE_KEY!, // the team's in-app purchase key
+  },
+  catalog, // the same catalog BillFn is given
+});
+```
+
+- Notifications and signed transactions verify when their signed payload names a listed bundle ID, and are rejected with `bundle_id_mismatch` otherwise. Only the signed payload counts: a bundle ID in the request body outside `signedPayload`, or in the JWS header, is ignored.
+- Apple product IDs are unique only within an app, so two apps can sell the same product ID. With more than one bundle ID, every Apple price in the catalog must name the app it is sold in as `metadata.appleBundleId` (exported as `APPLE_BUNDLE_ID_METADATA_KEY`), one of the listed bundle IDs. Checkout, verification and restore of a price that names no listed app fail with `BILLFN_VALIDATION_ERROR` before Apple is asked. With a single bundle ID the key is optional; when given, it must name that app.
+- App Store Server API requests are signed with the one team key, each token claiming as `bid` the app it asks about. Verification and restore ask only the app the price names, so another app's purchase of the same product is Apple's "transaction not found", and a transaction whose signed `bundleId` is not the price's app is rejected with `BILLFN_CONFLICT`. An unsigned bundle ID in the client payload is never read. Import and sync carry only a transaction ID of a subscription already bound to its app, so the adapter asks each listed app in order (`bundleId` first) until Apple's answer is not "transaction not found"; the request that succeeds is the one whose `bid` is the transaction's app. In the default `"production"` environment, an app that does not own the transaction usually costs a production and a sandbox request, so list the busiest app first.
+- Pass the BillFn catalog as `catalog` whenever two apps may sell the same product ID in different plans. With more than one bundle ID, `createAppleProvider` then requires every Apple price in it to name a listed app (`BILLFN_VALIDATION_ERROR` otherwise), and for a product ID the apps sell in more than one plan, webhook and notification history events (`priceId`) and read billing states (`raw.priceId`) name the catalog price of the app that signed the transaction, which BillFn matches before any product ID. A renewal or upgrade into that product then applies the app's own plan. Without `catalog`, BillFn matches such a product by product ID alone, finds prices in several plans, names none of them, and keeps the subscription's stored plan and entitlements. A product sold in only one plan, or an app selling one product in several plans, is matched by product ID with or without `catalog`, as with one app.
+- BillFn core picks a price for a provider product by product ID alone. When two apps' prices share a product ID in one plan, a renewal or plan change into that product can record the other app's price of it; the plan and its entitlements are the same, and sync keeps working because it reads the subscription from the app that owns it. Give each app its own product IDs if the recorded price must always be the app's own.
+- Advanced Commerce cancel and refund (revoke) first look the transaction up the same way, then sign the Advanced Commerce request for its app.
+- With more than one bundle ID, notification history reads each app's history in turn, moving to the next app when Apple answers `hasMore: false` or sends no pagination token, and `nextCursor` is an adapter cursor that names the app and Apple's pagination token; pass it back unchanged. With a single app, `nextCursor` is Apple's pagination token returned unchanged, as before. A plain Apple pagination token is read as the first app's, and a malformed adapter cursor is rejected with `BILLFN_VALIDATION_ERROR`.
+- Changing the bundle IDs keeps a stored history cursor working. An adapter cursor is read whatever the number of listed apps: one naming a listed app continues that app's history, and one naming an app no longer listed restarts from the first listed app. A restart replays notifications BillFn has already recorded, which it skips by notification ID. When moving from `bundleId` to `bundleIds`, keep the previous app as `bundleId` or first in `bundleIds`, so the stored plain Apple token is still read as that app's.
 
 ## Current Capabilities
 
@@ -97,10 +134,10 @@ BillFn expects App Store Server Notifications v2 payloads with `signedPayload`. 
 - the intermediate signed the leaf, the root signed the intermediate, and the intermediate is a certificate authority;
 - the leaf carries Apple's receipt signing OID (`1.2.840.113635.100.6.11.1`) and the intermediate Apple's WWDR OID (`1.2.840.113635.100.6.2.1`);
 - every certificate is valid at the time of verification and the leaf's key verifies the signature;
-- the payload names the configured `bundleId` and the `Production` or `Sandbox` environment. Both environments are accepted, and the verifier reports which one a payload came from.
+- the payload names a configured bundle ID (`bundleId` or one of `bundleIds`) and the `Production` or `Sandbox` environment. Both environments are accepted, and the verifier reports which one a payload came from.
 
 A notification carries its bundle ID and environment in `data`, in `summary` for a summary notification, in `appData` for a `RESCIND_CONSENT` notification, or in `unclaimInfo` for an `UNCLAIM_SEATS` notification, and the same bundle ID and environment rules apply to each. An `externalPurchaseToken` notification has no environment field: the verifier treats it as `Sandbox` (reported as `sandbox`) when its `externalPurchaseId` starts with `SANDBOX`, and as `Production` (`production`) otherwise.
 
 Certificate validity is checked against the current time, not the payload's `signedDate`. A notification that Apple retries, or that you read from notification history, after its leaf certificate has expired is rejected even though it was valid when Apple signed it.
 
-A rejected notification fails with `BILLFN_WEBHOOK_SIGNATURE_INVALID`, whose `details.reason` names the failed check. Without `bundleId` or a `notificationVerifier`, notifications cannot be verified and BillFn rejects them, and notification history is unavailable.
+A rejected notification fails with `BILLFN_WEBHOOK_SIGNATURE_INVALID`, whose `details.reason` names the failed check. Without `bundleId`, `bundleIds` or a `notificationVerifier`, notifications cannot be verified and BillFn rejects them, and notification history is unavailable.

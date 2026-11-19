@@ -1,7 +1,7 @@
 /**
  * Verifies App Store signed data (App Store Server Notifications v2 and signed transactions) on WebCrypto, so it runs
  * on Workers: an ES256 JWS whose x5c chain is leaf, Apple WWDR intermediate and the pinned Apple Root CA - G3, with
- * Apple's OIDs on the leaf and intermediate, every certificate valid now, and the payload for the configured app.
+ * Apple's OIDs on the leaf and intermediate, every certificate valid now, and the payload for one of the configured apps.
  */
 import { APPLE_ROOT_CA_G3, APPLE_ROOT_CA_G3_SHA256 } from './apple-root-ca.js';
 import { base64ToBytes, base64UrlToBytes, bytesEqual, bytesToHex, toArrayBuffer } from './encoding.js';
@@ -36,8 +36,16 @@ export class AppleSignedDataVerificationError extends Error {
 }
 
 export interface AppleSignedDataVerifierOptions {
-  /** The app's bundle ID; signed data for any other app is rejected. */
-  bundleId: string;
+  /**
+   * The app's bundle ID. This or `bundleIds` is required. Signed data is accepted for this app or any app in
+   * `bundleIds`, and rejected for any other app.
+   */
+  bundleId?: string;
+  /**
+   * The bundle IDs of several apps of one developer team; signed data for any app not listed is rejected. When
+   * `bundleId` is also given, it is accepted as well.
+   */
+  bundleIds?: readonly string[];
   /** The clock certificate validity is checked against. Defaults to the current time. */
   now?: () => Date;
 }
@@ -94,14 +102,15 @@ function createVerifier(
   options: AppleSignedDataVerifierOptions,
   loadRoot: () => Promise<TrustAnchor>
 ): AppleSignedDataVerifier {
-  if (typeof options.bundleId !== 'string' || options.bundleId.length === 0) {
-    throw new TypeError('The Apple signed data verifier requires a bundleId');
-  }
+  const bundleIds = new Set(readVerifierBundleIds(options));
   const now = options.now ?? (() => new Date());
-  const verify = async (jws: string, readScope: (payload: Record<string, unknown>) => SignedDataScope) => {
+  const verify = async (
+    jws: string,
+    readScope: (payload: Record<string, unknown>) => SignedDataScope
+  ): Promise<AppleVerifiedSignedData> => {
     const payload = await verifyAppleJws(jws, (await loadRoot()).certificate, now());
     const scope = readScope(payload);
-    if (scope.bundleId !== options.bundleId) {
+    if (typeof scope.bundleId !== 'string' || !bundleIds.has(scope.bundleId)) {
       throw new AppleSignedDataVerificationError('bundle_id_mismatch', 'Apple signed data is for another bundle ID');
     }
     const environment = readEnvironment(scope.environment);
@@ -118,6 +127,19 @@ function createVerifier(
     verifyTransaction: (signedTransaction) =>
       verify(signedTransaction, (payload) => ({ bundleId: payload.bundleId, environment: payload.environment }))
   };
+}
+
+/** Reads `bundleId` and `bundleIds` into one list; at least one non-empty bundle ID is required. */
+function readVerifierBundleIds(options: AppleSignedDataVerifierOptions): string[] {
+  const { bundleId, bundleIds } = options;
+  if (bundleIds !== undefined && (!Array.isArray(bundleIds) || bundleIds.length === 0)) {
+    throw new TypeError('The Apple signed data verifier bundleIds must be a non-empty array of bundle IDs');
+  }
+  const all = [...(bundleId === undefined ? [] : [bundleId]), ...(bundleIds ?? [])];
+  if (all.length === 0 || all.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
+    throw new TypeError('The Apple signed data verifier requires a bundleId or bundleIds');
+  }
+  return all;
 }
 
 /** Maps Apple's environment name by exact comparison, so inherited object keys never match. */
