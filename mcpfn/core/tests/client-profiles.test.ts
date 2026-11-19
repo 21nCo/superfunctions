@@ -88,6 +88,29 @@ describe("McpFn client profiles", () => {
     }
   });
 
+  // References followed inside a provider resolve in that provider, as Ajv
+  // compiles them, even beside a root whose $id ".../%41" serializes to ".../A".
+  it("lists and calls consumers of a provider beside a percent-encoded spelling of its $id", async () => {
+    const handler = async () => structuredResult({ ok: true });
+    const base = "https://profile.invalid/";
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "provider", description: "Provider", inputSchema: { $id: `${base}A`, type: "object" as const, properties: { v: { $ref: `${base}A#/definitions/q` } }, definitions: { q: { $id: "#node", type: "string" } } }, handler })
+      .register({ name: "encoded", description: "Encoded spelling", inputSchema: { $id: `${base}%41`, type: "object" as const, definitions: { q: { type: "number" } } }, handler })
+      .register({ name: "by_pointer", description: "Pointer into the provider", inputSchema: { type: "object" as const, properties: { v: { $ref: `${base}A#/properties/v` } }, required: ["v"] }, handler })
+      .register({ name: "by_resource", description: "Whole provider", inputSchema: { type: "object" as const, properties: { p: { $ref: `${base}A` } }, required: ["p"] }, handler })
+      .register({ name: "by_anchor", description: "Provider anchor", inputSchema: { type: "object" as const, properties: { v: { $ref: `${base}A#node` } }, required: ["v"] }, handler });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["by_anchor", "by_pointer", "by_resource", "encoded", "provider"]);
+    for (const [name, valid, invalid] of [
+      ["by_pointer", { v: "text" }, { v: 42 }],
+      ["by_resource", { p: { v: "text" } }, { p: { v: 42 } }],
+      ["by_anchor", { v: "text" }, { v: 42 }],
+    ] as const) {
+      expect((await client.callTool({ name, arguments: valid })).isError).not.toBe(true);
+      expect((await client.callTool({ name, arguments: invalid })).isError).toBe(true);
+    }
+  });
+
   const closeables: Array<{ close(): Promise<void> }> = [];
 
   afterEach(async () => {
@@ -1464,27 +1487,30 @@ describe("anonymous schema scopes beside registered schema resources", () => {
 
   // Ajv keys a root by its literal $id ("./shared") but resolves references to
   // normalized URIs ("shared#/..."), and binds one inside that root to the root
-  // itself, even beside a sibling that owns "shared". An anchor reference with
-  // a resource part has no fixed target there, so it is refused.
+  // itself, even beside a sibling that owns "shared". An anchor that both
+  // define has no fixed target, so it is refused.
   it.each([
-    ["./shared", "#/definitions/query", false, true, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "#node", true, true, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "shared#/definitions/query", false, true, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "shared#node", true, true, "MCPFN_INVALID_PROJECTED_CATALOG"],
-    ["./shared", "shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "./shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "shared#node", true, false, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["https://profile.invalid:443/shared", "https://profile.invalid/shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
-  ] as const)("compares a root $id %s referenced as %s (anchor %s, sibling %s)", async (id, reference, anchored, withSibling, code) => {
+    ["./shared", "#/definitions/query", false, "plain", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "#node", true, "plain", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#/definitions/query", false, "plain", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#node", true, "plain", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#node", true, "anchored", "MCPFN_INVALID_PROJECTED_CATALOG"],
+    ["./shared", "shared#/definitions/query", false, "none", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "./shared#/definitions/query", false, "none", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#node", true, "none", "MCPFN_PROFILE_ASYMMETRIC"],
+    ["https://profile.invalid:443/shared", "https://profile.invalid/shared#/definitions/query", false, "none", "MCPFN_PROFILE_ASYMMETRIC"],
+  ] as const)("compares a root $id %s referenced as %s (anchor %s, sibling %s)", async (id, reference, anchored, sibling, code) => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
-    const other = { $id: "shared", type: "object", definitions: { query: { type: "number" } } };
+    const other = { $id: "shared", type: "object", definitions: { query: { ...(sibling === "anchored" ? { $id: "#node" } : {}), type: "number" } } };
     const schema = (type: string) => ({ $id: id, type: "object" as const, properties: { query: { $ref: reference } }, definitions: { query: { ...(anchored ? { $id: "#node" } : {}), type } } });
-    // Oracle: the runtime Ajv compiler binds the reference to this root's own definition.
-    const compiler = createSchemaCompiler("ajv");
-    if (withSibling) compiler.compile(other);
-    const validate = compiler.compile(schema("string"));
-    expect([validate({ query: "text" }), validate({ query: 1 })]).toEqual([true, false]);
-    const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [...(withSibling ? [other] : []), schema("string")], resolved: {
+    if (code === "MCPFN_PROFILE_ASYMMETRIC") {
+      // Oracle: the runtime Ajv compiler binds the reference to this root's own definition.
+      const compiler = createSchemaCompiler("ajv");
+      if (sibling !== "none") compiler.compile(other);
+      const validate = compiler.compile(schema("string"));
+      expect([validate({ query: "text" }), validate({ query: 1 })]).toEqual([true, false]);
+    }
+    const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [...(sibling === "none" ? [] : [other]), schema("string")], resolved: {
       context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
       profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
     } });
