@@ -603,6 +603,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string; local: string }>();
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
+  const ambiguousKeys = new Set<string>();
   const resourceKey = (address: URL) => address.href.split("#", 1)[0]!;
   const fragment = (address: URL) => {
     try { return decodeURIComponent(address.hash.slice(1)); }
@@ -641,8 +642,8 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     }
     // An empty $id names no resource, as at runtime: the schema stays anonymous.
     const authoredId = !Array.isArray(value) && typeof schemaValue.$id === "string" && schemaValue.$id !== "" ? schemaValue.$id : undefined;
-    // A dot-segment $id would rename the anonymous resource it sits in.
-    if (!invalid && authoredId !== undefined && !authoredId.startsWith("#") && selfReference(authoredId, parentLocal) !== undefined) {
+    // A nested dot-segment $id would rename the anonymous resource it sits in.
+    if (!invalid && authoredId !== undefined && value !== resource && !authoredId.startsWith("#") && selfReference(authoredId, parentLocal) !== undefined) {
       reject("Schema resource ID collides with an anonymous schema scope");
     }
     if (!invalid && authoredId !== undefined) {
@@ -662,8 +663,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           } else ids.set(`${local}#${name}`, schemaValue);
         } else if (resourceRoots.has(resourceKey(address)) &&
             canonicalJson(resourceRoots.get(resourceKey(address))) !== canonicalJson(schemaValue)) {
-          // A different schema already owns this ID; never let it replace the
-          // target of that resource's references.
+          // A different schema already owns this ID (Ajv may still tell the
+          // two spellings apart, e.g. "shared" and "/shared"). Neither may
+          // stand in for the other, so references to it are refused.
+          ambiguousKeys.add(resourceKey(address));
           reject("Duplicate schema resource ID");
         } else {
           resource = schemaValue;
@@ -720,6 +723,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI"); }
     const pointer = fragment(address);
     const key = resourceKey(address);
+    if (ambiguousKeys.has(key)) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
     if (pointer && !pointer.startsWith("/")) {
       const anchored = ids.get(`${key}#${pointer}`);
       if (anchored) return assertReachable(anchored);

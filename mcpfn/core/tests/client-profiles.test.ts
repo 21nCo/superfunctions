@@ -1385,6 +1385,31 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     } })).rejects.toThrow(/anonymous schema scope/);
   });
 
+  it("lists a tool whose own root $id is a dot segment", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const inputSchema = { $id: "./", type: "object" as const, properties: { query: { type: "string" } } };
+    const catalog = await buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "noop", version: "1", matches: () => true },
+    } });
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(["search"]);
+  });
+
+  // Ajv keeps "shared" and "/shared" apart; one shared base cannot, so a
+  // projection must not swap one for the other.
+  it("refuses a reference to a schema ID that two different schemas claim", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const text = { $id: "shared", type: "string" };
+    const number = { $id: "/shared", type: "number" };
+    const consumer = (reference: string) => ({ type: "object" as const, properties: { value: { $ref: reference } } });
+    for (const schemaResources of [[text, number, consumer("/shared")], [number, text, consumer("/shared")]]) {
+      await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer("/shared") }], schemaResources, resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "swap", version: "1", matches: () => true, projectCatalog: () => [{ name: "consumer", inputSchema: consumer("shared") }] },
+      } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+    }
+  });
+
   it("compares a relative shared target when a projection changes it", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const provider = { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } };
