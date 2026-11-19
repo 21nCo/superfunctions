@@ -1,0 +1,21 @@
+catchfn/typescript/src/collectors/errors.ts
+  s_19abec75182420::t_6e36821f2581dc 219-221,223
+catchfn/typescript/test/errors.test.ts
+  s_19abec75182420::t_50449a8c7ac401 186,214-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff868936e5e390a2bda6e4adf1547f1df849a769",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
