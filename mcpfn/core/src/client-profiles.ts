@@ -441,12 +441,13 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
       });
       for (const resource of graph) validateDefinitionContainers(resource, ajv);
       // Anonymous schemas need distinct registry keys without changing their JSON
-      // Schema IDs. The key's last path segment carries a digest of the whole
-      // graph, so no authored $id in that graph (absolute, or relative to this
-      // key) can resolve to a key and make Ajv reject a valid catalog.
+      // Schema IDs. A relative key keeps Ajv's shared relative namespace, so an
+      // authored relative $ref such as "shared" resolves as it does for every
+      // other resource (and at runtime). The key carries a digest of the whole
+      // graph, so no authored $id in that graph can claim it.
       const namespace = sha256(graph).slice(0, 32);
       for (const [index, resource] of graph.entries()) {
-        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `https://profile.mcpfn.invalid/${namespace}-${index}` : undefined);
+        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `mcpfn-profile-${namespace}-${index}` : undefined);
       }
       ajv.compile(schema);
     }
@@ -578,18 +579,20 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const seen = new Set<unknown>();
   // Keep resource roots separate from named aliases. In draft-07, $id: "#node"
   // names a subschema but does not make it the root for JSON Pointer fragments.
-  // Every anonymous resource (this root and each anonymous sibling) gets its own
-  // synthetic base. The host carries a digest of the whole schema graph, so no
-  // authored $id in that graph can name it: a sibling's IDs and anchors can
-  // never take over this root's local references, or another sibling's.
+  // Mirror the runtime resolver (validation.ts): every resource resolves authored
+  // relative $id and $ref values against one shared base, while each anonymous
+  // resource (this root and each anonymous sibling) keeps a private key used
+  // only for its own fragment references and anchors. Both hosts carry a digest
+  // of the whole schema graph, so no authored $id in that graph can name them:
+  // a sibling can never take over this root's local references, or another
+  // sibling's, and relative references still reach their registered resource.
   const siblings = profileSchemaResources(root, schemaResources).slice(0, -1);
   const namespace = sha256([root, siblings]).slice(0, 32);
-  const syntheticBase = (label: string) => `https://${label}.${namespace}.mcpfn.invalid/schema`;
-  const initialBase = syntheticBase("root");
-  const siblingBases = siblings.map((_, position) => syntheticBase(`resource-${position}`));
-  const syntheticKeys = new Set([initialBase, ...siblingBases]);
-  const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string }>();
-  const resourceRoots = new Map<string, Record<string, unknown>>([[initialBase, root]]);
+  const sharedBase = `https://${namespace}.relative.mcpfn.invalid/`;
+  const privateKey = (label: string) => `https://${label}.${namespace}.mcpfn.invalid/schema`;
+  const rootKey = privateKey("root");
+  const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string; local: string }>();
+  const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const resourceKey = (address: URL) => address.href.split("#", 1)[0]!;
   const fragment = (address: URL) => {
@@ -606,10 +609,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // reference from this schema reaches that node, its subtree or its ancestors.
   const deferred = new WeakMap<object, string>();
   const parents = new WeakMap<object, object>();
-  const index = (value: unknown, resource: Record<string, unknown>, parentBase: string, strict: boolean, parent?: object) => {
+  const index = (value: unknown, resource: Record<string, unknown>, parentBase: string, parentLocal: string, strict: boolean, parent?: object) => {
     if (!value || typeof value !== "object" || scopes.has(value)) return;
     if (parent) parents.set(value, parent);
     let base = parentBase;
+    let local = parentLocal;
     const schemaValue = value as Record<string, unknown>;
     let invalid = false;
     const reject = (message: string) => {
@@ -640,14 +644,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
               resourceKey(address) !== resourceKey(new URL(parentBase))) {
             reject("Unsupported schema resource ID fragment");
-          } else ids.set(`${resourceKey(address)}#${name}`, schemaValue);
-        } else if (syntheticKeys.has(resourceKey(address)) && resourceRoots.get(resourceKey(address)) !== schemaValue) {
-          // A relative $id that resolves back onto an anonymous resource's own
-          // base would otherwise replace that resource's root for "#/..." refs.
-          reject("Schema resource ID collides with an anonymous schema scope");
+          } else ids.set(`${local}#${name}`, schemaValue);
         } else {
           resource = schemaValue;
-          resourceRoots.set(resourceKey(address), resource);
+          local = resourceKey(address);
+          resourceRoots.set(local, resource);
         }
         if (!invalid) base = address.href.replace(/#$/, "");
       }
@@ -655,19 +656,20 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     if (schemaValue.$dynamicRef !== undefined || schemaValue.$recursiveRef !== undefined) {
       reject("Dynamic and recursive references are not supported in projected catalogs");
     }
-    if (typeof schemaValue.$anchor === "string") ids.set(`${resourceKey(new URL(base))}#${schemaValue.$anchor}`, schemaValue);
-    if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) ids.set(`${resourceKey(new URL(base))}#${schemaValue.$dynamicAnchor}`, schemaValue);
-    scopes.set(value, { resource, base });
+    if (typeof schemaValue.$anchor === "string") ids.set(`${local}#${schemaValue.$anchor}`, schemaValue);
+    if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) ids.set(`${local}#${schemaValue.$dynamicAnchor}`, schemaValue);
+    scopes.set(value, { resource, base, local });
     for (const [key, child] of Object.entries(value)) {
-      mapSchemaKeyword(key, child, item => { index(item, resource, base, strict, value); return item; }, modernDialect(resource));
+      mapSchemaKeyword(key, child, item => { index(item, resource, base, local, strict, value); return item; }, modernDialect(resource));
     }
   };
   for (const [position, resource] of siblings.entries()) {
     const detached = JSON.parse(JSON.stringify(resource)) as Record<string, unknown>;
-    resourceRoots.set(siblingBases[position]!, detached);
-    index(detached, detached, siblingBases[position]!, false);
+    const siblingKey = privateKey(`resource-${position}`);
+    resourceRoots.set(siblingKey, detached);
+    index(detached, detached, sharedBase, siblingKey, false);
   }
-  index(root, root, initialBase, true);
+  index(root, root, sharedBase, rootKey, true);
   const assertReachable = (target: unknown): unknown => {
     if (!target || typeof target !== "object") return target;
     for (let node: object | undefined = parents.get(target); node; node = parents.get(node)) {
@@ -689,7 +691,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
     let address: URL;
-    try { address = new URL(reference, scopes.get(schema)?.base ?? initialBase); }
+    // Fragment-only references stay in the current resource; anything with a
+    // resource part resolves in the shared namespace, as the runtime does.
+    const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey };
+    try { address = new URL(reference, reference === "" || reference.startsWith("#") ? scope.local : scope.base); }
     catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI"); }
     const pointer = fragment(address);
     const key = resourceKey(address);

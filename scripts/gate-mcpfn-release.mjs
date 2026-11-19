@@ -21,6 +21,7 @@ const temporaryRoot = mkdtempSync(path.join(tmpdir(), "mcpfn-release-"));
 const candidateManifest = path.join(temporaryRoot, "calculator.manifest.json");
 const scenarioReport = path.join(temporaryRoot, "calculator.report.json");
 const results = [];
+const STEP_OUTPUT_LIMIT = 256 * 1024 * 1024;
 
 function run(name, command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -34,23 +35,47 @@ function run(name, command, args, options = {}) {
     stdio: "pipe",
     encoding: "utf8",
     shell: false,
+    // The 1 MiB default kills verbose steps (the datafn server test lanes print
+    // close to it) with ENOBUFS and reports them as an ordinary failure.
+    maxBuffer: STEP_OUTPUT_LIMIT,
     ...(options.timeout ? { timeout: options.timeout } : {}),
   });
   const record = {
     name,
     command: [command, ...args].join(" "),
-    ok: (result.status ?? 1) === 0,
-    status: result.status ?? 1,
+    ok: result.status === 0 && !result.error,
+    pid: result.pid ?? null,
+    status: result.status,
+    signal: result.signal,
+    error: result.error ? (result.error.code ?? result.error.message) : null,
     stdout: result.stdout?.trim() ?? "",
     stderr: result.stderr?.trim() ?? "",
   };
   results.push(record);
   if (!record.ok) {
-    throw new Error(
-      `${name} failed with ${record.status}\n${record.stdout}\n${record.stderr}`,
-    );
+    const cause = [
+      `status ${record.status}`,
+      record.signal ? `signal ${record.signal}` : "",
+      record.error ? `error ${record.error}` : "",
+      `pid ${record.pid}`,
+    ].filter(Boolean).join(", ");
+    throw new Error(`${name} failed (${cause})\n${record.stdout}\n${record.stderr}`);
   }
   return record;
+}
+
+// A step must be able to print more than the 1 MiB spawnSync default and still
+// pass with its whole output captured.
+function verifyLargeStepOutput() {
+  const bytes = 2 * 1024 * 1024;
+  const record = run("gate:large-output-capture", process.execPath, [
+    "-e",
+    `process.stdout.write("x".repeat(${bytes}))`,
+  ]);
+  if (record.stdout.length !== bytes) {
+    record.ok = false;
+    throw new Error(`gate:large-output-capture captured ${record.stdout.length} of ${bytes} bytes`);
+  }
 }
 
 function npmStep(name, args, options) {
@@ -391,6 +416,7 @@ process.stdout.write(JSON.stringify({ ok: true, transports: ["stdio", "streamabl
 }
 
 try {
+  verifyLargeStepOutput();
   verifyMcpSdkSecurityPolicy();
   for (const workspace of [
     "@superfunctions/auth",

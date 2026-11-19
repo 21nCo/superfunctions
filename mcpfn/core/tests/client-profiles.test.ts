@@ -50,6 +50,22 @@ describe("McpFn client profiles", () => {
     expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: 42 } } })).isError).toBe(true);
   });
 
+  // Authored relative IDs share one namespace with every registered resource, as
+  // they do at runtime; an anonymous schema's private identity is only for its
+  // own "#" references and must not rebase "shared".
+  it.each([
+    ["an anonymous consumer", {}],
+    ["a consumer with its own relative $id", { $id: "consumer" }],
+  ])("resolves a relative registered schema from %s in profiled list and call", async (_label, identity) => {
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "z_provider", description: "Provides a relative shared schema", inputSchema: { $id: "shared", type: "object", properties: { value: { type: "string" } }, required: ["value"] }, handler: async () => structuredResult({ ok: true }) })
+      .register({ name: "a_consumer", description: "Uses the relative shared schema", inputSchema: { ...identity, type: "object", properties: { nested: { $ref: "shared" } }, required: ["nested"] }, handler: async () => structuredResult({ ok: true }) });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["a_consumer", "z_provider"]);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: "valid" } } })).isError).not.toBe(true);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: 42 } } })).isError).toBe(true);
+  });
+
   const closeables: Array<{ close(): Promise<void> }> = [];
 
   afterEach(async () => {
@@ -1300,12 +1316,30 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     }
   });
 
-  it("rejects a nested relative $id that resolves back onto its anonymous root", async () => {
+  // A nested relative $id names its own resource in the shared namespace; it
+  // must neither take over the root's "#/" pointers nor be refused.
+  it("keeps an anonymous root's local references beside a nested relative $id", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
-    const inputSchema = { type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: "schema", definitions: { query: { type: "number" } } } }, definitions: { query: { type: "string" } } };
-    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema }], resolved: {
+    const schema = (type: string) => ({ type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: "schema", definitions: { query: { type: "number" } } } }, definitions: { query: { type } } });
+    const resolved = (projected?: ReturnType<typeof schema>) => ({
       context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
-      profile: { id: "noop", version: "1", matches: () => true },
-    } })).rejects.toThrow(/anonymous schema scope/);
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
+    });
+    const canonicalTools = [{ name: "search", inputSchema: schema("string") }];
+    expect((await buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved() })).tools.map((tool) => tool.name)).toEqual(["search"]);
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved(schema("number")) })).rejects.toThrow(/must retain its canonical schema/);
+  });
+
+  it("compares a relative shared target when a projection changes it", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const provider = { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } };
+    const consumer = { type: "object" as const, properties: { nested: { $ref: "shared#/properties/value" } } };
+    const canonicalTools = [{ name: "provider", inputSchema: provider }, { name: "consumer", inputSchema: consumer }];
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools, schemaResources: [provider, consumer], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true,
+        projectCatalog: ({ tools }) => tools.map((tool) => tool.name === "consumer" ? { ...tool, inputSchema: { type: "object", properties: { nested: { type: "number" } } } } : tool),
+      },
+    } })).rejects.toThrow(/must retain its canonical schema/);
   });
 });
