@@ -41,7 +41,7 @@
     "@superfunctions/metrics": "^0.1.1"
   },
   "devDependencies": {
-    "@superfunctions/db": "0.3.3",
+    "@superfunctions/db": "0.3.4",
     "@superfunctions/db-0.2": "npm:@superfunctions/db@0.2.1",
     "@superfunctions/queue": "0.2.0",
     "@superfunctions/webhooks": "^0.1.1",

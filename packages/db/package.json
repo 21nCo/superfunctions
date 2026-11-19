@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/db",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Shared database adapter system for building useful backend libraries",
   "type": "module",
   "main": "./dist/index.js",
@@ -86,7 +86,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.800.0",
     "@aws-sdk/lib-dynamodb": "^3.800.0",
-    "@superfunctions/observability": "0.0.3"
+    "@superfunctions/observability": "0.0.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",

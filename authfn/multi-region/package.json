@@ -28,7 +28,7 @@
   "dependencies": {
     "authfn": "0.7.0",
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/observability": "0.0.3"
+    "@superfunctions/observability": "0.0.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

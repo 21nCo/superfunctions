@@ -50,7 +50,7 @@
   "sideEffects": false,
   "dependencies": {
     "@searchfn/adapter-contracts": "^0.4.0",
-    "@superfunctions/observability": "0.0.3"
+    "@superfunctions/observability": "0.0.4"
   },
   "peerDependencies": {
     "@datafn/core": "0.1.0"
