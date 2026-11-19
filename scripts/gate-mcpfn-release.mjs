@@ -64,21 +64,22 @@ function packageVersion(packagePath) {
 }
 
 function verifyMcpSdkSecurityPolicy() {
-  const expectedVersion = "1.29.0";
+  // Exact SDK pins per package. @mcpfn/core moved to 1.32.1 with the port of
+  // next at e42232591 (SFNS-137); the other packages stay on the patched 1.29.0.
+  const expectedVersions = {
+    "mcpfn/core": "1.32.1",
+    "mcpfn/client": "1.29.0",
+    "mcpfn/auth": "1.29.0",
+    "mcpfn/testing": "1.29.0",
+    "mcpfn/inspector": "1.29.0",
+    "mcpfn/cli": "1.29.0",
+  };
   const expectedOverrides = {
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.9",
     nanoid: "3.3.18",
   };
-  const packagePaths = [
-    "mcpfn/core",
-    "mcpfn/client",
-    "mcpfn/auth",
-    "mcpfn/testing",
-    "mcpfn/inspector",
-    "mcpfn/cli",
-  ];
   const resolvedVersions = Object.fromEntries(
-    packagePaths.map((packagePath) => {
+    Object.keys(expectedVersions).map((packagePath) => {
       const manifest = JSON.parse(
         readFileSync(path.join(repoRoot, packagePath, "package.json"), "utf8"),
       );
@@ -86,7 +87,7 @@ function verifyMcpSdkSecurityPolicy() {
     }),
   );
   const mismatches = Object.entries(resolvedVersions).filter(
-    ([, version]) => version !== expectedVersion,
+    ([packagePath, version]) => version !== expectedVersions[packagePath],
   );
   const rootManifest = JSON.parse(
     readFileSync(path.join(repoRoot, "package.json"), "utf8"),
@@ -104,7 +105,7 @@ function verifyMcpSdkSecurityPolicy() {
     ok,
     status: ok ? 0 : 1,
     stdout: JSON.stringify({
-      expectedVersion,
+      expectedVersions,
       resolvedVersions,
       expectedOverrides,
       resolvedOverrides,
