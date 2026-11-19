@@ -1,0 +1,21 @@
+catchfn/typescript/src/collectors/websocket.ts
+  s_19abec75182420::t_d1579422a3881e 400-404,407-416,418,422-429,435-442
+catchfn/typescript/test/websocket.test.ts
+  s_19abec75182420::t_0dd385938ab18f 447-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2dbbdb92ba0a259aba7dd2adf2411b1ff3bc5931",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
