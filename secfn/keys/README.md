@@ -43,7 +43,8 @@ signer, or has a signer whose own `kid` (from its JWK or the `kid` option) diffe
   cannot change the signed header after validation. The payload is bytes (an `ArrayBuffer`, `SharedArrayBuffer`, any
   typed array or `DataView`, including one from another realm, signed as the bytes it views), a UTF-8 string, or a
   plain object or array serialized with `JSON.stringify` to a JSON object or array. Other objects, such as a `Map`,
-  `Date` or class instance, are rejected with `invalid-sign-input` instead of being signed as `{}`. A token longer than
+  `Date` or class instance, are rejected with `invalid-sign-input` instead of being signed as `{}`, and so is a
+  detached buffer or a view over one. A token longer than
   `MAX_JWS_LENGTH` (256 KiB) is rejected with `invalid-sign-input` before the signer runs, because `verify` would
   reject it.
 - `verify(jws)` accepts only the compact serialization with strict unpadded base64url, `alg: "ES256"`, a `kid` of an
@@ -55,7 +56,8 @@ signer, or has a signer whose own `kid` (from its JWK or the `kid` option) diffe
 
 `createWebCryptoSigner({ privateJwk })` or `createWebCryptoSigner({ pkcs8, kid? })` imports a P-256 private key
 (a JWK, PKCS #8 DER bytes, or a PEM string labelled `PRIVATE KEY`) as a non-extractable `CryptoKey` and
-checks that it matches its public coordinates. Convert SEC1 `EC PRIVATE KEY` PEM files to PKCS #8 first, for example
+checks that it matches its public coordinates. DER bytes may be any `ArrayBuffer` or view, including a view over a
+`SharedArrayBuffer`; they are copied before import, and a detached buffer is rejected with `invalid-private-key`. Convert SEC1 `EC PRIVATE KEY` PEM files to PKCS #8 first, for example
 with `openssl pkcs8 -topk8 -nocrypt`.
 
 Any object implementing `Es256Signer` (`alg`, `publicJwk`, optional `kid`, and `sign(bytes)` returning a 64-byte

@@ -1,4 +1,4 @@
-import { base64UrlDecode, base64UrlEncode, copyBytes, utf8Decode, utf8Encode } from './encoding.js';
+import { base64UrlDecode, base64UrlEncode, copyBytes, isArrayBuffer, utf8Decode, utf8Encode } from './encoding.js';
 import { describeKid, KeyRingError } from './errors.js';
 import { ECDSA_SHA256, ES256, type Es256PublicJwk, importPublicKey, isRecord, type Jwks, type JwksKey, P256_FIELD_BYTES, toPublicJwk } from './jwk.js';
 import type { Es256Signer } from './signer.js';
@@ -37,9 +37,10 @@ export interface JwsHeader {
 /**
  * Payload bytes (an `ArrayBuffer`, `SharedArrayBuffer` or any `ArrayBufferView`, from any realm, signed as its viewed
  * bytes), a UTF-8 string, or a plain object or array that is serialized with `JSON.stringify` and must serialize to a
- * JSON object or array. Other objects (`Map`, `Date`, class instances) are rejected rather than signed as `{}`.
+ * JSON object or array. Other objects (`Map`, `Date`, class instances) are rejected rather than signed as `{}`, and a
+ * detached buffer or a view over one is rejected with `invalid-sign-input`.
  */
-export type JwsPayload = ArrayBuffer | ArrayBufferView | string | Record<string, unknown> | readonly unknown[];
+export type JwsPayload = ArrayBuffer | SharedArrayBuffer | ArrayBufferView | string | Record<string, unknown> | readonly unknown[];
 
 export interface VerifiedJws {
   readonly kid: string;
@@ -155,7 +156,7 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
     const signingInput = utf8Encode(`${encodedHeader}.${encodedPayload}`);
     let valid: boolean;
     try {
-      valid = await crypto.subtle.verify(ECDSA_SHA256, publicKey, copyBytes(signature), copyBytes(signingInput));
+      valid = await crypto.subtle.verify(ECDSA_SHA256, publicKey, signature, signingInput);
     } catch {
       valid = false;
     }
@@ -232,17 +233,12 @@ function buildHeader(header: JwsHeader, activeKid: string): string {
 }
 
 function payloadBytes(payload: JwsPayload): Uint8Array {
-  if (payload instanceof Uint8Array) return payload;
-  // `ArrayBuffer.isView` and the `byteLength` brand checks below test internal slots, so they also hold for
-  // values from another realm (node:vm, an iframe, a test environment) where `instanceof` fails.
+  // `ArrayBuffer.isView` and the `isArrayBuffer` brand checks test internal slots, so they also hold for values from
+  // another realm (node:vm, an iframe, a test environment) where `instanceof` fails.
   if (ArrayBuffer.isView(payload) || isArrayBuffer(payload)) {
-    try {
-      return ArrayBuffer.isView(payload)
-        ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
-        : new Uint8Array(payload);
-    } catch {
-      throw new KeyRingError('invalid-sign-input', 'JWS payload buffer is detached');
-    }
+    const bytes = copyBytes(payload);
+    if (!bytes) throw new KeyRingError('invalid-sign-input', 'JWS payload buffer is detached');
+    return bytes;
   }
   if (typeof payload === 'string') return utf8Encode(payload);
   if (Array.isArray(payload) || isPlainObject(payload)) {
@@ -255,27 +251,6 @@ function payloadBytes(payload: JwsPayload): Uint8Array {
     if (json !== undefined && (json.startsWith('{') || json.startsWith('['))) return utf8Encode(json);
   }
   throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string, or a JSON-serializable plain object or array');
-}
-
-const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength')?.get;
-const sharedArrayBufferByteLength =
-  typeof SharedArrayBuffer === 'function'
-    ? Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength')?.get
-    : undefined;
-
-/** True for an `ArrayBuffer` or `SharedArrayBuffer` from any realm; a proxy or an object faking `Symbol.toStringTag` fails. */
-function isArrayBuffer(value: unknown): value is ArrayBufferLike {
-  if (typeof value !== 'object' || value === null) return false;
-  for (const byteLength of [arrayBufferByteLength, sharedArrayBufferByteLength]) {
-    if (!byteLength) continue;
-    try {
-      byteLength.call(value);
-      return true;
-    } catch {
-      // Not this kind of buffer.
-    }
-  }
-  return false;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { copyBytes, utf8Encode } from './encoding.js';
+import { copyBytes, isArrayBuffer, utf8Encode } from './encoding.js';
 import { KeyRingError } from './errors.js';
 import {
   checkEcJwkMembers,
@@ -86,8 +86,10 @@ export async function createWebCryptoSigner(options: WebCryptoSignerOptions): Pr
   const kid = options.kid ?? imported.jwkKid;
   const sign = async (data: Uint8Array): Promise<Uint8Array> => {
     if (!(data instanceof Uint8Array)) throw new KeyRingError('invalid-sign-input', 'signer input must be a Uint8Array');
+    const bytes = copyBytes(data);
+    if (!bytes) throw new KeyRingError('invalid-sign-input', 'signer input buffer is detached');
     try {
-      return new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, privateKey, copyBytes(data)));
+      return new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, privateKey, bytes));
     } catch {
       throw new KeyRingError('signing-failed', 'WebCrypto ES256 signing failed');
     }
@@ -145,7 +147,11 @@ async function importPkcs8(value: Pkcs8SignerOptions['pkcs8']): Promise<Imported
 }
 
 function pkcs8Bytes(value: Pkcs8SignerOptions['pkcs8']): Uint8Array<ArrayBuffer> {
-  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return copyBytes(value);
+  if (isArrayBuffer(value) || ArrayBuffer.isView(value)) {
+    const der = copyBytes(value);
+    if (!der) throw new KeyRingError('invalid-private-key', 'pkcs8 buffer is detached');
+    return der;
+  }
   if (typeof value !== 'string') {
     throw new KeyRingError('invalid-private-key', 'pkcs8 must be DER bytes or a PEM "PRIVATE KEY" string');
   }

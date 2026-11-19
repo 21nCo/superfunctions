@@ -1,7 +1,7 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, createWebCryptoSigner, type Es256PrivateJwk, KeyRingError, type WebCryptoSignerOptions } from '../index.js';
-import { exposedText, generateKey, toPem } from './helpers.js';
+import { detachedBuffers, exposedText, generateKey, toPem } from './helpers.js';
 
 async function rejection(promise: Promise<unknown>): Promise<KeyRingError> {
   const error = await promise.then(
@@ -28,6 +28,40 @@ describe('createWebCryptoSigner', () => {
     const signing = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: fromPem }] });
     const verifying = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
     expect((await verifying.verify(await signing.sign({}, 'x'))).kid).toBe('key-1');
+  });
+
+  it('imports PKCS #8 DER from offset views and shared-backed views', async () => {
+    const key = await generateKey();
+    const expected = { kty: 'EC', crv: 'P-256', x: key.privateJwk.x, y: key.privateJwk.y };
+    const length = key.pkcs8.length;
+    const padded = new Uint8Array(length + 5);
+    padded.set(key.pkcs8, 2);
+    const shared = new SharedArrayBuffer(length + 3);
+    new Uint8Array(shared).set(key.pkcs8, 3);
+    for (const pkcs8 of [padded.subarray(2, 2 + length), new DataView(padded.buffer, 2, length), new Uint8Array(shared, 3, length)]) {
+      expect((await createWebCryptoSigner({ pkcs8 })).publicJwk).toEqual(expected);
+    }
+  });
+
+  it('rejects detached PKCS #8 buffers and views with invalid-private-key', async () => {
+    for (const pkcs8 of detachedBuffers()) {
+      expect((await rejection(createWebCryptoSigner({ pkcs8 }))).code).toBe('invalid-private-key');
+    }
+  });
+
+  it('signs shared-backed input and rejects detached input with invalid-sign-input', async () => {
+    const key = await generateKey();
+    const shared = new SharedArrayBuffer(6);
+    new Uint8Array(shared).set([9, 1, 2, 3, 4, 9]);
+    const signature = await key.signer.sign(new Uint8Array(shared, 1, 4));
+    const publicKey = await crypto.subtle.importKey('jwk', key.signer.publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const verified = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, new Uint8Array(signature), new Uint8Array([1, 2, 3, 4]));
+    expect(verified).toBe(true);
+    const detached = detachedBuffers().filter((value): value is Uint8Array => value instanceof Uint8Array);
+    expect(detached).toHaveLength(2);
+    for (const data of detached) {
+      expect((await rejection(key.signer.sign(data))).code).toBe('invalid-sign-input');
+    }
   });
 
   it('returns 64-byte r || s signatures', async () => {

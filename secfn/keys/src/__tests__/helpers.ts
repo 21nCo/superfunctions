@@ -49,3 +49,20 @@ export function exposedText(value: unknown): string {
   }
   return JSON.stringify(value) ?? String(value);
 }
+
+/** An ArrayBuffer and views over it (whole, offset, wider element, DataView), all detached by a transfer. */
+export function detachedBuffers(): Array<ArrayBuffer | ArrayBufferView> {
+  const detach = <T>(create: (buffer: ArrayBuffer) => T): T => {
+    const buffer = new ArrayBuffer(8);
+    const value = create(buffer);
+    structuredClone(buffer, { transfer: [buffer] });
+    return value;
+  };
+  return [
+    detach((buffer) => buffer),
+    detach((buffer) => new Uint8Array(buffer)),
+    detach((buffer) => new Uint8Array(buffer, 2, 4)),
+    detach((buffer) => new Uint16Array(buffer)),
+    detach((buffer) => new DataView(buffer, 1, 4)),
+  ];
+}
