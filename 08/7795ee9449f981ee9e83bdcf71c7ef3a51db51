@@ -1,0 +1,93 @@
+apifn/contracts/package.json
+  s_19abec75182420::t_72b683c6b903a6 46
+authfn/core/package.json
+  s_19abec75182420::t_325c92e0bab7cc 78,80
+authfn/docs/package.json
+  s_19abec75182420::t_4a83006c701d58 36
+authfn/multi-region/package.json
+  s_19abec75182420::t_9048828a47aefc 31
+billfn/admin/package.json
+  s_19abec75182420::t_12cc4155f7d64e 48
+billfn/core/package.json
+  s_19abec75182420::t_3b87bde8b666fb 44
+billfn/provider-dodo/package.json
+  s_19abec75182420::t_ee6e487aae54c2 38
+datafn/client/package.json
+  s_19abec75182420::t_9a828905298fca 28
+datafn/server/package.json
+  s_19abec75182420::t_575e7d1293b077 58,60
+filefn/docs/package.json
+  s_19abec75182420::t_74b24f3a2da182 48
+filefn/server/package.json
+  s_19abec75182420::t_a485fd4622acf7 47
+package-lock.json
+  s_19abec75182420::t_b40ad5f2a0a763 269,1849,1851,1972,4490,4922,4965,6020,9875,10953,10955,12711,13392,59123,59172,59319,59324,59500,59510,59537,59565,59573,59587,59611,59634,59689,59692,59859,59971,59995,60034,60351,60376,61988,62019,62064,62083,62092,62194,63510,63527,63538,63947,63956,64827,73827
+packages/admin/package.json
+  s_19abec75182420::t_904a54f01f8d70 3
+packages/cli/package.json
+  s_19abec75182420::t_96b40f3ae3be73 39
+packages/db/package.json
+  s_19abec75182420::t_2748d394b0cd24 3,89
+packages/http-express/package.json
+  s_19abec75182420::t_c43fe9383bbb0e 3
+packages/http-fastify/package.json
+  s_19abec75182420::t_4afe5753be4cb4 3
+packages/http-hono/package.json
+  s_19abec75182420::t_8871835a61e3ed 26,32
+packages/http-next/package.json
+  s_19abec75182420::t_7a6efd8d3a96aa 3
+packages/http-openapi/package.json
+  s_19abec75182420::t_cf71c11487ce78 3
+packages/http-sveltekit/package.json
+  s_19abec75182420::t_5e2589479f598a 3
+packages/http/package.json
+  s_19abec75182420::t_8c67228a6ffc95 56
+packages/middleware/package.json
+  s_19abec75182420::t_ace215fc6dbb2d 43,46
+packages/oauth-router/package.json
+  s_19abec75182420::t_5e67433041381e 3
+packages/observability/package.json
+  s_19abec75182420::t_6c770e54001d58 3
+packages/queue/package.json
+  s_19abec75182420::t_3c92dd2237ee37 57
+packages/storage/package.json
+  s_19abec75182420::t_c9ecf028fb20e8 50
+plugfn/core/package.json
+  s_19abec75182420::t_4ea5a4bd46d1f4 49,53
+searchfn/adapter-elasticsearch/package.json
+  s_19abec75182420::t_90741a9a7f23b4 35
+searchfn/adapter-meilisearch/package.json
+  s_19abec75182420::t_1b44ea2b0d4212 35
+searchfn/adapter-postgres/package.json
+  s_19abec75182420::t_78554b0f8d18b3 38
+searchfn/adapter-sqlite/package.json
+  s_19abec75182420::t_e208970ab14ea6 50,71
+searchfn/datafn-provider/package.json
+  s_19abec75182420::t_b86e393b3d6af4 53
+searchfn/server/package.json
+  s_19abec75182420::t_09560366dea10a 21
+secfn/core/package.json
+  s_19abec75182420::t_bc42359a3ab271 48,59
+secfn/server/package.json
+  s_19abec75182420::t_644c598943054c 45,48
+superconsole/package.json
+  s_19abec75182420::t_0306032b1adbe9 28
+watchfn/typescript/package.json
+  s_19abec75182420::t_fcb32a4603b3c3 72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "087795ee9449f981ee9e83bdcf71c7ef3a51db51",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
