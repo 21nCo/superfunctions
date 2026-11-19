@@ -1,0 +1,19 @@
+scripts/sfns4/hosted-hyperdrive-worker.mjs
+  s_19abec75182420::t_ce7dc4d2cc204f 9,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30f738ccbe42d09d15bb102ea249b800aed63b97",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
