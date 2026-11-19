@@ -111,6 +111,46 @@ describe("McpFn client profiles", () => {
     }
   });
 
+  // Ajv registers the nested $id "nested" as an alias of "shared#/definitions/inner"
+  // and resolves it inside the consumer, whose own $id is "shared": the consumer's
+  // definition, not the provider's, validates tools/call.
+  it("compares a nested-ID alias with the definition Ajv validates tools/call against", async () => {
+    const handler = async () => structuredResult({ ok: true });
+    const provider = { $id: "./shared", type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
+    const consumer = (type: string) => ({ $id: "shared", type: "object" as const, properties: { value: { $ref: "nested" } }, required: ["value"], definitions: { inner: { type } } });
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "provider", description: "Provider", inputSchema: provider, handler })
+      .register({ name: "consumer", description: "Consumer", inputSchema: consumer("number"), handler });
+    const noop = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await noop.client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["consumer", "provider"]);
+    expect((await noop.client.callTool({ name: "consumer", arguments: { value: 1 } })).isError).not.toBe(true);
+    expect((await noop.client.callTool({ name: "consumer", arguments: { value: "text" } })).isError).toBe(true);
+    const projected = await connect({ subject: "authenticated-client" }, { id: "retyped", version: "1", matches: () => true,
+      projectCatalog: ({ tools }) => tools.map(tool => tool.name === "consumer" ? { ...tool, inputSchema: consumer("string") } : tool),
+    }, registry);
+    await expect(projected.client.listTools()).rejects.toThrow(/canonical schema/);
+  });
+
+  // An empty $id names no resource, so each sibling keeps its own local pointers.
+  it("lists and calls an anonymous tool beside two distinct empty-ID siblings", async () => {
+    const handler = async () => structuredResult({ ok: true });
+    const sibling = (type: string) => ({ $id: "", type: "object" as const, properties: { a: { $ref: "#/definitions/d" } }, required: ["a"], definitions: { d: { type } } });
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "anonymous", description: "Anonymous", inputSchema: { type: "object" as const, properties: { x: { type: "string" } }, required: ["x"] }, handler })
+      .register({ name: "text", description: "Text", inputSchema: sibling("string"), handler })
+      .register({ name: "number", description: "Number", inputSchema: sibling("number"), handler });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["anonymous", "number", "text"]);
+    for (const [name, valid, invalid] of [
+      ["anonymous", { x: "x" }, { x: 1 }],
+      ["text", { a: "x" }, { a: 1 }],
+      ["number", { a: 1 }, { a: "x" }],
+    ] as const) {
+      expect((await client.callTool({ name, arguments: valid })).isError).not.toBe(true);
+      expect((await client.callTool({ name, arguments: invalid })).isError).toBe(true);
+    }
+  });
+
   const closeables: Array<{ close(): Promise<void> }> = [];
 
   afterEach(async () => {
@@ -1534,6 +1574,75 @@ describe("anonymous schema scopes beside registered schema resources", () => {
       profile: { id: "noop", version: "1", matches: () => true },
     } });
     expect(catalog.tools.map((tool) => tool.name).sort()).toEqual(["consumer", "number", "text"]);
+  });
+
+  // Ajv registers a nested $id or anchor as an alias of "<top-level path>#<pointer>"
+  // and resolves it in the resource being compiled. The oracle is the runtime
+  // Ajv compiler, independent of the profile code: a projection that changes
+  // only the consumer's own definition at that pointer must be rejected exactly
+  // when that definition decides runtime validation.
+  it.each([
+    ["./shared", "shared", "nested", "nested", "consumer"],
+    ["shared", "./shared", "nested", "nested", "consumer"],
+    ["https://profile.invalid/a/b", "https://profile.invalid/a/./b", "nested", "nested", "consumer"],
+    ["shared", "other", "nested", "nested", "provider"],
+    ["shared", undefined, "nested", "nested", "provider"],
+    [undefined, undefined, "nested", "nested", "consumer"],
+    ["./shared", "shared", "#node", "shared#node", "consumer"],
+    ["./shared", "shared", "#node", "./shared#node", "consumer"],
+    ["shared", "other", "#node", "shared#node", "provider"],
+  ] as const)("compares a provider %s with nested $id %3$s from a consumer %2$s as Ajv does", async (providerId, consumerId, nestedId, reference, decides) => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const provider = { ...(providerId ? { $id: providerId } : {}), type: "object" as const, definitions: { inner: { $id: nestedId, type: "string" } } };
+    const consumer = (type: string) => ({ ...(consumerId ? { $id: consumerId } : {}), type: "object" as const, properties: { value: { $ref: reference } }, definitions: { inner: { type } } });
+    const runtime = (type: string) => { const compiler = createSchemaCompiler("ajv"); compiler.compile(provider); return compiler.compile(consumer(type))({ value: "text" }); };
+    expect(runtime("string") !== runtime("number")).toBe(decides === "consumer");
+    const run = (projected?: ReturnType<typeof consumer>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "provider", inputSchema: provider }, { name: "consumer", inputSchema: consumer("string") }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: ({ tools }: { tools: Array<{ name: string; inputSchema: McpFnObjectSchema }> }) => tools.map((tool) => tool.name === "consumer" ? { ...tool, inputSchema: projected } : tool) } : {}) },
+    } });
+    expect((await run()).tools.map((tool) => tool.name).sort()).toEqual(["consumer", "provider"]);
+    if (decides === "consumer") await expect(run(consumer("number"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
+    else expect((await run(consumer("number"))).tools.map((tool) => tool.name).sort()).toEqual(["consumer", "provider"]);
+  });
+
+  // At runtime an anonymous tool's nested $id aliases "#/<pointer>", which a named
+  // consumer resolves through whichever anonymous schema registered last.
+  it("refuses a nested ID of an anonymous provider referenced from a named consumer", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const provider = { type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
+    const consumer = { $id: "shared", type: "object" as const, properties: { value: { $ref: "nested" } } };
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "provider", inputSchema: provider }, { name: "consumer", inputSchema: consumer }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "noop", version: "1", matches: () => true },
+    } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+  });
+
+  it.each(["ajv", "cfworker"] as const)("rejects the nested-ID alias retyping on %s", async (engine) => {
+    vi.resetModules();
+    if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
+    try {
+      const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+      const provider = { $id: "./shared", type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
+      const consumer = (type: string) => ({ $id: "shared", type: "object" as const, properties: { value: { $ref: "nested" } }, definitions: { inner: { type } } });
+      await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "provider", inputSchema: provider }, { name: "consumer", inputSchema: consumer("string") }], resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "retyped", version: "1", matches: () => true, projectCatalog: ({ tools }) => tools.map((tool) => tool.name === "consumer" ? { ...tool, inputSchema: consumer("number") } : tool) },
+      } })).rejects.toMatchObject({ code: engine === "ajv" ? "MCPFN_PROFILE_ASYMMETRIC" : "MCPFN_INVALID_PROJECTED_CATALOG" });
+    } finally { vi.unstubAllGlobals(); vi.resetModules(); }
+  });
+
+  // Empty IDs stay anonymous; a genuine named ID that two schemas claim is still refused.
+  it("lists distinct empty-ID siblings and refuses a reference to a doubly claimed named ID", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const resolved = { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" }, profile: { id: "noop", version: "1", matches: () => true } };
+    const sibling = (id: string, type: string) => ({ $id: id, type: "object" as const, properties: { a: { $ref: "#/definitions/d" } }, definitions: { d: { type } } });
+    const anonymous = { type: "object" as const, properties: { x: { type: "string" } } };
+    const catalog = await buildMcpFnEffectiveCatalog({ canonicalTools: [anonymous, sibling("", "string"), sibling("", "number")].map((inputSchema, index) => ({ name: `tool_${index}`, inputSchema })), resolved });
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(["tool_0", "tool_1", "tool_2"]);
+    const consumer = { type: "object" as const, properties: { v: { $ref: "dup#/definitions/d" } } };
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer }], schemaResources: [sibling("dup", "string"), sibling("dup", "number"), consumer], resolved }))
+      .rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
   });
 
   it("compares a relative shared target when a projection changes it", async () => {

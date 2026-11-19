@@ -411,14 +411,18 @@ function validateDefinitionContainers(schema: unknown, ajv: Ajv | Ajv2019 | Ajv2
 
 // Cache only syntax validation; identity, projection and ownership checks still run per request.
 const validProfileSchemas = new Set<string>();
+// An absent or empty $id leaves a schema anonymous, as at runtime (validation.ts).
+function namedSchemaId(schema: object): string | undefined {
+  const id = (schema as Record<string, unknown>).$id;
+  return typeof id === "string" && id !== "" ? id : undefined;
+}
 function profileSchemaResources(schema: Record<string, unknown>, resources: readonly object[]): object[] {
-  const rootId = schema.$id;
+  const rootId = namedSchemaId(schema);
   const unique = new Map<string, object>();
   const rootKey = canonicalJson(schema);
   for (const resource of resources) {
-    const id = (resource as Record<string, unknown>).$id;
     const key = canonicalJson(resource);
-    if (!(typeof rootId === "string" && id === rootId) && key !== rootKey) unique.set(key, resource);
+    if (!(rootId !== undefined && namedSchemaId(resource) === rootId) && key !== rootKey) unique.set(key, resource);
   }
   return [...unique.values(), schema];
 }
@@ -447,7 +451,7 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
       // graph, so no authored $id in that graph can claim it.
       const namespace = sha256(graph).slice(0, 32);
       for (const [index, resource] of graph.entries()) {
-        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `mcpfn-profile-${namespace}-${index}` : undefined);
+        ajv.addSchema(resource as object, namedSchemaId(resource) === undefined ? `mcpfn-profile-${namespace}-${index}` : undefined);
       }
       ajv.compile(schema);
     }
@@ -580,17 +584,15 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // Keep resource roots separate from named aliases. In draft-07, $id: "#node"
   // names a subschema but does not make it the root for JSON Pointer fragments.
   // Resource identity follows the active validator, so the comparison never
-  // folds IDs the validator keeps apart, or splits IDs it folds. Ajv keys a
-  // top-level $id by its literal text ("shared", "/shared" and "./shared" are
-  // three resources) and resolves nested IDs and references against it, in a
-  // relative namespace whose anonymous base is "". The edge runtime
-  // (validation.ts) resolves every ID against one absolute base, where "shared"
-  // and "/shared" name one resource. Each anonymous resource (this root and each
-  // anonymous sibling) keeps a private key used only for its own fragment
-  // references and anchors. The keys carry a digest of the whole schema graph,
-  // so no authored $id in that graph can name them: a sibling can never take
-  // over this root's local references, or another sibling's, and relative
-  // references still reach their registered resource.
+  // folds IDs the validator keeps apart, or splits IDs it folds. On Ajv (the
+  // runtime registry in validation.ts compiles each tool with one Ajv), targets
+  // follow Ajv's own registry and lookup order; see ajvTarget below. The edge
+  // runtime (validation.ts) resolves every ID against one absolute base, where
+  // "shared" and "/shared" name one resource. Each anonymous resource (this root
+  // and each anonymous sibling) keeps a private key used only for its own
+  // fragment references and anchors. The keys carry a digest of the whole schema
+  // graph, so no authored $id in that graph can name them: a sibling can never
+  // take over this root's local references, or another sibling's.
   const siblings = profileSchemaResources(root, schemaResources).slice(0, -1);
   const namespace = sha256([root, siblings]).slice(0, 32);
   const literalRootIds = schemaEngine !== "cfworker";
@@ -610,8 +612,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const ambiguousKeys = new Set<string>();
-  // Normalized key -> literal top-level keys that normalize to it (Ajv engine).
-  const aliases = new Map<string, string[]>();
+  // Ajv engine: nested IDs and anchors by registry key (Ajv's this.refs, where
+  // they are aliases of "<top-level path>#<pointer>"), and anchors of anonymous
+  // resources by "<private key>#name" (Ajv's per-root localRefs).
+  const ajvAliases = new Map<string, object>();
+  const localAnchors = new Map<string, object>();
   const resourceKey = (address: string) => address.split("#", 1)[0]!;
   const fragment = (address: string) => {
     const hash = address.indexOf("#");
@@ -640,6 +645,18 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // reference from this schema reaches that node, its subtree or its ancestors.
   const deferred = new WeakMap<object, string>();
   const parents = new WeakMap<object, object>();
+  // Ajv (compile/resolve.ts getSchemaRefs) registers a nested ID or anchor under
+  // its URI resolved against the enclosing base, or as written when that base
+  // is "" (then a "#name" key stays local to its top-level resource).
+  const registerAjvKey = (base: string, id: string, node: object, top: string) => {
+    const key = (base ? resolveUri(base, id) : id)?.replace(/#$/, "");
+    if (key === undefined) return;
+    if (key.startsWith("#")) { localAnchors.set(`${top}${key}`, node); return; }
+    // Ajv keeps the last registration of a key claimed twice, so its target
+    // depends on registration order: refuse references to it.
+    if ((ajvAliases.has(key) && ajvAliases.get(key) !== node) || (resourceRoots.has(key) && !privateKeys.has(key))) ambiguousKeys.add(key);
+    ajvAliases.set(key, node);
+  };
   const index = (value: unknown, resource: Record<string, unknown>, parentBase: string, parentLocal: string, strict: boolean, parent?: object, top?: string) => {
     if (!value || typeof value !== "object" || scopes.has(value)) return;
     if (parent) parents.set(value, parent);
@@ -683,7 +700,14 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
               resourceKey(address) !== resourceKey(resolveUri(parentBase, "") ?? parentBase)) {
             reject("Unsupported schema resource ID fragment");
-          } else ids.set(`${local}#${name}`, schemaValue);
+          } else if (literalRootIds) registerAjvKey(parentBase, authoredId, schemaValue, top ?? local);
+          else ids.set(`${local}#${name}`, schemaValue);
+        } else if (literalRootIds && parent !== undefined) {
+          // A nested resource stays in its top-level resource's Ajv registry
+          // entry: it is reached through its alias, never as a resource root.
+          registerAjvKey(parentBase, authoredId, schemaValue, top!);
+          resource = schemaValue;
+          local = resourceKey(address);
         } else if (resourceRoots.has(resourceKey(address)) &&
             canonicalJson(resourceRoots.get(resourceKey(address))) !== canonicalJson(schemaValue)) {
           // A different schema already owns this key under the active
@@ -694,12 +718,8 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
         } else {
           resource = schemaValue;
           local = resourceKey(address);
+          if (literalRootIds && ajvAliases.has(local)) ambiguousKeys.add(local);
           resourceRoots.set(local, resource);
-          // Ajv resolves references to a normalized URI, and binds one whose
-          // path matches the root being compiled to that root, so a literal
-          // $id such as "./shared" is also reached as "shared".
-          const normalized = ajvPath(local);
-          if (parent === undefined && literalRootIds && normalized !== local) aliases.set(normalized, [...aliases.get(normalized) ?? [], local]);
         }
         if (!invalid) base = address.replace(/#$/, "");
       }
@@ -707,10 +727,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     if (schemaValue.$dynamicRef !== undefined || schemaValue.$recursiveRef !== undefined) {
       reject("Dynamic and recursive references are not supported in projected catalogs");
     }
-    if (typeof schemaValue.$anchor === "string") ids.set(`${local}#${schemaValue.$anchor}`, schemaValue);
-    if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) ids.set(`${local}#${schemaValue.$dynamicAnchor}`, schemaValue);
     // The top-level resource is the root Ajv compiles a reference in.
     const topLocal = top ?? local;
+    const anchor = (name: string) => literalRootIds ? registerAjvKey(base, `#${name}`, schemaValue, topLocal) : ids.set(`${local}#${name}`, schemaValue);
+    if (typeof schemaValue.$anchor === "string") anchor(schemaValue.$anchor);
+    if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) anchor(schemaValue.$dynamicAnchor);
     scopes.set(value, { resource, base, local, top: topLocal });
     for (const [key, child] of Object.entries(value)) {
       mapSchemaKeyword(key, child, item => { index(item, resource, base, local, strict, value, topLocal); return item; }, modernDialect(resource));
@@ -741,39 +762,88 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     }
     return target;
   };
-  // Ajv's order for a reference with a resource part (ajv compile/index.ts
-  // resolveRef): an exact ID, which only a reference without a fragment can
-  // match; then the top-level resource the reference is compiled in, when its
-  // serialized path matches; then the serialized ID. A root with a literal $id
-  // such as "./shared" is therefore reached as "shared#/..." from inside itself only.
-  const ajvResourceKey = (top: string, resolvedKey: string, normalizedKey: string, pointer: string): string => {
-    if (pointer === "" && resourceRoots.has(resolvedKey)) return resolvedKey;
-    return ajvPath(top) === normalizedKey ? top : normalizedKey;
+  const invalidCatalog = (message: string) => new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", message);
+  const walk = (target: unknown, keys: readonly string[]): unknown => {
+    for (const key of keys) target = target && typeof target === "object" && Object.hasOwn(target, key) ? (target as Record<string, unknown>)[key] : undefined;
+    return target;
+  };
+  // JSON pointer tokens from a resource root to a node indexed beneath it.
+  const pathFromTop = (node: object): string[] => {
+    const keys: string[] = [];
+    for (let child = node, parent = parents.get(node); parent; child = parent, parent = parents.get(parent)) {
+      for (const [key, value] of Object.entries(parent)) {
+        if (value === child) { keys.unshift(key); break; }
+        const nested = value && typeof value === "object" ? Object.entries(value).find(([, item]) => item === child) : undefined;
+        if (nested) { keys.unshift(key, nested[0]); break; }
+      }
+    }
+    return keys;
+  };
+  // A top-level resource's serialized path: "" for an anonymous one, whose
+  // runtime base is "" (each tool is compiled without a key).
+  const topPath = (top: string) => privateKeys.has(top) ? "" : ajvPath(top);
+  const ajvResource = (key: string) => privateKeys.has(key) ? undefined : resourceRoots.get(key);
+  // Ajv (compile/index.ts resolveSchema) resolves "<path>#<fragment>" in the
+  // top-level resource being compiled when that resource's serialized path is
+  // <path>; otherwise through the registry entry <path>, a resource or an alias.
+  // Only a JSON pointer fragment, or none for a whole registry resource, resolves.
+  const ajvSchema = (path: string, fragmentText: string | undefined, top: string): unknown => {
+    const keys = fragmentText?.startsWith("/") ? fragmentText.slice(1).split("/").map(part => part.replaceAll("~1", "/").replaceAll("~0", "~")) : undefined;
+    if (path === topPath(top)) {
+      // Each anonymous tool is the runtime registry's "" entry while it compiles.
+      return keys ? walk(resourceRoots.get(top), keys) : fragmentText === undefined && privateKeys.has(top) ? resourceRoots.get(top) : undefined;
+    }
+    // "" names whichever anonymous schema the runtime registered last.
+    if (path === "" || ambiguousKeys.has(path)) throw invalidCatalog("Ambiguous schema resource ID");
+    const alias = ajvAliases.get(path);
+    const resource = alias ? ajvAlias(alias, top) : ajvResource(path);
+    if (keys) return walk(resource, keys);
+    return fragmentText === undefined && !alias ? resource : undefined;
+  };
+  // A nested ID or anchor is an alias of "<owner path>#<pointer>", resolved in
+  // the resource being compiled: an owner whose path another resource shares
+  // (literal "./shared" beside "shared", or two anonymous tools) yields that
+  // resource's node at the same pointer, as Ajv does.
+  const ajvAlias = (node: object, top: string): unknown => {
+    const owner = scopes.get(node)!.top;
+    if (owner === top) return node;
+    return ajvSchema(topPath(owner), `/${pathFromTop(node).map(key => key.replaceAll("~", "~0").replaceAll("/", "~1")).join("/")}`, top);
+  };
+  // Ajv's order (vocabularies/core/ref.ts, compile/index.ts resolveRef): "#"
+  // from the compiled root's own base; then an exact registry key (a top-level
+  // resource, or a nested ID or anchor alias); then resolveSchema; then the
+  // compiled root's local anchors. Anything else is unresolved, as at runtime.
+  const ajvTarget = (scope: { base: string; top: string }, reference: string): unknown => {
+    if ((reference === "#" || reference === "#/") && scope.base === (privateKeys.has(scope.top) ? sharedBase : scope.top)) return resourceRoots.get(scope.top);
+    const address = resolveUri(scope.base, reference.replace(/#$/, ""));
+    if (address === undefined) throw invalidCatalog("Invalid schema reference URI");
+    if (ambiguousKeys.has(address)) throw invalidCatalog("Ambiguous schema resource ID");
+    const alias = ajvAliases.get(address);
+    const hash = address.indexOf("#");
+    const target = alias ? ajvAlias(alias, scope.top) : ajvResource(address) ??
+      ajvSchema(ajvPath(address), hash < 0 ? undefined : fragment(address), scope.top);
+    return target ?? localAnchors.get(`${scope.top}${address}`);
   };
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
-    // Fragment-only and anonymous self references stay in the current resource,
-    // even one whose literal $id normalizes onto another resource (Ajv binds
-    // them the same way); anything with a resource part resolves in the shared
-    // namespace, as the runtime does.
     const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey, top: rootKey };
+    if (literalRootIds) {
+      const target = ajvTarget(scope, reference);
+      if (target === undefined) throw invalidCatalog(/#(?!\/|$)/.test(reference) ? "Unresolved named schema anchor" : "Unresolved schema reference");
+      return assertReachable(target);
+    }
+    // The edge runtime resolves every reference against one base. Fragment-only
+    // and anonymous self references stay in the current resource.
     const self = reference.startsWith("#") ? reference : selfReference(reference, scope.local);
     const address = self !== undefined ? `${scope.local}${self}` : resolveUri(scope.base, reference);
-    if (address === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI");
+    if (address === undefined) throw invalidCatalog("Invalid schema reference URI");
     const pointer = fragment(address);
-    const resolvedKey = resourceKey(address);
-    const normalizedKey = literalRootIds ? ajvPath(resolvedKey) : resolvedKey;
-    if (ambiguousKeys.has(resolvedKey) || ambiguousKeys.has(normalizedKey)) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
-    const key = self !== undefined || !literalRootIds ? resolvedKey : ajvResourceKey(scope.top, resolvedKey, normalizedKey, pointer);
+    const key = resourceKey(address);
+    if (ambiguousKeys.has(key)) throw invalidCatalog("Ambiguous schema resource ID");
     if (pointer && !pointer.startsWith("/")) {
-      // Ajv first looks named anchors up by their resolved URI, which a root
-      // with a literal $id also reaches; an anchor more than one of them
-      // defines has no fixed target.
-      const owners = self !== undefined ? [key] : [...new Set([key, resolvedKey, normalizedKey, ...aliases.get(normalizedKey) ?? []])].filter(owner => ids.has(`${owner}#${pointer}`));
-      if (owners.length > 1) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
-      const anchored = ids.get(`${owners[0] ?? key}#${pointer}`);
+      const anchored = ids.get(`${key}#${pointer}`);
       if (anchored) return assertReachable(anchored);
-      throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Unresolved named schema anchor");
+      throw invalidCatalog("Unresolved named schema anchor");
     }
     let target: unknown = resourceRoots.get(key);
     if (!target) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Unresolved embedded schema reference");
