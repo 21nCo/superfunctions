@@ -69,7 +69,9 @@ export interface AppleProviderConfig {
   environment?: 'production' | 'sandbox';
   /**
    * The app's bundle ID. With it the built-in verifier checks notifications (x5c chain to the pinned Apple Root CA - G3,
-   * Apple's OIDs, ES256 signature, certificate validity, this bundle ID), and the built-in signer claims it.
+   * Apple's OIDs, ES256 signature, certificate validity, bundle ID). Signed data is accepted for this app or any app in
+   * `bundleIds`, and rejected for any other app. The built-in signer claims, as `bid`, the app being asked about,
+   * trying this bundle ID first.
    */
   bundleId?: string;
   /**

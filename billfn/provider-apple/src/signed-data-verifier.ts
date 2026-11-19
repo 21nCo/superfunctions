@@ -36,7 +36,10 @@ export class AppleSignedDataVerificationError extends Error {
 }
 
 export interface AppleSignedDataVerifierOptions {
-  /** The app's bundle ID; signed data for any other app is rejected. This or `bundleIds` is required. */
+  /**
+   * The app's bundle ID. This or `bundleIds` is required. Signed data is accepted for this app or any app in
+   * `bundleIds`, and rejected for any other app.
+   */
   bundleId?: string;
   /**
    * The bundle IDs of several apps of one developer team; signed data for any app not listed is rejected. When
