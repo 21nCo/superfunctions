@@ -63,18 +63,55 @@ export function isArrayBuffer(value: unknown): value is ArrayBufferLike {
   return false;
 }
 
+type Getter = (this: unknown) => unknown;
+
+function intrinsicGetter(prototype: object, name: string): Getter {
+  return Object.getOwnPropertyDescriptor(prototype, name)?.get as Getter;
+}
+
+// The built-in accessors, called directly, so a view cannot redirect the copy through its own `buffer`, `byteOffset`
+// or `byteLength` properties, and so a view from another realm is read by its internal slots.
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY = {
+  buffer: intrinsicGetter(TYPED_ARRAY_PROTOTYPE, 'buffer'),
+  byteOffset: intrinsicGetter(TYPED_ARRAY_PROTOTYPE, 'byteOffset'),
+  byteLength: intrinsicGetter(TYPED_ARRAY_PROTOTYPE, 'byteLength'),
+};
+// `%TypedArray%.prototype.values` throws for a detached or out-of-bounds typed array, where the getters above return 0.
+const validateTypedArray = (TYPED_ARRAY_PROTOTYPE as { values: (this: unknown) => unknown }).values;
+// The DataView `byteOffset` and `byteLength` getters themselves throw for a detached or out-of-bounds view.
+const DATA_VIEW = {
+  buffer: intrinsicGetter(DataView.prototype, 'buffer'),
+  byteOffset: intrinsicGetter(DataView.prototype, 'byteOffset'),
+  byteLength: intrinsicGetter(DataView.prototype, 'byteLength'),
+};
+
+function viewOf(source: ArrayBufferLike | ArrayBufferView): Uint8Array {
+  if (!ArrayBuffer.isView(source)) return new Uint8Array(source);
+  let accessors = TYPED_ARRAY;
+  try {
+    TYPED_ARRAY.buffer.call(source);
+  } catch {
+    accessors = DATA_VIEW;
+  }
+  if (accessors === TYPED_ARRAY) validateTypedArray.call(source);
+  return new Uint8Array(
+    accessors.buffer.call(source) as ArrayBufferLike,
+    accessors.byteOffset.call(source) as number,
+    accessors.byteLength.call(source) as number,
+  );
+}
+
 /**
  * Copies the bytes of an `ArrayBuffer`, `SharedArrayBuffer` or `ArrayBufferView` (from any realm) into a fresh
  * `Uint8Array` over its own, non-shared `ArrayBuffer`, as WebCrypto requires. Returns `undefined` when the buffer is
- * detached, so callers can report it with their own error code.
+ * detached or the view is out of bounds of a shrunk resizable buffer, so callers report it with their own error code
+ * instead of signing an empty range.
  */
 export function copyBytes(source: ArrayBufferLike | ArrayBufferView): Uint8Array<ArrayBuffer> | undefined {
   let view: Uint8Array;
   try {
-    // Constructing a view over a detached buffer throws, even for an empty range.
-    view = ArrayBuffer.isView(source)
-      ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
-      : new Uint8Array(source);
+    view = viewOf(source);
   } catch {
     return undefined;
   }

@@ -1,7 +1,7 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, createWebCryptoSigner, type Es256PrivateJwk, KeyRingError, type WebCryptoSignerOptions } from '../index.js';
-import { detachedBuffers, exposedText, generateKey, toPem } from './helpers.js';
+import { exposedText, generateKey, toPem, unusableBuffers } from './helpers.js';
 
 async function rejection(promise: Promise<unknown>): Promise<KeyRingError> {
   const error = await promise.then(
@@ -43,13 +43,13 @@ describe('createWebCryptoSigner', () => {
     }
   });
 
-  it('rejects detached PKCS #8 buffers and views with invalid-private-key', async () => {
-    for (const pkcs8 of detachedBuffers()) {
+  it('rejects detached and out-of-bounds PKCS #8 buffers and views with invalid-private-key', async () => {
+    for (const pkcs8 of unusableBuffers()) {
       expect((await rejection(createWebCryptoSigner({ pkcs8 }))).code).toBe('invalid-private-key');
     }
   });
 
-  it('signs shared-backed input and rejects detached input with invalid-sign-input', async () => {
+  it('signs shared-backed input and rejects detached or out-of-bounds input with invalid-sign-input', async () => {
     const key = await generateKey();
     const shared = new SharedArrayBuffer(6);
     new Uint8Array(shared).set([9, 1, 2, 3, 4, 9]);
@@ -57,9 +57,9 @@ describe('createWebCryptoSigner', () => {
     const publicKey = await crypto.subtle.importKey('jwk', key.signer.publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
     const verified = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, new Uint8Array(signature), new Uint8Array([1, 2, 3, 4]));
     expect(verified).toBe(true);
-    const detached = detachedBuffers().filter((value): value is Uint8Array => value instanceof Uint8Array);
-    expect(detached).toHaveLength(2);
-    for (const data of detached) {
+    const unusable = unusableBuffers().filter((value): value is Uint8Array => value instanceof Uint8Array);
+    expect(unusable).toHaveLength(3);
+    for (const data of unusable) {
       expect((await rejection(key.signer.sign(data))).code).toBe('invalid-sign-input');
     }
   });

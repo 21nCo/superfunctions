@@ -2,7 +2,7 @@ import { compactVerify, CompactSign, createLocalJWKSet, importJWK, type JWK } fr
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, type Es256Signer, KeyRingError, MAX_JWS_LENGTH, type SigningKeyEntry } from '../index.js';
-import { base64Url, base64UrlJson, detachedBuffers, exposedText, generateKey, replacePart } from './helpers.js';
+import { base64Url, base64UrlJson, emptyViews, exposedText, generateKey, replacePart, unusableBuffers } from './helpers.js';
 
 const decoder = new TextDecoder();
 
@@ -106,15 +106,18 @@ describe('sign and verify', () => {
     expect((await ring.verify(await ring.sign({}, new DataView(shared, 1, 2)))).payload).toEqual(new Uint8Array([2, 3]));
   });
 
-  it('rejects detached payload buffers and views with invalid-sign-input before calling the signer', async () => {
+  it('rejects detached and out-of-bounds payload buffers and views with invalid-sign-input before calling the signer', async () => {
     const key = await generateKey();
     let calls = 0;
     const signer: Es256Signer = { ...key.signer, sign: (bytes) => ((calls += 1), key.signer.sign(bytes)) };
     const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer }] });
-    for (const payload of detachedBuffers()) {
+    for (const payload of unusableBuffers()) {
       expect((await rejection(ring.sign({}, payload))).code).toBe('invalid-sign-input');
     }
     expect(calls).toBe(0);
+    for (const payload of emptyViews()) {
+      expect((await ring.verify(await ring.sign({}, payload))).payload).toEqual(new Uint8Array());
+    }
   });
 
   it('rejects non-plain object payloads instead of signing them as {} or a JSON string', async () => {
