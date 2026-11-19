@@ -1463,13 +1463,13 @@ describe("anonymous schema scopes beside registered schema resources", () => {
   });
 
   // Ajv keys a root by its literal $id ("./shared") but resolves references to
-  // normalized URIs ("shared#/..."), binding them to that root. With a sibling
-  // that owns the normalized key, the target depends on where the reference is
-  // compiled, so only "#..." (always the root it appears in) is compared.
+  // normalized URIs ("shared#/..."), and binds one inside that root to the root
+  // itself, even beside a sibling that owns "shared". An anchor reference with
+  // a resource part has no fixed target there, so it is refused.
   it.each([
     ["./shared", "#/definitions/query", false, true, "MCPFN_PROFILE_ASYMMETRIC"],
     ["./shared", "#node", true, true, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["./shared", "shared#/definitions/query", false, true, "MCPFN_INVALID_PROJECTED_CATALOG"],
+    ["./shared", "shared#/definitions/query", false, true, "MCPFN_PROFILE_ASYMMETRIC"],
     ["./shared", "shared#node", true, true, "MCPFN_INVALID_PROJECTED_CATALOG"],
     ["./shared", "shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
     ["./shared", "./shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
@@ -1490,6 +1490,24 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     } });
     if (code === "MCPFN_PROFILE_ASYMMETRIC") expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
     await expect(run(schema("number"))).rejects.toMatchObject({ code });
+  });
+
+  // Ajv serializes "%41" as "A": a separate consumer of ".../A#/..." reaches the
+  // root whose $id is exactly ".../A", as it does at runtime.
+  it("lists a consumer beside root IDs that differ only in percent-encoding", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const text = { $id: "https://profile.invalid/A", type: "object" as const, definitions: { q: { type: "string" } } };
+    const number = { $id: "https://profile.invalid/%41", type: "object" as const, definitions: { q: { type: "number" } } };
+    const consumer = { type: "object" as const, properties: { v: { $ref: "https://profile.invalid/A#/definitions/q" } } };
+    const compiler = createSchemaCompiler("ajv");
+    compiler.compile(text); compiler.compile(number);
+    const validate = compiler.compile(consumer);
+    expect([validate({ v: "text" }), validate({ v: 1 })]).toEqual([true, false]);
+    const catalog = await buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "text", inputSchema: text }, { name: "number", inputSchema: number }, { name: "consumer", inputSchema: consumer }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "noop", version: "1", matches: () => true },
+    } });
+    expect(catalog.tools.map((tool) => tool.name).sort()).toEqual(["consumer", "number", "text"]);
   });
 
   it("compares a relative shared target when a projection changes it", async () => {

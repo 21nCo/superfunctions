@@ -606,7 +606,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     const resolved = schemaUriResolver.resolve("", reference);
     return resolved === "" || resolved.startsWith("#") ? resolved : undefined;
   };
-  const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string; local: string }>();
+  const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string; local: string; inRoot: boolean }>();
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const ambiguousKeys = new Set<string>();
@@ -709,7 +709,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     }
     if (typeof schemaValue.$anchor === "string") ids.set(`${local}#${schemaValue.$anchor}`, schemaValue);
     if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) ids.set(`${local}#${schemaValue.$dynamicAnchor}`, schemaValue);
-    scopes.set(value, { resource, base, local });
+    scopes.set(value, { resource, base, local, inRoot: strict });
     for (const [key, child] of Object.entries(value)) {
       mapSchemaKeyword(key, child, item => { index(item, resource, base, local, strict, value); return item; }, modernDialect(resource));
     }
@@ -739,25 +739,38 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     }
     return target;
   };
+  // Ajv's order for a reference with a resource part (ajv compile/index.ts
+  // resolveRef): an exact ID, which only a reference without a fragment can
+  // match; then the root being compiled, when its serialized path matches;
+  // then the serialized ID. A root with a literal $id such as "./shared" is
+  // therefore reached as "shared#/..." from inside itself only.
+  const ajvResourceKey = (inRoot: boolean, resolvedKey: string, normalizedKey: string, pointer: string): string => {
+    if (pointer === "" && resourceRoots.has(resolvedKey)) return resolvedKey;
+    if (inRoot && (pointer === "" || pointer.startsWith("/"))) {
+      const rootLocal = scopes.get(root)!.local;
+      return ajvPath(rootLocal) === normalizedKey ? rootLocal : normalizedKey;
+    }
+    // Anchors, and references inside another tool's schema, whose compile root
+    // is not fixed here: more than one possible resource is refused.
+    const candidates = [...new Set([resolvedKey, normalizedKey, ...aliases.get(normalizedKey) ?? []])].filter(candidate => resourceRoots.has(candidate));
+    if (candidates.length > 1) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
+    return candidates[0] ?? resolvedKey;
+  };
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
     // Fragment-only and anonymous self references stay in the current resource,
     // even one whose literal $id normalizes onto another resource (Ajv binds
     // them the same way); anything with a resource part resolves in the shared
     // namespace, as the runtime does.
-    const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey };
+    const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey, inRoot: true };
     const self = reference.startsWith("#") ? reference : selfReference(reference, scope.local);
     const address = self !== undefined ? `${scope.local}${self}` : resolveUri(scope.base, reference);
     if (address === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI");
     const pointer = fragment(address);
     const resolvedKey = resourceKey(address);
-    // The resource registered under the key and every root whose literal $id
-    // normalizes to it are candidates. Ajv's choice between them depends on
-    // where the reference is compiled, so more than one is refused.
     const normalizedKey = literalRootIds ? ajvPath(resolvedKey) : resolvedKey;
-    const candidates = self === undefined ? [...new Set([resolvedKey, normalizedKey, ...aliases.get(normalizedKey) ?? []])].filter(candidate => resourceRoots.has(candidate)) : [];
-    if (ambiguousKeys.has(resolvedKey) || ambiguousKeys.has(normalizedKey) || candidates.length > 1) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
-    const key = candidates[0] ?? resolvedKey;
+    if (ambiguousKeys.has(resolvedKey) || ambiguousKeys.has(normalizedKey)) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
+    const key = self !== undefined || !literalRootIds ? resolvedKey : ajvResourceKey(scope.inRoot, resolvedKey, normalizedKey, pointer);
     if (pointer && !pointer.startsWith("/")) {
       const anchored = ids.get(`${key}#${pointer}`);
       if (anchored) return assertReachable(anchored);
