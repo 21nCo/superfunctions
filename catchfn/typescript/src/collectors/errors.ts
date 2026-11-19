@@ -1,5 +1,5 @@
 import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type ErrorEvidenceEvent } from "../events.js";
-import { apply, attribute, intrinsic, listen, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
+import { apply, attribute, intrinsic, listen, now, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
 import { MAX_ENTRY_BYTES, serializeEntry, truncateToBytes, utf8Length, type SerializedValue } from "../utils/serialization.js";
@@ -167,8 +167,10 @@ function listenOnGlobal(entries: Array<[string, (event: unknown) => void]>): (()
   };
   try {
     for (const entry of entries) {
-      apply(add, globalThis, entry);
+      // Owned before the attempt: an addEventListener that registers the
+      // listener and then throws still leaves it for undo() to remove.
       added.push(entry);
+      apply(add, globalThis, entry);
     }
   } catch {
     undo(); // A partly installed collector would record only some events.
@@ -192,7 +194,9 @@ function subscribe(listener: Listener): () => void {
       // ran and still subscribed after.
       const receivers = [...current];
       try {
-        const observation = read(event, Date.now());
+        // A clock that gives no valid timestamp drops the observation.
+        const timestamp = now();
+        const observation = timestamp === undefined ? undefined : read(event, timestamp);
         if (!observation) return;
         for (const receive of receivers) {
           if (!current.has(receive)) continue;

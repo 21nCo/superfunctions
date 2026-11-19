@@ -1,5 +1,5 @@
 import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type WebSocketEvidenceEvent } from "../events.js";
-import { apply, attribute, intrinsic, listen, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
+import { apply, attribute, intrinsic, listen, nonnegativeInteger, now, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
 import { MAX_ENTRY_BYTES, truncateToBytes } from "../utils/serialization.js";
@@ -37,7 +37,6 @@ const BLOB_SIZE = intrinsic(prototypeOf(platform.Blob), "size");
 const BINARY_SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
 // Sizing a string never runs a String.prototype method the page replaced.
 const CHAR_CODE_AT = intrinsic(String.prototype, "charCodeAt", "value") as Intrinsic;
-const MAX_SAFE_INTEGER = 9007199254740991;
 // `isTrusted`: an unforgeable own accessor of each browser event, else Event.prototype's.
 const EVENT_IS_TRUSTED = isTrustedGetter();
 // A browser window or worker fires its socket events trusted, so an untrusted
@@ -73,23 +72,18 @@ function binarySize(data: unknown): number | undefined {
   // An index loop and a typeof test: no iterator or Number method the page can replace.
   for (let index = 0; index < BINARY_SIZE_GETTERS.length; index += 1) {
     const size = platformRead(BINARY_SIZE_GETTERS[index], data);
-    if (typeof size === "number") return size; // A brand check passed; see byteCount() for its value.
+    if (typeof size === "number") return size; // A brand check passed; payloadSize() checks its value.
   }
   return undefined;
 }
 
 /**
- * A size v1 can record: a nonnegative safe integer, checked with primitive
- * comparisons only (no Number method the page can replace). A getter can be
- * fooled into another number (a Proxy of a Node Blob), recorded without size.
+ * Payload size in bytes: a string's UTF-8 length or a binary payload's size.
+ * The payload itself is never kept. A size getter can be fooled into another
+ * number (a Proxy of a Node Blob): only a size v1 can record is kept.
  */
-function byteCount(size: number | undefined): number | undefined {
-  return typeof size === "number" && size >= 0 && size <= MAX_SAFE_INTEGER && size % 1 === 0 ? size + 0 : undefined; // + 0: -0 as 0.
-}
-
-/** Payload size in bytes: a string's UTF-8 length or a binary payload's size. The payload itself is never kept. */
 function payloadSize(data: unknown): number | undefined {
-  return typeof data === "string" ? utf8Size(data) : byteCount(binarySize(data));
+  return typeof data === "string" ? utf8Size(data) : nonnegativeInteger(binarySize(data));
 }
 
 function isTrustedGetter(): Intrinsic | undefined {
@@ -264,7 +258,9 @@ function install(current: Set<Listener>): (() => void) | undefined {
           try {
             if (TRUSTED_EVENTS_ONLY && platformRead(EVENT_IS_TRUSTED, event) !== true) return;
             fields = read(event);
-            if (fields) deliver({ type, url, timestamp: Date.now(), ...fields });
+            // A clock that gives no valid timestamp drops the observation, never the event's dispatch.
+            const timestamp = fields && now();
+            if (fields && timestamp !== undefined) deliver({ type, url, timestamp, ...fields });
           } catch {
             /* Observation never raises into the socket's event dispatch. */
           } finally {
@@ -333,43 +329,46 @@ function install(current: Set<Listener>): (() => void) | undefined {
     // The send() sockets of the global class actually inherit, wrapped where it is defined.
     const send = sendOwner
       ? function (this: unknown, ...args: unknown[]) {
-          // The send always gets the caller's arguments unchanged, and
-          // nothing the page can replace runs on them before it: binary data
-          // is recognized through the captured brand-checked getters only.
+          // The send always gets the caller's arguments unchanged. Before it,
+          // only the socket's membership and state are read: classifying and
+          // sizing the data can run page code (a Proxy's trap), so they wait
+          // until the send has returned.
           const data = args[0];
-          let before: { url: string; timestamp: number; deliver: Deliver; binary: number | undefined; converted: boolean } | undefined;
+          let before: { url: string; timestamp: number; deliver: Deliver } | undefined;
           try {
             // A socket constructed while no collector ran gets the plain send.
             const url = live() && typeof this === "object" && this !== null ? sockets.get(this) : undefined;
             // Only a send() on an open socket transmits: the platform throws
             // while connecting and discards the data once closing or closed. A
             // send that closes the socket after transmitting still sent it.
-            if (url !== undefined && readyState(this) === OPEN) {
-              const binary = typeof data === "object" ? binarySize(data) : undefined;
-              // Strings, binary data and other primitives reach the platform
-              // as they are or convert without page code. Any other object is
-              // converted by the send (the platform's to a string, a library's
-              // in its own way), which can run page code that closes the socket.
-              const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
-              before = { url, timestamp: Date.now(), deliver: receivers(), binary, converted };
-            }
+            const timestamp = url !== undefined && readyState(this) === OPEN ? now() : undefined;
+            if (url !== undefined && timestamp !== undefined) before = { url, timestamp, deliver: receivers() };
           } catch {
             before = undefined; // Observation never stops the send.
           }
           const result = apply(sendOwner.original, this, args);
-          // The platform's own send never closes the socket, so one no
-          // longer open after it means converting the data closed it and the
-          // data was discarded. A library's send may transmit and then close,
-          // which the wrapper cannot tell from that: it is recorded by the
-          // state before its call.
-          if (before && (!before.converted || sendOwner.original !== PLATFORM_SEND || readyState(this) === OPEN)) {
-            try {
-              const { url, timestamp, deliver, binary } = before;
-              const size = typeof data === "string" ? utf8Size(data) : byteCount(binary);
+          if (!before) return result;
+          try {
+            // Read before sizing, which can run page code that closes the socket.
+            const open = readyState(this) === OPEN;
+            const binary = typeof data === "object" ? binarySize(data) : undefined;
+            // Strings, binary data and other primitives reach the platform as
+            // they are or convert without page code. Any other object is
+            // converted by the send (the platform's to a string, a library's
+            // in its own way), which can run page code that closes the socket.
+            const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
+            // The platform's own send never closes the socket, so one no
+            // longer open after it means converting the data closed it and the
+            // data was discarded. A library's send may transmit and then close,
+            // which the wrapper cannot tell from that: it is recorded by the
+            // state before its call.
+            if (!converted || sendOwner.original !== PLATFORM_SEND || open) {
+              const { url, timestamp, deliver } = before;
+              const size = typeof data === "string" ? utf8Size(data) : nonnegativeInteger(binary);
               deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
-            } catch {
-              /* Observation never changes what send() returns. */
             }
+          } catch {
+            /* Observation never changes what send() returns. */
           }
           return result;
         }
@@ -413,53 +412,51 @@ function exclusive(step: () => void): void {
   }
 }
 
-/** Installs the wrappers for a new session, or, while another installs or restores, once it has finished. */
-function installFor(current: Set<Listener>): void {
-  if (busy) {
-    installDeferred = true;
-    return;
+/**
+ * Installs the wrappers of the newest session if it still has to and no
+ * install or restore is running. A session started by page code while one
+ * runs is installed after it, in this loop: a long run of restarts never
+ * deepens the stack.
+ */
+function settle(): void {
+  while (!busy && installDeferred) {
+    installDeferred = false;
+    const current = listeners;
+    if (current.size === 0) continue; // Stopped before it could install.
+    let undo: (() => void) | undefined;
+    exclusive(() => {
+      undo = install(current);
+    });
+    // A session whose collectors all stopped while it installed is removed at once.
+    if (current.size > 0) restore = undo;
+    else if (undo) exclusive(undo);
   }
-  let undo: (() => void) | undefined;
-  exclusive(() => {
-    undo = install(current);
-  });
-  // A session whose collectors all stopped while it installed is removed at once.
-  if (current.size > 0) restore = undo;
-  else if (undo) exclusive(undo);
-  installNext();
 }
 
 function teardown(): void {
   const undo = restore;
   restore = undefined;
   if (undo) exclusive(undo);
-  installNext();
+  settle();
 }
 
-function installNext(): void {
-  if (busy || !installDeferred) return;
-  installDeferred = false;
-  if (listeners.size > 0) installFor(listeners);
-}
-
-function subscribe(listener: Listener): () => void {
-  const first = listeners.size === 0;
-  if (first) listeners = new Set();
+/**
+ * Adds a listener to the current session, or to a new one that settle()
+ * installs, and returns how to remove it. Nothing is installed here, so the
+ * caller holds the handle before any page code runs: a stop() during the
+ * install removes the listener at once.
+ */
+function reserve(listener: Listener): () => void {
+  if (listeners.size === 0) {
+    listeners = new Set();
+    installDeferred = true;
+  }
   const current = listeners;
-  // Subscribed before installing: page code that installing runs (a
-  // WebSocket getter) and that starts another collector joins this session.
   current.add(listener);
-  if (first) installFor(current);
   return () => {
     current.delete(listener);
     if (current === listeners && current.size === 0) teardown();
   };
-}
-
-/** One start() of a collector: pending until subscribe() returns, cancelled by stop(). */
-interface Subscription {
-  cancelled: boolean;
-  unsubscribe?: () => void;
 }
 
 /**
@@ -471,7 +468,7 @@ interface Subscription {
  */
 export class WebSocketCollector {
   private readonly events: RingBuffer<WebSocketEvidenceEvent>;
-  private subscription?: Subscription;
+  private unsubscribe?: () => void;
 
   constructor(maxSize = 100) {
     assertCapacity(maxSize);
@@ -479,14 +476,12 @@ export class WebSocketCollector {
   }
 
   start(): void {
-    // Set before subscribing: page code that installing runs (a WebSocket
-    // getter) and that calls start() again finds it pending, a no-op.
-    if (this.subscription) return;
-    const subscription: Subscription = { cancelled: false };
-    this.subscription = subscription;
-    const unsubscribe = subscribe((observation) => {
-      // A stop() during installation cancels it: nothing is recorded after that.
-      if (subscription.cancelled || this.events.capacity === 0) return;
+    // Reserved before installing: page code that installing runs (a WebSocket
+    // getter or setter) finds this collector started, so start() is a no-op
+    // and stop() leaves the session at once.
+    if (this.unsubscribe) return;
+    this.unsubscribe = reserve((observation) => {
+      if (this.events.capacity === 0) return;
       const event: WebSocketEvidenceEvent = {
         schemaVersion: EVIDENCE_SCHEMA_VERSION,
         kind: "websocket",
@@ -502,17 +497,13 @@ export class WebSocketCollector {
       if (observation.wasClean !== undefined) event.wasClean = observation.wasClean;
       this.events.push(freezeEvent(event));
     });
-    // Stopped while installing: leave the session now that its handle exists.
-    if (subscription.cancelled) unsubscribe();
-    else subscription.unsubscribe = unsubscribe;
+    settle();
   }
 
   stop(): void {
-    const subscription = this.subscription;
-    this.subscription = undefined;
-    if (!subscription) return;
-    subscription.cancelled = true;
-    subscription.unsubscribe?.();
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = undefined;
+    unsubscribe?.();
   }
 
   /** Captured events, oldest first, optionally limited to a time window. */

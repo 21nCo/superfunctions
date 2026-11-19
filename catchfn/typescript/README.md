@@ -209,8 +209,10 @@ constructs through the page's own class and is not observed.
   recorded without `size`. The payload itself is never recorded.
 - `send()` on a socket constructed while no collector ran is passed straight
   to the page's `send`, unobserved. On an observed socket the page's `send`
-  always receives the caller's arguments unchanged, and nothing the page can
-  replace runs on them before it.
+  always receives the caller's arguments unchanged. Before it only the
+  socket's membership and `readyState` are read; the data is classified and
+  sized after the `send` returns, so sizing (a `Proxy` trap included) never
+  changes what is sent.
 - Only a `send()` on an open socket is recorded, its `readyState` read
   before the call through the getter captured at load: the platform throws
   while connecting (it still throws) and discards the data once the socket
@@ -252,12 +254,16 @@ constructs through the page's own class and is not observed.
   getter reports as anything else (a `Proxy` of a `Blob` can fool Node's) is
   omitted and the event kept.
 - `start()` reentered while it installs (page code run by reading the global
-  or adding a listener) is a no-op, and a `stop()` during that install cancels
-  it: each collector holds at most one subscription.
+  or adding a listener) is a no-op, and a `stop()` during that install leaves
+  the session at once: a socket constructed meanwhile is never observed, also
+  after a restart. Each collector holds at most one subscription.
+- Timestamps of the error and WebSocket collectors come from the `Date.now`
+  captured at load. An observation whose clock gives anything but a
+  nonnegative safe integer is dropped; the event or send itself is unchanged.
 
 Known limit, deferred to SFNS-60 (SFNS-57 owner decision of 2026-11-19):
-against hostile same-realm page code (patched intrinsics such as `Date.now`
-or `Set` methods, accessor-backed sockets or payloads, Proxies, forwarding
+against hostile same-realm page code (patched intrinsics such as `Set`
+methods, accessor-backed sockets or payloads, Proxies, forwarding
 library `send` methods), WebSocket send evidence is best-effort. Such code
 can make a `send` the platform discarded be recorded as sent, run while a
 send is observed, start a collector that then receives a send already under

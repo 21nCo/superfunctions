@@ -474,6 +474,183 @@ describe("WebSocketCollector", () => {
     expect(PageSocket.prototype.send).toBe(pageSend);
   });
 
+  it("never captures a socket built while a stop() during installing had cancelled it; a restart and an overlapping collector each capture once", () => {
+    const other = new WebSocketCollector(5);
+    let value: unknown = PageSocket;
+    let cancelled: PageSocket | undefined;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get: () => value,
+      set(next) {
+        if (next !== PageSocket && !cancelled) {
+          collector.stop(); // Page code in the global's setter, while the first start() installs.
+          cancelled = new (next as typeof PageSocket)("wss://example.com/cancelled"); // Through the incoming wrapper.
+          collector.start();
+        }
+        value = next;
+      },
+    });
+    try {
+      collector.start();
+      other.start();
+      cancelled!.serverOpens();
+      cancelled!.send("lost");
+      cancelled!.serverSends("lost");
+      cancelled!.serverCloses(1000, true);
+      expect(cancelled!.sent).toEqual(["lost"]);
+      const socket = new (value as typeof PageSocket)("wss://example.com/restarted");
+      socket.serverOpens();
+      socket.send("ab");
+      collector.stop();
+      socket.send("c");
+      expect(collector.collect().map(({ type, size }) => [type, size])).toEqual([["open", undefined], ["message", 2]]);
+      expect(sentSizes(other)).toEqual([2, 1]);
+      other.stop();
+      expect(value).toBe(PageSocket);
+      expect(PageSocket.prototype.send).toBe(pageSend);
+      expectValidEvents(other.collect());
+    } finally {
+      other.stop();
+    }
+  });
+
+  it("excludes a send already under way from a collector a hook inside it restarts", () => {
+    collector.start();
+    const socket = openSocket("wss://example.com/pending");
+    socket.serverOpens();
+    PageSocket.prototype.send = function (this: PageSocket, data: unknown) {
+      collector.stop();
+      collector.start(); // A new subscription, after this send began.
+      return pageSend.call(this, data);
+    };
+    collector.stop();
+    collector.start(); // Wraps the hooked send.
+    const hooked = openSocket("wss://example.com/pending");
+    hooked.serverOpens();
+    hooked.send("x");
+    expect(hooked.sent).toEqual(["x"]);
+    expect(sentSizes(collector)).toEqual([]);
+  });
+
+  it("installs the last of a long run of restarts made while installing, without deepening the stack", () => {
+    let value: unknown = PageSocket;
+    let restarts = 0;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get: () => value,
+      set(next) {
+        value = next;
+        if (next !== PageSocket && restarts < 12_000) {
+          restarts += 1;
+          collector.stop();
+          collector.start();
+        }
+      },
+    });
+    collector.start();
+    expect(restarts).toBe(12_000);
+    expect(value).not.toBe(PageSocket);
+    const socket = new (value as typeof PageSocket)("wss://example.com/last");
+    socket.serverOpens();
+    socket.send("x");
+    expect(sentSizes(collector)).toEqual([1]);
+    collector.stop();
+    expect(value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("installs the last of a long run of starts during restores and stops during installs, without deepening the stack", () => {
+    let value: unknown = PageSocket;
+    let steps = 0;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get: () => value,
+      set(next) {
+        value = next;
+        if (steps >= 12_000) return;
+        steps += 1;
+        if (next === PageSocket) collector.start(); // During a restore: deferred until it finishes.
+        else collector.stop(); // During that install: undone once it finishes.
+      },
+    });
+    collector.start(); // Each install stops it and each restore restarts it, 12000 times; the last start installs.
+    expect(steps).toBe(12_000);
+    expect(value).not.toBe(PageSocket);
+    const socket = new (value as typeof PageSocket)("wss://example.com/alternating");
+    socket.serverOpens();
+    socket.send("x");
+    expect(sentSizes(collector)).toEqual([1]);
+    collector.stop();
+    expect(value).toBe(PageSocket);
+    expect(PageSocket.prototype.send).toBe(pageSend);
+  });
+
+  it("transmits a Blob Proxy whose trap closes the socket exactly as without the collector", () => {
+    const transmit = () => {
+      const socket = openSocket("wss://example.com/proxy-blob");
+      socket.serverOpens();
+      const blob = new Proxy(new Blob(["abc"]), {
+        get(target, key) {
+          if (typeof key === "symbol") socket.close(); // Sizing the data runs this trap.
+          return Reflect.get(target, key) as unknown;
+        },
+      });
+      socket.send(blob);
+      return socket.sent.length;
+    };
+    const without = transmit();
+    collector.start();
+    expect(transmit()).toBe(without);
+    expect(without).toBe(1);
+  });
+
+  it("drops an observation whose clock gives no valid v1 timestamp, keeping the send and the socket's events", async () => {
+    const realNow = Date.now;
+    let clock: () => unknown = realNow;
+    Date.now = () => clock() as number;
+    vi.resetModules();
+    let fresh: typeof import("../src/collectors/websocket.js");
+    try {
+      fresh = await import("../src/collectors/websocket.js"); // Captures the clock above.
+    } finally {
+      Date.now = realNow;
+    }
+    const timed = new fresh.WebSocketCollector(20);
+    timed.start();
+    try {
+      const page = vi.fn();
+      const exercise = () => {
+        const socket = openSocket("wss://example.com/clock");
+        socket.addEventListener("message", page);
+        socket.serverOpens();
+        socket.send("x");
+        socket.serverSends("y");
+        socket.serverFails();
+        socket.serverCloses(1000, true);
+        return socket.sent;
+      };
+      const invalid: Array<() => unknown> = [() => Number.NaN, () => 1.5, () => -1, () => "1700000000000", () => Number.POSITIVE_INFINITY, () => 2 ** 53];
+      for (const each of [...invalid, () => { throw new Error("clock"); }]) {
+        clock = each;
+        expect(exercise()).toEqual(["x"]);
+      }
+      expect(timed.collect()).toEqual([]);
+      expect(page).toHaveBeenCalledTimes(invalid.length + 1);
+      clock = () => 1_700_000_000_000;
+      expect(exercise()).toEqual(["x"]);
+      expect(timed.collect().map(({ type, direction, timestamp }) => [type, direction, timestamp])).toEqual([
+        ["open", undefined, 1_700_000_000_000],
+        ["message", "sent", 1_700_000_000_000],
+        ["message", "received", 1_700_000_000_000],
+        ["error", undefined, 1_700_000_000_000],
+        ["close", undefined, 1_700_000_000_000],
+      ]);
+      expectValidEvents(timed.collect());
+    } finally {
+      timed.stop();
+    }
+  });
+
   it("records a binary size only when it is a nonnegative safe integer, keeping the event", () => {
     collector.start();
     const socket = openSocket("wss://example.com/sizes");

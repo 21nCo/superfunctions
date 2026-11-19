@@ -80,3 +80,26 @@ export function unlisten(target: unknown, type: string, listener: (event: unknow
     /* Nothing more to undo. */
   }
 }
+
+const MAX_SAFE_INTEGER = 9007199254740991;
+
+/**
+ * `value` when it is a nonnegative safe integer, as v1 records a size or
+ * timestamp, checked with primitive comparisons only (no Number method the
+ * page can replace); -0 as 0. Undefined for anything else.
+ */
+export function nonnegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && value >= 0 && value <= MAX_SAFE_INTEGER && value % 1 === 0 ? value + 0 : undefined;
+}
+
+// Date.now as this module loaded: a clock the page replaces later never runs.
+const DATE_NOW = Date.now as Intrinsic;
+
+/** The time in milliseconds, or undefined when the clock gives no value v1 can record. Never throws. */
+export function now(): number | undefined {
+  try {
+    return nonnegativeInteger(apply(DATE_NOW, Date, []));
+  } catch {
+    return undefined;
+  }
+}

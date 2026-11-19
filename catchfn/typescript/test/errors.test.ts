@@ -222,8 +222,82 @@ describe("ErrorCollector", () => {
     collector.stop();
     reject("after the last stop");
     expect(collector.collect().map((event) => event.message).slice(2)).toEqual(["restarted in teardown"]);
+    // Each listener added is removed by its exact type and listener, whatever the order.
     expect(ours(remove.mock.calls)).toHaveLength(ours(add.mock.calls).length);
-    expect(new Set(ours(remove.mock.calls).map(([, listener]) => listener))).toEqual(new Set(ours(add.mock.calls).map(([, listener]) => listener)));
+    expect(ours(remove.mock.calls)).toEqual(expect.arrayContaining(ours(add.mock.calls)));
+  });
+
+  for (const failing of ["error", "unhandledrejection"] as const) {
+    it(`removes a ${failing} listener whose addEventListener registered it and then threw, and a restart records once`, () => {
+      const original = window.addEventListener;
+      const ours = (calls: unknown[][]) => calls.filter(([type]) => type === "error" || type === "unhandledrejection").map(([type, listener]) => [type, listener]);
+      let throwing = true;
+      const add = vi.spyOn(window, "addEventListener").mockImplementation(function (this: Window, ...args: Parameters<Window["addEventListener"]>) {
+        original.apply(this, args);
+        if (throwing && args[0] === failing) throw new Error("registered, then threw");
+      });
+      const remove = vi.spyOn(window, "removeEventListener");
+      const other = new ErrorCollector(10);
+      try {
+        collector.start();
+        other.start(); // Joins the session that failed to install.
+        reject("not recorded");
+        expect(collector.collect()).toEqual([]);
+        expect(other.collect()).toEqual([]);
+        // Every listener added, the one whose registration threw included, is removed by its exact type and listener.
+        expect(ours(add.mock.calls).map(([type]) => type)).toEqual(failing === "error" ? ["error"] : ["error", "unhandledrejection"]);
+        expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+        collector.stop();
+        other.stop();
+        throwing = false;
+        collector.start();
+        other.start();
+        reject("restarted");
+        collector.stop();
+        other.stop();
+        reject("after the last stop");
+        expect(collector.collect().map((event) => event.message)).toEqual(["restarted"]);
+        expect(other.collect().map((event) => event.message)).toEqual(["restarted"]);
+        expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+        expectValidEvents(other.collect());
+      } finally {
+        other.stop();
+      }
+    });
+  }
+
+  it("drops an error whose clock gives no valid v1 timestamp", async () => {
+    const realNow = Date.now;
+    let clock: () => unknown = realNow;
+    Date.now = () => clock() as number;
+    vi.resetModules();
+    let fresh: typeof import("../src/collectors/errors.js");
+    try {
+      fresh = await import("../src/collectors/errors.js"); // Captures the clock above.
+    } finally {
+      Date.now = realNow;
+    }
+    const timed = new fresh.ErrorCollector(10);
+    timed.start();
+    try {
+      const invalid: Array<() => unknown> = [() => Number.NaN, () => 1.5, () => -1, () => "1700000000000", () => Number.POSITIVE_INFINITY, () => 2 ** 53];
+      for (const each of [...invalid, () => { throw new Error("clock"); }]) {
+        clock = each;
+        reject("dropped");
+        throwUncaught(new Error("dropped"));
+      }
+      expect(timed.collect()).toEqual([]);
+      clock = () => 1_700_000_000_000;
+      reject("kept");
+      throwUncaught(new Error("kept"));
+      expect(timed.collect().map(({ source, timestamp }) => [source, timestamp])).toEqual([
+        ["unhandledrejection", 1_700_000_000_000],
+        ["error", 1_700_000_000_000],
+      ]);
+      expectValidEvents(timed.collect());
+    } finally {
+      timed.stop();
+    }
   });
 
   it("lets overlapping collectors each see only what happened while they ran", () => {
