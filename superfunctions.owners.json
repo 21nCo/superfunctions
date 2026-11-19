@@ -187,6 +187,7 @@
     "searchfn-datafn-provider": "public",
     "searchfn-server": "public",
     "secfn-core": "public",
+    "secfn-keys": "public",
     "secfn-runtime": "public",
     "secfn-server": "public",
     "sendfn": "public",
