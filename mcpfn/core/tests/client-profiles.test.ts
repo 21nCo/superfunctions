@@ -1283,6 +1283,23 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     await expect(projectBeside(sibling)).rejects.toThrow(/must retain its canonical schema/);
   });
 
+  it("validates an anonymous projected schema beside a sibling whose $id looks like an internal registry key", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const inputSchema = { type: "object" as const, properties: { query: { type: "string" } } };
+    // The projected graph is [sibling, inputSchema]; index 1 was the anonymous
+    // schema's former registry key, so Ajv refused the catalog as a duplicate.
+    for (const sibling of [
+      { $id: "mcpfn-profile-1", type: "object" },
+      { type: "object", definitions: { key: { $id: "mcpfn-profile-1", type: "string" } } },
+    ]) {
+      const catalog = await buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema }], schemaResources: [sibling, inputSchema], resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "noop", version: "1", matches: () => true },
+      } });
+      expect(catalog.tools.map((tool) => tool.name)).toEqual(["search"]);
+    }
+  });
+
   it("rejects a nested relative $id that resolves back onto its anonymous root", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const inputSchema = { type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: "schema", definitions: { query: { type: "number" } } } }, definitions: { query: { type: "string" } } };

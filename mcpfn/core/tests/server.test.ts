@@ -898,6 +898,54 @@ describe("McpFnServer", () => {
     expect(bystander.updates).toEqual(["memory://other"]);
   });
 
+  it("lets a later unsubscribe win over a subscribe that is still running", async () => {
+    let subscribeCalls = 0;
+    let subscribeEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { subscribeEntered = resolve; });
+    let releaseSubscribe!: () => void;
+    const released = new Promise<void>((resolve) => { releaseSubscribe = resolve; });
+    const server = createMcpFnServer({
+      info: { name: "subscription-race-test", version: "1.0.0" },
+      registry: new McpFnRegistry().registerResource({
+        uri: "memory://status",
+        name: "status",
+        read: async () => ({ contents: [{ uri: "memory://status", text: "ready" }] }),
+        subscribe: async () => {
+          if (++subscribeCalls > 1) return;
+          subscribeEntered();
+          await released;
+        },
+        unsubscribe: async () => undefined,
+      }),
+    });
+    const handler = await server.createWebStandardHandler({ sessionIdGenerator: () => "session-1" });
+    const client = new Client({ name: "racer", version: "1.0.0" });
+    const updates: string[] = [];
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notification) => {
+      updates.push(notification.params.uri);
+    });
+    closeables.push(client, server);
+    await client.connect(new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+      fetch: (input, init) => handler(new Request(input, init)),
+    }));
+
+    const slowSubscribe = client.subscribeResource({ uri: "memory://status" });
+    await entered;
+    await client.unsubscribeResource({ uri: "memory://status" });
+    releaseSubscribe();
+    await slowSubscribe;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await server.sendResourceUpdated({ uri: "memory://status" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(updates).toEqual([]);
+
+    // A subscribe that starts after the unsubscribe is recorded as usual.
+    await client.subscribeResource({ uri: "memory://status" });
+    await server.sendResourceUpdated({ uri: "memory://status" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(updates).toEqual(["memory://status"]);
+  });
+
   it("keeps broadcasting when one HTTP session's transport fails", async () => {
     const server = createMcpFnServer({
       info: { name: "broadcast-test", version: "1.0.0" },

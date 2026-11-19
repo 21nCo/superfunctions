@@ -230,6 +230,12 @@ export class McpFnServer<TContext = undefined> {
   // resources/subscribe request. Each HTTP session has its own server, so this
   // is the session's subscription set; it is dropped when the session closes.
   private readonly resourceSubscriptions = new Set<string>();
+  // resources/subscribe requests still running, by URI. The SDK handles
+  // requests concurrently, so an unsubscribe can finish while an earlier
+  // subscribe for the same URI is still awaiting its handler. Unsubscribe and
+  // close() drop these tokens, and a subscribe whose token is gone does not
+  // record its subscription: the later unsubscribe wins.
+  private readonly pendingResourceSubscriptions = new Map<string, Set<symbol>>();
   private connected = false;
 
   constructor(options: McpFnServerOptions<TContext>) {
@@ -551,22 +557,36 @@ export class McpFnServer<TContext = undefined> {
         this.protocol.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
-            const context = await this.contextFactory(extra);
-            await this.registry.changeSubscription(
-              request.params.uri,
-              true,
-              context,
-              extra,
-            );
-            this.resourceSubscriptions.add(request.params.uri);
-            return {};
+            const uri = request.params.uri;
+            const token = Symbol(uri);
+            let pending = this.pendingResourceSubscriptions.get(uri);
+            if (!pending) {
+              pending = new Set();
+              this.pendingResourceSubscriptions.set(uri, pending);
+            }
+            pending.add(token);
+            try {
+              const context = await this.contextFactory(extra);
+              await this.registry.changeSubscription(uri, true, context, extra);
+              // Record it only if no unsubscribe or close() ran since it began.
+              if (this.pendingResourceSubscriptions.get(uri)?.has(token)) {
+                this.resourceSubscriptions.add(uri);
+              }
+              return {};
+            } finally {
+              const current = this.pendingResourceSubscriptions.get(uri);
+              current?.delete(token);
+              if (current?.size === 0) this.pendingResourceSubscriptions.delete(uri);
+            }
           },
         );
         this.protocol.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
-            // further updates even when the registry handler then fails.
+            // further updates even when the registry handler then fails, and a
+            // subscribe for this URI that is still running does not restore it.
+            this.pendingResourceSubscriptions.delete(request.params.uri);
             this.resourceSubscriptions.delete(request.params.uri);
             const context = await this.contextFactory(extra);
             await this.registry.changeSubscription(
@@ -1042,6 +1062,7 @@ export class McpFnServer<TContext = undefined> {
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));
+    this.pendingResourceSubscriptions.clear();
     this.resourceSubscriptions.clear();
     await this.protocol.close();
     this.connected = false;

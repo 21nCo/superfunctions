@@ -440,9 +440,13 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
         ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
       });
       for (const resource of graph) validateDefinitionContainers(resource, ajv);
+      // Anonymous schemas need distinct registry keys without changing their JSON
+      // Schema IDs. The key's last path segment carries a digest of the whole
+      // graph, so no authored $id in that graph (absolute, or relative to this
+      // key) can resolve to a key and make Ajv reject a valid catalog.
+      const namespace = sha256(graph).slice(0, 32);
       for (const [index, resource] of graph.entries()) {
-        // Anonymous schemas need distinct registry keys without changing their JSON Schema IDs.
-        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `mcpfn-profile-${index}` : undefined);
+        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `https://profile.mcpfn.invalid/${namespace}-${index}` : undefined);
       }
       ajv.compile(schema);
     }
