@@ -190,6 +190,7 @@
   { "slug": "plugfn-providers", "path": "plugfn/providers", "name": "@plugfn/providers" },
   { "slug": "searchfn-admin", "path": "searchfn/admin", "name": "@searchfn/admin" },
   { "slug": "secfn-core", "path": "secfn/core", "name": "@secfn/core" },
+  { "slug": "secfn-keys", "path": "secfn/keys", "name": "@secfn/keys" },
   { "slug": "secfn-runtime", "path": "secfn/runtime", "name": "@secfn/runtime" },
   { "slug": "secfn-server", "path": "secfn/server", "name": "@secfn/server" },
   { "slug": "superfunctions-docs-theme", "path": "packages/docs-theme", "name": "@superfunctions/docs-theme" },

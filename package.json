@@ -51,6 +51,7 @@
     "langfn/docs",
     "memoryfn/docs",
     "secfn/core",
+    "secfn/keys",
     "secfn/server",
     "secfn/runtime",
     "secfn/docs"
