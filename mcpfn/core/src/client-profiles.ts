@@ -610,7 +610,8 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const ambiguousKeys = new Set<string>();
-  const aliasKeys = new Set<string>();
+  // Normalized key -> literal top-level keys that normalize to it (Ajv engine).
+  const aliases = new Map<string, string[]>();
   const resourceKey = (address: string) => address.split("#", 1)[0]!;
   const fragment = (address: string) => {
     const hash = address.indexOf("#");
@@ -622,6 +623,12 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const resolveUri = (base: string, reference: string) => {
     try { return schemaUriResolver.resolve(base, reference); }
     catch { return undefined; }
+  };
+  // Ajv matches and looks up IDs in serialized form (dot segments removed,
+  // default ports dropped).
+  const ajvPath = (key: string) => {
+    try { return resourceKey(schemaUriResolver.serialize(schemaUriResolver.parse(key))); }
+    catch { return key; }
   };
   const modernDialect = (schema: object) => {
     const resource = scopes.get(schema)?.resource ?? schema as Record<string, unknown>;
@@ -688,13 +695,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           resource = schemaValue;
           local = resourceKey(address);
           resourceRoots.set(local, resource);
-          // Ajv binds a reference whose normalized path matches the root being
-          // compiled to that root, and otherwise looks the path up as an ID.
-          // Where a literal $id ("./shared") normalizes to another key
-          // ("shared"), the target depends on where the reference sits, so
-          // references to the normalized key are refused.
-          const normalized = parent === undefined && literalRootIds ? resolveUri("", authoredId) : undefined;
-          if (normalized !== undefined && resourceKey(normalized) !== local) aliasKeys.add(resourceKey(normalized));
+          // Ajv resolves references to a normalized URI, and binds one whose
+          // path matches the root being compiled to that root, so a literal
+          // $id such as "./shared" is also reached as "shared".
+          const normalized = ajvPath(local);
+          if (parent === undefined && literalRootIds && normalized !== local) aliases.set(normalized, [...aliases.get(normalized) ?? [], local]);
         }
         if (!invalid) base = address.replace(/#$/, "");
       }
@@ -745,8 +750,14 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     const address = self !== undefined ? `${scope.local}${self}` : resolveUri(scope.base, reference);
     if (address === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI");
     const pointer = fragment(address);
-    const key = resourceKey(address);
-    if (ambiguousKeys.has(key) || (self === undefined && aliasKeys.has(key))) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
+    const resolvedKey = resourceKey(address);
+    // The resource registered under the key and every root whose literal $id
+    // normalizes to it are candidates. Ajv's choice between them depends on
+    // where the reference is compiled, so more than one is refused.
+    const normalizedKey = literalRootIds ? ajvPath(resolvedKey) : resolvedKey;
+    const candidates = self === undefined ? [...new Set([resolvedKey, normalizedKey, ...aliases.get(normalizedKey) ?? []])].filter(candidate => resourceRoots.has(candidate)) : [];
+    if (ambiguousKeys.has(resolvedKey) || ambiguousKeys.has(normalizedKey) || candidates.length > 1) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
+    const key = candidates[0] ?? resolvedKey;
     if (pointer && !pointer.startsWith("/")) {
       const anchored = ids.get(`${key}#${pointer}`);
       if (anchored) return assertReachable(anchored);

@@ -1462,19 +1462,29 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     });
   });
 
-  // Inside a resource whose literal $id ("./shared") normalizes onto another
-  // resource ("shared"), Ajv binds "#..." to the resource it appears in. With a
-  // resource part, the target depends on where the reference sits, so it is refused.
+  // Ajv keys a root by its literal $id ("./shared") but resolves references to
+  // normalized URIs ("shared#/..."), binding them to that root. With a sibling
+  // that owns the normalized key, the target depends on where the reference is
+  // compiled, so only "#..." (always the root it appears in) is compared.
   it.each([
-    ["#/definitions/query", false, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["#node", true, "MCPFN_PROFILE_ASYMMETRIC"],
-    ["shared#/definitions/query", false, "MCPFN_INVALID_PROJECTED_CATALOG"],
-    ["shared#node", true, "MCPFN_INVALID_PROJECTED_CATALOG"],
-  ] as const)("compares %s inside a root whose literal $id normalizes onto another resource", async (reference, anchored, code) => {
+    ["./shared", "#/definitions/query", false, true, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "#node", true, true, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#/definitions/query", false, true, "MCPFN_INVALID_PROJECTED_CATALOG"],
+    ["./shared", "shared#node", true, true, "MCPFN_INVALID_PROJECTED_CATALOG"],
+    ["./shared", "shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "./shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["./shared", "shared#node", true, false, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["https://profile.invalid:443/shared", "https://profile.invalid/shared#/definitions/query", false, false, "MCPFN_PROFILE_ASYMMETRIC"],
+  ] as const)("compares a root $id %s referenced as %s (anchor %s, sibling %s)", async (id, reference, anchored, withSibling, code) => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const other = { $id: "shared", type: "object", definitions: { query: { type: "number" } } };
-    const schema = (type: string) => ({ $id: "./shared", type: "object" as const, properties: { query: { $ref: reference } }, definitions: { query: { ...(anchored ? { $id: "#node" } : {}), type } } });
-    const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [other, schema("string")], resolved: {
+    const schema = (type: string) => ({ $id: id, type: "object" as const, properties: { query: { $ref: reference } }, definitions: { query: { ...(anchored ? { $id: "#node" } : {}), type } } });
+    // Oracle: the runtime Ajv compiler binds the reference to this root's own definition.
+    const compiler = createSchemaCompiler("ajv");
+    if (withSibling) compiler.compile(other);
+    const validate = compiler.compile(schema("string"));
+    expect([validate({ query: "text" }), validate({ query: 1 })]).toEqual([true, false]);
+    const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [...(withSibling ? [other] : []), schema("string")], resolved: {
       context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
       profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
     } });
