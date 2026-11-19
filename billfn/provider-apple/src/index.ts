@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type {
+  BillFnCatalog,
   BillFnCancelSubscriptionInput,
   BillFnChangeSubscriptionInput,
   BillFnCreateCheckoutInput,
@@ -89,6 +90,14 @@ export interface AppleProviderConfig {
    * so each request's token claims, as `bid`, the app being asked.
    */
   bundleIds?: readonly string[];
+  /**
+   * The BillFn catalog (the one given to BillFn). With several bundle IDs every Apple price in it must name its app as
+   * `metadata.appleBundleId`, which `createAppleProvider` checks. A product ID that the apps sell in more than one plan
+   * is then resolved by the app that signed the transaction: webhook and notification history events (`priceId`) and
+   * read billing states (`raw.priceId`) name the catalog price of that app, so BillFn applies that app's plan. Without
+   * it, BillFn matches such a product by product ID alone and keeps the stored plan.
+   */
+  catalog?: BillFnCatalog;
   /** The in-app purchase key the built-in signer signs App Store Server API tokens with; requires bundleId or bundleIds. */
   appStoreServerApiKey?: AppStoreServerApiKey;
   /**
@@ -108,7 +117,12 @@ interface ResolvedAppleProviderConfig extends AppleProviderConfig {
   /** Returns a token for the bundle, or the host's bundle-less token when no bundle ID is configured. */
   tokenFor: (bundleId: string | undefined) => Promise<string>;
   verifyNotification?: (context: AppleNotificationVerifierContext) => Promise<Record<string, unknown>>;
+  /** The catalog price ID a signed transaction names, when its product needs its app to name one (`catalog`). */
+  catalogPriceIdFor: CatalogPriceIdResolver;
 }
+
+/** Returns the catalog price ID for a signed transaction, preferring `currentPriceId` among its app's prices. */
+type CatalogPriceIdResolver = (transaction: Record<string, unknown> | null, currentPriceId?: string) => string | undefined;
 
 interface AppleTransactionExpectation {
   /** Null when any product is accepted; BillFn checks an imported subscription's product against the plan. */
@@ -170,11 +184,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       };
       if (input.price.kind === 'subscription') {
         const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
-        return mapAppleSubscriptionResponse(response.payload, expectation);
+        return mapAppleSubscriptionResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
       }
 
       const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${transactionId}`);
-      return mapAppleHistoryResponse(response.payload, expectation);
+      return mapAppleHistoryResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
     },
     async fetchSubscription(input: BillFnSyncSubscriptionInput) {
       const transactionId = input.subscription.providerSubscriptionId ?? input.subscription.providerChargeId;
@@ -195,7 +209,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         reference: transactionId,
         appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId),
         bundleId: null
-      });
+      }, config.catalogPriceIdFor, input.price.priceId);
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
@@ -236,7 +250,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         reference: input.providerReference,
         appAccountToken: null,
         bundleId: null
-      });
+      }, config.catalogPriceIdFor);
     },
     async cancelSubscription(input: BillFnCancelSubscriptionInput) {
       const transactionId = input.subscription.providerChargeId ?? input.subscription.providerSubscriptionId;
@@ -337,8 +351,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         bundleId
       };
       return [input.price.kind === 'subscription'
-        ? mapAppleSubscriptionResponse(response.payload, expectation)
-        : mapAppleHistoryResponse(response.payload, expectation)];
+        ? mapAppleSubscriptionResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId)
+        : mapAppleHistoryResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId)];
     },
     async parseWebhook(input): Promise<BillFnParsedWebhookEvent[]> {
       let payload: Record<string, unknown>;
@@ -364,7 +378,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         signedPayload
       });
 
-      return [mapAppleNotificationEvent(decoded, signedPayload)];
+      return [mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor)];
     },
     async fetchNotificationHistory(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage> {
       if (!config.verifyNotification) {
@@ -405,7 +419,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           rawBody: JSON.stringify({ signedPayload }),
           signedPayload
         });
-        events.push(mapAppleNotificationEvent(decoded, signedPayload));
+        events.push(mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor));
       }
 
       return {
@@ -703,7 +717,53 @@ function resolveAppleProviderConfig(config: AppleProviderConfig): ResolvedAppleP
   } else if (bundleId) {
     verifyNotification = createBuiltInNotificationVerifier(createAppleSignedDataVerifier({ bundleIds }));
   }
-  return { ...config, bundleId, bundleIds, tokenFor, verifyNotification };
+  const resolved: ResolvedAppleProviderConfig = {
+    ...config,
+    bundleId,
+    bundleIds,
+    tokenFor,
+    verifyNotification,
+    catalogPriceIdFor: () => undefined
+  };
+  resolved.catalogPriceIdFor = createCatalogPriceIdResolver(resolved, config.catalog);
+  return resolved;
+}
+
+/**
+ * With several bundle IDs and a catalog, resolves a product the listed apps sell in more than one plan by the app that
+ * signed the transaction, so BillFn's exact price ID match applies that app's price instead of its product match, which
+ * names no price across plans. Every Apple price must name a listed app (`readPriceBundleId`). Any other product, or an
+ * app that sells the product in several plans itself, is left to BillFn's product match, as with one app.
+ */
+function createCatalogPriceIdResolver(config: ResolvedAppleProviderConfig, catalog: BillFnCatalog | undefined): CatalogPriceIdResolver {
+  if (!catalog || config.bundleIds.length < 2) {
+    return () => undefined;
+  }
+  const plansOfProduct = new Map<string, Set<string>>();
+  const pricesOfAppProduct = new Map<string, Array<{ planKey: string; priceId: string }>>();
+  for (const plan of catalog.plans) {
+    for (const price of plan.prices) {
+      if (price.provider !== 'apple' || !price.providerProductId) {
+        continue;
+      }
+      const key = JSON.stringify([readPriceBundleId(config, price), price.providerProductId]);
+      plansOfProduct.set(price.providerProductId, (plansOfProduct.get(price.providerProductId) ?? new Set()).add(plan.planKey));
+      pricesOfAppProduct.set(key, [...(pricesOfAppProduct.get(key) ?? []), { planKey: plan.planKey, priceId: price.priceId }]);
+    }
+  }
+  return (transaction, currentPriceId) => {
+    // Both fields are inside Apple's signed transaction; nothing a client sends is read.
+    const productId = readString(transaction ?? {}, ['productId']);
+    const bundleId = readString(transaction ?? {}, ['bundleId']);
+    if (!productId || !bundleId || (plansOfProduct.get(productId)?.size ?? 0) < 2) {
+      return undefined;
+    }
+    const prices = pricesOfAppProduct.get(JSON.stringify([bundleId, productId])) ?? [];
+    if (new Set(prices.map((price) => price.planKey)).size !== 1) {
+      return undefined;
+    }
+    return (prices.find((price) => price.priceId === currentPriceId) ?? prices[0]).priceId;
+  };
 }
 
 /** Reads `bundleId` and `bundleIds` into one list, `bundleId` first and without duplicates. */
@@ -876,7 +936,8 @@ function mapAppleNotificationEvent(
     payload: Record<string, unknown>;
     signatureVerified: boolean;
   },
-  signedPayload: string
+  signedPayload: string,
+  catalogPriceIdFor: CatalogPriceIdResolver
 ): BillFnParsedWebhookEvent {
   const notification = decoded.payload;
   const data = asRecord(notification.data) ?? {};
@@ -893,7 +954,7 @@ function mapAppleNotificationEvent(
     occurredAt: millisToIso(readTimestamp(notification, ['signedDate'])) ?? undefined,
     providerSubscriptionId: readString(transaction ?? {}, ['originalTransactionId']) ?? undefined,
     providerChargeId: readString(transaction ?? {}, ['transactionId']) ?? undefined,
-    priceId: readString(transaction ?? {}, ['productId']) ?? undefined,
+    priceId: catalogPriceIdFor(transaction) ?? readString(transaction ?? {}, ['productId']) ?? undefined,
     billingState: state,
     raw: notification
   };
@@ -965,7 +1026,9 @@ function mapAppleNotificationState(
 
 function mapAppleSubscriptionResponse(
   payload: Record<string, unknown>,
-  expectation: AppleTransactionExpectation
+  expectation: AppleTransactionExpectation,
+  catalogPriceIdFor: CatalogPriceIdResolver,
+  currentPriceId?: string
 ): BillFnVerifiedBillingState {
   const { record: lastTransaction, transaction } = selectAppleLastTransaction(payload, expectation);
   const renewalInfo = decodeSignedPayload(lastTransaction, 'signedRenewalInfo');
@@ -981,13 +1044,15 @@ function mapAppleSubscriptionResponse(
     currentPeriodStart: millisToIso(readTimestamp(transaction, ['purchaseDate'])) ?? undefined,
     currentPeriodEnd: millisToIso(readTimestamp(transaction, ['expiresDate'])) ?? undefined,
     autoRenew: readNumber(renewalInfo, ['autoRenewStatus']) === 1,
-    raw: payload
+    raw: withCatalogPriceId(payload, catalogPriceIdFor(transaction, currentPriceId))
   };
 }
 
 function mapAppleHistoryResponse(
   payload: Record<string, unknown>,
-  expectation: AppleTransactionExpectation
+  expectation: AppleTransactionExpectation,
+  catalogPriceIdFor: CatalogPriceIdResolver,
+  currentPriceId?: string
 ): BillFnVerifiedBillingState {
   const transactions = extractHistoryTransactions(payload);
   const transaction = selectAppleTransaction(transactions, expectation, 'history');
@@ -1004,8 +1069,13 @@ function mapAppleHistoryResponse(
     currentPeriodStart: millisToIso(readTimestamp(transaction, ['purchaseDate'])) ?? undefined,
     currentPeriodEnd: expiresAt,
     autoRenew: false,
-    raw: payload
+    raw: withCatalogPriceId(payload, catalogPriceIdFor(transaction, currentPriceId))
   };
+}
+
+/** The StoreKit response with the catalog price ID BillFn matches first, when the transaction's app names one. */
+function withCatalogPriceId(payload: Record<string, unknown>, priceId: string | undefined): Record<string, unknown> {
+  return priceId ? { ...payload, priceId } : payload;
 }
 
 function mapTransactionPayload(

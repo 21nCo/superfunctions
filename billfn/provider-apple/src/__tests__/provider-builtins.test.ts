@@ -532,8 +532,11 @@ describe('createAppleProvider binds each price to its app with several bundle ID
       chain
     );
 
-  /** A StoreKit double for both apps; `answerAs` makes it answer with another app's transaction, as a forged answer. */
-  async function storeKit(answerAs?: string) {
+  /**
+   * A StoreKit double for both apps; `answerAs` makes it answer with another app's transaction, as a forged answer, and
+   * `config` adds to (or replaces the fetch of) the provider's configuration.
+   */
+  async function storeKit(answerAs?: string, config: Record<string, unknown> = {}) {
     const appAccountToken = await appAccountTokenPromise;
     const bids: string[] = [];
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -548,7 +551,7 @@ describe('createAppleProvider binds each price to its app with several bundle ID
         ? Response.json({ signedTransactions: [signed] })
         : Response.json({ data: [{ lastTransactions: [{ originalTransactionId: transactionOf[owner!], status: 1, signedTransactionInfo: signed }] }] });
     });
-    return { bids, provider: createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch }) };
+    return { bids, provider: createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch, ...config }) };
   }
 
   const priceFor = (kind: 'subscription' | 'one_time', metadata?: Record<string, unknown>) =>
@@ -633,6 +636,99 @@ describe('createAppleProvider binds each price to its app with several bundle ID
         providerSubscriptionId: 'txn_two'
       });
       expect(bids.at(-1)).toBe('com.example.two');
+    });
+  });
+
+  describe('with the catalog, a product ID the two apps sell in different plans', () => {
+    /** Basic is app one's only plan; each app sells the shared product in its own pro plan, so an upgrade is ambiguous by product. */
+    const applePrice = (priceId: string, providerProductId: string, appleBundleId?: string) => ({
+      priceId,
+      provider: 'apple',
+      kind: 'subscription',
+      providerProductId,
+      ...(appleBundleId ? { metadata: { appleBundleId } } : {})
+    });
+    const plan = (planKey: string, ...prices: Array<ReturnType<typeof applePrice>>) => ({ planKey, prices });
+    const catalog = {
+      plans: [
+        plan('basic', applePrice('basic-one', 'com.example.basic', 'com.example.one')),
+        plan('pro-one', applePrice('pro-one', productId, 'com.example.one')),
+        plan('pro-two', applePrice('pro-two', productId, 'com.example.two'))
+      ]
+    } as never;
+
+    const catalogProvider = async (config: Record<string, unknown> = {}) => (await storeKit(undefined, { catalog, ...config })).provider;
+    const renewal = (bundleId: string) => {
+      const notification = sampleSubscribedNotification(chain, { bundleId });
+      const data = notification.data as Record<string, unknown>;
+      return {
+        ...notification,
+        notificationType: 'DID_RENEW',
+        subtype: undefined,
+        notificationUUID: `renew-${bundleId}`,
+        data: { ...data, signedTransactionInfo: signedTransaction(bundleId, 'test-app-account-token') }
+      };
+    };
+
+    it('names the price of the app that signed a webhook notification', async () => {
+      const provider = await catalogProvider();
+      for (const [bundleId, priceId] of [['com.example.one', 'pro-one'], ['com.example.two', 'pro-two']]) {
+        await expect(provider.parseWebhook!(webhook(signJws(renewal(bundleId), chain)))).resolves.toEqual([
+          expect.objectContaining({ priceId, billingState: expect.objectContaining({ providerProductId: productId }) })
+        ]);
+      }
+    });
+
+    it("names the price of each history notification's app", async () => {
+      const fetchMock = vi.fn(async () =>
+        Response.json({ notificationHistory: [{ signedPayload: signJws(renewal('com.example.two'), chain) }], hasMore: false })
+      ) as typeof fetch;
+      const provider = await catalogProvider({ fetch: fetchMock });
+      const page = await provider.fetchNotificationHistory!({ limit: 10 });
+      expect(page.events).toEqual([expect.objectContaining({ priceId: 'pro-two' })]);
+    });
+
+    it("names the subscription's own app's price on a sync, whichever app's price of the product it is read for", async () => {
+      // After an upgrade BillFn reads the subscription for the event's price (its sync candidate), which may be either app's.
+      const provider = await catalogProvider();
+      for (const [reference, priceId] of [['txn_one', 'pro-one'], ['txn_two', 'pro-two']]) {
+        for (const price of [applePrice('pro-one', productId, 'com.example.one'), applePrice('pro-two', productId, 'com.example.two')]) {
+          const state = await provider.fetchSubscription!({
+            subscription: { billingAccountId: 'acct_1', providerSubscriptionId: reference },
+            price
+          } as never);
+          expect(state).toMatchObject({ providerProductId: productId, raw: { priceId } });
+        }
+      }
+    });
+
+    it('names the verified, restored or imported transaction\'s own price', async () => {
+      const provider = await catalogProvider();
+      const proOne = applePrice('pro-one', productId, 'com.example.one') as never;
+      await expect(operations.verifyCheckout(provider as never, proOne, 'txn_one')).resolves.toMatchObject({ raw: { priceId: 'pro-one' } });
+      await expect(operations.restorePurchases(provider as never, proOne, 'txn_one')).resolves.toMatchObject({ raw: { priceId: 'pro-one' } });
+      await expect(provider.importSubscription!({ providerReference: 'txn_two' } as never)).resolves.toMatchObject({ raw: { priceId: 'pro-two' } });
+    });
+
+    it('leaves a product sold in one plan to BillFn\'s product match, as without a catalog', async () => {
+      const onePlan = { plans: [plan('pro', applePrice('pro-one', productId, 'com.example.one'), applePrice('pro-two', productId, 'com.example.two'))] } as never;
+      const provider = await catalogProvider({ catalog: onePlan });
+      const [event] = await provider.parseWebhook!(webhook(signJws(renewal('com.example.two'), chain)));
+      expect(event.priceId).toBe(productId);
+      const state = await provider.fetchSubscription!({
+        subscription: { billingAccountId: 'acct_1', providerSubscriptionId: 'txn_two' },
+        price: applePrice('pro-one', productId, 'com.example.one')
+      } as never);
+      expect(state?.raw).not.toHaveProperty('priceId');
+    });
+
+    it('rejects a catalog with an Apple price that names no listed app', () => {
+      for (const appleBundleId of [undefined, 'com.example.other']) {
+        const unbound = { plans: [plan('pro', applePrice('pro', productId, appleBundleId))] } as never;
+        expect(() => createAppleProvider({ bundleIds, appStoreServerApiKey, catalog: unbound })).toThrow(
+          expect.objectContaining({ code: 'BILLFN_VALIDATION_ERROR', message: expect.stringContaining('metadata.appleBundleId') })
+        );
+      }
     });
   });
 
