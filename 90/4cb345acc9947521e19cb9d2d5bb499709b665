@@ -1,0 +1,33 @@
+secfn/keys/README.md
+  s_19abec75182420::t_1675df9798a7db 45-51,62-65
+secfn/keys/src/__tests__/helpers.ts
+  s_19abec75182420::t_ae70863a123de2 91-127
+secfn/keys/src/__tests__/key-ring.test.ts
+  s_19abec75182420::t_9ce010d6369c6d 5,123-152,179-191,193-194,198-199,478-513,515-541
+secfn/keys/src/__tests__/signer.test.ts
+  s_19abec75182420::t_f6653ea5daaca4 2,5,68-129
+secfn/keys/src/encoding.ts
+  s_19abec75182420::t_5ad534c57cd99b 23,45-55,57,59-61,65,70,73-75,86-88,98-111,113,120-122,125-128,130-133,135-139,141
+secfn/keys/src/jwk.ts
+  s_19abec75182420::t_ff00384ec3490a 56-75,80,99-101,108-113,117-121
+secfn/keys/src/key-ring.ts
+  s_19abec75182420::t_a77757fbec9c2f 1,65,69-70,83-87,93-95,97-98,106,122-126,130,132,136-139,192-195,199-200,203,206,209-214,217,220-221,226-227,255-264,268-270,273-276,278-279,281,284-288,291-293,295-298,302-314
+secfn/keys/src/signer.ts
+  s_19abec75182420::t_4e1cf275ae222b 1,13,68-71,75-76,79,83-84,90,92-94,96,108-112,115-117,120,124,127,156,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "904cb345acc9947521e19cb9d2d5bb499709b665",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
