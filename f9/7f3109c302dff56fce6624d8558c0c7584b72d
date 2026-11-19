@@ -1,0 +1,57 @@
+billfn/admin/package.json
+  s_19abec75182420::t_449e4bd070b087 3,15-17,20,43
+billfn/client/package.json
+  s_19abec75182420::t_276242ace51ef9 3,15-17,20
+billfn/core/package.json
+  s_19abec75182420::t_b0a4af2157cb4d 3,15-17,20
+billfn/docs/content/docs/clients/swift.mdx
+  s_19abec75182420::t_d963b7ef613a79 13,36-67,71,77-78,80-86
+billfn/docs/content/docs/meta.json
+  s_19abec75182420::t_f1ae909fd3b160 11
+billfn/docs/content/docs/production-readiness.mdx
+  s_19abec75182420::t_da5e8f403a20c9 27
+billfn/docs/content/docs/recipes/meta.json
+  s_19abec75182420::t_4b0c4dcbbdaf1f 1-6
+billfn/docs/content/docs/recipes/multi-region-workers.mdx
+  s_19abec75182420::t_2919ec9bf2d8f3 1-572
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_19abec75182420::t_15afc9520533ec 104-105,113-115
+billfn/docs/content/docs/server/regions.mdx
+  s_19abec75182420::t_a6da4af56edea8 6,51
+billfn/docs/package.json
+  s_19abec75182420::t_4af38a63150758 9-11,30-37,42
+billfn/docs/scripts/check-recipe-types.mjs
+  s_19abec75182420::t_ce68aa5a0db33e 1-155
+billfn/docs/scripts/check-recipe-types.test.mjs
+  s_19abec75182420::t_340d7bba914989 1-504
+billfn/docs/scripts/package-files.test.mjs
+  s_19abec75182420::t_db645cb592b357 1-50
+billfn/docs/turbo.json
+  s_19abec75182420::t_3cb75b24cafbe5 1-13
+billfn/provider-apple/package.json
+  s_19abec75182420::t_30eb59c2acf9ee 3,15-17,20
+billfn/provider-dodo/package.json
+  s_19abec75182420::t_fcd7df51c7c651 3,15-17,20
+billfn/svelte/package.json
+  s_19abec75182420::t_ba882e2c99fb5f 3,15-17,20-22
+billfn/swift-bridge/package.json
+  s_19abec75182420::t_778d600a53cea0 3,19-26,28,31-32
+package-lock.json
+  s_19abec75182420::t_400a83d1d2c84b 4915,4918,4932,4956,5055-5062,5067,5999,6022,6047,6075
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f97f3109c302dff56fce6624d8558c0c7584b72d",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
