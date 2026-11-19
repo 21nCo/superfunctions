@@ -183,6 +183,7 @@ describe("ErrorCollector", () => {
 
   it("subscribes once when installing reenters start() or stop() of the same collector", () => {
     const original = window.addEventListener;
+    const originalRemove = window.removeEventListener;
     const ours = (calls: unknown[][]) => calls.filter(([type]) => type === "error" || type === "unhandledrejection").map(([type, listener]) => [type, listener]);
     // Page code in a replaced addEventListener that restarts the collector while it installs.
     const add = vi.spyOn(window, "addEventListener").mockImplementationOnce(function (this: Window, ...args: Parameters<Window["addEventListener"]>) {
@@ -210,6 +211,19 @@ describe("ErrorCollector", () => {
     collector.stop();
     expect(collector.collect().map((event) => event.message)).toEqual(["once", "restarted"]);
     expect(ours(remove.mock.calls)).toEqual(ours(add.mock.calls));
+    // Restarted by page code in a replaced removeEventListener while stop() tears down: the new session is kept and its own stop() removes it.
+    remove.mockImplementationOnce(function (this: Window, ...args: Parameters<Window["removeEventListener"]>) {
+      collector.start();
+      return originalRemove.apply(this, args);
+    });
+    collector.start();
+    collector.stop();
+    reject("restarted in teardown");
+    collector.stop();
+    reject("after the last stop");
+    expect(collector.collect().map((event) => event.message).slice(2)).toEqual(["restarted in teardown"]);
+    expect(ours(remove.mock.calls)).toHaveLength(ours(add.mock.calls).length);
+    expect(new Set(ours(remove.mock.calls).map(([, listener]) => listener))).toEqual(new Set(ours(add.mock.calls).map(([, listener]) => listener)));
   });
 
   it("lets overlapping collectors each see only what happened while they ran", () => {

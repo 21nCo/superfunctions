@@ -216,8 +216,11 @@ function subscribe(listener: Listener): () => void {
   return () => {
     current.delete(listener);
     if (current === listeners && current.size === 0) {
-      restore?.();
+      // Cleared before the cleanup runs: page code in it (a replaced
+      // removeEventListener) may start a new session that owns `restore`.
+      const undo = restore;
       restore = undefined;
+      undo?.();
     }
   };
 }
