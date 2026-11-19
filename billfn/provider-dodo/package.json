@@ -37,7 +37,7 @@
     "@superfunctions/webhooks": "^0.1.0"
   },
   "devDependencies": {
-    "@superfunctions/db": "0.3.3",
+    "@superfunctions/db": "0.3.4",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

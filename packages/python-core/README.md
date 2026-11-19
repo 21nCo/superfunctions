@@ -6,6 +6,8 @@
 **Package:** `superfunctions-core`
 **Import:** `from superfunctions.http import ...`
 
+The distribution is named `superfunctions-core`; Python imports remain under `superfunctions`. When migrating an environment with the old `superfunctions` distribution, uninstall it before installing this package to avoid overlapping installed files.
+
 ## Installation
 
 ```bash

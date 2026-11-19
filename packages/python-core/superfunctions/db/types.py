@@ -352,9 +352,9 @@ class NamespaceConfig(BaseModel):
     """Namespace configuration."""
 
     separator: str = "_"
-    use_schema: bool = Field(False, alias="useSchema")
-    default_namespace: str = Field("default", alias="defaultNamespace")
-    known_namespaces: Optional[Set[str]] = Field(None, alias="knownNamespaces")
+    use_schema: bool = Field(default=False, alias="useSchema")
+    default_namespace: str = Field(default="default", alias="defaultNamespace")
+    known_namespaces: Optional[Set[str]] = Field(default=None, alias="knownNamespaces")
 
     class Config:
         populate_by_name = True
@@ -410,6 +410,18 @@ class TransactionAdapter(Protocol):
 
     async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
         """Delete a record within transaction."""
+        pass
+
+
+class AtomicUpdateTransactionAdapter(TransactionAdapter, Protocol):
+    """Optional transaction extension; callers must feature-detect update_many."""
+
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
+        """Atomically update all matching rows, retaining every WHERE predicate.
+
+        Returns the backend's affected/matched row count. CAS callers must change
+        a revision field and require exactly one row; no select/write emulation.
+        """
         pass
 
 

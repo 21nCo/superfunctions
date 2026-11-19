@@ -252,6 +252,36 @@ await adapter.rawSql!.execute('CREATE INDEX IF NOT EXISTS jobs_state_idx ON jobs
 `@superfunctions/queue` uses it for its durable `DatabaseQueueAdapter`.
 
 
+## JSON stored in text columns
+
+Function authors can declare `{ type: "json", jsonStorageType: "json-text" }`
+on a field in their internal `wrapWithSchema` schema when the physical column
+stores JSON as text (for example SQLite `TEXT`). Native JSON storage remains the
+default. The wrapper serializes values on writes and parses them on reads,
+including transactions; repeated wrappers with the same codec do not encode twice.
+Selected-field projections remain selected-field projections.
+
+Codec ownership also survives intermediate wrappers declaring native storage:
+those declarations cannot disable an already-active delegated JSON-text or
+integer-boolean codec. The outer wrapper avoids converting the field twice.
+
+Runtime `null` is stored as SQL NULL. Both SQL NULL and JSON text `null` read as
+runtime `null`; use a tagged application value if that distinction matters.
+Strings are JSON strings, even if they contain valid JSON text. Malformed stored
+JSON raises a TypeError identifying the field without including its contents.
+
+The optional Vitest peer is required only by the `@superfunctions/db/testing`
+contract suites; Vitest 3.2.4+ and 4.x are supported. Production adapters do not
+require Vitest.
+
+JSON-text predicates use the same JSON serialization as writes (including each value in `in`/`not_in`). Equality compares the serialized representation, so object key order remains significant; this is not a database-native JSON structural comparison.
+
+JSON-text fields support `eq`, `ne`, `in`, and `not_in`. Range and substring
+operators reject with a field-specific error instead of silently comparing
+serialized JSON using undefined application semantics.
+
+Import `wrapWithSchema` from `@superfunctions/db/schema` when only schema wrapping is needed. This narrow ESM entry does not initialize database drivers or observability; it also supports synchronous `require()` on Node versions that support requiring synchronous ESM (validated on Node 20.19).
+
 ## Testing
 
 Use the built-in memory adapter for testing:

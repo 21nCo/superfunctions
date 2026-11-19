@@ -45,7 +45,7 @@
     "@filefn/client": "0.3.1",
     "@filefn/processing": "0.3.2",
     "@filefn/server": "0.6.1",
-    "@superfunctions/db": "0.3.3",
+    "@superfunctions/db": "0.3.4",
     "@superfunctions/storage-r2": "0.3.0",
     "authfn": "0.7.0"
   }

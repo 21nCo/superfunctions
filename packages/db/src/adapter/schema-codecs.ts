@@ -20,6 +20,60 @@ import type {
   UpsertParams,
   WhereClause,
 } from "./types.js";
+import { mergeCapabilities } from "./capabilities.js";
+
+// Tracks codec ownership so wrapping an already-configured adapter never encodes JSON twice.
+const codecSchemas = new WeakMap<object, TableSchemaMap>();
+const codecSchemaKey = Symbol.for("@superfunctions/db/schema-codecs");
+function registeredSchema(adapter: object): TableSchemaMap | undefined {
+  return codecSchemas.get(adapter) ?? (adapter as { [codecSchemaKey]?: TableSchemaMap })[codecSchemaKey];
+}
+export function registerAdapterCodecs<T extends object>(adapter: T, schema: TableSchemaMap): T {
+  codecSchemas.set(adapter, schema);
+  Object.defineProperty(adapter, codecSchemaKey, { value: schema, configurable: true });
+  return adapter;
+}
+/** Preserve codecs already applied by a delegating adapter's underlying methods. */
+export function inheritAdapterCodecs<T extends object>(source: object, target: T): T {
+  const schema = registeredSchema(source);
+  return schema ? registerAdapterCodecs(target, schema) : target;
+}
+function unhandledCodecSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
+  const existing = registeredSchema(adapter);
+  if (!existing) return schema;
+  return Object.fromEntries(Object.entries(schema).map(([model, table]) => [model, {
+    ...table, fields: Object.fromEntries(Object.entries(table.fields).map(([name, field]) => [name,
+      field.type === "json" && field.jsonStorageType === "json-text" && existing[model]?.fields[name]?.jsonStorageType === "json-text"
+        ? { ...field, jsonStorageType: "native" as const }
+        : field.type === "boolean" && field.booleanStorageType === "integer" && existing[model]?.fields[name]?.booleanStorageType === "integer"
+          ? { ...field, booleanStorageType: "native" as const } : field,
+    ])),
+  }]));
+}
+function combinedCodecSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
+  const existing = registeredSchema(adapter) ?? {};
+  const combined = { ...existing };
+  for (const [model, table] of Object.entries(schema)) {
+    const fields = { ...existing[model]?.fields, ...table.fields };
+    for (const [name, field] of Object.entries(existing[model]?.fields ?? {})) {
+      // Delegating wrappers cannot disable codecs already active underneath.
+      if ((field.type === "json" && field.jsonStorageType === "json-text") ||
+          (field.type === "boolean" && field.booleanStorageType === "integer")) fields[name] = field;
+    }
+    combined[model] = { ...table, fields };
+  }
+  return combined;
+}
+
+/** Resolve declared booleans without converting arbitrary numeric or JSON values. */
+export function resolveBooleanStorage(schema: TableSchemaMap, nativeBooleans: boolean): TableSchemaMap {
+  return Object.fromEntries(Object.entries(schema).map(([model, table]) => [model, {
+    ...table, fields: Object.fromEntries(Object.entries(table.fields).map(([name, field]) => [name,
+      field.type === "boolean" && !field.booleanStorageType
+        ? { ...field, booleanStorageType: nativeBooleans ? "native" as const : "integer" as const } : field,
+    ])),
+  }]));
+}
 
 export function normalizeAdapterSchema(
   input: AdapterSchemaInput | undefined,
@@ -75,12 +129,18 @@ export function transformWhereForStorage(
 
   return where.map((clause) => {
     const field = table.fields[clause.field];
-    if (!isDateField(field)) {
+    const jsonText = field?.type === "json" && field.jsonStorageType === "json-text";
+    if (jsonText && !["eq", "ne", "in", "not_in"].includes(clause.operator)) {
+      throw new TypeError(`${model}.${clause.field} does not support ${clause.operator} for JSON text`);
+    }
+    const integerBoolean = field?.type === "boolean" && field.booleanStorageType === "integer";
+    if (!isDateField(field) && !jsonText && !integerBoolean) {
       return clause;
     }
 
-    const convert = (value: unknown) =>
-      convertDateForStorage(value, field, `${model}.${clause.field}`);
+    const convert = (value: unknown) => jsonText || integerBoolean
+      ? transformRecordForStorage(schema, model, { [clause.field]: value })[clause.field]
+      : convertDateForStorage(value, field, `${model}.${clause.field}`);
     const value =
       clause.operator === "in" || clause.operator === "not_in"
         ? readWhereArrayValue(clause.value, `${model}.${clause.field}`).map(
@@ -99,9 +159,10 @@ export function wrapWithSchema(
   adapter: Adapter,
   schemaInput: AdapterSchemaInput,
 ): Adapter {
-  const schema = normalizeAdapterSchema(schemaInput);
+  const requestedSchema = resolveBooleanStorage(normalizeAdapterSchema(schemaInput), mergeCapabilities(adapter.capabilities ?? {}).types.booleans);
+  const schema = unhandledCodecSchema(adapter, requestedSchema);
 
-  return {
+  return registerAdapterCodecs({
     ...adapter,
     id: adapter.id,
     name: adapter.name,
@@ -230,7 +291,7 @@ export function wrapWithSchema(
     createSchema: adapter.createSchema
       ? (params: CreateSchemaParams) => adapter.createSchema!(params)
       : undefined,
-  };
+  }, combinedCodecSchema(adapter, requestedSchema));
 }
 
 function readSchemaModelName(table: unknown): string {
@@ -252,9 +313,10 @@ function readWhereArrayValue(value: unknown, fieldPath: string): unknown[] {
 
 function wrapTransactionWithSchema(
   adapter: TransactionAdapter,
-  schema: TableSchemaMap,
+  requestedSchema: TableSchemaMap,
 ): TransactionAdapter {
-  return {
+  const schema = unhandledCodecSchema(adapter, requestedSchema);
+  return registerAdapterCodecs({
     ...adapter,
     create: async <T = any>(params: CreateParams): Promise<T> =>
       transformRecordForRuntime(
@@ -358,7 +420,7 @@ function wrapTransactionWithSchema(
         ...params,
         where: transformWhereForStorage(schema, params.model, params.where),
       }),
-  };
+  }, combinedCodecSchema(adapter, requestedSchema));
 }
 
 function transformRecord<T>(
@@ -380,7 +442,40 @@ function transformRecord<T>(
   const next = { ...(record as Record<string, unknown>) };
 
   for (const [fieldName, field] of Object.entries(table.fields)) {
-    if (!isDateField(field) || !(fieldName in next)) {
+    if (!(fieldName in next)) continue;
+    if (field.type === "json" && field.jsonStorageType === "json-text") {
+      const value = next[fieldName];
+      if (value !== null && value !== undefined) {
+        try {
+          if (direction === "storage") {
+            const serialized = JSON.stringify(value);
+            if (serialized === undefined) throw new Error("Unserializable JSON");
+            next[fieldName] = serialized;
+          } else {
+            if (typeof value !== "string") throw new Error("Expected JSON text");
+            next[fieldName] = JSON.parse(value);
+          }
+          changed = true;
+        } catch { throw new TypeError(`${model}.${fieldName} contains invalid JSON ${direction === "storage" ? "value" : "text"}`); }
+      }
+      continue;
+    }
+    if (field.type === "boolean" && field.booleanStorageType === "integer") {
+      const value = next[fieldName];
+      if (value !== null && value !== undefined) {
+        if (direction === "storage") {
+          if (typeof value !== "boolean") throw new TypeError(`${model}.${fieldName} must be a boolean`);
+          next[fieldName] = value ? 1 : 0;
+        } else {
+          // Safe-integer SQLite drivers (better-sqlite3 safeIntegers) return 0n/1n.
+          if (value !== 0 && value !== 1 && value !== 0n && value !== 1n) throw new TypeError(`${model}.${fieldName} contains invalid boolean integer`);
+          next[fieldName] = value === 1 || value === 1n;
+        }
+        changed = true;
+      }
+      continue;
+    }
+    if (!isDateField(field)) {
       continue;
     }
 
