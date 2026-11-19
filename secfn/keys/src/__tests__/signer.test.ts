@@ -2,7 +2,7 @@ import { inspect } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, createWebCryptoSigner, type Es256PrivateJwk, KeyRingError, type WebCryptoSignerOptions } from '../index.js';
-import { exposedText, generateKey, growableShared, growingOnAllocation, toPem, unusableBuffers } from './helpers.js';
+import { exposedText, generateKey, growableShared, growingOnCopy, toPem, unusableBuffers } from './helpers.js';
 
 async function rejection(promise: Promise<unknown>): Promise<KeyRingError> {
   const error = await promise.then(
@@ -68,7 +68,7 @@ describe('createWebCryptoSigner', () => {
   it('imports PKCS #8 DER from a growable shared buffer as the bytes observed, even if it grows during the copy', async () => {
     const key = await generateKey();
     const shared = growableShared(Array.from(key.pkcs8));
-    const signer = await growingOnAllocation(shared, 8, () => createWebCryptoSigner({ pkcs8: shared as unknown as ArrayBuffer }));
+    const signer = await growingOnCopy(shared, 8, () => createWebCryptoSigner({ pkcs8: shared as unknown as ArrayBuffer }));
     expect(signer.publicJwk).toEqual(key.signer.publicJwk);
   });
 
@@ -80,7 +80,7 @@ describe('createWebCryptoSigner', () => {
     const publicKey = await crypto.subtle.importKey('jwk', key.signer.publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
     expect(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, new Uint8Array(signature), new Uint8Array([1, 2, 3]))).toBe(true);
     const growing = growableShared([4, 5]);
-    const grown = await growingOnAllocation(growing, 8, () => key.signer.sign(new Uint8Array(growing)));
+    const grown = await growingOnCopy(growing, 8, () => key.signer.sign(new Uint8Array(growing)));
     expect(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey, new Uint8Array(grown), new Uint8Array([4, 5]))).toBe(true);
     for (const data of [new Uint16Array(2), new DataView(new ArrayBuffer(2)), [1, 2], new Proxy(new Uint8Array(2), {})]) {
       expect((await rejection(key.signer.sign(data as unknown as Uint8Array))).code).toBe('invalid-sign-input');

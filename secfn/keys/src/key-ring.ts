@@ -134,8 +134,9 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
       throw new KeyRingError('signing-failed', `signer for kid ${describeKid(activeKey.kid)} failed`);
     }
     // Copy the signature once, by its internal slots, and check and encode only that copy: a subclass cannot
-    // report one length and yield different bytes, and a Uint8Array from another realm is accepted.
-    const signature = isUint8Array(returned) ? copyBytes(returned) : undefined;
+    // report one length and yield different bytes, and a Uint8Array from another realm is accepted. A result longer
+    // than a signature is rejected by its observed length, before anything is copied.
+    const signature = isUint8Array(returned) ? copyBytes(returned, 2 * P256_FIELD_BYTES) : undefined;
     if (typeof signature !== 'object' || signature.length !== 2 * P256_FIELD_BYTES) {
       throw new KeyRingError('signing-failed', `signer for kid ${describeKid(activeKey.kid)} did not return a 64-byte ES256 signature`);
     }

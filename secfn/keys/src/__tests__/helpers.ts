@@ -103,25 +103,28 @@ export function growableShared(bytes: readonly number[]): GrowableSharedArrayBuf
 }
 
 /**
- * Runs `action` while the global `Uint8Array` grows `buffer` by `extra` bytes the first time code calling it allocates
- * one by length: the moment between a copy observing a buffer's length and copying into its destination.
+ * Runs `action` while `buffer` grows by `extra` bytes the first time a Uint8Array copy (`Uint8Array.prototype.set`)
+ * runs: after a copy has observed the source length and allocated its destination, before it copies. A copy that
+ * reads a length-tracking view at that point sees the grown length and fails. Returns the action's result once the
+ * growth has happened.
  */
-export async function growingOnAllocation<T>(buffer: GrowableSharedArrayBuffer, extra: number, action: () => Promise<T>): Promise<T> {
-  const Intrinsic = globalThis.Uint8Array;
+export async function growingOnCopy<T>(buffer: GrowableSharedArrayBuffer, extra: number, action: () => Promise<T>): Promise<T> {
+  const prototype = Uint8Array.prototype as { set: (this: Uint8Array, ...args: unknown[]) => void };
+  const set = prototype.set;
+  const before = buffer.byteLength;
   let armed = true;
-  class Racing extends Intrinsic {
-    constructor(...args: unknown[]) {
-      super(...(args as [ArrayBuffer]));
-      if (armed && typeof args[0] === 'number') {
-        armed = false;
-        buffer.grow(buffer.byteLength + extra);
-      }
+  prototype.set = function (this: Uint8Array, ...args: unknown[]): void {
+    if (armed) {
+      armed = false;
+      buffer.grow(before + extra);
     }
-  }
-  globalThis.Uint8Array = Racing as unknown as Uint8ArrayConstructor;
+    set.apply(this, args);
+  };
   try {
-    return await action();
+    const result = await action();
+    if (armed || buffer.byteLength !== before + extra) throw new Error('the buffer did not grow during the copy');
+    return result;
   } finally {
-    globalThis.Uint8Array = Intrinsic;
+    prototype.set = set;
   }
 }

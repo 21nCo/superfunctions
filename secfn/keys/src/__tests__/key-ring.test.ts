@@ -2,7 +2,7 @@ import { compactVerify, CompactSign, createLocalJWKSet, importJWK, type JWK } fr
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, type Es256Signer, KeyRingError, MAX_JWS_LENGTH, type SigningKeyEntry } from '../index.js';
-import { base64Url, base64UrlJson, emptyViews, exposedText, generateKey, growableShared, growingOnAllocation, replacePart, unusableBuffers } from './helpers.js';
+import { base64Url, base64UrlJson, emptyViews, exposedText, generateKey, growableShared, growingOnCopy, replacePart, unusableBuffers } from './helpers.js';
 
 const decoder = new TextDecoder();
 
@@ -124,10 +124,10 @@ describe('sign and verify', () => {
     const key = await generateKey();
     const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
     const direct = growableShared([1, 2, 3, 4]);
-    const signedDirect = await growingOnAllocation(direct, 8, () => ring.sign({}, direct));
+    const signedDirect = await growingOnCopy(direct, 8, () => ring.sign({}, direct));
     expect((await ring.verify(signedDirect)).payload).toEqual(new Uint8Array([1, 2, 3, 4]));
     const tracked = growableShared([5, 6]);
-    const signedView = await growingOnAllocation(tracked, 8, () => ring.sign({}, new Uint8Array(tracked)));
+    const signedView = await growingOnCopy(tracked, 8, () => ring.sign({}, new Uint8Array(tracked)));
     expect((await ring.verify(signedView)).payload).toEqual(new Uint8Array([5, 6]));
   });
 
@@ -537,6 +537,21 @@ describe('signers that misbehave', () => {
     for (const returned of [new LongLength(1), detached, new Uint16Array(32), new DataView(new ArrayBuffer(64)), Array.from(new Uint8Array(64))]) {
       expect((await rejection(ringWith(async () => returned).sign({}, 'x'))).code).toBe('signing-failed');
     }
+
+    // A result longer than a signature is rejected by its length, without being copied.
+    const prototype = Uint8Array.prototype as { set: (this: Uint8Array, ...args: unknown[]) => void };
+    const set = prototype.set;
+    let copied = 0;
+    prototype.set = function (this: Uint8Array, ...args: unknown[]): void {
+      copied += this.length;
+      set.apply(this, args);
+    };
+    try {
+      expect((await rejection(ringWith(async () => new Uint8Array(1024 * 1024)).sign({}, 'x'))).code).toBe('signing-failed');
+    } finally {
+      prototype.set = set;
+    }
+    expect(copied).toBeLessThan(1024);
   });
 
   it('rejects a non-64-byte signature and hides the signer error message', async () => {
