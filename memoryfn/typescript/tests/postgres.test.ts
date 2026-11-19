@@ -5,6 +5,9 @@ import postgres from 'postgres';
 import { PostgresAdapter } from '../src/storage/pg/adapter';
 import { MemoryFn } from '../src/core/pipeline';
 import * as schema from '../src/storage/pg/schema';
+import { describeSourceContract } from './source-contract';
+
+const migrations = ['0001-initial.sql', '0002-memory-lifecycle.sql', '0003-document-sources.sql'];
 
 const url = process.env.MEMORYFN_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -15,13 +18,37 @@ suite('Postgres lifecycle integration', () => {
   const vector = (index: number) => Array.from({ length: 1536 }, (_, i) => i === index ? 1 : 0);
   beforeAll(async () => {
     client = postgres(url!);
-    for (const name of ['0001-initial.sql', '0002-memory-lifecycle.sql']) {
+    for (const name of migrations) {
       await client.unsafe(await readFile(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
     }
     adapter = new PostgresAdapter(drizzle(client, { schema }));
   });
   beforeEach(async () => { await client`TRUNCATE memory_relationships, memories`; });
   afterAll(async () => { await client?.end(); });
+  describeSourceContract('PostgresAdapter', () => adapter);
+  it('re-runs every migration and keeps the source columns and live-source index', async () => {
+    for (const name of migrations) {
+      await client.unsafe(await readFile(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
+    }
+    const columns = await client`SELECT column_name, data_type, is_nullable FROM information_schema.columns
+      WHERE table_name = 'memories' AND column_name IN ('source_key', 'content_hash', 'chunk_index') ORDER BY column_name`;
+    expect(columns.map(c => [c.column_name, c.data_type, c.is_nullable])).toEqual([
+      ['chunk_index', 'integer', 'YES'], ['content_hash', 'text', 'YES'], ['source_key', 'text', 'YES'],
+    ]);
+    const [index] = await client`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_memories_live_source'`;
+    expect(index.indexdef).toMatch(/\(tenant_id, source_key\) WHERE \(deleted_at IS NULL\)/);
+  });
+  it('clears tombstoned chunk content and their relationships', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const [chunk] = await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [{ tenantId: 'a', containerTags: ['docs'], content: 'secret', embedding: vector(0) }] });
+    const [plain] = await adapter.insertMemories([{ tenantId: 'a', containerTags: ['docs'], content: 'plain' }]);
+    await adapter.insertRelationships([{ tenantId: 'a', containerTags: ['docs'], fromId: plain.id, toId: chunk.id }]);
+    await adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [] });
+    const [raw] = await client`SELECT content, embedding, metadata, deleted_at, source_key FROM memories WHERE id=${chunk.id}`;
+    expect(raw).toMatchObject({ content: '', embedding: null, metadata: {}, source_key: 'guide.md' });
+    expect(raw.deleted_at).not.toBeNull();
+    expect(await client`SELECT * FROM memory_relationships`).toHaveLength(0);
+  });
   it('preserves explicit relationship IDs and zero confidence', async () => {
     const rows = await adapter.insertMemories([0, 1].map(i => ({ tenantId: 'a', containerTags: [], content: String(i) })));
     const id = '550e8400-e29b-41d4-a716-446655440000';

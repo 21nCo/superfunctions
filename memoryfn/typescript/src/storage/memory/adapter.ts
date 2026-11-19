@@ -1,5 +1,9 @@
 import type { Memory, MemoryRelationship } from '../../core/types';
-import { requireScope, type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert } from '../adapter';
+import {
+  requireScope, requireSourceReplace, requireSourceScope, sameTagSet,
+  type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert,
+  type SourceReplace, type SourceScope, type SourceState,
+} from '../adapter';
 
 /** Reads through to the parent and stages only changed keys. */
 class StagedMap<K, V> extends Map<K, V> {
@@ -100,27 +104,24 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return result;
   }
 
-  async insertMemories(inputs: MemoryInsert[]): Promise<Memory[]> {
-    if (!inputs.length) return [];
-    const now = Date.now();
-    const saved = inputs.map((input) => {
-      requireScope(input.tenantId, input.containerTags);
-      const memory: Memory = {
-        id: input.id ?? `memory-${now}-${++this.sequence}`,
-        tenantId: input.tenantId,
-        revision: 1,
-        deletedAt: null,
-        containerTags: [...input.containerTags],
-        type: input.type ?? 'conversational',
-        content: input.content ?? '',
-        embedding: input.embedding ? [...input.embedding] : null,
-        metadata: structuredClone(input.metadata ?? {}),
-        isLatest: input.isLatest ?? true,
-        createdAt: input.createdAt ?? now,
-        updatedAt: input.updatedAt ?? now,
-      };
-      return memory;
-    });
+  private buildMemory(input: MemoryInsert, now: number): Memory {
+    return {
+      id: input.id ?? `memory-${now}-${++this.sequence}`,
+      tenantId: input.tenantId,
+      revision: 1,
+      deletedAt: null,
+      containerTags: [...input.containerTags],
+      type: input.type ?? 'conversational',
+      content: input.content ?? '',
+      embedding: input.embedding ? [...input.embedding] : null,
+      metadata: structuredClone(input.metadata ?? {}),
+      isLatest: input.isLatest ?? true,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    };
+  }
+
+  private requireNewIds(saved: Memory[]): void {
     const ids = new Set<string>();
     for (const memory of saved) {
       if (ids.has(memory.id) || this.memories.has(memory.id)) {
@@ -128,6 +129,16 @@ export class MemoryStorageAdapter implements StorageAdapter {
       }
       ids.add(memory.id);
     }
+  }
+
+  async insertMemories(inputs: MemoryInsert[]): Promise<Memory[]> {
+    if (!inputs.length) return [];
+    const now = Date.now();
+    const saved = inputs.map((input) => {
+      requireScope(input.tenantId, input.containerTags);
+      return this.buildMemory(input, now);
+    });
+    this.requireNewIds(saved);
     this.mutationVersion++;
     for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
     return saved.map(cloneMemory);
@@ -219,11 +230,59 @@ export class MemoryStorageAdapter implements StorageAdapter {
     if (current.deletedAt != null) return;
     if (input.expectedRevision !== undefined && current.revision !== input.expectedRevision) throw new Error('MEMORY_REVISION_CONFLICT');
     this.mutationVersion++;
-    this.memories.set(input.id, { ...current, content: '', embedding: null, metadata: {}, isLatest: false,
-      deletedAt: Date.now(), updatedAt: Date.now(), revision: current.revision! + 1 });
+    this.tombstone([current], Date.now());
+  }
+
+  /** Clears the content of each memory, marks it deleted and drops its relationships. */
+  private tombstone(targets: Memory[], now: number): void {
+    const ids = new Set(targets.map(memory => memory.id));
+    for (const current of targets) {
+      this.memories.set(current.id, { ...current, content: '', embedding: null, metadata: {}, isLatest: false,
+        deletedAt: now, updatedAt: now, revision: current.revision! + 1 });
+    }
     for (const [id, relation] of this.relationships) {
-      if (relation.fromId === input.id || relation.toId === input.id) this.relationships.delete(id);
+      if (ids.has(relation.fromId) || ids.has(relation.toId)) this.relationships.delete(id);
     }
   }
 
+  private liveSourceChunks(scope: SourceScope): Memory[] {
+    return [...this.memories.values()].filter(memory => memory.deletedAt == null
+      && memory.sourceKey === scope.sourceKey && memory.tenantId === scope.tenantId
+      && sameTagSet(memory.containerTags, scope.containerTags));
+  }
+
+  async getSourceState(scope: SourceScope): Promise<SourceState | null> {
+    requireSourceScope(scope);
+    const live = this.liveSourceChunks(scope);
+    if (!live.length) return null;
+    const hashes = new Set(live.map(memory => memory.contentHash ?? null));
+    return { contentHash: hashes.size === 1 ? [...hashes][0]! : null, chunkCount: live.length };
+  }
+
+  // replaceSource and deleteSource never await between reading and writing, so
+  // each call runs to completion before another call for any source can start.
+  async replaceSource(input: SourceReplace): Promise<Memory[]> {
+    requireSourceReplace(input);
+    const now = Date.now();
+    const live = this.liveSourceChunks(input);
+    const saved = input.chunks.map((chunk, chunkIndex) => ({
+      ...this.buildMemory({ ...chunk, tenantId: input.tenantId, containerTags: input.containerTags }, now),
+      sourceKey: input.sourceKey, contentHash: input.contentHash, chunkIndex,
+    }));
+    this.requireNewIds(saved);
+    if (!live.length && !saved.length) return [];
+    this.mutationVersion++;
+    this.tombstone(live, now);
+    for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
+    return saved.map(cloneMemory);
+  }
+
+  async deleteSource(scope: SourceScope): Promise<number> {
+    requireSourceScope(scope);
+    const live = this.liveSourceChunks(scope);
+    if (!live.length) return 0;
+    this.mutationVersion++;
+    this.tombstone(live, Date.now());
+    return live.length;
+  }
 }

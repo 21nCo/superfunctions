@@ -17,6 +17,10 @@ export const memories = pgTable('memories', {
   isLatest: boolean('is_latest').default(true).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  // Migration 0003: set only on chunks written by PostgresAdapter.replaceSource.
+  sourceKey: text('source_key'),
+  contentHash: text('content_hash'),
+  chunkIndex: integer('chunk_index'),
 }, (t) => ({
   tenantIdx: index('idx_memories_tenant').on(t.tenantId),
   typeIdx: index('idx_memories_type').on(t.type),

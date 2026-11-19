@@ -3,7 +3,7 @@ title: Storage and migrations
 description: PostgreSQL setup, connection ownership, transaction requirements, and custom adapters.
 ---
 
-`kind: "memory"` provides a process-local adapter. Durable PostgreSQL needs the SQL in `memoryfn/typescript/migrations`: apply `0001-initial.sql`, then `0002-memory-lifecycle.sql`, using a migration role in the intended application schema. The first migration creates pgvector-backed tables with `vector(1536)`; the second adds revisions, tombstones, and an active-row index. Neither migration provisions a database, grants, or Hyperdrive. Exact vector search works without an approximate index.
+`kind: "memory"` provides a process-local adapter. Durable PostgreSQL needs the SQL in `memoryfn/typescript/migrations`: apply `0001-initial.sql`, then `0002-memory-lifecycle.sql`, then `0003-document-sources.sql`, using a migration role in the intended application schema. The first migration creates pgvector-backed tables with `vector(1536)`; the second adds revisions, tombstones, and an active-row index; the third adds nullable source-key, content-hash and chunk-index columns with a live-source index for source-keyed document chunks. No migration provisions a database, grants, or Hyperdrive. Exact vector search works without an approximate index.
 
 ## Inject a caller-owned PostgreSQL adapter
 
@@ -28,6 +28,6 @@ Use an injected adapter when the host controls request or Worker lifetimes, pool
 
 PostgreSQL storage fixes embedding dimensions at 1536. The factory requests that dimension and rejects a conflicting embedder configuration, including with an injected `PostgresAdapter`.
 
-The `StorageAdapter` contract requires scoped `insertMemories()`, `insertRelationships()`, `searchVectors()`, `getMemory()`, `updateMemory()` (compare-and-update), and `deleteMemory()`; `close()` and `transaction()` are optional. Immutable-ID tombstones and scope checks are required for equivalent behavior. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
+The `StorageAdapter` contract requires scoped `insertMemories()`, `insertRelationships()`, `searchVectors()`, `getMemory()`, `updateMemory()` (compare-and-update), `deleteMemory()`, and the source-keyed document methods `getSourceState()`, `replaceSource()` and `deleteSource()`; `close()` and `transaction()` are optional. Immutable-ID tombstones and scope checks are required for equivalent behavior. A source is one tenant, the exact container tag set and a source key; `replaceSource()` must tombstone every live chunk of that source and insert the new chunks atomically, serialized per source, so concurrent replacements leave exactly one chunk set live. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
 
 `kind: "sqlite"` requires an explicit adapter. The factory does not create SQLite storage. `qdrant` is present in a legacy type union but has no factory implementation. Review the [source lifecycle guide](/docs/reference/storage-lifecycle) and [adapter interface](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/storage/adapter.ts) before implementing a custom store.
