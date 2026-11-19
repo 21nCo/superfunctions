@@ -38,14 +38,16 @@ signer, or has a signer whose own `kid` (from its JWK or the `kid` option) diffe
 ## Signing and verification
 
 - `sign(header, payload)` always writes `alg: "ES256"` and the active `kid` into the protected header. A header
-  that gives another `alg` or `kid`, or a `crit` parameter, is rejected. The header is serialized once with
-  `JSON.stringify` and those checks run on that serialization, so a `toJSON` method or getter cannot change the
-  signed header after validation. The payload is bytes (an `ArrayBuffer` or any typed array or `DataView`, signed as
-  the bytes it views), a UTF-8 string, or a JSON value serialized with `JSON.stringify`. A token longer than
+  that gives another `alg` or `kid`, or a `crit` or `b64` (RFC 7797) parameter, is rejected. The header is
+  serialized once with `JSON.stringify` and those checks run on that serialization, so a `toJSON` method or getter
+  cannot change the signed header after validation. The payload is bytes (an `ArrayBuffer`, `SharedArrayBuffer`, any
+  typed array or `DataView`, including one from another realm, signed as the bytes it views), a UTF-8 string, or a
+  plain object or array serialized with `JSON.stringify` to a JSON object or array. Other objects, such as a `Map`,
+  `Date` or class instance, are rejected with `invalid-sign-input` instead of being signed as `{}`. A token longer than
   `MAX_JWS_LENGTH` (256 KiB) is rejected with `invalid-sign-input` before the signer runs, because `verify` would
   reject it.
 - `verify(jws)` accepts only the compact serialization with strict unpadded base64url, `alg: "ES256"`, a `kid` of an
-  `active` or `verify-only` key, no `crit` parameter, and a 64-byte (r || s) signature. It returns
+  `active` or `verify-only` key, no `crit` or `b64` parameter, and a 64-byte (r || s) signature. It returns
   `{ kid, header, payload }` or throws a `KeyRingError` whose `code` says why. It does not check JWT claims such as
   `exp`, `nbf`, `aud` or `iss`; callers that sign JWTs check those after `verify`.
 
@@ -62,7 +64,8 @@ r || s signature) can be used as a signer.
 ## Key material
 
 No method returns private key material, and no error message includes it: `KeyRingError` messages are fixed text
-plus, at most, a `kid`, and underlying WebCrypto errors are not attached. A signer's `publicJwk` that carries a `d`
+plus, at most, non-secret values (a `kid`, an entry index, a count or a limit), and underlying WebCrypto errors are
+not attached. A signer's `publicJwk` that carries a `d`
 (or any other private) member is rejected, so a private key passed by mistake cannot reach `jwks()`.
 
 Out of scope for this package: callers that already hold the private key, side-channel timing, a KMS-backed signer

@@ -1,4 +1,5 @@
 import { compactVerify, CompactSign, createLocalJWKSet, importJWK, type JWK } from 'jose';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createSigningKeyRing, type Es256Signer, KeyRingError, MAX_JWS_LENGTH, type SigningKeyEntry } from '../index.js';
 import { base64Url, base64UrlJson, exposedText, generateKey, replacePart } from './helpers.js';
@@ -84,6 +85,35 @@ describe('sign and verify', () => {
     expect((await ring.verify(await ring.sign({}, new ArrayBuffer(0)))).payload).toEqual(new Uint8Array());
   });
 
+  it('signs ArrayBuffer and typed-array payloads from another realm as their bytes, not as JSON', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const foreignBuffer = runInNewContext('new Uint8Array([1, 2, 3]).buffer') as ArrayBuffer;
+    expect(foreignBuffer instanceof ArrayBuffer).toBe(false);
+    expect((await ring.verify(await ring.sign({}, foreignBuffer))).payload).toEqual(new Uint8Array([1, 2, 3]));
+    const foreignView = runInNewContext('new DataView(new Uint8Array([7, 1, 2, 7]).buffer, 1, 2)') as DataView;
+    expect((await ring.verify(await ring.sign({}, foreignView))).payload).toEqual(new Uint8Array([1, 2]));
+    const foreignObject = runInNewContext('({ sub: "user-1" })') as Record<string, unknown>;
+    expect(decoder.decode((await ring.verify(await ring.sign({}, foreignObject))).payload)).toBe('{"sub":"user-1"}');
+  });
+
+  it('rejects non-plain object payloads instead of signing them as {} or a JSON string', async () => {
+    const key = await generateKey();
+    const ring = createSigningKeyRing({ keys: [{ kid: 'key-1', alg: 'ES256', status: 'active', signer: key.signer }] });
+    const fakeBuffer = { [Symbol.toStringTag]: 'ArrayBuffer', byteLength: 4 };
+    const proxiedBuffer = new Proxy(new ArrayBuffer(4), {});
+    class Claims {
+      sub = 'user-1';
+    }
+    for (const payload of [new Map([['sub', 'user-1']]), new Set([1]), new Date(0), proxiedBuffer, new Claims(), { toJSON: () => 'text' }]) {
+      expect((await rejection(ring.sign({}, payload as unknown as Record<string, unknown>))).code).toBe('invalid-sign-input');
+    }
+    expect(decoder.decode((await ring.verify(await ring.sign({}, Object.assign(Object.create(null), { a: 1 })))).payload)).toBe('{"a":1}');
+    expect(decoder.decode((await ring.verify(await ring.sign({}, [1, 'two']))).payload)).toBe('[1,"two"]');
+    // A plain object that only claims to be a buffer is JSON, not bytes.
+    expect(decoder.decode((await ring.verify(await ring.sign({}, fakeBuffer))).payload)).toBe('{"byteLength":4}');
+  });
+
   it('rejects a payload whose token would exceed the length verify accepts, before calling the signer', async () => {
     const key = await generateKey();
     let calls = 0;
@@ -135,6 +165,9 @@ describe('sign and verify', () => {
     expect((await rejection(ring.sign({ alg: 'none' }, 'x'))).code).toBe('unsupported-algorithm');
     expect((await rejection(ring.sign({ kid: 'key-2' }, 'x'))).code).toBe('kid-mismatch');
     expect((await rejection(ring.sign({ crit: ['exp'] }, 'x'))).code).toBe('unsupported-header');
+    expect((await rejection(ring.sign({ b64: false }, 'hello'))).code).toBe('unsupported-header');
+    expect((await rejection(ring.sign({ b64: true }, 'hello'))).code).toBe('unsupported-header');
+    expect((await rejection(ring.sign({ toJSON: () => ({ b64: false }) }, 'hello'))).code).toBe('unsupported-header');
     expect((await rejection(ring.sign({}, { big: 1n } as unknown as Record<string, unknown>))).code).toBe('invalid-sign-input');
     expect((await rejection(ring.sign({}, 42 as unknown as string))).code).toBe('invalid-sign-input');
   });
@@ -236,6 +269,7 @@ describe('verify rejects malformed and tampered tokens', () => {
     ['alg none', (jws: string) => replacePart(jws, 0, base64UrlJson({ alg: 'none', kid: 'key-1' })), 'unsupported-algorithm'],
     ['alg HS256', (jws: string) => replacePart(jws, 0, base64UrlJson({ alg: 'HS256', kid: 'key-1' })), 'unsupported-algorithm'],
     ['a crit header', (jws: string) => replacePart(jws, 0, base64UrlJson({ alg: 'ES256', kid: 'key-1', crit: ['b64'], b64: false })), 'unsupported-header'],
+    ['a b64 header without crit', (jws: string) => replacePart(jws, 0, base64UrlJson({ alg: 'ES256', kid: 'key-1', b64: false })), 'unsupported-header'],
     ['a changed payload', (jws: string) => replacePart(jws, 1, base64UrlJson({ sub: 'admin' })), 'invalid-signature'],
     ['a changed header', (jws: string) => replacePart(jws, 0, base64UrlJson({ alg: 'ES256', kid: 'key-1', typ: 'other' })), 'invalid-signature'],
     ['a DER-length signature', (jws: string) => replacePart(jws, 2, base64Url(new Uint8Array(70).fill(1))), 'invalid-signature'],

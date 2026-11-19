@@ -1,7 +1,8 @@
 /**
- * Every failure this package raises is a `KeyRingError` with a stable `code`. Messages are fixed strings plus, at
- * most, a key id (a public identifier). They never carry key material, caller-supplied key objects or the error
- * of an underlying WebCrypto call, and no `cause` is attached, so logging an error cannot leak a private key.
+ * Every failure this package raises is a `KeyRingError` with a stable `code`. Messages are fixed text plus, at most,
+ * non-secret values: a key id (a public identifier), an entry index, a count or a limit. They never carry key
+ * material, caller-supplied key objects or the error of an underlying WebCrypto call, and no `cause` is attached, so
+ * logging an error cannot leak a private key.
  */
 export type KeyRingErrorCode =
   /** The key ring or signer options are malformed. */
@@ -12,7 +13,7 @@ export type KeyRingErrorCode =
   | 'active-key-count'
   /** Two entries share a `kid`. */
   | 'duplicate-kid'
-  /** A signer or JWK declares a `kid` that differs from the entry's `kid`. */
+  /** A signer or JWK declares a `kid` that differs from the entry's, or a `sign` header names a kid other than the active one. */
   | 'kid-mismatch'
   /** A public JWK is malformed, or carries private key members. */
   | 'invalid-public-key'
@@ -30,7 +31,7 @@ export type KeyRingErrorCode =
   | 'unknown-kid'
   /** The JWS was signed with a key that has been retired. */
   | 'retired-kid'
-  /** The JWS uses a header parameter this verifier does not support (for example `crit`). */
+  /** The header carries a parameter this ring does not support on sign or verify (`crit` or `b64`). */
   | 'unsupported-header'
   /** The signature does not verify. */
   | 'invalid-signature';

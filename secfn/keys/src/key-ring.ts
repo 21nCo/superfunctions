@@ -35,8 +35,9 @@ export interface JwsHeader {
 }
 
 /**
- * Payload bytes (an `ArrayBuffer` or any `ArrayBufferView`, signed as its viewed bytes), a UTF-8 string, or a JSON
- * value (object or array) that is serialized with `JSON.stringify`.
+ * Payload bytes (an `ArrayBuffer`, `SharedArrayBuffer` or any `ArrayBufferView`, from any realm, signed as its viewed
+ * bytes), a UTF-8 string, or a plain object or array that is serialized with `JSON.stringify` and must serialize to a
+ * JSON object or array. Other objects (`Map`, `Date`, class instances) are rejected rather than signed as `{}`.
  */
 export type JwsPayload = ArrayBuffer | ArrayBufferView | string | Record<string, unknown> | readonly unknown[];
 
@@ -141,7 +142,7 @@ export function createSigningKeyRing(options: SigningKeyRingOptions): SigningKey
     if (!signature) throw new KeyRingError('malformed-jws', 'JWS signature is not base64url');
 
     if (header.alg !== ES256) throw new KeyRingError('unsupported-algorithm', 'JWS alg must be ES256');
-    if (Object.hasOwn(header, 'crit')) throw new KeyRingError('unsupported-header', 'JWS crit header parameters are not supported');
+    rejectUnsupportedParameters(header);
     if (typeof header.kid !== 'string' || header.kid === '') throw new KeyRingError('unknown-kid', 'JWS header has no kid');
     const key = ring.get(header.kid);
     if (!key) throw new KeyRingError('unknown-kid', `JWS kid ${describeKid(header.kid)} is not in the key ring`);
@@ -224,7 +225,7 @@ function buildHeader(header: JwsHeader, activeKid: string): string {
   if (parsed.kid !== undefined && parsed.kid !== activeKid) {
     throw new KeyRingError('kid-mismatch', `JWS header kid must be the active kid ${describeKid(activeKid)} when given`);
   }
-  if (Object.hasOwn(parsed, 'crit')) throw new KeyRingError('unsupported-header', 'JWS crit header parameters are not supported');
+  rejectUnsupportedParameters(parsed);
   // `parsed` is plain JSON data, so this second serialization has no caller code left to run.
   const rest = Object.fromEntries(Object.entries(parsed).filter(([name]) => name !== 'alg' && name !== 'kid'));
   return JSON.stringify({ alg: ES256, kid: activeKid, ...rest });
@@ -232,25 +233,71 @@ function buildHeader(header: JwsHeader, activeKid: string): string {
 
 function payloadBytes(payload: JwsPayload): Uint8Array {
   if (payload instanceof Uint8Array) return payload;
-  if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
-  if (isArrayBuffer(payload)) return new Uint8Array(payload);
+  // `ArrayBuffer.isView` and the `byteLength` brand checks below test internal slots, so they also hold for
+  // values from another realm (node:vm, an iframe, a test environment) where `instanceof` fails.
+  if (ArrayBuffer.isView(payload) || isArrayBuffer(payload)) {
+    try {
+      return ArrayBuffer.isView(payload)
+        ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+        : new Uint8Array(payload);
+    } catch {
+      throw new KeyRingError('invalid-sign-input', 'JWS payload buffer is detached');
+    }
+  }
   if (typeof payload === 'string') return utf8Encode(payload);
-  if (typeof payload === 'object' && payload !== null) {
+  if (Array.isArray(payload) || isPlainObject(payload)) {
     let json: string | undefined;
     try {
       json = JSON.stringify(payload);
     } catch {
       json = undefined;
     }
-    if (json !== undefined) return utf8Encode(json);
+    if (json !== undefined && (json.startsWith('{') || json.startsWith('['))) return utf8Encode(json);
   }
-  throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string or a JSON-serializable object');
+  throw new KeyRingError('invalid-sign-input', 'JWS payload must be bytes, a string, or a JSON-serializable plain object or array');
 }
 
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength')?.get;
+const sharedArrayBufferByteLength =
+  typeof SharedArrayBuffer === 'function'
+    ? Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength')?.get
+    : undefined;
+
+/** True for an `ArrayBuffer` or `SharedArrayBuffer` from any realm; a proxy or an object faking `Symbol.toStringTag` fails. */
 function isArrayBuffer(value: unknown): value is ArrayBufferLike {
-  return (
-    value instanceof ArrayBuffer || (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer)
-  );
+  if (typeof value !== 'object' || value === null) return false;
+  for (const byteLength of [arrayBufferByteLength, sharedArrayBufferByteLength]) {
+    if (!byteLength) continue;
+    try {
+      byteLength.call(value);
+      return true;
+    } catch {
+      // Not this kind of buffer.
+    }
+  }
+  return false;
+}
+
+/**
+ * True for an object whose prototype is `null` or an `Object.prototype` (of any realm). Class instances such as
+ * `Map`, `Set`, `Date` or a `Blob` are not plain objects: `JSON.stringify` would sign them as `{}` or a string.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
+}
+
+/**
+ * `crit` (RFC 7515 §4.1.11) and `b64` (RFC 7797, unencoded payload) change how a token must be processed; this ring
+ * implements neither, so a header that carries one is refused on both sign and verify.
+ */
+function rejectUnsupportedParameters(header: Record<string, unknown>): void {
+  for (const name of ['crit', 'b64']) {
+    if (Object.hasOwn(header, name)) {
+      throw new KeyRingError('unsupported-header', `JWS ${name} header parameter is not supported`);
+    }
+  }
 }
 
 function decodeHeader(encoded: string): Record<string, unknown> {
