@@ -461,13 +461,31 @@ describe('createAppleProvider with several bundle IDs', () => {
         return { ok: true, status: 200, text: async () => JSON.stringify({ notificationHistory: [] }) } as Response;
       });
       const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
-      vi.stubGlobal('Buffer', undefined);
+      // Vitest's own worker IPC needs a working Buffer while the request is awaited, so Buffer is not removed.
+      // A stand-in forwards every static call to the real Buffer and records the ones made from adapter source.
+      const realBuffer = globalThis.Buffer;
+      const adapterBufferCalls: string[] = [];
+      const recordingBuffer = new Proxy(realBuffer, {
+        get(target, property, receiver) {
+          const value = Reflect.get(target, property, receiver);
+          if (typeof value !== 'function' || property === 'prototype' || property === 'constructor') return value;
+          return (...args: unknown[]) => {
+            const callers = (new Error().stack ?? '').split('\n').slice(2);
+            if (callers.some((frame) => /provider-apple[\\/]src[\\/](?!__tests__)/.test(frame))) {
+              adapterBufferCalls.push(`Buffer.${String(property)}`);
+            }
+            return Reflect.apply(value, target, args);
+          };
+        }
+      });
+      vi.stubGlobal('Buffer', recordingBuffer);
       let nextCursor: string | undefined;
       try {
         ({ nextCursor } = await provider.fetchNotificationHistory!({ cursor }));
       } finally {
         vi.unstubAllGlobals();
       }
+      expect(adapterBufferCalls).toEqual([]);
       expect(nextCursor).toBe(expectedNextCursor);
       expect(calls.map(({ url, init }) => ({ bid: claimsOf(init).bid, paginationToken: new URL(url).searchParams.get('paginationToken') })))
         .toEqual([{ bid: 'com.example.one', paginationToken: 'one-page-2' }]);
