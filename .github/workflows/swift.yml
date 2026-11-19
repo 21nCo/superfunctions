@@ -146,7 +146,7 @@ jobs:
       - name: BillFn products build for a package that depends on the repository root
         if: ${{ !cancelled() }}
         timeout-minutes: 10
-        run: swift build --package-path billfn/swift/Fixtures/RootConsumer
+        run: swift build --package-path billfn/swift/Fixtures/RootConsumer --only-use-versions-from-resolved-file
       - name: BillFn Swift package tests
         if: ${{ !cancelled() }}
         timeout-minutes: 10
