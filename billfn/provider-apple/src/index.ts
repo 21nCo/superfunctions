@@ -7,6 +7,7 @@ import type {
   BillFnImportSubscriptionInput,
   BillFnNotificationHistoryPage,
   BillFnParsedWebhookEvent,
+  BillFnPriceDefinition,
   BillFnProviderAdapter,
   BillFnProviderOperationResult,
   BillFnRefundChargeInput,
@@ -42,6 +43,13 @@ export {
   type AppleVerifiedSignedData
 } from './signed-data-verifier.js';
 export { APPLE_ROOT_CA_G3, APPLE_ROOT_CA_G3_SHA256 } from './apple-root-ca.js';
+
+/**
+ * The catalog price metadata key naming the app (bundle ID) a price is sold in. Apple product IDs are unique only within
+ * an app, so with several bundle IDs every Apple price must name one of them, and only that app's transactions satisfy
+ * the price.
+ */
+export const APPLE_BUNDLE_ID_METADATA_KEY = 'appleBundleId';
 
 export interface AppleNotificationVerifierContext {
   rawBody: string;
@@ -108,6 +116,8 @@ interface AppleTransactionExpectation {
   reference: string;
   /** Null for a subscription an operator imported: its binding is the operator's, not the purchase token's. */
   appAccountToken: string | null;
+  /** The app the price is sold in, which the signed transaction must name; null when the price names none. */
+  bundleId: string | null;
 }
 
 export function createAppleProvider(providerConfig: AppleProviderConfig): BillFnProviderAdapter {
@@ -130,6 +140,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
+      readPriceBundleId(config, input.price);
       const appAccountToken = createAppleAppAccountToken(input.billingAccount.id);
       return {
         status: 'requires_action',
@@ -150,25 +161,20 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         });
       }
 
-      if (input.price.kind === 'subscription') {
-        const response = await requestStoreKitForTransaction(
-          fetchImpl,
-          config,
-          `/inApps/v1/subscriptions/${transactionId}`
-        );
-        return mapAppleSubscriptionResponse(response.payload, {
-          productId: input.price.providerProductId,
-          reference: transactionId,
-          appAccountToken: createAppleAppAccountToken(input.billingAccount.id)
-        });
-      }
-
-      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v2/history/${transactionId}`);
-      return mapAppleHistoryResponse(response.payload, {
+      const bundleId = readPriceBundleId(config, input.price);
+      const expectation = {
         productId: input.price.providerProductId,
         reference: transactionId,
-        appAccountToken: createAppleAppAccountToken(input.billingAccount.id)
-      });
+        appAccountToken: createAppleAppAccountToken(input.billingAccount.id),
+        bundleId
+      };
+      if (input.price.kind === 'subscription') {
+        const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
+        return mapAppleSubscriptionResponse(response.payload, expectation);
+      }
+
+      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${transactionId}`);
+      return mapAppleHistoryResponse(response.payload, expectation);
     },
     async fetchSubscription(input: BillFnSyncSubscriptionInput) {
       const transactionId = input.subscription.providerSubscriptionId ?? input.subscription.providerChargeId;
@@ -178,13 +184,16 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           message: 'Apple subscription sync requires a provider subscription reference'
         });
       }
-      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
-      // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
+      // An imported purchase was made outside BillFn, so its token is not derived from the billing account, and BillFn
+      // chose its price by product alone: it is read from whichever listed app owns it, as importSubscription found it.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
+      const bundleId = imported ? null : readPriceBundleId(config, input.price);
+      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
       return mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
-        appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId)
+        appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId),
+        bundleId
       });
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
@@ -224,7 +233,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       return mapAppleSubscriptionResponse(response.payload, {
         productId: null,
         reference: input.providerReference,
-        appAccountToken: null
+        appAccountToken: null,
+        bundleId: null
       });
     },
     async cancelSubscription(input: BillFnCancelSubscriptionInput) {
@@ -310,9 +320,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       } satisfies BillFnProviderOperationResult;
     },
     async restorePurchases(input: BillFnRestorePurchasesInput) {
-      const response = await requestStoreKitForTransaction(
+      const bundleId = readPriceBundleId(config, input.price);
+      const response = await requestStoreKitForPrice(
         fetchImpl,
         config,
+        bundleId,
         input.price.kind === 'subscription'
           ? `/inApps/v1/subscriptions/${input.purchaseReference}`
           : `/inApps/v2/history/${input.purchaseReference}`
@@ -320,7 +332,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       const expectation = {
         productId: input.price.providerProductId,
         reference: input.purchaseReference,
-        appAccountToken: createAppleAppAccountToken(input.billingAccount.id)
+        appAccountToken: createAppleAppAccountToken(input.billingAccount.id),
+        bundleId
       };
       return [input.price.kind === 'subscription'
         ? mapAppleSubscriptionResponse(response.payload, expectation)
@@ -431,6 +444,40 @@ async function requestStoreKitForTransaction(
     }
   }
   throw lastError;
+}
+
+/**
+ * Requests a transaction's StoreKit record for a catalog price. A price bound to an app is asked about only with a token
+ * for that app, so another app's transaction is StoreKit's not-found; an unbound price keeps the per-app search.
+ */
+function requestStoreKitForPrice(
+  fetchImpl: typeof fetch,
+  config: ResolvedAppleProviderConfig,
+  bundleId: string | null,
+  path: string
+) {
+  return bundleId === null
+    ? requestStoreKitForTransaction(fetchImpl, config, path)
+    : requestStoreKitWithFallback(fetchImpl, config, bundleId, path);
+}
+
+/**
+ * The app a catalog price is sold in, from its trusted `metadata.appleBundleId`, never from client input. With several
+ * bundle IDs a price must name one of them; with one it may, and must then name that one; with none it is not read.
+ */
+function readPriceBundleId(config: ResolvedAppleProviderConfig, price: BillFnPriceDefinition): string | null {
+  const value = price.metadata?.[APPLE_BUNDLE_ID_METADATA_KEY];
+  if (config.bundleIds.length === 0 || (value === undefined && config.bundleIds.length === 1)) {
+    return null;
+  }
+  if (typeof value !== 'string' || !config.bundleIds.includes(value)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: `Apple price ${price.priceId} must name the app it is sold in as metadata.${APPLE_BUNDLE_ID_METADATA_KEY}, one of the configured bundle IDs`,
+      details: { priceId: price.priceId, bundleIds: [...config.bundleIds] }
+    });
+  }
+  return value;
 }
 
 /** True for StoreKit's definitive answer that the transaction does not exist for the app the token names. */
@@ -1038,6 +1085,7 @@ function appleTransactionMatches(
   const productId = readString(transaction, ['productId']);
   const appAccountToken = readString(transaction, ['appAccountToken']);
   return (
+    (expectation.bundleId === null || readString(transaction, ['bundleId']) === expectation.bundleId) &&
     (expectation.productId === null || productId === expectation.productId) &&
     (expectation.appAccountToken === null ||
       appAccountToken?.toLowerCase() === expectation.appAccountToken.toLowerCase()) &&
@@ -1048,7 +1096,7 @@ function appleTransactionMatches(
 function throwAppleTransactionConflict(): never {
   throw createBillFnError({
     code: 'BILLFN_CONFLICT',
-    message: 'Apple transaction does not match the checkout product, reference, and billing account token'
+    message: 'Apple transaction does not match the checkout app, product, reference, and billing account token'
   });
 }
 

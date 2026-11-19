@@ -201,9 +201,10 @@ describe('createAppleProvider with several bundle IDs', () => {
   });
 
   it("never claims a bundle ID the checkout payload names outside Apple's signed data", async () => {
+    const price = { kind: 'subscription', providerProductId: 'com.example.product', metadata: { appleBundleId: owner } };
     const checkout = await createAppleProvider({ bundleIds, appStoreServerApiKey }).createCheckout!({
       billingAccount: { id: 'acct_1' },
-      price: { providerProductId: 'com.example.product' }
+      price
     } as never);
     const appAccountToken = String(checkout.clientAction?.metadata?.appAccountToken);
     const { requests, fetchMock } = storeKit(appAccountToken);
@@ -211,11 +212,12 @@ describe('createAppleProvider with several bundle IDs', () => {
     await expect(
       provider.verifyCheckout!({
         billingAccount: { id: 'acct_1' },
-        price: { kind: 'subscription', providerProductId: 'com.example.product' },
+        price,
         payload: { transactionId: 'txn_1', bundleId: 'com.example.other' }
       } as never)
     ).resolves.toMatchObject({ providerChargeId: 'txn_1', subscriptionStatus: 'active' });
-    expect(requests.map((request) => request.bid)).toEqual(['com.example.one', 'com.example.one', 'com.example.two']);
+    // The token claims the app the catalog price names, not the payload's bundle ID.
+    expect(requests.map((request) => request.bid)).toEqual([owner]);
   });
 
   it("finds the transaction's app before an Advanced Commerce request and signs it for that app", async () => {
@@ -261,24 +263,21 @@ describe('createAppleProvider with several bundle IDs', () => {
     ]);
   });
 
-  it('restores a one-time purchase from the transaction history of the app that owns it', async () => {
+  it('restores a one-time purchase from the transaction history of the app its price is sold in', async () => {
+    const price = { kind: 'one_time', providerProductId: 'com.example.product', metadata: { appleBundleId: owner } };
     const checkout = await createAppleProvider({ bundleIds, appStoreServerApiKey }).createCheckout!({
       billingAccount: { id: 'acct_1' },
-      price: { providerProductId: 'com.example.product' }
+      price
     } as never);
     const { requests, fetchMock } = storeKit(String(checkout.clientAction?.metadata?.appAccountToken));
     const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock });
     const restored = await provider.restorePurchases!({
       billingAccount: { id: 'acct_1' },
-      price: { kind: 'one_time', providerProductId: 'com.example.product' },
+      price,
       purchaseReference: 'txn_1'
     } as never);
     expect(restored).toEqual([expect.objectContaining({ providerProductId: 'com.example.product' })]);
-    expect(requests).toEqual([
-      { url: 'https://api.storekit.itunes.apple.com/inApps/v2/history/txn_1', bid: 'com.example.one' },
-      { url: 'https://api.storekit-sandbox.itunes.apple.com/inApps/v2/history/txn_1', bid: 'com.example.one' },
-      { url: 'https://api.storekit.itunes.apple.com/inApps/v2/history/txn_1', bid: owner }
-    ]);
+    expect(requests).toEqual([{ url: 'https://api.storekit.itunes.apple.com/inApps/v2/history/txn_1', bid: owner }]);
   });
 
   it("stops at the first answer that is not StoreKit's not-found", async () => {
@@ -501,5 +500,156 @@ describe('createAppleProvider with several bundle IDs', () => {
     expect(() => createAppleProvider({ bundleIds: [], appStoreServerApiKey })).toThrow(/bundleIds must be a non-empty array/);
     expect(() => createAppleProvider({ bundleIds: ['com.example', ' '], appStoreServerApiKey })).toThrow(/bundleIds entry/);
     expect(() => createAppleProvider({ bundleIds: ['com.example'], appStoreServerApiKey })).not.toThrow();
+  });
+});
+
+describe('createAppleProvider binds each price to its app with several bundle IDs', () => {
+  const bundleIds = ['com.example.one', 'com.example.two'];
+  /** Product IDs are unique only within an app, so both apps sell the same one. */
+  const productId = 'com.example.shared-product';
+  /** Each app's transaction; StoreKit answers not-found to a token for any other app. */
+  const transactionOf: Record<string, string> = { 'com.example.one': 'txn_one', 'com.example.two': 'txn_two' };
+  const appAccountTokenPromise = createAppleProvider({ bundleId: 'com.example.one', appStoreServerApiKey })
+    .createCheckout!({ billingAccount: { id: 'acct_1' }, price: { providerProductId: productId } } as never)
+    .then((checkout) => String(checkout.clientAction?.metadata?.appAccountToken));
+
+  const bidOf = (init?: RequestInit) => {
+    const token = String((init?.headers as Record<string, string>).authorization).replace(/^Bearer /, '');
+    return (JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as { bid: string }).bid;
+  };
+  const signedTransaction = (bundleId: string, appAccountToken: string) =>
+    signJws(
+      {
+        transactionId: transactionOf[bundleId],
+        originalTransactionId: transactionOf[bundleId],
+        bundleId,
+        productId,
+        appAccountToken,
+        purchaseDate: 1698148800000,
+        expiresDate: 4102444800000,
+        environment: 'Production'
+      },
+      chain
+    );
+
+  /** A StoreKit double for both apps; `answerAs` makes it answer with another app's transaction, as a forged answer. */
+  async function storeKit(answerAs?: string) {
+    const appAccountToken = await appAccountTokenPromise;
+    const bids: string[] = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const bid = bidOf(init);
+      bids.push(bid);
+      const owner = answerAs ?? Object.keys(transactionOf).find((bundleId) => String(url).endsWith(`/${transactionOf[bundleId]}`));
+      if (!answerAs && owner !== bid) {
+        return Response.json({ errorCode: 4040010 }, { status: 404 });
+      }
+      const signed = signedTransaction(owner!, appAccountToken);
+      return String(url).includes('/inApps/v2/history/')
+        ? Response.json({ signedTransactions: [signed] })
+        : Response.json({ data: [{ lastTransactions: [{ originalTransactionId: transactionOf[owner!], status: 1, signedTransactionInfo: signed }] }] });
+    });
+    return { bids, provider: createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch }) };
+  }
+
+  const priceFor = (kind: 'subscription' | 'one_time', metadata?: Record<string, unknown>) =>
+    ({ priceId: `price-${kind}`, provider: 'apple', kind, providerProductId: productId, ...(metadata ? { metadata } : {}) }) as never;
+  const boundToOne = (kind: 'subscription' | 'one_time') => priceFor(kind, { appleBundleId: 'com.example.one' });
+
+  const operations = {
+    verifyCheckout: (provider: Awaited<ReturnType<typeof storeKit>>['provider'], price: never, reference: string) =>
+      provider.verifyCheckout!({ billingAccount: { id: 'acct_1' }, price, payload: { transactionId: reference, bundleId: 'com.example.one' } } as never),
+    restorePurchases: (provider: Awaited<ReturnType<typeof storeKit>>['provider'], price: never, reference: string) =>
+      provider.restorePurchases!({ billingAccount: { id: 'acct_1' }, price, purchaseReference: reference } as never).then(([state]) => state)
+  };
+
+  describe.each(['subscription', 'one_time'] as const)('a %s price', (kind) => {
+    describe.each(Object.keys(operations) as Array<keyof typeof operations>)('%s', (operation) => {
+      it("accepts the price's own app's transaction, asking only that app", async () => {
+        const { bids, provider } = await storeKit();
+        await expect(operations[operation](provider, boundToOne(kind), 'txn_one')).resolves.toMatchObject({
+          providerChargeId: 'txn_one',
+          providerProductId: productId
+        });
+        expect(new Set(bids)).toEqual(new Set(['com.example.one']));
+      });
+
+      it("rejects another listed app's transaction with the same product and billing account", async () => {
+        const { bids, provider } = await storeKit();
+        await expect(operations[operation](provider, boundToOne(kind), 'txn_two')).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          details: { status: 404 }
+        });
+        expect(new Set(bids)).toEqual(new Set(['com.example.one']));
+      });
+
+      it("rejects an answer whose signed transaction names another app than the price's", async () => {
+        const { provider } = await storeKit('com.example.two');
+        await expect(operations[operation](provider, boundToOne(kind), 'txn_two')).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+      });
+
+      it('rejects a price that names no app, or an app that is not listed, without asking Apple', async () => {
+        const { bids, provider } = await storeKit();
+        for (const price of [priceFor(kind), priceFor(kind, { appleBundleId: 'com.example.other' }), priceFor(kind, { appleBundleId: 1 })]) {
+          await expect(operations[operation](provider, price, 'txn_one')).rejects.toMatchObject({
+            code: 'BILLFN_VALIDATION_ERROR',
+            message: expect.stringContaining('metadata.appleBundleId')
+          });
+        }
+        expect(bids).toEqual([]);
+      });
+    });
+  });
+
+  describe('fetchSubscription', () => {
+    const subscription = (reference: string, metadata?: Record<string, unknown>) =>
+      ({ billingAccountId: 'acct_1', providerSubscriptionId: reference, ...(metadata ? { metadata } : {}) }) as never;
+
+    it("syncs the price's own app's subscription and rejects another app's", async () => {
+      const { bids, provider } = await storeKit();
+      await expect(provider.fetchSubscription!({ subscription: subscription('txn_one'), price: boundToOne('subscription') } as never)).resolves.toMatchObject({
+        providerSubscriptionId: 'txn_one'
+      });
+      await expect(provider.fetchSubscription!({ subscription: subscription('txn_two'), price: boundToOne('subscription') } as never)).rejects.toMatchObject({
+        code: 'BILLFN_PROVIDER_ERROR'
+      });
+      expect(new Set(bids)).toEqual(new Set(['com.example.one']));
+    });
+
+    it("rejects a price that names no app", async () => {
+      const { provider } = await storeKit();
+      await expect(provider.fetchSubscription!({ subscription: subscription('txn_one'), price: priceFor('subscription') } as never)).rejects.toMatchObject({
+        code: 'BILLFN_VALIDATION_ERROR'
+      });
+    });
+
+    it('finds an imported subscription in whichever listed app owns it, as the operator bound it', async () => {
+      const { bids, provider } = await storeKit();
+      const imported = subscription('txn_two', { billfnImportedAt: '2026-11-19T00:00:00.000Z' });
+      await expect(provider.fetchSubscription!({ subscription: imported, price: boundToOne('subscription') } as never)).resolves.toMatchObject({
+        providerSubscriptionId: 'txn_two'
+      });
+      expect(bids.at(-1)).toBe('com.example.two');
+    });
+  });
+
+  it('rejects a checkout for a price that names no listed app', async () => {
+    const { provider } = await storeKit();
+    await expect(provider.createCheckout!({ billingAccount: { id: 'acct_1' }, price: priceFor('subscription') } as never)).rejects.toMatchObject({
+      code: 'BILLFN_VALIDATION_ERROR'
+    });
+    await expect(provider.createCheckout!({ billingAccount: { id: 'acct_1' }, price: boundToOne('subscription') } as never)).resolves.toMatchObject({
+      status: 'requires_action'
+    });
+  });
+
+  it('with one bundle ID, checks a price that names its app and keeps accepting a price that names none', async () => {
+    const appAccountToken = await appAccountTokenPromise;
+    const fetchMock = vi.fn(async () => Response.json({ signedTransactions: [signedTransaction('com.example.one', appAccountToken)] }));
+    const provider = createAppleProvider({ bundleId: 'com.example.one', appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+    const verify = (price: never) =>
+      provider.verifyCheckout!({ billingAccount: { id: 'acct_1' }, price, payload: { transactionId: 'txn_one' } } as never);
+    await expect(verify(priceFor('one_time'))).resolves.toMatchObject({ providerChargeId: 'txn_one' });
+    await expect(verify(boundToOne('one_time'))).resolves.toMatchObject({ providerChargeId: 'txn_one' });
+    await expect(verify(priceFor('one_time', { appleBundleId: 'com.example.two' }))).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
   });
 });
