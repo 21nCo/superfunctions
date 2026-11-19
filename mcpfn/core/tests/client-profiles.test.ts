@@ -1351,6 +1351,40 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     await expect(buildMcpFnEffectiveCatalog({ canonicalTools, resolved: resolved(schema("number")) })).rejects.toMatchObject({ code });
   });
 
+  // The runtime resolves an anonymous schema's literal dot-segment references
+  // ("./#/x", ".#/x", "../#/x") to that schema itself, so a sibling whose $id is
+  // "/" must not supply their target on either validation engine.
+  describe.each(["ajv", "cfworker"])("dot-segment self references (%s)", (engine) => {
+    afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+    it.each(["./#/definitions/query", ".#/definitions/query", "../#/definitions/query"])("keeps %s on the anonymous root", async (reference) => {
+      if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
+      vi.resetModules();
+      const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+      const sibling = { $id: "/", type: "object", definitions: { query: { type: "string" } } };
+      const schema = (type: string) => ({ type: "object" as const, properties: { query: { $ref: reference } }, definitions: { query: { type } } });
+      const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [sibling, schema("string")], resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
+      } });
+      if (engine === "cfworker") expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
+      // Ajv cannot resolve a dot-segment reference under a registry key and
+      // refuses the catalog; the edge engine resolves it and compares shapes.
+      await expect(run(schema("number"))).rejects.toMatchObject({ code: engine === "cfworker" ? "MCPFN_PROFILE_ASYMMETRIC" : "MCPFN_INVALID_PROJECTED_CATALOG" });
+    });
+  });
+
+  // Ajv engine only: the runtime collection validator does not return for this
+  // schema on either engine (pre-existing at next e42232591, deferred to SFNS-158),
+  // and the edge engine runs it before the structural comparison.
+  it("refuses a dot-segment $id that would rename the anonymous root", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const inputSchema = { type: "object" as const, properties: { query: { $ref: "#/definitions/query" }, nested: { $id: "./", definitions: { query: { type: "number" } } } }, definitions: { query: { type: "string" } } };
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "noop", version: "1", matches: () => true },
+    } })).rejects.toThrow(/anonymous schema scope/);
+  });
+
   it("compares a relative shared target when a projection changes it", async () => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const provider = { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } };

@@ -591,6 +591,15 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const sharedBase = `https://${namespace}.relative.mcpfn.invalid/`;
   const privateKey = (label: string) => `https://${label}.${namespace}.mcpfn.invalid/schema`;
   const rootKey = privateKey("root");
+  const privateKeys = new Set([rootKey, ...siblings.map((_, position) => privateKey(`resource-${position}`))]);
+  // Inside an anonymous resource, the runtime treats a reference whose literal
+  // dot segments resolve to no resource ("./#/x", "../#/x", ".") as a reference
+  // to that resource itself (schema-uri.ts, validation.ts).
+  const selfReference = (reference: string, local: string) => {
+    if (!privateKeys.has(local)) return undefined;
+    const resolved = schemaUriResolver.resolve("", reference);
+    return resolved === "" || resolved.startsWith("#") ? resolved : undefined;
+  };
   const scopes = new WeakMap<object, { resource: Record<string, unknown>; base: string; local: string }>();
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
@@ -631,10 +640,15 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       }
     }
     // An empty $id names no resource, as at runtime: the schema stays anonymous.
-    if (!invalid && !Array.isArray(value) && typeof schemaValue.$id === "string" && schemaValue.$id !== "") {
+    const authoredId = !Array.isArray(value) && typeof schemaValue.$id === "string" && schemaValue.$id !== "" ? schemaValue.$id : undefined;
+    // A dot-segment $id would rename the anonymous resource it sits in.
+    if (!invalid && authoredId !== undefined && !authoredId.startsWith("#") && selfReference(authoredId, parentLocal) !== undefined) {
+      reject("Schema resource ID collides with an anonymous schema scope");
+    }
+    if (!invalid && authoredId !== undefined) {
       let address: URL | undefined;
       let name: string | undefined;
-      try { address = new URL(schemaValue.$id, parentBase); }
+      try { address = new URL(authoredId, parentBase); }
       catch { reject("Invalid schema resource ID"); }
       if (address) {
         try { name = fragment(address); }
@@ -697,10 +711,12 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
     let address: URL;
-    // Fragment-only references stay in the current resource; anything with a
-    // resource part resolves in the shared namespace, as the runtime does.
+    // Fragment-only and anonymous self references stay in the current resource;
+    // anything with a resource part resolves in the shared namespace, as the
+    // runtime does.
     const scope = scopes.get(schema) ?? { base: sharedBase, local: rootKey };
-    try { address = new URL(reference, reference === "" || reference.startsWith("#") ? scope.local : scope.base); }
+    const self = selfReference(reference, scope.local);
+    try { address = self !== undefined ? new URL(self, scope.local) : new URL(reference, scope.base); }
     catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI"); }
     const pointer = fragment(address);
     const key = resourceKey(address);
