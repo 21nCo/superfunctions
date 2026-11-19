@@ -1,5 +1,5 @@
 import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type WebSocketEvidenceEvent } from "../events.js";
-import { apply, attribute, intrinsic, listen, nonnegativeInteger, now, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
+import { apply, attribute, capture, globalValue, intrinsic, listen, nonnegativeInteger, now, platform, platformRead, prototypeOf, trapFree, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
 import { MAX_ENTRY_BYTES, truncateToBytes } from "../utils/serialization.js";
@@ -12,43 +12,53 @@ type Deliver = (observation: Observation) => void;
 
 // The platform getters observation reads through, captured when this module
 // loads: a getter the page patches later never runs on a socket or event.
-const WEBSOCKET_PROTOTYPE = prototypeOf(platform.WebSocket);
+const WEBSOCKET_PROTOTYPE = prototypeOf(globalValue("WebSocket"));
 // The `url` and `readyState` getters each prototype of the load-time
 // WebSocket's chain passes to its sockets, also when the global was already
 // a subclass at load.
 const LOADED_GETTERS = { url: loadedGetters("url"), readyState: loadedGetters("readyState") };
 // The platform's own send(): the deepest one the load-time WebSocket's chain
 // defines (a subclass overrides it nearer). It never closes a socket itself.
-const PLATFORM_SEND = WEBSOCKET_PROTOTYPE ? prototypeChain(WEBSOCKET_PROTOTYPE).reverse().map((prototype) => intrinsic(prototype, "send", "value")).find(Boolean) : undefined;
+const PLATFORM_SEND = capture(() => (WEBSOCKET_PROTOTYPE ? prototypeChain(WEBSOCKET_PROTOTYPE).reverse().map((prototype) => intrinsic(prototype, "send", "value")).find(Boolean) : undefined));
 const OPEN = 1;
 const CLOSING = 2;
 const CLOSED = 3;
-const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(platform.MessageEvent), "data");
-const CLOSE_EVENT_PROTOTYPE = prototypeOf(platform.CloseEvent);
+const MESSAGE_EVENT_DATA = intrinsic(prototypeOf(globalValue("MessageEvent")), "data");
+const CLOSE_EVENT_PROTOTYPE = prototypeOf(globalValue("CloseEvent"));
 const CLOSE_EVENT_CODE = intrinsic(CLOSE_EVENT_PROTOTYPE, "code");
 const CLOSE_EVENT_WAS_CLEAN = intrinsic(CLOSE_EVENT_PROTOTYPE, "wasClean");
 // The binary data a socket sends as it is, each recognized by its brand-checked
-// size getter. Anything else, a bare SharedArrayBuffer included, the platform
-// converts to a string first.
-const ARRAY_BUFFER_BYTE_LENGTH = intrinsic(prototypeOf(platform.ArrayBuffer), "byteLength");
-const TYPED_ARRAY_BYTE_LENGTH = intrinsic(Object.getPrototypeOf(Uint8Array.prototype) as object, "byteLength");
-const DATA_VIEW_BYTE_LENGTH = intrinsic(prototypeOf(platform.DataView), "byteLength");
-const BLOB_SIZE = intrinsic(prototypeOf(platform.Blob), "size");
-const BINARY_SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH, BLOB_SIZE];
+// size getter, used only where that check runs no Proxy trap. Anything else, a
+// bare SharedArrayBuffer included, the platform converts to a string first.
+const ARRAY_BUFFER = globalValue("ArrayBuffer") as ArrayBufferConstructor | undefined;
+const ARRAY_BUFFER_BYTE_LENGTH = trapFree(intrinsic(prototypeOf(ARRAY_BUFFER), "byteLength"), () => new ARRAY_BUFFER!(0));
+const TYPED_ARRAY_BYTE_LENGTH = trapFree(
+  intrinsic(capture(() => Object.getPrototypeOf(Uint8Array.prototype) as object), "byteLength"),
+  () => new Uint8Array(0),
+);
+const DATA_VIEW_BYTE_LENGTH = trapFree(intrinsic(prototypeOf(globalValue("DataView")), "byteLength"), () => new DataView(new ARRAY_BUFFER!(0)));
+const BLOB = globalValue("Blob") as typeof Blob | undefined;
+// A browser's WebIDL getter; never Node's, whose brand check runs a trap.
+const BLOB_SIZE = trapFree(intrinsic(prototypeOf(BLOB), "size"), () => new BLOB!([]));
+// Buffer and view lengths are read before the send: a library's send may
+// transfer the buffer (to a worker), which detaches it. A Blob never changes.
+const BUFFER_SIZE_GETTERS = [ARRAY_BUFFER_BYTE_LENGTH, TYPED_ARRAY_BYTE_LENGTH, DATA_VIEW_BYTE_LENGTH];
+const BINARY_SIZE_GETTERS = [...BUFFER_SIZE_GETTERS, BLOB_SIZE];
 // Sizing a string never runs a String.prototype method the page replaced.
-const CHAR_CODE_AT = intrinsic(String.prototype, "charCodeAt", "value") as Intrinsic;
+const CHAR_CODE_AT = intrinsic(capture(() => String.prototype), "charCodeAt", "value");
 // `isTrusted`: an unforgeable own accessor of each browser event, else Event.prototype's.
 const EVENT_IS_TRUSTED = isTrustedGetter();
 // A browser window or worker fires its socket events trusted, so an untrusted
 // one there was dispatched by the page. Node dispatches its own socket events
 // untrusted, so there `isTrusted` tells nothing.
-const TRUSTED_EVENTS_ONLY = EVENT_IS_TRUSTED !== undefined && (typeof platform.Window === "function" || typeof platform.WorkerGlobalScope === "function");
+const TRUSTED_EVENTS_ONLY = EVENT_IS_TRUSTED !== undefined && (typeof globalValue("Window") === "function" || typeof globalValue("WorkerGlobalScope") === "function");
 
 let listeners = new Set<Listener>();
 let restore: (() => void) | undefined;
 
 /** UTF-8 byte length of a string, as a socket sends it, without encoding it. */
-function utf8Size(value: string): number {
+function utf8Size(value: string): number | undefined {
+  if (!CHAR_CODE_AT) return undefined;
   const codeAt = (index: number) => apply(CHAR_CODE_AT, value, [index]) as number;
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -64,17 +74,22 @@ function utf8Size(value: string): number {
 }
 
 /**
- * The size in bytes of an `ArrayBuffer`, typed array, `DataView` or `Blob`,
- * read through the captured platform getters, whose brand checks run no page
- * code. Undefined for anything else.
+ * The size in bytes of the binary data the getters recognize, read through
+ * the captured platform getters, whose brand checks run no page code: the
+ * number a brand check passed with (payloadSize() checks its value), else
+ * undefined (also for a `Blob` where no getter is trap-free).
  */
-function binarySize(data: unknown): number | undefined {
+function sizeThrough(getters: Array<Intrinsic | undefined>, data: unknown): number | undefined {
   // An index loop and a typeof test: no iterator or Number method the page can replace.
-  for (let index = 0; index < BINARY_SIZE_GETTERS.length; index += 1) {
-    const size = platformRead(BINARY_SIZE_GETTERS[index], data);
-    if (typeof size === "number") return size; // A brand check passed; payloadSize() checks its value.
+  for (let index = 0; index < getters.length; index += 1) {
+    const size = platformRead(getters[index], data);
+    if (typeof size === "number") return size;
   }
   return undefined;
+}
+
+function binarySize(data: unknown): number | undefined {
+  return sizeThrough(BINARY_SIZE_GETTERS, data);
 }
 
 /**
@@ -88,7 +103,7 @@ function payloadSize(data: unknown): number | undefined {
 
 function isTrustedGetter(): Intrinsic | undefined {
   try {
-    const Event = platform.Event as (new (type: string) => object) | undefined;
+    const Event = globalValue("Event") as (new (type: string) => object) | undefined;
     return (typeof Event === "function" ? intrinsic(new Event("probe"), "isTrusted") : undefined) ?? intrinsic(prototypeOf(Event), "isTrusted");
   } catch {
     return undefined;
@@ -124,16 +139,20 @@ function ownGetter(prototype: object, key: SocketAttribute): Intrinsic | undefin
 function loadedGetters(key: SocketAttribute): Map<object, Intrinsic | undefined> {
   const getters = new Map<object, Intrinsic | undefined>();
   if (!WEBSOCKET_PROTOTYPE) return getters;
-  const chain = prototypeChain(WEBSOCKET_PROTOTYPE);
-  let inherited: Intrinsic | undefined;
-  // From the top down, so each prototype maps to the nearest getter at or above it.
-  for (let index = chain.length - 1; index >= 0; index -= 1) {
-    const prototype = chain[index] as object;
-    const own = ownGetter(prototype, key);
-    if (own !== null) inherited = own;
-    getters.set(prototype, inherited);
+  try {
+    const chain = prototypeChain(WEBSOCKET_PROTOTYPE);
+    let inherited: Intrinsic | undefined;
+    // From the top down, so each prototype maps to the nearest getter at or above it.
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const prototype = chain[index] as object;
+      const own = ownGetter(prototype, key);
+      if (own !== null) inherited = own;
+      getters.set(prototype, inherited);
+    }
+    return getters;
+  } catch {
+    return new Map(); // A prototype the page made a throwing Proxy: none captured at load.
   }
-  return getters;
 }
 
 /**
@@ -326,15 +345,37 @@ function install(current: Set<Listener>): (() => void) | undefined {
       },
     });
 
+    // What a send() on an observed open socket recorded once it returned. A
+    // buffer or view was sized before it; nothing here runs page code.
+    type Sending = { url: string; timestamp: number; deliver: Deliver; buffer: number | undefined };
+    const recordSent = (socket: unknown, data: unknown, { url, timestamp, deliver, buffer }: Sending, platformSend: boolean) => {
+      // A Blob is recognized (and sized) only through a trap-free getter.
+      const blob = buffer === undefined && typeof data === "object" ? platformRead(BLOB_SIZE, data) : UNREADABLE;
+      const binary = buffer ?? (typeof blob === "number" ? blob : undefined);
+      // Strings, binary data and other primitives reach the platform as they
+      // are or convert without page code. Any other object is converted by
+      // the send (the platform's to a string, a library's in its own way),
+      // which can run page code that closes the socket.
+      const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
+      // The platform's own send never closes the socket, so one no longer
+      // open after it means converting the data closed it and the data was
+      // discarded. Only then is the state read again. A library's send may
+      // transmit and then close, which the wrapper cannot tell from that: it
+      // is recorded by the state before its call.
+      if (converted && platformSend && readyState(socket) !== OPEN) return;
+      const size = typeof data === "string" ? utf8Size(data) : nonnegativeInteger(binary);
+      deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
+    };
+
     // The send() sockets of the global class actually inherit, wrapped where it is defined.
     const send = sendOwner
       ? function (this: unknown, ...args: unknown[]) {
           // The send always gets the caller's arguments unchanged. Before it,
-          // only the socket's membership and state are read: classifying and
-          // sizing the data can run page code (a Proxy's trap), so they wait
-          // until the send has returned.
+          // only what runs no page code is read: the socket's membership and
+          // state, the clock, and a buffer's or view's length through the
+          // brand-checked getters (a Proxy fails their check without a trap).
           const data = args[0];
-          let before: { url: string; timestamp: number; deliver: Deliver } | undefined;
+          let before: Sending | undefined;
           try {
             // A socket constructed while no collector ran gets the plain send.
             const url = live() && typeof this === "object" && this !== null ? sockets.get(this) : undefined;
@@ -342,31 +383,16 @@ function install(current: Set<Listener>): (() => void) | undefined {
             // while connecting and discards the data once closing or closed. A
             // send that closes the socket after transmitting still sent it.
             const timestamp = url !== undefined && readyState(this) === OPEN ? now() : undefined;
-            if (url !== undefined && timestamp !== undefined) before = { url, timestamp, deliver: receivers() };
+            if (url !== undefined && timestamp !== undefined) {
+              before = { url, timestamp, deliver: receivers(), buffer: typeof data === "object" ? sizeThrough(BUFFER_SIZE_GETTERS, data) : undefined };
+            }
           } catch {
             before = undefined; // Observation never stops the send.
           }
           const result = apply(sendOwner.original, this, args);
           if (!before) return result;
           try {
-            // Read before sizing, which can run page code that closes the socket.
-            const open = readyState(this) === OPEN;
-            const binary = typeof data === "object" ? binarySize(data) : undefined;
-            // Strings, binary data and other primitives reach the platform as
-            // they are or convert without page code. Any other object is
-            // converted by the send (the platform's to a string, a library's
-            // in its own way), which can run page code that closes the socket.
-            const converted = binary === undefined && ((typeof data === "object" && data !== null) || typeof data === "function");
-            // The platform's own send never closes the socket, so one no
-            // longer open after it means converting the data closed it and the
-            // data was discarded. A library's send may transmit and then close,
-            // which the wrapper cannot tell from that: it is recorded by the
-            // state before its call.
-            if (!converted || sendOwner.original !== PLATFORM_SEND || open) {
-              const { url, timestamp, deliver } = before;
-              const size = typeof data === "string" ? utf8Size(data) : nonnegativeInteger(binary);
-              deliver(size === undefined ? { type: "message", url, timestamp, direction: "sent" } : { type: "message", url, timestamp, direction: "sent", size });
-            }
+            recordSent(this, data, before, sendOwner.original === PLATFORM_SEND);
           } catch {
             /* Observation never changes what send() returns. */
           }

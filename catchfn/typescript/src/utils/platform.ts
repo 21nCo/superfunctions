@@ -12,14 +12,58 @@ export const UNREADABLE: unique symbol = Symbol("unreadable");
 export const { apply } = Reflect;
 export const platform = globalThis as Record<string, unknown>;
 
+/**
+ * What `read` gives as this module loads, or undefined when it throws (a
+ * global or prototype the page made a throwing accessor or Proxy): loading
+ * catchfn never throws.
+ */
+export function capture<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
+/** A global, read without throwing. */
+export function globalValue(name: string): unknown {
+  return capture(() => platform[name]);
+}
+
 export function prototypeOf(constructor: unknown): object | undefined {
-  return typeof constructor === "function" ? (constructor.prototype as object) : undefined;
+  return typeof constructor === "function" ? capture(() => constructor.prototype as object) : undefined;
 }
 
 /** A prototype's own getter (or, with "value", method). */
 export function intrinsic(prototype: object | undefined, key: PropertyKey, kind: "get" | "value" = "get"): Intrinsic | undefined {
-  const found: unknown = prototype && Object.getOwnPropertyDescriptor(prototype, key)?.[kind];
+  const found: unknown = prototype && capture(() => Object.getOwnPropertyDescriptor(prototype, key)?.[kind]);
   return typeof found === "function" ? (found as Intrinsic) : undefined;
+}
+
+/**
+ * `get` when its brand check runs no Proxy trap on this runtime, probed once
+ * at load on a Proxy of `sample()` (a platform object it accepts) and of a
+ * plain object, whose handler records every trap lookup. A WebIDL getter
+ * checks an internal slot; Node's `Blob` size getter reads a symbol property,
+ * which runs a trap: such a getter is never used, so reading a value through
+ * it can never run page code.
+ */
+export function trapFree(get: Intrinsic | undefined, sample: () => object): Intrinsic | undefined {
+  if (!get || typeof Proxy !== "function") return undefined;
+  let trapped = false;
+  try {
+    const handler = new Proxy({}, { get: () => void (trapped = true) });
+    for (const target of [sample(), {}]) {
+      try {
+        apply(get, new Proxy(target, handler), []);
+      } catch {
+        /* Not the platform object, as expected. */
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return trapped ? undefined : get;
 }
 
 /**
@@ -56,7 +100,7 @@ export function attribute(get: Intrinsic | undefined, target: unknown, key: stri
   return dataValue(target, key);
 }
 
-const EVENT_TARGET_PROTOTYPE = prototypeOf(platform.EventTarget);
+const EVENT_TARGET_PROTOTYPE = prototypeOf(globalValue("EventTarget"));
 export const ADD_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "addEventListener", "value");
 export const REMOVE_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "removeEventListener", "value");
 
@@ -93,12 +137,18 @@ export function nonnegativeInteger(value: unknown): number | undefined {
 }
 
 // Date.now as this module loaded: a clock the page replaces later never runs.
-const DATE_NOW = Date.now as Intrinsic;
+// Undefined when there was none to read then (no Date, or a Date.now accessor
+// that throws or gives no function): every observation is then dropped.
+const DATE_NOW = capture(() => {
+  const read: unknown = Date.now;
+  return typeof read === "function" ? (read as Intrinsic) : undefined;
+});
 
 /** The time in milliseconds, or undefined when the clock gives no value v1 can record. Never throws. */
 export function now(): number | undefined {
+  if (!DATE_NOW) return undefined;
   try {
-    return nonnegativeInteger(apply(DATE_NOW, Date, []));
+    return nonnegativeInteger(apply(DATE_NOW, undefined, []));
   } catch {
     return undefined;
   }

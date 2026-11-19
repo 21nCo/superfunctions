@@ -205,14 +205,19 @@ constructs through the page's own class and is not observed.
 - Messages record their direction and their size in bytes: a string's UTF-8
   length (counted with the `String.prototype.charCodeAt` captured at load),
   or the size of an `ArrayBuffer`, typed array, `DataView` or `Blob`
-  through the platform getters captured at load. Another payload type is
-  recorded without `size`. The payload itself is never recorded.
+  through the platform getters captured at load, each used only when a
+  probe at load shows its brand check runs no `Proxy` trap. A browser's
+  `Blob` getter qualifies; Node's reads a symbol property, which runs a
+  trap, so on Node a `Blob` is recorded without `size`. Another payload
+  type is recorded without `size`. The payload itself is never recorded.
 - `send()` on a socket constructed while no collector ran is passed straight
   to the page's `send`, unobserved. On an observed socket the page's `send`
-  always receives the caller's arguments unchanged. Before it only the
-  socket's membership and `readyState` are read; the data is classified and
-  sized after the `send` returns, so sizing (a `Proxy` trap included) never
-  changes what is sent.
+  always receives the caller's arguments unchanged, and observing it runs
+  no page code. Before it only the socket's membership and `readyState`,
+  the clock, and the length of an `ArrayBuffer`, typed array or `DataView`
+  are read (a library's `send` may transfer the buffer, detaching it). A
+  `Blob` and a string are sized after the `send` returns; `readyState` is
+  read again only for an object the platform's own `send` converts (below).
 - Only a `send()` on an open socket is recorded, its `readyState` read
   before the call through the getter captured at load: the platform throws
   while connecting (it still throws) and discards the data once the socket
@@ -251,8 +256,7 @@ constructs through the page's own class and is not observed.
   `close` with code 1006, which Node 22 omits. The collector records what
   the runtime emits.
 - A recorded `size` is always a nonnegative safe integer; a size a platform
-  getter reports as anything else (a `Proxy` of a `Blob` can fool Node's) is
-  omitted and the event kept.
+  getter reports as anything else is omitted and the event kept.
 - `start()` reentered while it installs (page code run by reading the global
   or adding a listener) is a no-op, and a `stop()` during that install leaves
   the session at once: a socket constructed meanwhile is never observed, also
@@ -260,6 +264,8 @@ constructs through the page's own class and is not observed.
 - Timestamps of the error and WebSocket collectors come from the `Date.now`
   captured at load. An observation whose clock gives anything but a
   nonnegative safe integer is dropped; the event or send itself is unchanged.
+  Loading never throws: with no `Date.now` to capture then (a throwing
+  accessor, or none), every observation is dropped.
 
 Known limit, deferred to SFNS-60 (SFNS-57 owner decision of 2026-11-19):
 against hostile same-realm page code (patched intrinsics such as `Set`

@@ -100,6 +100,38 @@ async function loadOverPageSocket() {
   return import("../src/collectors/websocket.js");
 }
 
+/**
+ * A Blob whose size getter checks a private field, as a browser's WebIDL
+ * getter checks an internal slot: on a Proxy it throws without a trap.
+ */
+class TrapFreeBlob {
+  readonly #size: number;
+  constructor(size: number) {
+    this.#size = size;
+  }
+  get size(): number {
+    return this.#size;
+  }
+}
+
+/** The collector loaded over PageSocket while TrapFreeBlob is the global Blob. */
+async function loadWithTrapFreeBlob() {
+  const savedBlob = Object.getOwnPropertyDescriptor(globalThis, "Blob")!;
+  platform.Blob = TrapFreeBlob;
+  try {
+    return await loadOverPageSocket();
+  } finally {
+    Object.defineProperty(globalThis, "Blob", savedBlob);
+  }
+}
+
+/** A Proxy of `target` whose handler counts every trap lookup. */
+function countingProxy<T extends object>(target: T): { proxy: T; traps: () => number } {
+  let count = 0;
+  const handler = new Proxy({}, { get: () => void (count += 1) });
+  return { proxy: new Proxy(target, handler) as T, traps: () => count };
+}
+
 /** The collector loaded with listener methods that record each add and remove. */
 async function loadRecordingListeners(hooks: { onAdd?: () => void } = {}) {
   const added: Array<[unknown, string, unknown]> = [];
@@ -171,7 +203,9 @@ describe("WebSocketCollector", () => {
     socket.serverSends(new Blob(["ab"]));
     socket.serverSends({ unknown: "shape" });
     const sizes = collector.collect().filter((event) => event.type === "message").map((event) => event.size);
-    expect(sizes).toEqual([8, 5, 3, 4, 12, 2, undefined]);
+    // Node's Blob size getter runs a Proxy trap, so a Blob is recorded without
+    // size there; a browser's WebIDL getter (TrapFreeBlob below) sizes it.
+    expect(sizes).toEqual([8, 5, 3, undefined, 12, undefined, undefined]);
   });
 
   it("does not record a send() the socket rejects", () => {
@@ -585,23 +619,135 @@ describe("WebSocketCollector", () => {
     expect(PageSocket.prototype.send).toBe(pageSend);
   });
 
-  it("transmits a Blob Proxy whose trap closes the socket exactly as without the collector", () => {
-    const transmit = () => {
+  it("transmits Blob Proxies whose trap closes the socket on a first or a later call exactly as without the collector", () => {
+    const transmit = (closeAfter: number) => {
       const socket = openSocket("wss://example.com/proxy-blob");
       socket.serverOpens();
-      const blob = new Proxy(new Blob(["abc"]), {
-        get(target, key) {
-          if (typeof key === "symbol") socket.close(); // Sizing the data runs this trap.
-          return Reflect.get(target, key) as unknown;
-        },
-      });
-      socket.send(blob);
-      return socket.sent.length;
+      let calls = 0;
+      const blob = () =>
+        new Proxy(new Blob(["abc"]), {
+          get(target, key) {
+            if (typeof key === "symbol" && (calls += 1) > closeAfter) socket.close(); // Node's size getter runs this trap.
+            return Reflect.get(target, key) as unknown;
+          },
+        });
+      for (let index = 0; index < 3; index += 1) socket.send(blob());
+      return { sent: socket.sent.length, readyState: socket.readyState, calls };
     };
-    const without = transmit();
+    const without = [0, 1, 2].map(transmit);
     collector.start();
-    expect(transmit()).toBe(without);
-    expect(without).toBe(1);
+    expect([0, 1, 2].map(transmit)).toEqual(without);
+    expect(without.map(({ sent }) => sent)).toEqual([3, 3, 3]); // PageSocket's send runs no symbol get.
+    expect(sentSizes(collector)).toEqual(Array(9).fill(undefined));
+  });
+
+  it("sizes a buffer or view before the send, so one a library's send transfers is recorded by what it sent", () => {
+    PageSocket.prototype.send = function (this: PageSocket, data: unknown) {
+      // To a transport worker: transferring detaches the caller's buffer.
+      const transfer = data instanceof ArrayBuffer ? [data] : ArrayBuffer.isView(data) ? [data.buffer as ArrayBuffer] : [];
+      pageSend.call(this, transfer.length ? structuredClone(data, { transfer }) : data);
+    };
+    collector.start();
+    const socket = openSocket("wss://example.com/transfer");
+    socket.serverOpens();
+    const view = new Uint8Array(8);
+    const buffer = new ArrayBuffer(6);
+    socket.send(view);
+    socket.send(buffer);
+    socket.send(new DataView(new ArrayBuffer(4)));
+    socket.send(new Uint8Array(0));
+    expect(view.byteLength).toBe(0); // Detached by the send.
+    expect(buffer.byteLength).toBe(0);
+    expect((socket.sent as ArrayBufferLike[]).map((each) => (each as { byteLength: number }).byteLength)).toEqual([8, 6, 4, 0]);
+    expect(sentSizes(collector)).toEqual([8, 6, 4, 0]);
+  });
+
+  it("runs no trap of a Proxy of a view or a Blob, recording it without size", async () => {
+    const payloads = () => [new ArrayBuffer(4), new DataView(new ArrayBuffer(4)), new TrapFreeBlob(4)];
+    const send = (target: object) => {
+      const socket = openSocket("wss://example.com/proxy-view");
+      socket.serverOpens();
+      const { proxy, traps } = countingProxy(target);
+      socket.send(proxy);
+      return traps(); // PageSocket's own send converts it, running some: as many without the collector.
+    };
+    const fresh = await loadWithTrapFreeBlob();
+    const without = payloads().map(send);
+    collector = new fresh.WebSocketCollector(5);
+    collector.start();
+    expect(payloads().map(send)).toEqual(without);
+    expect(sentSizes(collector)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("reads readyState after a send only for an object the platform's send converts", async () => {
+    let reads = 0;
+    /** A socket whose readyState getter counts reads; its send reads it once, as PageSocket's. */
+    class CountingSocket extends EventTarget {
+      readonly sent: unknown[] = [];
+      #state = 0;
+      get readyState(): number {
+        reads += 1;
+        return this.#state;
+      }
+      get url(): string {
+        return "wss://example.com/reads";
+      }
+      send(data: unknown): void {
+        const binary = data instanceof ArrayBuffer || ArrayBuffer.isView(data) || data instanceof Blob;
+        if (this.readyState === 1) this.sent.push(typeof data === "object" && data !== null && !binary ? String(data) : data);
+      }
+      serverOpens(): void {
+        this.#state = 1;
+        this.dispatchEvent(new Event("open"));
+      }
+    }
+    platform.WebSocket = CountingSocket;
+    vi.resetModules();
+    const fresh = await import("../src/collectors/websocket.js"); // CountingSocket's send is the platform's to it.
+    collector = new fresh.WebSocketCollector(10);
+    collector.start();
+    const socket = new (platform.WebSocket as new (url: string) => CountingSocket)("wss://example.com/reads");
+    socket.serverOpens();
+    const readsFor = (data: unknown) => {
+      reads = 0;
+      socket.send(data);
+      return reads - 1; // The send's own read.
+    };
+    // Node's Blob is not recognized without a trap-free getter: it counts as converted.
+    expect([readsFor("x"), readsFor(new Uint8Array(2)), readsFor({ toString: () => "y" }), readsFor(new Blob(["ab"]))]).toEqual([1, 1, 2, 2]);
+    expect(socket.sent).toHaveLength(4);
+    expect(sentSizes(collector)).toEqual([1, 2, undefined, undefined]);
+  });
+
+  it("imports the package and starts with no clock to capture, recording nothing timestamped and changing no send", async () => {
+    const realNow = Object.getOwnPropertyDescriptor(Date, "now")!;
+    const noClock = [
+      () => Object.defineProperty(Date, "now", { configurable: true, get: () => { throw new Error("clock accessor"); } }),
+      () => Reflect.deleteProperty(Date, "now"),
+    ];
+    for (const remove of noClock) {
+      remove();
+      vi.resetModules();
+      let entry: typeof import("../src/index.js");
+      try {
+        entry = await import("../src/index.js");
+      } finally {
+        Object.defineProperty(Date, "now", realNow);
+      }
+      const timed = new entry.WebSocketCollector(10);
+      timed.start();
+      try {
+        const socket = openSocket("wss://example.com/no-clock");
+        socket.serverOpens();
+        socket.send("x");
+        socket.serverSends("y");
+        socket.serverCloses(1000, true);
+        expect(socket.sent).toEqual(["x"]);
+        expect(timed.collect()).toEqual([]);
+      } finally {
+        timed.stop();
+      }
+    }
   });
 
   it("drops an observation whose clock gives no valid v1 timestamp, keeping the send and the socket's events", async () => {
@@ -651,18 +797,19 @@ describe("WebSocketCollector", () => {
     }
   });
 
-  it("records a binary size only when it is a nonnegative safe integer, keeping the event", () => {
+  it("records a binary size only when it is a nonnegative safe integer, keeping the event", async () => {
+    const fresh = await loadWithTrapFreeBlob();
+    collector = new fresh.WebSocketCollector(20);
     collector.start();
     const socket = openSocket("wss://example.com/sizes");
     socket.serverOpens();
-    // A Proxy of a Blob can make the platform's own size getter report any number.
-    const fooled = (size: number) =>
-      new Proxy(new Blob(["abc"]), { get: (target, key) => (typeof key === "symbol" && key !== Symbol.toPrimitive && key !== Symbol.toStringTag ? size : Reflect.get(target, key)) });
+    // A platform getter can report any number: a size v1 cannot record is omitted.
+    const fooled = (size: number) => new TrapFreeBlob(size);
     const invalid = [2.5, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53];
     for (const size of invalid) socket.send(fooled(size));
     for (const size of invalid) socket.serverSends(fooled(size));
     socket.send(new Uint8Array(3));
-    socket.serverSends(new Blob(["abcd"]));
+    socket.serverSends(new TrapFreeBlob(4));
     socket.send("é");
     const messages = collector.collect().filter((event) => event.type === "message");
     expect(messages.map(({ direction, size }) => [direction, size])).toEqual([
@@ -869,7 +1016,8 @@ describe("WebSocketCollector", () => {
     expect(received[0]).toBe(object);
     expect(received[1]).toBe(blob);
     expect(socket.sent).toEqual(['{"action":"ping"}', blob]);
-    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, 2]);
+    // Node's Blob size getter runs a Proxy trap, so the Blob has no size here.
+    expect(collector.collect().filter((event) => event.type === "message").map(({ size }) => size)).toEqual([undefined, undefined]);
   });
 
   it("never sizes a bare SharedArrayBuffer by its byteLength: the platform's send converts it to a string", async () => {

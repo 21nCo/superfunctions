@@ -266,6 +266,34 @@ describe("ErrorCollector", () => {
     });
   }
 
+  it("imports and starts with no clock to capture, recording nothing timestamped", async () => {
+    const realNow = Object.getOwnPropertyDescriptor(Date, "now")!;
+    const noClock = [
+      () => Object.defineProperty(Date, "now", { configurable: true, get: () => { throw new Error("clock accessor"); } }),
+      () => Reflect.deleteProperty(Date, "now"),
+    ];
+    for (const remove of noClock) {
+      remove();
+      vi.resetModules();
+      let entry: typeof import("../src/index.js");
+      try {
+        entry = await import("../src/index.js");
+      } finally {
+        Object.defineProperty(Date, "now", realNow);
+      }
+      const timed = new entry.ErrorCollector(10);
+      timed.start();
+      try {
+        const event = reject("no clock");
+        throwUncaught(new Error("no clock"));
+        expect(event.defaultPrevented).toBe(false);
+        expect(timed.collect()).toEqual([]);
+      } finally {
+        timed.stop();
+      }
+    }
+  });
+
   it("drops an error whose clock gives no valid v1 timestamp", async () => {
     const realNow = Date.now;
     let clock: () => unknown = realNow;

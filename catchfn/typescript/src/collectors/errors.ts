@@ -1,5 +1,5 @@
 import { EVIDENCE_SCHEMA_VERSION, freezeEvent, takeSeq, type ErrorEvidenceEvent } from "../events.js";
-import { apply, attribute, intrinsic, listen, now, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
+import { apply, attribute, globalValue, intrinsic, listen, now, platform, platformRead, prototypeOf, unlisten, UNREADABLE, type Intrinsic } from "../utils/platform.js";
 import { redactUrl } from "../utils/redaction.js";
 import { RingBuffer, assertCapacity, type CollectWindow } from "../utils/ring-buffer.js";
 import { MAX_ENTRY_BYTES, serializeEntry, truncateToBytes, utf8Length, type SerializedValue } from "../utils/serialization.js";
@@ -10,13 +10,13 @@ type Listener = (observation: Observation) => void;
 
 // The ErrorEvent and PromiseRejectionEvent getters, captured when this module
 // loads: a getter the page patches later never runs on a reported event.
-const ERROR_EVENT_PROTOTYPE = prototypeOf(platform.ErrorEvent);
+const ERROR_EVENT_PROTOTYPE = prototypeOf(globalValue("ErrorEvent"));
 const ERROR_EVENT_MESSAGE = intrinsic(ERROR_EVENT_PROTOTYPE, "message");
 const ERROR_EVENT_FILENAME = intrinsic(ERROR_EVENT_PROTOTYPE, "filename");
 const ERROR_EVENT_LINENO = intrinsic(ERROR_EVENT_PROTOTYPE, "lineno");
 const ERROR_EVENT_COLNO = intrinsic(ERROR_EVENT_PROTOTYPE, "colno");
 const ERROR_EVENT_ERROR = intrinsic(ERROR_EVENT_PROTOTYPE, "error");
-const REJECTION_EVENT_REASON = intrinsic(prototypeOf(platform.PromiseRejectionEvent), "reason");
+const REJECTION_EVENT_REASON = intrinsic(prototypeOf(globalValue("PromiseRejectionEvent")), "reason");
 
 let listeners = new Set<Listener>();
 let restore: (() => void) | undefined;
