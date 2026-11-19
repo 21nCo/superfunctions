@@ -385,7 +385,9 @@ await new Promise<void>((resolve, reject) => {
 const address = httpServer.address() as AddressInfo;
 const origin = `http://127.0.0.1:${address.port}`;
 handler = await server.createWebStandardHandler({
-  sessionIdGenerator: randomUUID,
+  // Elicitation and sampling are server-to-client requests; the client's
+  // response must reach the server instance that is waiting for it.
+  sessionIdGenerator: () => randomUUID(),
   enableDnsRebindingProtection: true,
   allowedHosts: [`127.0.0.1:${address.port}`],
   allowedOrigins: [origin],

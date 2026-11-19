@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ErrorCode, ListToolsRequestSchema, LoggingMessageNotificationSchema, McpError, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -142,6 +143,25 @@ describe("McpFnServer", () => {
       name: "schema_prompt",
       arguments: [{ name: "topic", description: "Topic to explain.", required: true }],
     })]);
+  });
+
+  it("resolves percent-encoded local references in prompt argument schemas", () => {
+    for (const reference of ["#/definitions/first%20name", "#%2Fdefinitions%2Ffirst%20name"]) {
+      const registry = new McpFnRegistry().registerPrompt({
+        name: "encoded_reference_prompt",
+        argumentsSchema: {
+          type: "object",
+          definitions: { "first name": { type: "string", description: "Given name." } },
+          properties: { name: { $ref: reference } },
+          required: ["name"],
+          additionalProperties: false,
+        },
+        get: async () => ({ messages: [] }),
+      });
+      expect(registry.listPrompts()[0]?.arguments).toEqual([
+        expect.objectContaining({ name: "name", required: true }),
+      ]);
+    }
   });
 
   it("lists required-only prompt arguments derived from argumentsSchema", () => {
@@ -744,6 +764,131 @@ describe("McpFnServer", () => {
     expect(configuredServers).toHaveLength(2);
     expect(new Set(configuredServers).size).toBe(2);
     expect(configuredServers).not.toContain(server);
+  });
+
+  it("delivers notifications sent through the server to session HTTP clients", async () => {
+    const server = createMcpFnServer({
+      info: { name: "notify-test", version: "1.0.0" },
+      registry: new McpFnRegistry().register({
+        name: "noop",
+        description: "Does nothing.",
+        inputSchema: { type: "object", properties: {} },
+        handler: async () => structuredResult({}),
+      }),
+    });
+    let nextSession = 0;
+    const handler = await server.createWebStandardHandler({
+      sessionIdGenerator: () => `session-${++nextSession}`,
+    });
+    const client = new Client({ name: "notify-client", version: "1.0.0" });
+    const received = new Promise<void>((resolve) => {
+      client.setNotificationHandler(ToolListChangedNotificationSchema, async () => resolve());
+    });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+      fetch: (input, init) => handler(new Request(input, init)),
+    });
+    closeables.push(client, server);
+    await client.connect(transport);
+    // Wait until the client's standalone event stream is open on the session server.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await server.sendToolListChanged();
+    await expect(Promise.race([
+      received.then(() => "received"),
+      new Promise((resolve) => setTimeout(() => resolve("timed out"), 2_000)),
+    ])).resolves.toBe("received");
+  });
+
+  it("honors each HTTP session's logging level for broadcast log messages", async () => {
+    const server = createMcpFnServer({
+      info: { name: "log-test", version: "1.0.0" },
+      additionalCapabilities: { logging: {} },
+      registry: new McpFnRegistry().register({
+        name: "noop",
+        description: "Does nothing.",
+        inputSchema: { type: "object", properties: {} },
+        handler: async () => structuredResult({}),
+      }),
+    });
+    let nextSession = 0;
+    const handler = await server.createWebStandardHandler({
+      sessionIdGenerator: () => `session-${++nextSession}`,
+    });
+    const client = new Client({ name: "log-client", version: "1.0.0" });
+    const levels: string[] = [];
+    client.setNotificationHandler(LoggingMessageNotificationSchema, async (notification) => {
+      levels.push(notification.params.level);
+    });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+      fetch: (input, init) => handler(new Request(input, init)),
+    });
+    closeables.push(client, server);
+    await client.connect(transport);
+    await client.setLoggingLevel("error");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await server.sendLoggingMessage({ level: "debug", data: "below the client's level" });
+    await server.sendLoggingMessage({ level: "error", data: "at the client's level" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(levels).toEqual(["error"]);
+  });
+
+  it("keeps broadcasting when one HTTP session's transport fails", async () => {
+    const server = createMcpFnServer({
+      info: { name: "broadcast-test", version: "1.0.0" },
+      registry: new McpFnRegistry().register({
+        name: "noop",
+        description: "Does nothing.",
+        inputSchema: { type: "object", properties: {} },
+        handler: async () => structuredResult({}),
+      }),
+    });
+    let nextSession = 0;
+    const handler = await server.createWebStandardHandler({
+      sessionIdGenerator: () => `session-${++nextSession}`,
+      configureRequestServer: (requestServer) => {
+        if (nextSession === 1) {
+          // The second session's transport fails every send, like a client
+          // that disappeared without closing its session.
+          requestServer.protocol.sendToolListChanged = () => Promise.reject(new Error("transport gone"));
+        }
+      },
+    });
+    const healthy = new Client({ name: "healthy", version: "1.0.0" });
+    const received = new Promise<void>((resolve) => {
+      healthy.setNotificationHandler(ToolListChangedNotificationSchema, async () => resolve());
+    });
+    const broken = new Client({ name: "broken", version: "1.0.0" });
+    const connect = (client: Client) => client.connect(new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+      fetch: (input, init) => handler(new Request(input, init)),
+    }));
+    closeables.push(healthy, broken, server);
+    await connect(healthy);
+    await connect(broken);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(server.sendToolListChanged()).resolves.toBeUndefined();
+    await expect(Promise.race([
+      received.then(() => "received"),
+      new Promise((resolve) => setTimeout(() => resolve("timed out"), 2_000)),
+    ])).resolves.toBe("received");
+  });
+
+  it("points client requests without a direct transport to the per-request APIs", async () => {
+    const server = createMcpFnServer({
+      info: { name: "client-request-test", version: "1.0.0" },
+      registry: new McpFnRegistry(),
+    });
+    closeables.push(server);
+    await server.createWebStandardHandler({ sessionIdGenerator: () => "session-1" });
+    await expect(server.sample({ messages: [], maxTokens: 1 })).rejects.toMatchObject({
+      code: "MCPFN_CLIENT_REQUEST_NEEDS_REQUEST",
+      message: expect.stringContaining("sampleForRequest"),
+    });
+    await expect(server.elicit({ message: "?", requestedSchema: { type: "object", properties: {} } })).rejects.toMatchObject({
+      code: "MCPFN_CLIENT_REQUEST_NEEDS_REQUEST",
+    });
+    await expect(server.listRoots()).rejects.toMatchObject({ code: "MCPFN_CLIENT_REQUEST_NEEDS_REQUEST" });
   });
 
   it("routes sessionful HTTP clients to isolated transports", async () => {

@@ -147,6 +147,7 @@ export function validateManifest(value: unknown): McpFnManifest {
   assertObject("McpFn manifest", value);
   const manifest = value as Partial<McpFnManifest>;
   const manifestSchemas: object[] = [];
+  const manifestSchemaLabels: string[] = [];
   if (manifest.formatVersion !== 1) {
     throw new McpFnValidationError("Unsupported McpFn manifest formatVersion");
   }
@@ -226,7 +227,11 @@ export function validateManifest(value: unknown): McpFnManifest {
       }
     }
     manifestSchemas.push(tool.inputSchema);
-    if (tool.outputSchema !== undefined) manifestSchemas.push(tool.outputSchema);
+    manifestSchemaLabels.push(`tool ${tool.name} inputSchema`);
+    if (tool.outputSchema !== undefined) {
+      manifestSchemas.push(tool.outputSchema);
+      manifestSchemaLabels.push(`tool ${tool.name} outputSchema`);
+    }
     for (const [label, metadata] of [
       ["annotations", tool.annotations],
       ["execution", tool.execution],
@@ -342,6 +347,7 @@ export function validateManifest(value: unknown): McpFnManifest {
         );
       }
       manifestSchemas.push(prompt.argumentsSchema);
+      manifestSchemaLabels.push(`prompt ${prompt.name} argumentsSchema`);
       assertPromptSchemaSupportsStringValues(
         prompt.argumentsSchema,
         `Manifest prompt ${prompt.name} argumentsSchema`,
@@ -371,9 +377,14 @@ export function validateManifest(value: unknown): McpFnManifest {
       // canonical manifest ordering while duplicate IDs still fail.
       validateSchemaCollection(manifestSchemas);
     } catch (error) {
-      throw new McpFnValidationError("Manifest contains an invalid JSON Schema", {
-        cause: error instanceof Error ? error.message : String(error),
-      });
+      const culprit = invalidSchemaLabel(manifestSchemas, manifestSchemaLabels);
+      throw new McpFnValidationError(
+        culprit ? `Manifest contains an invalid JSON Schema in ${culprit}` : "Manifest contains an invalid JSON Schema",
+        {
+          cause: error instanceof Error ? error.message : String(error),
+          ...(culprit ? { schema: culprit } : {}),
+        },
+      );
     }
   }
 
@@ -390,3 +401,27 @@ export function validateManifest(value: unknown): McpFnManifest {
   }
   return manifest as McpFnManifest;
 }
+
+/**
+ * Name the schema that makes a manifest's schema collection invalid: the one
+ * whose removal leaves the rest valid. Schemas reference each other, so they
+ * are validated together and the collection error alone cannot say which
+ * schema failed. Only runs after validation has already failed.
+ */
+// Each attempt recompiles the rest of the collection, so the search is
+// quadratic; above this size the error stays generic instead.
+const MAX_LABEL_SEARCH_SCHEMAS = 32;
+
+function invalidSchemaLabel(schemas: readonly object[], labels: readonly string[]): string | undefined {
+  if (schemas.length > MAX_LABEL_SEARCH_SCHEMAS) return undefined;
+  for (let index = 0; index < schemas.length; index += 1) {
+    try {
+      validateSchemaCollection(schemas.filter((_, other) => other !== index));
+      return labels[index];
+    } catch {
+      // Removing this schema does not make the collection valid; try the next.
+    }
+  }
+  return undefined;
+}
+

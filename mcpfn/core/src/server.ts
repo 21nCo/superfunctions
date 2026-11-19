@@ -433,10 +433,13 @@ export class McpFnServer<TContext = undefined> {
                 extra as McpFnTaskRequestExtra,
                 observer,
               );
+              // Result writes during the creation callback validate output
+              // before the callback returns, so their evidence precedes handler.
               await this.emitCompletedToolStages(
                 completedStages,
                 resolved,
                 request.params.name,
+                flushTaskOutput,
               );
               await flushTaskOutput();
               return result;
@@ -457,7 +460,7 @@ export class McpFnServer<TContext = undefined> {
           } catch (error) {
             completedStages.delete(currentStage);
             if ((currentStage as McpFnClientProfileLifecycleStage) === "invalid-arguments-handler") completedStages.delete("input-validation");
-            if (resolved) await this.emitCompletedToolStages(completedStages, resolved, request.params.name);
+            if (resolved) await this.emitCompletedToolStages(completedStages, resolved, request.params.name, flushTaskOutput);
             await flushTaskOutput();
             const profile = this.profileReference(resolved);
             const details =
@@ -688,6 +691,7 @@ export class McpFnServer<TContext = undefined> {
       const result = await buildMcpFnEffectiveCatalog({
         canonicalTools: tools,
         knownTools,
+        schemaResources: this.registry.schemaDefinitions(),
         resolved,
       });
       await this.emitProfileEvidence({
@@ -714,6 +718,7 @@ export class McpFnServer<TContext = undefined> {
     stages: Set<McpFnClientProfileLifecycleStage>,
     resolved: McpFnResolvedClientProfile<TContext>,
     tool: string,
+    beforeHandler?: () => Promise<void>,
   ): Promise<void> {
     for (const stage of [
       "input-validation",
@@ -721,6 +726,7 @@ export class McpFnServer<TContext = undefined> {
       "handler",
       "output-validation",
     ] as const) {
+      if (stage === "handler") await beforeHandler?.();
       if (!stages.has(stage)) continue;
       await this.emitProfileEvidence({
         stage,
@@ -868,6 +874,8 @@ export class McpFnServer<TContext = undefined> {
     params: McpFnSamplingParams,
     options?: McpFnClientRequestOptions,
   ): Promise<McpFnSamplingResult> {
+    const unavailable = this.directClientRequestError("sample", "sampleForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.createMessage(params, options);
   }
 
@@ -890,6 +898,8 @@ export class McpFnServer<TContext = undefined> {
     params: McpFnElicitationParams,
     options?: McpFnClientRequestOptions,
   ): Promise<McpFnElicitationResult> {
+    const unavailable = this.directClientRequestError("elicit", "elicitForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.elicitInput(params, options);
   }
 
@@ -906,7 +916,21 @@ export class McpFnServer<TContext = undefined> {
   }
 
   listRoots(options?: RequestOptions): Promise<McpFnRootsResult> {
+    const unavailable = this.directClientRequestError("listRoots", "listRootsForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.listRoots(undefined, options);
+  }
+
+  // sample(), elicit() and listRoots() send a request to the client on this
+  // server's own transport. With createWebStandardHandler, each request or
+  // session is served by its own server, so there is no single client to ask:
+  // tool handlers use the *ForRequest variants with their `extra` instead.
+  private directClientRequestError(method: string, alternative: string): McpFnError | undefined {
+    if (this.connected) return undefined;
+    return new McpFnError(
+      "MCPFN_CLIENT_REQUEST_NEEDS_REQUEST",
+      `${method}() needs a directly connected transport. Over createWebStandardHandler, call ${alternative}(extra, ...) from the tool handler instead.`,
+    );
   }
 
   listRootsForRequest(
@@ -920,27 +944,53 @@ export class McpFnServer<TContext = undefined> {
     );
   }
 
-  sendLoggingMessage(
+  // Servers that currently have a client: this server when it was connected
+  // directly, and the per-request or per-session servers created by
+  // createWebStandardHandler, which own the HTTP transports.
+  private connectedServers(): McpFnServer<TContext>[] {
+    return [this, ...this.requestServers].filter((server) => server.connected);
+  }
+
+  // Deliver to every recipient. A failure on this server's own transport is
+  // still reported; a per-request or per-session server whose client went
+  // away does not stop the others from receiving the notification.
+  private async broadcast(
+    servers: McpFnServer<TContext>[],
+    send: (server: McpFnServer<TContext>) => Promise<void>,
+  ): Promise<void> {
+    const results = await Promise.allSettled(servers.map((server) => send(server)));
+    const own = servers.indexOf(this);
+    const ownResult = own === -1 ? undefined : results[own];
+    if (ownResult?.status === "rejected") throw ownResult.reason;
+  }
+
+  async sendLoggingMessage(
     params: LoggingMessageNotification["params"],
     sessionId?: string,
-  ) {
-    return this.protocol.sendLoggingMessage(params, sessionId);
+  ): Promise<void> {
+    await this.broadcast(
+      this.connectedServers()
+        .filter((server) => server === this || sessionId === undefined || server.protocol.transport?.sessionId === sessionId),
+      // The SDK keeps each HTTP client's logging level under its transport's
+      // session id, so pass the recipient's own id unless one was given.
+      (server) => server.protocol.sendLoggingMessage(params, sessionId ?? server.protocol.transport?.sessionId),
+    );
   }
 
-  sendResourceUpdated(params: ResourceUpdatedNotification["params"]) {
-    return this.protocol.sendResourceUpdated(params);
+  async sendResourceUpdated(params: ResourceUpdatedNotification["params"]): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendResourceUpdated(params));
   }
 
-  sendResourceListChanged() {
-    return this.protocol.sendResourceListChanged();
+  async sendResourceListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendResourceListChanged());
   }
 
-  sendToolListChanged() {
-    return this.protocol.sendToolListChanged();
+  async sendToolListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendToolListChanged());
   }
 
-  sendPromptListChanged() {
-    return this.protocol.sendPromptListChanged();
+  async sendPromptListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendPromptListChanged());
   }
 
   async close(): Promise<void> {

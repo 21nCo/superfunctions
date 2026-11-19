@@ -167,7 +167,7 @@ events. It is observational: a sink failure cannot fail or change a request.
 
 Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the same registry. Resource-template and prompt completers advertise the completions capability automatically. Resource subscription handlers advertise `resources.subscribe`. List calls use stable `mcpfn:<offset>` cursors and a configurable server page size.
 
-Task support is declared with `execution.taskSupport` and a `taskHandler`; a task-capable server must receive an official SDK `TaskStore`. `server.listRoots()`, `server.sample()`, and `server.elicit()` invoke matching client capabilities. Declare required client features in `clientRequirements` so manifests and host-profile tests can reject incompatible hosts before deployment.
+Task support is declared with `execution.taskSupport` and a `taskHandler`; a task-capable server must receive an official SDK `TaskStore`. `server.listRoots()`, `server.sample()`, and `server.elicit()` invoke matching client capabilities over a transport connected with `server.connect()`. Behind `createWebStandardHandler()`, each request or session is served by its own isolated server, so tool handlers call `server.listRootsForRequest(extra)`, `server.sampleForRequest(extra, ...)` and `server.elicitForRequest(extra, ...)` with the handler's `extra`; the plain methods throw `MCPFN_CLIENT_REQUEST_NEEDS_REQUEST` there. Declare required client features in `clientRequirements` so manifests and host-profile tests can reject incompatible hosts before deployment.
 
 `createWebStandardHandler()` accepts the official SDK `HandleRequestOptions`, including validated `authInfo`. Use `@mcpfn/auth` to publish OAuth protected-resource metadata and produce that trusted value. In stateless mode, McpFn creates and disposes an isolated SDK server and transport for every request. Attach protocol instrumentation with `configureRequestServer`; it receives the live isolated server before transport connection and runs once per request, or once per session initialization attempt. Because configuration precedes SDK request validation, a rejected attempt can invoke the hook without retaining a session. Supply a cryptographically secure `sessionIdGenerator` when the server uses sampling, elicitation, or another server-to-client request that must be correlated across HTTP requests; session-enabled handlers retain their transport across the session.
 
@@ -208,9 +208,12 @@ The MCP-required root `type: "object"` is permitted; place other assertions on
 the referenced target. Later-draft keywords and unknown extensions ignored by
 the registry's draft-07 Ajv may remain beside `$ref`.
 
-Structural diagnostics retain exact unknown property names and instance paths;
-consumer report sinks must apply an aggregate size cap (the testing suite defaults
-to one MiB) rather than silently shortening property names.
+Structural diagnostics are bounded: a result carries at most 100 issues;
+property names, keywords and messages are cut to 256 characters; and instance or
+schema paths longer than 256 characters are reported as the root (`/`, `#`).
+Any issue shortened this way has `truncated: true`, so consumers can tell an
+exact name or path from a bounded one. Report sinks that aggregate many issues
+should still apply their own size cap.
 
 Task profile evidence distinguishes the creation handler from result persistence.
 `handler` reports the creation callback's outcome; `task-result-storage: failed`
@@ -220,3 +223,19 @@ not reverse handler success or claim a final task status. Output validation stil
 runs for each attempted result before persistence.
 
 Lifecycle evidence retains only recognized framework error codes; application-defined codes become `MCPFN_TOOL_ERROR`. Protocol error responses preserve the original application code and details.
+
+## Supported Node runtimes
+
+Core supports Node 18.18 and later. The SDK's web-standard HTTP transport requires
+`globalThis.crypto.randomUUID`; on Node 18 enable global WebCrypto before starting
+HTTP handlers, for example `NODE_OPTIONS=--experimental-global-webcrypto node app.mjs`.
+Node 20 provides this global by default. This prerequisite also applies to the
+previous SDK version; schema validation and in-memory transport do not require it.
+`@superfunctions/admin` requires Node 20 or later.
+
+After building core and shared admin, run
+`node mcpfn/core/scripts/packed-runtime-acceptance.mjs` from the repository root to
+pack both packages, install them in a disposable consumer, audit production
+dependencies, and exercise ESM/CJS validation and MCP transport. Set `NODE18` and
+`NODE20` to additional runtime executables. Set the WebCrypto `NODE_OPTIONS` flag
+when testing Node 18 HTTP. The consumer directory is removed afterward.

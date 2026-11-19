@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +24,32 @@ interface RequestContext {
 }
 
 describe("McpFn client profiles", () => {
+  it("reuses schema validation only for identical projection dependency graphs", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const compile = vi.spyOn(Ajv.prototype, "compile");
+    const tool = { name: "cache_graph", inputSchema: { type: "object" as const, $id: "https://cache.invalid/unique", properties: { value: { type: "string" } } } };
+    const input = { canonicalTools: [tool], resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" }, profile: { id: "cache", version: "1", matches: () => true } } };
+    try {
+      await buildMcpFnEffectiveCatalog(input);
+      expect(compile.mock.calls.length).toBeGreaterThan(0);
+      compile.mockClear();
+      await buildMcpFnEffectiveCatalog(input);
+      expect(compile).not.toHaveBeenCalled();
+      tool.inputSchema.properties.value.type = "not-a-json-schema-type";
+      await expect(buildMcpFnEffectiveCatalog(input)).rejects.toThrow("Projected schema must be valid JSON Schema");
+    } finally { compile.mockRestore(); }
+  });
+
+  it("retains registered external schemas in profiled list and call validation", async () => {
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "z_provider", description: "Provides a shared schema", inputSchema: { type: "object", $id: "https://profile.invalid/shared", properties: { value: { type: "string" } }, required: ["value"] }, handler: async () => structuredResult({ ok: true }) })
+      .register({ name: "a_consumer", description: "Uses shared schema", inputSchema: { type: "object", properties: { nested: { $ref: "https://profile.invalid/shared" } }, required: ["nested"] }, handler: async () => structuredResult({ ok: true }) });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "external", version: "1", matches: () => true, projectCatalog: ({ tools }) => tools.filter(tool => tool.name === "a_consumer") }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["a_consumer"]);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: "valid" } } })).isError).not.toBe(true);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: 42 } } })).isError).toBe(true);
+  });
+
   const closeables: Array<{ close(): Promise<void> }> = [];
 
   afterEach(async () => {
@@ -663,6 +690,7 @@ it("marks invalid-argument callbacks as handlers and bounds diagnostic paths", a
   const issue = formatMcpFnSchemaIssues([{ instancePath: '/' + 'x'.repeat(1000), schemaPath: '#/' + 'x'.repeat(1000), keyword: 'type', params: {}, message: 'bad' }])[0];
   expect(issue.instancePath).toBe('/');
   expect(issue.schemaPath).toBe('#');
+  expect(issue.truncated).toBe(true);
   const stages: string[] = [];
   const registry = new McpFnRegistry().register({ name: 'test', description: 'Test validation observer', inputSchema: { type: 'object', required: ['value'] },
     handleInvalidArguments: () => { throw new McpFnValidationError('private', { issues: [{ secret: 'private' }] }); },
@@ -977,6 +1005,10 @@ it("bounds request-controlled property names in diagnostics", async () => {
   const { formatMcpFnSchemaIssues } = await import("../src/validation.js");
   const issues = formatMcpFnSchemaIssues([{ keyword: "additionalProperties", instancePath: "", schemaPath: "#", params: { additionalProperty: "x".repeat(10000) } }]);
   expect(issues[0].rejectedProperty?.length).toBe(256);
+  expect(issues[0].truncated).toBe(true);
+  const exact = formatMcpFnSchemaIssues([{ keyword: "additionalProperties", instancePath: "/a", schemaPath: "#", params: { additionalProperty: "tenantId" } }]);
+  expect(exact[0]).toMatchObject({ rejectedProperty: "tenantId", instancePath: "/a" });
+  expect(exact[0].truncated).toBeUndefined();
 });
 
 it("rejects invalid projected MCP metadata and ignores schema object aliasing", async () => {
@@ -1046,6 +1078,34 @@ it.each(["storage", "wrapped-storage", "retried-storage", "handler", "invalid-ou
 });
 
 
+it("reports output validation of a result written during task creation before the handler outcome", async () => {
+  const { InMemoryTaskStore } = await import("@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js");
+  const { CreateTaskResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const taskStore = new InMemoryTaskStore();
+  const evidence: McpFnClientProfileEvidence[] = [];
+  const registry = new McpFnRegistry().register({
+    name: "immediate", description: "Immediate task", inputSchema: { type: "object" },
+    outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    execution: { taskSupport: "required" }, handler: async () => structuredResult({ ok: true }),
+    taskHandler: { createTask: async (_args, _context, extra) => {
+      const task = await extra.taskStore.createTask({ ttl: 1000 });
+      await extra.taskStore.storeTaskResult(task.taskId, "completed", structuredResult({ ok: true }));
+      return { task };
+    } },
+  });
+  const server = createMcpFnServer({ info: { name: "test", version: "1" }, registry, taskStore,
+    clientProfiles: { profiles: [], resolveVerifiedIdentity: () => undefined, evidence: event => { evidence.push(event); } } });
+  const client = new Client({ name: "test", version: "1" });
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(right); await client.connect(left);
+    await client.request({ method: "tools/call", params: { name: "immediate", arguments: {}, task: { ttl: 1000 } } }, CreateTaskResultSchema);
+    expect(evidence.filter(event => ["input-validation", "handler", "output-validation"].includes(event.stage)).map(event => [event.stage, event.outcome])).toEqual([
+      ["input-validation", "succeeded"], ["output-validation", "succeeded"], ["handler", "succeeded"],
+    ]);
+  } finally { await client.close(); await server.close(); }
+});
+
 it("reports a rejected task-store promise after the creation request has settled", async () => {
   const { InMemoryTaskStore } = await import("@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js");
   const { CreateTaskResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
@@ -1112,5 +1172,83 @@ it.each(["resolver", "projector"])("preserves framework fallback evidence from a
     await server.connect(right); await client.connect(left);
     await expect(client.listTools()).rejects.toThrow();
     expect(evidence).toContainEqual(expect.objectContaining({ outcome: "failed", code: hook === "resolver" ? "MCPFN_PROFILE_RESOLUTION_FAILED" : "MCPFN_CATALOG_PROJECTION_FAILED" }));
+  } finally { await client.close(); await server.close(); }
+});
+
+it("resolves embedded external resources in edge profile validation", async () => {
+  vi.stubGlobal("WebSocketPair", class {});
+  vi.resetModules();
+  try {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const dependency = { type: "object" as const, $defs: { shared: { $id: "https://edge-profile.invalid/shared", type: "string" } } };
+    const tool = { name: "edge_external", inputSchema: { type: "object" as const, properties: { value: { $ref: "https://edge-profile.invalid/shared" } } } };
+    const result = await buildMcpFnEffectiveCatalog({ canonicalTools: [tool], schemaResources: [dependency, tool.inputSchema], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "edge", version: "1", matches: () => true },
+    } });
+    expect(result.tools).toEqual([tool]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  }
+});
+
+it("lists and calls a visible tool beside a hidden tool whose unreferenced draft-07 schema the projection would reject", async () => {
+  const registry = new McpFnRegistry()
+    .register({
+      name: "visible", description: "Independent visible tool",
+      inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      handler: async () => structuredResult({ ok: true }),
+    })
+    .register({
+      name: "hidden", description: "Hidden tool with a scope-changing sibling",
+      inputSchema: {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        $id: "https://example.test/hidden/main",
+        type: "object",
+        definitions: { target: { $id: "https://example.test/hidden/target", definitions: { value: { type: "string" } } } },
+        properties: { query: { $id: "https://example.test/hidden/child", $ref: "target#/definitions/value" } },
+      },
+      handler: async () => structuredResult({ ok: true }),
+    });
+  const server = createMcpFnServer({ info: { name: "hidden-sibling-server", version: "1" }, registry,
+    toolVisibility: ({ tool }) => tool.name !== "hidden",
+    clientProfiles: { profiles: [{ id: "noop", version: "1", matches: () => true }],
+      resolveVerifiedIdentity: () => ({ subject: "trusted" }) } });
+  const client = new Client({ name: "hidden-sibling-client", version: "1" });
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(right); await client.connect(left);
+    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["visible"]);
+    expect(await client.callTool({ name: "visible", arguments: { query: "hello" } })).toMatchObject({ structuredContent: { ok: true } });
+  } finally { await client.close(); await server.close(); }
+});
+
+it("rejects a visible tool that references an unsupported construct in another tool's schema resource", async () => {
+  const registry = new McpFnRegistry()
+    .register({
+      name: "hidden", description: "Owns the referenced resource",
+      inputSchema: {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        $id: "https://example.test/shared/target",
+        definitions: { value: { type: "string", $recursiveRef: "#" } },
+      },
+      handler: async () => structuredResult({ ok: true }),
+    })
+    .register({
+      name: "visible", description: "References the hidden resource",
+      inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: { query: { $ref: "https://example.test/shared/target#/definitions/value" } } },
+      handler: async () => structuredResult({ ok: true }),
+    });
+  const server = createMcpFnServer({ info: { name: "reached-sibling-server", version: "1" }, registry,
+    toolVisibility: ({ tool }) => tool.name !== "hidden",
+    clientProfiles: { profiles: [{ id: "noop", version: "1", matches: () => true }],
+      resolveVerifiedIdentity: () => ({ subject: "trusted" }) } });
+  const client = new Client({ name: "reached-sibling-client", version: "1" });
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(right); await client.connect(left);
+    await expect(client.listTools()).rejects.toThrow(/Dynamic and recursive references/);
   } finally { await client.close(); await server.close(); }
 });

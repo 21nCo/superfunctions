@@ -1,3 +1,4 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv from "ajv";
 import Ajv2019 from "ajv/dist/2019.js";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -5,7 +6,7 @@ import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { canonicalJson, compareCodeUnits, sha256 } from "./canonical.js";
 import { McpFnClientProfileError } from "./errors.js";
-import { createSchemaCompiler, schemaEngine } from "./validation.js";
+import { schemaEngine, validateSchemaCollection } from "./validation.js";
 import type {
   McpFnListedTool,
   McpFnReportedClient,
@@ -200,6 +201,7 @@ function assertProjectedCatalog(
   knownTools: McpFnListedTool[],
   projectedTools: McpFnListedTool[],
   profile: McpFnClientProfile<unknown>,
+  schemaResources: readonly object[],
 ): void {
   const canonical = new Map(canonicalTools.map((tool) => [tool.name, tool]));
   const known = new Map(knownTools.map((tool) => [tool.name, tool]));
@@ -244,8 +246,8 @@ function assertProjectedCatalog(
     const visibleTool = projectedTools.find((tool) => tool.name === toolName);
     if (!visibleTool) continue;
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema)));
     const canonicalProperties = canonicalShape.properties;
     const canonicalRequired = canonicalShape.required;
     const visibleProperties = visibleShape.properties;
@@ -273,10 +275,11 @@ function assertProjectedCatalog(
 
   for (const visibleTool of projectedTools) {
     const canonicalTool = canonical.get(visibleTool.name)!;
-    assertValidProfileSchema(visibleTool.inputSchema);
+    const projectedResources = schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema));
+    assertValidProfileSchema(visibleTool.inputSchema, projectedResources);
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, projectedResources);
     const visibleRequired = visibleShape.required;
     const visibleProperties = visibleShape.properties;
     const owned = new Set(
@@ -327,6 +330,8 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   canonicalTools: McpFnListedTool[];
   /** Complete registry inventory when canonicalTools has already been visibility-filtered. */
   knownTools?: McpFnListedTool[];
+  /** All registered resources, including schemas of hidden tools and prompts. */
+  schemaResources?: readonly object[];
   resolved: McpFnResolvedClientProfile<TContext>;
 }): Promise<{ tools: McpFnListedTool[]; changes: McpFnCatalogChange[] }> {
   const canonicalTools = structuredClone(input.canonicalTools);
@@ -354,6 +359,7 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
     knownTools,
     projected,
     profile as McpFnClientProfile<unknown>,
+    input.schemaResources ?? knownTools.flatMap(tool => [tool.inputSchema, ...(tool.outputSchema ? [tool.outputSchema] : [])]),
   );
   const tools = structuredClone(projected).sort((left, right) => compareCodeUnits(left.name, right.name));
   const projectedByName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -403,22 +409,45 @@ function validateDefinitionContainers(schema: unknown, ajv: Ajv | Ajv2019 | Ajv2
   for (const keyword of ["items", "additionalItems", "additionalProperties", "contains", "not", "if", "then", "else"]) validateDefinitionContainers(object[keyword], ajv);
 }
 
-function assertValidProfileSchema(schema: Record<string, unknown>): void {
+// Cache only syntax validation; identity, projection and ownership checks still run per request.
+const validProfileSchemas = new Set<string>();
+function profileSchemaResources(schema: Record<string, unknown>, resources: readonly object[]): object[] {
+  const rootId = schema.$id;
+  const unique = new Map<string, object>();
+  const rootKey = canonicalJson(schema);
+  for (const resource of resources) {
+    const id = (resource as Record<string, unknown>).$id;
+    const key = canonicalJson(resource);
+    if (!(typeof rootId === "string" && id === rootId) && key !== rootKey) unique.set(key, resource);
+  }
+  return [...unique.values(), schema];
+}
+
+function assertValidProfileSchema(schema: Record<string, unknown>, resources: readonly object[]): void {
+  const graph = profileSchemaResources(schema, resources);
+  const cacheKey = `${schemaEngine}:${sha256(graph)}`;
+  if (validProfileSchemas.has(cacheKey)) return;
   try {
     const dialect = typeof schema.$schema === "string" ? schema.$schema : "http://json-schema.org/draft-07/schema#";
     if (schemaEngine === "cfworker") {
       if (!dialect.includes("draft-07")) {
         throw new Error("Modern projected schemas require a dialect-aware edge validator");
       }
-      createSchemaCompiler("cfworker").compile(schema);
-      return;
+      validateSchemaCollection(graph, "cfworker");
+    } else {
+      const Validator = dialect.includes("draft-07") ? Ajv : dialect.includes("2019-09") ? Ajv2019 : Ajv2020;
+      const ajv = new Validator({ uriResolver: schemaUriResolver, strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
+        ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
+      });
+      for (const resource of graph) validateDefinitionContainers(resource, ajv);
+      for (const [index, resource] of graph.entries()) {
+        // Anonymous schemas need distinct registry keys without changing their JSON Schema IDs.
+        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `mcpfn-profile-${index}` : undefined);
+      }
+      ajv.compile(schema);
     }
-    const Validator = dialect.includes("draft-07") ? Ajv : dialect.includes("2019-09") ? Ajv2019 : Ajv2020;
-    const ajv = new Validator({ strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
-      ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
-    });
-    validateDefinitionContainers(schema, ajv);
-    ajv.compile(schema);
+    if (validProfileSchemas.size >= 64) validProfileSchemas.delete(validProfileSchemas.values().next().value!);
+    validProfileSchemas.add(cacheKey);
   }
   catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Projected schema must be valid JSON Schema"); }
 }
@@ -533,7 +562,7 @@ function mapSchemaKeyword(key: string, value: unknown, visit: (schema: unknown) 
 // still affect reference resolution, so keep those fail-closed.
 const DRAFT07_REF_UNSAFE_KEYWORDS = new Set(["$id", "id"]);
 
-function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
+function rootShape(root: Record<string, unknown>, owned = new Set<string>(), schemaResources: readonly object[] = []): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
   // JSON transports duplicate aliases. Give each occurrence its own identity so
   // relative references inherit the resource at that occurrence, not the first one.
   root = JSON.parse(JSON.stringify(root)) as Record<string, unknown>;
@@ -559,47 +588,86 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { 
     const dialect = String(resource.$schema ?? root.$schema ?? "draft-07");
     return dialect.includes("2019-09") || dialect.includes("2020-12");
   };
-  const index = (value: unknown, resource: Record<string, unknown>, parentBase: string) => {
+  // Other tools' schemas are indexed only so references can resolve into them.
+  // Their unsupported constructs are recorded per node and rejected only when a
+  // reference from this schema reaches that node, its subtree or its ancestors.
+  const deferred = new WeakMap<object, string>();
+  const parents = new WeakMap<object, object>();
+  const index = (value: unknown, resource: Record<string, unknown>, parentBase: string, strict: boolean, parent?: object) => {
     if (!value || typeof value !== "object" || scopes.has(value)) return;
+    if (parent) parents.set(value, parent);
     let base = parentBase;
     const schemaValue = value as Record<string, unknown>;
+    let invalid = false;
+    const reject = (message: string) => {
+      if (strict) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", message);
+      if (!deferred.has(value)) deferred.set(value, message);
+      invalid = true;
+    };
     // A draft-07 client ignores a $id beside $ref, but Ajv applies its URI
     // scope before resolving the reference. Reject it before indexing either
     // schema so the published catalog cannot describe a different target.
     if (typeof schemaValue.$ref === "string" && !modernDialect(resource)) {
       if (Object.keys(schemaValue).some(key => DRAFT07_REF_UNSAFE_KEYWORDS.has(key) &&
           !(value === root && key === "type" && schemaValue.type === "object"))) {
-        throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Draft-07 $ref assertion siblings are unsupported in projected catalogs");
+        reject("Draft-07 $ref assertion siblings are unsupported in projected catalogs");
       }
     }
-    if (!Array.isArray(value) && typeof schemaValue.$id === "string") {
-      let address: URL;
+    if (!invalid && !Array.isArray(value) && typeof schemaValue.$id === "string") {
+      let address: URL | undefined;
+      let name: string | undefined;
       try { address = new URL(schemaValue.$id, parentBase); }
-      catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema resource ID"); }
-      const name = fragment(address);
-      if (name) {
-        if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
-            resourceKey(address) !== resourceKey(new URL(parentBase))) {
-          throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Unsupported schema resource ID fragment");
-        }
-        ids.set(`${resourceKey(address)}#${name}`, schemaValue);
-      } else {
-        resource = schemaValue;
-        resourceRoots.set(resourceKey(address), resource);
+      catch { reject("Invalid schema resource ID"); }
+      if (address) {
+        try { name = fragment(address); }
+        catch (error) { if (strict) throw error; reject("Invalid schema reference encoding"); }
       }
-      base = address.href.replace(/#$/, "");
+      if (address && name !== undefined) {
+        if (name) {
+          if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
+              resourceKey(address) !== resourceKey(new URL(parentBase))) {
+            reject("Unsupported schema resource ID fragment");
+          } else ids.set(`${resourceKey(address)}#${name}`, schemaValue);
+        } else {
+          resource = schemaValue;
+          resourceRoots.set(resourceKey(address), resource);
+        }
+        if (!invalid) base = address.href.replace(/#$/, "");
+      }
     }
     if (schemaValue.$dynamicRef !== undefined || schemaValue.$recursiveRef !== undefined) {
-      throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Dynamic and recursive references are not supported in projected catalogs");
+      reject("Dynamic and recursive references are not supported in projected catalogs");
     }
     if (typeof schemaValue.$anchor === "string") ids.set(`${resourceKey(new URL(base))}#${schemaValue.$anchor}`, schemaValue);
     if (typeof schemaValue.$dynamicAnchor === "string" && String(resource.$schema ?? root.$schema ?? "draft-07").includes("2020-12")) ids.set(`${resourceKey(new URL(base))}#${schemaValue.$dynamicAnchor}`, schemaValue);
     scopes.set(value, { resource, base });
     for (const [key, child] of Object.entries(value)) {
-      mapSchemaKeyword(key, child, item => { index(item, resource, base); return item; }, modernDialect(resource));
+      mapSchemaKeyword(key, child, item => { index(item, resource, base, strict, value); return item; }, modernDialect(resource));
     }
   };
-  index(root, root, initialBase);
+  for (const resource of profileSchemaResources(root, schemaResources).slice(0, -1)) {
+    const detached = JSON.parse(JSON.stringify(resource)) as Record<string, unknown>;
+    index(detached, detached, initialBase, false);
+  }
+  index(root, root, initialBase, true);
+  const assertReachable = (target: unknown): unknown => {
+    if (!target || typeof target !== "object") return target;
+    for (let node: object | undefined = parents.get(target); node; node = parents.get(node)) {
+      const message = deferred.get(node);
+      if (message) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", message);
+    }
+    const pending: object[] = [target];
+    const walked = new WeakSet<object>();
+    while (pending.length > 0) {
+      const node = pending.pop()!;
+      if (walked.has(node)) continue;
+      walked.add(node);
+      const message = deferred.get(node);
+      if (message) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", message);
+      for (const child of Object.values(node)) if (child && typeof child === "object") pending.push(child);
+    }
+    return target;
+  };
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;
     let address: URL;
@@ -609,7 +677,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { 
     const key = resourceKey(address);
     if (pointer && !pointer.startsWith("/")) {
       const anchored = ids.get(`${key}#${pointer}`);
-      if (anchored) return anchored;
+      if (anchored) return assertReachable(anchored);
       throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Unresolved named schema anchor");
     }
     let target: unknown = resourceRoots.get(key);
@@ -619,7 +687,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { 
       target = target && typeof target === "object" && Object.hasOwn(target, key) ? (target as Record<string, unknown>)[key] : undefined;
     }
     if (target === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Unresolved schema reference");
-    return target;
+    return assertReachable(target);
   };
   // Compare referenced schemas as well as pointer strings. Track resource targets
   // rather than fragment text: identical fragments can name different resources.
