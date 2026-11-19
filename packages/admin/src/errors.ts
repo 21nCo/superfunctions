@@ -54,7 +54,8 @@ function isAdminError(error: unknown): error is AdminError {
     && Number.isInteger(candidate.status)
     && candidate.status >= 400
     && candidate.status <= 599
-    && typeof candidate.retryable === "boolean";
+    && typeof candidate.retryable === "boolean"
+    && typeof candidate.message === "string";
 }
 
 export function normalizeAdminError(

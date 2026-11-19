@@ -1,4 +1,4 @@
-import { isBrowserScope } from "./runtime.js";
+import { serverRuntime } from "./runtime.js";
 
 export type ObservationStatus = "ok" | "error";
 export type ObservationSeverity = "debug" | "info" | "warn" | "error";
@@ -146,6 +146,9 @@ export interface ObservabilityConfigInput<TEvent extends ObservationEvent = Obse
   labels?: Record<string, string>;
   events?: ObservationEventChannel<TEvent> | ((event: TEvent) => void | Promise<void>);
   metrics?: ObservationMetricChannel | ((metric: ObservationMetric) => void | Promise<void>);
+  /** Override context propagation. Node defaults to AsyncLocalStorage; other
+   * runtimes only retain synchronous scope and need an injected implementation
+   * for propagation across await. */
   requestContext?: RequestObservationContext<TEvent>;
 }
 
@@ -193,7 +196,7 @@ interface AsyncLocalStorageLike<TStore> {
 
 type AsyncLocalStorageConstructor = new <TStore>() => AsyncLocalStorageLike<TStore>;
 
-const NodeAsyncLocalStorage = await loadNodeAsyncLocalStorage();
+let nodeAsyncLocalStorage: Promise<AsyncLocalStorageConstructor> | undefined;
 
 class RequestObservationImpl<TEvent extends ObservationEvent = ObservationEvent> implements RequestObservation<TEvent> {
   readonly requestId: string;
@@ -586,7 +589,9 @@ function createStackRequestContext<TEvent extends ObservationEvent>(): RequestOb
     ): Promise<T> {
       stack.push(observation);
       try {
-        return await work();
+        // Only synchronous work can use the fallback safely. Keeping this frame
+        // across await would attribute concurrent requests to one another.
+        return work();
       } finally {
         const index = stack.lastIndexOf(observation);
         if (index >= 0) {
@@ -603,39 +608,61 @@ function createStackRequestContext<TEvent extends ObservationEvent>(): RequestOb
 function createDefaultRequestContext<
   TEvent extends ObservationEvent,
 >(): RequestObservationContext<TEvent> {
-  if (!NodeAsyncLocalStorage) {
+  // Browser pages, web workers and scopes that identify no server runtime keep
+  // the synchronous fallback and never import a Node built-in.
+  const runtime = serverRuntime();
+  if (runtime === undefined) {
     return createStackRequestContext<TEvent>();
   }
 
-  const storage = new NodeAsyncLocalStorage<RequestObservation<TEvent>>();
+  let storage: AsyncLocalStorageLike<RequestObservation<TEvent>> | undefined;
+  let fallback: RequestObservationContext<TEvent> | undefined;
+  let initialization: Promise<(observation: RequestObservation<TEvent>, work: () => unknown) => unknown> | undefined;
+  const initialize = () => initialization ??= loadNodeAsyncLocalStorage().then(
+    Constructor => {
+      const local = new Constructor<RequestObservation<TEvent>>();
+      storage = local;
+      return (observation: RequestObservation<TEvent>, work: () => unknown) => local.run(observation, work);
+    },
+    (error: unknown) => {
+      // On Node a missing AsyncLocalStorage is a broken install: fail before
+      // running user work rather than silently losing async isolation. Other
+      // server runtimes (Cloudflare Workers without nodejs_als or
+      // nodejs_compat, Deno or Bun without Node compatibility) keep the
+      // synchronous fallback.
+      if (runtime === "node") {
+        throw error;
+      }
+      const stack = createStackRequestContext<TEvent>();
+      fallback = stack;
+      return (observation: RequestObservation<TEvent>, work: () => unknown) => stack.run(observation, work);
+    },
+  );
   return {
     async run<T>(
       observation: RequestObservation<TEvent>,
       work: () => T | Promise<T>,
     ): Promise<T> {
-      return await storage.run(observation, work);
+      const run = await initialize();
+      return await (run(observation, work) as T | Promise<T>);
     },
     get(): RequestObservation<TEvent> | undefined {
-      return storage.getStore();
+      return storage ? storage.getStore() : fallback?.get();
     },
   };
 }
 
-async function loadNodeAsyncLocalStorage(): Promise<AsyncLocalStorageConstructor | undefined> {
-  if (isBrowserScope()) {
-    return undefined;
-  }
-  try {
-    // Keep the specifier dynamic so browser and edge bundlers can retain the
-    // synchronous fallback without resolving a Node-only built-in.
-    const specifier: string = "node:async_hooks";
-    const module = await import(specifier) as {
-      AsyncLocalStorage?: AsyncLocalStorageConstructor;
-    };
-    return module.AsyncLocalStorage;
-  } catch {
-    return undefined;
-  }
+function loadNodeAsyncLocalStorage(): Promise<AsyncLocalStorageConstructor> {
+  // Initialization is awaited by run(), not module evaluation: CommonJS bundles
+  // can load synchronously without sacrificing first-request async isolation.
+  // Keep the specifier dynamic so browser bundlers do not resolve a Node builtin.
+  const specifier: string = "node:async_hooks";
+  return nodeAsyncLocalStorage ??= import(specifier).then((module: { AsyncLocalStorage?: unknown }) => {
+    if (typeof module.AsyncLocalStorage !== "function") {
+      throw new Error("Node AsyncLocalStorage is unavailable");
+    }
+    return module.AsyncLocalStorage as AsyncLocalStorageConstructor;
+  });
 }
 
 function logEvent(logger: ObservationLogger | undefined, event: ObservationEvent): void {

@@ -25,6 +25,22 @@ describe("normalizeAdminError", () => {
     });
   });
 
+  it("does not trust a foreign AdminError whose message is not a string", () => {
+    class ForeignAdminError extends Error {
+      readonly name = "AdminError";
+      readonly code = "forbidden";
+      readonly status = 403;
+      readonly retryable = false;
+    }
+    const error = new ForeignAdminError("Denied");
+    Object.defineProperty(error, "message", { value: { secret: true } });
+
+    expect(normalizeAdminError(error)).toMatchObject({
+      ok: false,
+      error: { code: "internal", message: "The administration operation could not be completed.", status: 500 },
+    });
+  });
+
   it("does not trust plain objects that mimic an AdminError", () => {
     expect(normalizeAdminError({
       name: "AdminError",

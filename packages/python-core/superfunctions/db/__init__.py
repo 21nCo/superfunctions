@@ -30,6 +30,7 @@ from .types import (
     Adapter,
     AdapterCapabilities,
     AdapterConfig,
+    AtomicUpdateTransactionAdapter,
     ConstraintSchema,
     CountParams,
     CreateManyParams,
@@ -62,6 +63,7 @@ from .types import (
 __all__ = [
     # Core protocols
     "Adapter",
+    "AtomicUpdateTransactionAdapter",
     "TransactionAdapter",
     # Configuration
     "AdapterCapabilities",

@@ -47,7 +47,7 @@
   "sideEffects": false,
   "dependencies": {
     "@searchfn/adapter-contracts": "^0.4.0",
-    "@superfunctions/observability": "0.0.3"
+    "@superfunctions/observability": "0.0.4"
   },
   "peerDependencies": {
     "@libsql/client": ">=0.14.0",
@@ -68,7 +68,7 @@
     "@libsql/client": "^0.15.15",
     "@searchfn/client": "^0.3.0",
     "@searchfn/datafn-provider": "^0.4.0",
-    "@superfunctions/db": "0.3.3",
+    "@superfunctions/db": "0.3.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.9.1",
     "better-sqlite3": "^12.5.0",

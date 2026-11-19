@@ -14,6 +14,8 @@ import type {
 } from './types.js';
 import {  NamespaceManager } from '../utils/namespace.js';
 import {
+  registerAdapterCodecs,
+  resolveBooleanStorage,
   transformRecordForRuntime,
   transformRecordForStorage,
   transformWhereForStorage,
@@ -36,7 +38,7 @@ export function createAdapterFactory(
     const implementation = createAdapter(context);
 
     // Wrap with factory enhancements
-    return wrapAdapter(implementation, context, config);
+    return registerAdapterCodecs(wrapAdapter(implementation, context, config), context.schema);
   };
 }
 
@@ -48,7 +50,7 @@ function buildAdapterContext(
   libraryOptions: LibraryOptions
 ): AdapterContext {
   const namespace = libraryOptions.namespace ?? 'default';
-  const schema = libraryOptions.schema ?? {};
+  const schema = resolveBooleanStorage(libraryOptions.schema ?? {}, mergeCapabilities(config.capabilities ?? {}).types.booleans);
 
   // Create namespace manager
   const namespaceManager = new NamespaceManager({

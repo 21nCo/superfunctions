@@ -194,3 +194,19 @@ describe("schema date codecs", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("wrapWithSchema with partial adapter capabilities", () => {
+  it.each([
+    ["empty capabilities", {}],
+    ["missing capabilities", undefined],
+    ["types without booleans", { types: { json: true } }],
+  ])("wraps an adapter with %s using the default capabilities", async (_label, capabilities) => {
+    const base = memoryAdapter();
+    const partial = { ...base, capabilities } as unknown as Adapter;
+    const wrapped = wrapWithSchema(partial, {
+      flags: { modelName: "flags", fields: { id: { type: "string", required: true }, enabled: { type: "boolean" } } },
+    });
+    await wrapped.create({ model: "flags", data: { id: "a", enabled: true } });
+    expect(await wrapped.findOne({ model: "flags", where: [{ field: "id", operator: "eq", value: "a" }] })).toMatchObject({ id: "a", enabled: true });
+  });
+});

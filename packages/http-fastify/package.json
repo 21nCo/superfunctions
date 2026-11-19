@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-fastify",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Fastify adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,11 +23,11 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@superfunctions/http": "0.2.0",
+    "@superfunctions/http": "^0.3.1",
     "fastify": "^4.0.0 || ^5.0.0"
   },
   "devDependencies": {
-    "@superfunctions/http": "^0.2.0",
+    "@superfunctions/http": "0.3.1",
     "@types/node": "^22.0.0",
     "fastify": "^5.2.0",
     "typescript": "^5.6.0",

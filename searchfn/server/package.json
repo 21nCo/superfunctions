@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/observability": "0.0.3",
+    "@superfunctions/observability": "0.0.4",
     "@searchfn/adapter-contracts": "0.4.1"
   },
   "devDependencies": {
