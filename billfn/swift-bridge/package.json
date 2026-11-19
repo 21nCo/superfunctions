@@ -1,6 +1,6 @@
 {
   "name": "@billfn/swift-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "WKWebView bridge primitives for native-backed BillFn clients",
   "repository": {
@@ -16,13 +16,20 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "clean": "rm -rf dist"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

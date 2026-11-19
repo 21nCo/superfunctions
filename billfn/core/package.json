@@ -1,6 +1,6 @@
 {
   "name": "@billfn/core",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Core billfn contracts, persistence, router, and entitlements",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,10 +12,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.test.*"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "test": "npm run test:node && npm run test:db-0.2 && npm run test:workers",
     "test:node": "vitest run",
     "test:db-0.2": "vitest run --config test/db-0.2/vitest.config.ts",

@@ -10,7 +10,7 @@ BillFn Phase 2 adds a native Apple surface instead of forcing embedded apps to p
 | Package | Purpose |
 | --- | --- |
 | `BillFnClient` | Direct HTTP-backed lifecycle calls |
-| `BillFnStoreKit` | Apple-managed subscription helpers |
+| `BillFnStoreKit` | StoreKit 2 purchase, restore and transaction confirmation through BillFn, and Apple-managed subscription helpers |
 | `BillFnWebViewBridgeHost` | Native owner for embedded web apps |
 | `@billfn/swift-bridge` | JavaScript bridge protocol and client wrapper |
 
@@ -33,16 +33,57 @@ print(manageAction.url ?? "")
 
 The full sample lives in [native-apple.swift](https://github.com/21nCo/super-functions/blob/dev/billfn/swift/examples/native-apple.swift).
 
+## StoreKit 2
+
+`BillFnStoreKit` buys, restores and confirms App Store purchases through BillFn with StoreKit 2:
+
+- `start()` listens to `Transaction.updates` and confirms what earlier launches left unfinished. Call it once at launch, before any purchase.
+- `purchase(planKey:priceId:interval:)` opens a BillFn Apple checkout (`POST /checkouts`) and buys its product with the `appAccountToken` BillFn returned. It returns `.purchased` with the transaction's outcome, `.pending` (Ask to Buy; the transaction arrives later through `Transaction.updates`) or `.cancelled`.
+- A transaction is finished only after BillFn confirms it: a purchase, including an approved Ask to Buy or an interrupted one, is verified against its retained checkout (`POST /checkouts/verify`); a renewal, a restored purchase, or a transaction with no matching checkout (or whose checkout BillFn permanently rejects) is restored onto the plan its product maps to in `plans` (`POST /purchases/restore`). A transaction BillFn does not confirm stays unfinished, and `start()` retries it on the next launch.
+- A restore sends the mapping's `priceId` when it has one. Give each `BillFnStoreKitPlan` the `priceId` of its catalog price when its plan has more than one Apple price (such as a monthly and a yearly one): without it BillFn can take the price only from a checkout it recorded for the transaction, so a restore with neither answers `BILLFN_VALIDATION_ERROR` and the transaction stays unfinished.
+- `restore()` syncs with the App Store (which may ask the user to sign in) and confirms each current entitlement.
+- The checkout a purchase opened is kept in `UserDefaults` until BillFn confirms its transaction, so a pending or interrupted purchase still verifies against it.
+
+Every call needs the user's credential, so pass it as a header, and point `baseURL` at the user's home region when BillFn runs in several regions (see the [multi-region Workers recipe](/docs/recipes/multi-region-workers#apple-storekit-2-and-the-apple-helpers)):
+
+```swift
+let client = BillFnClient(configuration: BillFnClientConfiguration(
+    baseURL: URL(string: "https://euwest.account.example.com/billfn/")!,
+    headers: { ["authorization": "Bearer \(try await session.token())"] }
+))
+let storeKit = BillFnStoreKit(client: client, plans: [
+    BillFnStoreKitPlan(productId: "com.example.nucleus.month", planKey: "nucleus", priceId: "nucleus_apple_month"),
+])
+await storeKit.start()
+switch try await storeKit.purchase(planKey: "nucleus") {
+case .purchased(_, let outcome) where outcome.finished: break // BillFn confirmed it
+case .purchased, .pending, .cancelled: break
+}
+```
+
+In an embedded web app, `@billfn/swift-bridge`'s `checkout()`, `restore()` and `transactions()` ask the native `BillFnWebViewBridgeHost` to do the same (`storekit.checkout`, `storekit.restore` and `storekit.transactions`). The dispatcher answers them through the async `respond(to:)` only when it is built with `storeKit:` (otherwise they fail with `BILLFN_CAPABILITY_UNAVAILABLE`), and it does not post `transaction.updated` events by itself: the app reads `storeKit.outcomes` and posts each outcome to the web view as `dispatcher.transactionEvent(outcome)`. That stream carries every outcome, from a checkout, a restore or a transaction completed later (Ask to Buy approval, renewal).
+
+On the web side, call `billing.subscribe(handler)` when the page starts showing billing state, before its first StoreKit request and whether or not it starts a checkout, and keep the subscription while that state is shown; subscribing needs no handshake. Its `transaction.updated` events carry `{ outcome }`, and they are the only way a `pending` checkout (Ask to Buy) or one that ended with `BRIDGE_INTERACTIVE_TIMEOUT` reaches the web app once it completes; the bridge does not replay events sent before the subscription. The [multi-region Workers recipe](/docs/recipes/multi-region-workers#apple-storekit-2-and-the-apple-helpers) shows such a module.
+
 ## Embedded web example
 
 ```swift
+import BillFnStoreKit
 import BillFnWebViewBridgeHost
 
 let dispatcher = BillFnBridgeDispatcher(
     configuration: BillFnBridgeConfiguration(
         baseURL: "https://billfn.example.test/billfn"
-    )
+    ),
+    storeKit: storeKit // the BillFnStoreKit above
 )
+
+// Forward each processed transaction to the web view as a transaction.updated event.
+Task {
+    for await outcome in storeKit.outcomes {
+        postToWebView(dispatcher.transactionEvent(outcome)) // your WKWebView message delivery
+    }
+}
 ```
 
 The full sample lives in [embedded-web.swift](https://github.com/21nCo/super-functions/blob/dev/billfn/swift/examples/embedded-web.swift).
