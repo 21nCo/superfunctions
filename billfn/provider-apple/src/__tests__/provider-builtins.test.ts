@@ -409,6 +409,33 @@ describe('createAppleProvider with several bundle IDs', () => {
       });
     });
 
+    describe("Apple's hasMore flag", () => {
+      /** Reads one page of a multi-app history whose answer carries a token and the given hasMore flag. */
+      async function readFlaggedPage(cursor: string, hasMore: boolean, configured: { bundleId?: string; bundleIds?: string[] } = { bundleIds }) {
+        const fetchMock = vi.fn(async () => Response.json({ notificationHistory: [], paginationToken: 'stale-page', hasMore }));
+        const provider = createAppleProvider({ ...configured, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+        return (await provider.fetchNotificationHistory!({ cursor })).nextCursor;
+      }
+
+      it("moves to the next app when Apple says the app has no more history, even with a token", async () => {
+        await expect(readFlaggedPage(historyCursor({ bundleId: 'com.example.one', paginationToken: 'one-page-2' }), false))
+          .resolves.toBe(historyCursor({ bundleId: 'com.example.two' }));
+      });
+
+      it('ends the history after the last app when Apple says it has no more, even with a token', async () => {
+        await expect(readFlaggedPage(historyCursor({ bundleId: 'com.example.two' }), false)).resolves.toBeUndefined();
+      });
+
+      it('continues the same app while Apple says it has more', async () => {
+        await expect(readFlaggedPage(historyCursor({ bundleId: 'com.example.one' }), true))
+          .resolves.toBe(historyCursor({ bundleId: 'com.example.one', paginationToken: 'stale-page' }));
+      });
+
+      it('leaves single-app cursors as plain Apple tokens', async () => {
+        await expect(readFlaggedPage('one-page-2', false, { bundleId: 'com.example.one' })).resolves.toBe('stale-page');
+      });
+    });
+
     it('rejects a malformed adapter cursor without asking Apple', async () => {
       for (const configured of [{ bundleIds }, { bundleId: 'com.example.one' }]) {
         for (const cursor of [
@@ -445,6 +472,11 @@ describe('createAppleProvider with several bundle IDs', () => {
       expect(calls.map(({ url, init }) => ({ bid: claimsOf(init).bid, paginationToken: new URL(url).searchParams.get('paginationToken') })))
         .toEqual([{ bid: 'com.example.one', paginationToken: 'one-page-2' }]);
     });
+  });
+
+  it('names bundleIds as an alternative to bundleId in the configuration errors', () => {
+    expect(() => createAppleProvider({})).toThrow(/bundleIds in place of bundleId/);
+    expect(() => createAppleProvider({ appStoreServerApiKey })).toThrow(/only with a bundleId or bundleIds/);
   });
 
   it('requires a non-empty list of non-empty bundle IDs', () => {

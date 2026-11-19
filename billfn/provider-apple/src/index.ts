@@ -397,7 +397,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         nextCursor: buildNextNotificationHistoryCursor(
           config.bundleIds,
           position.bundleId,
-          readString(response.payload, ['paginationToken', 'nextPaginationToken']) ?? undefined
+          readString(response.payload, ['paginationToken', 'nextPaginationToken']) ?? undefined,
+          typeof response.payload.hasMore === 'boolean' ? response.payload.hasMore : undefined
         )
       };
     }
@@ -630,14 +631,14 @@ function resolveAppleProviderConfig(config: AppleProviderConfig): ResolvedAppleP
     tokenFor = (bundle) => (bundle === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId: bundle }));
   } else if (config.appStoreServerApiKey) {
     if (!bundleId) {
-      throw new TypeError('The Apple provider signs App Store Server API tokens only with a bundleId');
+      throw new TypeError('The Apple provider signs App Store Server API tokens only with a bundleId or bundleIds');
     }
     // One signer per app: the team key signs every app's tokens, each claiming its own bundle ID as `bid`.
     const key = config.appStoreServerApiKey;
     const signers = new Map(bundleIds.map((bundle) => [bundle, createAppStoreServerApiTokenSigner({ ...key, bundleId: bundle })]));
     tokenFor = (bundle) => signers.get(bundle ?? bundleId)!();
   } else {
-    throw new TypeError('The Apple provider requires tokenProvider, or bundleId with appStoreServerApiKey');
+    throw new TypeError('The Apple provider requires tokenProvider, or bundleId with appStoreServerApiKey (or bundleIds in place of bundleId)');
   }
   const hostVerifier = config.notificationVerifier;
   let verifyNotification: ResolvedAppleProviderConfig['verifyNotification'];
@@ -774,17 +775,23 @@ function readNotificationHistoryCursor(bundleIds: readonly string[], cursor: str
   return { bundleId, paginationToken };
 }
 
-/** Continues the app's history while Apple has more, then starts the next app's; undefined after the last app. */
+/**
+ * Continues the app's history while Apple has more, then starts the next app's; undefined after the last app.
+ * With several apps, Apple's `hasMore: false` ends the app's history even when the page carries a token; without
+ * `hasMore`, the app's history ends when the page has no token.
+ */
 function buildNextNotificationHistoryCursor(
   bundleIds: readonly string[],
   bundleId: string | undefined,
-  paginationToken: string | undefined
+  paginationToken: string | undefined,
+  hasMore: boolean | undefined
 ): string | undefined {
   if (bundleIds.length <= 1) {
     return paginationToken;
   }
   const nextBundleId = bundleIds[bundleIds.indexOf(bundleId as string) + 1];
-  const next = paginationToken ? { bundleId, paginationToken } : nextBundleId === undefined ? undefined : { bundleId: nextBundleId };
+  const continuesApp = Boolean(paginationToken) && hasMore !== false;
+  const next = continuesApp ? { bundleId, paginationToken } : nextBundleId === undefined ? undefined : { bundleId: nextBundleId };
   return next && NOTIFICATION_HISTORY_CURSOR_PREFIX + utf8ToBase64Url(JSON.stringify(next));
 }
 
