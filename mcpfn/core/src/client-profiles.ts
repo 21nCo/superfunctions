@@ -610,6 +610,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const resourceRoots = new Map<string, Record<string, unknown>>([[rootKey, root]]);
   const ids = new Map<string, Record<string, unknown>>();
   const ambiguousKeys = new Set<string>();
+  const aliasKeys = new Set<string>();
   const resourceKey = (address: string) => address.split("#", 1)[0]!;
   const fragment = (address: string) => {
     const hash = address.indexOf("#");
@@ -670,8 +671,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       }
       if (address !== undefined && name !== undefined) {
         if (name) {
+          // Compare in resolved form: a literal base such as "./shared"
+          // resolves "#node" to "shared#node", which is still this resource.
           if (!/^[A-Za-z][-A-Za-z0-9.:_]*$/.test(name) || modernDialect(resource) ||
-              resourceKey(address) !== resourceKey(parentBase)) {
+              resourceKey(address) !== resourceKey(resolveUri(parentBase, "") ?? parentBase)) {
             reject("Unsupported schema resource ID fragment");
           } else ids.set(`${local}#${name}`, schemaValue);
         } else if (resourceRoots.has(resourceKey(address)) &&
@@ -685,6 +688,13 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
           resource = schemaValue;
           local = resourceKey(address);
           resourceRoots.set(local, resource);
+          // Ajv binds a reference whose normalized path matches the root being
+          // compiled to that root, and otherwise looks the path up as an ID.
+          // Where a literal $id ("./shared") normalizes to another key
+          // ("shared"), the target depends on where the reference sits, so
+          // references to the normalized key are refused.
+          const normalized = parent === undefined && literalRootIds ? resolveUri("", authoredId) : undefined;
+          if (normalized !== undefined && resourceKey(normalized) !== local) aliasKeys.add(resourceKey(normalized));
         }
         if (!invalid) base = address.replace(/#$/, "");
       }
@@ -736,7 +746,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     if (address === undefined) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Invalid schema reference URI");
     const pointer = fragment(address);
     const key = resourceKey(address);
-    if (ambiguousKeys.has(key)) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
+    if (ambiguousKeys.has(key) || (self === undefined && aliasKeys.has(key))) throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Ambiguous schema resource ID");
     if (pointer && !pointer.startsWith("/")) {
       const anchored = ids.get(`${key}#${pointer}`);
       if (anchored) return assertReachable(anchored);

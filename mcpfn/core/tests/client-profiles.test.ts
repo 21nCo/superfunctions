@@ -1462,18 +1462,24 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     });
   });
 
-  // Inside a resource whose literal $id normalizes onto another resource, Ajv
-  // still binds "#/..." to the resource it appears in.
-  it("keeps fragment references on a root whose literal $id normalizes onto another resource", async () => {
+  // Inside a resource whose literal $id ("./shared") normalizes onto another
+  // resource ("shared"), Ajv binds "#..." to the resource it appears in. With a
+  // resource part, the target depends on where the reference sits, so it is refused.
+  it.each([
+    ["#/definitions/query", false, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["#node", true, "MCPFN_PROFILE_ASYMMETRIC"],
+    ["shared#/definitions/query", false, "MCPFN_INVALID_PROJECTED_CATALOG"],
+    ["shared#node", true, "MCPFN_INVALID_PROJECTED_CATALOG"],
+  ] as const)("compares %s inside a root whose literal $id normalizes onto another resource", async (reference, anchored, code) => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const other = { $id: "shared", type: "object", definitions: { query: { type: "number" } } };
-    const schema = (type: string) => ({ $id: "./shared", type: "object" as const, properties: { query: { $ref: "#/definitions/query" } }, definitions: { query: { type } } });
+    const schema = (type: string) => ({ $id: "./shared", type: "object" as const, properties: { query: { $ref: reference } }, definitions: { query: { ...(anchored ? { $id: "#node" } : {}), type } } });
     const run = (projected?: ReturnType<typeof schema>) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "search", inputSchema: schema("string") }], schemaResources: [other, schema("string")], resolved: {
       context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
       profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
     } });
-    expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
-    await expect(run(schema("number"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
+    if (code === "MCPFN_PROFILE_ASYMMETRIC") expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
+    await expect(run(schema("number"))).rejects.toMatchObject({ code });
   });
 
   it("compares a relative shared target when a projection changes it", async () => {
