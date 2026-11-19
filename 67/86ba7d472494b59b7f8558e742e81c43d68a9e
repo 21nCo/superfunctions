@@ -1,0 +1,19 @@
+package-lock.json
+  s_6ecdca3bc53805::t_b95bc1e130bab0 40641,40643-40664,40666-40667,40669-40671,40674,40677,40680,40685-40688,40691-40694,40701,40737,40744,40755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6786ba7d472494b59b7f8558e742e81c43d68a9e",
+  "prompts": {},
+  "sessions": {
+    "s_6ecdca3bc53805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04ae556c-c870-4032-b170-7847cd346b68",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
