@@ -1,7 +1,7 @@
 {
   "name": "catchfn",
   "version": "0.1.0",
-  "description": "Console, network and breadcrumb evidence collectors with redaction and a versioned event schema",
+  "description": "Console, network, breadcrumb, error and WebSocket evidence collectors with redaction and a versioned event schema",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
