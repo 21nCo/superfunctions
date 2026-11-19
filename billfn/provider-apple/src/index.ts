@@ -735,7 +735,7 @@ function buildNotificationHistoryPath(cursor?: string) {
 
 /**
  * Marks a notification history cursor that names the app it continues. A cursor without it is Apple's own
- * pagination token, which a single-app adapter returns unchanged and a multi-app adapter reads as the first app's.
+ * pagination token, which a single-app adapter returns unchanged and any adapter reads as the first app's.
  */
 const NOTIFICATION_HISTORY_CURSOR_PREFIX = 'billfn-apple-history:';
 
@@ -744,8 +744,14 @@ interface NotificationHistoryPosition {
   paginationToken: string | undefined;
 }
 
+/**
+ * Reads a stored history cursor. Adapter cursors are read whatever the number of listed apps, so a cursor written
+ * before the bundle IDs changed keeps working: one naming a still-listed app continues that app's history, and one
+ * naming an app no longer listed restarts from the first listed app, because a cursor that fails would be retried
+ * unchanged on every backfill. Replayed notifications are deduplicated by their notification IDs.
+ */
 function readNotificationHistoryCursor(bundleIds: readonly string[], cursor: string | undefined): NotificationHistoryPosition {
-  if (bundleIds.length <= 1 || !cursor?.startsWith(NOTIFICATION_HISTORY_CURSOR_PREFIX)) {
+  if (!cursor?.startsWith(NOTIFICATION_HISTORY_CURSOR_PREFIX)) {
     return { bundleId: bundleIds[0], paginationToken: cursor || undefined };
   }
   const position = parseJsonRecord(Buffer.from(cursor.slice(NOTIFICATION_HISTORY_CURSOR_PREFIX.length), 'base64url').toString('utf8'));
@@ -753,13 +759,16 @@ function readNotificationHistoryCursor(bundleIds: readonly string[], cursor: str
   const paginationToken = position?.paginationToken;
   if (
     typeof bundleId !== 'string' ||
-    !bundleIds.includes(bundleId) ||
+    bundleId.length === 0 ||
     (paginationToken !== undefined && (typeof paginationToken !== 'string' || paginationToken.length === 0))
   ) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
-      message: 'The Apple notification history cursor does not name a configured bundle ID'
+      message: 'The Apple notification history cursor is malformed'
     });
+  }
+  if (!bundleIds.includes(bundleId)) {
+    return { bundleId: bundleIds[0], paginationToken: undefined };
   }
   return { bundleId, paginationToken };
 }

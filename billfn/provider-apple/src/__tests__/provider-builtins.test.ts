@@ -172,6 +172,9 @@ describe('createAppleProvider with several bundle IDs', () => {
       if (String(url).includes('/inApps/v1/transactions/')) {
         return Response.json({ signedTransactionInfo: signedTransaction(appAccountToken) });
       }
+      if (String(url).includes('/inApps/v2/history/')) {
+        return Response.json({ bundleId: owner, environment: 'Production', signedTransactions: [signedTransaction(appAccountToken)] });
+      }
       return Response.json({
         bundleId: owner,
         environment: 'Production',
@@ -224,6 +227,58 @@ describe('createAppleProvider with several bundle IDs', () => {
       bid: owner
     });
     expect(requests.slice(0, -1).map((request) => request.bid)).toEqual(['com.example.one', 'com.example.one', 'com.example.two']);
+  });
+
+  it("finds the transaction's app before an Advanced Commerce refund and asks the host's token provider for that app", async () => {
+    const { requests, fetchMock: storeKitFetch } = storeKit();
+    const advancedCommerceRequests: Array<{ url: string; authorization: string }> = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(url).includes('/advancedCommerce/')) {
+        return storeKitFetch(url, init);
+      }
+      advancedCommerceRequests.push({ url: String(url), authorization: String((init?.headers as Record<string, string>).authorization) });
+      return Response.json({});
+    });
+    const tokenProvider = vi.fn(async (context?: { bundleId: string }) => `host-advanced-commerce-token-for-${context?.bundleId}`);
+    const provider = createAppleProvider({
+      bundleIds,
+      appStoreServerApiKey,
+      fetch: fetchMock as typeof fetch,
+      advancedCommerce: { enabled: true, tokenProvider }
+    });
+    await provider.refundCharge!({ providerChargeId: 'txn_1', reason: 'customer_request' } as never);
+    expect(requests).toEqual([
+      { url: 'https://api.storekit.itunes.apple.com/inApps/v1/transactions/txn_1', bid: 'com.example.one' },
+      { url: 'https://api.storekit-sandbox.itunes.apple.com/inApps/v1/transactions/txn_1', bid: 'com.example.one' },
+      { url: 'https://api.storekit.itunes.apple.com/inApps/v1/transactions/txn_1', bid: owner }
+    ]);
+    expect(tokenProvider).toHaveBeenCalledExactlyOnceWith({ bundleId: owner });
+    expect(advancedCommerceRequests).toEqual([
+      {
+        url: 'https://api.storekit.itunes.apple.com/advancedCommerce/v1/subscription/revoke/txn_1',
+        authorization: `Bearer host-advanced-commerce-token-for-${owner}`
+      }
+    ]);
+  });
+
+  it('restores a one-time purchase from the transaction history of the app that owns it', async () => {
+    const checkout = await createAppleProvider({ bundleIds, appStoreServerApiKey }).createCheckout!({
+      billingAccount: { id: 'acct_1' },
+      price: { providerProductId: 'com.example.product' }
+    } as never);
+    const { requests, fetchMock } = storeKit(String(checkout.clientAction?.metadata?.appAccountToken));
+    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock });
+    const restored = await provider.restorePurchases!({
+      billingAccount: { id: 'acct_1' },
+      price: { kind: 'one_time', providerProductId: 'com.example.product' },
+      purchaseReference: 'txn_1'
+    } as never);
+    expect(restored).toEqual([expect.objectContaining({ providerProductId: 'com.example.product' })]);
+    expect(requests).toEqual([
+      { url: 'https://api.storekit.itunes.apple.com/inApps/v2/history/txn_1', bid: 'com.example.one' },
+      { url: 'https://api.storekit-sandbox.itunes.apple.com/inApps/v2/history/txn_1', bid: 'com.example.one' },
+      { url: 'https://api.storekit.itunes.apple.com/inApps/v2/history/txn_1', bid: owner }
+    ]);
   });
 
   it("stops at the first answer that is not StoreKit's not-found", async () => {
@@ -310,18 +365,61 @@ describe('createAppleProvider with several bundle IDs', () => {
     expect(cursor).toBeUndefined();
   });
 
-  it("reads Apple's own history cursor as the first app's, and refuses a cursor naming an unlisted app", async () => {
-    const requests: Array<{ bid: string; paginationToken: string | null }> = [];
-    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      requests.push({ bid: claimsOf(init).bid, paginationToken: new URL(String(url)).searchParams.get('paginationToken') });
-      return Response.json({ notificationHistory: [] });
+  describe('notification history cursors written before the bundle IDs changed', () => {
+    const historyCursor = (position: { bundleId: string; paginationToken?: string }) =>
+      `billfn-apple-history:${Buffer.from(JSON.stringify(position)).toString('base64url')}`;
+
+    /** Reads one history page with the given bundle IDs and reports the request Apple received and the next cursor. */
+    async function readPage(configured: { bundleId?: string; bundleIds?: string[] }, cursor: string, more = false) {
+      const requests: Array<{ bid: string; paginationToken: string | null }> = [];
+      const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ bid: claimsOf(init).bid, paginationToken: new URL(String(url)).searchParams.get('paginationToken') });
+        return Response.json({ notificationHistory: [], ...(more ? { paginationToken: 'next-page' } : {}) });
+      });
+      const provider = createAppleProvider({ ...configured, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+      const { nextCursor } = await provider.fetchNotificationHistory!({ cursor });
+      return { requests, nextCursor };
+    }
+
+    it("reads Apple's own pagination token as the first app's", async () => {
+      await expect(readPage({ bundleIds }, 'legacy-page')).resolves.toEqual({
+        requests: [{ bid: 'com.example.one', paginationToken: 'legacy-page' }],
+        nextCursor: historyCursor({ bundleId: 'com.example.two' })
+      });
     });
-    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
-    await provider.fetchNotificationHistory!({ cursor: 'legacy-page' });
-    expect(requests).toEqual([{ bid: 'com.example.one', paginationToken: 'legacy-page' }]);
-    const forged = `billfn-apple-history:${Buffer.from(JSON.stringify({ bundleId: 'com.example.other' })).toString('base64url')}`;
-    await expect(provider.fetchNotificationHistory!({ cursor: forged })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    it('continues a kept app after narrowing to one bundle ID, and returns plain Apple tokens from then on', async () => {
+      await expect(readPage({ bundleId: 'com.example.two' }, historyCursor({ bundleId: 'com.example.two', paginationToken: 'two-page-3' }), true))
+        .resolves.toEqual({ requests: [{ bid: 'com.example.two', paginationToken: 'two-page-3' }], nextCursor: 'next-page' });
+      await expect(readPage({ bundleIds: ['com.example.two'] }, historyCursor({ bundleId: 'com.example.two' }))).resolves.toEqual({
+        requests: [{ bid: 'com.example.two', paginationToken: null }],
+        nextCursor: undefined
+      });
+    });
+
+    it('restarts from the first listed app when the cursor names a removed app, instead of failing every backfill', async () => {
+      const removed = historyCursor({ bundleId: 'com.example.removed', paginationToken: 'removed-page-2' });
+      await expect(readPage({ bundleId: 'com.example.one' }, removed, true)).resolves.toEqual({
+        requests: [{ bid: 'com.example.one', paginationToken: null }],
+        nextCursor: 'next-page'
+      });
+      await expect(readPage({ bundleIds }, removed)).resolves.toEqual({
+        requests: [{ bid: 'com.example.one', paginationToken: null }],
+        nextCursor: historyCursor({ bundleId: 'com.example.two' })
+      });
+    });
+
+    it('rejects a malformed adapter cursor without asking Apple', async () => {
+      for (const configured of [{ bundleIds }, { bundleId: 'com.example.one' }]) {
+        for (const cursor of [
+          'billfn-apple-history:not-json',
+          historyCursor({ bundleId: '' }),
+          historyCursor({ bundleId: 'com.example.one', paginationToken: '' })
+        ]) {
+          await expect(readPage(configured, cursor)).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+        }
+      }
+    });
   });
 
   it('requires a non-empty list of non-empty bundle IDs', () => {
