@@ -397,6 +397,41 @@ function install(current: Set<Listener>): (() => void) | undefined {
   return undo;
 }
 
+// True while a session's restore runs, and whether page code it ran (a
+// WebSocket getter or setter) started a session that still has to install.
+let tearingDown = false;
+let installDeferred = false;
+
+/**
+ * Installs the wrappers for a new session, or, during a restore, once the
+ * restore has finished: never over the constructor being restored.
+ */
+function installFor(current: Set<Listener>): void {
+  if (tearingDown) {
+    installDeferred = true;
+    return;
+  }
+  restore = install(current);
+  // Page code installing ran may have stopped every collector of the session.
+  if (current === listeners && current.size === 0) teardown();
+}
+
+function teardown(): void {
+  const undo = restore;
+  restore = undefined;
+  if (!undo) return;
+  tearingDown = true;
+  try {
+    undo();
+  } finally {
+    tearingDown = false;
+  }
+  if (installDeferred) {
+    installDeferred = false;
+    if (listeners.size > 0) installFor(listeners);
+  }
+}
+
 function subscribe(listener: Listener): () => void {
   const first = listeners.size === 0;
   if (first) listeners = new Set();
@@ -404,14 +439,10 @@ function subscribe(listener: Listener): () => void {
   // Subscribed before installing: page code that installing runs (a
   // WebSocket getter) and that starts another collector joins this session.
   current.add(listener);
-  if (first) restore = install(current);
+  if (first) installFor(current);
   return () => {
     current.delete(listener);
-    if (current === listeners && current.size === 0) {
-      const undo = restore;
-      restore = undefined;
-      undo?.();
-    }
+    if (current === listeners && current.size === 0) teardown();
   };
 }
 

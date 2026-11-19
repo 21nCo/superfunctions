@@ -389,6 +389,61 @@ describe("WebSocketCollector", () => {
     }
   });
 
+  /** Makes the global WebSocket an accessor that runs `onRead` before each read and `onWrite` before each write. */
+  function hookAccess(hooks: { onRead?: () => void; onWrite?: () => void }): { readonly value: unknown } {
+    const state = { value: PageSocket as unknown };
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      get() {
+        hooks.onRead?.();
+        return state.value;
+      },
+      set(value) {
+        hooks.onWrite?.();
+        state.value = value;
+      },
+    });
+    return state;
+  }
+
+  for (const via of ["getter", "setter"] as const) {
+    it(`installs a session the global's ${via} starts during stop() over the restored constructor, and its stop() restores everything`, () => {
+      const other = new WebSocketCollector(5);
+      let armed = false;
+      const restart = () => {
+        if (!armed) return;
+        armed = false;
+        collector.start(); // The same collector, restarted by page code during its own stop().
+        other.start();
+      };
+      const global = hookAccess(via === "getter" ? { onRead: restart } : { onWrite: restart });
+      try {
+        collector.start();
+        const wrapper = global.value;
+        expect(wrapper).not.toBe(PageSocket);
+        armed = true;
+        collector.stop();
+        expect(armed).toBe(false);
+        expect(global.value).not.toBe(PageSocket);
+        expect(global.value).not.toBe(wrapper);
+        const socket = new (global.value as typeof PageSocket)("wss://example.com/restarted");
+        socket.serverOpens();
+        socket.send("x");
+        expect(socket.sent).toEqual(["x"]);
+        for (const each of [collector, other]) expect(each.collect().map(({ type, size }) => [type, size])).toEqual([["open", undefined], ["message", 1]]);
+        collector.stop();
+        other.stop();
+        expect(global.value).toBe(PageSocket);
+        expect(PageSocket.prototype.send).toBe(pageSend);
+        socket.send("after");
+        expect(other.collect()).toHaveLength(2);
+        expectValidEvents(other.collect());
+      } finally {
+        other.stop();
+      }
+    });
+  }
+
   it("records a binary size only when it is a nonnegative safe integer, keeping the event", () => {
     collector.start();
     const socket = openSocket("wss://example.com/sizes");
