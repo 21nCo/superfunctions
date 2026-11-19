@@ -1,0 +1,27 @@
+testfn/typescript/src/fixtures/authfn/index.ts
+  s_39e2d9f374a912::t_532d6e33efdfbb 21
+testfn/typescript/src/fixtures/authfn/remote.ts
+  s_39e2d9f374a912::t_6297f4b9b58809 38-54,67-68,97-102,122-123,136,150,179-182,187-206
+testfn/typescript/tests/authfn-fixture-remote.test.ts
+  s_39e2d9f374a912::t_58379e78966f85 5-6,136,138-142,165-239
+testfn/typescript/tests/support/authfn.ts
+  s_39e2d9f374a912::t_2b3f369ab40383 3,12-14,19,22
+testfn/typescript/README.md
+  s_39e2d9f374a912::t_9f4854eea48c72 177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45e44989ec694cb124d97de5bbeac4145ec271bc",
+  "prompts": {},
+  "sessions": {
+    "s_39e2d9f374a912": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8c544ea8-a326-4911-bc94-676d6cc45863",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
