@@ -149,7 +149,16 @@ interface RegionSummary {
   dependencies: Set<string>;
   /** A name flagged inside not, if/then/else or a schema-valued dependency. */
   conditionalFlag?: string;
+  /**
+   * A keyword (const, enum or minProperties) in this region or a nested one
+   * that constrains the whole instance or its property count, which removing
+   * a property would change.
+   */
+  instanceConstraint?: string;
 }
+
+/** Object keywords whose meaning changes when a property is removed. */
+const INSTANCE_CONSTRAINTS = ["const", "enum", "minProperties"] as const;
 
 const EMPTY_REGION: RegionSummary = {
   names: new Set(),
@@ -314,8 +323,8 @@ export class SchemaConverter {
     if (conflict !== undefined) {
       throw new OpenApiSkip(
         "unsupported-access-flag",
-        `property ${JSON.stringify(conflict)} is ${keyword} but is also constrained by ` +
-          "anyOf/oneOf, not, if/then/else or dependencies, so it cannot be removed soundly",
+        `property ${JSON.stringify(conflict.name)} is ${keyword} but is also constrained by ` +
+          `${conflict.by}, so it cannot be removed soundly`,
       );
     }
     const removed = own.size === 0 ? strip : new Set([...strip, ...own]);
@@ -497,21 +506,32 @@ export class SchemaConverter {
    *   that mark `id` readOnly, or a readOnly `id` that a `oneOf` member requires;
    * - a flagged name inside `not`, `if`, `then`, `else` or a schema-valued
    *   dependency, where removing it would invert or move the condition;
-   * - a flagged name used by `dependencies` or `dependentRequired`.
+   * - a flagged name used by `dependencies` or `dependentRequired`;
+   * - any flagged name where the schema or a region nested in it has `const`,
+   *   `enum` or `minProperties`, which constrain the whole instance or its
+   *   property count (`maxProperties` stays allowed: removal only helps it).
    * An `anyOf`/`oneOf` member that flags and uses a name only itself is
    * converted on its own and removes the name there.
    */
   private directionalAnalysis(
     schema: unknown,
     keyword: DirectionalKeyword,
-  ): { names: ReadonlySet<string>; conflict?: string } {
+  ): { names: ReadonlySet<string>; conflict?: { name: string; by: string } } {
     const summary = this.regionSummary(schema, keyword);
     const names = summary.names;
-    if (summary.conditionalFlag !== undefined) return { names, conflict: summary.conditionalFlag };
+    const elsewhere = "anyOf/oneOf, not, if/then/else or a schema dependency";
+    if (summary.conditionalFlag !== undefined) {
+      return { names, conflict: { name: summary.conditionalFlag, by: elsewhere } };
+    }
     // A name some region uses without flagging it conflicts with any region
     // that flags it (never the same region: there it would count as flagged).
     for (const name of summary.flagged) {
-      if (summary.unflagged.has(name) || summary.dependencies.has(name)) return { names, conflict: name };
+      if (summary.unflagged.has(name)) return { names, conflict: { name, by: elsewhere } };
+      if (summary.dependencies.has(name)) return { names, conflict: { name, by: "dependencies" } };
+    }
+    const [first] = summary.flagged;
+    if (first !== undefined && summary.instanceConstraint !== undefined) {
+      return { names, conflict: { name: first, by: summary.instanceConstraint } };
     }
     return { names };
   }
@@ -538,6 +558,7 @@ export class SchemaConverter {
     const dependencies = new Set<string>();
     const nested: RegionSummary[] = [];
     let conditionalFlag: string | undefined;
+    let instanceConstraint: string | undefined;
     const conditional = (member: unknown) => {
       const summary = this.regionSummary(member, keyword);
       conditionalFlag ??= summary.conditionalFlag ?? summary.flagged.values().next().value;
@@ -551,6 +572,7 @@ export class SchemaConverter {
         walk(this.target(current.$ref));
         if (this.version === "3.0") return;
       }
+      instanceConstraint ??= INSTANCE_CONSTRAINTS.find((constraint) => Object.hasOwn(current, constraint));
       if (isObject(current.properties)) {
         for (const [name, property] of Object.entries(current.properties)) {
           if (this.hasFlag(property, keyword)) flagged.add(name);
@@ -590,12 +612,14 @@ export class SchemaConverter {
       unflagged: new Set([...mentioned].filter((name) => !flagged.has(name))),
       dependencies,
       ...(conditionalFlag !== undefined ? { conditionalFlag } : {}),
+      ...(instanceConstraint !== undefined ? { instanceConstraint } : {}),
     };
     for (const inner of nested) {
       for (const name of inner.flagged) summary.flagged.add(name);
       for (const name of inner.unflagged) summary.unflagged.add(name);
       for (const name of inner.dependencies) summary.dependencies.add(name);
       if (inner.conditionalFlag !== undefined) summary.conditionalFlag ??= inner.conditionalFlag;
+      if (inner.instanceConstraint !== undefined) summary.instanceConstraint ??= inner.instanceConstraint;
     }
     memo.set(schema, summary);
     return summary;
@@ -647,7 +671,8 @@ export class SchemaConverter {
 
   /**
    * Whether a property schema carries `keyword`: on itself, on a schema it
-   * references (an alias's own sibling included), on an `allOf` member, or on
+   * references (an alias's own sibling included in 3.1; OpenAPI 3.0 ignores
+   * every `$ref` sibling, so there only the target counts), on an `allOf` member, or on
    * every alternative of an `anyOf`/`oneOf` other than a null-only one (the
    * nullable reference idiom `anyOf: [{ $ref }, { type: "null" }]`).
    */
@@ -669,8 +694,11 @@ export class SchemaConverter {
   }
 
   private computeFlag(property: JsonObject, keyword: DirectionalKeyword): boolean {
+    if (Object.hasOwn(property, "$ref")) {
+      const referenced = this.hasFlag(this.target(property.$ref), keyword);
+      if (this.version === "3.0" || referenced) return referenced;
+    }
     if (property[keyword] === true) return true;
-    if (Object.hasOwn(property, "$ref") && this.hasFlag(this.target(property.$ref), keyword)) return true;
     if (Array.isArray(property.allOf) && property.allOf.some((member) => this.hasFlag(member, keyword))) {
       return true;
     }

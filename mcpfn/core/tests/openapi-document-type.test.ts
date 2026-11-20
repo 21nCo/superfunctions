@@ -3,7 +3,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 describe("fromOpenAPI document type", () => {
-  it("accepts a fromRouter-style document interface and a parsed record without a cast", () => {
+  it("accepts fresh literals, fromRouter-style and plain interfaces and parsed records without a cast", () => {
     const file = fileURLToPath(new URL("./types/openapi-document.ts", import.meta.url));
     const program = ts.createProgram([file], {
       strict: true,

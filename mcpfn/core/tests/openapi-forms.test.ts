@@ -486,6 +486,75 @@ describe("fromOpenAPI skip reasons", () => {
     expect(output.properties).not.toHaveProperty("password");
   });
 
+  it("skips readOnly and writeOnly properties of objects that const, enum or minProperties constrain", () => {
+    const { tools, skipped } = convert("skip-access-flag-instance-constraints");
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlyWithConst", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by const, so it cannot be removed soundly'],
+      ["readOnlyWithEnum", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by enum, so it cannot be removed soundly'],
+      ["readOnlyWithMinProperties", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by minProperties, so it cannot be removed soundly'],
+      ["readOnlyWithInheritedMinProperties", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by minProperties, so it cannot be removed soundly'],
+      ["readOnlyBesideConstInOneOf", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by const, so it cannot be removed soundly'],
+      ["writeOnlyWithEnum", "unsupported-access-flag", 'property "password" is writeOnly but is also constrained by enum, so it cannot be removed soundly'],
+    ]);
+    // maxProperties only gets easier to meet when a property is removed.
+    expectArguments(tool(tools, "readOnlyWithMaxProperties").inputSchema, {
+      valid: [{ body: { label: "a" } }, { body: {} }],
+      invalid: [{ body: { id: "client-chosen-id" } }, { body: { label: "a", other: 1 } }],
+    });
+    // An object enum without flagged properties is converted unchanged.
+    expectArguments(tool(tools, "enumWithoutAccessFlags").inputSchema, {
+      valid: [{ body: { label: "a" } }],
+      invalid: [{ body: { label: "c" } }],
+    });
+  });
+
+  it("ignores readOnly and writeOnly beside a $ref in OpenAPI 3.0, which ignores $ref siblings", () => {
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/accounts": {
+            post: {
+              operationId: "createAccount",
+              requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Account" } } } },
+              responses: {
+                "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Credentials" } } } },
+              },
+            },
+          },
+        },
+        components: {
+          schemas: {
+            Id: { type: "string" },
+            Secret: { type: "string" },
+            Account: {
+              type: "object",
+              properties: { id: { $ref: "#/components/schemas/Id", readOnly: true }, name: { type: "string" } },
+              required: ["id", "name"],
+            },
+            Credentials: {
+              type: "object",
+              properties: { user: { type: "string" }, password: { $ref: "#/components/schemas/Secret", writeOnly: true } },
+              required: ["user", "password"],
+            },
+          },
+        },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(skipped).toEqual([]);
+    const created = tool(tools, "createAccount");
+    // id stays a required, writable field the server expects.
+    expectArguments(created.inputSchema, {
+      valid: [{ body: { id: "client-chosen-id", name: "a" } }],
+      invalid: [{ body: { name: "a" } }],
+    });
+    expectArguments(created.outputSchema!, {
+      valid: [{ user: "a", password: "test-password" }],
+      invalid: [{ user: "a" }],
+    });
+  });
+
   it("skips declared request bodies without a usable JSON media entry", () => {
     const { tools, skipped } = convert("skip-malformed-request-body");
     expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([

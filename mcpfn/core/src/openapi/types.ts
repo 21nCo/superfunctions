@@ -161,10 +161,20 @@ export interface FromOpenApiResult<TContext = undefined> {
  * loosely so that documents typed by their producer (such as the interface
  * `@apifn/core`'s `fromRouter` returns, which has only an `x-*` index
  * signature) are accepted as they are; the content is validated at run time.
+ * `fromOpenAPI` takes the document as a type parameter constrained by this
+ * interface, so a fresh object literal may also carry `x-*` extensions and
+ * any other top-level field.
  */
 export interface OpenApiDocument {
   readonly openapi?: unknown;
   readonly swagger?: unknown;
+  readonly info?: unknown;
+  readonly jsonSchemaDialect?: unknown;
+  readonly servers?: unknown;
   readonly paths?: unknown;
+  readonly webhooks?: unknown;
   readonly components?: unknown;
+  readonly security?: unknown;
+  readonly tags?: unknown;
+  readonly externalDocs?: unknown;
 }

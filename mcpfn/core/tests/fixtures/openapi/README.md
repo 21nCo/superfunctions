@@ -12,6 +12,11 @@
   `anyOf`/`oneOf`, `not`, `if`/`then` or dependencies constrain, and keeps the
   nullable-reference idiom, polymorphic members that each mark `id` readOnly
   and a `oneOf` that does not use the flagged name.
+- `skip-access-flag-instance-constraints.json` skips readOnly/writeOnly
+  properties of objects that `const`, `enum` or `minProperties` constrain (in
+  the object, an `allOf`/`$ref` member or an alternative), and keeps
+  `maxProperties` beside a readOnly property and an object `enum` without
+  flagged properties.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.

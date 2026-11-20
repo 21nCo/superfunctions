@@ -109,8 +109,11 @@ for (const { operation, code, reason } of skipped) {
   that marks a property readOnly removes it within that member. When a flagged
   property is also used by another `anyOf`/`oneOf` member or the enclosing
   object without the flag, or inside `not`, `if`/`then`/`else` or
-  `dependencies`/`dependentRequired`, removing it would change what the schema
-  means, so the operation is skipped (`unsupported-access-flag`). The request
+  `dependencies`/`dependentRequired`, or when the object or a subschema of it
+  has `const`, `enum` or `minProperties`, removing it would change what the
+  schema means, so the operation is skipped (`unsupported-access-flag`). In
+  OpenAPI 3.0 a `readOnly` beside a `$ref` is ignored, as 3.0 ignores every
+  `$ref` sibling; in 3.1 it applies. The request
   body is the first `application/json` media entry that is an object, else the
   first such `*+json` one; a declared body without one is skipped
   (`invalid-request-body`), and a media entry without `schema` accepts any

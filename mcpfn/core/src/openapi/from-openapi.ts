@@ -592,8 +592,11 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
  * `McpFnRegistry`. Operations outside the supported set, or filtered out, are
  * listed in `skipped` with a reason. Tool calls are delegated to the executor.
  */
-export function fromOpenAPI<TContext = undefined>(
-  document: OpenApiDocument,
+export function fromOpenAPI<
+  TContext = undefined,
+  TDocument extends OpenApiDocument = OpenApiDocument,
+>(
+  document: TDocument,
   options: FromOpenApiOptions<TContext>,
 ): FromOpenApiResult<TContext> {
   if (!isObject(document)) {
