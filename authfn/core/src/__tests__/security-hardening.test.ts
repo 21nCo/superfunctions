@@ -467,7 +467,8 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
   });
 
   it('binds JSON and session-token callbacks too, so no unbound callback sets session cookies', async () => {
-    const auth = createTestServer(createConfig({ bindBrowserState: true }));
+    const events: string[] = [];
+    const auth = createTestServer({ ...createConfig({ bindBrowserState: true }), observability: { events: { emit: async (event: { type: string }) => { events.push(event.type); } } } as never });
     for (const body of [
       { callbackMode: 'json' },
       { returnTo: 'nucleum://oauthsignin', handoffMode: 'session-token' }
@@ -480,6 +481,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
       expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
       expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.') && /Max-Age=0/i.test(cookie))).toBe(true);
     }
+    expect(events).toContain('authfn.request.failed');
   });
 
   it('binds a JSON session-token start even when it sends a handoff challenge', async () => {

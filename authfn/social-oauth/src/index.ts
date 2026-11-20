@@ -67,7 +67,7 @@ import {
 import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
-import { jsonError, jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
+import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
 import { emitAuthEvent } from 'authfn/core/observability';
 import { createOAuthTokenDiagnosticFetcher } from './oauth-support.js';
 import {
@@ -670,10 +670,10 @@ function createSocialRoutes(
               303
             );
           }
-          if (config.bindBrowserState) {
-            const response = jsonError(request, error);
-            response.headers.append('set-cookie', clearBrowserBindingCookie(ctx, request, runtime, stateId));
-            return response;
+          if (config.bindBrowserState && error && typeof error === 'object') {
+            Object.assign(error, {
+              authfnSetCookies: [clearBrowserBindingCookie(ctx, request, runtime, stateId)]
+            });
           }
           throw error;
         }

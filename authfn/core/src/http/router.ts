@@ -64,9 +64,25 @@ export function createAuthFnRouter(
         // Error handling must still return the original auth response.
       }
 
-      return jsonError(request, error);
+      const response = jsonError(request, error);
+      for (const cookie of readErrorSetCookies(error)) {
+        response.headers.append('set-cookie', cookie);
+      }
+      return response;
     }
   });
+}
+
+/**
+ * Cookies a route attached to a thrown error (as `authfnSetCookies`) so the
+ * shared error response can still clear per-request state, such as an OAuth
+ * browser-binding cookie.
+ */
+function readErrorSetCookies(error: unknown): string[] {
+  const cookies = error && typeof error === 'object'
+    ? (error as { authfnSetCookies?: unknown }).authfnSetCookies
+    : undefined;
+  return Array.isArray(cookies) ? cookies.filter((cookie): cookie is string => typeof cookie === 'string') : [];
 }
 
 function isDebugErrorLoggingEnabled(): boolean {
