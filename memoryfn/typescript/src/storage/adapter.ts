@@ -35,7 +35,10 @@ export const MAX_SOURCE_CHUNKS = 16_384;
  * and JSON-serialized embedding, as given.
  */
 export const MAX_SOURCE_REPLACE_BYTES = 256 * 1024 * 1024;
-/** Most UTF-8 bytes of a source's tenantId and of its sourceKey, each. */
+/**
+ * Most UTF-8 bytes of each part of a source's identity: its tenantId, its
+ * sourceKey, and its containerTags as given (all tags, duplicates included).
+ */
 export const MAX_SOURCE_IDENTITY_BYTES = 1024;
 export interface StorageAdapter {
   /** Fixed vector dimension, shared across bundled entrypoints. */
@@ -99,7 +102,8 @@ function isSourceText(value: unknown): value is string {
  * UTF-8 length of `value` as PostgreSQL stores it (a lone surrogate becomes the
  * 3-byte U+FFFD), counted without encoding it or any runtime-specific API.
  */
-function utf8Bytes(value: string): number {
+function utf8Bytes(value: string | string[]): number {
+  if (Array.isArray(value)) return value.reduce((total, part) => total + utf8Bytes(part), 0);
   let bytes = value.length;
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
@@ -140,7 +144,8 @@ export function requireSourceScope(input: SourceScope): SourceSnapshot {
   if (!isSourceText(tenantId)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
   if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
-  if (utf8Bytes(tenantId) > MAX_SOURCE_IDENTITY_BYTES || utf8Bytes(sourceKey) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+  // PostgreSQL statements repeat the tags, escaped, in their scope predicates, so the tag set is bounded like the keys.
+  if ([tenantId, sourceKey, containerTags].some(part => utf8Bytes(part) > MAX_SOURCE_IDENTITY_BYTES)) throw sourceLimitExceeded();
   const scope: SourceScope = { tenantId, containerTags: [...containerTags], sourceKey };
   return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
 }
@@ -150,11 +155,24 @@ export function sameTagSet(left: string[], right: string[]): boolean {
   return a.size === b.size && [...a].every(tag => b.has(tag));
 }
 
-/** Bytes a chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
+/**
+ * UTF-8 bytes of the JSON text of `value`. A value whose JSON text exceeds the
+ * runtime's string capacity (a RangeError) is far over MAX_SOURCE_REPLACE_BYTES.
+ */
+function jsonBytes(value: unknown): number {
+  try {
+    return utf8Bytes(JSON.stringify(value));
+  } catch (error) {
+    if (error instanceof RangeError) throw sourceLimitExceeded();
+    throw error;
+  }
+}
+
+/** Bytes a copied chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
 function chunkBytes(chunk: MemoryInsert): number {
   const text = (value: unknown) => typeof value === 'string' ? utf8Bytes(value) : 0;
-  return text(chunk.id) + text(chunk.type) + text(chunk.content) + utf8Bytes(JSON.stringify(chunk.metadata ?? {}))
-    + (chunk.embedding ? utf8Bytes(JSON.stringify(chunk.embedding)) : 0);
+  return text(chunk.id) + text(chunk.type) + text(chunk.content) + jsonBytes(chunk.metadata ?? {})
+    + (chunk.embedding ? jsonBytes(chunk.embedding) : 0);
 }
 
 /**
@@ -169,18 +187,23 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   const given = [...chunks];
   if (given.length > MAX_SOURCE_CHUNKS) throw sourceLimitExceeded();
-  let bytes = utf8Bytes(contentHash) + scope.containerTags.reduce((total, tag) => total + utf8Bytes(tag), 0);
+  let bytes = utf8Bytes(contentHash) + utf8Bytes(scope.containerTags);
+  if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
+  // Each chunk is copied first, reading every field once, and the copy that the
+  // adapters write is the value measured.
   const copies = given.map((chunk): MemoryInsert => {
     if (!chunk || chunk.tenantId !== scope.tenantId) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
     requireSourceTags(chunk.containerTags);
     if (!sameTagSet(chunk.containerTags, scope.containerTags)) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
-    bytes += chunkBytes(chunk);
-    if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
-    return {
-      ...chunk, tenantId: scope.tenantId, containerTags: [...scope.containerTags],
-      ...(chunk.embedding ? { embedding: [...chunk.embedding] } : {}),
-      ...(chunk.metadata === undefined ? {} : { metadata: structuredClone(chunk.metadata) }),
+    const { embedding, metadata, ...fields } = chunk;
+    const copy: MemoryInsert = {
+      ...fields, tenantId: scope.tenantId, containerTags: [...scope.containerTags],
+      ...(embedding ? { embedding: [...embedding] } : {}),
+      ...(metadata === undefined ? {} : { metadata: structuredClone(metadata) }),
     };
+    bytes += chunkBytes(copy);
+    if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
+    return copy;
   });
   return { scope, tags, contentHash, chunks: copies };
 }

@@ -244,6 +244,13 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
         { content: 'x'.repeat(overByEscapes), metadata: { v: control.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 8 - overByEscapes) / 6) } },
       ];
       for (const chunk of overCases) await expect(replace(chunk)).rejects.toThrow(LIMIT);
+      // Measured on the copy that is written: structuredClone drops this prototype's toJSON and keeps `value`.
+      class Hidden { constructor(readonly value: string) {} toJSON() { return {}; } }
+      await expect(replace({ metadata: new Hidden('x'.repeat(MAX_SOURCE_REPLACE_BYTES)) as unknown as Record<string, unknown> })).rejects.toThrow(LIMIT);
+      // JSON text beyond the runtime's string capacity.
+      await expect(replace({ metadata: { list: new Array(90).fill(control.repeat(1 << 20)) } })).rejects.toThrow(LIMIT);
+      // The hash and tags count even without chunks.
+      await expect(adapter().replaceSource({ ...source, contentHash: 'h'.repeat(MAX_SOURCE_REPLACE_BYTES + 1), chunks: [] })).rejects.toThrow(LIMIT);
       await unchanged();
       const content = `😀${'€'.repeat(1000)}${'x'.repeat(MAX_SOURCE_REPLACE_BYTES - fixed - '{"v":""}'.length - 6 * 1000 - 4 - 3 * 1000)}`;
       const [row] = await replace({ content, metadata: { v: control.repeat(1000) } });
@@ -251,15 +258,17 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
     }, LARGE);
 
-    it('rejects a tenant or source key over the identity limit in every source method', async () => {
+    it('rejects a tenant, source key or tag set over the identity limit in every source method', async () => {
       const unchanged = await seed();
       // 1,024 bytes each: 341 3-byte characters and one ASCII character, and 256 4-byte characters.
-      const atLimit = { ...source, tenantId: `${'€'.repeat(341)}x`, sourceKey: '😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4) };
+      const atLimit = { tenantId: `${'€'.repeat(341)}x`, sourceKey: '😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4), containerTags: ['team', 'x'.repeat(1020)] };
       await adapter().replaceSource({ ...atLimit, contentHash: 'hash-k', chunks: chunks(atLimit, 'k') });
       expect(await adapter().getSourceState(atLimit)).toEqual({ contentHash: 'hash-k', chunkCount: 1 });
       const overScopes: SourceScope[] = [
         { ...source, sourceKey: 'k'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, sourceKey: `${atLimit.sourceKey}x` },
         { ...source, tenantId: 't'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, tenantId: `${'é'.repeat(512)}x` },
+        // The tags count as given, duplicates included.
+        { ...source, containerTags: ['team', 'x'.repeat(1021)] }, { ...source, containerTags: new Array(257).fill('team') },
       ];
       for (const scope of overScopes) {
         await expect(adapter().getSourceState(scope)).rejects.toThrow(LIMIT);
