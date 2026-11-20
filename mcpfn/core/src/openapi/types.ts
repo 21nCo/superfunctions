@@ -125,16 +125,19 @@ export interface OpenApiExecutor {
   execute(request: OpenApiExecuteRequest): CallToolResult | Promise<CallToolResult>;
 }
 
+/**
+ * An operation selector: an operationId, `tag:<name>` or `METHOD /path` as a
+ * string, or `{ operationId }`, which matches that operationId exactly even
+ * when it reads as a tag or route selector.
+ */
+export type OpenApiSelector = string | { readonly operationId: string };
+
 export interface FromOpenApiOptions<TContext = undefined> {
   executor: OpenApiExecutor;
-  /**
-   * When present, only matching operations are exposed. A selector is an
-   * operationId, `operationId:<id>` (exact, for ids that read as another
-   * form), `tag:<name>` or `METHOD /path`.
-   */
-  include?: readonly string[];
-  /** Matching operations (same selectors as `include`) are never exposed; `exclude` wins. */
-  exclude?: readonly string[];
+  /** When present, only matching operations are exposed. */
+  include?: readonly OpenApiSelector[];
+  /** Matching operations are never exposed; `exclude` wins over `include`. */
+  exclude?: readonly OpenApiSelector[];
   /** Expose methods other than GET and HEAD without listing their operationId in `include`. */
   allowMutations?: boolean;
   /** Expose operations marked `deprecated: true`. */

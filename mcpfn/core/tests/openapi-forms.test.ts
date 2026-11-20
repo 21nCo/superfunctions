@@ -635,7 +635,11 @@ describe("fromOpenAPI skip reasons", () => {
       ["readOnlyChildObjectEnum", "unsupported-access-flag", child('property "data"', "const or enum")],
       ["readOnlyUniqueItems", "unsupported-access-flag", child("items", "uniqueItems")],
       ["readOnlyItemsUnderIf", "unsupported-access-flag", child("items", OVERLAP)],
-      ["readOnlyMapSibling", "unsupported-access-flag", child('property "x"', "another schema for the same value")],
+      [
+        "readOnlyMapSibling",
+        "unsupported-access-flag",
+        child("additionalProperties", "properties of another schema for the same object"),
+      ],
     ]);
     // A map of objects with readOnly properties, and a string enum beside the
     // object member, constrain nothing else and still convert.
@@ -1068,6 +1072,87 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     });
   });
 
+  it("decides anchored literal patterns without running them, and stays linear in allOf members", () => {
+    const person = { type: "object", properties: { id: { type: "string", readOnly: true }, name: { type: "string" } } };
+    const members = Array.from({ length: 5000 }, (_, index) => ({ properties: { [`p${index}`]: { type: "string" } } }));
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/prefix": {
+            post: {
+              operationId: "extensionPattern",
+              requestBody: body({ type: "object", properties: { profile: person }, patternProperties: { "^x-": { type: "string" } } }),
+              responses: ok,
+            },
+          },
+          "/exact": {
+            post: {
+              operationId: "exactPattern",
+              requestBody: body({ type: "object", properties: { profile: person }, patternProperties: { "^profile$": { required: ["id"] } } }),
+              responses: ok,
+            },
+          },
+          "/wide": {
+            post: {
+              operationId: "wideAllOf",
+              requestBody: body({ allOf: [...members, { properties: { owner: person } }] }),
+              responses: ok,
+            },
+          },
+        },
+      },
+      options(),
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(skips(result)).toEqual([
+      ["exactPattern", "unsupported-access-flag", child('property "profile"', "patternProperties of a schema for the same object")],
+    ]);
+    expectArguments(tool(result.tools, "extensionPattern").inputSchema, {
+      valid: [{ body: { profile: { name: "n" }, "x-tag": "t" } }],
+      invalid: [{ body: { profile: { id: "client-chosen-id" } } }, { body: { "x-tag": 1 } }],
+    });
+    expectArguments(tool(result.tools, "wideAllOf").inputSchema, {
+      valid: [{ body: { owner: { name: "n" }, p0: "a" } }],
+      invalid: [{ body: { owner: { id: "client-chosen-id" } } }],
+    });
+  });
+
+  it("skips an operation whose unprojectable output mcpFn would also reject", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/bad": {
+            get: {
+              operationId: "badUnprojectable",
+              responses: json({
+                type: "object",
+                required: ["password"],
+                allOf: [{ properties: { password: { type: "string", writeOnly: true } } }],
+                properties: { n: { type: "bogus" } },
+              }),
+            },
+          },
+          "/good": {
+            get: {
+              operationId: "goodUnprojectable",
+              responses: json({
+                type: "object",
+                required: ["password"],
+                allOf: [{ properties: { password: { type: "string", writeOnly: true } } }],
+              }),
+            },
+          },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([["badUnprojectable", "invalid-schema"]]);
+    expect(registered(result)).toEqual([["goodUnprojectable", false]]);
+  });
+
   it("skips an input and leaves out an output that expand past the node budget, keeping the rest", () => {
     let node: Record<string, unknown> = { type: "string" };
     let literal: Record<string, unknown> = { leaf: true };
@@ -1109,6 +1194,30 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       valid: [{ name: "r", children: [{ name: "c", children: [] }] }],
       invalid: [{ children: [{ name: 1 }] }],
     });
+  });
+
+  it("bounds the work of a whole document that shares one object between many operations", () => {
+    let node: Record<string, unknown> = { type: "string" };
+    for (let depth = 0; depth < 17; depth += 1) node = { type: "object", properties: { a: node, b: node } };
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 200; index += 1) {
+      paths[`/dag${index}`] = { post: { operationId: `dag${index}`, requestBody: body(node), responses: ok } };
+    }
+    const components: Record<string, unknown> = {};
+    for (let index = 0; index < 50; index += 1) components[`Alias${index}`] = node;
+    paths["/aliases"] = {
+      post: {
+        operationId: "aliases",
+        requestBody: body({ allOf: Object.keys(components).map((name) => ({ $ref: `#/components/schemas/${name}` })) }),
+        responses: ok,
+      },
+    };
+    const started = performance.now();
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: components } }, options());
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(result.tools).toEqual([]);
+    expect(new Set(result.skipped.map((entry) => entry.code))).toEqual(new Set(["schema-too-large"]));
+    expect(result.skipped.at(-1)!.reason).toMatch(/^the document's schemas expand in total to more than \d+ nodes/);
   });
 
   it("skips schemas in a dialect other than the OAS 3.1 base or 2020-12 one", () => {
@@ -1157,6 +1266,36 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         plain.tools.map((entry) => [entry.inputSchema, entry.outputSchema]),
       );
     }
+    // A root that selects a supported dialect itself is read in it; an unknown OAS dialect id is not supported.
+    const own = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        jsonSchemaDialect: draft07,
+        paths: {
+          "/own": {
+            post: {
+              operationId: "ownDialect",
+              requestBody: body({ $schema: "https://spec.openapis.org/oas/3.1/dialect/base", type: "object" }),
+              responses: ok,
+            },
+          },
+          "/ref": { post: { operationId: "referenced", requestBody: body({ $ref: "#/components/schemas/Own" }), responses: ok } },
+          "/other": {
+            post: {
+              operationId: "otherOasDialect",
+              requestBody: body({ $schema: "https://spec.openapis.org/oas/3.1/dialect/other", type: "object" }),
+              responses: ok,
+            },
+          },
+        },
+        components: { schemas: { Own: { $schema: "https://spec.openapis.org/oas/3.1/dialect/2024-11-10", type: "object" } } },
+      },
+      options(),
+    );
+    expect(skips(own)).toEqual([
+      ["otherOasDialect", "unsupported-dialect", 'schema dialect "https://spec.openapis.org/oas/3.1/dialect/other" is not supported'],
+    ]);
+    expect(registered(own)).toEqual([["ownDialect", false], ["referenced", false]]);
     const legacy = fromOpenAPI(
       { openapi: "3.0.3", paths: { "/in": { post: { operationId: "legacy", requestBody: body({ $schema: draft07, type: "object" }), responses: ok } } } },
       options(),

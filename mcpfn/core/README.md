@@ -87,9 +87,9 @@ for (const { operation, code, reason } of skipped) {
 - **Exposure.** Only `GET` and `HEAD` are exposed by default. Any other method
   needs its operationId in `include` or `allowMutations: true`; a `tag:` or
   `METHOD /path` selector selects an operation but does not opt a mutation in.
-  `operationId:<id>` selects an operationId exactly, for one that reads as a
-  tag or route selector (such as `operationId:tag:pets`), and opts it in like
-  a plain operationId.
+  `{ operationId: "<id>" }` selects an operationId exactly, for one that reads
+  as a tag or route selector (such as `{ operationId: "tag:pets" }`), and
+  opts it in like a plain operationId.
   When `include` is given, nothing outside it is exposed, and `exclude` always
   wins. Deprecated operations need `includeDeprecated: true`.
 - **Names.** The operationId, with `prefix` prepended, characters outside
@@ -170,11 +170,14 @@ for (const { operation, code, reason } of skipped) {
   `$dynamicRef`, `unevaluatedProperties`, `unevaluatedItems`,
   `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
   translated to draft-07 `dependencies`). A 3.1 `jsonSchemaDialect` or
-  `$schema` other than the OAS 3.1 base dialect or JSON Schema 2020-12, or
-  any `$schema` in a 3.0 document, skips the schemas it governs
-  (`unsupported-dialect`). An input or a component that would expand to more
-  than 100,000 schema nodes (a document can share one object between many
-  positions) is skipped (`schema-too-large`). A Swagger 2.0 document throws.
+  `$schema` other than the OAS 3.1 base dialect (`.../dialect/base` or a
+  dated id) or JSON Schema 2020-12, or any `$schema` in a 3.0 document, skips
+  the schemas it governs (`unsupported-dialect`); a schema root that names a
+  supported `$schema` itself is read in it. An input, output or component
+  that would expand to more than 100,000 schema nodes (a document can share
+  one object between many positions) is skipped (`schema-too-large`), and so
+  is every schema converted after one call has produced 1,000,000 nodes plus
+  64 per value of the document. A Swagger 2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates.
   `operation` is deeply frozen and typed read-only.

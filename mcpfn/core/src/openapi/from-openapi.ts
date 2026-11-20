@@ -70,8 +70,6 @@ function isForbiddenHeader(name: string): boolean {
   return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
 }
 
-const OPERATION_ID_SELECTOR = "operationId:";
-
 interface SelectorSet {
   operationIds: Set<string>;
   tags: Set<string>;
@@ -92,28 +90,26 @@ function compileSelectors(
 }
 
 function addSelector(set: SelectorSet, option: "include" | "exclude", selector: unknown): void {
+  if (isObject(selector) && Object.keys(selector).length === 1 && typeof selector.operationId === "string" && selector.operationId) {
+    // Exact form, for operationIds that read as a tag or route selector.
+    set.operationIds.add(selector.operationId);
+    return;
+  }
   if (typeof selector !== "string" || selector.trim() === "") {
     throw new McpFnValidationError(
-      `fromOpenAPI ${option} selector ${JSON.stringify(selector)} must be a non-empty string`,
+      `fromOpenAPI ${option} selector ${JSON.stringify(selector)} must be a non-empty string or { operationId }`,
     );
   }
   const route = /^([A-Za-z]+)\s+(\/\S*)$/.exec(selector);
-  if (selector.startsWith(OPERATION_ID_SELECTOR)) {
-    // Exact form, for operationIds that read as a tag or route selector.
-    set.operationIds.add(selectorValue(option, selector, OPERATION_ID_SELECTOR, "an operationId"));
-  } else if (selector.startsWith("tag:")) {
-    set.tags.add(selectorValue(option, selector, "tag:", "a tag name"));
+  if (selector.startsWith("tag:")) {
+    const tag = selector.slice("tag:".length);
+    if (!tag) throw new McpFnValidationError(`fromOpenAPI ${option} selector "tag:" needs a tag name`);
+    set.tags.add(tag);
   } else if (route && METHODS.has(route[1]!.toLowerCase())) {
     set.routes.add(`${route[1]!.toUpperCase()} ${route[2]}`);
   } else {
     set.operationIds.add(selector);
   }
-}
-
-function selectorValue(option: "include" | "exclude", selector: string, prefix: string, needs: string): string {
-  const value = selector.slice(prefix.length);
-  if (!value) throw new McpFnValidationError(`fromOpenAPI ${option} selector "${prefix}" needs ${needs}`);
-  return value;
 }
 
 type OperationIdentity = Pick<OpenApiOperation, "method" | "path" | "operationId" | "tags">;
@@ -220,8 +216,9 @@ function isApplicationJson(key: string): boolean {
 const SUCCESS_STATUS = /^2(?:\d\d|XX)$/i;
 
 // Codes that leave a tool without an output schema instead of skipping it:
-// the contract allows "otherwise no output schema".
-const OUTPUT_OMIT_CODES = new Set(["schema-too-large", "unsupported-access-flag", "unsupported-dialect"]);
+// the contract allows "otherwise no output schema". (A projection conflict
+// also does, once the schema has compiled; see convertOutput.)
+const OUTPUT_OMIT_CODES = new Set(["schema-too-large", "unsupported-dialect"]);
 
 /** The `{name}` variables of a path template, scanned without backtracking. */
 function templateVariables(path: string): string[] {
@@ -256,6 +253,7 @@ class OperationConverter {
     this.schemas = new SchemaConverter(
       version,
       isObject(this.components.schemas) ? this.components.schemas : {},
+      NodeBudget.forDocument(document),
       version === "3.1" && dialect !== undefined && !isDefaultDialect(dialect) ? JSON.stringify(dialect) : undefined,
     );
   }
@@ -269,7 +267,7 @@ class OperationConverter {
       const resolved = this.inputs(path, pathItem, raw);
       // Each tool owns its schema objects: component conversions are cached
       // and shared, and a schema must not reach one object by two paths.
-      return { inputs: resolved, inputSchema: treeCopy(this.inputSchema(resolved), new NodeBudget()) };
+      return { inputs: resolved, inputSchema: treeCopy(this.inputSchema(resolved), this.schemas.copyBudget()) };
     });
     const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
     const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
@@ -354,7 +352,7 @@ class OperationConverter {
       if (requiredNames.length > 0) required.push(location);
     }
     if (body) {
-      groups.push(["body", this.schemas.convert(body.schema, "input", refs)]);
+      groups.push(["body", this.schemas.convertRoot(body.schema, "input", refs)]);
       this.schemas.checkProjection(body.schema, "input");
       if (body.info.required) required.push("body");
     }
@@ -400,7 +398,7 @@ class OperationConverter {
 
   private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const refs = new Set<string>();
-    let root = this.schemas.convert(schema, "output", refs);
+    let root = this.schemas.convertRoot(schema, "output", refs);
     const definitions = this.schemas.definitions(refs, "output");
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
@@ -410,7 +408,15 @@ class OperationConverter {
       this.assertCompiles(root, definitions);
       return undefined;
     }
-    this.schemas.checkProjection(schema, "output");
+    try {
+      this.schemas.checkProjection(schema, "output");
+    } catch (error) {
+      if (!(error instanceof OpenApiSkip) || error.code !== "unsupported-access-flag") throw error;
+      // writeOnly properties cannot be left out soundly: no output schema,
+      // but a schema the registry would reject still skips the operation.
+      this.assertCompiles(root, definitions);
+      return undefined;
+    }
     // A root `$ref` is inlined: draft-07 ignores keywords beside `$ref`, and
     // mcpFn needs `type: "object"` on the root itself.
     const seen = new Set<string>();
@@ -432,7 +438,7 @@ class OperationConverter {
         type: "object",
         ...(Object.keys(definitions).length > 0 ? { definitions } : {}),
       } as McpFnObjectSchema,
-      new NodeBudget(),
+      this.schemas.copyBudget(),
     );
   }
 
@@ -442,7 +448,7 @@ class OperationConverter {
     const schema = Object.keys(definitions).length > 0 ? { ...root, definitions } : root;
     this.compiler ??= createSchemaCompiler();
     try {
-      this.compiler.compile(treeCopy(schema, new NodeBudget()));
+      this.compiler.compile(treeCopy(schema, this.schemas.copyBudget()));
     } catch (error) {
       if (error instanceof OpenApiSkip) throw error;
       throw new OpenApiSkip(
@@ -528,7 +534,7 @@ class OperationConverter {
     // Conversion runs first so its skip reasons (unsupported keywords,
     // unresolved or cyclic references) take precedence over the shape check.
     const refs = new Set<string>();
-    const converted = this.schemas.convert(raw.schema, "input", refs);
+    const converted = this.schemas.convertRoot(raw.schema, "input", refs);
     this.schemas.definitions(refs, "input");
     const shape = this.parameterShape(name, location, raw.schema);
     if (location === "query" && shape === "array" && !explode) {

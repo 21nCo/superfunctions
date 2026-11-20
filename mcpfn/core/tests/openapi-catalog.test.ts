@@ -90,13 +90,15 @@ describe("fromOpenAPI filtering (D8)", () => {
     expect(names({ include: ["legacyPurge"] }).skipped).toMatchObject({ legacyPurge: "deprecated" });
   });
 
-  it("selects an operationId that reads as a tag or route exactly with operationId:", () => {
+  it("selects an operationId that reads as a tag or route exactly with { operationId }", () => {
     const document = {
       openapi: "3.1.0",
       paths: {
         "/a": { get: { operationId: "tag:pets", tags: ["other"], responses: ok } },
         "/b": { post: { operationId: "POST /b", responses: ok } },
         "/c": { get: { operationId: "plain", tags: ["pets"], responses: ok } },
+        "/d": { post: { operationId: "operationId:rotate", responses: ok } },
+        "/e": { post: { operationId: "rotate", responses: ok } },
       },
     };
     const run = (options: Partial<Parameters<typeof fromOpenAPI>[1]>) => {
@@ -106,17 +108,23 @@ describe("fromOpenAPI filtering (D8)", () => {
         skipped: Object.fromEntries(result.skipped.map((entry) => [entry.operation.operationId, entry.code])),
       };
     };
-    // "tag:pets" as a selector is the tag; the exact form names the operationId.
+    // "tag:pets" as a string is the tag; the object form names the operationId.
     expect(run({ include: ["tag:pets"] }).names).toEqual(["plain"]);
-    expect(run({ include: ["operationId:tag:pets"] }).names).toEqual(["tag_pets"]);
-    // The exact form opts a mutation in like a plain operationId; a route never does.
-    expect(run({ include: ["operationId:POST /b"] }).names).toEqual(["POST__b"]);
+    expect(run({ include: [{ operationId: "tag:pets" }] }).names).toEqual(["tag_pets"]);
+    // The object form opts a mutation in like a plain operationId; a route never does.
+    expect(run({ include: [{ operationId: "POST /b" }] }).names).toEqual(["POST__b"]);
     expect(run({ include: ["POST /b"] }).skipped).toMatchObject({ "POST /b": "mutation-not-allowed" });
+    // A string never changes meaning: it still names the literal operationId.
+    expect(run({ include: ["operationId:rotate"] }).names).toEqual(["operationId_rotate"]);
+    expect(run({ allowMutations: true, exclude: ["operationId:rotate"] }).skipped).toMatchObject({
+      "operationId:rotate": "excluded",
+    });
+    expect(run({ allowMutations: true, exclude: ["operationId:rotate"] }).names).toContain("rotate");
     // exclude still wins.
-    expect(run({ include: ["operationId:POST /b"], exclude: ["operationId:POST /b"] }).skipped).toMatchObject({
+    expect(run({ include: [{ operationId: "POST /b" }], exclude: [{ operationId: "POST /b" }] }).skipped).toMatchObject({
       "POST /b": "excluded",
     });
-    expect(() => run({ include: ["operationId:"] })).toThrow(/needs an operationId/);
+    expect(() => run({ include: [{ operationId: "" }] })).toThrow(/non-empty string or \{ operationId \}/);
   });
 
   it("rejects malformed selectors and options", () => {

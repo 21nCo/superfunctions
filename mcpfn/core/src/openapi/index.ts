@@ -12,6 +12,7 @@ export type {
   OpenApiOperationRef,
   OpenApiOperationRequestBody,
   OpenApiParameterLocation,
+  OpenApiSelector,
   OpenApiServer,
   OpenApiSkipCode,
   OpenApiSkippedOperation,
