@@ -1,0 +1,19 @@
+scripts/ci-plan.mjs
+  s_3159cb29d37831::t_9d8bec0eef9706 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e01018d4cc6dcd709d8441ce770a73cce5325876",
+  "prompts": {},
+  "sessions": {
+    "s_3159cb29d37831": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d168f7-171e-423c-bbb3-f8d1418cfa5d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

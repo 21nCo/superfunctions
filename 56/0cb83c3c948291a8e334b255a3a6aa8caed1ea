@@ -1,0 +1,43 @@
+authfn/python/authfn/plugins/api_keys.py
+  s_168078b9d6d0b1::t_f29a554b93f50f 67-93,210-218,226-230,235-237,241-242,245-246,324-325
+authfn/python/authfn/plugins/placement_context.py
+  s_168078b9d6d0b1::t_db6e4aeedff761 46,519-521
+authfn/python/authfn/types.py
+  s_168078b9d6d0b1::t_4374d29bc3ad5f 148-154,163-164,742
+authfn/python/tests/test_api_keys.py
+  s_168078b9d6d0b1::t_69afc250930755 7,23-28,35,43,116,204-380
+authfn/python/tests/test_placement_context.py
+  s_168078b9d6d0b1::t_bd181ce3b150c5 26,29,575-706
+authfn/docs/content/docs/core-concepts/sessions.md
+  s_168078b9d6d0b1::t_9f22f5da52cdb9 168
+authfn/docs/content/docs/plugins/api-keys.md
+  s_168078b9d6d0b1::t_de7310756b13cc 64
+authfn/docs/content/docs/recipes/placement-bound-auth-context.md
+  s_168078b9d6d0b1::t_7c561c121af436 160
+authfn/docs/content/docs/sdk/python.md
+  s_168078b9d6d0b1::t_990e6e5394ed77 127,133,135-139,141
+authfn/docs/static/llms-full.txt
+  s_168078b9d6d0b1::t_4e913209efed69 3844,5198,9521,11265,11271,11273-11277,11279
+authfn/python/CHANGELOG.md
+  s_168078b9d6d0b1::t_238f9444801566 10-11,16-19
+authfn/python/authfn/__init__.py
+  s_168078b9d6d0b1::t_da76907fdc515f 3,58,175
+authfn/python/pyproject.toml
+  s_168078b9d6d0b1::t_c78f38d3dbf92a 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "560cb83c3c948291a8e334b255a3a6aa8caed1ea",
+  "prompts": {},
+  "sessions": {
+    "s_168078b9d6d0b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91280e83-63b8-4d95-926a-491c2db9001f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

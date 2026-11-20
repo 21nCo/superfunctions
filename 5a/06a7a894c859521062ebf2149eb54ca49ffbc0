@@ -1,0 +1,23 @@
+billfn/docs/content/docs/clients/swift.mdx
+  s_5aa00e754499c1::t_1a8986f7dee152 42
+billfn/docs/content/docs/recipes/multi-region-workers.mdx
+  s_5aa00e754499c1::t_883eda7b3a95b7 355-357,366
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_5aa00e754499c1::t_8514781179a856 104-105,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a06a7a894c859521062ebf2149eb54ca49ffbc0",
+  "prompts": {},
+  "sessions": {
+    "s_5aa00e754499c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9e3a33b-fb51-4cd3-8261-43e282485797",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

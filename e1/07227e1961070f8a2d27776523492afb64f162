@@ -1,0 +1,55 @@
+billfn/admin/package.json
+  s_cca2118238ab45::t_104ce8f803615d 3,15-17,20,43
+billfn/client/package.json
+  s_cca2118238ab45::t_5929f6af9dacb4 3,15-17,20
+billfn/core/package.json
+  s_cca2118238ab45::t_37b5fb555fddf2 3,15-17,20
+billfn/docs/content/docs/clients/swift.mdx
+  s_cca2118238ab45::t_ae2623bcd02601 13,36-64
+billfn/docs/content/docs/meta.json
+  s_cca2118238ab45::t_db5bd2a48466e8 11
+billfn/docs/content/docs/production-readiness.mdx
+  s_cca2118238ab45::t_8ee278838a6c13 27
+billfn/docs/content/docs/recipes/meta.json
+  s_cca2118238ab45::t_431610d9eef047 1-6
+billfn/docs/content/docs/recipes/multi-region-workers.mdx
+  s_cca2118238ab45::t_4b26eb68198eef 1-483
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_cca2118238ab45::t_11b5caa8bd6ad1 113-114
+billfn/docs/content/docs/server/regions.mdx
+  s_cca2118238ab45::t_7c79c6385e90a0 6
+billfn/docs/package.json
+  s_cca2118238ab45::t_6ee242a4876fb9 9-11,30-37,42
+billfn/docs/scripts/check-recipe-types.mjs
+  s_cca2118238ab45::t_a8e5a811e05a2e 1-155
+billfn/docs/scripts/check-recipe-types.test.mjs
+  s_cca2118238ab45::t_487b292b2ee834 1-224
+billfn/docs/scripts/package-files.test.mjs
+  s_cca2118238ab45::t_7947f4110e7798 1-50
+billfn/provider-apple/package.json
+  s_cca2118238ab45::t_8b6345eedc30d7 3,15-17,20
+billfn/provider-dodo/package.json
+  s_cca2118238ab45::t_95d50f77d6e0a1 3,15-17,20
+billfn/svelte/package.json
+  s_cca2118238ab45::t_9273e895db14f2 3,15-17,20-22
+billfn/swift-bridge/package.json
+  s_cca2118238ab45::t_f3e4be5bfc743d 3,19-26,28,31-32
+package-lock.json
+  s_cca2118238ab45::t_be26c223a587ec 4915,4918,4932,4956,5055-5062,5067,5999,6022,6047,6075
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e107227e1961070f8a2d27776523492afb64f162",
+  "prompts": {},
+  "sessions": {
+    "s_cca2118238ab45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9776c6ff-1a95-4d3d-8cd4-96317b37ba6d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

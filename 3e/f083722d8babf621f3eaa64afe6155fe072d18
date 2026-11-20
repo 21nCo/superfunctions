@@ -1,0 +1,31 @@
+mcpfn/core/README.md
+  s_1eb217f2cbe12c::t_1cb94f18aa9535 174-179,184-185,188-190
+mcpfn/core/src/openapi/from-openapi.ts
+  s_1eb217f2cbe12c::t_2f6930ef14a7e9 247-248,360,371-373,388-394,398,400-401,403-407,436,451-458,474-475,711-715,787-791,793-797,800-803,945-946,951-952
+mcpfn/core/src/openapi/schema.ts
+  s_1eb217f2cbe12c::t_cf13c9984f8049 519,716,724-732,761,1001,1125-1129,1132-1134,1169-1170,1177-1178,1181-1209
+mcpfn/core/src/openapi/types.ts
+  s_1eb217f2cbe12c::t_9287d9cba08364 191-193,195-197
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_1eb217f2cbe12c::t_1eba2d47e5e7dd 374,398-403
+mcpfn/core/tests/openapi-forms.test.ts
+  s_1eb217f2cbe12c::t_4fedca606a4b02 496-497,503-506,1759-1760,1763,1769,1820-1867
+mcpfn/core/tests/types/openapi-document.ts
+  s_1eb217f2cbe12c::t_57a969b7bd072a 90-91,95-98,101-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ef083722d8babf621f3eaa64afe6155fe072d18",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

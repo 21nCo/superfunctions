@@ -1,0 +1,53 @@
+langfn/typescript/package.json
+  s_ab14a3529f135d::t_c00a3fd766aa05 3
+mcpfn/core/README.md
+  s_ab14a3529f135d::t_f78f486d6e6cfa 96-97,104-105,108-117,126-127,129
+mcpfn/core/src/openapi/from-openapi.ts
+  s_ab14a3529f135d::t_96e524875eab81 246-252,262,271,279-280,315-319,337-342,350-353,361-368,431-435,453-454,459-465,471-477,479-480,485,490,505,511-513,517-528,649-650,657,668-670,675,688,702,715-725,755-799,801,803-815
+mcpfn/core/src/openapi/schema.ts
+  s_ab14a3529f135d::t_dfa7ae6fd7a915 154-211,344-350,425-427,429-468,470-496,498
+mcpfn/core/src/openapi/types.ts
+  s_ab14a3529f135d::t_5d76a0519ce4d6 31-35
+mcpfn/core/src/validation.ts
+  s_ab14a3529f135d::t_35e4e84c18ca18 2,67-71,561-594,608,613-618
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_ab14a3529f135d::t_d7a60b898ba4e7 7-8
+mcpfn/core/tests/fixtures/openapi/form-nullable-3.0.json
+  s_ab14a3529f135d::t_47a04611a3942d 30-37
+mcpfn/core/tests/fixtures/openapi/skip-composed-parameter-schemas.json
+  s_ab14a3529f135d::t_3621d447b39d40 1-339
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_ab14a3529f135d::t_ff6122f208ee70 162-196
+mcpfn/core/tests/openapi-forms.test.ts
+  s_ab14a3529f135d::t_5fa17c9d3d31bd 168-169,173-175,180-190,214-215,217-225,287,347-376,453-549
+mcpfn/core/tests/openapi-scale.test.ts
+  s_ab14a3529f135d::t_2eada201de554a 1-63
+mcpfn/core/tests/validation.test.ts
+  s_ab14a3529f135d::t_6310d03817a4f2 607-641
+mcpfn/core/vitest.config.ts
+  s_ab14a3529f135d::t_aad16aaf92400d 4-5,13-20
+memoryfn/typescript/package.json
+  s_ab14a3529f135d::t_eaad0c7706c667 3
+package-lock.json
+  s_ab14a3529f135d::t_695b94f9abbc02 15833,24994,59147,64876
+packages/admin/package.json
+  s_ab14a3529f135d::t_ef1492547e8f73 3
+superconsole/package.json
+  s_ab14a3529f135d::t_9c659b841df77e 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32b97d66f26cda22c72f9f18d6f8a5b378b922f8",
+  "prompts": {},
+  "sessions": {
+    "s_ab14a3529f135d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ab14a3529f135d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

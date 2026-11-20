@@ -1,0 +1,24 @@
+searchfn/adapter-contracts/src/redaction.ts
+  s_1eb217f2cbe12c::t_fdf256d809ca8f 569
+  s_1eb217f2cbe12c::t_8f4ca6a31c3425 567-568
+  s_1eb217f2cbe12c::t_ab4563f3d5d52e 570-572
+  s_1eb217f2cbe12c::t_94ad9e3596bfe0 14-16,54,58,64,69-78,80,370-374,403,420-446,573,575,577-579,581,603-608,625-629,643-647,649-657,669-673,675-683,685-689,693,703-713,715-716,725,743-754,756-766,768-798,801-803,805,845-860,870-871
+searchfn/adapter-contracts/__tests__/redaction-hardening.test.ts
+  s_1eb217f2cbe12c::t_93ad6db37114c7 1364-1483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfbbc6747a74f20883ba7ed2eaa3a20575207e6d",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

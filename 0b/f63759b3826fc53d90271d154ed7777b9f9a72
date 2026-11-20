@@ -1,0 +1,33 @@
+.github/workflows/release-swift.yml
+  s_19abec75182420::t_4227a58352f09f 41
+.github/workflows/swift.yml
+  s_19abec75182420::t_7e2ae69e06c4f5 143-144,146-149
+Package.swift
+  s_19abec75182420::t_ac2acabf3d4d42 14-16,40-53
+billfn/docs/content/docs/clients/swift.mdx
+  s_19abec75182420::t_0edf106e4b0e0e 17-48
+billfn/swift/Fixtures/RootConsumer/Package.swift
+  s_19abec75182420::t_46fb9a92348aaa 1-28
+billfn/swift/Fixtures/RootConsumer/Sources/BillFnRootConsumer/BillFnRootConsumer.swift
+  s_19abec75182420::t_1467a8969c654f 1-18
+scripts/swift-release.mjs
+  s_19abec75182420::t_f1a0418895ed97 17,45
+scripts/swift-release.test.mjs
+  s_19abec75182420::t_266473df3a79a8 43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bf63759b3826fc53d90271d154ed7777b9f9a72",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

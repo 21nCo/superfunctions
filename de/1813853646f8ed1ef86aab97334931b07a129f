@@ -1,0 +1,19 @@
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_066ba1abf4042c::t_84c621b67c964d 113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de1813853646f8ed1ef86aab97334931b07a129f",
+  "prompts": {},
+  "sessions": {
+    "s_066ba1abf4042c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4389dd0c-886e-472a-92fc-264765ac55c4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

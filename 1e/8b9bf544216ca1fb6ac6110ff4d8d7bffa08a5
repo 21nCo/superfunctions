@@ -1,0 +1,79 @@
+filefn/docs/content/docs/recipes/index.md
+  s_0b0647615a23f7::t_ba99c5176c12ac 19
+filefn/docs/content/docs/recipes/meta.json
+  s_0b0647615a23f7::t_efc244b8f4ca00 12
+datafn/docs/content/docs/recipes/filefn-integration.mdx
+  s_ace82070dcb8c7::t_afea24dd5ed23c 8,13,29,31,39-58,62-88,92,94,96,98,100-102,104-107,110-111,115-121,138,141-150,153,157
+datafn/docs/public/llms-full.txt
+  s_e753f4ab224de9::t_9bc4cd8bdae8be 22098,22103,22119,22121,22129-22148,22152-22153,22155-22158,22160-22178,22182,22184,22186,22188,22190-22192,22194-22197,22200-22201,22205-22211,22228,22231-22232,22234-22240,22243,22247
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_ace82070dcb8c7::t_ca6ad94d841fb5 16-17
+filefn/docs/content/docs/recipes/workers-authfn-r2-queues.md
+  s_ace82070dcb8c7::t_d5aae3808a2777 1-264
+filefn/docs/package.json
+  s_ace82070dcb8c7::t_fd561c6a6faaef 10,12,39-49
+filefn/docs/turbo.json
+  s_ace82070dcb8c7::t_50ed18285fa6ae 18-19
+package-lock.json
+  s_ace82070dcb8c7::t_041f3b182ff113 12671,12702-12705,12707-12711,12719,13307,13325,13493
+filefn/client/package.json
+  s_ace82070dcb8c7::t_fb77a026ac9212 3,15-17,20
+filefn/client/tests/package-contents.test.ts
+  s_ace82070dcb8c7::t_6b3c36d3d47acf 1-30
+filefn/client/tsconfig.build.json
+  s_ace82070dcb8c7::t_6016ef718ea9c8 1-4
+filefn/docs/scripts/check-recipe-types.mjs
+  s_ace82070dcb8c7::t_e52a1c31058292 1-149
+filefn/docs/scripts/check-recipe-types.test.mjs
+  s_ace82070dcb8c7::t_f55bc6bd2f54f4 1-54
+filefn/docs/static/llms-full.txt
+  s_ace82070dcb8c7::t_7d69ff6f9d0a2f 6402,6466-6467,7649-7919
+filefn/docs/static/llms.txt
+  s_ace82070dcb8c7::t_68b1f63bc2a931 97
+filefn/processing/container/package.json
+  s_ace82070dcb8c7::t_185456ab9a516e 17
+filefn/processing/package.json
+  s_ace82070dcb8c7::t_1837ddc96bd0bc 3,19-21,24
+filefn/processing/tests/package-contents.test.ts
+  s_ace82070dcb8c7::t_a80a016c9f8a51 1-30
+filefn/processing/tsconfig.build.json
+  s_ace82070dcb8c7::t_18f15d007e2fa5 1-4
+filefn/viewer/package.json
+  s_ace82070dcb8c7::t_f7ce88ff64ad5f 3,15-17,20
+filefn/viewer/tests/package-contents.test.ts
+  s_ace82070dcb8c7::t_3461be1cf8c1ef 1-30
+filefn/viewer/tsconfig.build.json
+  s_ace82070dcb8c7::t_5063f1a7dc5cc9 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e8b9bf544216ca1fb6ac6110ff4d8d7bffa08a5",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ace82070dcb8c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32377d70-4569-4b72-b877-f60e4a5990c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e753f4ab224de9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9b413bb-78e4-461c-b7a1-7e3598c6e221",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
