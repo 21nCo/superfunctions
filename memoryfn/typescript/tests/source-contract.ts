@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_SOURCE_CHUNKS, MAX_SOURCE_IDENTITY_BYTES, MAX_SOURCE_REPLACE_BYTES,
+  MAX_SOURCE_CHUNKS, MAX_SOURCE_IDENTITY_BYTES, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
   type MemoryInsert, type MemoryUpdate, type SourceScope, type StorageAdapter,
 } from '../src/storage/adapter';
 import type { Memory } from '../src/core/types';
@@ -222,7 +222,7 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
     it('accepts a replacement at the chunk limit and rejects one more chunk without writing', async () => {
       const unchanged = await seed();
       const over = chunks(source, ...Array.from({ length: MAX_SOURCE_CHUNKS + 1 }, (_, index) => `chunk ${index}`));
-      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over })).rejects.toThrow(LIMIT);
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over })).rejects.toThrow(MemorySourceLimitError);
       await unchanged();
       const rows = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over.slice(0, MAX_SOURCE_CHUNKS) });
       expect([rows.length, rows[MAX_SOURCE_CHUNKS - 1].content, rows[MAX_SOURCE_CHUNKS - 1].chunkIndex]).toEqual([MAX_SOURCE_CHUNKS, `chunk ${MAX_SOURCE_CHUNKS - 1}`, MAX_SOURCE_CHUNKS - 1]);
@@ -243,14 +243,14 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
         { content: `😀${'€'.repeat(Math.floor((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) / 3))}${'x'.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) % 3)}` },
         { content: 'x'.repeat(overByEscapes), metadata: { v: control.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 8 - overByEscapes) / 6) } },
       ];
-      for (const chunk of overCases) await expect(replace(chunk)).rejects.toThrow(LIMIT);
+      for (const chunk of overCases) await expect(replace(chunk)).rejects.toThrow(MemorySourceLimitError);
       // Measured on the copy that is written: structuredClone drops this prototype's toJSON and keeps `value`.
       class Hidden { constructor(readonly value: string) {} toJSON() { return {}; } }
-      await expect(replace({ metadata: new Hidden('x'.repeat(MAX_SOURCE_REPLACE_BYTES)) as unknown as Record<string, unknown> })).rejects.toThrow(LIMIT);
+      await expect(replace({ metadata: new Hidden('x'.repeat(MAX_SOURCE_REPLACE_BYTES)) as unknown as Record<string, unknown> })).rejects.toThrow(MemorySourceLimitError);
       // JSON text beyond the runtime's string capacity.
-      await expect(replace({ metadata: { list: new Array(90).fill(control.repeat(1 << 20)) } })).rejects.toThrow(LIMIT);
+      await expect(replace({ metadata: { list: new Array(90).fill(control.repeat(1 << 20)) } })).rejects.toThrow(MemorySourceLimitError);
       // The hash and tags count even without chunks.
-      await expect(adapter().replaceSource({ ...source, contentHash: 'h'.repeat(MAX_SOURCE_REPLACE_BYTES + 1), chunks: [] })).rejects.toThrow(LIMIT);
+      await expect(adapter().replaceSource({ ...source, contentHash: 'h'.repeat(MAX_SOURCE_REPLACE_BYTES + 1), chunks: [] })).rejects.toThrow(MemorySourceLimitError);
       await unchanged();
       const content = `😀${'€'.repeat(1000)}${'x'.repeat(MAX_SOURCE_REPLACE_BYTES - fixed - '{"v":""}'.length - 6 * 1000 - 4 - 3 * 1000)}`;
       const [row] = await replace({ content, metadata: { v: control.repeat(1000) } });
@@ -258,25 +258,47 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
     }, LARGE);
 
-    it('rejects a tenant, source key or tag set over the identity limit in every source method', async () => {
+    it('rejects a tenant or source key over the identity limit in every source method', async () => {
       const unchanged = await seed();
       // 1,024 bytes each: 341 3-byte characters and one ASCII character, and 256 4-byte characters.
-      const atLimit = { tenantId: `${'€'.repeat(341)}x`, sourceKey: '😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4), containerTags: ['team', 'x'.repeat(1020)] };
+      const atLimit = { ...source, tenantId: `${'€'.repeat(341)}x`, sourceKey: '😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4) };
       await adapter().replaceSource({ ...atLimit, contentHash: 'hash-k', chunks: chunks(atLimit, 'k') });
       expect(await adapter().getSourceState(atLimit)).toEqual({ contentHash: 'hash-k', chunkCount: 1 });
       const overScopes: SourceScope[] = [
         { ...source, sourceKey: 'k'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, sourceKey: `${atLimit.sourceKey}x` },
         { ...source, tenantId: 't'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, tenantId: `${'é'.repeat(512)}x` },
-        // The tags count as given, duplicates included.
-        { ...source, containerTags: ['team', 'x'.repeat(1021)] }, { ...source, containerTags: new Array(257).fill('team') },
       ];
       for (const scope of overScopes) {
-        await expect(adapter().getSourceState(scope)).rejects.toThrow(LIMIT);
-        await expect(adapter().deleteSource(scope)).rejects.toThrow(LIMIT);
-        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(scope, 'x') })).rejects.toThrow(LIMIT);
+        await expect(adapter().getSourceState(scope)).rejects.toThrow(MemorySourceLimitError);
+        await expect(adapter().deleteSource(scope)).rejects.toThrow(MemorySourceLimitError);
+        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(scope, 'x') })).rejects.toThrow(MemorySourceLimitError);
       }
+      await expect(adapter().getSourceState(overScopes[0])).rejects.toMatchObject({ name: 'MemorySourceLimitError', code: LIMIT, message: LIMIT });
       await unchanged();
       expect(await adapter().deleteSource(atLimit)).toBe(1);
+    });
+
+    it('reads, replaces and deletes a source with a long or repeated tag set', async () => {
+      // Tags are not bound by the identity limit; equivalent tag sets name one source.
+      for (const containerTags of [['docs', 'x'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1)], new Array<string>(257).fill('docs')]) {
+        const scope = { ...source, containerTags };
+        const [row] = await adapter().replaceSource({ ...scope, contentHash: 'hash-t', chunks: chunks(scope, 't') });
+        expect(row.containerTags.length === containerTags.length && row.containerTags.every((tag, index) => tag === containerTags[index])).toBe(true);
+        const equivalent = { ...scope, containerTags: [...new Set(containerTags)].reverse() };
+        expect(await adapter().getSourceState(equivalent)).toEqual({ contentHash: 'hash-t', chunkCount: 1 });
+        expect(await adapter().deleteSource(equivalent)).toBe(1);
+        expect(await adapter().getSourceState(scope)).toBeNull();
+      }
+    });
+
+    it('reads the chunks and tags given by index, not through their iterators', async () => {
+      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      const iterated = <T>(values: T[]) => Object.defineProperty(values, Symbol.iterator, { value: () => { throw new Error('ITERATED'); } });
+      expect(await adapter().getSourceState({ ...source, containerTags: iterated([...source.containerTags]) })).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+      const over = iterated(chunks(source, 'x')); over.length = MAX_SOURCE_CHUNKS + 1;
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over })).rejects.toThrow(MemorySourceLimitError);
+      const [row] = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: iterated(chunks(source, 'y')) });
+      expect([row.content, await adapter().getSourceState(source)]).toEqual(['y', { contentHash: 'hash-2', chunkCount: 1 }]);
     });
 
     it('rolls a replacement back with its enclosing transaction', async () => {

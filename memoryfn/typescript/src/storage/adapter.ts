@@ -26,20 +26,25 @@ export interface SourceReplace extends SourceScope {
 }
 
 // Input limits shared by every adapter. A source call over a limit is rejected
-// with MEMORY_SOURCE_LIMIT_EXCEEDED before any lock or write.
+// with MemorySourceLimitError before any lock or write.
 /** Most chunks one replaceSource call may write. */
 export const MAX_SOURCE_CHUNKS = 16_384;
 /**
  * Most UTF-8 bytes one replaceSource call may write: the content hash and the
- * scope tags once, plus each chunk's id, type, content, JSON-serialized metadata
- * and JSON-serialized embedding, as given.
+ * scope tags once, plus each chunk's type, content, JSON-serialized metadata
+ * and JSON-serialized embedding.
  */
 export const MAX_SOURCE_REPLACE_BYTES = 256 * 1024 * 1024;
-/**
- * Most UTF-8 bytes of each part of a source's identity: its tenantId, its
- * sourceKey, and its containerTags as given (all tags, duplicates included).
- */
+/** Most UTF-8 bytes of a source's tenantId and of its sourceKey, each. */
 export const MAX_SOURCE_IDENTITY_BYTES = 1024;
+/** Rejects a source call over one of the limits above; `code` is stable for callers to test. */
+export class MemorySourceLimitError extends Error {
+  readonly code = 'MEMORY_SOURCE_LIMIT_EXCEEDED' as const;
+  constructor() {
+    super('MEMORY_SOURCE_LIMIT_EXCEEDED');
+    this.name = 'MemorySourceLimitError';
+  }
+}
 export interface StorageAdapter {
   /** Fixed vector dimension, shared across bundled entrypoints. */
   readonly embeddingDimensions?: number;
@@ -102,8 +107,7 @@ function isSourceText(value: unknown): value is string {
  * UTF-8 length of `value` as PostgreSQL stores it (a lone surrogate becomes the
  * 3-byte U+FFFD), counted without encoding it or any runtime-specific API.
  */
-function utf8Bytes(value: string | string[]): number {
-  if (Array.isArray(value)) return value.reduce((total, part) => total + utf8Bytes(part), 0);
+function utf8Bytes(value: string): number {
   let bytes = value.length;
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
@@ -116,7 +120,7 @@ function utf8Bytes(value: string | string[]): number {
   return bytes;
 }
 
-function sourceLimitExceeded(): Error { return new Error('MEMORY_SOURCE_LIMIT_EXCEEDED'); }
+function sourceLimitExceeded(): Error { return new MemorySourceLimitError(); }
 
 /**
  * Source tags must all be non-empty, storable strings. Unlike Array#some, this
@@ -138,15 +142,17 @@ export interface SourceReplaceSnapshot extends SourceSnapshot { contentHash: str
  * while a write waits for the source lock cannot retarget that write.
  */
 export function requireSourceScope(input: SourceScope): SourceSnapshot {
-  const { tenantId, containerTags, sourceKey } = input;
-  requireScope(tenantId, containerTags);
+  const { tenantId, sourceKey } = input;
+  // Copied by index (holes become undefined), so the tags validated are the tags used.
+  const given: unknown = input.containerTags;
+  const containerTags = Array.isArray(given) ? Array.from({ length: given.length }, (_, index): unknown => given[index]) : given;
+  requireScope(tenantId, containerTags as string[]);
   requireSourceTags(containerTags);
   if (!isSourceText(tenantId)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
   if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
-  // PostgreSQL statements repeat the tags, escaped, in their scope predicates, so the tag set is bounded like the keys.
-  if ([tenantId, sourceKey, containerTags].some(part => utf8Bytes(part) > MAX_SOURCE_IDENTITY_BYTES)) throw sourceLimitExceeded();
-  const scope: SourceScope = { tenantId, containerTags: [...containerTags], sourceKey };
+  if (utf8Bytes(tenantId) > MAX_SOURCE_IDENTITY_BYTES || utf8Bytes(sourceKey) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+  const scope: SourceScope = { tenantId, containerTags, sourceKey };
   return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
 }
 
@@ -171,7 +177,7 @@ function jsonBytes(value: unknown): number {
 /** Bytes a copied chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
 function chunkBytes(chunk: MemoryInsert): number {
   const text = (value: unknown) => typeof value === 'string' ? utf8Bytes(value) : 0;
-  return text(chunk.id) + text(chunk.type) + text(chunk.content) + jsonBytes(chunk.metadata ?? {})
+  return text(chunk.type) + text(chunk.content) + jsonBytes(chunk.metadata ?? {})
     + (chunk.embedding ? jsonBytes(chunk.embedding) : 0);
 }
 
@@ -185,9 +191,12 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
   const { contentHash, chunks } = input;
   if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
-  const given = [...chunks];
-  if (given.length > MAX_SOURCE_CHUNKS) throw sourceLimitExceeded();
-  let bytes = utf8Bytes(contentHash) + utf8Bytes(scope.containerTags);
+  // The length is checked before the array is read, and the copy is taken by index, not through its iterator.
+  const count = chunks.length;
+  if (count > MAX_SOURCE_CHUNKS) throw sourceLimitExceeded();
+  const given = Array.from({ length: count }, (_, index) => chunks[index]);
+  let bytes = utf8Bytes(contentHash);
+  for (const tag of scope.containerTags) bytes += utf8Bytes(tag);
   if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
   // Each chunk is copied first, reading every field once, and the copy that the
   // adapters write is the value measured.
