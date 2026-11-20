@@ -175,12 +175,17 @@ interface ResolvedProviderSettings {
   profileResolver?: AuthFnSocialProfileResolver;
 }
 
+const MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS = 3600;
+
 export function authFnSocialOAuthPlugin(
   config: SocialOAuthPluginConfig = {}
 ): AuthFnPlugin<'socialOAuth', SocialOAuthPluginRuntimeConfig, true> {
   const ttl = config.handoffCodeTtlSeconds;
-  if (ttl !== undefined && (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl <= 0)) {
-    throw new AuthFnConfigError('socialOAuth handoffCodeTtlSeconds must be a positive whole number of seconds', {
+  if (
+    ttl !== undefined &&
+    (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl <= 0 || ttl > MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS)
+  ) {
+    throw new AuthFnConfigError(`socialOAuth handoffCodeTtlSeconds must be a positive whole number of seconds, at most ${MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS}`, {
       option: 'handoffCodeTtlSeconds',
       value: String(ttl)
     });

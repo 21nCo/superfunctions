@@ -361,4 +361,3 @@ async function readTwoFactorIdentifier(
   const { sessionToken } = readCookieValues(request, resolveCookiePolicy(config, request, runtime));
   return sessionToken ? `two-factor-session:${sessionToken}` : null;
 }
-

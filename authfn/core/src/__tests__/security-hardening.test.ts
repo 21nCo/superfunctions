@@ -460,10 +460,11 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
   }
 
   it('rejects an invalid handoff code lifetime when the plugin is created', () => {
-    for (const value of [Number.NaN, 0, -1, 1.5]) {
+    for (const value of [Number.NaN, 0, -1, 1.5, 3601, Number.MAX_SAFE_INTEGER]) {
       expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: value })).toThrow(/positive whole number/);
     }
     expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: 120 })).not.toThrow();
+    expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: 3600 })).not.toThrow();
   });
 
   it('only completes a browser-bound sign-in in the browser that started it', async () => {

@@ -66,7 +66,7 @@ export interface SocialOAuthPluginConfig extends AuthFnBundledPluginConfig {
    * verifier can exchange it at `/social/handoff/exchange`.
    */
   requireHandoffChallenge?: boolean;
-  /** Lifetime of a one-time social handoff code, in seconds (default 60). */
+  /** Lifetime of a one-time social handoff code, in seconds (default 60, at most 3600). */
   handoffCodeTtlSeconds?: number;
 }
 

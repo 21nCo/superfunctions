@@ -6981,7 +6981,7 @@ interface AuthFnSocialProviderConfig {
 | `bindBrowserState` | factory | `false` | Every sign-in whose callback can set session cookies (redirect or JSON, either handoff mode) sets a short-lived HttpOnly binding cookie at start, one per pending state (`__Host-` on https); the callback refuses a state whose cookie is missing or different (`AUTHFN_OAUTH_STATE_INVALID`). Only code-and-verifier handoffs, whose callback sets no cookies, are unbound, so native flows must send `handoffChallenge` when this is on. |
 | `allowWebSessionTokenHandoff` | factory | `true` | Set `false` so only native (non-http) `returnTo` targets can use `handoffMode: 'session-token'`; a web target then fails with `AUTHFN_VALIDATION_ERROR`. |
 | `requireHandoffChallenge` | factory | `false` | Native session-token handoffs must send `handoffChallenge`; see [Handoff code exchange](#handoff-code-exchange). |
-| `handoffCodeTtlSeconds` | factory | `60` | Lifetime of a one-time social handoff code. |
+| `handoffCodeTtlSeconds` | factory | `60` | Lifetime of a one-time social handoff code, in whole seconds from 1 to 3600. |
 | `providers` | `pluginRuntime.socialOAuth` | required | Map of provider id → config. |
 | `fetcher` | `pluginRuntime.socialOAuth` | global `fetch` | Inject a custom fetcher (proxy, instrumentation). |
 | `tokenHttpClient` | `pluginRuntime.socialOAuth` | default | Override the token endpoint client. |
