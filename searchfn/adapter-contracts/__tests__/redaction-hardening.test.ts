@@ -342,3 +342,37 @@ describe("round-8 URL component and scheme-word repairs", () => {
     expect(redactSensitiveString("authorization=basic token: test-hidden")).toBe("authorization=[REDACTED]");
   });
 });
+
+describe("round-9 scheme word before a key the redactor's own grammar recognises", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const hidden = ["test", "hidden"].join("-");
+
+  it("ends a non-authorization value after the scheme word when a key/value starts next", () => {
+    const cases: Array<[string, string]> = [
+      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey}= [REDACTED] q=x`],
+      [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey} = [REDACTED] q=x`],
+      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED]`],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("drops the authorization scheme label when a key/value starts at the next token", () => {
+    const tok = ["test", "tok"].join("-");
+    const cases: Array<[string, string]> = [
+      [`Authorization: bearer ${tokenKey}= ${tok} status=401`, "Authorization: [REDACTED]"],
+      [`Authorization: bearer ${tokenKey} = ${tok}`, "Authorization: [REDACTED]"],
+      [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
+      ["Authorization: Bearer test-token\nnext=line", "Authorization: Bearer [REDACTED]\nnext=line"],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(tok);
+    }
+  });
+});

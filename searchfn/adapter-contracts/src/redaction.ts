@@ -16,20 +16,25 @@ const SENSITIVE_KEY =
 // line, because schemes such as Digest or AWS4-HMAC-SHA256 carry
 // comma-separated name=value parameters (Credential=..., Signature=...) that
 // cannot be told apart from trailing diagnostics such as status=401, so no
-// following field is kept. Only a leading Bearer, Basic or Token label is kept,
-// and only when the next token on the same line is a valid credential token
-// (RFC 6750 b64token / RFC 7617 base64: CREDENTIAL_TOKEN); before anything else
-// (name=value, name:value, other punctuation) the label may itself be the
-// secret, so key, separator and [REDACTED] are printed. After any other key the
-// scheme word may be the secret too: when the next token is a name=value or
-// "name:" assignment (ASSIGNMENT_TOKEN), the scheme word alone is the value, so
-// it is redacted and scanning resumes at that assignment
+// following field is kept. Whether the text after a scheme word starts a new
+// key/value is decided by this pattern itself (startsKeyValue, a sticky match
+// at the next token), so token=, token = x and token: x all count as keys.
+// Only a leading Bearer, Basic or Token label is kept, and only when the next
+// token on the same line is a valid credential token (RFC 6750 b64token /
+// RFC 7617 base64: CREDENTIAL_TOKEN) and does not start a key/value; before
+// anything else the label may itself be the secret, so key, separator and
+// [REDACTED] are printed. After any other key the scheme word may be the secret
+// too: when a key/value starts at the next token, or that token is a name=value
+// or "name:" assignment (ASSIGNMENT_TOKEN), the scheme word alone is the value,
+// so it is redacted and scanning resumes at the next token
 // (password=basic connectionTimeout=5000 keeps connectionTimeout=5000, and
-// password=basic token: x still redacts x); before anything else (a credential
+// password=basic token= x still redacts x); before anything else (a credential
 // such as accessToken: Bearer x, or user:pass) word and token are redacted
 // together, so the credential is never printed.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
+// The same grammar, anchored at one position (see startsKeyValue).
+const KEY_VALUE_START = new RegExp(KEY_VALUE_SECRET.source, "iy");
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
 const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
@@ -286,6 +291,12 @@ export function redactSensitiveString(input: string): string {
     .replace(POSTGRES_CREDENTIALS, "$1[REDACTED]@");
 }
 
+/** Whether a sensitive key/value of KEY_VALUE_SECRET starts exactly at index. */
+function startsKeyValue(input: string, index: number): boolean {
+  KEY_VALUE_START.lastIndex = index;
+  return KEY_VALUE_START.test(input);
+}
+
 function redactKeyValues(input: string): string {
   const pattern = new RegExp(KEY_VALUE_SECRET.source, KEY_VALUE_SECRET.flags);
   let output = "";
@@ -294,6 +305,8 @@ function redactKeyValues(input: string): string {
   while ((match = pattern.exec(input)) !== null) {
     const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme, credential] = match;
     let end = match.index + whole.length;
+    // The token after a scheme word starts a new key/value of its own.
+    const nextIsKey = scheme !== undefined && startsKeyValue(input, end - credential.length);
     let replacement: string;
     if (valueQuote) {
       replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
@@ -302,12 +315,12 @@ function redactKeyValues(input: string): string {
     } else if (AUTHORIZATION_KEY.test(key)) {
       const lineBreak = input.slice(end).search(LINE_BREAK);
       end = lineBreak === -1 ? input.length : end + lineBreak;
-      const label = scheme !== undefined && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
+      const label = scheme !== undefined && !nextIsKey && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
       replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
-      if (scheme !== undefined && ASSIGNMENT_TOKEN.test(credential)) {
+      if (scheme !== undefined && (nextIsKey || ASSIGNMENT_TOKEN.test(credential))) {
         // The scheme word is the whole value: end right after it and resume
-        // scanning at the following assignment.
+        // scanning at the following key/value or assignment.
         end = end - credential.length - scheme.length + scheme.trimEnd().length;
       }
       replacement = `${key}${keyQuote}${separator}${REDACTED}`;
