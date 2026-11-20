@@ -846,3 +846,86 @@ describe("round-17 folded continuation lines belong to the credential they conti
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
+
+describe("round-18 quoted values across & after escaped keys, decoded re-checks and unclosed quoted folds", () => {
+  const first = ["test", "first"].join("-");
+  const last = ["test", "last"].join("-");
+  const second = ["test", "second"].join("-");
+  const response = ["test", "response"].join("-");
+  const tail = ["test", "x"].join("-");
+  const escapedKey = "pass%77ord";
+  const tokenKey = ["to", "ken"].join("");
+  const href = (suffix: string) => String(redactSensitive(new URL(`https://example.test/${suffix}`)));
+
+  it("masks a quoted value after an escaped sensitive key as one value across &", () => {
+    const cases: Array<[string, string]> = [
+      [`#${escapedKey}=%22${first}&chunk=${last}%22&q=ok`, `#${escapedKey}=%22[REDACTED]%22&q=ok`],
+      [`#${escapedKey}='${first}&chunk=${last}'&state=ok`, `#${escapedKey}='[REDACTED]'&state=ok`],
+      [`#${escapedKey}:'${first}&chunk=${last}'&state=ok`, "#[REDACTED]&state=ok"],
+      [`?${escapedKey}=%27${first}&chunk=${last}%27&state=ok`, `?${escapedKey}=%27[REDACTED]%27&state=ok`],
+      [`?user%255B${PW}%255D=%27a&${last}%27&state=ok`, `?user%255B${PW}%255D=%27[REDACTED]%27&state=ok`],
+      [`#${escapedKey}='${first}&chunk=${last}`, `#${escapedKey}='[REDACTED]`],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      expect(output).not.toContain(last);
+      expect(output).not.toContain(first);
+    }
+  });
+
+  it("keeps raw-key quoted values, unquoted escaped keys and other parameters as before", () => {
+    const cases: Array<[string, string]> = [
+      [`#${tokenKey}='${first}&chunk=${last}'&state=ok`, `#${tokenKey}='[REDACTED]'&state=ok`],
+      [`?${escapedKey}=x&q=ok`, `?${escapedKey}=[REDACTED]&q=ok`],
+      ["#note='a&b'&q=1", "#note='a&b'&q=1"],
+      ["#/callback?state=ok", "#/callback?state=ok"],
+    ];
+    for (const [suffix, expected] of cases) {
+      expect(href(suffix)).toBe(`https://example.test/${expected}`);
+    }
+  });
+
+  it("checks the decoded form of a URLSearchParams value after the string pass masked part of it", () => {
+    const escaped = new URLSearchParams([["note", `${tokenKey}=a,${tokenKey}%3D${second}`], ["q", "ok"]]);
+    const output = redactSensitive(escaped);
+    expect(output).toBe("note=[REDACTED]&q=ok");
+    expect(output).not.toContain(second);
+    const plain = new URLSearchParams([["note", `${tokenKey}=a ${tokenKey}=${second}`], ["q", "ok"]]);
+    expect(redactSensitive(plain)).toBe(`note=${tokenKey}%3D[REDACTED]+${tokenKey}%3D[REDACTED]&q=ok`);
+  });
+
+  it("masks folded lines after an unclosed quoted authorization or scheme-labelled value", () => {
+    const cases: Array<[string, string]> = [
+      [`Authorization: "Bearer ${first}\r\n ${last}" q=ok`, 'Authorization: "[REDACTED]'],
+      [`Authorization: 'Digest username="u",\n  response="${response}"'\nnext=1`, "Authorization: '[REDACTED]\nnext=1"],
+      [`${tokenKey}: "Bearer\n ${tail}"`, `${tokenKey}: "[REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      for (const value of [last, response, tail]) expect(output).not.toContain(value);
+    }
+  });
+
+  it("keeps closed quoted values and unclosed values without a scheme unfolded", () => {
+    const cases: Array<[string, string]> = [
+      [`Authorization: "Bearer ${tail}" q=ok`, 'Authorization: "[REDACTED]" q=ok'],
+      [`${PW}: "test-v"\n indented=1`, `${PW}: "[REDACTED]"\n indented=1`],
+      [`${PW}: "test-v\n indented=1`, `${PW}: "[REDACTED]\n indented=1`],
+      ['{"authorization": "Bearer x"\n  }', '{"authorization": "[REDACTED]"\n  }'],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("scans quoted URL values across & in linear time", () => {
+    const started = performance.now();
+    expect(href(`#${`${escapedKey}='a&`.repeat(64_000)}`)).toBe(`https://example.test/#${escapedKey}='[REDACTED]`);
+    expect(href(`?${`${escapedKey}=%27&`.repeat(64_000)}`)).toBe(
+      `https://example.test/?${`${escapedKey}=%27[REDACTED]%27&`.repeat(32_000)}`,
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});

@@ -38,9 +38,11 @@ const SENSITIVE_KEY =
 // status = 401) the word may start a credential that holds =, :, quotes or
 // spaces, so key, separator and [REDACTED] are printed to the end of the line,
 // as after an authorization key. A credential may continue on folded lines
-// (RFC 7230 obs-fold): after an unquoted authorization value, and after a
-// scheme-labelled value (a bare scheme word, or a word with its token) under
-// any sensitive key, when only spaces or tabs remain before the line break,
+// (RFC 7230 obs-fold): after an authorization value that is unquoted or whose
+// quote does not close on its line, and after a scheme-labelled value (a bare
+// scheme word, a word with its token, or an unclosed quote that opens with a
+// scheme word) under any sensitive key, when only spaces or tabs remain before
+// the line break,
 // blank lines are skipped and each following line that begins with a space or
 // tab is redacted too (see foldEnd); a next line that starts in column 0 stays
 // readable.
@@ -63,6 +65,8 @@ const LINE_BREAK = /[\r\n]/g;
 const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
 // A value that is only a scheme word, with no credential on its line.
 const BARE_SCHEME_WORD = /^(?:bearer|basic|token)$/i;
+// Quoted text that opens with a scheme word followed by a blank or its line end.
+const QUOTED_SCHEME_START = /^(?:bearer|basic|token)(?:[ \t]|\r?$)/i;
 const BLANKS = /[ \t]*/y;
 // At the token after a scheme word: a quoted name followed by optional
 // whitespace and : or =, or an unquoted name followed by whitespace and : or =,
@@ -115,18 +119,19 @@ function encodeQueryComponent(input: string): string {
  * key hides its whole value; other parameters stay readable. A key that still
  * holds escapes and whose decoded form holds a secret (authorization%3Ax) is
  * printed as [REDACTED] as a whole, and a value whose decoded form holds a
- * secret is hidden.
+ * secret is hidden. The decoded forms are checked after the string pass too, so
+ * an escaped secret behind a secret the pass already masked is still found.
  */
 function redactSearchParams(params: URLSearchParams): string {
   const pairs: string[] = [];
   params.forEach((entry, key) => {
     const redactedKey = redactSensitiveString(key);
-    if (redactedKey === key && holdsSecret(key, false)) {
+    if (decodedFormHoldsSecret(redactedKey, false)) {
       pairs.push(REDACTED);
       return;
     }
     const redactedEntry = redactSensitiveString(entry);
-    const hidden = isSensitiveKey(key) || (redactedEntry === entry && holdsSecret(entry, false));
+    const hidden = isSensitiveKey(key) || decodedFormHoldsSecret(redactedEntry, false);
     const value = hidden ? REDACTED : redactedEntry;
     pairs.push(`${encodeQueryComponent(redactedKey)}=${encodeQueryComponent(value)}`);
   });
@@ -145,7 +150,15 @@ function urlParamKey(name: string): string {
  * + as a space when plusAsSpace is set, as URL query text does).
  */
 function holdsSecret(text: string, plusAsSpace: boolean): boolean {
-  if (redactSensitiveString(text) !== text) return true;
+  return redactSensitiveString(text) !== text || decodedFormHoldsSecret(text, plusAsSpace);
+}
+
+/**
+ * Whether the string redactor finds a secret in one of up to
+ * MAX_KEY_DECODE_PASSES escape-decoded forms of text (not in text as written,
+ * which the caller has already redacted).
+ */
+function decodedFormHoldsSecret(text: string, plusAsSpace: boolean): boolean {
   let candidate = text;
   for (let pass = 0; pass < MAX_KEY_DECODE_PASSES; pass += 1) {
     const source = pass === 0 && plusAsSpace ? candidate.replace(PLUS_SIGN, " ") : candidate;
@@ -155,6 +168,60 @@ function holdsSecret(text: string, plusAsSpace: boolean): boolean {
     candidate = decoded;
   }
   return false;
+}
+
+/** An opening or closing quote as written: ' or ", or its single or double escape. */
+const QUOTE_AT = /(["'])|%(?:25)?2([27])/y;
+// The first key/value separator of a URL parameter, as written or escaped.
+const PARAM_SEPARATOR_FIND = /[=:]|%(?:25)?3[ad]/i;
+
+/** The quote character and token length of a quote at position, if any. */
+function quoteAt(text: string, position: number): { quote: string; length: number } | undefined {
+  QUOTE_AT.lastIndex = position;
+  const match = QUOTE_AT.exec(text);
+  if (match === null) return undefined;
+  return { quote: match[1] ?? (match[2] === "2" ? '"' : "'"), length: match[0].length };
+}
+
+/** The length of the quote (literal, %2X or %252X) that ends text, or 0. */
+function closingQuoteLength(text: string, quote: string): number {
+  if (text.endsWith(quote)) return 1;
+  const escape = quote === '"' ? "22" : "27";
+  if (text.endsWith(`%25${escape}`)) return 5;
+  return text.endsWith(`%${escape}`) ? 3 : 0;
+}
+
+/**
+ * The quoted value of a masked URL parameter, which may span &-parts. When the
+ * text of params[index] at valueStart opens with a quote, the value runs to the
+ * first &-part (this one included) that ends with the same quote, literal or
+ * escaped, so that quote is followed by & or the end of the component; without
+ * one it runs to the end of the component. Returns the quotes as written and
+ * the index of the value's last &-part. Each part is read once.
+ */
+function quotedValueSpan(
+  params: string[],
+  index: number,
+  valueStart: number,
+): { open: string; close: string; last: number } {
+  const param = params[index];
+  const opening = valueStart === -1 ? undefined : quoteAt(param, valueStart);
+  if (opening === undefined) return { open: "", close: "", last: index };
+  const open = param.slice(valueStart, valueStart + opening.length);
+  const rest = param.slice(valueStart + opening.length);
+  let closeLength = closingQuoteLength(rest, opening.quote);
+  if (closeLength > 0) return { open, close: rest.slice(-closeLength), last: index };
+  for (let next = index + 1; next < params.length; next += 1) {
+    closeLength = closingQuoteLength(params[next], opening.quote);
+    if (closeLength > 0) return { open, close: params[next].slice(-closeLength), last: next };
+  }
+  return { open, close: "", last: params.length - 1 };
+}
+
+/** The position after the first separator (=, :, %3D or %3A) of param, or -1. */
+function firstSeparatorEnd(param: string): number {
+  const match = PARAM_SEPARATOR_FIND.exec(param);
+  return match === null ? -1 : match.index + match[0].length;
 }
 
 /**
@@ -167,23 +234,36 @@ function holdsSecret(text: string, plusAsSpace: boolean): boolean {
  * and whose value is not already a (quoted) [REDACTED], becomes key=[REDACTED];
  * (iii) a parameter whose value holds a secret as written or decoded becomes
  * key=[REDACTED].
- * Empty parameters, route text and delimiters stay as written.
+ * In (i) and (ii), a value that opens with a quote (literal, %22/%27 or
+ * double-escaped) after the first separator is masked as one value across &
+ * (see quotedValueSpan), as the string pass masks it after a raw key; (ii)
+ * keeps its quotes as written. Empty parameters, route text and delimiters
+ * stay as written.
  */
 function maskUrlComponent(component: string): string {
-  return component
-    .split(URL_PARAM_SEPARATOR)
-    .map((param) => {
-      if (param === "" || param === REDACTED) return param;
-      const separator = param.indexOf("=");
-      const key = separator === -1 ? param : param.slice(0, separator);
-      if (holdsSecret(key, true)) return REDACTED;
-      if (separator === -1) return param;
-      const value = param.slice(separator + 1);
-      if (MASKED_VALUE.test(value)) return param;
-      if (isSensitiveKey(urlParamKey(key)) || holdsSecret(value, true)) return `${key}=${REDACTED}`;
-      return param;
-    })
-    .join(URL_PARAM_SEPARATOR);
+  const params = component.split(URL_PARAM_SEPARATOR);
+  const output: string[] = [];
+  for (let index = 0; index < params.length; index += 1) {
+    const param = params[index];
+    const separator = param.indexOf("=");
+    const key = separator === -1 ? param : param.slice(0, separator);
+    const value = param.slice(separator + 1);
+    if (param === "" || param === REDACTED) {
+      output.push(param);
+    } else if (holdsSecret(key, true)) {
+      index = quotedValueSpan(params, index, firstSeparatorEnd(param)).last;
+      output.push(REDACTED);
+    } else if (separator === -1 || MASKED_VALUE.test(value)) {
+      output.push(param);
+    } else if (isSensitiveKey(urlParamKey(key))) {
+      const span = quotedValueSpan(params, index, separator + 1);
+      index = span.last;
+      output.push(`${key}=${span.open}${REDACTED}${span.close}`);
+    } else {
+      output.push(holdsSecret(value, true) ? `${key}=${REDACTED}` : param);
+    }
+  }
+  return output.join(URL_PARAM_SEPARATOR);
 }
 
 /**
@@ -406,6 +486,10 @@ function redactKeyValues(input: string): string {
     if (valueQuote) {
       replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
     } else if (openQuote) {
+      // An unclosed quoted authorization or scheme-labelled value may continue
+      // on folded lines, as its unquoted form does.
+      const quoted = input.slice(match.index + key.length + keyQuote.length + separator.length + 1, end);
+      if (AUTHORIZATION_KEY.test(key) || QUOTED_SCHEME_START.test(quoted)) end = foldEnd(input, end);
       replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
     } else if (AUTHORIZATION_KEY.test(key)) {
       end = foldEnd(input, endOfLine(input, end));
