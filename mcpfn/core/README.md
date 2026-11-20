@@ -63,6 +63,63 @@ await server.serveStdio();
 
 Tool definitions are public contracts. Do not derive tool names, descriptions, or exposed fields from storage schemas without an explicit exposure manifest.
 
+## Tools from an OpenAPI document
+
+`fromOpenAPI()` from `@mcpfn/core/openapi` turns the operations of a parsed
+OpenAPI 3.0 or 3.1 document into tools on an `McpFnRegistry`. Parse YAML
+yourself; the function takes the document object. Calls go to the executor you
+pass; each handler forwards the arguments the registry validated, unchanged.
+
+```ts
+import { fromOpenAPI } from "@mcpfn/core/openapi";
+
+const { registry, tools, skipped } = fromOpenAPI(document, {
+  executor: { execute: ({ operation, args, signal }) => send(operation, args, signal) },
+  include: ["listPets", "tag:stores", "GET /health"],
+  exclude: ["tag:internal"],
+  prefix: "petstore.",
+});
+for (const { operation, code, reason } of skipped) {
+  console.warn(`${operation.method ?? "*"} ${operation.path}: ${code} (${reason})`);
+}
+```
+
+- **Exposure.** Only `GET` and `HEAD` are exposed by default. Any other method
+  needs its operationId in `include` or `allowMutations: true`; a `tag:` or
+  `METHOD /path` selector selects an operation but does not opt a mutation in.
+  When `include` is given, nothing outside it is exposed, and `exclude` always
+  wins. Deprecated operations need `includeDeprecated: true`.
+- **Names.** The operationId, with `prefix` prepended, characters outside
+  `[A-Za-z0-9_.-]` replaced by `_`, and truncated to 128 characters. Without an
+  operationId the name is `<method>_<path segments>`, such as
+  `get_users_userId_posts`. Collisions, including with tools already on a
+  supplied registry, get `_2`, `_3`, ... in document order. A `name(operation)`
+  callback replaces this; an invalid or duplicate result throws an error naming
+  the operation before anything is registered.
+- **Inputs.** The input schema is `{ path, query, header, body }`, each group
+  present only when the operation has such inputs, with
+  `additionalProperties: false` throughout. Referenced component schemas are
+  copied under `definitions` (draft-07). `readOnly` properties are removed from
+  inputs, and `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
+  `Accept` and `Content-Type` headers are never inputs: credentials and
+  transport headers belong to the executor.
+- **Outputs.** The output schema is the schema of the first 2xx response with
+  `application/json` content when it is a plain object schema (`writeOnly`
+  properties removed); otherwise the tool declares none.
+- **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
+  is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
+  `openWorldHint`. The description is the trimmed summary and description,
+  joined by a blank line and capped at 2,000 characters.
+- **Supported forms.** Local `#/components/{schemas,parameters,requestBodies,responses}/<name>`
+  references (recursive schemas included); path- and operation-level parameters
+  in `path`, `query` and `header` with their default styles over primitives and
+  arrays of primitives; `application/json` and `*+json` bodies; OpenAPI 3.0
+  `nullable`. Anything else is listed in `skipped` with a code and reason:
+  external or URL references, `cookie` parameters, non-default styles,
+  object-valued parameters, bodies without a JSON media type, and the 2020-12
+  keywords `prefixItems`, `$dynamicRef`, `unevaluatedProperties`,
+  `unevaluatedItems` and `dependentSchemas`. A Swagger 2.0 document throws.
+
 ## Server context and errors
 
 Build trusted context once at the server boundary:

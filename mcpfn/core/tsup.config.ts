@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const zodRoot = dirname(require.resolve("zod/package.json"));
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: { index: "src/index.ts", openapi: "src/openapi/index.ts" },
   format: ["esm", "cjs"],
   dts: true,
   sourcemap: true,
@@ -24,4 +24,7 @@ export default defineConfig({
     options.alias = { ...options.alias, zod: zodRoot };
   },
   noExternal: ["@modelcontextprotocol/sdk", "zod"],
+  // `@mcpfn/core/openapi` imports the root entry by package name, so both
+  // entries share one McpFnRegistry and one error class hierarchy at runtime.
+  external: ["@mcpfn/core"],
 });
