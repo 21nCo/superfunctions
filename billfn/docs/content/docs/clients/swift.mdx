@@ -14,6 +14,38 @@ BillFn Phase 2 adds a native Apple surface instead of forcing embedded apps to p
 | `BillFnWebViewBridgeHost` | Native owner for embedded web apps |
 | `@billfn/swift-bridge` | JavaScript bridge protocol and client wrapper |
 
+## Add the package
+
+The three Swift products come from the `super-functions` repository's root package (`SuperfunctionsSwift`, iOS 16 and macOS 13), the package Xcode resolves when you add the repository. Pin it to the exact commit of a BillFn Swift release. Each release is marked by a `billfn-swift-v<version>` tag, which SwiftPM cannot resolve as a version (it only resolves plain `v<semver>` tags), so look the commit up and pin that:
+
+```sh
+git ls-remote --tags https://github.com/21nCo/super-functions.git 'billfn-swift-v*'
+```
+
+Use the commit SHA of the tag for the release you want (for an annotated tag, the SHA on its `^{}` line).
+
+In Xcode, choose **File > Add Package Dependencies**, enter `https://github.com/21nCo/super-functions.git`, set the dependency rule to **Commit** with that SHA, and add the products you use to your app target.
+
+In a `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/21nCo/super-functions.git", revision: "<release commit SHA>"),
+],
+targets: [
+    .target(
+        name: "App",
+        dependencies: [
+            .product(name: "BillFnClient", package: "super-functions"),
+            .product(name: "BillFnStoreKit", package: "super-functions"),
+            .product(name: "BillFnWebViewBridgeHost", package: "super-functions"), // embedded web apps only
+        ]
+    ),
+]
+```
+
+To move to a newer release, replace the SHA with that release's commit.
+
 ## Native Apple example
 
 ```swift

@@ -14,6 +14,7 @@ const version = tag.slice(1);
 const prerelease = Boolean(match[2]);
 const products = [
   'AuthFnClient', 'AuthFnSwiftUI', 'AuthFnWebViewBridgeHost',
+  'BillFnClient', 'BillFnStoreKit', 'BillFnWebViewBridgeHost',
   'FileFnClient', 'FileFnSwiftUI', 'FileFnWebViewBridgeHost',
   'SearchFnCore', 'SearchFnAdapterContracts', 'SearchFnMemoryAdapter',
   'SearchFnSQLiteAdapter', 'SearchFnClient', 'SearchFnConvenience',
@@ -41,7 +42,7 @@ if (command === 'validate') {
     return 0;
   };
   const actual = manifest.products.filter(product => product.type.library).map(product => product.name).sort(byCodeUnit);
-  if (JSON.stringify(actual) !== JSON.stringify([...products].sort(byCodeUnit))) throw new Error('Root Swift package must expose the 13 supported library products');
+  if (JSON.stringify(actual) !== JSON.stringify([...products].sort(byCodeUnit))) throw new Error('Root Swift package must expose the 16 supported library products');
   run('swift', ['package', 'resolve']);
   // The root's automatic library products are all built by the default build.
   run('swift', ['build', '--configuration', 'release']);

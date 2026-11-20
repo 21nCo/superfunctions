@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "AuthFnClient", targets: ["AuthFnClient"]),
         .library(name: "AuthFnSwiftUI", targets: ["AuthFnSwiftUI"]),
         .library(name: "AuthFnWebViewBridgeHost", targets: ["AuthFnWebViewBridgeHost"]),
+        .library(name: "BillFnClient", targets: ["BillFnClient"]),
+        .library(name: "BillFnStoreKit", targets: ["BillFnStoreKit"]),
+        .library(name: "BillFnWebViewBridgeHost", targets: ["BillFnWebViewBridgeHost"]),
         .library(name: "FileFnClient", targets: ["FileFnClient"]),
         .library(name: "FileFnSwiftUI", targets: ["FileFnSwiftUI"]),
         .library(name: "FileFnWebViewBridgeHost", targets: ["FileFnWebViewBridgeHost"]),
@@ -33,6 +36,20 @@ let package = Package(
             name: "AuthFnWebViewBridgeHost",
             dependencies: ["AuthFnClient"],
             path: "authfn/swift/Sources/AuthFnWebViewBridgeHost"
+        ),
+        // BillFn's sources, the same targets billfn/swift/Package.swift declares. Their tests
+        // need swift-testing, so they stay in that package and the root has no dependencies.
+        .target(name: "BillFnClient", path: "billfn/swift/Sources/BillFnClient"),
+        .target(
+            name: "BillFnStoreKit",
+            dependencies: ["BillFnClient"],
+            path: "billfn/swift/Sources/BillFnStoreKit",
+            resources: [.copy("PrivacyInfo.xcprivacy")]
+        ),
+        .target(
+            name: "BillFnWebViewBridgeHost",
+            dependencies: ["BillFnClient", "BillFnStoreKit"],
+            path: "billfn/swift/Sources/BillFnWebViewBridgeHost"
         ),
         .target(name: "FileFnClient", path: "filefn/swift/Sources/FileFnClient"),
         .target(
