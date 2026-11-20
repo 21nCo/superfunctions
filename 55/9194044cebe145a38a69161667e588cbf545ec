@@ -1,0 +1,35 @@
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b996deaa3d01f1::t_7137307ebce93d 302-312,319,322
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_b996deaa3d01f1::t_77ff414b692179 507-508,539-541
+flowfn/typescript/src/adapters/redis.test.ts
+  s_b996deaa3d01f1::t_a1975fad0ca656 449-462
+flowfn/typescript/src/adapters/redis.ts
+  s_b996deaa3d01f1::t_14536187e4b8df 323-324,326-327,329,342,349-352,440,514,543,559
+flowfn/typescript/src/queue/dlq.ts
+  s_b996deaa3d01f1::t_ac69d39f52880d 223-226,244
+flowfn/typescript/src/queue/queue.ts
+  s_b996deaa3d01f1::t_179bbfc02eec69 358-359,363
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_b996deaa3d01f1::t_747e971329cb96 6,60-121
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b996deaa3d01f1::t_58f30c020aab5a 62-64,97-98,100-101
+flowfn/typescript/tests/dlq.test.ts
+  s_b996deaa3d01f1::t_2d95450043d7f0 522-536
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "559194044cebe145a38a69161667e588cbf545ec",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
