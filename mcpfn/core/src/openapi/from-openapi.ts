@@ -471,8 +471,10 @@ class OperationConverter {
       root = definitions[name]!;
     }
     if (!isObject(root)) return undefined;
-    // Nor by replacing a root type, such as `["object", "bogus"]`.
-    if (root.type !== undefined && root.type !== "object") {
+    // Nor by replacing a root type, such as `["object", "bogus"]`, or root
+    // definitions with the generated ones (`toolSchema`).
+    const replacesDefinitions = Object.hasOwn(root, "definitions") && Object.keys(definitions).length > 0;
+    if ((root.type !== undefined && root.type !== "object") || replacesDefinitions) {
       throwIfInvalid(this.compileVerdict(root, definitions, "output"), "response");
     }
     // The root may carry its object type only through a reference or a

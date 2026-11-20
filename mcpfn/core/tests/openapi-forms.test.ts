@@ -1675,8 +1675,10 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       const leaf = { $ref: "#/components/schemas/Leaf" };
       // properties of an array-only member never apply, so the object member alone constrains each property.
       const array = { type: "array", properties: { child: leaf } };
+      // The same member with its kind stated in a composition beside the properties.
+      const composed = { allOf: [{ type: "array" }, { properties: { child: leaf } }] };
       const object = { type: "object", additionalProperties: leaf };
-      for (const members of [[array, object], [object, array]]) {
+      for (const members of [[array, object], [object, array], [composed, object], [object, composed]]) {
         const schema = { oneOf: members };
         const path = flag === "readOnly"
           ? post("op", schema)
@@ -1811,6 +1813,36 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     ]);
     expectArguments(tool(result.tools, "validBody").inputSchema, { valid: [{ body: { value: "x" } }], invalid: [{ body: { value: 1 } }, { body: {} }] });
     expectArguments(tool(result.tools, "validResponse").outputSchema!, { valid: [{ value: "x" }], invalid: [{ value: 1 }] });
+  });
+
+  it("checks 3.1 $defs and unflagged root output definitions as written beside referenced components", () => {
+    const text = { $ref: "#/components/schemas/Text" };
+    const flagged = (type: string) => ({ Unused: { type: "object", properties: { bad: { type, readOnly: true } } } });
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        components: { schemas: { Text: { type: "string" } } },
+        paths: {
+          "/b": post("defsBody", { type: "object", $defs: flagged("bogus"), properties: { value: text } }),
+          "/u": post("defsUnflagged", { type: "object", $defs: { U: { type: "bogus" } }, properties: { value: { type: "string" } } }),
+          "/r": { get: { operationId: "ownOutput", responses: json({ type: "object", definitions: { U: { type: "bogus" } }, properties: { v: text } }) } },
+          "/v": post("validDefs", { type: "object", $defs: flagged("string"), definitions: { D: { type: "string" } }, properties: { value: text } }),
+          "/o": { get: { operationId: "validOutput", responses: json({ type: "object", definitions: { U: { type: "string" } }, properties: { v: text } }) } },
+        },
+      },
+      options(),
+    );
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code]).sort()).toEqual([
+      ["defsBody", "invalid-schema"],
+      ["defsUnflagged", "invalid-schema"],
+      ["ownOutput", "invalid-schema"],
+    ]);
+    const body = (tool(result.tools, "validDefs").inputSchema.properties as Record<string, Record<string, unknown>>).body!;
+    expect(body.$defs).toBeUndefined();
+    expect(body.definitions).toEqual({ D: { type: "string" } });
+    expect(body.allOf).toEqual([{ definitions: { Unused: { type: "object", properties: { bad: false } } } }]);
+    expectArguments(tool(result.tools, "validDefs").inputSchema, { valid: [{ body: { value: "x" } }], invalid: [{ body: { value: 1 } }] });
+    expectArguments(tool(result.tools, "validOutput").outputSchema!, { valid: [{ v: "x" }], invalid: [{ v: 1 }] });
   });
 
   it("compiles a response schema many operations share once, and bounds conversions by the document total", () => {

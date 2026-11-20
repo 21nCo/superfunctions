@@ -30,8 +30,8 @@ export function isObject(value: unknown): value is JsonObject {
 // that change the base URI so `#/definitions/<name>` would no longer resolve.
 // Every 2019-09/2020-12 keyword draft-07 does not define is either listed
 // here or handled in convertObject: `dependentRequired` is translated to
-// `dependencies`, `$defs` is converted like `definitions` (refs only ever
-// target components), and the annotations `$comment`, `deprecated`,
+// `dependencies`, `$defs` becomes `definitions` (refs only ever target
+// components; see addDefinitions), and the annotations `$comment`, `deprecated`,
 // `contentSchema` and `examples` change no result in either engine. A listed
 // keyword would be validated by @cfworker/json-schema but ignored by Ajv's
 // draft-07 dialect (or change reference resolution), so the engines would
@@ -258,6 +258,8 @@ interface AccessConflict {
 interface ClosureEntry {
   schema: JsonObject;
   conditional: boolean;
+  /** The kinds of value for which the schema matters: those every schema on its path from the root admits. */
+  kinds: ReadonlySet<ValueKind>;
 }
 
 const CONDITIONAL = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
@@ -520,6 +522,7 @@ export class SchemaConverter {
   private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
+    let defs: JsonObject | undefined;
     for (const [keyword, value] of Object.entries(schema)) {
       if (DROPPED_KEYWORDS.has(keyword)) continue;
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
@@ -528,12 +531,15 @@ export class SchemaConverter {
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
         dependencies = { ...value, ...dependencies };
+      } else if (keyword === "$defs" && isObject(value)) {
+        defs = this.convertMap(value, mode, refs);
       } else {
         const entry = this.convertEntry(schema, keyword, value, mode, refs);
         if (entry) entries.push(entry);
       }
     }
     if (dependencies) entries.push(["dependencies", dependencies]);
+    if (defs) addDefinitions(entries, defs);
     return Object.fromEntries(entries) as McpFnJsonSchema;
   }
 
@@ -660,8 +666,8 @@ export class SchemaConverter {
       const entries = this.closure(schema);
       // Object children only matter in schemas that can accept an object,
       // array items only in schemas that can accept an array.
-      const objects = entries.filter((entry) => this.mayBeObject(entry.schema));
-      const arrays = entries.filter((entry) => this.admittedValues(entry.schema).has("array"));
+      const objects = entries.filter((entry) => entry.kinds.has("object"));
+      const arrays = entries.filter((entry) => entry.kinds.has("array"));
       const conflict = this.flagConflict(objects, keyword) ?? this.childConflict(entries, objects, arrays, keyword);
       if (conflict !== undefined) memo.set(schema, conflict);
       else if (this.lowest >= index) this.settle(schema, mark, memo);
@@ -703,32 +709,43 @@ export class SchemaConverter {
    * dependencies and alternatives that can accept the same kind of value. A
    * schema reached both ways is also recorded as conditional, whatever the
    * order of the visits, because its converted form is shared by both.
+   * Each entry also keeps the kinds of value every schema on a path to it
+   * admits: for any other value a schema on that path fails whatever the
+   * entry says, so the entry decides nothing for it. A schema reached for
+   * more kinds, or newly under a condition, is visited again (at most once
+   * per kind and once more for the condition).
    */
   private closure(root: JsonObject): ClosureEntry[] {
     const entries: ClosureEntry[] = [];
-    const visited = new Map<object, boolean>();
-    const walk = (current: unknown, conditional: boolean): void => {
+    const visited = new Map<object, { conditional: boolean; kinds: ReadonlySet<ValueKind> }>();
+    const walk = (current: unknown, conditional: boolean, reaching: ReadonlySet<ValueKind>): void => {
       if (!isObject(current)) return;
       const before = visited.get(current);
-      if (before === true || before === conditional) return;
-      visited.set(current, conditional);
+      let kinds = intersect(reaching, this.admittedValues(current));
+      if (before !== undefined) {
+        const covered = [...kinds].every((kind) => before.kinds.has(kind));
+        if (covered && (before.conditional || !conditional)) return;
+        conditional ||= before.conditional;
+        kinds = new Set([...before.kinds, ...kinds]);
+      }
+      visited.set(current, { conditional, kinds });
       if (Object.hasOwn(current, "$ref")) {
-        walk(this.target(current.$ref), conditional);
+        walk(this.target(current.$ref), conditional, kinds);
         if (this.version === "3.0") return;
       }
-      entries.push({ schema: current, conditional });
-      for (const member of arrayOf(current.allOf)) walk(member, conditional);
+      entries.push({ schema: current, conditional, kinds });
+      for (const member of arrayOf(current.allOf)) walk(member, conditional, kinds);
       for (const keyword of ["anyOf", "oneOf"] as const) {
         const members = arrayOf(current[keyword]);
         const exclusive = this.exclusive(members);
-        for (const member of members) walk(member, conditional || !exclusive);
+        for (const member of members) walk(member, conditional || !exclusive, kinds);
       }
-      for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], true);
+      for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], true, kinds);
       for (const keyword of this.dependencyKeywords()) {
-        for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, true);
+        for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, true, kinds);
       }
     };
-    walk(root, false);
+    walk(root, false, EVERYTHING.values);
     return entries;
   }
 
@@ -1230,6 +1247,22 @@ function patternMatcher(entries: ClosureEntry[], ignored: string | undefined): (
     }
     return false;
   };
+}
+
+/**
+ * Draft-07 has no `$defs`, so Ajv would not check the declarations under it
+ * while @cfworker/json-schema does: they become `definitions` (never
+ * referenced, since refs only target components), or an `allOf` member's
+ * when the schema declares `definitions` too, which accepts every value.
+ */
+function addDefinitions(entries: Array<[string, unknown]>, defs: JsonObject): void {
+  if (!entries.some(([keyword]) => keyword === "definitions")) {
+    entries.push(["definitions", defs]);
+    return;
+  }
+  const allOf = entries.find(([keyword]) => keyword === "allOf");
+  if (allOf) allOf[1] = [...(allOf[1] as unknown[]), { definitions: defs }];
+  else entries.push(["allOf", [{ definitions: defs }]]);
 }
 
 function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {
