@@ -1,0 +1,35 @@
+mcpfn/core/README.md
+  s_b996deaa3d01f1::t_7134533d12c42d 112-116
+mcpfn/core/src/openapi/from-openapi.ts
+  s_b996deaa3d01f1::t_f621514561d1ac 595-599
+mcpfn/core/src/openapi/schema.ts
+  s_b996deaa3d01f1::t_aebb509db32b7a 152-157,160-162,326-327,509-512,519,522-525,529-534,561,575,615,622,674-675,697-700
+mcpfn/core/src/openapi/types.ts
+  s_b996deaa3d01f1::t_d28343a07387f2 164-166,171-173,175,177-179
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_b996deaa3d01f1::t_9c6c1235f4b130 15-19
+mcpfn/core/tests/fixtures/openapi/skip-access-flag-instance-constraints.json
+  s_b996deaa3d01f1::t_6a42901922ac00 1-288
+mcpfn/core/tests/openapi-document-type.test.ts
+  s_b996deaa3d01f1::t_5c21058bab2943 6
+mcpfn/core/tests/openapi-forms.test.ts
+  s_b996deaa3d01f1::t_f43d9a72a93273 488-556
+mcpfn/core/tests/types/openapi-document.ts
+  s_b996deaa3d01f1::t_ac6111e1d15823 24-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66982cd68ab19e1b91461867e2ef3c8706ea852d",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
