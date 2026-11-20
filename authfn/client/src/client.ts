@@ -2,10 +2,13 @@ import { createAuthFnHttpClient } from './http-client.js';
 import { createAuthFnSessionTransportAuth } from './transport-auth-internal.js';
 import type {
   AuthFnClient,
-  AuthFnClientOptions
+  AuthFnClientOptions,
+  AuthFnSocialHandoffClient
 } from './types.js';
 
-export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnClient {
+export function createAuthFnClient(
+  options: AuthFnClientOptions = {}
+): AuthFnClient & AuthFnSocialHandoffClient {
   const http = createAuthFnHttpClient(options);
 
   return {

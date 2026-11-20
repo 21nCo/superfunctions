@@ -335,6 +335,11 @@ export interface AuthFnRegionalClientOptions {
   clientOptions?: Omit<AuthFnClientOptions, 'baseUrl'>;
 }
 
+/** The built-in clients always provide the social handoff exchange. */
+export interface AuthFnSocialHandoffClient {
+  exchangeSocialHandoff: NonNullable<AuthFnClient['exchangeSocialHandoff']>;
+}
+
 export interface AuthFnRegionalClient extends AuthFnClient {
   prepareEmailAuth(input: {
     email: string;

@@ -6,6 +6,7 @@ import type {
   AuthFnErrorEnvelope,
   AuthFnRegionStorage,
   AuthFnRegionalClient,
+  AuthFnSocialHandoffClient,
   AuthFnRegionalEmailAuthPreparation,
   AuthFnRegionalClientOptions
 } from './types.js';
@@ -15,13 +16,13 @@ const DEFAULT_STORAGE_KEY = 'authfn:user-region-map';
 
 export function createAuthFnRegionalClient(
   options: AuthFnRegionalClientOptions
-): AuthFnRegionalClient {
+): AuthFnRegionalClient & AuthFnSocialHandoffClient {
   const storage = options.storage ?? createLocalStorageRegionStorage();
   const cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
-  const clients = new Map<string, AuthFnClient>();
+  const clients = new Map<string, AuthFnClient & AuthFnSocialHandoffClient>();
   let currentRegionId = options.defaultRegionId;
 
-  const clientFor = (regionId: string): AuthFnClient => {
+  const clientFor = (regionId: string): AuthFnClient & AuthFnSocialHandoffClient => {
     const existing = clients.get(regionId);
     if (existing) {
       return existing;
@@ -177,7 +178,7 @@ export function createAuthFnRegionalClient(
     return operation(clientFor(regionId));
   };
 
-  const regionalClient: AuthFnRegionalClient = {
+  const regionalClient: AuthFnRegionalClient & AuthFnSocialHandoffClient = {
     createTransportAuth: (input) =>
       createAuthFnClient(options.clientOptions ?? {}).createTransportAuth(input),
     getSession: () => clientFor(currentRegionId).getSession(),
@@ -236,7 +237,7 @@ export function createAuthFnRegionalClient(
     },
     startSocialSignIn: (input) => clientFor(currentRegionId).startSocialSignIn(input),
     disconnectSocialAccount: (input) => clientFor(currentRegionId).disconnectSocialAccount(input),
-    exchangeSocialHandoff: (input) => clientFor(currentRegionId).exchangeSocialHandoff!(input),
+    exchangeSocialHandoff: (input) => clientFor(currentRegionId).exchangeSocialHandoff(input),
     startNativeHandoff: () => clientFor(currentRegionId).startNativeHandoff(),
     startWebHandoff: (input) => clientFor(currentRegionId).startWebHandoff(input),
     createApiKey: (input) => clientFor(currentRegionId).createApiKey(input),

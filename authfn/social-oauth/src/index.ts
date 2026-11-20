@@ -2512,10 +2512,10 @@ type SocialTokenSet = {
 };
 
 function readHandoffChallenge(value: unknown): string | undefined {
-  const challenge = readOptionalString(value);
-  if (challenge === undefined) {
+  if (value === undefined || value === null) {
     return undefined;
   }
+  const challenge = typeof value === 'string' ? value : '';
   if (!HANDOFF_CHALLENGE_PATTERN.test(challenge)) {
     throw new AuthFnValidationError('handoffChallenge must be a base64url SHA-256 digest', {
       field: 'handoffChallenge'
