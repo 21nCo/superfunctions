@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import type { Adapter, TableSchema } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
@@ -36,7 +36,8 @@ import {
   type AuthFnUserRecord
 } from 'authfn';
 import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
-import { issueSessionCookies } from 'authfn/core/cookies';
+import { issueSessionCookies, resolveCookiePolicy } from 'authfn/core/cookies';
+import { serializeSetCookie } from '@superfunctions/http';
 import { resolveEnvironment } from 'authfn/core/environment';
 import {
   beginTwoFactorChallenge,
@@ -54,6 +55,9 @@ import {
   AuthFnConflictError,
   AuthFnError,
   AuthFnOAuthCallbackInvalidError,
+  AuthFnOAuthStateInvalidError,
+  AuthFnOAuthStateReplayedError,
+  AuthFnRegionMismatchError,
   AuthFnOAuthProviderUnsupportedError,
   AuthFnPluginAbortedError,
   AuthFnRedirectUriDisallowedError,
@@ -94,6 +98,12 @@ const SOCIAL_PROVIDER_METHODS = {
 
 const CALLBACK_METADATA_MODE = 'callbackMode';
 const CALLBACK_METADATA_HANDOFF = 'handoffMode';
+const CALLBACK_METADATA_BINDING = 'browserBindingHash';
+const CALLBACK_METADATA_HANDOFF_CHALLENGE = 'handoffChallenge';
+const SOCIAL_HANDOFF_STATE_PREFIX = 'social-handoff:';
+const SOCIAL_HANDOFF_KIND = 'social-handoff';
+const DEFAULT_SOCIAL_HANDOFF_CODE_TTL_SECONDS = 60;
+const HANDOFF_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const APPLE_JWKS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 
 interface SocialStartBody {
@@ -101,6 +111,12 @@ interface SocialStartBody {
   returnTo?: string;
   callbackMode?: 'redirect' | 'json';
   handoffMode?: AuthFnSocialHandoffMode;
+  handoffChallenge?: string;
+}
+
+interface SocialHandoffExchangeBody {
+  code?: string;
+  verifier?: string;
 }
 
 interface NativeAppleStartBody {
@@ -128,7 +144,7 @@ interface SocialCallbackCompletion {
   callbackMode: 'redirect' | 'json';
   handoffMode: AuthFnSocialHandoffMode;
   redirectTo?: string;
-  session: Awaited<ReturnType<typeof issueSession>>['session'];
+  session?: Awaited<ReturnType<typeof issueSession>>['session'];
   userId: string;
   oauthAccountId?: string;
   connectionId?: string;
@@ -180,6 +196,10 @@ function createSocialRoutes(
 ): Route[] {
   const config: ResolvedSocialOAuthPluginConfig = {
     defaultHandoffMode: schemaConfig.defaultHandoffMode,
+    bindBrowserState: schemaConfig.bindBrowserState,
+    allowWebSessionTokenHandoff: schemaConfig.allowWebSessionTokenHandoff,
+    requireHandoffChallenge: schemaConfig.requireHandoffChallenge,
+    handoffCodeTtlSeconds: schemaConfig.handoffCodeTtlSeconds,
     providers: {},
     ...readPluginRuntimeConfig<SocialOAuthPluginRuntimeConfig>(ctx, 'socialOAuth')
   };
@@ -218,6 +238,16 @@ function createSocialRoutes(
         );
 
         assertAllowedReturnTarget(providerSettings, returnTo, callbackMode);
+        const handoffChallenge = readHandoffChallenge(body.handoffChallenge);
+        assertAllowedHandoff(config, {
+          returnTo,
+          callbackMode,
+          handoffMode,
+          handoffChallenge
+        });
+        const browserBinding = config.bindBrowserState && callbackMode === 'redirect' && handoffMode === 'none'
+          ? createBrowserBindingNonce()
+          : undefined;
 
         const requestId = resolveRequestId(request);
         const flowService = createSocialFlowService(ctx.config, ctx.hooks, config, request, runtime, providerId);
@@ -232,7 +262,11 @@ function createSocialRoutes(
             returnTo,
             metadata: {
               [CALLBACK_METADATA_MODE]: callbackMode,
-              [CALLBACK_METADATA_HANDOFF]: handoffMode
+              [CALLBACK_METADATA_HANDOFF]: handoffMode,
+              ...(browserBinding ? { [CALLBACK_METADATA_BINDING]: hashBindingValue(browserBinding) } : {}),
+              ...(handoffChallenge && handoffMode === 'session-token'
+                ? { [CALLBACK_METADATA_HANDOFF_CHALLENGE]: handoffChallenge }
+                : {})
             }
           },
           requestId
@@ -257,6 +291,77 @@ function createSocialRoutes(
           redirectTo: result.authorizationUrl,
           stateId: result.stateId,
           expiresAt: result.expiresAt
+        }, browserBinding
+          ? {
+              setCookies: [
+                serializeBrowserBindingCookie(ctx, request, runtime, browserBinding, result.expiresAt)
+              ]
+            }
+          : undefined);
+      }
+    },
+    {
+      method: 'POST',
+      path: '/social/handoff/exchange',
+      meta: createAuthFnRouteMeta('exchangeSocialHandoff', 'Exchange a one-time social sign-in handoff code and its verifier for a bearer session', {
+        mode: 'none'
+      }),
+      handler: async (request) => {
+        const runtime = await resolveEnvironment(ctx.config, request);
+        const body = await request.json().catch(() => ({})) as SocialHandoffExchangeBody;
+        const code = readRequiredString(body.code, 'code');
+        const verifier = readRequiredString(body.verifier, 'verifier');
+        const stateStore = new DbAdapterOAuthStateStore(
+          withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+        );
+        const stateId = socialHandoffStateId(code);
+        const pending = await stateStore.get(stateId);
+        const metadata = pending?.subject?.kind === 'browser-auth' ? pending.subject.metadata : undefined;
+        if (!pending || metadata?.kind !== SOCIAL_HANDOFF_KIND) {
+          throw new AuthFnOAuthStateInvalidError('Social handoff code is invalid');
+        }
+        if (!verifierMatchesChallenge(verifier, readOptionalString(metadata.challenge))) {
+          throw new AuthFnOAuthStateInvalidError('Social handoff verifier does not match');
+        }
+        if (runtime.regionId && pending.regionId && pending.regionId !== runtime.regionId) {
+          throw new AuthFnRegionMismatchError('Social handoff code belongs to a different region', {
+            regionId: pending.regionId
+          });
+        }
+        const now = config.now?.() ?? new Date();
+        const consumed = await stateStore.consume(stateId, now.toISOString());
+        if (!consumed) {
+          throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
+        }
+        const userId = readRequiredString(metadata.userId, 'userId');
+        const user = await findUserById(ctx.config, userId);
+        if (!user) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
+        }
+        const methods = Array.isArray(metadata.methods)
+          ? metadata.methods.filter((method): method is string => typeof method === 'string')
+          : [];
+        const issued = await issueSession(ctx.config, ctx.hooks, {
+          request,
+          userId: user.id,
+          primaryEmail: user.primaryEmail,
+          regionId: pending.regionId ?? runtime.regionId,
+          methods: methods as Parameters<typeof issueSession>[2]['methods']
+        });
+
+        await emitAuthEvent(ctx.config, {
+          type: 'authfn.handoff.exchanged',
+          requestId: resolveRequestId(request),
+          actorId: user.id,
+          userId: user.id,
+          sessionId: issued.session.id,
+          regionId: issued.session.regionId,
+          outcome: 'social-exchanged'
+        });
+
+        return jsonSuccess(request, {
+          session: issued.session,
+          handoff: buildSessionHandoffPayload(issued)
         });
       }
     },
@@ -281,6 +386,7 @@ function createSocialRoutes(
           stateId
         );
         try {
+        await assertBrowserBinding(ctx, request, runtime, stateId);
         const formPostIdToken = readOptionalString(url.searchParams.get('id_token'));
         const callbackResult = providerId === 'apple' && formPostIdToken
           ? await handleAppleFormPostIdentityCallback(
@@ -384,6 +490,61 @@ function createSocialRoutes(
           }
         }
 
+        const handoffChallenge = readOptionalString(
+          callbackResult.subject.metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]
+        );
+        if (
+          handoffChallenge
+          && readStoredCallbackMode(callbackResult) === 'redirect'
+          && readStoredHandoffMode(callbackResult, config.defaultHandoffMode) === 'session-token'
+        ) {
+          const redirectTo = callbackResult.subject.returnTo;
+          assertAllowedReturnTarget(providerSettings, redirectTo, 'redirect');
+          const handoffCode = await createSocialHandoffCode(ctx, config, {
+            providerId,
+            redirectUri: callbackUri,
+            userId: user.id,
+            regionId: runtime.regionId,
+            methods: [SOCIAL_PROVIDER_METHODS[providerId]],
+            challenge: handoffChallenge
+          });
+          const completion = {
+            provider: providerId,
+            linked: true,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            redirectTo,
+            userId: user.id,
+            oauthAccountId: readOptionalString(resolvedIdentity.metadata?.oauthAccountId),
+            connectionId: callbackResult.connectionId,
+            handoffCodeIssued: true
+          } as Record<string, unknown>;
+          await ctx.hooks.afterOAuthCallback?.(
+            buildHookContext(ctx.config, request, runtime, user.id),
+            completion
+          );
+          await emitAuthEvent(ctx.config, {
+            type: 'authfn.oauth.completed',
+            requestId,
+            actorId: user.id,
+            userId: user.id,
+            regionId: runtime.regionId,
+            provider: providerId,
+            outcome: 'handoff-code-issued',
+            metadata: {
+              callbackMode: 'redirect',
+              handoffMode: 'session-token',
+              connectionId: callbackResult.connectionId
+            }
+          });
+          return redirectWithCookies(
+            request,
+            appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
+            [clearBrowserBindingCookie(ctx, request, runtime)],
+            303
+          );
+        }
+
         const issued = await issueSession(ctx.config, ctx.hooks, {
           request,
           userId: user.id,
@@ -394,6 +555,9 @@ function createSocialRoutes(
         const cookies = Object.values(
           issueSessionCookies(issued.cookiePolicy!, issued.sessionToken, issued.csrfToken)
         );
+        if (config.bindBrowserState) {
+          cookies.push(clearBrowserBindingCookie(ctx, request, runtime));
+        }
         const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
         const completion: SocialCallbackCompletion = {
           provider: providerId,
@@ -1823,6 +1987,10 @@ async function createFormPostCallbackRequest(request: Request): Promise<Request>
   if (requestId) {
     headers.set('x-request-id', requestId);
   }
+  const cookie = request.headers.get('cookie');
+  if (cookie) {
+    headers.set('cookie', cookie);
+  }
   return new Request(url.toString(), {
     method: 'GET',
     headers
@@ -2326,3 +2494,244 @@ type SocialTokenSet = {
   tokenType?: string;
   idToken?: string;
 };
+
+function readHandoffChallenge(value: unknown): string | undefined {
+  const challenge = readOptionalString(value);
+  if (challenge === undefined) {
+    return undefined;
+  }
+  if (!HANDOFF_CHALLENGE_PATTERN.test(challenge)) {
+    throw new AuthFnValidationError('handoffChallenge must be a base64url SHA-256 digest', {
+      field: 'handoffChallenge'
+    });
+  }
+  return challenge;
+}
+
+/**
+ * Applies the server-side handoff policy: session tokens are only delivered to
+ * web URLs when explicitly allowed, and native handoffs can be required to use
+ * the code-and-verifier exchange.
+ */
+function assertAllowedHandoff(
+  config: ResolvedSocialOAuthPluginConfig,
+  input: {
+    returnTo: string | undefined;
+    callbackMode: 'redirect' | 'json';
+    handoffMode: AuthFnSocialHandoffMode;
+    handoffChallenge: string | undefined;
+  }
+): void {
+  if (input.handoffMode !== 'session-token' || input.callbackMode !== 'redirect') {
+    return;
+  }
+  if (config.allowWebSessionTokenHandoff === false && isWebReturnTarget(input.returnTo)) {
+    throw new AuthFnValidationError('Session-token handoff is only available for native return targets', {
+      field: 'handoffMode'
+    });
+  }
+  if (config.requireHandoffChallenge && !input.handoffChallenge) {
+    throw new AuthFnValidationError('Session-token handoff requires handoffChallenge', {
+      field: 'handoffChallenge'
+    });
+  }
+}
+
+function isWebReturnTarget(returnTo: string | undefined): boolean {
+  if (!returnTo) {
+    return false;
+  }
+  try {
+    const protocol = new URL(returnTo).protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function createBrowserBindingNonce(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+function hashBindingValue(value: string): string {
+  return createHash('sha256').update(value).digest('base64url');
+}
+
+function browserBindingCookieName(prefix: string): string {
+  return `${prefix}.oauth_binding`;
+}
+
+function browserBindingCookiePath(ctx: AuthFnPluginRuntimeContext): string {
+  return `${ctx.basePath.replace(/\/$/, '')}/social/callback`;
+}
+
+/**
+ * The binding cookie is host-only and limited to the callback path. Apple
+ * returns with a cross-site form POST, so on https it uses SameSite=None;
+ * it only carries a random nonce, never a credential.
+ */
+function serializeBrowserBindingCookie(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment,
+  value: string,
+  expiresAt: string | undefined
+): string {
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  const maxAge = Number.isFinite(expiresAtMs)
+    ? Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000))
+    : 600;
+  return serializeSetCookie({
+    name: browserBindingCookieName(policy.prefix),
+    value,
+    path: browserBindingCookiePath(ctx),
+    secure: policy.secure,
+    httpOnly: true,
+    sameSite: policy.secure ? 'none' : 'lax',
+    maxAge
+  });
+}
+
+function clearBrowserBindingCookie(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment
+): string {
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  return serializeSetCookie({
+    name: browserBindingCookieName(policy.prefix),
+    value: '',
+    path: browserBindingCookiePath(ctx),
+    secure: policy.secure,
+    httpOnly: true,
+    sameSite: policy.secure ? 'none' : 'lax',
+    maxAge: 0,
+    expires: new Date(0)
+  });
+}
+
+/**
+ * Refuses a callback for a browser-bound state unless this browser holds the
+ * binding cookie set when the sign-in started.
+ */
+async function assertBrowserBinding(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string
+): Promise<void> {
+  const stateStore = new DbAdapterOAuthStateStore(
+    withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+  );
+  const state = await stateStore.get(stateId);
+  const subject = state?.subject;
+  const expected = subject?.kind === 'browser-auth'
+    ? readOptionalString(subject.metadata?.[CALLBACK_METADATA_BINDING])
+    : undefined;
+  if (!expected) {
+    return;
+  }
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const provided = readCookie(request, browserBindingCookieName(policy.prefix));
+  if (!provided || !safeEqual(hashBindingValue(provided), expected)) {
+    throw new AuthFnOAuthStateInvalidError('OAuth sign-in was started in a different browser');
+  }
+}
+
+function readCookie(request: Request, name: string): string | undefined {
+  const header = request.headers.get('cookie');
+  if (!header) {
+    return undefined;
+  }
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) {
+      continue;
+    }
+    if (part.slice(0, separator).trim() === name) {
+      const value = part.slice(separator + 1).trim();
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function verifierMatchesChallenge(verifier: string, challenge: string | undefined): boolean {
+  if (!challenge || verifier.length < 43 || verifier.length > 128) {
+    return false;
+  }
+  return safeEqual(createHash('sha256').update(verifier).digest('base64url'), challenge);
+}
+
+function socialHandoffStateId(code: string): string {
+  return `${SOCIAL_HANDOFF_STATE_PREFIX}${createHash('sha256').update(code).digest('hex')}`;
+}
+
+/** Stores a one-time handoff code (hashed) that the verifier holder can exchange for a session. */
+async function createSocialHandoffCode(
+  ctx: AuthFnPluginRuntimeContext,
+  config: ResolvedSocialOAuthPluginConfig,
+  input: {
+    providerId: AuthFnSocialProviderId;
+    redirectUri: string;
+    userId: string;
+    regionId?: string;
+    methods: string[];
+    challenge: string;
+  }
+): Promise<string> {
+  const code = `shc_${randomBytes(24).toString('base64url')}`;
+  const now = config.now?.() ?? new Date();
+  const ttlSeconds = config.handoffCodeTtlSeconds ?? DEFAULT_SOCIAL_HANDOFF_CODE_TTL_SECONDS;
+  const stateStore = new DbAdapterOAuthStateStore(
+    withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+  );
+  await stateStore.put({
+    stateId: socialHandoffStateId(code),
+    providerId: input.providerId,
+    redirectUri: input.redirectUri,
+    requestedScopes: [],
+    subject: {
+      kind: 'browser-auth',
+      intentId: createIdentifier('handoff'),
+      regionId: input.regionId,
+      metadata: {
+        kind: SOCIAL_HANDOFF_KIND,
+        userId: input.userId,
+        methods: input.methods,
+        challenge: input.challenge
+      }
+    },
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + ttlSeconds * 1000).toISOString()
+  });
+  return code;
+}
+
+/**
+ * Sends the one-time code to the native return target. The code travels in the
+ * `token` fragment parameter so existing native shells forward it unchanged;
+ * `handoff=code` tells the client to exchange it with its verifier.
+ */
+function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionId: string | undefined): string {
+  const url = new URL(returnTo);
+  const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+  fragment.set('token', code);
+  fragment.set('handoff', 'code');
+  if (regionId) {
+    fragment.set('regionId', regionId);
+  }
+  url.hash = fragment.toString();
+  return url.toString();
+}

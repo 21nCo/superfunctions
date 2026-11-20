@@ -2165,6 +2165,7 @@ interface AuthFnErrorEnvelope {
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | The region lookup yielded no record for the given identifier. |
 | `AUTHFN_ROUTING_ASSERTION_INVALID` | 401 | no | A cell rejected a missing, expired, replayed, or request-mismatched gateway assertion. |
 | `AUTHFN_ROUTING_CELL_UNAVAILABLE` | 503 | no | The selected private cell target was absent or dispatch failed. A generic retry is unsafe because execution may already have started. |
+| `AUTHFN_REAUTHENTICATION_REQUIRED` | 403 | yes | Sensitive action needs a recent sign-in; sign in again and retry. |
 | `AUTHFN_SESSION_EXPIRED` | 401 | no | Session past `expiresAt`. |
 | `AUTHFN_SESSION_REVOKED` | 401 | no | Session has `revokedAt` set. |
 | `AUTHFN_UNAUTHENTICATED` | 401 | no | No session at all. |
@@ -3126,6 +3127,7 @@ A handful of routes have built-in protections that aren't traditional rate limit
 - **OTP attempt counter.** Each OTP challenge tracks `attemptCount`. After a small number of failed verifications (per the plugin's config), the challenge is invalidated.
 - **OAuth state replay.** OAuth states are one-shot. Replaying the same state returns `AUTHFN_OAUTH_STATE_REPLAYED` and the request is rejected without further processing.
 - **Native handoff codes.** One-time, short TTL.
+- **Two-factor attempts.** When `rateLimit` is enabled, `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable` use the `two-factor` policy: 30 requests per IP and 5 per challenge ID in a 5-minute window by default.
 
 These protect against logical replay attacks but do not protect against high-volume probing or credential stuffing.
 
@@ -5162,6 +5164,9 @@ const authApp = authfn({
 | Option | Default | Notes |
 | --- | --- | --- |
 | `secretPrefix` | `'authfn_'` | Prefix for the issued secret string. Useful for vendor-specific keys (`sk_live_`, `prj_`). |
+| `recentAuthenticationSeconds` | unset | When set, creating a key needs a cookie session signed in within this many seconds; a session issued by a handoff from another session does not count. Otherwise the request fails with `AUTHFN_REAUTHENTICATION_REQUIRED` (403). |
+| `defaultExpiresInSeconds` | unset | Expiry applied when the request omits `expiresAt`. |
+| `maxExpiresInSeconds` | unset | Longest allowed lifetime; a later or missing `expiresAt` fails with `AUTHFN_VALIDATION_ERROR`. |
 | `now` | `() => new Date()` | Clock injection for tests. |
 
 The scope registry is the `scopes` option on `authfn()` itself, not a plugin option; see [Scopes](#scopes).
@@ -6291,6 +6296,8 @@ bridge.attach(to: webView)
 
 Less common, but useful when a native app wants to deep-link into a web page that should be authenticated as the native user. Native side calls `startWebHandoff`; the URL it hands to the web side carries `?code=<handoff-code>`. The web page calls `consumeWebHandoff`, sets cookies, and continues.
 
+The consume URL must be loaded directly by the native app (the browser marks that `Sec-Fetch-Site: none`). A navigation that another site started (`cross-site` or `same-site`) is refused with `AUTHFN_VALIDATION_ERROR` and the code stays unused, so a page cannot sign its visitors into the page owner's account. `returnTo` is reduced to a same-origin path; backslashes and control characters fall back to `/`.
+
 ## Errors
 
 | Code | When |
@@ -6941,6 +6948,10 @@ authApp.createServer({
 ```ts
 interface SocialOAuthPluginConfig {
   defaultHandoffMode?: 'none' | 'session-token';
+  bindBrowserState?: boolean;
+  allowWebSessionTokenHandoff?: boolean;
+  requireHandoffChallenge?: boolean;
+  handoffCodeTtlSeconds?: number;
 }
 
 interface SocialOAuthPluginRuntimeConfig {
@@ -6967,6 +6978,10 @@ interface AuthFnSocialProviderConfig {
 | Option | Stage | Default | Notes |
 | --- | --- | --- | --- |
 | `defaultHandoffMode` | factory | `'none'` | `'session-token'` lets the callback embed a one-time handoff for native apps. |
+| `bindBrowserState` | factory | `false` | Cookie-session redirect sign-ins set a short-lived HttpOnly binding cookie at start; the callback refuses a state whose cookie is missing or different (`AUTHFN_OAUTH_STATE_INVALID`). Stops a callback URL completed by someone else from signing a visitor in. |
+| `allowWebSessionTokenHandoff` | factory | `true` | Set `false` so only native (non-http) `returnTo` targets can use `handoffMode: 'session-token'`; a web target then fails with `AUTHFN_VALIDATION_ERROR`. |
+| `requireHandoffChallenge` | factory | `false` | Native session-token handoffs must send `handoffChallenge`; see [Handoff code exchange](#handoff-code-exchange). |
+| `handoffCodeTtlSeconds` | factory | `60` | Lifetime of a one-time social handoff code. |
 | `providers` | `pluginRuntime.socialOAuth` | required | Map of provider id → config. |
 | `fetcher` | `pluginRuntime.socialOAuth` | global `fetch` | Inject a custom fetcher (proxy, instrumentation). |
 | `tokenHttpClient` | `pluginRuntime.socialOAuth` | default | Override the token endpoint client. |
@@ -6989,6 +7004,7 @@ The plugin mounts the following routes (paths shown relative to the kernel's bas
 | `POST` | `/auth/social/start` | `startSocialOAuth` | Begin a flow. Body: `{ provider, returnTo, callbackMode? }`. |
 | `GET` | `/auth/social/callback/:provider` | `callbackSocialOAuth` | Provider's `redirect_uri` lands here. |
 | `POST` | `/auth/social/callback/:provider` | `callbackSocialOAuthForm` | For Apple's `form_post` response_mode. |
+| `POST` | `/auth/social/handoff/exchange` | `exchangeSocialHandoff` | Exchange a one-time handoff code and its verifier for a bearer session. Body: `{ code, verifier }`. |
 | `POST` | `/auth/social/native/apple/start` | `startNativeAppleSignIn` | Native Apple flow start. |
 | `POST` | `/auth/social/native/apple/complete` | `completeNativeAppleSignIn` | Native Apple flow complete. |
 | `POST` | `/auth/social/disconnect/:provider` | `disconnectSocialOAuth` | Remove a provider's identity from the current user. |
@@ -7004,6 +7020,10 @@ When the callback fires *and* the response is destined for a native app (because
 The native app then exchanges the code for a session through `POST /auth/handoff/native/exchange`. This avoids cookie storage in browsers that the native wrapper can't share.
 
 See [Plugins → Native handoff](../native-handoff) for the full flow.
+
+## Handoff code exchange
+
+A session token in a redirect URL can be read by any app that registers the same URL scheme. To avoid that, the client keeps a random verifier (43-128 characters) and sends `handoffChallenge`, the base64url SHA-256 of the verifier, to `/social/start` together with `handoffMode: 'session-token'` and a native `returnTo`. The callback then issues no session. It redirects to `returnTo#token=<one-time code>&handoff=code&regionId=...`, and the client exchanges the code with `POST /social/handoff/exchange` (`client.exchangeSocialHandoff({ code, verifier })`). The code is single use, expires after `handoffCodeTtlSeconds`, is stored hashed, and is refused without the matching verifier. The code travels in the `token` fragment parameter so native shells that already forward `token` keep working. Set `requireHandoffChallenge: true` once every client sends a challenge.
 
 ## Schema
 
@@ -10181,6 +10201,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OTP_EXPIRED` | 401 | yes | OTP has aged past TTL. |
 | `AUTHFN_OTP_REPLAYED` | 401 | no | OTP was already consumed. |
 | `AUTHFN_API_KEY_REVOKED` | 401 | no | API key has been revoked. |
+| `AUTHFN_REAUTHENTICATION_REQUIRED` | 403 | yes | A sensitive action (such as creating an API key with `recentAuthenticationSeconds` set) needs a session signed in more recently; sign in again and retry. `details.recentAuthenticationSeconds`. |
 | `AUTHFN_SESSION_EXPIRED` | 401 | no | Session past its `expiresAt`. |
 | `AUTHFN_SESSION_REVOKED` | 401 | no | Session was revoked (sign-out, sign-out-everywhere). |
 | `AUTHFN_EMAIL_NOT_VERIFIED` | 403 | yes | Sign-in is gated behind verification; user must verify first. |

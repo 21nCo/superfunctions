@@ -28,6 +28,9 @@ const authApp = authfn({
 | Option | Default | Notes |
 | --- | --- | --- |
 | `secretPrefix` | `'authfn_'` | Prefix for the issued secret string. Useful for vendor-specific keys (`sk_live_`, `prj_`). |
+| `recentAuthenticationSeconds` | unset | When set, creating a key needs a cookie session signed in within this many seconds; a session issued by a handoff from another session does not count. Otherwise the request fails with `AUTHFN_REAUTHENTICATION_REQUIRED` (403). |
+| `defaultExpiresInSeconds` | unset | Expiry applied when the request omits `expiresAt`. |
+| `maxExpiresInSeconds` | unset | Longest allowed lifetime; a later or missing `expiresAt` fails with `AUTHFN_VALIDATION_ERROR`. |
 | `now` | `() => new Date()` | Clock injection for tests. |
 
 The scope registry is the `scopes` option on `authfn()` itself, not a plugin option; see [Scopes](#scopes).

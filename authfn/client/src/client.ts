@@ -99,6 +99,12 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
         path: `/social/disconnect/${encodeURIComponent(input.provider)}`,
         csrf: true
       }),
+    exchangeSocialHandoff: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/social/handoff/exchange',
+        body: input
+      }),
     startNativeHandoff: () =>
       http.requestJson({
         method: 'POST',

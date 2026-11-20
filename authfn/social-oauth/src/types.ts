@@ -46,6 +46,28 @@ export interface AuthFnSocialProviderConfig extends Partial<AuthFnSocialProvider
 
 export interface SocialOAuthPluginConfig extends AuthFnBundledPluginConfig {
   defaultHandoffMode?: AuthFnSocialHandoffMode;
+  /**
+   * Binds cookie-session redirect sign-ins to the browser that started them:
+   * `/social/start` sets a short-lived HttpOnly binding cookie and the callback
+   * refuses a state whose binding cookie is missing or different. Stops a
+   * callback URL completed by someone else from signing this browser in.
+   */
+  bindBrowserState?: boolean;
+  /**
+   * Allows `handoffMode: "session-token"` with an http(s) `returnTo`, which puts
+   * a session token in a web URL fragment. Defaults to true for compatibility;
+   * set false so only native (non-http) return targets can receive a handoff.
+   */
+  allowWebSessionTokenHandoff?: boolean;
+  /**
+   * Requires native session-token handoffs to send `handoffChallenge` (the
+   * base64url SHA-256 of a client-held verifier). The callback then returns a
+   * one-time code instead of a session token, and only the holder of the
+   * verifier can exchange it at `/social/handoff/exchange`.
+   */
+  requireHandoffChallenge?: boolean;
+  /** Lifetime of a one-time social handoff code, in seconds (default 60). */
+  handoffCodeTtlSeconds?: number;
 }
 
 export interface SocialOAuthPluginRuntimeConfig {

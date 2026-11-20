@@ -28,6 +28,7 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   'password-reset': { ipLimit: 20, identifierLimit: 5, windowSeconds: 300 },
   'social-start': { ipLimit: 60, windowSeconds: 60 },
   handoff: { ipLimit: 30, windowSeconds: 60 },
+  'two-factor': { ipLimit: 30, identifierLimit: 5, windowSeconds: 300 },
   'region-lookup': { ipLimit: 120, identifierLimit: 60, windowSeconds: 60 },
   account: { ipLimit: 120, windowSeconds: 60 },
 };
@@ -149,6 +150,11 @@ function scopeForPath(path: string): AuthFnRateLimitScope {
     || path.endsWith('/password/reset/complete')
   ) return 'password-reset';
   if (path.endsWith('/social/start')) return 'social-start';
+  if (
+    path.endsWith('/2fa/challenge')
+    || path.endsWith('/2fa/confirm')
+    || path.endsWith('/2fa/disable')
+  ) return 'two-factor';
   if (path.includes('/handoff/')) return 'handoff';
   if (path.endsWith('/regions/lookup')) return 'region-lookup';
   return 'account';
@@ -302,12 +308,14 @@ async function readIdentifier(request: Request): Promise<string | null> {
   }
 
   try {
-    const body = await request.json() as { email?: unknown; identifier?: unknown };
+    const body = await request.json() as { email?: unknown; identifier?: unknown; challengeId?: unknown };
     const value = typeof body.email === 'string'
       ? body.email
       : typeof body.identifier === 'string'
         ? body.identifier
-        : undefined;
+        : typeof body.challengeId === 'string'
+          ? `two-factor-challenge:${body.challengeId}`
+          : undefined;
     return value?.trim().toLowerCase() ?? null;
   } catch {
     return null;

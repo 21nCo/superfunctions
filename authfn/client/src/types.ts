@@ -222,6 +222,8 @@ export interface AuthFnClient {
     returnTo?: string;
     callbackMode?: 'redirect' | 'json';
     handoffMode?: 'none' | 'session-token';
+    /** Base64url SHA-256 of a verifier the client keeps; the callback then returns a one-time code. */
+    handoffChallenge?: string;
   }): Promise<AuthFnSuccessEnvelope<{
     provider: AuthFnSocialProviderId;
     redirectTo: string;
@@ -233,6 +235,20 @@ export interface AuthFnClient {
   }): Promise<AuthFnSuccessEnvelope<{
     disconnected: boolean;
     provider: AuthFnSocialProviderId;
+  }> | AuthFnErrorEnvelope>;
+  /** Exchanges a one-time social sign-in handoff code and its verifier for a bearer session. */
+  exchangeSocialHandoff(input: {
+    code: string;
+    verifier: string;
+  }): Promise<AuthFnSuccessEnvelope<{
+    session: AuthFnSession;
+    handoff: {
+      type: 'session-token';
+      token: string;
+      sessionId: string;
+      regionId: string | null;
+      expiresAt: string | null;
+    };
   }> | AuthFnErrorEnvelope>;
   startNativeHandoff(): Promise<AuthFnSuccessEnvelope<{
     code: string;

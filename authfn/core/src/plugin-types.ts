@@ -42,6 +42,17 @@ export interface EmailOtpPluginRuntimeConfig {
 }
 export interface ApiKeyPluginConfig extends AuthFnBundledPluginConfig {
   secretPrefix?: string;
+  /**
+   * When set, creating a key needs a cookie session that was signed in within
+   * this many seconds. Sessions issued by a handoff from another session do
+   * not count as a fresh sign-in. Otherwise the request fails with
+   * `AUTHFN_REAUTHENTICATION_REQUIRED` (403).
+   */
+  recentAuthenticationSeconds?: number;
+  /** Expiry applied, in seconds from creation, when a create request omits `expiresAt`. */
+  defaultExpiresInSeconds?: number;
+  /** Longest allowed lifetime in seconds; later `expiresAt` values are rejected. */
+  maxExpiresInSeconds?: number;
 }
 export interface ApiKeyPluginRuntimeConfig {
   /** Clock source used for API key timestamps and expiry checks; primarily useful for tests. */

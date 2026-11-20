@@ -211,6 +211,7 @@ function createNativeHandoffRoutes(
       }),
       handler: async (request) => {
         const code = new URL(request.url).searchParams.get('code');
+        await assertDirectWebConsumeNavigation(ctx, request);
         const consumed = await consumeHandoffCode(ctx, request, code, 'web');
         const sourceSession = await findSessionRecord(ctx, consumed.record.sourceSessionId);
         const issued = await issueSession(ctx.config, ctx.hooks, {
@@ -503,15 +504,52 @@ function isNotFoundError(error: unknown): boolean {
     );
 }
 
-function sanitizeReturnTo(value: unknown): string {
+const RETURN_TO_BASE = 'https://authfn-return-to.invalid';
+
+/**
+ * The web handoff consume URL is meant to be loaded directly by the native app
+ * that minted the code. A browser marks such a load `Sec-Fetch-Site: none`; a
+ * page on another site that redirects or links a visitor there is marked
+ * `cross-site` or `same-site`. Refusing those stops a page from signing its
+ * visitors into the page owner's account (login CSRF). Clients that send no
+ * fetch metadata are still accepted.
+ */
+async function assertDirectWebConsumeNavigation(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request
+): Promise<void> {
+  const fetchSite = request.headers.get('sec-fetch-site')?.trim().toLowerCase();
+  if (!fetchSite || fetchSite === 'none' || fetchSite === 'same-origin') {
+    return;
+  }
+  await emitHandoffFailure(ctx, request, 'web', 'cross-site-navigation');
+  throw new AuthFnValidationError('Handoff links must be opened directly by the app that created them', {
+    fetchSite
+  });
+}
+
+/**
+ * Reduces a handoff return target to a same-origin path. The value is resolved
+ * against a placeholder origin the way a browser resolves a `Location` header,
+ * so backslashes, control characters and protocol-relative forms that a browser
+ * would send to another host fall back to `/`.
+ */
+export function sanitizeReturnTo(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) {
     return '/';
   }
-  if (value.startsWith('/') && !value.startsWith('//')) {
-    return value;
+  if (/[\\\u0000-\u001f\u007f]/.test(value)) {
+    return '/';
   }
   try {
-    const url = new URL(value);
+    const isPath = value.startsWith('/');
+    const url = isPath ? new URL(value, RETURN_TO_BASE) : new URL(value);
+    if (isPath && url.origin !== RETURN_TO_BASE) {
+      return '/';
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return '/';
+    }
     const relative = `${url.pathname}${url.search}${url.hash}` || '/';
     return relative.startsWith('/') && !relative.startsWith('//') ? relative : '/';
   } catch {

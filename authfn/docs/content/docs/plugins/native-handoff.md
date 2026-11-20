@@ -92,6 +92,8 @@ bridge.attach(to: webView)
 
 Less common, but useful when a native app wants to deep-link into a web page that should be authenticated as the native user. Native side calls `startWebHandoff`; the URL it hands to the web side carries `?code=<handoff-code>`. The web page calls `consumeWebHandoff`, sets cookies, and continues.
 
+The consume URL must be loaded directly by the native app (the browser marks that `Sec-Fetch-Site: none`). A navigation that another site started (`cross-site` or `same-site`) is refused with `AUTHFN_VALIDATION_ERROR` and the code stays unused, so a page cannot sign its visitors into the page owner's account. `returnTo` is reduced to a same-origin path; backslashes and control characters fall back to `/`.
+
 ## Errors
 
 | Code | When |

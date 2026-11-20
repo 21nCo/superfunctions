@@ -14,6 +14,8 @@ import { assertValidCsrf, requireCookieSession } from 'authfn/core/sessions';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
+import { AuthFnReauthenticationRequiredError, AuthFnValidationError } from 'authfn/core/errors';
+import type { AuthFnSessionRecord } from 'authfn';
 import { readPluginRuntimeConfig } from 'authfn/core/plugin-runtime';
 
 export type {
@@ -85,12 +87,15 @@ function createApiKeyRoutes(
       handler: async (request) => {
         const state = await requireCookieSession(ctx.config, request);
         assertValidCsrf(request, state);
+        const now = runtimeConfig.now?.() ?? new Date();
+        assertRecentAuthentication(state.sessionRecord, config, now);
         const body = await request.json() as {
           name?: string;
           scopes?: unknown;
           metadata?: Record<string, unknown>;
           expiresAt?: string;
         };
+        const expiresAt = resolveApiKeyExpiry(body.expiresAt, config, now);
         const created = await createApiKey(ctx.config, {
           userId: state.user.id,
           name: body.name ?? 'api-key',
@@ -99,7 +104,7 @@ function createApiKeyRoutes(
           // 400 before anything is stored. Only an omitted field means none.
           scopes: body.scopes as string[] | undefined,
           metadata: body.metadata,
-          expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined
+          expiresAt
         }, {
           now: runtimeConfig.now,
           secretPrefix: config.secretPrefix
@@ -171,4 +176,54 @@ function createApiKeyRoutes(
       }
     }
   ];
+}
+
+/**
+ * Refuses key creation from a session that was not signed in recently. The
+ * session's creation time is its sign-in time; a session issued by a handoff
+ * from another session is never treated as a fresh sign-in.
+ */
+function assertRecentAuthentication(
+  session: AuthFnSessionRecord,
+  config: ApiKeyPluginConfig,
+  now: Date
+): void {
+  const windowSeconds = config.recentAuthenticationSeconds;
+  if (windowSeconds === undefined) {
+    return;
+  }
+  const isHandoffSession = typeof session.metadata?.sourceSessionId === 'string';
+  const signedInAt = new Date(session.createdAt).getTime();
+  if (
+    isHandoffSession
+    || !Number.isFinite(signedInAt)
+    || now.getTime() - signedInAt > windowSeconds * 1000
+  ) {
+    throw new AuthFnReauthenticationRequiredError('Sign in again to create an API key', {
+      recentAuthenticationSeconds: windowSeconds
+    });
+  }
+}
+
+/** Applies the configured default and maximum lifetime to a requested key expiry. */
+function resolveApiKeyExpiry(
+  requested: string | undefined,
+  config: ApiKeyPluginConfig,
+  now: Date
+): Date | undefined {
+  const expiresAt = requested
+    ? new Date(requested)
+    : config.defaultExpiresInSeconds !== undefined
+      ? new Date(now.getTime() + config.defaultExpiresInSeconds * 1000)
+      : undefined;
+  if (config.maxExpiresInSeconds !== undefined) {
+    const latest = now.getTime() + config.maxExpiresInSeconds * 1000;
+    if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() > latest) {
+      throw new AuthFnValidationError('API key expiry exceeds the allowed lifetime', {
+        field: 'expiresAt',
+        maxExpiresInSeconds: config.maxExpiresInSeconds
+      });
+    }
+  }
+  return expiresAt;
 }

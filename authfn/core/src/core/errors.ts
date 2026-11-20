@@ -23,6 +23,7 @@ export type AuthFnErrorCode =
   | 'AUTHFN_OTP_INVALID'
   | 'AUTHFN_OTP_REPLAYED'
   | 'AUTHFN_PLUGIN_ABORTED'
+  | 'AUTHFN_REAUTHENTICATION_REQUIRED'
   | 'AUTHFN_RATE_LIMITED'
   | 'AUTHFN_REDIRECT_URI_DISALLOWED'
   | 'AUTHFN_REGION_MISMATCH'
@@ -281,6 +282,17 @@ export class AuthFnInsufficientScopeError extends AuthFnError {
       details
     });
     this.name = 'AuthFnInsufficientScopeError';
+  }
+}
+
+/** Raised when a sensitive action needs a session signed in more recently than the configured window. */
+export class AuthFnReauthenticationRequiredError extends AuthFnError {
+  constructor(message: string = 'Sign in again to continue', details?: Record<string, unknown>) {
+    super('AUTHFN_REAUTHENTICATION_REQUIRED', message, {
+      status: 403,
+      details
+    });
+    this.name = 'AuthFnReauthenticationRequiredError';
   }
 }
 
