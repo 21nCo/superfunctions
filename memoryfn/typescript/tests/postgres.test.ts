@@ -124,24 +124,73 @@ suite('Postgres lifecycle integration', () => {
       expect(n).toBe(after?.chunkCount ?? 0);
     }
   });
-  it('invalidates a table-aware drizzle cache when a source write tombstones chunks', async () => {
+  it('invalidates cached memories and relationships after every source write', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
-    const writes: Array<[string, (cached: PostgresAdapter) => Promise<unknown>]> = [
-      ['deleteSource', cached => cached.deleteSource(scope)],
-      ['empty replaceSource', cached => cached.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [] })],
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const writes: Array<[string, (cached: PostgresAdapter) => Promise<unknown>, { contentHash: string; chunkCount: number } | null]> = [
+      ['deleteSource', cached => cached.deleteSource(scope), null],
+      ['empty replaceSource', cached => cached.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [] }), null],
+      ['replaceSource', cached => cached.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [chunk('new')] }), { contentHash: 'hash-2', chunkCount: 1 }],
     ];
-    for (const [name, write] of writes) {
+    for (const [name, write, state] of writes) {
       await client`TRUNCATE memory_relationships, memories`;
-      const cached = new PostgresAdapter(drizzle(client, { schema, cache: new TableCache() }));
-      const [chunk] = await cached.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [{ tenantId: 'a', containerTags: ['docs'], content: 'old' }] });
-      const read = { tenantId: 'a', containerTags: ['docs'], id: chunk.id };
-      // Fill the cache with the live source before the write.
+      const db = drizzle(client, { schema, cache: new TableCache() });
+      const cached = new PostgresAdapter(db);
+      const [source] = await cached.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old')] });
+      const [plain] = await cached.insertMemories([chunk('plain')]);
+      await cached.insertRelationships([{ tenantId: 'a', containerTags: ['docs'], fromId: plain.id, toId: source.id, reasoning: 'reasoning' }]);
+      const read = { tenantId: 'a', containerTags: ['docs'], id: source.id };
+      const relationships = () => db.select({ reasoning: schema.memoryRelationships.reasoning }).from(schema.memoryRelationships);
+      // Fill the cache with the live source and its relationship before the write.
       expect(await cached.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
       expect(await cached.getMemory(read)).toMatchObject({ content: 'old', deletedAt: null });
+      expect(await relationships()).toEqual([{ reasoning: 'reasoning' }]);
       await write(cached);
-      expect(await cached.getSourceState(scope), name).toBeNull();
+      expect(await cached.getSourceState(scope), name).toEqual(state);
       expect(await cached.getMemory(read), name).toBeNull();
+      expect(await relationships(), name).toEqual([]);
     }
+  });
+  it('takes the source and relationship row locks on the connection when a drizzle cache holds their reads', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const waitingRowLocks = async () => (await client`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted`)[0].n;
+    /** Returns once `pending` waits on a row lock or has settled. */
+    const untilBlocked = async (pending: Promise<unknown>) => {
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+      for (let tries = 0; !settled && await waitingRowLocks() < 1 && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 20));
+    };
+    const cached = new PostgresAdapter(drizzle(client, { schema, cache: new TableCache() }));
+    const [source] = await cached.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old')] });
+    const [plain] = await cached.insertMemories([chunk('plain')]);
+
+    // A replacement that fails after its row-lock read, before any mutation reaches drizzle, leaves that read cached if it is cacheable.
+    await expect(cached.replaceSource({ ...scope, contentHash: 'hash-x', chunks: [{ ...chunk('bad'), createdAt: Infinity }] })).rejects.toThrow();
+    let pending!: Promise<unknown>;
+    await client.begin(async relate => {
+      await relate`SELECT id FROM memories WHERE id IN (${source.id}, ${plain.id}) AND deleted_at IS NULL ORDER BY id FOR UPDATE`;
+      await relate`INSERT INTO memory_relationships (from_id, to_id, type, confidence, reasoning) VALUES (${plain.id}, ${source.id}, 'extends', 1, 'reasoning')`;
+      pending = cached.deleteSource(scope);
+      await untilBlocked(pending);
+    });
+    expect(await pending).toBe(1);
+    expect(await client`SELECT reasoning FROM memory_relationships`).toHaveLength(0);
+
+    // A relationship insert whose endpoint read is cached must still wait for a source write that holds the chunk.
+    await client`TRUNCATE memory_relationships, memories`;
+    const [next] = await cached.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [chunk('next')] });
+    const [other] = await cached.insertMemories([chunk('other')]);
+    const relate = () => cached.insertRelationships([{ tenantId: 'a', containerTags: ['other'], fromId: other.id, toId: next.id }]);
+    await expect(relate()).rejects.toThrow('MEMORY_RELATION_SCOPE_INVALID');
+    let inserted!: Promise<unknown>;
+    await client.begin(async write => {
+      await write`UPDATE memories SET deleted_at = now() WHERE id = ${next.id}`;
+      inserted = cached.insertRelationships([{ tenantId: 'a', containerTags: ['docs'], fromId: other.id, toId: next.id }]);
+      await untilBlocked(inserted);
+    });
+    await expect(inserted).rejects.toThrow('MEMORY_RELATION_SCOPE_INVALID');
+    expect(await client`SELECT reasoning FROM memory_relationships`).toHaveLength(0);
   });
   describe('source writes under REPEATABLE READ', () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };

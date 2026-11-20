@@ -72,7 +72,8 @@ export class PostgresAdapter implements StorageAdapter {
 
     const result = await this.db.transaction(async tx => {
       const ids = [...new Set(values.flatMap(value => [value.fromId, value.toId]))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-      const rows = await tx.select().from(memories).where(and(inArray(memories.id, ids), isNull(memories.deletedAt))).orderBy(memories.id).for('update');
+      // The row locks order this insert with source writes, so the read must reach the connection, never a cache.
+      const rows = await tx.select().from(memories).where(and(inArray(memories.id, ids), isNull(memories.deletedAt))).orderBy(memories.id).for('update').$withCache(false);
       const byId = new Map(rows.map(row => [row.id, row]));
       for (const [index, value] of values.entries()) {
         const from = byId.get(value.fromId); const to = byId.get(value.toId);
@@ -217,6 +218,12 @@ export class PostgresAdapter implements StorageAdapter {
    * it). `operation` must therefore make its whole change in one statement:
    * statements of one session run one at a time and each sees the session's
    * earlier writes.
+   *
+   * A caller-owned drizzle cache must not change this: the row-lock read
+   * bypasses the cache, and every write is followed by an empty DELETE builder
+   * on memory_relationships. drizzle invalidates only a builder's target table,
+   * so the relationship delete inside the write's CTE would leave cached
+   * relationship reads stale.
    */
   private withSourceLock<T>(scope: SourceScope, tags: string[], operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
@@ -224,8 +231,10 @@ export class PostgresAdapter implements StorageAdapter {
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
       const key = JSON.stringify([scope.tenantId, scope.sourceKey]);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
-      await tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags)).orderBy(memories.id).for('update');
-      return operation(tx);
+      await tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags)).orderBy(memories.id).for('update').$withCache(false);
+      const result = await operation(tx);
+      await tx.delete(memoryRelationships).where(sql`false`);
+      return result;
     };
     return is(this.db, PgTransaction)
       ? this.db.transaction(tx => locked(tx as unknown as PostgresJsDatabase<any>))
