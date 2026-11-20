@@ -133,6 +133,20 @@ describe('web handoff verifier and route toggle (F-08)', () => {
     expect(withVerifier.status).toBe(302);
   });
 
+  it('rejects a null or empty verifier challenge instead of minting an unbound code', async () => {
+    const auth = createTestServer(createConfig());
+    const token = await bearer(auth);
+    for (const verifierChallenge of [null, '']) {
+      const start = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ verifierChallenge })
+      }));
+      expect(start.status).toBe(400);
+      expect((await start.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+    }
+  });
+
   it('requires a verifier on every web handoff when requireWebHandoffVerifier is set', async () => {
     const config = createConfig();
     config.plugins = [authFnPasswordPlugin(), authFnMultiRegionPlugin(), authFnNativeHandoffPlugin({ requireWebHandoffVerifier: true })];

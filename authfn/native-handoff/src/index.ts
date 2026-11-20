@@ -288,7 +288,7 @@ const WEB_HANDOFF_VERIFIER_HEADER = 'x-authfn-handoff-verifier';
 const VERIFIER_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 function readVerifierChallenge(value: unknown): string | undefined {
-  if (value === undefined || value === null || value === '') {
+  if (value === undefined) {
     return undefined;
   }
   if (typeof value !== 'string' || !VERIFIER_CHALLENGE_PATTERN.test(value)) {
