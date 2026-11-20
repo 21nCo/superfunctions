@@ -1,0 +1,33 @@
+package-lock.json
+  s_b0ccd33c8d226a::t_34ba67bdb64366 127601-127602,127630-127631,127647-127652,128302-128319
+testfn/scripts/packed-consumer.mjs
+  s_b0ccd33c8d226a::t_4d2876e2e2857a 40-41,49-50,52-54,97-98,146-149,171
+testfn/typescript/README.md
+  s_b0ccd33c8d226a::t_17810f0c8a8bed 213-243
+testfn/typescript/package.json
+  s_b0ccd33c8d226a::t_e640153b4e8556 40-43,108-110,139-144,172-174
+testfn/typescript/src/fixtures/mailfn/envelope.ts
+  s_b0ccd33c8d226a::t_9650842d7100a0 1-219
+testfn/typescript/src/fixtures/mailfn/index.ts
+  s_b0ccd33c8d226a::t_041cb1b074bef4 1-28
+testfn/typescript/src/fixtures/mailfn/memory.ts
+  s_b0ccd33c8d226a::t_1275361d373e64 1-611
+testfn/typescript/tests/mailfn-fixture.test.ts
+  s_b0ccd33c8d226a::t_142c4bfd92caef 1-649
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "674b0bf3a032866caf796f3f2acc88dbdc2c3bc5",
+  "prompts": {},
+  "sessions": {
+    "s_b0ccd33c8d226a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b74c9e31-4f78-4ee1-b45e-39cba71388c0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
