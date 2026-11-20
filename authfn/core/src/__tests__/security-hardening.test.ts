@@ -13,6 +13,7 @@ import { issueSessionCookies } from '../core/cookies.js';
 import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { issueSession } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
+import { AuthFnValidationError, isAuthFnErrorWithCookies } from '../core/errors.js';
 import { satisfyTwoFactorChallenge } from '../core/two-factor.js';
 
 function cookieHeaderFromSetCookies(setCookies: string[]): string {
@@ -499,7 +500,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
 
   it('reports a frozen error thrown during a bound JSON callback and still clears the cookie', async () => {
     const events: string[] = [];
-    const frozen = Object.freeze(new Error('test-frozen-hook-error'));
+    const frozen = Object.freeze(new AuthFnValidationError('test-frozen-hook-error'));
     const auth = createTestServer({
       ...createConfig({ bindBrowserState: true }),
       hooks: { beforeSessionIssue: async () => { throw frozen; } },
@@ -508,9 +509,16 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     const started = await start(auth, { callbackMode: 'json' });
     const stateId = (await started.json()).data.stateId as string;
     const response = await callback(auth, stateId, cookieHeaderFromSetCookies(started.headers.getSetCookie()));
-    expect(response.ok).toBe(false);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
     expect(response.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.') && /Max-Age=0/i.test(cookie))).toBe(true);
     expect(events).toContain('authfn.request.failed');
+  });
+
+  it('recognises the cookie-carrying error from another package copy', () => {
+    const foreign = { name: 'AuthFnErrorWithCookies', original: new Error('x'), setCookies: ['a=; Max-Age=0'] };
+    expect(isAuthFnErrorWithCookies(foreign)).toBe(true);
+    expect(isAuthFnErrorWithCookies(new Error('x'))).toBe(false);
   });
 
   it('keeps the binding cookie Secure and SameSite=None on an https origin when session cookies are not secure', async () => {

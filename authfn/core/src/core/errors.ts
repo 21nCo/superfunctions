@@ -585,3 +585,20 @@ export class AuthFnErrorWithCookies extends Error {
     this.setCookies = setCookies;
   }
 }
+
+/**
+ * Recognises an `AuthFnErrorWithCookies` structurally, so it also works when a
+ * plugin throws one from a different copy of the `authfn` package.
+ */
+export function isAuthFnErrorWithCookies(
+  value: unknown
+): value is { original: unknown; setCookies: string[] } {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as { name?: unknown; original?: unknown; setCookies?: unknown };
+  return candidate.name === 'AuthFnErrorWithCookies'
+    && 'original' in candidate
+    && Array.isArray(candidate.setCookies)
+    && candidate.setCookies.every((cookie) => typeof cookie === 'string');
+}

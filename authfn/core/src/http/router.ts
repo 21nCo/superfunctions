@@ -1,7 +1,7 @@
 import { createObservabilityMiddleware, createRouter, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnRuntimeConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
-import { AuthFnErrorWithCookies, AuthFnValidationError } from '../core/errors.js';
+import { AuthFnValidationError, isAuthFnErrorWithCookies } from '../core/errors.js';
 import { clearSessionCookies, issueSessionCookies } from '../core/cookies.js';
 import {
   assertValidCsrf,
@@ -49,7 +49,7 @@ export function createAuthFnRouter(
     middleware: middleware.length > 0 ? middleware : undefined,
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
     onError: async (thrown, request) => {
-      const error = thrown instanceof AuthFnErrorWithCookies ? thrown.original : thrown;
+      const error = isAuthFnErrorWithCookies(thrown) ? thrown.original : thrown;
       const metadata = sanitizeErrorMetadata(describeRouteError(error, request));
       if (isDebugErrorLoggingEnabled()) {
         console.error('[authfn route error]', JSON.stringify(metadata));
@@ -66,7 +66,7 @@ export function createAuthFnRouter(
       }
 
       const response = jsonError(request, error);
-      if (thrown instanceof AuthFnErrorWithCookies) {
+      if (isAuthFnErrorWithCookies(thrown)) {
         for (const cookie of thrown.setCookies) {
           response.headers.append('set-cookie', cookie);
         }
