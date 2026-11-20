@@ -1,0 +1,96 @@
+packages/admin/src/errors.test.ts
+  h_bdc5b81c173ee9 28-43
+packages/admin/src/errors.ts
+  h_bdc5b81c173ee9 57-58
+packages/db/README.md
+  h_bdc5b81c173ee9 255-284
+packages/db/package.json
+  h_bdc5b81c173ee9 51-54,66-67,73
+packages/db/scripts/verify-schema-entry.cjs
+  h_bdc5b81c173ee9 1-7
+packages/db/src/adapter/__tests__/boolean-codec-ownership.test.ts
+  h_bdc5b81c173ee9 1-26
+packages/db/src/adapter/__tests__/json-codecs.test.ts
+  h_bdc5b81c173ee9 1-64
+packages/db/src/adapter/__tests__/namespace-codecs.test.ts
+  h_bdc5b81c173ee9 1-80
+packages/db/src/adapter/__tests__/schema-codecs.test.ts
+  h_bdc5b81c173ee9 197-212
+packages/db/src/adapter/factory.ts
+  h_bdc5b81c173ee9 17-18,41,53
+packages/db/src/adapter/row-level-namespace.ts
+  h_bdc5b81c173ee9 14,316,320,358
+packages/db/src/adapter/schema-codecs.ts
+  h_bdc5b81c173ee9 23-76,132-137,141-143,162-163,165,294,316,318-319,423,445-477
+packages/db/src/adapter/types.ts
+  h_bdc5b81c173ee9 225-228
+packages/db/src/adapters/drizzle/index.ts
+  h_bdc5b81c173ee9 31,386
+packages/db/src/adapters/kysely/boolean-codecs.test.ts
+  h_bdc5b81c173ee9 1-71
+packages/db/src/adapters/kysely/index.ts
+  h_bdc5b81c173ee9 270,277-281,284,286,290-292,294-311,444
+packages/db/src/adapters/kysely/returning.test.ts
+  h_bdc5b81c173ee9 1-67
+packages/db/src/adapters/kysely/upsert-target.test.ts
+  h_bdc5b81c173ee9 1-106
+packages/db/src/adapters/memory/index.ts
+  h_bdc5b81c173ee9 30,606
+packages/http-express/package.json
+  h_bdc5b81c173ee9 26,30
+packages/http-fastify/package.json
+  h_bdc5b81c173ee9 26,30
+packages/http-next/package.json
+  h_bdc5b81c173ee9 26,30
+packages/http-next/vitest.config.ts
+  h_bdc5b81c173ee9 1-8
+packages/http-openapi/package.json
+  h_bdc5b81c173ee9 41
+packages/http-sveltekit/package.json
+  h_bdc5b81c173ee9 26,30
+packages/http-sveltekit/vitest.config.ts
+  h_bdc5b81c173ee9 1-8
+packages/oauth-router/package.json
+  h_bdc5b81c173ee9 41
+packages/observability/src/default-context.test.ts
+  h_bdc5b81c173ee9 1-64
+packages/observability/src/index.test.ts
+  h_bdc5b81c173ee9 1,239-325
+packages/observability/src/index.ts
+  h_bdc5b81c173ee9 1,149-151,199,592-594,611-614,618-640,646-647,650,655-665
+packages/observability/src/runtime.test.ts
+  h_bdc5b81c173ee9 2,47-66
+packages/observability/src/runtime.ts
+  h_bdc5b81c173ee9 26,36-56
+packages/observability/vitest.config.ts
+  h_bdc5b81c173ee9 1-7
+packages/python-core/README.md
+  h_bdc5b81c173ee9 9-10
+packages/python-core/superfunctions/db/__init__.py
+  h_bdc5b81c173ee9 33,66
+packages/python-core/superfunctions/db/namespace.py
+  h_bdc5b81c173ee9 58-60
+packages/python-core/superfunctions/db/types.py
+  h_bdc5b81c173ee9 355-357,416-427
+packages/python-core/superfunctions/http/types.py
+  h_bdc5b81c173ee9 77-79
+packages/python-core/tests/test_auth_http_types.py
+  h_bdc5b81c173ee9 66-70,74
+packages/python-sqlalchemy/README.md
+  h_bdc5b81c173ee9 101-118
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  h_bdc5b81c173ee9 8,123,130-132,244,289,313,348,384,444,447,452-453,455-456,458,467-470,536-537,539,546-547,558-560,644-647,651-653
+packages/python-sqlalchemy/tests/test_adapter.py
+  h_bdc5b81c173ee9 261-262,373-374,396-397,421-533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "18cadf60fcae808ce3e8a5a685849c7ee152ae7b",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+catchfn/typescript/test/schema.test.ts
+  s_761f918969b9b1::t_d6dd0bf899bc6e 14-16,43-48
+catchfn/typescript/README.md
+  s_761f918969b9b1::t_71ba8bd173e047 191-201,208-211,217-224,227-233
+catchfn/typescript/src/collectors/errors.ts
+  s_761f918969b9b1::t_678fcb1f3a84e4 186-189,193-194
+catchfn/typescript/src/collectors/websocket.ts
+  s_761f918969b9b1::t_9f2e3133d9b23b 2,11,21,32-37,72,74-75,77,81-84,148-160,168-179,182-195,197-203,205-210,212-227,229-236,238-243,245-259,261-267,269,271,273-289,292,294,300-301,305-326,333,335
+catchfn/typescript/src/events.ts
+  s_761f918969b9b1::t_ed4d23bf99a5aa 209-213,255-262,305,345-348
+catchfn/typescript/test/errors.test.ts
+  s_761f918969b9b1::t_c6188767d39fc4 198-222
+catchfn/typescript/test/websocket.test.ts
+  s_761f918969b9b1::t_5fbf704733c270 11-27,29-33,48-49,51-52,54,162-179,184-186,191-261,383-526,580-584,587,597-598,601-602,604-608,610,616,619-620,623,625-626,630
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "18734747b5ac5ec30a5a4f42a1aaf8d609b886e2",
+  "prompts": {},
+  "sessions": {
+    "s_761f918969b9b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3837b772-7a67-40b7-a666-1af2aaf2fb76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
