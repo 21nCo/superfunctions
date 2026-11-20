@@ -558,13 +558,6 @@ export function validateSchemaCollection(
   else validateCfWorkerSchemaCollection(schemas);
 }
 
-interface SnapshotGuard {
-  /** Node's `util.types.isProxy`, when the runtime exposes it. */
-  readonly isProxy: ((value: object) => boolean) | undefined;
-  /** Every keyword the Ajv instance reads, for runtimes without `isProxy`. */
-  readonly keywords: () => readonly string[];
-}
-
 function runtimeProxyCheck(): ((value: object) => boolean) | undefined {
   try {
     const runtime = (globalThis as {
@@ -579,28 +572,6 @@ function runtimeProxyCheck(): ((value: object) => boolean) | undefined {
   } catch {
     return undefined;
   }
-}
-
-function ajvKeywords(ajv: Ajv): readonly string[] {
-  return [...new Set([
-    ...Object.keys(ajv.RULES.keywords),
-    ...Object.keys(ajv.RULES.all),
-    "$ref", "$id", "$schema", "definitions",
-  ])];
-}
-
-/**
- * Without a Proxy check, an object that reports a keyword through [[Get]]
- * that it does not own (a Proxy get trap, or a keyword inherited from a
- * changed Object.prototype) cannot be copied faithfully.
- */
-function answersUnownedKeyword(value: object, keywords: readonly string[]): boolean {
-  if (Array.isArray(value)) return false;
-  for (const keyword of keywords) {
-    if (Object.prototype.hasOwnProperty.call(value, keyword)) continue;
-    if ((value as Record<string, unknown>)[keyword] !== undefined) return true;
-  }
-  return false;
 }
 
 /**
@@ -622,16 +593,18 @@ function answersUnownedKeyword(value: object, keywords: readonly string[]): bool
  * no snapshot, as does `$id` (Ajv rejects a repeated id); such schemas are
  * compiled from the caller's object every time, as before.
  *
- * A Proxy anywhere in the schema also gives no snapshot: its traps can answer
- * a keyword read that no own key backs, or answer differently on each read,
- * so no copy can be proven equal to what Ajv reads from it. Proxies are
- * detected with Node's `util.types.isProxy`; where that is unavailable, an
- * object that answers any keyword the Ajv instance knows without owning it
- * gives no snapshot instead.
+ * A Proxy anywhere in the schema (objects and arrays alike) also gives no
+ * snapshot: its traps can answer a keyword read that no own key backs, or
+ * answer differently on each read, so no copy can be proven equal to what Ajv
+ * reads from it. Proxies are detected with Node's `util.types.isProxy`. A
+ * runtime without it (no `process.getBuiltinModule`, such as Node before
+ * 20.16 or a non-Node runtime) cannot prove any copy equal, so the caller
+ * never asks for a snapshot there and every schema is compiled from the
+ * caller's object, as before.
  */
 function schemaContentSnapshot(
   schema: object,
-  guard: SnapshotGuard,
+  isProxy: (value: object) => boolean,
 ): { key: string; copy: object } | undefined {
   const parts: string[] = [];
   const active = new Set<object>();
@@ -647,9 +620,7 @@ function schemaContentSnapshot(
       return value;
     }
     if (typeof value !== "object" || active.has(value)) return NO_SNAPSHOT;
-    if (guard.isProxy ? guard.isProxy(value) : answersUnownedKeyword(value, guard.keywords())) {
-      return NO_SNAPSHOT;
-    }
+    if (isProxy(value)) return NO_SNAPSHOT;
     if ("toJSON" in value) return NO_SNAPSHOT;
     const isArray = Array.isArray(value);
     if (Object.getPrototypeOf(value) !== (isArray ? Array.prototype : Object.prototype)) return NO_SNAPSHOT;
@@ -696,16 +667,13 @@ export function createSchemaCompiler(
   if (engine === "ajv") {
     const ajv = createAjv();
     const compiledByContent = new Map<string, ValidateFunction>();
-    let keywords: readonly string[] | undefined;
-    const guard: SnapshotGuard = {
-      isProxy: runtimeProxyCheck(),
-      keywords: () => (keywords ??= ajvKeywords(ajv)),
-    };
+    const isProxy = runtimeProxyCheck();
     return {
       engine,
       compile(schema) {
         assertNoLegacySchemaIds(schema);
-        const snapshot = schemaContentSnapshot(schema, guard);
+        // Without a Proxy check no copy can be proven equal: compile the caller's object.
+        const snapshot = isProxy === undefined ? undefined : schemaContentSnapshot(schema, isProxy);
         let validate = snapshot === undefined ? undefined : compiledByContent.get(snapshot.key);
         if (!validate) {
           validate = ajv.compile((snapshot?.copy ?? schema) as never);

@@ -731,7 +731,7 @@ describe("Ajv compilation of Proxy schemas", () => {
     runtime.getBuiltinModule = original;
     vi.restoreAllMocks();
   });
-  // Node's isProxy where available, and the keyword check where it is not.
+  // Node's isProxy where available; without it no schema is snapshotted.
   const detections = [
     ["with util.types.isProxy", () => {}],
     ["without util.types.isProxy", () => { runtime.getBuiltinModule = undefined; }],
@@ -744,6 +744,18 @@ describe("Ajv compilation of Proxy schemas", () => {
   const changedMinimum = () =>
     new Proxy({ type: "number", minimum: 1 } as Record<string, unknown>, {
       get: (target, key) => (key === "minimum" ? 5 : Reflect.get(target, key)),
+    });
+  // Answers 1 on the first read of minimum and 5 on every later read.
+  const statefulMinimum = () => {
+    let reads = 0;
+    return new Proxy({ type: "number", minimum: 1 } as Record<string, unknown>, {
+      get: (target, key) => (key === "minimum" ? (reads++ === 0 ? 1 : 5) : Reflect.get(target, key)),
+    });
+  };
+  const phantomDefs = () =>
+    new Proxy({ $ref: "#/$defs/x" } as Record<string, unknown>, {
+      get: (target, key) =>
+        key === "$defs" ? { x: { type: "string", maxLength: 2 } } : Reflect.get(target, key),
     });
   const lazyEmpty = () =>
     new Proxy({} as Record<string, unknown>, {
@@ -792,14 +804,51 @@ describe("Ajv compilation of Proxy schemas", () => {
     }
   });
 
-  it.each(detections)("still compiles equal plain schemas once (%s)", (_label, setup) => {
+  it.each(detections)("matches direct Ajv for a get trap that answers differently per read (%s)", (_label, setup) => {
     setup();
+    const direct = new Ajv().compile(statefulMinimum());
+    expect(direct(2)).toBe(false);
+    const compiler = createSchemaCompiler("ajv");
+    compiler.compile({ type: "number", minimum: 1 });
+    const afterPlain = compiler.compile(statefulMinimum());
+    const alone = createSchemaCompiler("ajv").compile(statefulMinimum());
+    for (const value of [0, 2, 5, 6]) {
+      expect(alone(value)).toBe(direct(value));
+      expect(afterPlain(value)).toBe(direct(value));
+    }
+  });
+
+  it.each(detections)("resolves a reference into definitions only a get trap answers (%s)", (_label, setup) => {
+    setup();
+    const direct = new Ajv().compile(phantomDefs());
+    const validate = createSchemaCompiler("ajv").compile(phantomDefs());
+    for (const value of ["ab", "abc", 1]) expect(validate(value)).toBe(direct(value));
+    expect(validate("abc")).toBe(false);
+  });
+
+  const plainSchema = () => ({ type: "object", properties: { n: { type: "integer", minimum: 1 } }, required: ["n"] });
+
+  it("compiles equal plain schemas once with util.types.isProxy", () => {
     const compile = vi.spyOn(Ajv.prototype, "compile");
     const compiler = createSchemaCompiler("ajv");
-    const schema = () => ({ type: "object", properties: { n: { type: "integer", minimum: 1 } }, required: ["n"] });
-    const first = compiler.compile(schema());
-    const second = compiler.compile(schema());
+    const first = compiler.compile(plainSchema());
+    const second = compiler.compile(plainSchema());
     expect(compile).toHaveBeenCalledTimes(1);
+    expect(first({ n: 0 })).toBe(false);
+    expect(second({ n: 1 })).toBe(true);
+  });
+
+  it("compiles each plain schema from the caller's object without util.types.isProxy", () => {
+    runtime.getBuiltinModule = undefined;
+    const compile = vi.spyOn(Ajv.prototype, "compile");
+    const compiler = createSchemaCompiler("ajv");
+    const firstSchema = plainSchema();
+    const secondSchema = plainSchema();
+    const first = compiler.compile(firstSchema);
+    const second = compiler.compile(secondSchema);
+    expect(compile).toHaveBeenCalledTimes(2);
+    expect(compile.mock.calls[0]?.[0]).toBe(firstSchema);
+    expect(compile.mock.calls[1]?.[0]).toBe(secondSchema);
     expect(first({ n: 0 })).toBe(false);
     expect(second({ n: 1 })).toBe(true);
   });
