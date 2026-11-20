@@ -1,0 +1,21 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fixture_openai_stream_tool","object":"response","created_at":1763683200,"status":"in_progress","model":"gpt-5.1-2025-11-13","output":[],"usage":null,"store":false,"error":null,"incomplete_details":null}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_fixture_openai_stream_tool","type":"function_call","status":"in_progress","call_id":"call_fixture_weather","name":"get_weather","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"fc_fixture_openai_stream_tool","output_index":0,"delta":"{\"city\":"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":3,"item_id":"fc_fixture_openai_stream_tool","output_index":0,"delta":"\"Paris\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":4,"item_id":"fc_fixture_openai_stream_tool","output_index":0,"arguments":"{\"city\":\"Paris\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"fc_fixture_openai_stream_tool","type":"function_call","status":"completed","call_id":"call_fixture_weather","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":6,"response":{"id":"resp_fixture_openai_stream_tool","object":"response","created_at":1763683200,"status":"completed","model":"gpt-5.1-2025-11-13","output":[{"id":"fc_fixture_openai_stream_tool","type":"function_call","status":"completed","call_id":"call_fixture_weather","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}],"usage":{"input_tokens":58,"input_tokens_details":{"cached_tokens":0},"output_tokens":16,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":74},"store":false,"error":null,"incomplete_details":null}}
+
