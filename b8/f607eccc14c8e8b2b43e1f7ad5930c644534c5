@@ -1,0 +1,29 @@
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_eb415f203c1fbe::t_e04f74ae97cbdf 610-634
+authfn/social-oauth/src/index.ts
+  s_c2d6ef2e96fafa::t_65abe7b982c4b0 211,218-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8f607eccc14c8e8b2b43e1f7ad5930c644534c5",
+  "prompts": {},
+  "sessions": {
+    "s_c2d6ef2e96fafa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06fe544c-d9eb-46b8-b581-824711a616bb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_eb415f203c1fbe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61830fa3-935c-44a8-8e9e-1bb32c2675e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
