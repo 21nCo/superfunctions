@@ -236,7 +236,7 @@ export function createAuthFnRegionalClient(
     },
     startSocialSignIn: (input) => clientFor(currentRegionId).startSocialSignIn(input),
     disconnectSocialAccount: (input) => clientFor(currentRegionId).disconnectSocialAccount(input),
-    exchangeSocialHandoff: (input) => clientFor(currentRegionId).exchangeSocialHandoff(input),
+    exchangeSocialHandoff: (input) => clientFor(currentRegionId).exchangeSocialHandoff!(input),
     startNativeHandoff: () => clientFor(currentRegionId).startNativeHandoff(),
     startWebHandoff: (input) => clientFor(currentRegionId).startWebHandoff(input),
     createApiKey: (input) => clientFor(currentRegionId).createApiKey(input),

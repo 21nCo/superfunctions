@@ -237,7 +237,7 @@ export interface AuthFnClient {
     provider: AuthFnSocialProviderId;
   }> | AuthFnErrorEnvelope>;
   /** Exchanges a one-time social sign-in handoff code and its verifier for a bearer session. */
-  exchangeSocialHandoff(input: {
+  exchangeSocialHandoff?(input: {
     code: string;
     verifier: string;
   }): Promise<AuthFnSuccessEnvelope<{

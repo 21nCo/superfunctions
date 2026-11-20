@@ -81,7 +81,7 @@ interface AuthFnSocialProviderConfig {
 | Option | Stage | Default | Notes |
 | --- | --- | --- | --- |
 | `defaultHandoffMode` | factory | `'none'` | `'session-token'` lets the callback embed a one-time handoff for native apps. |
-| `bindBrowserState` | factory | `false` | Cookie-session redirect sign-ins set a short-lived HttpOnly binding cookie at start; the callback refuses a state whose cookie is missing or different (`AUTHFN_OAUTH_STATE_INVALID`). Stops a callback URL completed by someone else from signing a visitor in. |
+| `bindBrowserState` | factory | `false` | Every sign-in whose callback can set session cookies (redirect or JSON, either handoff mode) sets a short-lived HttpOnly binding cookie at start, one per pending state (`__Host-` on https); the callback refuses a state whose cookie is missing or different (`AUTHFN_OAUTH_STATE_INVALID`). Only code-and-verifier handoffs, whose callback sets no cookies, are unbound, so native flows must send `handoffChallenge` when this is on. |
 | `allowWebSessionTokenHandoff` | factory | `true` | Set `false` so only native (non-http) `returnTo` targets can use `handoffMode: 'session-token'`; a web target then fails with `AUTHFN_VALIDATION_ERROR`. |
 | `requireHandoffChallenge` | factory | `false` | Native session-token handoffs must send `handoffChallenge`; see [Handoff code exchange](#handoff-code-exchange). |
 | `handoffCodeTtlSeconds` | factory | `60` | Lifetime of a one-time social handoff code. |

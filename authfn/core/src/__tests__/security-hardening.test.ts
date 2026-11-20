@@ -91,6 +91,64 @@ describe('web handoff consume navigation (F-08)', () => {
   });
 });
 
+describe('web handoff verifier and route toggle (F-08)', () => {
+  function createConfig(webHandoff?: boolean): AuthFnRuntimeConfig {
+    return {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      environment: authFnMultiRegionEnvironment({
+        regions: [{ regionId: 'us-east-1', authority: 'https://us.account.example.com', hosts: ['us.account.example.com'] }]
+      }),
+      plugins: [authFnPasswordPlugin(), authFnMultiRegionPlugin(), authFnNativeHandoffPlugin({ webHandoff })]
+    };
+  }
+
+  async function bearer(auth: ReturnType<typeof createTestServer>) {
+    const signUp = await auth.router.handle(new Request('https://us.account.example.com/auth/sign-up/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'verifier@example.com', password: 'Sup3rSecurePassphrase!', sessionMode: 'hybrid' })
+    }));
+    return (await signUp.json()).data.token as string;
+  }
+
+  it('requires the verifier header when the code was minted with a challenge', async () => {
+    const auth = createTestServer(createConfig());
+    const token = await bearer(auth);
+    const verifier = 'test-web-verifier-'.padEnd(64, 'w');
+    const start = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ verifierChallenge: createHash('sha256').update(verifier).digest('base64url') })
+    }));
+    const consumeUrl = (await start.json()).data.consumeUrl as string;
+
+    const withoutVerifier = await auth.router.handle(new Request(consumeUrl, { headers: { 'sec-fetch-site': 'none' } }));
+    expect(withoutVerifier.status).toBe(400);
+    const withVerifier = await auth.router.handle(new Request(consumeUrl, {
+      headers: { 'sec-fetch-site': 'none', 'x-authfn-handoff-verifier': verifier }
+    }));
+    expect(withVerifier.status).toBe(302);
+  });
+
+  it('does not register the web handoff routes when webHandoff is false', async () => {
+    const auth = createTestServer(createConfig(false));
+    const token = await bearer(auth);
+    const start = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}'
+    }));
+    const unknownRoute = await auth.router.handle(new Request('https://us.account.example.com/auth/no-such-route', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}'
+    }));
+    expect(start.ok).toBe(false);
+    expect(start.status).toBe(unknownRoute.status);
+  });
+});
+
 describe('two-factor challenge attempts (F-11)', () => {
   it('limits verification attempts per challenge', async () => {
     const config: AuthFnRuntimeConfig = {
@@ -118,6 +176,56 @@ describe('two-factor challenge attempts (F-11)', () => {
       details: expect.objectContaining({ scope: 'two-factor', dimension: 'identifier' })
     });
     expect((await attempt('chal_other', '198.51.100.99')).status).toBe(200);
+  });
+
+  it('ignores extra body fields and trailing slashes when counting challenge attempts', async () => {
+    const config: AuthFnRuntimeConfig = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn-2fa-bypass',
+      plugins: [],
+      rateLimit: { enabled: true, mode: 'local' }
+    };
+    const middleware = createAuthFnRateLimitMiddleware(config)!;
+    const attempt = (index: number) => middleware(
+      new Request(`https://account.example.com/auth/2fa/challenge${index % 2 ? '/' : ''}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.113.${index}` },
+        body: JSON.stringify({ challengeId: 'chal_bypass', code: '000000', email: `random-${index}@example.com` })
+      }),
+      {} as never,
+      async () => new Response('ok')
+    );
+    for (let index = 0; index < 5; index += 1) {
+      expect((await attempt(index)).status).toBe(200);
+    }
+    await expect(attempt(5)).rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
+  it('limits /2fa/disable attempts per session', async () => {
+    const config: AuthFnRuntimeConfig = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn-2fa-disable',
+      plugins: [],
+      rateLimit: { enabled: true, mode: 'local' }
+    };
+    const middleware = createAuthFnRateLimitMiddleware(config)!;
+    const attempt = (index: number) => middleware(
+      new Request('https://account.example.com/auth/2fa/disable', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': `203.0.113.${index}`,
+          cookie: '__Secure-authfn.session=test-session-token'
+        },
+        body: JSON.stringify({ code: '000000' })
+      }),
+      {} as never,
+      async () => new Response('ok')
+    );
+    for (let index = 0; index < 5; index += 1) {
+      expect((await attempt(index)).status).toBe(200);
+    }
+    await expect(attempt(5)).rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
   });
 });
 
@@ -184,6 +292,13 @@ describe('API key creation policy (F-13)', () => {
 
     const fresh = await createKey(config, await sessionHeaders(config, new Date(now.getTime() - 1000)), { name: 'fresh' });
     expect(fresh.status).toBe(201);
+  });
+
+  it('rejects invalid policy settings when the plugin is created', () => {
+    for (const value of [Number.NaN, 0, -1, 1.5]) {
+      expect(() => authFnApiKeyPlugin({ recentAuthenticationSeconds: value })).toThrow(/positive whole number/);
+      expect(() => authFnApiKeyPlugin({ maxExpiresInSeconds: value })).toThrow(/positive whole number/);
+    }
   });
 
   it('applies a default expiry and refuses expiries past the maximum lifetime', async () => {
@@ -270,9 +385,10 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     const auth = createTestServer(createConfig({ bindBrowserState: true }));
     const started = await start(auth, { returnTo: 'https://app.example.com/post-auth' });
     expect(started.status).toBe(200);
-    const bindingCookie = started.headers.getSetCookie().find((cookie) => cookie.startsWith('authfn.oauth_binding='));
+    const bindingCookie = started.headers.getSetCookie().find((cookie) => cookie.startsWith('__Host-authfn.oauth_binding.'));
     expect(bindingCookie).toMatch(/HttpOnly/i);
-    expect(bindingCookie).toMatch(/Path=\/auth\/social\/callback/);
+    expect(bindingCookie).toMatch(/Path=\//);
+    expect(bindingCookie).not.toMatch(/Domain=/i);
     const stateId = (await started.json()).data.stateId as string;
 
     const otherBrowser = await callback(auth, stateId);
@@ -283,10 +399,50 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
 
     const secondStart = await start(auth, { returnTo: 'https://app.example.com/post-auth' });
     const secondStateId = (await secondStart.json()).data.stateId as string;
-    const sameBrowser = await callback(auth, secondStateId, cookieHeaderFromSetCookies(secondStart.headers.getSetCookie()));
+    const thirdStart = await start(auth, { returnTo: 'https://app.example.com/post-auth' });
+    const browserCookies = cookieHeaderFromSetCookies([
+      ...secondStart.headers.getSetCookie(),
+      ...thirdStart.headers.getSetCookie()
+    ]);
+    const sameBrowser = await callback(auth, secondStateId, browserCookies);
     expect(sameBrowser.status).toBe(303);
     expect(sameBrowser.headers.get('location')).toBe('https://app.example.com/post-auth');
     expect(sameBrowser.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(true);
+  });
+
+  it('binds JSON and session-token callbacks too, so no unbound callback sets session cookies', async () => {
+    const auth = createTestServer(createConfig({ bindBrowserState: true }));
+    for (const body of [
+      { callbackMode: 'json' },
+      { returnTo: 'nucleum://oauthsignin', handoffMode: 'session-token' }
+    ]) {
+      const started = await start(auth, body);
+      expect(started.status).toBe(200);
+      expect(started.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.'))).toBe(true);
+      const stateId = (await started.json()).data.stateId as string;
+      const elsewhere = await callback(auth, stateId);
+      expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
+    }
+  });
+
+  it('refuses handoff grants presented as OAuth states at the callback', async () => {
+    const auth = createTestServer(createConfig({ requireHandoffChallenge: true }));
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const handoffChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge });
+    const completed = await callback(auth, (await started.json()).data.stateId as string);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+    const grantStateId = `social-handoff:${createHash('sha256').update(code).digest('hex')}`;
+
+    const misuse = await callback(auth, grantStateId);
+    expect(misuse.ok).toBe(false);
+
+    const exchanged = await auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier })
+    }));
+    expect(exchanged.status).toBe(200);
   });
 
   it('refuses session-token handoff to web URLs and requires a handoff challenge when configured', async () => {

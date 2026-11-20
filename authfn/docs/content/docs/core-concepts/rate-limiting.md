@@ -34,7 +34,7 @@ A handful of routes have built-in protections that aren't traditional rate limit
 - **OTP attempt counter.** Each OTP challenge tracks `attemptCount`. After a small number of failed verifications (per the plugin's config), the challenge is invalidated.
 - **OAuth state replay.** OAuth states are one-shot. Replaying the same state returns `AUTHFN_OAUTH_STATE_REPLAYED` and the request is rejected without further processing.
 - **Native handoff codes.** One-time, short TTL.
-- **Two-factor attempts.** When `rateLimit` is enabled, `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable` use the `two-factor` policy: 30 requests per IP and 5 per challenge ID in a 5-minute window by default.
+- **Two-factor attempts.** When `rateLimit` is enabled, `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable` use the `two-factor` policy: 30 requests per IP and 5 per challenge ID (for `/2fa/challenge`) or per session credential (for `/2fa/confirm` and `/2fa/disable`) in a 5-minute window by default. Other body fields do not change the counter.
 
 These protect against logical replay attacks but do not protect against high-volume probing or credential stuffing.
 

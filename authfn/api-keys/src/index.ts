@@ -14,7 +14,11 @@ import { assertValidCsrf, requireCookieSession } from 'authfn/core/sessions';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
-import { AuthFnReauthenticationRequiredError, AuthFnValidationError } from 'authfn/core/errors';
+import {
+  AuthFnConfigError,
+  AuthFnReauthenticationRequiredError,
+  AuthFnValidationError
+} from 'authfn/core/errors';
 import type { AuthFnSessionRecord } from 'authfn';
 import { readPluginRuntimeConfig } from 'authfn/core/plugin-runtime';
 
@@ -26,6 +30,9 @@ export type {
 export function authFnApiKeyPlugin(
   config: ApiKeyPluginConfig = {}
 ): AuthFnPlugin<'apiKey', ApiKeyPluginRuntimeConfig, false> {
+  assertPositiveSeconds(config.recentAuthenticationSeconds, 'recentAuthenticationSeconds');
+  assertPositiveSeconds(config.defaultExpiresInSeconds, 'defaultExpiresInSeconds');
+  assertPositiveSeconds(config.maxExpiresInSeconds, 'maxExpiresInSeconds');
   return {
     name: 'apiKey',
     schema: () => config.schema ?? createApiKeySchema(),
@@ -226,4 +233,16 @@ function resolveApiKeyExpiry(
     }
   }
   return expiresAt;
+}
+
+function assertPositiveSeconds(value: number | undefined, option: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new AuthFnConfigError(`apiKey ${option} must be a positive whole number of seconds`, {
+      option,
+      value: String(value)
+    });
+  }
 }

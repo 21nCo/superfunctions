@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { NotFoundError } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
 import type {
@@ -95,10 +95,11 @@ function createNativeHandoffRoutes(
 ): Route[] {
   const config: ResolvedNativeHandoffPluginConfig = {
     codeTtlSeconds: pluginConfig.codeTtlSeconds,
+    webHandoff: pluginConfig.webHandoff,
     ...readPluginRuntimeConfig<NativeHandoffPluginRuntimeConfig>(ctx, 'nativeHandoff')
   };
 
-  return [
+  const routes: Route[] = [
     {
       method: 'POST',
       path: '/handoff/native/start',
@@ -178,7 +179,9 @@ function createNativeHandoffRoutes(
         const session = await requireBearerSession(ctx, request);
         const body = await readOptionalJson<{
           returnTo?: string;
+          verifierChallenge?: string;
         }>(request);
+        const verifierChallenge = readVerifierChallenge(body.verifierChallenge);
         const code = await createHandoffCode(ctx, config, {
           request,
           sourceSessionId: session.record.id,
@@ -187,7 +190,8 @@ function createNativeHandoffRoutes(
           target: 'web',
           metadata: {
             source: 'native',
-            returnTo: sanitizeReturnTo(body.returnTo)
+            returnTo: sanitizeReturnTo(body.returnTo),
+            ...(verifierChallenge ? { verifierChallenge } : {})
           }
         });
 
@@ -212,7 +216,17 @@ function createNativeHandoffRoutes(
       handler: async (request) => {
         const code = new URL(request.url).searchParams.get('code');
         await assertDirectWebConsumeNavigation(ctx, request);
-        const consumed = await consumeHandoffCode(ctx, request, code, 'web');
+        const consumed = await consumeHandoffCode(ctx, request, code, 'web', async (record) => {
+          const challenge = record.metadata?.verifierChallenge;
+          if (typeof challenge !== 'string') {
+            return;
+          }
+          const verifier = request.headers.get(WEB_HANDOFF_VERIFIER_HEADER)?.trim() ?? '';
+          if (!verifierMatches(verifier, challenge)) {
+            await emitHandoffFailure(ctx, request, 'web', 'verifier-mismatch', record);
+            throw new AuthFnValidationError('Handoff verifier is missing or does not match');
+          }
+        });
         const sourceSession = await findSessionRecord(ctx, consumed.record.sourceSessionId);
         const issued = await issueSession(ctx.config, ctx.hooks, {
           request,
@@ -251,6 +265,33 @@ function createNativeHandoffRoutes(
       }
     }
   ];
+  return config.webHandoff === false
+    ? routes.filter((route) => !route.path.startsWith('/handoff/web/'))
+    : routes;
+}
+
+const WEB_HANDOFF_VERIFIER_HEADER = 'x-authfn-handoff-verifier';
+const VERIFIER_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+function readVerifierChallenge(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value !== 'string' || !VERIFIER_CHALLENGE_PATTERN.test(value)) {
+    throw new AuthFnValidationError('verifierChallenge must be a base64url SHA-256 digest', {
+      field: 'verifierChallenge'
+    });
+  }
+  return value;
+}
+
+function verifierMatches(verifier: string, challenge: string): boolean {
+  if (verifier.length < 43 || verifier.length > 128) {
+    return false;
+  }
+  const digest = Buffer.from(createHash('sha256').update(verifier).digest('base64url'));
+  const expected = Buffer.from(challenge);
+  return digest.length === expected.length && timingSafeEqual(digest, expected);
 }
 
 async function createHandoffCode(
@@ -339,7 +380,8 @@ async function consumeHandoffCode(
   ctx: AuthFnPluginRuntimeContext,
   request: Request,
   code: string | null | undefined,
-  target: 'native' | 'web'
+  target: 'native' | 'web',
+  verify?: (record: AuthFnNativeHandoffCodeRecord) => Promise<void>
 ): Promise<{ record: AuthFnNativeHandoffCodeRecord; user: { id: string; primaryEmail?: string } }> {
   if (!code) {
     await emitHandoffFailure(ctx, request, target, 'missing-code');
@@ -377,6 +419,8 @@ async function consumeHandoffCode(
       handoffId: record.id
     });
   }
+
+  await verify?.(record);
 
   const sourceSession = await findSessionRecord(ctx, record.sourceSessionId);
   if (sourceSession.revokedAt) {
@@ -511,8 +555,10 @@ const RETURN_TO_BASE = 'https://authfn-return-to.invalid';
  * that minted the code. A browser marks such a load `Sec-Fetch-Site: none`; a
  * page on another site that redirects or links a visitor there is marked
  * `cross-site` or `same-site`. Refusing those stops a page from signing its
- * visitors into the page owner's account (login CSRF). Clients that send no
- * fetch metadata are still accepted.
+ * visitors into the page owner's account (login CSRF). A link opened from
+ * outside the browser (mail, chat) is also `none`, so apps should mint codes
+ * with `verifierChallenge` and send the verifier in the
+ * `x-authfn-handoff-verifier` header when loading the consume URL.
  */
 async function assertDirectWebConsumeNavigation(
   ctx: AuthFnPluginRuntimeContext,

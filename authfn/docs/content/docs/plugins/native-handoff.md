@@ -92,7 +92,7 @@ bridge.attach(to: webView)
 
 Less common, but useful when a native app wants to deep-link into a web page that should be authenticated as the native user. Native side calls `startWebHandoff`; the URL it hands to the web side carries `?code=<handoff-code>`. The web page calls `consumeWebHandoff`, sets cookies, and continues.
 
-The consume URL must be loaded directly by the native app (the browser marks that `Sec-Fetch-Site: none`). A navigation that another site started (`cross-site` or `same-site`) is refused with `AUTHFN_VALIDATION_ERROR` and the code stays unused, so a page cannot sign its visitors into the page owner's account. `returnTo` is reduced to a same-origin path; backslashes and control characters fall back to `/`.
+The consume URL must be loaded directly by the native app (the browser marks that `Sec-Fetch-Site: none`). A navigation that another site started (`cross-site` or `same-site`) is refused with `AUTHFN_VALIDATION_ERROR` and the code stays unused, so a page cannot sign its visitors into the page owner's account. A link opened from outside the browser (mail, chat, a QR code) is also `none`, so bind the code to the app: send `verifierChallenge` (base64url SHA-256 of a verifier the app keeps) to `/handoff/web/start`, and load the consume URL with the verifier in the `x-authfn-handoff-verifier` header. A code minted with a challenge is refused without the matching verifier. Set `webHandoff: false` to leave both web handoff routes unregistered when no app needs them. `returnTo` is reduced to a same-origin path; backslashes and control characters fall back to `/`.
 
 ## Errors
 

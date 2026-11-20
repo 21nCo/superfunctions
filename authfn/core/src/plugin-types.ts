@@ -83,6 +83,12 @@ export interface TwoFactorPluginRuntimeConfig {
 
 export interface NativeHandoffPluginConfig extends AuthFnBundledPluginConfig {
   codeTtlSeconds?: number;
+  /**
+   * Registers the native-to-web routes (`/handoff/web/start` and
+   * `/handoff/web/consume`). Defaults to true; turn off when no app opens web
+   * pages signed in as the native user.
+   */
+  webHandoff?: boolean;
 }
 export interface NativeHandoffPluginRuntimeConfig {
   /** Clock source used for native handoff code timestamps and expiry checks; primarily useful for tests. */

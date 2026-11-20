@@ -49,7 +49,9 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
     const path = new URL(request.url).pathname;
     const scope = scopeForPath(path);
     const policy = policyForScope(config, scope);
-    const identifier = await readIdentifier(request.clone());
+    const identifier = scope === 'two-factor'
+      ? await readTwoFactorIdentifier(request.clone(), config)
+      : await readIdentifier(request.clone());
     const ip = (await rateLimit.resolveClientIp?.(request))?.trim() || 'unknown';
     const identifierHash = identifier && policy.identifierLimit ? await hashIdentifier(identifier) : null;
     // One clock reading per request, taken after every asynchronous step, so
@@ -141,7 +143,8 @@ function assertValidWindows(config: AuthFnRuntimeConfig): void {
   }
 }
 
-function scopeForPath(path: string): AuthFnRateLimitScope {
+function scopeForPath(rawPath: string): AuthFnRateLimitScope {
+  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
   if (path.endsWith('/sign-in/password') || path.endsWith('/sign-up/password')) return 'password';
   if (path.endsWith('/otp/send')) return 'otp-send';
   if (path.endsWith('/otp/verify')) return 'otp-verify';
@@ -320,4 +323,46 @@ async function readIdentifier(request: Request): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Two-factor attempts are counted per sign-in challenge (`challengeId`) or,
+ * for `/2fa/confirm` and `/2fa/disable`, per session credential. Other body
+ * fields are ignored so a caller cannot change the counter by adding them.
+ */
+async function readTwoFactorIdentifier(
+  request: Request,
+  config: AuthFnRuntimeConfig
+): Promise<string | null> {
+  if (request.method === 'POST') {
+    try {
+      const body = await request.json() as { challengeId?: unknown };
+      if (typeof body.challengeId === 'string' && body.challengeId.length > 0) {
+        return `two-factor-challenge:${body.challengeId}`;
+      }
+    } catch {
+      // Fall through to the session credential.
+    }
+  }
+  const credential = readSessionCredential(request, config);
+  return credential ? `two-factor-session:${credential}` : null;
+}
+
+function readSessionCredential(request: Request, config: AuthFnRuntimeConfig): string | null {
+  const authorization = request.headers.get('authorization')?.trim();
+  if (authorization?.toLowerCase().startsWith('bearer ')) {
+    const token = authorization.slice('bearer '.length).trim();
+    if (token) return token;
+  }
+  const prefix = config.cookie?.prefix?.trim() || 'authfn';
+  const names = new Set([`__Secure-${prefix}.session`, `${prefix}.session`]);
+  for (const part of (request.headers.get('cookie') ?? '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) continue;
+    if (names.has(part.slice(0, separator).trim())) {
+      const value = part.slice(separator + 1).trim();
+      if (value) return value;
+    }
+  }
+  return null;
 }

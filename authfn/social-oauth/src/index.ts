@@ -245,7 +245,10 @@ function createSocialRoutes(
           handoffMode,
           handoffChallenge
         });
-        const browserBinding = config.bindBrowserState && callbackMode === 'redirect' && handoffMode === 'none'
+        const usesHandoffCode = handoffMode === 'session-token'
+          && callbackMode === 'redirect'
+          && Boolean(handoffChallenge);
+        const browserBinding = config.bindBrowserState && !usesHandoffCode
           ? createBrowserBindingNonce()
           : undefined;
 
@@ -294,7 +297,7 @@ function createSocialRoutes(
         }, browserBinding
           ? {
               setCookies: [
-                serializeBrowserBindingCookie(ctx, request, runtime, browserBinding, result.expiresAt)
+                serializeBrowserBindingCookie(ctx, request, runtime, result.stateId, browserBinding, result.expiresAt)
               ]
             }
           : undefined);
@@ -385,8 +388,11 @@ function createSocialRoutes(
           providerSettings,
           stateId
         );
+        if (stateId.startsWith(SOCIAL_HANDOFF_STATE_PREFIX)) {
+          throw new AuthFnOAuthStateInvalidError('OAuth state is invalid');
+        }
         try {
-        await assertBrowserBinding(ctx, request, runtime, stateId);
+        await assertBrowserBinding(ctx, config, request, runtime, stateId);
         const formPostIdToken = readOptionalString(url.searchParams.get('id_token'));
         const callbackResult = providerId === 'apple' && formPostIdToken
           ? await handleAppleFormPostIdentityCallback(
@@ -540,7 +546,7 @@ function createSocialRoutes(
           return redirectWithCookies(
             request,
             appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
-            [clearBrowserBindingCookie(ctx, request, runtime)],
+            [],
             303
           );
         }
@@ -556,7 +562,7 @@ function createSocialRoutes(
           issueSessionCookies(issued.cookiePolicy!, issued.sessionToken, issued.csrfToken)
         );
         if (config.bindBrowserState) {
-          cookies.push(clearBrowserBindingCookie(ctx, request, runtime));
+          cookies.push(clearBrowserBindingCookie(ctx, request, runtime, stateId));
         }
         const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
         const completion: SocialCallbackCompletion = {
@@ -2557,23 +2563,25 @@ function hashBindingValue(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
 }
 
-function browserBindingCookieName(prefix: string): string {
-  return `${prefix}.oauth_binding`;
-}
-
-function browserBindingCookiePath(ctx: AuthFnPluginRuntimeContext): string {
-  return `${ctx.basePath.replace(/\/$/, '')}/social/callback`;
+/**
+ * One binding cookie per pending sign-in, so overlapping sign-ins in the same
+ * browser do not overwrite each other. On https it is a `__Host-` cookie
+ * (Secure, Path=/, no Domain), so a sibling subdomain cannot plant it.
+ */
+function browserBindingCookieName(prefix: string, secure: boolean, stateId: string): string {
+  const suffix = createHash('sha256').update(stateId).digest('base64url').slice(0, 16);
+  return `${secure ? '__Host-' : ''}${prefix}.oauth_binding.${suffix}`;
 }
 
 /**
- * The binding cookie is host-only and limited to the callback path. Apple
- * returns with a cross-site form POST, so on https it uses SameSite=None;
- * it only carries a random nonce, never a credential.
+ * The binding cookie only carries a random nonce, never a credential. Apple
+ * returns with a cross-site form POST, so on https it uses SameSite=None.
  */
 function serializeBrowserBindingCookie(
   ctx: AuthFnPluginRuntimeContext,
   request: Request,
   runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string,
   value: string,
   expiresAt: string | undefined
 ): string {
@@ -2583,9 +2591,9 @@ function serializeBrowserBindingCookie(
     ? Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000))
     : 600;
   return serializeSetCookie({
-    name: browserBindingCookieName(policy.prefix),
+    name: browserBindingCookieName(policy.prefix, policy.secure, stateId),
     value,
-    path: browserBindingCookiePath(ctx),
+    path: '/',
     secure: policy.secure,
     httpOnly: true,
     sameSite: policy.secure ? 'none' : 'lax',
@@ -2596,13 +2604,14 @@ function serializeBrowserBindingCookie(
 function clearBrowserBindingCookie(
   ctx: AuthFnPluginRuntimeContext,
   request: Request,
-  runtime: AuthFnSocialOAuthEnvironment
+  runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string
 ): string {
   const policy = resolveCookiePolicy(ctx.config, request, runtime);
   return serializeSetCookie({
-    name: browserBindingCookieName(policy.prefix),
+    name: browserBindingCookieName(policy.prefix, policy.secure, stateId),
     value: '',
-    path: browserBindingCookiePath(ctx),
+    path: '/',
     secure: policy.secure,
     httpOnly: true,
     sameSite: policy.secure ? 'none' : 'lax',
@@ -2612,11 +2621,13 @@ function clearBrowserBindingCookie(
 }
 
 /**
- * Refuses a callback for a browser-bound state unless this browser holds the
- * binding cookie set when the sign-in started.
+ * With `bindBrowserState`, refuses a callback unless this browser holds the
+ * binding cookie set when the sign-in started. The only unbound states allowed
+ * are code-and-verifier handoffs, whose callback sets no session cookies.
  */
 async function assertBrowserBinding(
   ctx: AuthFnPluginRuntimeContext,
+  config: ResolvedSocialOAuthPluginConfig,
   request: Request,
   runtime: AuthFnSocialOAuthEnvironment,
   stateId: string
@@ -2626,14 +2637,17 @@ async function assertBrowserBinding(
   );
   const state = await stateStore.get(stateId);
   const subject = state?.subject;
-  const expected = subject?.kind === 'browser-auth'
-    ? readOptionalString(subject.metadata?.[CALLBACK_METADATA_BINDING])
-    : undefined;
+  const metadata = subject?.kind === 'browser-auth' ? subject.metadata : undefined;
+  const expected = readOptionalString(metadata?.[CALLBACK_METADATA_BINDING]);
   if (!expected) {
+    const isHandoffCodeFlow = Boolean(readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]));
+    if (config.bindBrowserState && state && !isHandoffCodeFlow) {
+      throw new AuthFnOAuthStateInvalidError('OAuth sign-in was not bound to a browser');
+    }
     return;
   }
   const policy = resolveCookiePolicy(ctx.config, request, runtime);
-  const provided = readCookie(request, browserBindingCookieName(policy.prefix));
+  const provided = readCookie(request, browserBindingCookieName(policy.prefix, policy.secure, stateId));
   if (!provided || !safeEqual(hashBindingValue(provided), expected)) {
     throw new AuthFnOAuthStateInvalidError('OAuth sign-in was started in a different browser');
   }
