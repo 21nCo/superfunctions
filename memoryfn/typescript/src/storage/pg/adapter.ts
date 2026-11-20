@@ -229,8 +229,8 @@ export class PostgresAdapter implements StorageAdapter {
     const locked = async (tx: PostgresJsDatabase<any>) => {
       const [setting] = await tx.execute<{ isolation: string }>(sql`SELECT current_setting('transaction_isolation') AS isolation`);
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
-      const key = JSON.stringify([scope.tenantId, scope.sourceKey]);
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+      // The key is built from the values as the server received them, so it names the stored source.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(json_build_array(${scope.tenantId}::text, ${scope.sourceKey}::text)::text, 0))`);
       await tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags)).orderBy(memories.id).for('update').$withCache(false);
       const result = await operation(tx);
       await tx.delete(memoryRelationships).where(sql`false`);

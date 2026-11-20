@@ -173,6 +173,32 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState({ ...source, containerTags: [...source.containerTags, 'undefined'] })).toBeNull();
     });
 
+    it('rejects source identities that storage cannot keep distinct', async () => {
+      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      // A lone surrogate is stored as U+FFFD by PostgreSQL text, so it would alias another source.
+      const lone = `${source.sourceKey}\uD800`;
+      const scopes: SourceScope[] = [
+        { ...source, sourceKey: lone }, { ...source, sourceKey: `\uDC00${source.sourceKey}` }, { ...source, sourceKey: `${source.sourceKey}\u0000` },
+        { ...source, tenantId: `${source.tenantId}\uD800` }, { ...source, containerTags: [...source.containerTags, 'x\uDFFF'] },
+      ];
+      for (const scope of scopes) {
+        await expect(adapter().getSourceState(scope)).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+        await expect(adapter().deleteSource(scope)).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(scope, 'x') })).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+      }
+      const loneChunk = { ...chunks(source, 'x')[0], containerTags: [...source.containerTags, 'x\uD800'] };
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [loneChunk] })).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash\uD800', chunks: chunks(source, 'x') })).rejects.toThrow('MEMORY_SOURCE_HASH_REQUIRED');
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+
+      // Well-formed non-BMP text (a surrogate pair) is a valid, distinct source.
+      const paired = { ...source, sourceKey: `${source.sourceKey}😀` };
+      await adapter().replaceSource({ ...paired, contentHash: 'hash-pair', chunks: chunks(paired, 'p') });
+      expect(await adapter().getSourceState(paired)).toEqual({ contentHash: 'hash-pair', chunkCount: 1 });
+      expect(await adapter().getSourceState({ ...source, sourceKey: `${source.sourceKey}�` })).toBeNull();
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+    });
+
     it('rolls a replacement back with its enclosing transaction', async () => {
       await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
       await expect(adapter().transaction!(async tx => {

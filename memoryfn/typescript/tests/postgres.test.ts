@@ -203,7 +203,7 @@ suite('Postgres lifecycle integration', () => {
         let pending!: Promise<unknown>;
         // Both replacements take their first snapshot while a third session holds the source lock.
         await client.begin(async holder => {
-          await holder`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([scope.tenantId, scope.sourceKey])}, 0))`;
+          await holder`SELECT pg_advisory_xact_lock(hashtextextended(json_build_array(${scope.tenantId}::text, ${scope.sourceKey}::text)::text, 0))`;
           pending = Promise.all([
             storage.replaceSource({ ...scope, contentHash: 'hash-left', chunks: [chunk('l1'), chunk('l2')] }),
             storage.replaceSource({ ...scope, contentHash: 'hash-right', chunks: [chunk('r1')] }),

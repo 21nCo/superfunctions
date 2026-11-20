@@ -68,14 +68,27 @@ export function compareCodeUnits(left: string, right: string): number {
 }
 
 /**
- * Source tags must all be non-empty strings. Unlike Array#some, this visits the
- * holes of a sparse array, which would otherwise be stored as missing tags.
+ * An unpaired UTF-16 surrogate, or NUL. PostgreSQL text cannot store either as
+ * given: a lone surrogate is encoded as U+FFFD, so two different strings would
+ * name one stored source, and NUL is rejected. The memory adapter would keep
+ * them distinct, so the source path rejects them in every adapter.
+ * (A regex rather than String#isWellFormed, which needs Node 20.)
+ */
+const STORAGE_UNSAFE_TEXT = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|\u0000/;
+
+/** A non-empty string that every adapter stores and compares unchanged. */
+function isSourceText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && !STORAGE_UNSAFE_TEXT.test(value);
+}
+
+/**
+ * Source tags must all be non-empty, storable strings. Unlike Array#some, this
+ * visits the holes of a sparse array, which would otherwise be stored as missing tags.
  */
 function requireSourceTags(tags: unknown): asserts tags is string[] {
   if (!Array.isArray(tags)) throw new Error('MEMORY_SCOPE_REQUIRED');
   for (let index = 0; index < tags.length; index++) {
-    const tag: unknown = tags[index];
-    if (typeof tag !== 'string' || !tag.trim()) throw new Error('MEMORY_SCOPE_REQUIRED');
+    if (!isSourceText(tags[index])) throw new Error('MEMORY_SCOPE_REQUIRED');
   }
 }
 
@@ -91,7 +104,9 @@ export function requireSourceScope(input: SourceScope): SourceSnapshot {
   const { tenantId, containerTags, sourceKey } = input;
   requireScope(tenantId, containerTags);
   requireSourceTags(containerTags);
+  if (!isSourceText(tenantId)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
+  if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
   const scope: SourceScope = { tenantId, containerTags: [...containerTags], sourceKey };
   return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
 }
@@ -108,7 +123,7 @@ export function sameTagSet(left: string[], right: string[]): boolean {
 export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapshot {
   const { scope, tags } = requireSourceScope(input);
   const { contentHash, chunks } = input;
-  if (typeof contentHash !== 'string' || !contentHash.trim()) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+  if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   const copies = [...chunks].map((chunk): MemoryInsert => {
     if (!chunk || chunk.tenantId !== scope.tenantId) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
