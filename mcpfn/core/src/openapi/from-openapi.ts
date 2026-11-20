@@ -215,11 +215,6 @@ function isApplicationJson(key: string): boolean {
 
 const SUCCESS_STATUS = /^2(?:\d\d|XX)$/i;
 
-// Codes that leave a tool without an output schema instead of skipping it:
-// the contract allows "otherwise no output schema". (A projection conflict
-// also does, once the schema has compiled; see convertOutput.)
-const OUTPUT_OMIT_CODES = new Set(["schema-too-large", "unsupported-dialect"]);
-
 /** The `{name}` variables of a path template, scanned without backtracking. */
 function templateVariables(path: string): string[] {
   const names: string[] = [];
@@ -352,7 +347,8 @@ class OperationConverter {
       if (requiredNames.length > 0) required.push(location);
     }
     if (body) {
-      groups.push(["body", this.schemas.convertRoot(body.schema, "input", refs)]);
+      // A media type object without `schema` accepts any JSON value, whatever the dialect.
+      groups.push(["body", body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", refs)]);
       this.schemas.checkProjection(body.schema, "input");
       if (body.info.required) required.push("body");
     }
@@ -374,13 +370,7 @@ class OperationConverter {
    */
   outputSchema(raw: JsonObject, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const schema = this.responseSchema(raw);
-    if (schema === undefined) return undefined;
-    try {
-      return this.convertOutput(schema, method);
-    } catch (error) {
-      if (error instanceof OpenApiSkip && OUTPUT_OMIT_CODES.has(error.code)) return undefined;
-      throw error;
-    }
+    return schema === undefined ? undefined : this.convertOutput(schema, method);
   }
 
   private responseSchema(raw: JsonObject): unknown {
@@ -403,20 +393,14 @@ class OperationConverter {
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
     const { values } = this.schemas.admits(schema);
-    // A schema the registry would reject is not hidden by discarding it.
-    if (method === "HEAD" || values.size !== 1 || !values.has("object")) {
-      this.assertCompiles(root, definitions);
-      return undefined;
-    }
-    try {
-      this.schemas.checkProjection(schema, "output");
-    } catch (error) {
-      if (!(error instanceof OpenApiSkip) || error.code !== "unsupported-access-flag") throw error;
-      // writeOnly properties cannot be left out soundly: no output schema,
-      // but a schema the registry would reject still skips the operation.
-      this.assertCompiles(root, definitions);
-      return undefined;
-    }
+    const objectOnly = method !== "HEAD" && values.size === 1 && values.has("object");
+    // A schema the registry would reject is not hidden by discarding it, nor
+    // by leaving out writeOnly properties: those are checked as written.
+    if (!objectOnly || this.schemas.flagsFor(schema, "output")) this.assertCompilesAsWritten(schema);
+    if (!objectOnly) return undefined;
+    // An output that cannot be projected soundly skips the operation, so no
+    // tool returns structured content its schema would not have checked.
+    this.schemas.checkProjection(schema, "output");
     // A root `$ref` is inlined: draft-07 ignores keywords beside `$ref`, and
     // mcpFn needs `type: "object"` on the root itself.
     const seen = new Set<string>();
@@ -440,6 +424,12 @@ class OperationConverter {
       } as McpFnObjectSchema,
       this.schemas.copyBudget(),
     );
+  }
+
+  private assertCompilesAsWritten(schema: unknown): void {
+    const refs = new Set<string>();
+    const root = this.schemas.convertRoot(schema, "plain", refs);
+    this.assertCompiles(root, this.schemas.definitions(refs, "plain"));
   }
 
   /** Compile a selected schema as the registry would, before it is discarded or rewritten. */
@@ -614,8 +604,7 @@ class OperationConverter {
     const media = content[contentType] as JsonObject;
     return {
       info: { required: body.required === true, contentType },
-      // A media type object without `schema` accepts any JSON value.
-      schema: media.schema !== undefined ? media.schema : {},
+      schema: media.schema,
     };
   }
 }
@@ -646,7 +635,7 @@ const PRIMITIVE_KINDS = ["string", "number", "integer", "boolean"] as const;
  * that shares one object many times cannot expand without bound.
  */
 function treeCopy<T>(value: T, budget: NodeBudget, ancestors = new Set<object>()): T {
-  budget.charge();
+  budget.charge(value);
   if (typeof value !== "object" || value === null) return value;
   // YAML parsers can produce Date values (for example a timestamp `default`).
   if (value instanceof Date) return value.toISOString() as T;
@@ -804,6 +793,10 @@ function convertOperation<TContext>(
   try {
     return { candidate: converter.candidate(path, pathItem, method, value) };
   } catch (error) {
+    // A stack overflow means schemas or references nest too deeply to walk.
+    if (error instanceof RangeError) {
+      return { skip: { operation: ref, code: "schema-too-large", reason: "a schema or reference chain nests too deeply" } };
+    }
     if (!(error instanceof OpenApiSkip)) throw error;
     return { skip: { operation: ref, code: error.code, reason: error.message } };
   }

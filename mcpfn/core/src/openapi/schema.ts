@@ -14,8 +14,11 @@ export class OpenApiSkip extends Error {
 
 export type OpenApiVersion = "3.0" | "3.1";
 
-/** `input` removes `readOnly` properties; `output` removes `writeOnly` properties. */
-export type SchemaMode = "input" | "output";
+/**
+ * `input` removes `readOnly` properties; `output` removes `writeOnly`
+ * properties; `plain` removes none (to check a schema as the document wrote it).
+ */
+export type SchemaMode = "input" | "output" | "plain";
 
 type JsonObject = Record<string, unknown>;
 
@@ -104,41 +107,64 @@ const OAS_DIALECT = /^https:\/\/spec\.openapis\.org\/oas\/3\.1\/dialect\/(?:base
 export const MAX_SCHEMA_NODES = 100_000;
 
 /**
- * Nodes all of one `fromOpenAPI` call's conversions and copies may produce
- * together: a floor plus a multiple of the document's own size, so a small
- * document that shares objects cannot multiply work across operations or
- * components. Once it is spent, every later schema is `schema-too-large`.
+ * Schema nodes all of one `fromOpenAPI` call's conversions may produce: a
+ * floor plus a multiple of the document's own size, so a document that shares
+ * one schema object between many operations cannot multiply the work. Copies
+ * of produced schemas are not charged to it: each tool's schemas are output
+ * the registry compiles anyway, and each copy has its own limits.
  */
 const DOCUMENT_NODE_FLOOR = 1_000_000;
 const DOCUMENT_NODE_FACTOR = 64;
 
+/**
+ * Within one conversion or copy, the produced nodes may exceed the values of
+ * the distinct source objects it reads by this factor (plus an allowance)
+ * only when objects are shared; a plain JSON tree produces exactly as many.
+ */
+const SHARING_FACTOR = 4;
+const SHARING_ALLOWANCE = 1024;
+
+const REGION = "a schema expands";
+
 export class NodeBudget {
-  private remaining: number;
+  private produced = 0;
+  private sourceValues = 0;
+  private readonly seen = new WeakSet<object>();
 
   constructor(
     private readonly limit = MAX_SCHEMA_NODES,
     private readonly total?: NodeBudget,
-    private readonly subject = "a schema expands",
-  ) {
-    this.remaining = limit;
-  }
+    private readonly subject = REGION,
+  ) {}
 
-  /** The budget of a whole call for `document`, counted as its values (shared ones once). */
+  /** The conversion budget of a whole call for `document`, counted as its values (shared ones once). */
   static forDocument(document: unknown): NodeBudget {
     const limit = DOCUMENT_NODE_FLOOR + DOCUMENT_NODE_FACTOR * countValues(document);
     return new NodeBudget(limit, undefined, "the document's schemas expand in total");
   }
 
-  /** A budget for one input, output, component or copy, also charged to this one. */
+  /** A budget for one input, output or component conversion, also charged to this one. */
   child(): NodeBudget {
     return new NodeBudget(MAX_SCHEMA_NODES, this);
   }
 
-  charge(): void {
+  /** Charge one produced node read from `value`. */
+  charge(value?: unknown): void {
     this.total?.charge();
-    this.remaining -= 1;
-    if (this.remaining < 0) {
+    this.produced += 1;
+    if (typeof value === "object" && value !== null && !this.seen.has(value)) {
+      this.seen.add(value);
+      this.sourceValues += 1 + Object.keys(value).length;
+    }
+    if (this.produced > this.limit) {
       throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
+    }
+    // The call's total counts nodes only; each region checks its own sharing.
+    if (this.subject === REGION && this.produced > SHARING_FACTOR * this.sourceValues + SHARING_ALLOWANCE) {
+      throw new OpenApiSkip(
+        "schema-too-large",
+        `a schema repeats shared objects into ${this.produced} nodes from ${this.sourceValues} source values`,
+      );
     }
   }
 }
@@ -153,7 +179,7 @@ function countValues(root: unknown): number {
     count += 1;
     if (typeof value !== "object" || value === null || seen.has(value)) continue;
     seen.add(value);
-    stack.push(...Object.values(value));
+    for (const item of Object.values(value)) stack.push(item);
   }
   return count;
 }
@@ -209,7 +235,7 @@ interface ConvertedComponent {
 
 type DirectionalKeyword = "readOnly" | "writeOnly";
 
-function directionalKeyword(mode: SchemaMode): DirectionalKeyword {
+function directionalKeyword(mode: "input" | "output"): DirectionalKeyword {
   return mode === "input" ? "readOnly" : "writeOnly";
 }
 
@@ -316,9 +342,9 @@ export class SchemaConverter {
     this.budget = total.child();
   }
 
-  /** A budget for one copy of a produced schema. */
+  /** A budget for one copy of a produced schema (not charged to the call's total). */
   copyBudget(): NodeBudget {
-    return this.total.child();
+    return new NodeBudget();
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -421,7 +447,7 @@ export class SchemaConverter {
   }
 
   private convert(schema: unknown, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema | boolean {
-    this.budget.charge();
+    this.budget.charge(schema);
     if (typeof schema === "boolean") return schema;
     if (!isObject(schema)) {
       throw new OpenApiSkip("invalid-schema", "a schema is not an object");
@@ -544,6 +570,7 @@ export class SchemaConverter {
    * closed object refuses it once it is no longer listed.
    */
   private project(converted: McpFnJsonSchema, source: JsonObject, mode: SchemaMode): void {
+    if (mode === "plain") return;
     const keyword = directionalKeyword(mode);
     const flagged = objectEntries(source.properties)
       .filter(([, property]) => this.hasFlag(property, keyword))
@@ -553,7 +580,7 @@ export class SchemaConverter {
     const properties: JsonObject = { ...converted.properties };
     for (const name of flagged) {
       if (closed) delete properties[name];
-      else properties[name] = false;
+      else Object.defineProperty(properties, name, { value: false, enumerable: true, writable: true, configurable: true });
     }
     converted.properties = properties as McpFnJsonSchema["properties"];
     if (Array.isArray(converted.required)) {
@@ -572,7 +599,7 @@ export class SchemaConverter {
    * for `mode` everywhere `schema` applies is sound: the result refuses every
    * flagged name and still accepts what the source accepted without them.
    */
-  checkProjection(schema: unknown, mode: SchemaMode): void {
+  checkProjection(schema: unknown, mode: "input" | "output"): void {
     const keyword = directionalKeyword(mode);
     const conflict = this.projectionConflict(schema, keyword);
     if (conflict === undefined) return;
@@ -584,18 +611,50 @@ export class SchemaConverter {
     );
   }
 
-  /** Memoised per schema object; a cycle back to a schema being checked adds nothing new. */
+  /** Whether `schema` (through any subschema or reference) flags a property for `mode`. */
+  flagsFor(schema: unknown, mode: "input" | "output"): boolean {
+    return this.reachesFlag(schema, directionalKeyword(mode));
+  }
+
+  /**
+   * Memoised per schema object. A check that reaches a schema still being
+   * checked (a reference cycle) does not know that schema's result yet, so a
+   * clean result is kept only for the outermost schema of its cycle (as in
+   * Tarjan's algorithm); a conflict is always final.
+   */
   private projectionConflict(schema: unknown, keyword: DirectionalKeyword): AccessConflict | undefined {
     if (!isObject(schema) || !this.reachesFlag(schema, keyword)) return undefined;
     const memo = memoFor(this.projections, keyword);
     const known = memo.get(schema);
     if (known !== undefined) return known ?? undefined;
-    memo.set(schema, null);
-    const entries = this.closure(schema);
-    const conflict = this.flagConflict(entries, keyword) ?? this.childConflict(entries, keyword);
-    memo.set(schema, conflict ?? null);
-    return conflict;
+    const active = this.checking.get(schema);
+    if (active !== undefined) {
+      this.lowest = Math.min(this.lowest, active);
+      return undefined;
+    }
+    if (this.provisional.has(schema)) return undefined;
+    const depth = this.checking.size;
+    const outer = this.lowest;
+    this.checking.set(schema, depth);
+    this.lowest = Number.POSITIVE_INFINITY;
+    try {
+      const entries = this.closure(schema);
+      const conflict = this.flagConflict(entries, keyword) ?? this.childConflict(entries, keyword);
+      if (conflict !== undefined) memo.set(schema, conflict);
+      else if (this.lowest >= depth) memo.set(schema, null);
+      else this.provisional.add(schema);
+      return conflict;
+    } finally {
+      this.checking.delete(schema);
+      this.lowest = Math.min(outer, this.lowest >= depth ? Number.POSITIVE_INFINITY : this.lowest);
+      if (this.checking.size === 0) this.provisional.clear();
+    }
   }
+
+  private readonly checking = new Map<object, number>();
+  /** Clean results that depend on a schema still being checked; valid only until the outermost check ends. */
+  private readonly provisional = new Set<object>();
+  private lowest = Number.POSITIVE_INFINITY;
 
   /**
    * `root` and every schema applied to the same instance: `$ref` targets
@@ -653,6 +712,23 @@ export class SchemaConverter {
    * or matching property names, or closing the object).
    */
   private flagConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    const declarers = this.declarers(entries, keyword);
+    if (!(declarers instanceof Map)) return declarers;
+    if (declarers.size === 0) return undefined;
+    // Validators do not read a "__proto__" key of properties as a property schema.
+    if (declarers.has("__proto__")) return { name: "__proto__", by: "the validators, which ignore it in properties" };
+    for (const entry of entries) {
+      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers) : undefined;
+      if (conflict !== undefined) return conflict;
+    }
+    return undefined;
+  }
+
+  /** The schemas flagging each property name, or the conflict of a flag under a condition. */
+  private declarers(
+    entries: ClosureEntry[],
+    keyword: DirectionalKeyword,
+  ): Map<string, Set<object>> | AccessConflict {
     const declarers = new Map<string, Set<object>>();
     for (const { schema, conditional } of entries) {
       for (const [name, property] of objectEntries(schema.properties)) {
@@ -663,12 +739,7 @@ export class SchemaConverter {
         declarers.set(name, known);
       }
     }
-    if (declarers.size === 0) return undefined;
-    for (const entry of entries) {
-      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers) : undefined;
-      if (conflict !== undefined) return conflict;
-    }
-    return undefined;
+    return declarers;
   }
 
   /**
@@ -817,7 +888,7 @@ export class SchemaConverter {
     const referrers = new Map<string, string[]>();
     const queue: string[] = [];
     for (const [name, schema] of Object.entries(this.schemas)) {
-      const { flagged, refs } = this.localFlags(schema, keyword);
+      const { flagged, refs } = this.componentFlags(schema, keyword);
       if (flagged) {
         result.add(name);
         queue.push(name);
@@ -837,6 +908,20 @@ export class SchemaConverter {
     }
     this.reaching.set(keyword, result);
     return result;
+  }
+
+  /**
+   * `localFlags` of a component. One too deeply nested to scan (a stack
+   * overflow) counts as flagged, so any operation reaching it is checked in
+   * full, and fails there with its own skip; others are unaffected.
+   */
+  private componentFlags(schema: unknown, keyword: DirectionalKeyword): { flagged: boolean; refs: Set<string> } {
+    try {
+      return this.localFlags(schema, keyword);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      return { flagged: true, refs: new Set() };
+    }
   }
 
   /**
@@ -904,9 +989,15 @@ export class SchemaConverter {
     // A cycle back to this schema adds no flag; a cycle that never descends
     // into a child is rejected by `definitions` anyway.
     memo.set(property, false);
-    const result = this.computeFlag(property, keyword);
-    memo.set(property, result);
-    return result;
+    try {
+      const result = this.computeFlag(property, keyword);
+      memo.set(property, result);
+      return result;
+    } catch (error) {
+      // A partial result (such as after a stack overflow) is never kept.
+      memo.delete(property);
+      throw error;
+    }
   }
 
   private computeFlag(property: JsonObject, keyword: DirectionalKeyword): boolean {

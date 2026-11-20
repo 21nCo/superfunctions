@@ -141,16 +141,17 @@ for (const { operation, code, reason } of skipped) {
   an array of objects or arrays, or both an array and a single value is skipped.
 - **Outputs.** The selected response schema is the first `application/json`
   entry with a `schema`, scanning 2xx responses in order. It is always
-  converted and, unless it becomes the output schema as it is, compiled by
-  mcpFn's validator, for `HEAD` too, so the skip rules apply to it whatever
-  its shape or method. A `HEAD` tool never declares an output schema, since
-  its response has no body. Otherwise the schema becomes the output schema
-  when it accepts objects and nothing else (also through a 3.1 `$ref` with
-  sibling keywords, an `allOf`, or a `not` of bare types such as
+  converted, for `HEAD` too, so the skip rules apply to it whatever its
+  shape or method; a schema that is discarded, or whose `writeOnly`
+  properties are left out, is first compiled by mcpFn's validator as
+  written. A `HEAD` tool never declares an output schema, since its response
+  has no body. Otherwise the schema becomes the output schema when it
+  accepts objects and nothing else (also through a 3.1 `$ref` with sibling
+  keywords, an `allOf`, or a `not` of bare types such as
   `not: { type: "null" }`), with `writeOnly` properties left out by the same
-  rule as `readOnly` ones in inputs. When that rule cannot be applied, or the
-  schema is too large or in another dialect, the tool declares no output
-  schema instead of being skipped.
+  rule as `readOnly` ones in inputs; when that rule cannot be applied, the
+  operation is skipped (`unsupported-access-flag`), so no tool returns
+  structured content its schema did not check.
 - **Paths.** `x-*` entries of the Paths Object are extensions and are ignored.
 - **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
   is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
@@ -173,11 +174,15 @@ for (const { operation, code, reason } of skipped) {
   `$schema` other than the OAS 3.1 base dialect (`.../dialect/base` or a
   dated id) or JSON Schema 2020-12, or any `$schema` in a 3.0 document, skips
   the schemas it governs (`unsupported-dialect`); a schema root that names a
-  supported `$schema` itself is read in it. An input, output or component
-  that would expand to more than 100,000 schema nodes (a document can share
-  one object between many positions) is skipped (`schema-too-large`), and so
-  is every schema converted after one call has produced 1,000,000 nodes plus
-  64 per value of the document. A Swagger 2.0 document throws.
+  supported `$schema` itself is read in it, and a JSON body without `schema`
+  accepts any JSON value in any dialect. A schema that would expand to more
+  than 100,000 nodes, or that repeats objects the document shares between
+  positions into more than four times the values they hold, is skipped
+  (`schema-too-large`), and so is every schema converted after one call's
+  conversions have produced 1,000,000 nodes plus 64 per value of the
+  document (copies of produced schemas for each tool do not count). A schema
+  or reference chain nested too deeply to walk is skipped the same way. A
+  Swagger 2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates.
   `operation` is deeply frozen and typed read-only.
