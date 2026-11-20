@@ -11,11 +11,12 @@ const SENSITIVE_KEY =
 // closed with more characters attached) redacts to the end of the line;
 // an unquoted value runs to the next whitespace, comma or semicolon (quotes and
 // & inside it are redacted too). A bracketed key such as user[password] or
-// user%5Bpassword%5D may close with "]" or "%5D" before the separator. An
-// authorization scheme such as Bearer is kept, and its credential redacted,
-// only after an authorization key and only when the credential is on the same
-// line; after any other key the scheme word may itself be the secret, so the
-// whole value is redacted.
+// user%5Bpassword%5D may close with "]" or "%5D" before the separator.
+// An unquoted value after an authorization key is redacted to the end of its
+// line, because schemes such as Digest or AWS4-HMAC-SHA256 carry
+// comma-separated parameters; only a leading Bearer, Basic or Token label
+// followed by a credential on the same line is kept. After any other key the
+// scheme word may itself be the secret, so the whole value is redacted.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
@@ -25,23 +26,30 @@ const REDACTED = "[REDACTED]";
 const ENCODED_REDACTED = /%5BREDACTED%5D/g;
 const MAX_KEY_DECODE_PASSES = 3;
 
+const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
+const LINE_BREAK = /[\r\n]/;
+
+/**
+ * Decodes each well-formed %XX escape on its own and leaves malformed %
+ * sequences as written, so one bad escape (%ZZ, a trailing %, invalid UTF-8)
+ * cannot stop the rest of the key from being decoded. Bytes map to single
+ * characters, which is enough to recognise the ASCII sensitive words.
+ */
+function decodePercentEscapes(input: string): string {
+  return input.replace(PERCENT_ESCAPE, (_escape, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)));
+}
+
 /**
  * Tests a key against SENSITIVE_KEY as written and after up to
- * MAX_KEY_DECODE_PASSES percent-decoding passes, so keys that still carry
- * escapes after parsing (user%5Bpass%77ord%5D) are recognised. Malformed
- * escapes stop decoding.
+ * MAX_KEY_DECODE_PASSES escape-decoding passes, so keys that still carry
+ * escapes after parsing (user%5Bpass%77ord%5D) are recognised.
  */
 function isSensitiveKey(key: string): boolean {
   let candidate = key;
   for (let pass = 0; pass <= MAX_KEY_DECODE_PASSES; pass += 1) {
     if (SENSITIVE_KEY.test(candidate)) return true;
-    if (pass === MAX_KEY_DECODE_PASSES || !candidate.includes("%")) return false;
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(candidate);
-    } catch {
-      return false;
-    }
+    if (pass === MAX_KEY_DECODE_PASSES) return false;
+    const decoded = decodePercentEscapes(candidate);
     if (decoded === candidate) return false;
     candidate = decoded;
   }
@@ -184,25 +192,34 @@ export function redactSensitive(value: unknown): any {
 }
 
 export function redactSensitiveString(input: string): string {
-  return input
-    .replace(
-      KEY_VALUE_SECRET,
-      (
-        _match,
-        key: string,
-        keyQuote: string,
-        separator: string,
-        valueQuote?: string,
-        _quoted?: string,
-        openQuote?: string,
-        scheme?: string,
-      ) => {
-        if (valueQuote) return `${key}${keyQuote}${separator}${valueQuote}[REDACTED]${valueQuote}`;
-        if (openQuote) return `${key}${keyQuote}${separator}${openQuote}[REDACTED]`;
-        const keptScheme = scheme && AUTHORIZATION_KEY.test(key) ? scheme : "";
-        return `${key}${keyQuote}${separator}${keptScheme}[REDACTED]`;
-      },
-    )
+  return redactKeyValues(input)
     .replace(URL_CREDENTIALS, "$1[REDACTED]@")
     .replace(POSTGRES_CREDENTIALS, "$1[REDACTED]@");
+}
+
+function redactKeyValues(input: string): string {
+  const pattern = new RegExp(KEY_VALUE_SECRET.source, KEY_VALUE_SECRET.flags);
+  let output = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(input)) !== null) {
+    const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme] = match;
+    let end = match.index + whole.length;
+    let replacement: string;
+    if (valueQuote) {
+      replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
+    } else if (openQuote) {
+      replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
+    } else if (AUTHORIZATION_KEY.test(key)) {
+      const lineBreak = input.slice(end).search(LINE_BREAK);
+      end = lineBreak === -1 ? input.length : end + lineBreak;
+      replacement = `${key}${keyQuote}${separator}${scheme ?? ""}${REDACTED}`;
+    } else {
+      replacement = `${key}${keyQuote}${separator}${REDACTED}`;
+    }
+    output += input.slice(cursor, match.index) + replacement;
+    cursor = end;
+    pattern.lastIndex = end;
+  }
+  return output + input.slice(cursor);
 }

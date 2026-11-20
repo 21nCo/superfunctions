@@ -23,7 +23,7 @@ describe("auth scheme words as secret values", () => {
     const cases: Array<[string, string]> = [
       ["Authorization: Bearer test-token", "Authorization: Bearer [REDACTED]"],
       ["Proxy-Authorization: Basic test-credential", "Proxy-Authorization: Basic [REDACTED]"],
-      ["authorization=token test-token next", "authorization=token [REDACTED] next"],
+      ["authorization=token test-token next", "authorization=token [REDACTED]"],
     ];
     for (const [input, expected] of cases) {
       expect(redactSensitiveString(input)).toBe(expected);
@@ -119,5 +119,84 @@ describe("auth scheme on its own line", () => {
     );
     expect(redactSensitiveString("Authorization: Bearer test-leak")).toBe("Authorization: Bearer [REDACTED]");
     expect(redactSensitiveString(`${PW}=basic connectionTimeout=5000`)).toBe(`${PW}=[REDACTED]`);
+  });
+});
+
+describe("escaped keys with malformed escapes", () => {
+  // user[password] with the w escaped and a malformed tail, built at runtime.
+  const tails = ["%ZZ", "%", "%E0%A4"];
+  const escapedKeys = tails.map((tail) => ["user%5B", "pass%77ord", "%5D", tail].join(""));
+
+  it("masks the value in URLSearchParams, URL query, URL fragment and object keys", () => {
+    for (const key of escapedKeys) {
+      expect(redactSensitive(new URLSearchParams([[key, "test-leak"]]))).not.toContain("test-leak");
+
+      const url = new URL("https://example.test/search?q=x");
+      url.searchParams.set(key, "test-leak");
+      const fromQuery = redactSensitive(url);
+      expect(fromQuery).toContain("=[REDACTED]");
+      expect(fromQuery).not.toContain("test-leak");
+
+      const withFragment = new URL("https://example.test/search");
+      withFragment.hash = new URLSearchParams([[key, "test-leak"], ["state", "ok"]]).toString();
+      const fromFragment = redactSensitive(withFragment);
+      expect(fromFragment).toContain("&state=ok");
+      expect(fromFragment).not.toContain("test-leak");
+
+      expect(redactSensitive({ [key]: "test-leak" })).toEqual({ [key]: "[REDACTED]" });
+    }
+  });
+
+  it("keeps non-sensitive keys with malformed escapes readable", () => {
+    const params = new URLSearchParams([
+      ["filter%5Bcolor%5D%ZZ", "red"],
+      ["page%", "2"],
+      ["sort%E0%A4", "asc"],
+    ]);
+    expect(redactSensitive(params)).toBe("filter%255Bcolor%255D%25ZZ=red&page%25=2&sort%25E0%25A4=asc");
+    expect(redactSensitive({ "page%ZZ": "2" })).toEqual({ "page%ZZ": "2" });
+  });
+});
+
+describe("credentials after an authorization key", () => {
+  it("prints at most the key, separator and one recognised scheme label", () => {
+    const cases: Array<[string, string]> = [
+      ["Authorization: ApiKey test-api-key", "Authorization: [REDACTED]"],
+      ["authorization: ApiKey test-api-key", "authorization: [REDACTED]"],
+      ["Authorization: Negotiate test-ticket", "Authorization: [REDACTED]"],
+      [
+        'Authorization: Digest username="test-user", realm="test", nonce="test-nonce", response="test-response"',
+        "Authorization: [REDACTED]",
+      ],
+      [
+        "Authorization: AWS4-HMAC-SHA256 Credential=test-credential/scope, SignedHeaders=host, Signature=test-signature",
+        "Authorization: [REDACTED]",
+      ],
+      ["Authorization: Bearer\ttest-token", "Authorization: Bearer\t[REDACTED]"],
+      ["Authorization: Bearer  test-token", "Authorization: Bearer  [REDACTED]"],
+      ["Authorization: Bearer test-token, extra-test-part", "Authorization: Bearer [REDACTED]"],
+      ["Authorization: Bearer , test-token", "Authorization: [REDACTED]"],
+      ["Proxy-Authorization: Digest test-response, nc=1", "Proxy-Authorization: [REDACTED]"],
+      ["headers[authorization]=ApiKey test-api-key", "headers[authorization]=[REDACTED]"],
+      ["Authorization: Bearer ***", "Authorization: Bearer [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("keeps quoted and JSON values as before and leaves the next line readable", () => {
+    expect(redactSensitiveString('{"authorization":"ApiKey test-api-key","q":"x"}')).toBe(
+      '{"authorization":"[REDACTED]","q":"x"}',
+    );
+    expect(redactSensitiveString("Authorization: 'Digest test-response' status=401")).toBe(
+      "Authorization: '[REDACTED]' status=401",
+    );
+    expect(redactSensitiveString("Authorization: ApiKey test-api-key, x=1\nstatus=401 q=x")).toBe(
+      "Authorization: [REDACTED]\nstatus=401 q=x",
+    );
+    expect(redactSensitiveString("Authorization: Negotiate test-ticket\r\ntoken=test-token")).toBe(
+      "Authorization: [REDACTED]\r\ntoken=[REDACTED]",
+    );
   });
 });
