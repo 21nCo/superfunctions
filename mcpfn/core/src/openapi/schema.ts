@@ -1261,8 +1261,10 @@ function addDefinitions(entries: Array<[string, unknown]>, defs: JsonObject): vo
     return;
   }
   const allOf = entries.find(([keyword]) => keyword === "allOf");
-  if (allOf) allOf[1] = [...(allOf[1] as unknown[]), { definitions: defs }];
-  else entries.push(["allOf", [{ definitions: defs }]]);
+  if (allOf === undefined) entries.push(["allOf", [{ definitions: defs }]]);
+  else if (Array.isArray(allOf[1]) && allOf[1].length > 0) allOf[1] = [...allOf[1], { definitions: defs }];
+  // A malformed allOf is kept as written, so the schema is still refused.
+  else entries.push(["$defs", defs]);
 }
 
 function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {

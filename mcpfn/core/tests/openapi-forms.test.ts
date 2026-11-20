@@ -1828,6 +1828,13 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
           "/r": { get: { operationId: "ownOutput", responses: json({ type: "object", definitions: { U: { type: "bogus" } }, properties: { v: text } }) } },
           "/v": post("validDefs", { type: "object", $defs: flagged("string"), definitions: { D: { type: "string" } }, properties: { value: text } }),
           "/o": { get: { operationId: "validOutput", responses: json({ type: "object", definitions: { U: { type: "string" } }, properties: { v: text } }) } },
+          // Both maps beside a malformed allOf: the allOf is kept as written and refused.
+          ...Object.fromEntries(
+            [null, {}, [], ""].map((allOf, index) => [
+              `/m${index}`,
+              post(`malformedAllOf${index}`, { type: "string", definitions: { A: { type: "string" } }, $defs: { B: { type: "string" } }, allOf }),
+            ]),
+          ),
         },
       },
       options(),
@@ -1835,6 +1842,7 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code]).sort()).toEqual([
       ["defsBody", "invalid-schema"],
       ["defsUnflagged", "invalid-schema"],
+      ...[0, 1, 2, 3].map((index) => [`malformedAllOf${index}`, "invalid-schema"]),
       ["ownOutput", "invalid-schema"],
     ]);
     const body = (tool(result.tools, "validDefs").inputSchema.properties as Record<string, Record<string, unknown>>).body!;
