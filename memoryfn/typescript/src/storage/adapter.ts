@@ -48,12 +48,13 @@ export class MemorySourceLimitError extends Error {
 
   /**
    * Each package entry point (the root and ./storage/pg) bundles its own copy
-   * of this class, so `instanceof` matches the error by its name and code.
+   * of this class, so besides the ordinary prototype check `instanceof` matches
+   * the error of another copy by its name and code. A subclass keeps only the
+   * ordinary check.
    */
   static [Symbol.hasInstance](value: unknown): boolean {
-    // A subclass keeps the ordinary prototype check.
-    if (this !== MemorySourceLimitError) return Function.prototype[Symbol.hasInstance].call(this, value);
-    return value instanceof Error && value.name === 'MemorySourceLimitError'
+    if (Function.prototype[Symbol.hasInstance].call(this, value)) return true;
+    return this === MemorySourceLimitError && value instanceof Error && value.name === 'MemorySourceLimitError'
       && (value as { code?: unknown }).code === 'MEMORY_SOURCE_LIMIT_EXCEEDED';
   }
 }

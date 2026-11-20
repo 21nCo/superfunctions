@@ -73,7 +73,9 @@ describe('PostgresAdapter source statements', () => {
     const others = [new Error('MEMORY_SOURCE_LIMIT_EXCEEDED'), Object.assign(new Error('x'), { code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' }), { name: 'MemorySourceLimitError', code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' }];
     expect(others.map(value => value instanceof MemorySourceLimitError)).toEqual([false, false, false]);
     class AppLimit extends MemorySourceLimitError { readonly retryAfter = 1; }
+    class Renamed extends MemorySourceLimitError { name = 'AppLimit'; }
     expect([new MemorySourceLimitError() instanceof AppLimit, foreign instanceof AppLimit, new AppLimit() instanceof AppLimit, new AppLimit() instanceof pgEntry.MemorySourceLimitError])
       .toEqual([false, false, true, true]);
+    expect([new Renamed() instanceof MemorySourceLimitError, new Renamed() instanceof Renamed, new AppLimit() instanceof Renamed]).toEqual([true, true, false]);
   });
 });
