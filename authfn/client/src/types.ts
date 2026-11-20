@@ -257,6 +257,11 @@ export interface AuthFnClient {
   }> | AuthFnErrorEnvelope>;
   startWebHandoff(input?: {
     returnTo?: string;
+    /**
+     * Base64url SHA-256 of a verifier the app keeps; the app must then load
+     * the consume URL with the verifier in the `x-authfn-handoff-verifier` header.
+     */
+    verifierChallenge?: string;
   }): Promise<AuthFnSuccessEnvelope<{
     consumeUrl: string;
     code: string;

@@ -666,7 +666,7 @@ function createSocialRoutes(
             return redirectWithCookies(
               request,
               appendOAuthErrorToReturnTarget(errorRedirectTo, providerId, requestId, authError),
-              [],
+              config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
               303
             );
           }

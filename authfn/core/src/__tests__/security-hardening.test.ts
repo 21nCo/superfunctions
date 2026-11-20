@@ -349,6 +349,7 @@ describe('API key creation policy (F-13)', () => {
   });
 
   it('rejects invalid policy settings when the plugin is created', () => {
+    expect(() => authFnApiKeyPlugin({ defaultExpiresInSeconds: 30 * 86_400, maxExpiresInSeconds: 7 * 86_400 })).toThrow(/must not exceed/);
     for (const value of [Number.NaN, 0, -1, 1.5]) {
       expect(() => authFnApiKeyPlugin({ recentAuthenticationSeconds: value })).toThrow(/positive whole number/);
       expect(() => authFnApiKeyPlugin({ maxExpiresInSeconds: value })).toThrow(/positive whole number/);
@@ -447,6 +448,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
 
     const otherBrowser = await callback(auth, stateId);
     expect(otherBrowser.status).toBe(303);
+    expect(otherBrowser.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.') && /Max-Age=0/i.test(cookie))).toBe(true);
     const errorTarget = new URL(otherBrowser.headers.get('location')!);
     expect(errorTarget.searchParams.get('auth_error_code')).toBe('AUTHFN_OAUTH_STATE_INVALID');
     expect(otherBrowser.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);

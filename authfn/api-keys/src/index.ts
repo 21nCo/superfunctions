@@ -33,6 +33,15 @@ export function authFnApiKeyPlugin(
   assertPositiveSeconds(config.recentAuthenticationSeconds, 'recentAuthenticationSeconds');
   assertPositiveSeconds(config.defaultExpiresInSeconds, 'defaultExpiresInSeconds');
   assertPositiveSeconds(config.maxExpiresInSeconds, 'maxExpiresInSeconds');
+  if (
+    config.defaultExpiresInSeconds !== undefined
+    && config.maxExpiresInSeconds !== undefined
+    && config.defaultExpiresInSeconds > config.maxExpiresInSeconds
+  ) {
+    throw new AuthFnConfigError('apiKey defaultExpiresInSeconds must not exceed maxExpiresInSeconds', {
+      option: 'defaultExpiresInSeconds'
+    });
+  }
   return {
     name: 'apiKey',
     schema: () => config.schema ?? createApiKeySchema(),
