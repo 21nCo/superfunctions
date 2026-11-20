@@ -1,5 +1,5 @@
 import Ajv from "ajv";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection } from "../src/validation.js";
 
@@ -721,5 +721,86 @@ describe("Ajv compilation of repeated schemas", () => {
       expect(alone(value)).toBe(direct(value));
       expect(afterEqual(value)).toBe(direct(value));
     }
+  });
+});
+
+describe("Ajv compilation of Proxy schemas", () => {
+  const runtime = process as { getBuiltinModule?: unknown };
+  const original = runtime.getBuiltinModule;
+  afterEach(() => {
+    runtime.getBuiltinModule = original;
+    vi.restoreAllMocks();
+  });
+  // Node's isProxy where available, and the keyword check where it is not.
+  const detections = [
+    ["with util.types.isProxy", () => {}],
+    ["without util.types.isProxy", () => { runtime.getBuiltinModule = undefined; }],
+  ] as const;
+
+  const phantomMinLength = () =>
+    new Proxy({ type: "string" } as Record<string, unknown>, {
+      get: (target, key) => (key === "minLength" ? 3 : Reflect.get(target, key)),
+    });
+  const changedMinimum = () =>
+    new Proxy({ type: "number", minimum: 1 } as Record<string, unknown>, {
+      get: (target, key) => (key === "minimum" ? 5 : Reflect.get(target, key)),
+    });
+  const lazyEmpty = () =>
+    new Proxy({} as Record<string, unknown>, {
+      get: (_target, key) => (key === "type" ? "string" : key === "maxLength" ? 2 : undefined),
+    });
+
+  it.each(detections)("applies a keyword a Proxy answers without owning it (%s)", (_label, setup) => {
+    setup();
+    const direct = new Ajv().compile(phantomMinLength());
+    expect(direct("a")).toBe(false);
+    const compiler = createSchemaCompiler("ajv");
+    compiler.compile({ type: "string" });
+    const afterPlain = compiler.compile(phantomMinLength());
+    const alone = createSchemaCompiler("ajv").compile(phantomMinLength());
+    for (const value of ["a", "abc", 1]) {
+      expect(alone(value)).toBe(direct(value));
+      expect(afterPlain(value)).toBe(direct(value));
+    }
+  });
+
+  it.each(detections)("applies the value a get trap returns for an owned keyword (%s)", (_label, setup) => {
+    setup();
+    const direct = new Ajv().compile(changedMinimum());
+    expect(direct(2)).toBe(false);
+    const compiler = createSchemaCompiler("ajv");
+    expect(compiler.compile({ type: "number", minimum: 1 })(2)).toBe(true);
+    const afterPlain = compiler.compile(changedMinimum());
+    const alone = createSchemaCompiler("ajv").compile(changedMinimum());
+    for (const value of [0, 2, 5, 6]) {
+      expect(alone(value)).toBe(direct(value));
+      expect(afterPlain(value)).toBe(direct(value));
+    }
+  });
+
+  it.each(detections)("matches direct Ajv for a Proxy over an empty object (%s)", (_label, setup) => {
+    setup();
+    const direct = new Ajv().compile(lazyEmpty());
+    const compiler = createSchemaCompiler("ajv");
+    compiler.compile({});
+    const afterEmpty = compiler.compile(lazyEmpty());
+    const nested = compiler.compile({ type: "object", properties: { v: lazyEmpty() } });
+    const directNested = new Ajv().compile({ type: "object", properties: { v: lazyEmpty() } });
+    for (const value of ["a", "abc", 1]) {
+      expect(afterEmpty(value)).toBe(direct(value));
+      expect(nested({ v: value })).toBe(directNested({ v: value }));
+    }
+  });
+
+  it.each(detections)("still compiles equal plain schemas once (%s)", (_label, setup) => {
+    setup();
+    const compile = vi.spyOn(Ajv.prototype, "compile");
+    const compiler = createSchemaCompiler("ajv");
+    const schema = () => ({ type: "object", properties: { n: { type: "integer", minimum: 1 } }, required: ["n"] });
+    const first = compiler.compile(schema());
+    const second = compiler.compile(schema());
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(first({ n: 0 })).toBe(false);
+    expect(second({ n: 1 })).toBe(true);
   });
 });

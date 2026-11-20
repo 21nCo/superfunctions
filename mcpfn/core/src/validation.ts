@@ -558,6 +558,51 @@ export function validateSchemaCollection(
   else validateCfWorkerSchemaCollection(schemas);
 }
 
+interface SnapshotGuard {
+  /** Node's `util.types.isProxy`, when the runtime exposes it. */
+  readonly isProxy: ((value: object) => boolean) | undefined;
+  /** Every keyword the Ajv instance reads, for runtimes without `isProxy`. */
+  readonly keywords: () => readonly string[];
+}
+
+function runtimeProxyCheck(): ((value: object) => boolean) | undefined {
+  try {
+    const runtime = (globalThis as {
+      process?: { getBuiltinModule?: (id: string) => unknown };
+    }).process;
+    if (typeof runtime?.getBuiltinModule !== "function") return undefined;
+    const util = runtime.getBuiltinModule("node:util") as
+      | { types?: { isProxy?: (value: unknown) => boolean } }
+      | undefined;
+    const isProxy = util?.types?.isProxy;
+    return typeof isProxy === "function" ? (value) => isProxy(value) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ajvKeywords(ajv: Ajv): readonly string[] {
+  return [...new Set([
+    ...Object.keys(ajv.RULES.keywords),
+    ...Object.keys(ajv.RULES.all),
+    "$ref", "$id", "$schema", "definitions",
+  ])];
+}
+
+/**
+ * Without a Proxy check, an object that reports a keyword through [[Get]]
+ * that it does not own (a Proxy get trap, or a keyword inherited from a
+ * changed Object.prototype) cannot be copied faithfully.
+ */
+function answersUnownedKeyword(value: object, keywords: readonly string[]): boolean {
+  if (Array.isArray(value)) return false;
+  for (const keyword of keywords) {
+    if (Object.prototype.hasOwnProperty.call(value, keyword)) continue;
+    if ((value as Record<string, unknown>)[keyword] !== undefined) return true;
+  }
+  return false;
+}
+
 /**
  * Registration compiles every tool schema eagerly, and a catalog generated
  * from one API description repeats the same schemas across its tools. Equal
@@ -570,15 +615,24 @@ export function validateSchemaCollection(
  * and of dense arrays, holding
  * strings, booleans, null and finite numbers, and builds both the key and a
  * private copy of that data. Ajv compiles the copy, never the caller's object,
- * so the key always describes exactly what was compiled (a Proxy or getter
- * cannot answer differently on a second read), and a validator never depends
- * on data another caller can mutate. Anything else (a toJSON method, an
- * accessor, a symbol or non-enumerable key, a null-prototype or class
- * instance, a hole, undefined, -0, a non-finite number, a cycle) gives no
- * snapshot, as does `$id` (Ajv rejects a repeated id); such schemas are
+ * so the key always describes exactly what was compiled, and a validator
+ * never depends on data another caller can mutate. Anything else (a toJSON
+ * method, an accessor, a symbol or non-enumerable key, a null-prototype or
+ * class instance, a hole, undefined, -0, a non-finite number, a cycle) gives
+ * no snapshot, as does `$id` (Ajv rejects a repeated id); such schemas are
  * compiled from the caller's object every time, as before.
+ *
+ * A Proxy anywhere in the schema also gives no snapshot: its traps can answer
+ * a keyword read that no own key backs, or answer differently on each read,
+ * so no copy can be proven equal to what Ajv reads from it. Proxies are
+ * detected with Node's `util.types.isProxy`; where that is unavailable, an
+ * object that answers any keyword the Ajv instance knows without owning it
+ * gives no snapshot instead.
  */
-function schemaContentSnapshot(schema: object): { key: string; copy: object } | undefined {
+function schemaContentSnapshot(
+  schema: object,
+  guard: SnapshotGuard,
+): { key: string; copy: object } | undefined {
   const parts: string[] = [];
   const active = new Set<object>();
   const NO_SNAPSHOT = Symbol("no snapshot");
@@ -592,7 +646,11 @@ function schemaContentSnapshot(schema: object): { key: string; copy: object } | 
       parts.push(JSON.stringify(value));
       return value;
     }
-    if (typeof value !== "object" || active.has(value) || "toJSON" in value) return NO_SNAPSHOT;
+    if (typeof value !== "object" || active.has(value)) return NO_SNAPSHOT;
+    if (guard.isProxy ? guard.isProxy(value) : answersUnownedKeyword(value, guard.keywords())) {
+      return NO_SNAPSHOT;
+    }
+    if ("toJSON" in value) return NO_SNAPSHOT;
     const isArray = Array.isArray(value);
     if (Object.getPrototypeOf(value) !== (isArray ? Array.prototype : Object.prototype)) return NO_SNAPSHOT;
     const ownKeys = Reflect.ownKeys(value);
@@ -609,8 +667,7 @@ function schemaContentSnapshot(schema: object): { key: string; copy: object } | 
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return NO_SNAPSHOT;
       if (!isArray) parts.push(JSON.stringify(key), ":");
-      // Read the value the way Ajv would ([[Get]]), once: a Proxy whose get
-      // trap disagrees with its descriptor is captured as Ajv would see it.
+      // Read the value the way Ajv would ([[Get]]), once.
       const item = walk((value as Record<string, unknown>)[key]);
       if (item === NO_SNAPSHOT) return NO_SNAPSHOT;
       if (isArray) (copy as unknown[]).push(item);
@@ -639,11 +696,16 @@ export function createSchemaCompiler(
   if (engine === "ajv") {
     const ajv = createAjv();
     const compiledByContent = new Map<string, ValidateFunction>();
+    let keywords: readonly string[] | undefined;
+    const guard: SnapshotGuard = {
+      isProxy: runtimeProxyCheck(),
+      keywords: () => (keywords ??= ajvKeywords(ajv)),
+    };
     return {
       engine,
       compile(schema) {
         assertNoLegacySchemaIds(schema);
-        const snapshot = schemaContentSnapshot(schema);
+        const snapshot = schemaContentSnapshot(schema, guard);
         let validate = snapshot === undefined ? undefined : compiledByContent.get(snapshot.key);
         if (!validate) {
           validate = ajv.compile((snapshot?.copy ?? schema) as never);
