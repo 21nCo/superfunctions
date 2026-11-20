@@ -200,3 +200,49 @@ describe("credentials after an authorization key", () => {
     );
   });
 });
+
+describe("scheme label without a credential after it", () => {
+  it("redacts the label when the next same-line token is a name=value assignment", () => {
+    // Base64 credential with trailing padding, built at runtime.
+    const padded = btoa("test");
+    const cases: Array<[string, string]> = [
+      ["authorization=token connectionTimeout=5000", "authorization=[REDACTED]"],
+      ["Authorization: Bearer x=1", "Authorization: [REDACTED]"],
+      ["Authorization: Bearer status=401 requestId=test-request", "Authorization: [REDACTED]"],
+      ["Authorization: Token token=test-token", "Authorization: [REDACTED]"],
+      [`Authorization: Basic ${padded}`, "Authorization: Basic [REDACTED]"],
+      [`Authorization: Basic ${padded} status=401`, "Authorization: Basic [REDACTED]"],
+      ["Authorization: Bearer test-token\nstatus=401", "Authorization: Bearer [REDACTED]\nstatus=401"],
+    ];
+    expect(padded.endsWith("=")).toBe(true);
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("prints nothing after the key for AWS4 parameters", () => {
+    const redacted = redactSensitiveString(
+      "Authorization: AWS4-HMAC-SHA256 Credential=test-credential/scope,SignedHeaders=host,Signature=test-signature",
+    );
+    expect(redacted).toBe("Authorization: [REDACTED]");
+  });
+});
+
+describe("URL fragments", () => {
+  it("keeps non-sensitive fragment routes as written", () => {
+    for (const href of [
+      "https://example.test/#/callback?state=ok",
+      "https://example.test/#?q=x&state=ok",
+      "https://example.test/app#section-2",
+      "https://example.test/#/a/b?x=1&y=2",
+    ]) {
+      expect(redactSensitive(new URL(href))).toBe(href);
+    }
+  });
+
+  it("masks only the value of a sensitive segment in a fragment route", () => {
+    const tokenKey = ["access", "token"].join("_");
+    const url = new URL(`https://example.test/#/cb?state=ok&${tokenKey}=test-leak&next=/home`);
+    expect(redactSensitive(url)).toBe(`https://example.test/#/cb?state=ok&${tokenKey}=[REDACTED]&next=/home`);
+  });
+});

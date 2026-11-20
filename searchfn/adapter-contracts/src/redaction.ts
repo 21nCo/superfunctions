@@ -14,9 +14,14 @@ const SENSITIVE_KEY =
 // user%5Bpassword%5D may close with "]" or "%5D" before the separator.
 // An unquoted value after an authorization key is redacted to the end of its
 // line, because schemes such as Digest or AWS4-HMAC-SHA256 carry
-// comma-separated parameters; only a leading Bearer, Basic or Token label
-// followed by a credential on the same line is kept. After any other key the
-// scheme word may itself be the secret, so the whole value is redacted.
+// comma-separated name=value parameters (Credential=..., Signature=...) that
+// cannot be told apart from trailing diagnostics such as status=401, so no
+// following field is kept. Only a leading Bearer, Basic or Token label is kept,
+// and only when the next token on the same line is a credential rather than a
+// name=value assignment (an = that is only trailing base64 padding still counts
+// as a credential); otherwise the label may itself be the secret. After any
+// other key the scheme word may be the secret too, so the whole value is
+// redacted.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
@@ -28,6 +33,10 @@ const MAX_KEY_DECODE_PASSES = 3;
 
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 const LINE_BREAK = /[\r\n]/;
+// An = anywhere but trailing base64 padding marks a name=value assignment.
+const ASSIGNMENT = /=(?!=*$)/;
+// One key=value segment of a URL fragment; route text (/, ?, #) is not a key.
+const FRAGMENT_SEGMENT = /([^&?#/=]+)=([^&]*)/g;
 
 /**
  * Decodes each well-formed %XX escape on its own and leaves malformed %
@@ -76,6 +85,24 @@ function redactSearchParams(params: URLSearchParams): string {
   return pairs.join("&");
 }
 
+/**
+ * Keeps a URL fragment as written (route prefix, ?, / and delimiters) and
+ * redacts only the value of each key=value segment whose key is sensitive;
+ * other values and the text between segments go through redactSensitiveString.
+ */
+function redactFragment(fragment: string): string {
+  let output = "";
+  let cursor = 0;
+  for (const match of fragment.matchAll(FRAGMENT_SEGMENT)) {
+    const [whole, key, value] = match;
+    const index = match.index ?? 0;
+    const redactedValue = isSensitiveKey(key) ? REDACTED : redactSensitiveString(value);
+    output += `${redactSensitiveString(fragment.slice(cursor, index))}${key}=${redactedValue}`;
+    cursor = index + whole.length;
+  }
+  return output + redactSensitiveString(fragment.slice(cursor));
+}
+
 function redactUrl(url: URL): string {
   const base = new URL(url.href);
   const hasUserinfo = base.username !== "" || base.password !== "";
@@ -91,8 +118,7 @@ function redactUrl(url: URL): string {
     output += `?${redactSearchParams(url.searchParams)}`;
   }
   if (url.hash !== "") {
-    const fragment = url.hash.slice(1);
-    output += `#${fragment.includes("=") ? redactSearchParams(new URLSearchParams(fragment)) : redactSensitiveString(fragment)}`;
+    output += `#${redactFragment(url.hash.slice(1))}`;
   }
   return output;
 }
@@ -203,7 +229,7 @@ function redactKeyValues(input: string): string {
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(input)) !== null) {
-    const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme] = match;
+    const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme, credential] = match;
     let end = match.index + whole.length;
     let replacement: string;
     if (valueQuote) {
@@ -213,7 +239,8 @@ function redactKeyValues(input: string): string {
     } else if (AUTHORIZATION_KEY.test(key)) {
       const lineBreak = input.slice(end).search(LINE_BREAK);
       end = lineBreak === -1 ? input.length : end + lineBreak;
-      replacement = `${key}${keyQuote}${separator}${scheme ?? ""}${REDACTED}`;
+      const label = scheme !== undefined && !ASSIGNMENT.test(credential) ? scheme : "";
+      replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
       replacement = `${key}${keyQuote}${separator}${REDACTED}`;
     }
