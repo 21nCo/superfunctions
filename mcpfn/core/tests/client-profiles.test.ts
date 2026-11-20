@@ -1670,6 +1670,23 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     } finally { vi.unstubAllGlobals(); vi.resetModules(); }
   });
 
+  // Ajv does not recompile a schema object it has seen, so registering one
+  // anonymous object again leaves the runtime's "" entry on the schema between.
+  it("refuses an anonymous nested ID from a named consumer after a reused anonymous schema", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const declaring = { type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
+    const between = { type: "object" as const, definitions: { inner: { type: "number" } } };
+    const consumer = { $id: "shared", type: "object" as const, properties: { value: { $ref: "nested" } } };
+    const compiler = createSchemaCompiler("ajv");
+    for (const schema of [declaring, between, declaring]) compiler.compile(schema);
+    const validate = compiler.compile(consumer);
+    expect([validate({ value: 1 }), validate({ value: "text" })]).toEqual([true, false]);
+    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer }], schemaResources: [declaring, between, declaring, consumer], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "inline", version: "1", matches: () => true, projectCatalog: () => [{ name: "consumer", inputSchema: { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } } }] },
+    } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+  });
+
   // Ajv stores an alias pointer unencoded but parses it as a URI, so the token
   // "%41" names definitions.A in the resource being compiled.
   it.each([true, false])("compares a nested-ID alias at a percent-encoded pointer as Ajv decodes it (literal %%41 sibling %s)", async (literalSibling) => {

@@ -571,15 +571,23 @@ function mapSchemaKeyword(key: string, value: unknown, visit: (schema: unknown) 
 // The runtime registry compiles schemaResources in order with one Ajv, whose ""
 // entry is the last anonymous schema compiled. Returns that schema's canonical
 // JSON for a root (null when none precedes it), or undefined when the root is
-// not registered or its registrations see different ones.
+// not registered or its registrations see different ones. Ajv skips a schema
+// object it has already compiled, so a reused object does not take the entry
+// again; content cannot tell a reused object from a copy, so a repeated
+// anonymous schema before the root also leaves it undefined.
 function anonymousBefore(resources: readonly object[], root: object): string | null | undefined {
   const rootJson = canonicalJson(root);
-  const seen = new Set<string | null>();
-  let last: string | null = null;
+  const seen = new Set<string | null | undefined>();
+  const anonymous = new Set<string>();
+  let last: string | null | undefined = null;
   for (const resource of resources) {
     const json = canonicalJson(resource);
     if (json === rootJson) seen.add(last);
-    if (namedSchemaId(resource) === undefined) last = json;
+    if (namedSchemaId(resource) === undefined) {
+      // New content is a new object, which Ajv compiles and enters as "".
+      last = anonymous.has(json) ? undefined : json;
+      anonymous.add(json);
+    }
   }
   return seen.size === 1 ? [...seen][0] : undefined;
 }
