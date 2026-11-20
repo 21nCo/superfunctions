@@ -516,8 +516,10 @@ export class SchemaConverter {
    * - any flagged name where the schema or a region nested in it has `const`,
    *   `enum` or `minProperties`, which constrain the whole instance or its
    *   property count (`maxProperties` stays allowed: removal only helps it);
-   * - a name a `oneOf` member removes that the other members do not all flag
-   *   through the same property schemas with the same required status
+   * - a name removed anywhere inside a `oneOf` member that every member able
+   *   to be an object does not remove in its own region through the same
+   *   property schemas with the same required status, or that a member
+   *   constrains by pattern, `propertyNames` or `maxProperties`
    *   (see `oneOfConflict`).
    * An `anyOf`/`oneOf` member that flags and uses a name only itself is
    * converted on its own and removes the name there.
@@ -645,18 +647,23 @@ export class SchemaConverter {
   }
 
   /**
-   * A name some `oneOf` member removes (flags in its own region) that would
-   * stop distinguishing the members once removed. Removal is sound only when
-   * every member flags the name through the same property schemas with the
-   * same required status, as polymorphic members sharing one base schema do;
-   * otherwise a member that differs on the name (another type, `const` or
-   * `enum`, required in one member only, or absent or forbidden in one) could
-   * overlap with another after removal, so `oneOf` would reject a value
-   * exactly one member accepted.
+   * A name removed anywhere inside a `oneOf` member (in its own region or a
+   * nested `anyOf`/`oneOf`/`$ref` region) that would stop distinguishing the
+   * members once removed. Removal is sound only when every member that can be
+   * an object removes the name in its own region (not only inside a nested
+   * composition), gives it the same property schemas with the same required
+   * status, as polymorphic members sharing one base schema do, and has no
+   * `patternProperties` key matching it (an invalid pattern counts as a
+   * match) and no `propertyNames` or `maxProperties` anywhere in it. Otherwise
+   * a member that differs on the name (another type, `const` or `enum`,
+   * required in one member only, absent or forbidden in one, constrained by a
+   * pattern, or removed only in a nested alternative) could overlap with
+   * another after removal, so `oneOf` would reject a value exactly one member
+   * accepted.
    */
   private oneOfConflict(members: unknown[], summaries: RegionSummary[]): string | undefined {
     const removed = new Set<string>();
-    for (const summary of summaries) for (const name of summary.names) removed.add(name);
+    for (const summary of summaries) for (const name of summary.flagged) removed.add(name);
     for (const name of removed) {
       let first: PropertyFacts | undefined;
       for (const [index, member] of members.entries()) {
@@ -665,12 +672,46 @@ export class SchemaConverter {
         // reference) cannot start overlapping.
         if (!this.mayBeObject(member)) continue;
         if (!summaries[index]!.names.has(name)) return name;
+        if (this.constrainsName(member, name)) return name;
         const facts = this.propertyFacts(member, name);
         if (first === undefined) first = facts;
         else if (!sameFacts(first, facts)) return name;
       }
     }
     return undefined;
+  }
+
+  /**
+   * Whether `schema` or any schema applied to the same instance (through
+   * `$ref`, `allOf`/`anyOf`/`oneOf`, `not`/`if`/`then`/`else` or a
+   * schema-valued dependency) constrains property `name` by pattern, or
+   * constrains the property names or count, beyond `properties`/`required`.
+   */
+  private constrainsName(schema: unknown, name: string): boolean {
+    const seen = new Set<object>();
+    const walk = (current: unknown): boolean => {
+      if (!isObject(current) || seen.has(current)) return false;
+      seen.add(current);
+      if (Object.hasOwn(current, "$ref")) {
+        if (walk(this.target(current.$ref))) return true;
+        if (this.version === "3.0") return false;
+      }
+      if (Object.hasOwn(current, "propertyNames") || Object.hasOwn(current, "maxProperties")) return true;
+      if (isObject(current.patternProperties)) {
+        for (const pattern of Object.keys(current.patternProperties)) if (patternMatches(pattern, name)) return true;
+      }
+      for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
+        const members = current[keyword];
+        if (Array.isArray(members) && members.some(walk)) return true;
+      }
+      for (const keyword of IN_PLACE_KEYWORDS) if (walk(current[keyword])) return true;
+      for (const keyword of ["dependencies", "dependentSchemas"] as const) {
+        const map = current[keyword];
+        if (isObject(map) && Object.values(map).some(walk)) return true;
+      }
+      return false;
+    };
+    return walk(schema);
   }
 
   private mayBeObject(schema: unknown): boolean {
@@ -857,6 +898,15 @@ function sameSchema(left: unknown, right: unknown): boolean {
     return encoded !== undefined && encoded === JSON.stringify(right);
   } catch {
     return false;
+  }
+}
+
+/** Whether a `patternProperties` key matches `name`; a pattern that does not compile counts as a match. */
+function patternMatches(pattern: string, name: string): boolean {
+  try {
+    return new RegExp(pattern, "u").test(name);
+  } catch {
+    return true;
   }
 }
 

@@ -22,6 +22,11 @@
   discriminators, required in one member only, absent in one, and a writeOnly
   output discriminator), and keeps members that mark the property through
   equal schemas, a nullable reference and an `anyOf` discriminator.
+- `skip-access-flag-oneof-nested.json` skips readOnly/writeOnly properties
+  removed only inside a nested `oneOf`/`anyOf` of `oneOf` members (direct,
+  through `$ref` and through `allOf`), and properties a member constrains by
+  a matching or invalid `patternProperties` key, `maxProperties` or
+  `propertyNames`, and keeps members whose patterns cannot match the name.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.

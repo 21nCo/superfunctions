@@ -543,6 +543,28 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
+  it("skips readOnly and writeOnly properties removed inside nested oneOf members or constrained by member patterns", () => {
+    const { tools, skipped } = convert("skip-access-flag-oneof-nested");
+    const reason = (name: string, keyword = "readOnly") =>
+      `property "${name}" is ${keyword} but is also constrained by a oneOf whose members do not all mark it the same way, so it cannot be removed soundly`;
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlyNestedOneOf", "unsupported-access-flag", reason("kind")],
+      ["readOnlyNestedAnyOf", "unsupported-access-flag", reason("kind")],
+      ["readOnlyReferencedAnyOf", "unsupported-access-flag", reason("kind")],
+      ["readOnlyAllOfOneOf", "unsupported-access-flag", reason("kind")],
+      ["readOnlyPatternDiscriminator", "unsupported-access-flag", reason("id")],
+      ["readOnlyInvalidPattern", "unsupported-access-flag", reason("id")],
+      ["readOnlyMaxPropertiesInOneOf", "unsupported-access-flag", reason("id")],
+      ["readOnlyPropertyNamesInOneOf", "unsupported-access-flag", reason("id")],
+      ["writeOnlyNestedOutput", "unsupported-access-flag", reason("kind", "writeOnly")],
+    ]);
+    // A pattern that cannot match the removed name keeps the members exclusive on the rest.
+    expectArguments(tool(tools, "readOnlyPatternNotMatching").inputSchema, {
+      valid: [{ body: { a: "x" } }, { body: { b: "y", "x-tag": "t" } }],
+      invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
+    });
+  });
+
   it("ignores readOnly and writeOnly beside a $ref in OpenAPI 3.0, which ignores $ref siblings", () => {
     const { tools, skipped } = fromOpenAPI(
       {
