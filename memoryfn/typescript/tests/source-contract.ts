@@ -199,6 +199,15 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
     });
 
+    it('replaces a source with more chunks than one PostgreSQL statement can bind one by one', async () => {
+      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      const many = chunks(source, ...Array.from({ length: 7000 }, (_, index) => `chunk ${index}`));
+      const rows = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: many });
+      expect(rows).toHaveLength(7000);
+      expect([rows[0], rows[6999]].map(row => [row.content, row.chunkIndex])).toEqual([['chunk 0', 0], ['chunk 6999', 6999]]);
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
+    });
+
     it('rolls a replacement back with its enclosing transaction', async () => {
       await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
       await expect(adapter().transaction!(async tx => {

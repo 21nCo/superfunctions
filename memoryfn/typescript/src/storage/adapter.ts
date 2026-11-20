@@ -68,17 +68,18 @@ export function compareCodeUnits(left: string, right: string): number {
 }
 
 /**
- * An unpaired UTF-16 surrogate, or NUL. PostgreSQL text cannot store either as
- * given: a lone surrogate is encoded as U+FFFD, so two different strings would
- * name one stored source, and NUL is rejected. The memory adapter would keep
+ * An unpaired UTF-16 surrogate. PostgreSQL text encodes it as U+FFFD, so two
+ * different strings would name one stored source. The memory adapter would keep
  * them distinct, so the source path rejects them in every adapter.
  * (A regex rather than String#isWellFormed, which needs Node 20.)
  */
-const STORAGE_UNSAFE_TEXT = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|\u0000/;
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/** PostgreSQL text rejects NUL while the memory adapter would store it. */
+const NUL = String.fromCharCode(0);
 
 /** A non-empty string that every adapter stores and compares unchanged. */
 function isSourceText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== '' && !STORAGE_UNSAFE_TEXT.test(value);
+  return typeof value === 'string' && value.trim() !== '' && !value.includes(NUL) && !LONE_SURROGATE.test(value);
 }
 
 /**

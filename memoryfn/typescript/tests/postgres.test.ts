@@ -151,6 +151,60 @@ suite('Postgres lifecycle integration', () => {
       expect(await relationships(), name).toEqual([]);
     }
   });
+  it('never caches source state read inside a transaction that rolls back', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const cached = new PostgresAdapter(drizzle(client, { schema, cache: new TableCache() }));
+    await cached.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old')] });
+    expect(await cached.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+    await expect(cached.transaction(async tx => {
+      await tx.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [chunk('n1'), chunk('n2')] });
+      expect(await tx.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: 2 });
+      throw new Error('abort');
+    })).rejects.toThrow('abort');
+    expect(await cached.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+  });
+  it('keeps the previous chunks and relationships when a replacement above the bind limit fails', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const [source] = await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old-1'), chunk('old-2')] });
+    const [plain] = await adapter.insertMemories([chunk('plain')]);
+    await adapter.insertRelationships([{ tenantId: 'a', containerTags: ['docs'], fromId: plain.id, toId: source.id }]);
+    const many = Array.from({ length: 7000 }, (_, index) => chunk(`chunk ${index}`));
+    const duplicateId = '00000000-0000-4000-8000-000000000001';
+    const failing = many.map((row, index) => index === 0 || index === 6999 ? { ...row, id: duplicateId } : row);
+    await expect(adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: failing })).rejects.toThrow();
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 2 });
+    expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(1);
+    await adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: many });
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
+    expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(0);
+  });
+  it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
+    const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
+    const keys = ['b.md', 'a.md'].sort();
+    // Sources sharing a key share its lock whatever their tags: each transaction takes the keys in sorted order.
+    const writeAll = (tag: string) => adapter.transaction(async tx => {
+      for (const sourceKey of keys) {
+        await tx.replaceSource({ tenantId: 'a', containerTags: [tag], sourceKey, contentHash: `hash-${tag}`, chunks: [chunk(tag, `${tag} ${sourceKey}`)] });
+      }
+    });
+    await Promise.all([writeAll('x'), writeAll('y')]);
+    for (const tag of ['x', 'y']) for (const sourceKey of keys) {
+      expect(await adapter.getSourceState({ tenantId: 'a', containerTags: [tag], sourceKey })).toEqual({ contentHash: `hash-${tag}`, chunkCount: 1 });
+    }
+    // The same tag set given reordered or with duplicates is the same source, so its writes stay serialized.
+    const scope = { tenantId: 'a', containerTags: ['docs', 'team'], sourceKey: 'c.md' };
+    const team = (content: string) => ({ tenantId: 'a', containerTags: ['team', 'docs'], content });
+    await Promise.all([
+      adapter.replaceSource({ ...scope, contentHash: 'hash-left', chunks: [team('l1'), team('l2')] }),
+      adapter.replaceSource({ ...scope, containerTags: ['team', 'docs', 'team'], contentHash: 'hash-right', chunks: [team('r1')] }),
+    ]);
+    const state = await adapter.getSourceState(scope);
+    expect([{ contentHash: 'hash-left', chunkCount: 2 }, { contentHash: 'hash-right', chunkCount: 1 }]).toContainEqual(state);
+    const [{ n }] = await client`SELECT count(*)::int AS n FROM memories WHERE deleted_at IS NULL AND source_key = 'c.md'`;
+    expect(n).toBe(state!.chunkCount);
+  });
   it('takes the source and relationship row locks on the connection when a drizzle cache holds their reads', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
     const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });

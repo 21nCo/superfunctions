@@ -9,6 +9,15 @@ import { and, eq, sql, isNull, or, arrayContains, inArray, is } from 'drizzle-or
 import { PgTransaction } from 'drizzle-orm/pg-core';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
+/**
+ * postgres-js sends a text parameter as UTF-8, which stores a lone surrogate as
+ * U+FFFD. JSON would carry it as an escape that jsonb rejects, so a text column
+ * sent inside a jsonb payload gets the same replacement first.
+ */
+function storedText(value: string): string {
+  return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
 // We assume the DB passed is compatible with PostgresJsDatabase schema
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
@@ -219,6 +228,12 @@ export class PostgresAdapter implements StorageAdapter {
    * statements of one session run one at a time and each sees the session's
    * earlier writes.
    *
+   * The lock key is (tenant, source key) as the issue specifies, so sources that
+   * share a key but differ in tags share one lock by design. A caller transaction
+   * that writes several sources must take them in one consistent order (for
+   * example sorted by source key); with opposite orders PostgreSQL detects the
+   * deadlock and aborts one of the transactions, which the caller retries.
+   *
    * A caller-owned drizzle cache must not change this: the row-lock read
    * bypasses the cache, and every write is followed by an empty DELETE builder
    * on memory_relationships. drizzle invalidates only a builder's target table,
@@ -276,10 +291,14 @@ export class PostgresAdapter implements StorageAdapter {
     return rows.length;
   }
 
+  /**
+   * Bypasses a caller-owned drizzle cache: a read inside a transaction could
+   * otherwise publish state that never commits.
+   */
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
     const { scope, tags } = requireSourceScope(input);
     const rows = await this.db.select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
-      .from(memories).where(this.liveSource(scope, tags)).groupBy(memories.contentHash);
+      .from(memories).where(this.liveSource(scope, tags)).groupBy(memories.contentHash).$withCache(false);
     if (!rows.length) return null;
     return {
       contentHash: rows.length === 1 ? rows[0].contentHash : null,
@@ -296,8 +315,20 @@ export class PostgresAdapter implements StorageAdapter {
     return this.withSourceLock(scope, tags, async tx => {
       if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
       const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
-      const rows = await tx.with(tombstoned, unlinked).insert(memories).values(values).returning();
-      return rows.map(row => this.mapToDomain(row));
+      // Every chunk travels in one jsonb parameter, so the bind count does not grow
+      // with the chunk count. Columns follow the table order drizzle inserts in.
+      const payload = JSON.stringify(values.map(row => ({
+        id: row.id ?? null, tenant_id: row.tenantId, container_tags: row.containerTags,
+        type: storedText(row.type), content: storedText(row.content),
+        embedding: row.embedding ? JSON.stringify(row.embedding) : null, metadata: row.metadata, is_latest: row.isLatest,
+        created_at: row.createdAt.toISOString(), updated_at: row.updatedAt.toISOString(),
+        source_key: row.sourceKey, content_hash: row.contentHash, chunk_index: row.chunkIndex,
+      })));
+      const rows = await tx.with(tombstoned, unlinked).insert(memories).select(sql`SELECT coalesce(r.id, gen_random_uuid()),
+        r.tenant_id, r.container_tags, r.type, r.content, r.embedding, r.metadata, 1, r.deleted_at, r.is_latest,
+        r.created_at, r.updated_at, r.source_key, r.content_hash, r.chunk_index
+        FROM jsonb_populate_recordset(NULL::${memories}, ${payload}::jsonb) AS r`).returning();
+      return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
     });
   }
 
