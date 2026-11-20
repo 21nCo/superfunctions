@@ -232,14 +232,18 @@ export class PostgresAdapter implements StorageAdapter {
       : this.db.transaction(tx => locked(tx as unknown as PostgresJsDatabase<any>), { isolationLevel: 'read committed' });
   }
 
+  /** Column values that clear and soft-delete a source chunk. */
+  private tombstone(now: Date) {
+    return { content: '', embedding: null, metadata: {}, isLatest: false, deletedAt: now, updatedAt: now, revision: sql`${memories.revision} + 1` };
+  }
+
   /**
    * Common table expressions that clear and soft-delete every live chunk of the
    * source and drop their relationships. PostgreSQL runs data-modifying CTEs to
    * completion as part of the statement that carries them.
    */
   private tombstoneSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date) {
-    const tombstoned = tx.$with('source_tombstoned').as(tx.update(memories).set({ content: '', embedding: null, metadata: {}, isLatest: false,
-      deletedAt: now, updatedAt: now, revision: sql`${memories.revision} + 1` })
+    const tombstoned = tx.$with('source_tombstoned').as(tx.update(memories).set(this.tombstone(now))
       .where(this.liveSource(scope, tags)).returning({ id: memories.id }));
     const ids = tx.select({ id: tombstoned.id }).from(tombstoned);
     const unlinked = tx.$with('source_unlinked').as(tx.delete(memoryRelationships)
@@ -247,11 +251,20 @@ export class PostgresAdapter implements StorageAdapter {
     return { tombstoned, unlinked };
   }
 
-  /** Tombstones the source in one statement and returns how many chunks it removed. */
+  /**
+   * Tombstones the source in one statement and returns how many chunks it removed.
+   * The statement is an UPDATE builder so a drizzle cache sees the mutation of
+   * `memories` (a SELECT over data-modifying CTEs would be cached as a read).
+   * Its relationship CTE selects the same live chunks the UPDATE changes: the
+   * advisory and row locks held by withSourceLock keep that set fixed.
+   */
   private async clearSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date): Promise<number> {
-    const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
-    const [row] = await tx.with(tombstoned, unlinked).select({ count: sql<number>`count(*)::int` }).from(tombstoned);
-    return Number(row?.count ?? 0);
+    const live = tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags));
+    const unlinked = tx.$with('source_unlinked').as(tx.delete(memoryRelationships)
+      .where(or(inArray(memoryRelationships.fromId, live), inArray(memoryRelationships.toId, live))).returning({ id: memoryRelationships.id }));
+    const rows = await tx.with(unlinked).update(memories).set(this.tombstone(now))
+      .where(this.liveSource(scope, tags)).returning({ id: memories.id });
+    return rows.length;
   }
 
   async getSourceState(input: SourceScope): Promise<SourceState | null> {

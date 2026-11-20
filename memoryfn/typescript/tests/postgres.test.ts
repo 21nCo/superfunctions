@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { Cache, type MutationOption } from 'drizzle-orm/cache/core';
 import postgres from 'postgres';
 import { PostgresAdapter } from '../src/storage/pg/adapter';
 import { MemoryFn } from '../src/core/pipeline';
@@ -10,6 +11,18 @@ import { describeSourceContract } from './source-contract';
 const migrations = ['0001-initial.sql', '0002-memory-lifecycle.sql', '0003-document-sources.sql'];
 
 const url = process.env.MEMORYFN_TEST_DATABASE_URL;
+
+/** Caches every read and drops the entries of a table on any mutation of it, like a table-aware drizzle cache. */
+class TableCache extends Cache {
+  private readonly entries = new Map<string, { value: unknown[]; tables: string[] }>();
+  strategy() { return 'all' as const; }
+  async get(key: string) { return this.entries.get(key)?.value; }
+  async put(key: string, value: unknown[], tables: string[]) { this.entries.set(key, { value, tables }); }
+  async onMutate({ tables = [] }: MutationOption) {
+    const names = (Array.isArray(tables) ? tables : [tables]).map(String);
+    for (const [key, entry] of this.entries) if (entry.tables.some(table => names.includes(table))) this.entries.delete(key);
+  }
+}
 const suite = url ? describe : describe.skip;
 // This variable must designate a disposable test database, never a production URL.
 suite('Postgres lifecycle integration', () => {
@@ -109,6 +122,25 @@ suite('Postgres lifecycle integration', () => {
       else expect([deleted, after]).toEqual([state!.chunkCount, { contentHash: 'hash-new', chunkCount: 3 }]);
       const [{ n }] = await client`SELECT count(*)::int AS n FROM memories WHERE deleted_at IS NULL`;
       expect(n).toBe(after?.chunkCount ?? 0);
+    }
+  });
+  it('invalidates a table-aware drizzle cache when a source write tombstones chunks', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const writes: Array<[string, (cached: PostgresAdapter) => Promise<unknown>]> = [
+      ['deleteSource', cached => cached.deleteSource(scope)],
+      ['empty replaceSource', cached => cached.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [] })],
+    ];
+    for (const [name, write] of writes) {
+      await client`TRUNCATE memory_relationships, memories`;
+      const cached = new PostgresAdapter(drizzle(client, { schema, cache: new TableCache() }));
+      const [chunk] = await cached.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [{ tenantId: 'a', containerTags: ['docs'], content: 'old' }] });
+      const read = { tenantId: 'a', containerTags: ['docs'], id: chunk.id };
+      // Fill the cache with the live source before the write.
+      expect(await cached.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+      expect(await cached.getMemory(read)).toMatchObject({ content: 'old', deletedAt: null });
+      await write(cached);
+      expect(await cached.getSourceState(scope), name).toBeNull();
+      expect(await cached.getMemory(read), name).toBeNull();
     }
   });
   describe('source writes under REPEATABLE READ', () => {
