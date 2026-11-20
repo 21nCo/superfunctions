@@ -1,0 +1,53 @@
+flowfn/admin/README.md
+  s_b996deaa3d01f1::t_7c8d24491b2408 23-27
+flowfn/admin/src/__tests__/admin.test.ts
+  s_b996deaa3d01f1::t_b30067b52f3ac4 49,53
+flowfn/admin/src/domain-service.ts
+  s_b996deaa3d01f1::t_de65504a75dadf 1,340,343,346-357,359
+flowfn/typescript/README.md
+  s_b996deaa3d01f1::t_cfe44b0544e102 58
+flowfn/typescript/src/adapters/base.ts
+  s_b996deaa3d01f1::t_63ff301c31d075 37,40
+flowfn/typescript/src/adapters/memory-order.test.ts
+  s_b996deaa3d01f1::t_88c69202791532 4
+flowfn/typescript/src/adapters/memory.ts
+  s_b996deaa3d01f1::t_48dac0c1d56453 3,35,41,47,49
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b996deaa3d01f1::t_36d8e03418c6bd 7,75,221,224,242-243,253,259,264,297
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_b996deaa3d01f1::t_da5f1fe3e58a8c 27
+flowfn/typescript/src/adapters/redis.test.ts
+  s_b996deaa3d01f1::t_7cdfb760e496b1 18
+flowfn/typescript/src/adapters/redis.ts
+  s_b996deaa3d01f1::t_a4ad5f6a967631 6,231-235,237,291,334,360,377,379,388,446-448,450
+flowfn/typescript/src/queue/dlq.ts
+  s_b996deaa3d01f1::t_405f2733c946fb 53,72,77,195,199,203,207
+flowfn/typescript/src/queue/job.ts
+  s_b996deaa3d01f1::t_79e2d1915799cf 6,84,97
+flowfn/typescript/src/queue/queue.ts
+  s_b996deaa3d01f1::t_a436e5c14997cd 26,190,192,237-240,288,324-332,369
+flowfn/typescript/src/queue/types.ts
+  s_b996deaa3d01f1::t_71ad7531f362a7 106
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_b996deaa3d01f1::t_992b4a3ffb4edc 6
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b996deaa3d01f1::t_ab93ec2b5244ae 84-86,89,91-94
+flowfn/typescript/tests/dlq.test.ts
+  s_b996deaa3d01f1::t_0b15936cccb897 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "711b5a0c357b0e66582818c552fb30b7d7cdb854",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
