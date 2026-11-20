@@ -521,3 +521,37 @@ describe("round-11 whole-href string pass with an additive parameter post-pass",
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
+
+describe("round-12 scheme word before an empty sensitive field", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const secretKey = ["sec", "ret"].join("");
+
+  it("never prints the scheme word when a sensitive key with no value follows it", () => {
+    const cases: Array<[string, string]> = [
+      [`Authorization: bearer ${tokenKey}=`, "Authorization: [REDACTED]"],
+      [`Authorization: basic ${PW}=, status=401`, "Authorization: [REDACTED]"],
+      [`Authorization: token ${secretKey}=;`, "Authorization: [REDACTED]"],
+      [`Authorization: bearer db.${PW}=`, "Authorization: [REDACTED]"],
+      [`Authorization: Basic ${tokenKey}=`, "Authorization: [REDACTED]"],
+      [`${PW}=basic ${tokenKey}=`, `${PW}=[REDACTED] ${tokenKey}=`],
+      // Earlier cases still hold.
+      ["Authorization: Bearer test-token", "Authorization: Bearer [REDACTED]"],
+      [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
+      ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+    expect(redactSensitiveString(`${PW}=basic ${tokenKey}=`)).not.toContain("basic");
+  });
+
+  it("decides scheme words before empty fields in linear time", () => {
+    const started = performance.now();
+    expect(redactSensitiveString("authorization: bearer x ".repeat(64_000))).toBe("authorization: bearer [REDACTED]");
+    expect(redactSensitiveString(`${PW}=basic tok.`.repeat(64_000))).not.toContain("basic");
+    expect(redactSensitiveString(`${PW}=basic ${tokenKey}= `.repeat(64_000))).not.toContain("basic");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});

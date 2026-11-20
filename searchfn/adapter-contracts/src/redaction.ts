@@ -18,12 +18,14 @@ const SENSITIVE_KEY =
 // cannot be told apart from trailing diagnostics such as status=401, so no
 // following field is kept. One rule (schemeWordStandsAlone) decides, for both
 // key kinds, whether a Bearer, Basic or Token word is followed by a new key or
-// assignment rather than a credential: it is when a match of this pattern
-// begins anywhere inside the next token (token=, db.password = x, "token" = x),
+// assignment rather than a credential: it is when a sensitive key of this
+// pattern's key group (dotted or bracket prefix, optional quote) followed by
+// optional whitespace and : or = begins anywhere inside the next token, whether
+// or not a value follows (token=, password=, db.password = x, "token" = x),
 // or when that token, optionally quoted, is a name followed by optional
 // whitespace and : or = (status = 401, name=value, name:), where an = attached
-// to an unquoted token and followed only by more = is base64 padding, not an
-// assignment. After an authorization key the label is kept only when the next
+// to an unquoted non-sensitive name and followed only by more = is base64
+// padding, not an assignment. After an authorization key the label is kept only when the next
 // token on the same line is a valid credential token (RFC 6750 b64token /
 // RFC 7617 base64: CREDENTIAL_TOKEN) and the scheme word does not stand alone;
 // otherwise the label may itself be the secret, so key, separator and
@@ -35,8 +37,10 @@ const SENSITIVE_KEY =
 // token are redacted together, so the credential is never printed.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
-// The same grammar, searched from one position (see keyValueStartsWithin).
-const KEY_VALUE_FIND = new RegExp(KEY_VALUE_SECRET.source, "gi");
+// The key group of KEY_VALUE_SECRET and its separator, with or without a value,
+// searched from one position (see sensitiveKeyStartsWithin).
+const SENSITIVE_KEY_SEPARATOR_FIND =
+  /\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?["']?\s*[:=]/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
 const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
@@ -301,22 +305,24 @@ export function redactSensitiveString(input: string): string {
 }
 
 /**
- * Whether a match of KEY_VALUE_SECRET begins at or after start and before end.
- * The search stops at the first match, which the caller's own scan reaches
- * next anyway, so repeated calls stay linear overall.
+ * Whether a sensitive key and its separator (with or without a value) begin at
+ * or after start and before end. Every KEY_VALUE_SECRET match begins with such
+ * a key, so the search stops no later than the caller's next match and
+ * repeated calls stay linear overall.
  */
-function keyValueStartsWithin(input: string, start: number, end: number): boolean {
-  KEY_VALUE_FIND.lastIndex = start;
-  const match = KEY_VALUE_FIND.exec(input);
+function sensitiveKeyStartsWithin(input: string, start: number, end: number): boolean {
+  SENSITIVE_KEY_SEPARATOR_FIND.lastIndex = start;
+  const match = SENSITIVE_KEY_SEPARATOR_FIND.exec(input);
   return match !== null && match.index < end;
 }
 
 /**
  * Whether the scheme word before the token at [start, end) stands alone: a
- * key/value begins inside that token, or the token is a name assignment.
+ * sensitive key with its separator begins inside that token (an empty field
+ * such as token= included), or the token is a name assignment.
  */
 function schemeWordStandsAlone(input: string, start: number, end: number): boolean {
-  if (keyValueStartsWithin(input, start, end)) return true;
+  if (sensitiveKeyStartsWithin(input, start, end)) return true;
   ASSIGNMENT_START.lastIndex = start;
   return ASSIGNMENT_START.test(input);
 }
