@@ -11,8 +11,8 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 /**
  * postgres-js sends a text parameter as UTF-8, which stores a lone surrogate as
- * U+FFFD. JSON would carry it as an escape that jsonb rejects, so a text column
- * sent inside a jsonb payload gets the same replacement first.
+ * U+FFFD. JSON would carry it as an escape that PostgreSQL rejects, so a text
+ * column sent inside a json payload gets the same replacement first.
  */
 function storedText(value: string): string {
   return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
@@ -230,9 +230,10 @@ export class PostgresAdapter implements StorageAdapter {
    *
    * The lock key is (tenant, source key) as the issue specifies, so sources that
    * share a key but differ in tags share one lock by design. A caller transaction
-   * that writes several sources must take them in one consistent order (for
-   * example sorted by source key); with opposite orders PostgreSQL detects the
-   * deadlock and aborts one of the transactions, which the caller retries.
+   * that writes several sources must take them in one consistent order over
+   * (tenant ID, source key), for example sorted by tenant ID and then source key;
+   * with opposite orders PostgreSQL detects the deadlock and aborts one of the
+   * transactions, and the caller reruns that whole transaction.
    *
    * A caller-owned drizzle cache must not change this: the row-lock read
    * bypasses the cache, and every write is followed by an empty DELETE builder
@@ -315,8 +316,10 @@ export class PostgresAdapter implements StorageAdapter {
     return this.withSourceLock(scope, tags, async tx => {
       if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
       const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
-      // Every chunk travels in one jsonb parameter, so the bind count does not grow
-      // with the chunk count. Columns follow the table order drizzle inserts in.
+      // Every chunk travels in one json parameter, so the bind count does not grow
+      // with the chunk count. json (unlike jsonb, capped near 256 MB) is stored as
+      // text, so the payload has the same 1 GB ceiling as the protocol message that
+      // carried per-column parameters. Columns follow the table order drizzle inserts in.
       const payload = JSON.stringify(values.map(row => ({
         id: row.id ?? null, tenant_id: row.tenantId, container_tags: row.containerTags,
         type: storedText(row.type), content: storedText(row.content),
@@ -327,7 +330,7 @@ export class PostgresAdapter implements StorageAdapter {
       const rows = await tx.with(tombstoned, unlinked).insert(memories).select(sql`SELECT coalesce(r.id, gen_random_uuid()),
         r.tenant_id, r.container_tags, r.type, r.content, r.embedding, r.metadata, 1, r.deleted_at, r.is_latest,
         r.created_at, r.updated_at, r.source_key, r.content_hash, r.chunk_index
-        FROM jsonb_populate_recordset(NULL::${memories}, ${payload}::jsonb) AS r`).returning();
+        FROM json_populate_recordset(NULL::${memories}, ${payload}::text::json) AS r`).returning();
       return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
     });
   }

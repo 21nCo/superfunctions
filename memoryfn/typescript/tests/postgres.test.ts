@@ -183,7 +183,7 @@ suite('Postgres lifecycle integration', () => {
   it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
     const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
     const keys = ['b.md', 'a.md'].sort();
-    // Sources sharing a key share its lock whatever their tags: each transaction takes the keys in sorted order.
+    // Sources sharing a key share its lock whatever their tags: each transaction takes its (tenant, key) pairs in sorted order.
     const writeAll = (tag: string) => adapter.transaction(async tx => {
       for (const sourceKey of keys) {
         await tx.replaceSource({ tenantId: 'a', containerTags: [tag], sourceKey, contentHash: `hash-${tag}`, chunks: [chunk(tag, `${tag} ${sourceKey}`)] });
