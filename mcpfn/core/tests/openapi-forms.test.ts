@@ -1669,6 +1669,37 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     });
   });
 
+  it("compares child schemas only among members that accept the same kind of value", () => {
+    for (const flag of ["readOnly", "writeOnly"] as const) {
+      const Leaf = { type: "object", properties: { id: { type: "string", [flag]: true }, v: { type: "string" } } };
+      const leaf = { $ref: "#/components/schemas/Leaf" };
+      // properties of an array-only member never apply, so the object member alone constrains each property.
+      const array = { type: "array", properties: { child: leaf } };
+      const object = { type: "object", additionalProperties: leaf };
+      for (const members of [[array, object], [object, array]]) {
+        const schema = { oneOf: members };
+        const path = flag === "readOnly"
+          ? post("op", schema)
+          : { get: { operationId: "op", responses: json({ type: "object", properties: { data: schema } }) } };
+        const result = fromOpenAPI({ openapi: "3.1.0", components: { schemas: { Leaf } }, paths: { "/x": path } }, options());
+        expect(result.skipped).toEqual([]);
+        const converted = tool(result.tools, "op");
+        const wrap = (value: unknown) => (flag === "readOnly" ? { body: value } : { data: value });
+        expectArguments((flag === "readOnly" ? converted.inputSchema : converted.outputSchema)!, {
+          valid: [wrap([]), wrap({ k: { v: "x" } }), wrap({ child: { v: "x" } })],
+          invalid: [wrap({ k: { id: "x" } }), wrap({ child: { id: "x" } })],
+        });
+      }
+      // Members that both accept objects still constrain the same property twice.
+      const overlapping = { allOf: [{ type: "object", properties: { child: leaf } }, { type: "object", additionalProperties: leaf }] };
+      const path = flag === "readOnly"
+        ? post("op", overlapping)
+        : { get: { operationId: "op", responses: json(overlapping) } };
+      const result = fromOpenAPI({ openapi: "3.1.0", components: { schemas: { Leaf } }, paths: { "/x": path } }, options());
+      expect(result.skipped.map((entry) => entry.code)).toEqual(["unsupported-access-flag"]);
+    }
+  });
+
   it("does not keep a clean result that depends on a later conflict in the same reference cycle", () => {
     // Shared reference objects, as a parsed document has them. A -> B -> A is a
     // cycle; D -> B reaches B while its result is still provisional; A's
@@ -1748,6 +1779,40 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expectArguments(tool(result.tools, "validBody").inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { id: "x" } }] });
   });
 
+  it("keeps a schema's own definitions when it is checked as written beside referenced components", () => {
+    const own = (bad: unknown) => ({ Unused: { type: "object", properties: { bad: { ...(bad as object), readOnly: true, writeOnly: true } } } });
+    const schema = (bad: unknown, extra: object = {}) => ({
+      type: "object",
+      definitions: own(bad),
+      properties: { value: { $ref: "#/components/schemas/Text" } },
+      ...extra,
+    });
+    const malformed = { type: "bogus" };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        components: { schemas: { Text: { type: "string" } } },
+        paths: {
+          "/b": post("malformedBody", schema(malformed)),
+          "/q": { get: { operationId: "malformedParameter", parameters: [{ name: "q", in: "query", schema: { type: "string", definitions: own(malformed), allOf: [{ $ref: "#/components/schemas/Text" }] } }], responses: ok } },
+          "/r": { get: { operationId: "malformedResponse", responses: json(schema(malformed)) } },
+          "/h": { head: { operationId: "malformedDiscarded", responses: json(schema(malformed)) } },
+          "/v": post("validBody", schema({ type: "string" }, { required: ["value"] })),
+          "/o": { get: { operationId: "validResponse", responses: json(schema({ type: "string" })) } },
+        },
+      },
+      options(),
+    );
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason.split(":")[0]])).toEqual([
+      ["malformedBody", "invalid-schema", "the request body schema is not a valid JSON Schema"],
+      ["malformedParameter", "invalid-schema", "the parameter q schema is not a valid JSON Schema"],
+      ["malformedResponse", "invalid-schema", "the response schema is not a valid JSON Schema"],
+      ["malformedDiscarded", "invalid-schema", "the response schema is not a valid JSON Schema"],
+    ]);
+    expectArguments(tool(result.tools, "validBody").inputSchema, { valid: [{ body: { value: "x" } }], invalid: [{ body: { value: 1 } }, { body: {} }] });
+    expectArguments(tool(result.tools, "validResponse").outputSchema!, { valid: [{ value: "x" }], invalid: [{ value: 1 }] });
+  });
+
   it("compiles a response schema many operations share once, and bounds conversions by the document total", () => {
     const properties = Object.fromEntries(
       Array.from({ length: 100 }, (_, outer) => [
@@ -1792,10 +1857,13 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       ...(jsonSchemaDialect ? { jsonSchemaDialect } : {}),
       paths: { "/p": post("p", schema) },
     });
-    for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/base", "https://spec.openapis.org/oas/3.1/dialect/2024-11-10"]) {
+    const published = ["base", "2024-10-25", "2024-11-10"].map((id) => `https://spec.openapis.org/oas/3.1/dialect/${id}`);
+    for (const uri of [...published, ...published.map((id) => `${id}#`)]) {
       expect(fromOpenAPI(document(uri, { type: "object" }), options()).skipped).toEqual([]);
+      expect(fromOpenAPI(document(undefined, { $schema: uri, type: "object" }), options()).skipped).toEqual([]);
     }
-    for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/2099-12-31", "https://example.com/my-dialect"]) {
+    for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/2022-10-07", "https://spec.openapis.org/oas/3.1/dialect/2099-12-31", "https://example.com/my-dialect"]) {
+      expect(fromOpenAPI(document(undefined, { $schema: uri, type: "object" }), options()).skipped.map((entry) => entry.code)).toEqual(["unsupported-dialect"]);
       for (const schema of [{ type: "object" }, true]) {
         expect(fromOpenAPI(document(uri, schema), options()).skipped.map((entry) => entry.code)).toEqual(["unsupported-dialect"]);
       }

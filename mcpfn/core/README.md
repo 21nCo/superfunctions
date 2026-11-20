@@ -172,7 +172,8 @@ for (const { operation, code, reason } of skipped) {
   `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
   translated to draft-07 `dependencies`). A 3.1 `jsonSchemaDialect` or
   `$schema` other than a published OAS 3.1 base dialect id
-  (`.../dialect/base` or `.../dialect/2024-11-10`) or JSON Schema 2020-12,
+  (`.../dialect/base`, `.../dialect/2024-10-25` or `.../dialect/2024-11-10`)
+  or JSON Schema 2020-12,
   or any `$schema` in a 3.0 document, skips the schemas it governs
   (`unsupported-dialect`), boolean schemas included; a schema root that names
   a supported `$schema` itself is read in it, and a JSON body without

@@ -507,12 +507,17 @@ class OperationConverter {
     const budget = this.schemas.copyBudget(true);
     const values = { json: true, chars: 0 };
     const copy = treeCopy(root, budget, values);
-    // Definitions with the same names differ between modes.
+    // Definitions with the same names differ between modes. The key holds
+    // the whole copy, so it covers the wrapper built from it below.
     const key = contentKey(`compile:${mode}`, copy, values, definitions);
     let failure = key === undefined ? undefined : this.verdicts.get(key);
     if (failure === undefined) {
+      // The generated definitions go on a wrapper, as in a tool schema, so
+      // they never replace definitions the schema itself declares.
       failure = this.compileFailure(
-        Object.keys(definitions).length > 0 ? { ...copy, definitions: treeCopy(definitions, budget) } : copy,
+        Object.keys(definitions).length > 0
+          ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) }
+          : copy,
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }

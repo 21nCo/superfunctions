@@ -90,7 +90,7 @@ const COMPONENT_NAME = /^[A-Za-z0-9._-]+$/;
 /**
  * Whether a 3.1 `jsonSchemaDialect` or `$schema` names a dialect the
  * converter implements: JSON Schema 2020-12 or a published OAS 3.1 base
- * dialect id (`base` for 3.1.0, `2024-11-10` for 3.1.1). Any other id,
+ * dialect id (`base`, `2024-10-25` or `2024-11-10`). Any other id,
  * including an unpublished dated one, is not known to mean the same.
  */
 export function isDefaultDialect(uri: unknown): boolean {
@@ -101,6 +101,7 @@ export function isDefaultDialect(uri: unknown): boolean {
 const SUPPORTED_DIALECTS = new Set([
   "https://json-schema.org/draft/2020-12/schema",
   "https://spec.openapis.org/oas/3.1/dialect/base",
+  "https://spec.openapis.org/oas/3.1/dialect/2024-10-25",
   "https://spec.openapis.org/oas/3.1/dialect/2024-11-10",
 ]);
 
@@ -657,7 +658,11 @@ export class SchemaConverter {
     this.lowest = Number.POSITIVE_INFINITY;
     try {
       const entries = this.closure(schema);
-      const conflict = this.flagConflict(entries, keyword) ?? this.childConflict(entries, keyword);
+      // Object children only matter in schemas that can accept an object,
+      // array items only in schemas that can accept an array.
+      const objects = entries.filter((entry) => this.mayBeObject(entry.schema));
+      const arrays = entries.filter((entry) => this.admittedValues(entry.schema).has("array"));
+      const conflict = this.flagConflict(objects, keyword) ?? this.childConflict(entries, objects, arrays, keyword);
       if (conflict !== undefined) memo.set(schema, conflict);
       else if (this.lowest >= index) this.settle(schema, mark, memo);
       else {
@@ -750,9 +755,9 @@ export class SchemaConverter {
   }
 
   /**
-   * Flags on this instance's own properties: each must be declared in an
-   * unconditional schema, no schema that can accept an object may need the
-   * name (a `required` list of another schema, `const`, `enum`,
+   * Flags on this instance's own properties, among the schemas that can
+   * accept an object: each must be declared in an unconditional schema, no
+   * such schema may need the name (a `required` list of another schema, `const`, `enum`,
    * `minProperties` or a dependency), and no conditional one may tell the
    * object with the name from the object without it (listing it, counting
    * or matching property names, or closing the object).
@@ -764,7 +769,7 @@ export class SchemaConverter {
     // Validators do not read a "__proto__" key of properties as a property schema.
     if (declarers.has("__proto__")) return { name: "__proto__", by: "the validators, which ignore it in properties" };
     for (const entry of entries) {
-      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers, this.ignoredKeyword()) : undefined;
+      const conflict = needsFlagged(entry, declarers, this.ignoredKeyword());
       if (conflict !== undefined) return conflict;
     }
     return undefined;
@@ -792,8 +797,16 @@ export class SchemaConverter {
    * Flags below this instance: a child value (a property, the additional
    * properties, the items) is projected only when exactly one schema
    * constrains it, unconditionally, and nothing compares whole values.
+   * Property children are compared among the schemas that can accept an
+   * object (`objects`), items among those that can accept an array
+   * (`arrays`): a schema of another kind never applies them.
    */
-  private childConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+  private childConflict(
+    entries: ClosureEntry[],
+    objects: ClosureEntry[],
+    arrays: ClosureEntry[],
+    keyword: DirectionalKeyword,
+  ): AccessConflict | undefined {
     const reaches = (value: unknown) => this.reachesFlag(value, keyword);
     for (const { schema } of entries) {
       for (const position of UNPROJECTED_POSITIONS) {
@@ -804,9 +817,9 @@ export class SchemaConverter {
       }
     }
     return (
-      this.propertyConflict(entries, keyword) ??
-      this.additionalConflict(entries, keyword) ??
-      this.itemsConflict(entries, keyword)
+      this.propertyConflict(objects, keyword) ??
+      this.additionalConflict(objects, keyword) ??
+      this.itemsConflict(arrays, keyword)
     );
   }
 
@@ -854,7 +867,6 @@ export class SchemaConverter {
       const shared = entries.some(
         ({ schema }) =>
           schema !== entry.schema &&
-          this.mayBeObject(schema) &&
           (objectEntries(schema.properties).length > 0 ||
             objectEntries(schema.patternProperties).length > 0 ||
             constrainsValues(schema.additionalProperties, this.ignoredKeyword())),
