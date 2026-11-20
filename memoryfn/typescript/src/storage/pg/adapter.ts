@@ -12,9 +12,9 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 /** Characters of row JSON per json parameter of a source replacement. */
 const JSON_PART_LENGTH = 1 << 26;
 /**
- * A replacement of at most this many chunks sends each chunk's type and content
- * as their own text parameters, unescaped, as the per-column insert did (it could
- * bind about 5,400 chunks). A larger one sends as its own parameter only content
+ * A replacement of at most this many chunks sends each chunk's type, content and
+ * metadata as their own parameters, unescaped, as the per-column insert did (it
+ * could bind about 5,400 chunks). A larger one sends as its own parameter only content
  * of at least SIDE_TEXT_LENGTH characters, so its bind count stays below the
  * driver limit.
  */
@@ -335,11 +335,11 @@ export class PostgresAdapter implements StorageAdapter {
    * A SELECT of the replacement rows whose bind count stays below the driver
    * limit. The tenant, tags, source key and content hash are bound once. Each row
    * travels as a JSON array in json parameters of at most JSON_PART_LENGTH
-   * characters; type and content chosen by SIDE_TEXT_ROWS and SIDE_TEXT_LENGTH
-   * travel as their own text parameters, unescaped, joined to the row by chunk
-   * index. Up to SIDE_TEXT_ROWS chunks, every text value therefore travels as it
-   * did in the per-column insert, and the bound values are no larger than that
-   * insert's. No JavaScript string grows beyond one part or one input value.
+   * characters; values chosen by SIDE_TEXT_ROWS and SIDE_TEXT_LENGTH travel as
+   * their own parameters, unescaped, joined to the row by chunk index. Up to
+   * SIDE_TEXT_ROWS chunks, the type, content and metadata of every chunk travel
+   * as they did in the per-column insert, and the row JSON holds only fixed-size
+   * values, so the bound values are no larger than that insert's.
    * Columns follow the table order drizzle inserts in.
    */
   private replacementRows(scope: SourceScope, contentHash: string, values: Array<ReturnType<PostgresAdapter['toRow']>>) {
@@ -349,11 +349,12 @@ export class PostgresAdapter implements StorageAdapter {
     let partLength = 0;
     values.forEach((row, chunkIndex) => {
       const sideContent = allSide || row.content.length >= SIDE_TEXT_LENGTH;
-      if (allSide) side.push(sql`(${sql.raw(String(chunkIndex))}, ${row.type}::text, ${row.content}::text)`);
-      else if (sideContent) side.push(sql`(${sql.raw(String(chunkIndex))}, NULL, ${row.content}::text)`);
+      const index = sql.raw(String(chunkIndex));
+      if (allSide) side.push(sql`(${index}, ${row.type}::text, ${row.content}::text, ${JSON.stringify(row.metadata)}::text::jsonb)`);
+      else if (sideContent) side.push(sql`(${index}, NULL::text, ${row.content}::text, NULL::jsonb)`);
       const json = JSON.stringify([
         chunkIndex, row.id ?? null, allSide ? null : storedText(row.type), sideContent ? null : storedText(row.content),
-        row.embedding ? JSON.stringify(row.embedding) : null, row.metadata, row.isLatest,
+        row.embedding ? JSON.stringify(row.embedding) : null, allSide ? null : row.metadata, row.isLatest,
         row.createdAt.toISOString(), row.updatedAt.toISOString(),
       ]);
       if (partLength && partLength + json.length > JSON_PART_LENGTH) { parts.push([]); partLength = 0; }
@@ -364,11 +365,11 @@ export class PostgresAdapter implements StorageAdapter {
       .map((name, index) => sql.raw(`'${name}', e->${index}`));
     return sql`SELECT coalesce(r.id, gen_random_uuid()), ${scope.tenantId}::text,
       ARRAY(SELECT tag FROM json_array_elements_text(${JSON.stringify(scope.containerTags)}::text::json) WITH ORDINALITY AS t(tag, n) ORDER BY n),
-      ${side.length ? sql`coalesce(side.type, r.type), coalesce(side.content, r.content)` : sql`r.type, r.content`},
-      r.embedding, r.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
+      ${side.length ? sql`coalesce(side.type, r.type), coalesce(side.content, r.content)` : sql`r.type, r.content`}, r.embedding,
+      ${side.length ? sql`coalesce(side.metadata, r.metadata)` : sql`r.metadata`}, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
       CROSS JOIN json_populate_record(NULL::${memories}, json_build_object(${sql.join(fields, sql`, `)})) AS r
-      ${side.length ? sql`LEFT JOIN (VALUES ${sql.join(side, sql`, `)}) AS side(chunk_index, type, content) ON side.chunk_index = r.chunk_index` : sql``}`;
+      ${side.length ? sql`LEFT JOIN (VALUES ${sql.join(side, sql`, `)}) AS side(chunk_index, type, content, metadata) ON side.chunk_index = r.chunk_index` : sql``}`;
   }
 
   async deleteSource(input: SourceScope): Promise<number> {
