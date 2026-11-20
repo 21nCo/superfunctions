@@ -127,8 +127,12 @@ describe("fromOpenAPI filtering (D8)", () => {
     expect(() => run({ include: [{ operationId: "" }] })).toThrow(/non-empty string or \{ operationId \}/);
     // Only an own operationId key counts: an inherited one neither includes, excludes nor opts in.
     const inherited = Object.assign(Object.create({ operationId: "POST /b" }) as object, { other: "x" });
+    // Nor does a non-enumerable own one beside another enumerable key.
+    const hidden = Object.defineProperty({ other: "x" }, "operationId", { value: "POST /b", enumerable: false });
     for (const option of ["include", "exclude"] as const) {
-      expect(() => run({ [option]: [inherited] })).toThrow(/non-empty string or \{ operationId \}/);
+      for (const selector of [inherited, hidden]) {
+        expect(() => run({ [option]: [selector] })).toThrow(/non-empty string or \{ operationId \}/);
+      }
     }
   });
 
@@ -371,7 +375,7 @@ describe("fromOpenAPI tool metadata", () => {
     expect(tool(tools, "unusableEntries").operation.servers).toEqual([{ url: "/" }]);
   });
 
-  it("lists and validates with the registered schemas, which the catalog cannot change", async () => {
+  it("lists and validates with the registered schemas whatever is done to the returned catalog", async () => {
     const { registry, tools } = fromOpenAPI(
       {
         openapi: "3.1.0",
@@ -395,12 +399,8 @@ describe("fromOpenAPI tool metadata", () => {
     const entry = tool(tools, "getItem");
     const listedBefore = JSON.stringify(registry.listTools());
     const path = (entry.inputSchema.properties!.path as { properties: Record<string, { maxLength?: number }> }).properties;
-    expect(() => {
-      path.id!.maxLength = 100;
-    }).toThrow(TypeError);
-    expect(() => {
-      (entry.outputSchema!.properties as Record<string, unknown>).n = { type: "string" };
-    }).toThrow(TypeError);
+    path.id!.maxLength = 100;
+    (entry.outputSchema!.properties as Record<string, unknown>).n = { type: "string" };
     entry.annotations.readOnlyHint = false;
     expect(JSON.stringify(registry.listTools())).toBe(listedBefore);
     await expect(

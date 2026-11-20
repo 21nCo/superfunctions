@@ -1748,40 +1748,38 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expectArguments(tool(result.tools, "validBody").inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { id: "x" } }] });
   });
 
-  it("copies and compiles a schema many operations share once, and bounds distinct copies by the document total", () => {
+  it("compiles a response schema many operations share once, and bounds conversions by the document total", () => {
     const properties = Object.fromEntries(
       Array.from({ length: 100 }, (_, outer) => [
         `p${outer}`,
         { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, inner) => [`q${inner}`, { type: "string", maxLength: 5 }])) },
       ]),
     );
-    const paths: Record<string, unknown> = {};
-    // Past the point where charging each operation a full copy would exceed the document total.
+    const components = { schemas: { Big: { type: "object", properties } } };
+    const shared = { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Big" } } } } };
+    const heads: Record<string, unknown> = {};
     for (let index = 0; index < 600; index += 1) {
-      paths[`/h${index}`] = { head: { operationId: `h${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
-      paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
-      paths[`/p${index}`] = post(`p${index}`, { $ref: "#/components/schemas/Big" });
+      // Each operation has its own reference object, and half share one response object.
+      heads[`/h${index}`] = { head: { operationId: `h${index}`, responses: index % 2 === 0 ? shared : json({ $ref: "#/components/schemas/Big" }) } };
     }
     const started = performance.now();
-    const shared = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Big: { type: "object", properties } } } }, options());
+    const discarded = fromOpenAPI({ openapi: "3.1.0", paths: heads, components }, options());
     expect(performance.now() - started).toBeLessThan(5000);
-    expect(shared.skipped).toEqual([]);
-    expect(shared.tools).toHaveLength(1800);
-    // Distinct roots over one large component are copied each time, and charged to the document total.
-    const distinct: Record<string, unknown> = {};
-    for (let index = 0; index < 400; index += 1) {
-      distinct[`/d${index}`] = post(`d${index}`, { allOf: [{ $ref: "#/components/schemas/Big" }], description: `variant ${index}` });
-    }
-    const bounded = fromOpenAPI(
-      { openapi: "3.1.0", paths: distinct, components: { schemas: { Big: { type: "object", properties } } } },
-      { ...options(), registry: { register: () => undefined, has: () => false } as unknown as McpFnRegistry },
-    );
-    expect(bounded.tools[0]?.name).toBe("d0");
+    expect(discarded.skipped).toEqual([]);
+    expect(discarded.tools).toHaveLength(600);
+    // Regions that each fit their limits still exhaust the document total when
+    // many operations convert one shared object: earlier ones succeed.
+    const wide = { type: "object", properties: Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [`f${index}`, { type: "string" }])) };
+    const sharedResponse: Record<string, unknown> = {};
+    for (let index = 0; index < 300; index += 1) sharedResponse[`/w${index}`] = { head: { operationId: `w${index}`, responses: json(wide) } };
+    const bounded = fromOpenAPI({ openapi: "3.1.0", paths: sharedResponse }, options());
+    expect(bounded.tools[0]?.name).toBe("w0");
+    expect(bounded.tools.length).toBeGreaterThan(100);
     expect(bounded.skipped.length).toBeGreaterThan(0);
     expect(new Set(bounded.skipped.map((entry) => entry.reason))).toEqual(
       new Set([expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/) as unknown as string]),
     );
-  });
+  }, 30_000);
 
   it("reads only published dialect ids as the default, refuses boolean roots under another one and drops 3.1 dependencies", () => {
     const document = (jsonSchemaDialect: string | undefined, schema: unknown) => ({
@@ -1793,15 +1791,12 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       expect(fromOpenAPI(document(uri, { type: "object" }), options()).skipped).toEqual([]);
     }
     for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/2099-12-31", "https://example.com/my-dialect"]) {
-      for (const schema of [{ type: "object" }, true, undefined]) {
-        const result = fromOpenAPI(
-          schema === undefined
-            ? { openapi: "3.1.0", jsonSchemaDialect: uri, paths: { "/p": { post: { operationId: "p", requestBody: { content: { "application/json": {} } }, responses: ok } } } }
-            : document(uri, schema),
-          options(),
-        );
-        expect(result.skipped.map((entry) => entry.code)).toEqual(["unsupported-dialect"]);
+      for (const schema of [{ type: "object" }, true]) {
+        expect(fromOpenAPI(document(uri, schema), options()).skipped.map((entry) => entry.code)).toEqual(["unsupported-dialect"]);
       }
+      // A media type without a schema declares none, so no dialect applies to it.
+      const schemaLess = { openapi: "3.1.0", jsonSchemaDialect: uri, paths: { "/p": { post: { operationId: "p", requestBody: { content: { "application/json": {} } }, responses: ok } } } };
+      expect(fromOpenAPI(schemaLess, options()).skipped).toEqual([]);
       // A root that names a supported dialect itself is still read in it.
       expect(fromOpenAPI(document(uri, { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" }), options()).skipped).toEqual([]);
     }
@@ -1833,16 +1828,27 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expect(registered(result)).toEqual([["valid", false]]);
   });
 
-  it("shares identical tool schemas only as frozen objects, so no tool can change another's", () => {
+  it("never lets one tool's listed schema change another's, and keeps the catalog detached", () => {
     const resource = { type: "object", properties: { name: { type: "string" } } };
-    const result = fromOpenAPI({ openapi: "3.1.0", paths: { "/a": { get: { operationId: "a", responses: json(resource) } }, "/b": { get: { operationId: "b", responses: json(resource) } } } }, options());
-    const [first, second] = ["a", "b"].map((name) => result.registry.getListedTool(name)!);
-    expect(Object.isFrozen(first!.outputSchema)).toBe(true);
+    const document = { openapi: "3.1.0", paths: { "/a": { get: { operationId: "a", responses: json(resource) } }, "/b": { get: { operationId: "b", responses: json(resource) } } } };
+    // A supplied registry gets a fresh object per tool, as from any caller.
+    const supplied = fromOpenAPI(document, { ...options(), registry: new McpFnRegistry() });
+    const [a, b] = ["a", "b"].map((name) => supplied.registry.getListedTool(name)!);
+    expect(a!.outputSchema).not.toBe(b!.outputSchema);
+    (a!.outputSchema!.properties!.name as { type: string }).type = "integer";
+    expect(b!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
+    // A registry the call creates shares identical schemas, frozen.
+    const own = fromOpenAPI(document, options());
+    const [first, second] = ["a", "b"].map((name) => own.registry.getListedTool(name)!);
+    expect(first!.outputSchema).toBe(second!.outputSchema);
     expect(() => {
       (first!.outputSchema!.properties!.name as { type: string }).type = "integer";
     }).toThrow(TypeError);
+    // The catalog holds detached, writable copies either way.
+    const listed = tool(own.tools, "a").outputSchema!;
+    (listed.properties!.name as { type: string }).type = "integer";
     expect(second!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
-    expect(tool(result.tools, "a").outputSchema).toBe(first!.outputSchema);
+    expect(tool(own.tools, "b").outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
   });
 
   it("decides more than a handful of anchored literal prefixes exactly", () => {
@@ -1864,5 +1870,14 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expectArguments(tool(modern.tools, "p").inputSchema, { valid: [{ body: { foo: "x" } }], invalid: [{ body: { id: "x" } }] });
     const legacy = fromOpenAPI({ openapi: "3.0.3", paths: { "/p": post("p", schema) } }, options());
     expect(skips(legacy)).toEqual([["p", "unsupported-access-flag", constrained("id", "dependencies")]]);
+    // A sibling additionalProperties holding only 3.1 dependencies constrains nothing either.
+    const nested = {
+      type: "object",
+      properties: { nested: { type: "object", properties: { id: { type: "string", readOnly: true } } } },
+      allOf: [{ additionalProperties: { dependencies: { x: ["y"] } } }],
+    };
+    const sibling = fromOpenAPI({ openapi: "3.1.0", paths: { "/p": post("p", nested) } }, options());
+    expect(sibling.skipped).toEqual([]);
+    expectArguments(tool(sibling.tools, "p").inputSchema, { valid: [{ body: { nested: {} } }], invalid: [{ body: { nested: { id: "x" } } }] });
   });
 });

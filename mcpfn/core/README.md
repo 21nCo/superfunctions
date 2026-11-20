@@ -174,20 +174,25 @@ for (const { operation, code, reason } of skipped) {
   `$schema` other than a published OAS 3.1 base dialect id
   (`.../dialect/base` or `.../dialect/2024-11-10`) or JSON Schema 2020-12,
   or any `$schema` in a 3.0 document, skips the schemas it governs
-  (`unsupported-dialect`), boolean schemas and a JSON body without `schema`
-  included; a schema root that names a supported `$schema` itself is read in
-  it. A 3.1 `dependencies` keyword is ignored, since 2020-12 defines none. A schema that would expand to more
+  (`unsupported-dialect`), boolean schemas included; a schema root that names
+  a supported `$schema` itself is read in it, and a JSON body without
+  `schema` declares none, so it accepts any JSON value in any dialect. A 3.1
+  `dependencies` keyword is ignored, since 2020-12 defines none. A schema that would expand to more
   than 100,000 nodes, or that repeats objects the document shares between
   positions into more than four times the values they hold, is skipped
   (`schema-too-large`), and so is every schema converted after one call's
   conversions have produced 1,000,000 nodes plus 64 per value of the
-  document, copies of the produced tool schemas included (tools whose
-  schemas are identical share one). A schema
+  document (each tool's own copy of its schemas does not count; a copy made
+  to check a schema does). A schema compiled only to be checked (a `HEAD` or
+  non-object response, or one with properties to leave out) is compiled once
+  per distinct schema. A schema
   or reference chain nested too deeply to walk is skipped the same way. A
   Swagger 2.0 document throws.
-- **Catalog.** `tools` holds the registered schemas, deeply frozen, so
-  nothing can change what the registry lists or validates; tools whose
-  schemas are identical share one object.
+- **Catalog.** `tools` holds copies of the registered schemas, so changing
+  them changes neither what the registry lists nor what it validates. In a
+  registry `fromOpenAPI` creates, tools with identical schemas register one
+  deeply frozen object (compiled once); a supplied registry gets a fresh
+  object per tool.
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.

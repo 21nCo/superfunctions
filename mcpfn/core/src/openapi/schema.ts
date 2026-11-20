@@ -114,8 +114,8 @@ export const MAX_SCHEMA_NODES = 100_000;
  * Schema nodes all of one `fromOpenAPI` call's conversions may produce: a
  * floor plus a multiple of the document's own size, so a document that shares
  * one schema object between many operations cannot multiply the work.
- * Copies of produced schemas are charged to it too; identical tool schemas
- * share one copy (see `OperationConverter`), so only distinct ones count.
+ * Copies made to check a schema are charged to it too; each tool's own copy
+ * of its schemas is not (see `copyBudget`).
  */
 const DOCUMENT_NODE_FLOOR = 1_000_000;
 const DOCUMENT_NODE_FACTOR = 64;
@@ -346,9 +346,13 @@ export class SchemaConverter {
     this.budget = total.child();
   }
 
-  /** A budget for one copy of a produced schema, also charged to the call's total. */
-  copyBudget(): NodeBudget {
-    return this.total.child();
+  /**
+   * A budget for one copy of a produced schema. A tool's own copy of its
+   * schemas is output the registry compiles anyway, so it has only its own
+   * limits; a copy made only to check a schema is charged to the call's total.
+   */
+  copyBudget(charged = false): NodeBudget {
+    return charged ? this.total.child() : new NodeBudget();
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -819,14 +823,15 @@ export class SchemaConverter {
     }
     // How many schemas with a constraining additionalProperties list each
     // name: one that does not list it validates its value as well.
-    const additional = entries.filter(({ schema }) => constrainsValues(schema.additionalProperties));
+    const ignored = this.ignoredKeyword();
+    const additional = entries.filter(({ schema }) => constrainsValues(schema.additionalProperties, ignored));
     const listedByAdditional = new Map<string, number>();
     for (const { schema } of additional) {
       for (const [name] of objectEntries(schema.properties)) {
         listedByAdditional.set(name, (listedByAdditional.get(name) ?? 0) + 1);
       }
     }
-    const patterned = patternMatcher(entries);
+    const patterned = patternMatcher(entries, ignored);
     for (const [name, { values, conditional }] of listed) {
       if (!values.some((value) => this.reachesFlag(value, keyword))) continue;
       const subject = `property ${JSON.stringify(name)}`;
@@ -850,7 +855,7 @@ export class SchemaConverter {
           this.mayBeObject(schema) &&
           (objectEntries(schema.properties).length > 0 ||
             objectEntries(schema.patternProperties).length > 0 ||
-            constrainsValues(schema.additionalProperties)),
+            constrainsValues(schema.additionalProperties, this.ignoredKeyword())),
       );
       const subject = "additionalProperties";
       const conflict = shared
@@ -866,7 +871,7 @@ export class SchemaConverter {
     let conditional = false;
     for (const entry of entries) {
       const { schema } = entry;
-      if (schema.items === undefined || Array.isArray(schema.items) || opens(schema.items)) continue;
+      if (schema.items === undefined || Array.isArray(schema.items) || opens(schema.items, this.ignoredKeyword())) continue;
       sources.push(schema.items);
       conditional ||= entry.conditional;
     }
@@ -874,7 +879,7 @@ export class SchemaConverter {
     for (const { schema } of entries) {
       if (Array.isArray(schema.items)) return childConflict(keyword, "items", "a tuple items list for the same array");
       if (schema.uniqueItems === true) return childConflict(keyword, "items", "uniqueItems");
-      if (!opens(schema.contains) || !opens(schema.additionalItems)) {
+      if (!opens(schema.contains, this.ignoredKeyword()) || !opens(schema.additionalItems, this.ignoredKeyword())) {
         return childConflict(keyword, "items", "contains or additionalItems");
       }
     }
@@ -1133,7 +1138,7 @@ function needsFlagged(
     (keyword) => keyword !== ignored && Object.hasOwn(schema, keyword),
   );
   if (constraint !== undefined) return { name: first!, by: constraint };
-  if (conditional && !opens(schema.additionalProperties)) {
+  if (conditional && !opens(schema.additionalProperties, ignored)) {
     return { name: first!, by: "additionalProperties under a condition" };
   }
   const listed = conditional ? objectEntries(schema.properties).find(([name]) => declarers.has(name)) : undefined;
@@ -1164,14 +1169,14 @@ function comparesWholeValues(entries: ClosureEntry[]): boolean {
  * decided, by looking strings up; any other pattern may match. No document
  * pattern is ever run.
  */
-function patternMatcher(entries: ClosureEntry[]): (name: string) => boolean {
+function patternMatcher(entries: ClosureEntry[], ignored: string | undefined): (name: string) => boolean {
   const exact = new Set<string>();
   // Literal prefixes as a character trie, so a name is matched in one pass.
   const prefixes: PrefixNode = { next: new Map() };
   let any = false;
   for (const { schema } of entries) {
     for (const [pattern, value] of objectEntries(schema.patternProperties)) {
-      if (!constrainsValues(value)) continue;
+      if (!constrainsValues(value, ignored)) continue;
       const literal = /^\^([A-Za-z0-9_-]*)(\$?)$/.exec(pattern);
       if (!literal) any = true;
       else if (literal[2]) exact.add(literal[1]!);
@@ -1230,9 +1235,9 @@ function sameReference(left: unknown, right: unknown): boolean {
   );
 }
 
-/** Whether a subschema accepts every value (absent, `true` or `{}`). */
-function opens(value: unknown): boolean {
-  return value === undefined || value === true || (isObject(value) && Object.keys(value).length === 0);
+/** Whether a subschema accepts every value (absent, `true` or `{}`, ignoring a keyword the dialect does not define). */
+function opens(value: unknown, ignored: string | undefined): boolean {
+  return value === undefined || value === true || (isObject(value) && Object.keys(value).every((key) => key === ignored));
 }
 
 /** Whether a `const` or `enum` value is an object or array, which constrains child values. */
@@ -1241,8 +1246,8 @@ function isComposite(value: unknown): boolean {
 }
 
 /** Whether an `additionalProperties` value constrains the values (not only the presence) of properties. */
-function constrainsValues(value: unknown): boolean {
-  return isObject(value) && Object.keys(value).length > 0;
+function constrainsValues(value: unknown, ignored: string | undefined): boolean {
+  return isObject(value) && Object.keys(value).some((key) => key !== ignored);
 }
 
 function foldExclusiveBounds(converted: McpFnJsonSchema): void {
