@@ -1,0 +1,69 @@
+apifn/README.md
+  s_19abec75182420::t_267c6a05d8351f 178-191
+apifn/admin/src/__tests__/ecosystem-contract.test.ts
+  s_19abec75182420::t_6dd6bb83874fe8 1-224
+apifn/admin/vitest.config.ts
+  s_19abec75182420::t_7030ff63053f09 1-3,6-28,32-33
+billfn/python/README.md
+  s_19abec75182420::t_3d758aee27ad30 25-29
+botfn/README.md
+  s_19abec75182420::t_e12176705f41e2 76-87
+hostfn/cli/README.md
+  s_19abec75182420::t_e072de51cbd41d 92-98
+package-lock.json
+  s_19abec75182420::t_e47a8d22b97f25 61986,62011,62026,62042,62057,62072,62087,62142,63532
+searchfn/adapter-contracts/__tests__/redaction.test.ts
+  s_19abec75182420::t_1f5712822435ea 1-129
+searchfn/adapter-contracts/package.json
+  s_19abec75182420::t_a2134e9f78c1c6 3
+searchfn/adapter-contracts/src/index.ts
+  s_19abec75182420::t_6e81f3d9980f0f 107-108
+searchfn/adapter-contracts/src/redaction.ts
+  s_19abec75182420::t_57572a00a5af9a 1-132
+searchfn/adapter-elasticsearch/__tests__/elasticsearch.test.ts
+  s_19abec75182420::t_aa34b1e58c160b 132,136-137,142-143
+searchfn/adapter-elasticsearch/package.json
+  s_19abec75182420::t_85192c0de85130 34
+searchfn/adapter-elasticsearch/src/internal/redaction.ts
+  s_19abec75182420::t_f8d7b712395874 1
+searchfn/adapter-indexeddb/package.json
+  s_19abec75182420::t_5cb162ace86ce9 32
+searchfn/adapter-meilisearch/__tests__/meilisearch.test.ts
+  s_19abec75182420::t_61928525d5c816 129,133-134,139-140
+searchfn/adapter-meilisearch/package.json
+  s_19abec75182420::t_eff6c3a3e912ce 34
+searchfn/adapter-meilisearch/src/internal/redaction.ts
+  s_19abec75182420::t_ad8e0636a2a21f 1
+searchfn/adapter-memory/package.json
+  s_19abec75182420::t_58822788cd815c 32
+searchfn/adapter-memory/src/index.ts
+  s_19abec75182420::t_52ab42b2f7416e 217-227
+searchfn/adapter-opensearch/package.json
+  s_19abec75182420::t_0cbe0b2c30d8eb 34
+searchfn/adapter-postgres/__tests__/postgres.test.ts
+  s_19abec75182420::t_009eb9f78d8945 375,379-380,385-386
+searchfn/adapter-postgres/package.json
+  s_19abec75182420::t_3076b34dc99c46 37
+searchfn/adapter-postgres/src/internal/redaction.ts
+  s_19abec75182420::t_381f56d8064309 1
+searchfn/admin/package.json
+  s_19abec75182420::t_22bc1b8026c2a8 41
+searchfn/server/package.json
+  s_19abec75182420::t_90b71f9d2301dd 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89738280b6378c34f27921ba3ad951660cc56eb4",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
