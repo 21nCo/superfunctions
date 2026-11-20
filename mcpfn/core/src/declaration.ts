@@ -31,27 +31,6 @@ export type McpFnServerRuntimeOptions<TContext> = Omit<
   "info" | "registry" | "additionalCapabilities" | keyof CreateManifestOptions
 >;
 
-function hasDefinitionAdditions<TContext>(
-  options: McpFnServerDeclarationOptions<TContext>,
-): boolean {
-  return Boolean(
-    options.tools?.length ||
-    options.resources?.length ||
-    options.resourceTemplates?.length ||
-    options.prompts?.length
-  );
-}
-
-function cloneRegistry<TContext>(source: McpFnRegistry<TContext>): McpFnRegistry<TContext> {
-  const clone = new McpFnRegistry<TContext>();
-  for (const tool of source.definitions()) clone.register(tool);
-  for (const resource of source.resourceDefinitions()) clone.registerResource(resource);
-  for (const template of source.resourceTemplateDefinitions()) {
-    clone.registerResourceTemplate(template);
-  }
-  for (const prompt of source.promptDefinitions()) clone.registerPrompt(prompt);
-  return clone;
-}
 
 /**
  * Side-effect-free application declaration. The same registry and manifest
@@ -64,9 +43,10 @@ export class McpFnServerDeclaration<TContext = undefined> {
 
   constructor(options: McpFnServerDeclarationOptions<TContext>) {
     this.info = options.info;
-    this.registry = options.registry && hasDefinitionAdditions(options)
-      ? cloneRegistry(options.registry)
-      : options.registry ?? new McpFnRegistry<TContext>();
+    // Always own a copy of a supplied registry: capabilities are resolved
+    // here, so later registrations on the caller's registry must not change
+    // this declaration's tools without changing its manifest.
+    this.registry = options.registry ? options.registry.clone() : new McpFnRegistry<TContext>();
     for (const tool of options.tools ?? []) this.registry.register(tool);
     for (const resource of options.resources ?? []) this.registry.registerResource(resource);
     for (const template of options.resourceTemplates ?? []) {

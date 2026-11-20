@@ -1,4 +1,9 @@
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
 import { defineConfig } from "tsup";
+
+const require = createRequire(import.meta.url);
+const zodRoot = dirname(require.resolve("zod/package.json"));
 
 export default defineConfig({
   entry: ["src/index.ts"],
@@ -13,5 +18,10 @@ export default defineConfig({
   // initialization order that throws `Class2 is not a constructor` at workerd
   // startup; a self-contained bundle removes that hazard without any
   // consumer-local alias. See mcpfn/ADR-0001-COMPATIBILITY.md.
+  // Resolve every SDK Zod subpath from this package's pinned build input.
+  // Other workspaces may legitimately retain a different hoisted Zod version.
+  esbuildOptions(options) {
+    options.alias = { ...options.alias, zod: zodRoot };
+  },
   noExternal: ["@modelcontextprotocol/sdk", "zod"],
 });

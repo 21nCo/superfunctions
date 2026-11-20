@@ -4,6 +4,16 @@ import { describe, expect, it } from "vitest";
 import { McpFnRegistry, defineMcpFnServer, structuredResult } from "../src/index.js";
 
 describe("McpFn server declarations", () => {
+  it("preserves schema registration order when extending a registry", () => {
+    const handler = async () => structuredResult({ ok: true });
+    const registry = new McpFnRegistry()
+      .register({ name: "z_dependency", description: "Schema provider", inputSchema: { type: "object", $id: "https://test.invalid/shared", properties: { value: { type: "string" } } }, handler })
+      .register({ name: "a_consumer", description: "Schema consumer", inputSchema: { type: "object", properties: { nested: { $ref: "https://test.invalid/shared" } } }, handler });
+    const declaration = defineMcpFnServer({ info: { name: "extended", version: "1" }, registry, tools: [{ name: "extra", description: "Added", inputSchema: { type: "object" }, handler }] });
+    expect(declaration.registry.listTools().map(tool => tool.name)).toEqual(["a_consumer", "extra", "z_dependency"]);
+    expect(registry.has("extra")).toBe(false);
+  });
+
   it("uses one declaration for manifests and runtime construction", () => {
     const declaration = defineMcpFnServer({
       info: { name: "minimal", version: "1.0.0" },
@@ -63,6 +73,25 @@ describe("McpFn server declarations", () => {
       "added",
       "existing",
     ]);
+  });
+
+  it("keeps its own copy of a supplied registry", () => {
+    const registry = new McpFnRegistry().register({
+      name: "existing",
+      description: "An existing tool.",
+      inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const declaration = defineMcpFnServer({ info: { name: "shared", version: "1.0.0" }, registry });
+    registry.register({
+      name: "late",
+      description: "Registered after the declaration.",
+      inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+
+    expect(declaration.registry.listTools().map(({ name }) => name)).toEqual(["existing"]);
+    expect(declaration.createServer().manifest()).toEqual(declaration.manifest());
   });
 
   it("keeps task-store capability flags identical in manifest and runtime", () => {

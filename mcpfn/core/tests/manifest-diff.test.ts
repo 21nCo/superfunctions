@@ -112,7 +112,9 @@ describe("McpFn manifests", () => {
       const { hash: _oldHash, ...body } = manifest;
       manifest.hash = sha256(body);
 
-      expect(() => validateManifest(manifest)).toThrow(/invalid JSON Schema/);
+      expect(() => validateManifest(manifest)).toThrow(
+        `invalid JSON Schema in tool ${manifest.tools[0]!.name} inputSchema`,
+      );
     },
   );
 

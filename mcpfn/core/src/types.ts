@@ -49,20 +49,29 @@ export type McpFnTaskRequestExtra = McpFnRequestExtra & {
   taskStore: RequestTaskStore;
 };
 
-/** Safe structural JSON Schema diagnostic. Argument values are never retained. */
+/**
+ * Safe structural JSON Schema diagnostic. Argument values are never retained.
+ * Fields are bounded: at most 100 issues per result, and each string field is
+ * limited to 256 characters (see `truncated`).
+ */
 export interface McpFnSchemaIssue {
   /** Backwards-compatible alias for instancePath; `/` represents the root. */
   path: string;
-  /** RFC 6901 path to the rejected input location; `/` represents the root. */
+  /**
+   * RFC 6901 path to the rejected input location; `/` represents the root.
+   * A path longer than 256 characters is reported as `/` with `truncated: true`.
+   */
   instancePath: string;
-  /** JSON Schema path reported by the validator. */
+  /** JSON Schema path reported by the validator; `#` when longer than 256 characters. */
   schemaPath: string;
   keyword: string;
   message: string;
-  /** Exact unknown property name for additionalProperties failures. */
+  /** Unknown property name for additionalProperties failures, cut to 256 characters. */
   rejectedProperty?: string;
-  /** Exact missing property name for required failures. */
+  /** Missing property name for required failures, cut to 256 characters. */
   missingProperty?: string;
+  /** Set when any field above was shortened or replaced by the bounds. */
+  truncated?: true;
 }
 
 export type McpFnToolLifecycleStage =
