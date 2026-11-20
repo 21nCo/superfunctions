@@ -1828,25 +1828,29 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expect(registered(result)).toEqual([["valid", false]]);
   });
 
-  it("never lets one tool's listed schema change another's, and keeps the catalog detached", () => {
+  it("shares identical schemas only frozen and only in its own registry, and keeps the catalog detached", () => {
     const resource = { type: "object", properties: { name: { type: "string" } } };
-    const document = { openapi: "3.1.0", paths: { "/a": { get: { operationId: "a", responses: json(resource) } }, "/b": { get: { operationId: "b", responses: json(resource) } } } };
+    const document = {
+      openapi: "3.1.0",
+      paths: Object.fromEntries(["a", "b", "c"].map((name) => [`/${name}`, { get: { operationId: name, responses: json(resource) } }])),
+    };
     // A supplied registry gets a fresh object per tool, as from any caller.
     const supplied = fromOpenAPI(document, { ...options(), registry: new McpFnRegistry() });
     const [a, b] = ["a", "b"].map((name) => supplied.registry.getListedTool(name)!);
     expect(a!.outputSchema).not.toBe(b!.outputSchema);
     (a!.outputSchema!.properties!.name as { type: string }).type = "integer";
     expect(b!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
-    // A registry the call creates shares identical schemas, frozen.
+    // Its own registry shares one frozen object; the last registration gets a fresh one.
     const own = fromOpenAPI(document, options());
-    const [first, second] = ["a", "b"].map((name) => own.registry.getListedTool(name)!);
+    const [first, second, third] = ["a", "b", "c"].map((name) => own.registry.getListedTool(name)!);
     expect(first!.outputSchema).toBe(second!.outputSchema);
+    expect(third!.outputSchema).not.toBe(second!.outputSchema);
+    expect(third!.outputSchema).toEqual(second!.outputSchema);
     expect(() => {
       (first!.outputSchema!.properties!.name as { type: string }).type = "integer";
     }).toThrow(TypeError);
     // The catalog holds detached, writable copies either way.
-    const listed = tool(own.tools, "a").outputSchema!;
-    (listed.properties!.name as { type: string }).type = "integer";
+    (tool(own.tools, "a").outputSchema!.properties!.name as { type: string }).type = "integer";
     expect(second!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
     expect(tool(own.tools, "b").outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
   });

@@ -191,7 +191,7 @@ for (const { operation, code, reason } of skipped) {
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates. In a
   registry `fromOpenAPI` creates, tools with identical schemas register one
-  deeply frozen object (compiled once); a supplied registry gets a fresh
+  deeply frozen object, compiled once; a supplied registry gets a fresh
   object per tool.
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of

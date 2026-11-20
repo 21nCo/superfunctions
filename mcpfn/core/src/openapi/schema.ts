@@ -1171,8 +1171,9 @@ function comparesWholeValues(entries: ClosureEntry[]): boolean {
  */
 function patternMatcher(entries: ClosureEntry[], ignored: string | undefined): (name: string) => boolean {
   const exact = new Set<string>();
-  // Literal prefixes as a character trie, so a name is matched in one pass.
-  const prefixes: PrefixNode = { next: new Map() };
+  // Literal prefixes by length: a name is compared once per distinct length,
+  // with no structure larger than the prefixes themselves.
+  const prefixes = new Map<number, Set<string>>();
   let any = false;
   for (const { schema } of entries) {
     for (const [pattern, value] of objectEntries(schema.patternProperties)) {
@@ -1180,38 +1181,21 @@ function patternMatcher(entries: ClosureEntry[], ignored: string | undefined): (
       const literal = /^\^([A-Za-z0-9_-]*)(\$?)$/.exec(pattern);
       if (!literal) any = true;
       else if (literal[2]) exact.add(literal[1]!);
-      else addPrefix(prefixes, literal[1]!);
+      else {
+        const prefix = literal[1]!;
+        const known = prefixes.get(prefix.length) ?? new Set<string>();
+        known.add(prefix);
+        prefixes.set(prefix.length, known);
+      }
     }
   }
-  return (name) => any || exact.has(name) || hasPrefixOf(prefixes, name);
-}
-
-interface PrefixNode {
-  end?: true;
-  next: Map<string, PrefixNode>;
-}
-
-function addPrefix(root: PrefixNode, prefix: string): void {
-  let node = root;
-  for (const character of prefix) {
-    let child = node.next.get(character);
-    if (!child) {
-      child = { next: new Map() };
-      node.next.set(character, child);
+  return (name) => {
+    if (any || exact.has(name)) return true;
+    for (const [length, known] of prefixes) {
+      if (length <= name.length && known.has(name.slice(0, length))) return true;
     }
-    node = child;
-  }
-  node.end = true;
-}
-
-function hasPrefixOf(root: PrefixNode, name: string): boolean {
-  let node: PrefixNode | undefined = root;
-  for (const character of name) {
-    if (node.end) return true;
-    node = node.next.get(character);
-    if (!node) return false;
-  }
-  return node.end === true;
+    return false;
+  };
 }
 
 function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {

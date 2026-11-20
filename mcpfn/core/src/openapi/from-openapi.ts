@@ -240,22 +240,16 @@ class OperationConverter {
   private readonly components: JsonObject;
   private readonly schemas: SchemaConverter;
   private compiler: SchemaCompiler | undefined;
+  /** Tool schemas by content, when tools share them (see `toolSchema`). */
+  private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
   private readonly checkedAsWritten = new WeakMap<object, string | null>();
   private readonly verdicts = new Map<string, string | null>();
 
-  /** Tool schemas by content, when tools may share them (see `toolSchema`). */
-  private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
-
   constructor(
     private readonly document: JsonObject,
     version: OpenApiVersion,
-    /**
-     * Whether tools may share identical schema objects: only in a registry
-     * this call creates. A supplied registry's Ajv may already hold schemas
-     * whose references resolve against the anonymous schema compiled last,
-     * so there every tool hands it a fresh object, as any caller would.
-     */
+    /** Whether tools may share identical schema objects (see `toolSchema`). */
     private readonly shareSchemas: boolean,
   ) {
     this.components = isObject(document.components) ? document.components : {};
@@ -376,13 +370,25 @@ class OperationConverter {
   }
 
   /**
-   * A tool schema built from a converted `root` and its `definitions` by
-   * `finish` (which may inline the root or find it unusable), as a
-   * tree-shaped copy the tool owns. In a registry this call creates, tools
-   * with identical schemas share one deeply frozen copy instead, so the
-   * registry's Ajv compiles it once (it caches by schema object) and no tool
-   * can change another's. Within one call equal definition names are the
-   * same converted components, so only the root is compared by content.
+   * Leaving out the properties flagged for `mode` must be sound, and must not
+   * hide a declaration the registry would reject: a schema that flags any is
+   * also compiled as written.
+   */
+  private assertProjectable(schema: unknown, mode: "input" | "output", subject: string): void {
+    if (schema === undefined || !this.schemas.flagsFor(schema, mode)) return;
+    this.assertCompilesAsWritten(schema, subject);
+    this.schemas.checkProjection(schema, mode);
+  }
+
+  /**
+   * A tool schema built by `finish` (which may inline the converted `root` or
+   * find it unusable) as a tree-shaped copy. In a registry `fromOpenAPI`
+   * creates, tools with identical schemas share one deeply frozen copy, so
+   * its Ajv compiles it once (it caches by schema object) and no tool can
+   * change another's; `register` keeps the registry's observable state as
+   * with fresh copies. A supplied registry gets a fresh copy per tool. Within
+   * one call equal definition names are the same converted components, so
+   * only the root is compared by content.
    */
   private toolSchema(
     kind: "input" | "output",
@@ -402,17 +408,6 @@ class OperationConverter {
     const result = produce();
     if (key !== undefined) this.shared.set(key, result && deepFreeze(result));
     return result;
-  }
-
-  /**
-   * Leaving out the properties flagged for `mode` must be sound, and must not
-   * hide a declaration the registry would reject: a schema that flags any is
-   * also compiled as written.
-   */
-  private assertProjectable(schema: unknown, mode: "input" | "output", subject: string): void {
-    if (schema === undefined || !this.schemas.flagsFor(schema, mode)) return;
-    this.assertCompilesAsWritten(schema, subject);
-    this.schemas.checkProjection(schema, mode);
   }
 
   /**
@@ -728,6 +723,7 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
     if (typeof value === "string") values.chars += value.length;
     return value;
   }
+  if (!Array.isArray(value)) for (const key of Object.keys(value)) values.chars += key.length;
   // YAML parsers can produce Date values (for example a timestamp `default`).
   if (value instanceof Date) return value.toISOString() as T;
   if (ancestors.has(value)) {
@@ -749,15 +745,25 @@ function throwIfInvalid(failure: string | null, subject: string): void {
 
 interface CopiedValues {
   json: boolean;
-  /** The length of the copied strings, which a content key serialises. */
+  /** The length of the copied strings and object keys, which a content key serialises. */
   chars: number;
 }
 
-/** Content keys serialise at most this much string content; a larger schema gets none. */
-const MAX_KEY_CHARS = 65_536;
+/**
+ * Content keys hold at most this many characters of strings, object keys and
+ * definition names (at most six times as many once escaped); a schema with
+ * more gets none, and is checked again for each source object.
+ */
+const MAX_KEY_CHARS = 4096;
 
+/** A value JSON round-trips exactly (not -0, which it writes as 0). */
 function isJsonPrimitive(value: unknown): boolean {
-  return typeof value === "string" || typeof value === "boolean" || value === null || Number.isFinite(value);
+  return (
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    value === null ||
+    (Number.isFinite(value) && !Object.is(value, -0))
+  );
 }
 
 /**
@@ -767,7 +773,9 @@ function isJsonPrimitive(value: unknown): boolean {
  * and is never shared.
  */
 function contentKey(kind: string, copy: unknown, values: CopiedValues, definitions: object): string | undefined {
-  return values.json && values.chars <= MAX_KEY_CHARS ? JSON.stringify([kind, Object.keys(definitions), copy]) : undefined;
+  const names = Object.keys(definitions);
+  const chars = names.reduce((total, name) => total + name.length, values.chars);
+  return values.json && chars <= MAX_KEY_CHARS ? JSON.stringify([kind, names, copy]) : undefined;
 }
 
 function documentVersion(document: JsonObject): OpenApiVersion {
@@ -943,8 +951,19 @@ function register<TContext>(
   const chosen = options.name ? candidates.map(({ operation }) => names.choose(operation)) : undefined;
   const tools: OpenApiToolInfo[] = [];
   const executor = options.executor;
+  // Shared schemas (see OperationConverter.toolSchema) leave the registry's
+  // Ajv as fresh copies would: it resolves later schemas against the
+  // anonymous schema it compiled last, which a cached object does not
+  // replace, so the last registration (and any after a failed one, whose
+  // object Ajv half-registered) gets fresh copies.
+  const failed = new WeakSet<object>();
+  const fresh = <T extends object | undefined>(schema: T, last: boolean): T =>
+    schema !== undefined && Object.isFrozen(schema) && (last || failed.has(schema)) ? deepFreeze(structuredClone(schema)) : schema;
   candidates.forEach((candidate, index) => {
-    const { operation, inputSchema, outputSchema } = candidate;
+    const { operation } = candidate;
+    const last = index === candidates.length - 1;
+    const inputSchema = fresh(candidate.inputSchema, last);
+    const outputSchema = fresh(candidate.outputSchema, last);
     const name = chosen ? chosen[index]! : names.next(operation);
     const description = toolDescription(operation);
     const annotations = toolAnnotations(operation.method);
@@ -959,6 +978,8 @@ function register<TContext>(
       });
     } catch (error) {
       if (!isValidationError(error)) throw error;
+      failed.add(inputSchema);
+      if (outputSchema) failed.add(outputSchema);
       skipped.push(registrationSkip(operation, error));
       return;
     }
