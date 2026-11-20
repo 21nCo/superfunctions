@@ -1,3 +1,4 @@
+import Ajv from "ajv";
 import { describe, expect, it } from "vitest";
 
 import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection } from "../src/validation.js";
@@ -703,5 +704,22 @@ describe("Ajv compilation of repeated schemas", () => {
     compiler.compile({ type: "number", minimum: 1 });
     const afterEqual = compiler.compile(proxy());
     for (const value of [0, 2, 6]) expect(afterEqual(value)).toBe(alone(value));
+  });
+
+  it("compiles a Proxy schema with the values its get trap returns, as Ajv itself reads them", () => {
+    const proxy = () =>
+      new Proxy({ type: "number", minimum: 1 } as Record<string, unknown>, {
+        get: (target, key) => (key === "minimum" ? 5 : Reflect.get(target, key)),
+      });
+    const direct = new Ajv().compile(proxy());
+    const alone = createSchemaCompiler("ajv").compile(proxy());
+    const compiler = createSchemaCompiler("ajv");
+    expect(compiler.compile({ type: "number", minimum: 1 })(2)).toBe(true);
+    const afterEqual = compiler.compile(proxy());
+    expect(direct(2)).toBe(false);
+    for (const value of [0, 2, 5, 6]) {
+      expect(alone(value)).toBe(direct(value));
+      expect(afterEqual(value)).toBe(direct(value));
+    }
   });
 });

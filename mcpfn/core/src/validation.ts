@@ -565,8 +565,9 @@ export function validateSchemaCollection(
  * once and shares the generated function (each caller keeps its own error
  * state).
  *
- * The snapshot reads each value once, from own enumerable data properties of
- * objects whose prototype is Object.prototype and of dense arrays, holding
+ * The snapshot reads each value once, through [[Get]] as Ajv does, from own
+ * enumerable data properties of objects whose prototype is Object.prototype
+ * and of dense arrays, holding
  * strings, booleans, null and finite numbers, and builds both the key and a
  * private copy of that data. Ajv compiles the copy, never the caller's object,
  * so the key always describes exactly what was compiled (a Proxy or getter
@@ -608,7 +609,9 @@ function schemaContentSnapshot(schema: object): { key: string; copy: object } | 
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return NO_SNAPSHOT;
       if (!isArray) parts.push(JSON.stringify(key), ":");
-      const item = walk(descriptor.value);
+      // Read the value the way Ajv would ([[Get]]), once: a Proxy whose get
+      // trap disagrees with its descriptor is captured as Ajv would see it.
+      const item = walk((value as Record<string, unknown>)[key]);
       if (item === NO_SNAPSHOT) return NO_SNAPSHOT;
       if (isArray) (copy as unknown[]).push(item);
       else Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });

@@ -590,6 +590,68 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
+  it("skips a oneOf whose members removal would change differently below their own level", () => {
+    const { tools, skipped } = convert("skip-access-flag-oneof-projection");
+    const nested = (name: string, keyword = "readOnly") =>
+      `property "${name}" contains ${keyword} properties but the members of a oneOf do not all give it the same schema, so they could overlap once those are removed`;
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlyNestedProperty", "unsupported-access-flag", nested("data")],
+      [
+        "readOnlyArrayItems",
+        "unsupported-access-flag",
+        "a oneOf member removes readOnly properties through items, so its members could overlap once they are removed",
+      ],
+      ["writeOnlyNestedOutput", "unsupported-access-flag", nested("data", "writeOnly")],
+    ]);
+    // Members giving the nested property the same schema, and members that
+    // admit different kinds of value, still convert and keep exactly one match.
+    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyIdenticalNested", "readOnlyOneOrMany"]);
+    expectArguments(tool(tools, "readOnlyIdenticalNested").inputSchema, {
+      valid: [{ body: { type: "x", data: { label: "l" } } }, { body: { type: "y", data: { label: "l" } } }],
+      invalid: [
+        { body: { type: "z", data: { label: "l" } } },
+        { body: { type: "x", data: { kind: "client-chosen", label: "l" } } },
+        { body: { type: "x", data: {} } },
+      ],
+    });
+    expectArguments(tool(tools, "readOnlyOneOrMany").inputSchema, {
+      valid: [{ body: { label: "l" } }, { body: [{ label: "l" }, { label: "m" }] }],
+      invalid: [{ body: { kind: "client-chosen", label: "l" } }, { body: [{ kind: "client-chosen", label: "l" }] }],
+    });
+  });
+
+  it("skips a child value whose projected schema is not the only thing constraining it", () => {
+    const { tools, skipped } = convert("skip-access-flag-child-constraints");
+    const child = (subject: string, by: string, keyword = "readOnly") =>
+      `${subject} contains ${keyword} properties but is also constrained by ${by}, so they cannot be removed soundly`;
+    const conditional = "not, if/then/else or a schema dependency";
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlyChildUnderNot", "unsupported-access-flag", child('property "data"', conditional)],
+      ["readOnlyChildTwoSchemas", "unsupported-access-flag", child('property "data"', "another schema for the same property")],
+      ["readOnlyChildPattern", "unsupported-access-flag", child('property "data"', 'patternProperties "^da"')],
+      ["readOnlyChildObjectEnum", "unsupported-access-flag", child('property "data"', "enum")],
+      ["readOnlyUniqueItems", "unsupported-access-flag", child("items", "uniqueItems")],
+      ["readOnlyItemsUnderIf", "unsupported-access-flag", child("items", conditional)],
+      [
+        "readOnlyMapSibling",
+        "unsupported-access-flag",
+        child("additionalProperties", "properties of another schema for the same object"),
+      ],
+      ["writeOnlyChildUnderNot", "unsupported-access-flag", child('property "login"', conditional, "writeOnly")],
+    ]);
+    // A map of objects with readOnly properties, and a string enum beside the
+    // object member, constrain nothing else and still convert.
+    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyMap", "readOnlyBesideStringEnum"]);
+    expectArguments(tool(tools, "readOnlyMap").inputSchema, {
+      valid: [{ body: {} }, { body: { a: { label: "l" }, b: { label: "m" } } }],
+      invalid: [{ body: { a: { kind: "client-chosen", label: "l" } } }, { body: { a: {} } }],
+    });
+    expectArguments(tool(tools, "readOnlyBesideStringEnum").inputSchema, {
+      valid: [{ body: { data: { label: "l" } } }, { body: "none" }],
+      invalid: [{ body: { data: { kind: "client-chosen", label: "l" } } }, { body: "other" }],
+    });
+  });
+
   it("ignores readOnly and writeOnly beside a $ref in OpenAPI 3.0, which ignores $ref siblings", () => {
     const { tools, skipped } = fromOpenAPI(
       {

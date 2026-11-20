@@ -34,6 +34,15 @@
   `maxProperties` inside `not`, and `dependentRequired` on other names; it
   keeps a closed object that lists the property with an unconditional
   `maxProperties`.
+- `skip-access-flag-oneof-projection.json` skips `oneOf` members that
+  removal changes differently below their own level (a nested property with
+  `const` a/b inside, array items, and a writeOnly nested output), and keeps
+  members sharing the same nested schema and an object-or-array `oneOf`.
+- `skip-access-flag-child-constraints.json` skips child values whose
+  projected schema is not the only constraint on them (under `not` or `if`,
+  a second schema for the property, a matching pattern, an object `enum`,
+  `uniqueItems`, a map beside other properties, a writeOnly output under
+  `not`), and keeps a map of objects and a string `enum` beside the object.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.

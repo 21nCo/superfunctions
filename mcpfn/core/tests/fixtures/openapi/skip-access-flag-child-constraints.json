@@ -1,0 +1,368 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/not": {
+      "post": {
+        "operationId": "readOnlyChildUnderNot",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data"
+                ],
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/Data"
+                  }
+                },
+                "not": {
+                  "properties": {
+                    "data": {
+                      "maxProperties": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/two-schemas": {
+      "post": {
+        "operationId": "readOnlyChildTwoSchemas",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "data"
+                    ],
+                    "properties": {
+                      "data": {
+                        "$ref": "#/components/schemas/Data"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "data": {
+                        "required": [
+                          "kind"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/pattern": {
+      "post": {
+        "operationId": "readOnlyChildPattern",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data"
+                ],
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/Data"
+                  }
+                },
+                "patternProperties": {
+                  "^da": {
+                    "maxProperties": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/object-enum": {
+      "post": {
+        "operationId": "readOnlyChildObjectEnum",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data"
+                ],
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/Data"
+                  }
+                },
+                "enum": [
+                  {
+                    "data": {
+                      "kind": "k",
+                      "label": "l"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/unique-items": {
+      "post": {
+        "operationId": "readOnlyUniqueItems",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/components/schemas/Data"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/items-under-if": {
+      "post": {
+        "operationId": "readOnlyItemsUnderIf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "if": {
+                  "items": {
+                    "$ref": "#/components/schemas/Data"
+                  }
+                },
+                "then": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/map-sibling": {
+      "post": {
+        "operationId": "readOnlyMapSibling",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/Data"
+                    }
+                  },
+                  {
+                    "properties": {
+                      "x": {
+                        "maxProperties": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/write-only-output": {
+      "get": {
+        "operationId": "writeOnlyChildUnderNot",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "$ref": "#/components/schemas/Login"
+                    }
+                  },
+                  "not": {
+                    "properties": {
+                      "login": {
+                        "maxProperties": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/map": {
+      "post": {
+        "operationId": "readOnlyMap",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Data"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/string-enum-member": {
+      "post": {
+        "operationId": "readOnlyBesideStringEnum",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "data"
+                    ],
+                    "properties": {
+                      "data": {
+                        "$ref": "#/components/schemas/Data"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "none"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Data": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "label"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "readOnly": true
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "Login": {
+        "type": "object",
+        "required": [
+          "user",
+          "password"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          }
+        }
+      }
+    }
+  }
+}

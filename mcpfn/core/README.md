@@ -121,7 +121,17 @@ for (const { operation, code, reason } of skipped) {
   `dependencies` or `dependentRequired`, `maxProperties` other than
   unconditionally, a `patternProperties` key matching the name (an invalid
   pattern counts as a match), or an `additionalProperties` other than `true`
-  or `{}` without listing the name in its own `properties`. In
+  or `{}` without listing the name in its own `properties`. Removal inside a
+  child value (a property's object, array items, a map's values) is kept
+  only when the projected subschema is the only thing constraining that
+  child: the operation is skipped when the members of a `oneOf` that can be
+  objects do not all give such a property the same schema with the same
+  required status, when a `oneOf` member changes through `items`,
+  `additionalProperties`, `patternProperties` or a nested composition and
+  another member admits the same kind of value, or when any applied schema
+  gives the child another subschema, constrains it inside `not`,
+  `if`/`then`/`else` or a dependency, has an object or array `const`/`enum`,
+  or (for items) `uniqueItems`. In
   OpenAPI 3.0 a `readOnly` beside a `$ref` is ignored, as 3.0 ignores every
   `$ref` sibling; in 3.1 it applies. The request
   body is the first `application/json` media entry that is an object, else the
