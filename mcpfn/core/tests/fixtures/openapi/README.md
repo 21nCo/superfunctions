@@ -17,6 +17,11 @@
   the object, an `allOf`/`$ref` member or an alternative), and keeps
   `maxProperties` beside a readOnly property and an object `enum` without
   flagged properties.
+- `skip-access-flag-oneof-overlap.json` skips readOnly/writeOnly properties
+  removed from `oneOf` members that differ on them (`const`, `enum` or type
+  discriminators, required in one member only, absent in one, and a writeOnly
+  output discriminator), and keeps members that mark the property through
+  equal schemas, a nullable reference and an `anyOf` discriminator.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.

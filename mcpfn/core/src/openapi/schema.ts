@@ -155,6 +155,12 @@ interface RegionSummary {
    * a property would change.
    */
   instanceConstraint?: string;
+  /**
+   * A name removed from a `oneOf` member (in this region or a nested one)
+   * that the members do not all flag through the same property schema with
+   * the same required status: removing it could make members overlap.
+   */
+  oneOfConflict?: string;
 }
 
 /** Object keywords whose meaning changes when a property is removed. */
@@ -509,7 +515,10 @@ export class SchemaConverter {
    * - a flagged name used by `dependencies` or `dependentRequired`;
    * - any flagged name where the schema or a region nested in it has `const`,
    *   `enum` or `minProperties`, which constrain the whole instance or its
-   *   property count (`maxProperties` stays allowed: removal only helps it).
+   *   property count (`maxProperties` stays allowed: removal only helps it);
+   * - a name a `oneOf` member removes that the other members do not all flag
+   *   through the same property schemas with the same required status
+   *   (see `oneOfConflict`).
    * An `anyOf`/`oneOf` member that flags and uses a name only itself is
    * converted on its own and removes the name there.
    */
@@ -522,6 +531,12 @@ export class SchemaConverter {
     const elsewhere = "anyOf/oneOf, not, if/then/else or a schema dependency";
     if (summary.conditionalFlag !== undefined) {
       return { names, conflict: { name: summary.conditionalFlag, by: elsewhere } };
+    }
+    if (summary.oneOfConflict !== undefined) {
+      return {
+        names,
+        conflict: { name: summary.oneOfConflict, by: "a oneOf whose members do not all mark it the same way" },
+      };
     }
     // A name some region uses without flagging it conflicts with any region
     // that flags it (never the same region: there it would count as flagged).
@@ -559,6 +574,7 @@ export class SchemaConverter {
     const nested: RegionSummary[] = [];
     let conditionalFlag: string | undefined;
     let instanceConstraint: string | undefined;
+    let oneOfConflict: string | undefined;
     const conditional = (member: unknown) => {
       const summary = this.regionSummary(member, keyword);
       conditionalFlag ??= summary.conditionalFlag ?? summary.flagged.values().next().value;
@@ -597,9 +613,10 @@ export class SchemaConverter {
       if (Array.isArray(current.allOf)) for (const member of current.allOf) walk(member);
       for (const alternatives of ["anyOf", "oneOf"] as const) {
         const members = current[alternatives];
-        if (Array.isArray(members)) {
-          for (const member of members) nested.push(this.regionSummary(member, keyword));
-        }
+        if (!Array.isArray(members)) continue;
+        const summaries = members.map((member) => this.regionSummary(member, keyword));
+        nested.push(...summaries);
+        if (alternatives === "oneOf") oneOfConflict ??= this.oneOfConflict(members, summaries);
       }
       for (const condition of ["not", "if", "then", "else"] as const) {
         if (current[condition] !== undefined) conditional(current[condition]);
@@ -613,6 +630,7 @@ export class SchemaConverter {
       dependencies,
       ...(conditionalFlag !== undefined ? { conditionalFlag } : {}),
       ...(instanceConstraint !== undefined ? { instanceConstraint } : {}),
+      ...(oneOfConflict !== undefined ? { oneOfConflict } : {}),
     };
     for (const inner of nested) {
       for (const name of inner.flagged) summary.flagged.add(name);
@@ -620,9 +638,60 @@ export class SchemaConverter {
       for (const name of inner.dependencies) summary.dependencies.add(name);
       if (inner.conditionalFlag !== undefined) summary.conditionalFlag ??= inner.conditionalFlag;
       if (inner.instanceConstraint !== undefined) summary.instanceConstraint ??= inner.instanceConstraint;
+      if (inner.oneOfConflict !== undefined) summary.oneOfConflict ??= inner.oneOfConflict;
     }
     memo.set(schema, summary);
     return summary;
+  }
+
+  /**
+   * A name some `oneOf` member removes (flags in its own region) that would
+   * stop distinguishing the members once removed. Removal is sound only when
+   * every member flags the name through the same property schemas with the
+   * same required status, as polymorphic members sharing one base schema do;
+   * otherwise a member that differs on the name (another type, `const` or
+   * `enum`, required in one member only, or absent or forbidden in one) could
+   * overlap with another after removal, so `oneOf` would reject a value
+   * exactly one member accepted.
+   */
+  private oneOfConflict(members: unknown[], summaries: RegionSummary[]): string | undefined {
+    const removed = new Set<string>();
+    for (const summary of summaries) for (const name of summary.names) removed.add(name);
+    for (const name of removed) {
+      let first: PropertyFacts | undefined;
+      for (const [index, member] of members.entries()) {
+        // Removal only changes what objects a member accepts, so a member
+        // that accepts no object (the `{ type: "null" }` of a nullable
+        // reference) cannot start overlapping.
+        if (!this.mayBeObject(member)) continue;
+        if (!summaries[index]!.names.has(name)) return name;
+        const facts = this.propertyFacts(member, name);
+        if (first === undefined) first = facts;
+        else if (!sameFacts(first, facts)) return name;
+      }
+    }
+    return undefined;
+  }
+
+  private mayBeObject(schema: unknown): boolean {
+    try {
+      return this.admits(schema).values.has("object");
+    } catch {
+      return true;
+    }
+  }
+
+  /** The schemas given to property `name` and whether it is required, over `schema`'s allOf/$ref closure. */
+  private propertyFacts(schema: unknown, name: string): PropertyFacts {
+    const schemas: unknown[] = [];
+    let required = false;
+    this.inPlaceMembers(schema, (member) => {
+      if (isObject(member.properties) && Object.hasOwn(member.properties, name)) {
+        schemas.push(member.properties[name]);
+      }
+      if (Array.isArray(member.required) && member.required.includes(name)) required = true;
+    }, false);
+    return { schemas, required };
   }
 
   /** Property names in `properties` or `required` of `schema` or any schema validating the same instance. */
@@ -766,6 +835,30 @@ export class SchemaConverter {
 }
 
 const DEFINITION_REF = "#/definitions/";
+
+interface PropertyFacts {
+  schemas: unknown[];
+  required: boolean;
+}
+
+function sameFacts(left: PropertyFacts, right: PropertyFacts): boolean {
+  return (
+    left.required === right.required &&
+    left.schemas.length === right.schemas.length &&
+    left.schemas.every((schema, index) => sameSchema(schema, right.schemas[index]))
+  );
+}
+
+/** The same object, or equal JSON (a schema JSON cannot represent counts as different). */
+function sameSchema(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  try {
+    const encoded = JSON.stringify(left);
+    return encoded !== undefined && encoded === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
 
 const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;

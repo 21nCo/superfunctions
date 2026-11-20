@@ -508,6 +508,41 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
+  it("skips readOnly and writeOnly properties whose removal would make oneOf members overlap", () => {
+    const { tools, skipped } = convert("skip-access-flag-oneof-overlap");
+    const oneOf = "a oneOf whose members do not all mark it the same way";
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlyConstDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["readOnlyEnumDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["readOnlyTypeDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["readOnlyRequiredInOneMember", "unsupported-access-flag", `property "id" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["readOnlyAbsentInOneMember", "unsupported-access-flag", `property "id" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["readOnlyDiscriminatorInReferencedMembers", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+      ["writeOnlyOutputDiscriminator", "unsupported-access-flag", `property "kind" is writeOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
+    ]);
+    // Members that flag id through equal schemas, required in both, stay exclusive on the rest.
+    expectArguments(tool(tools, "readOnlySameInEveryMember").inputSchema, {
+      valid: [{ body: { a: "x" } }, { body: { b: "y" } }],
+      invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
+    });
+    // The null member of a nullable reference accepts no object, so it cannot start overlapping.
+    expectArguments(tool(tools, "readOnlyNullableReference").inputSchema, {
+      valid: [{ body: { name: "a" } }, { body: null }],
+      invalid: [{ body: { name: "a", id: "client-chosen-id" } }, { body: {} }],
+    });
+    // anyOf members may overlap, so removing the discriminator keeps the call possible.
+    expectArguments(tool(tools, "readOnlyDiscriminatorInAnyOf").inputSchema, {
+      valid: [{ body: {} }],
+      invalid: [{ body: { kind: "a" } }, { body: { other: 1 } }],
+    });
+    // Polymorphic members sharing one readOnly base property stay supported.
+    const shared = convert("skip-access-flag-conflicts").tools;
+    expectArguments(tool(shared, "polymorphicReadOnlyId").inputSchema, {
+      valid: [{ body: { kind: "cat" } }, { body: { kind: "dog" } }],
+      invalid: [{ body: { kind: "cat", id: "client-chosen-id" } }, { body: {} }],
+    });
+  });
+
   it("ignores readOnly and writeOnly beside a $ref in OpenAPI 3.0, which ignores $ref siblings", () => {
     const { tools, skipped } = fromOpenAPI(
       {
