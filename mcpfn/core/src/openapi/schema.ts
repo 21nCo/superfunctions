@@ -516,7 +516,7 @@ export class SchemaConverter {
     for (const [keyword, value] of Object.entries(schema)) {
       if (DROPPED_KEYWORDS.has(keyword)) continue;
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
-      if (keyword === "dependencies" && this.version === "3.1") continue;
+      if (keyword === this.ignoredKeyword()) continue;
       if (keyword === "dependencies" && isObject(value)) {
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
@@ -713,12 +713,21 @@ export class SchemaConverter {
         for (const member of members) walk(member, conditional || !exclusive);
       }
       for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], true);
-      for (const keyword of ["dependencies", "dependentSchemas"] as const) {
+      for (const keyword of this.dependencyKeywords()) {
         for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, true);
       }
     };
     walk(root, false);
     return entries;
+  }
+
+  /** The keyword conversion drops: 2020-12 (OpenAPI 3.1) defines no `dependencies`, so it annotates only. */
+  private ignoredKeyword(): string | undefined {
+    return this.version === "3.1" ? "dependencies" : undefined;
+  }
+
+  private dependencyKeywords(): string[] {
+    return this.version === "3.1" ? ["dependentSchemas"] : ["dependencies", "dependentSchemas"];
   }
 
   /** Whether no two alternatives accept the same kind of value, so each value meets at most one. */
@@ -749,7 +758,7 @@ export class SchemaConverter {
     // Validators do not read a "__proto__" key of properties as a property schema.
     if (declarers.has("__proto__")) return { name: "__proto__", by: "the validators, which ignore it in properties" };
     for (const entry of entries) {
-      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers) : undefined;
+      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers, this.ignoredKeyword()) : undefined;
       if (conflict !== undefined) return conflict;
     }
     return undefined;
@@ -989,6 +998,7 @@ export class SchemaConverter {
         if (this.hasFlag(property, keyword)) flagged = true;
       }
       for (const entry of SUBSCHEMA_KEYWORDS) {
+        if (entry === this.ignoredKeyword()) continue;
         for (const child of this.childSchemas(current, entry)) walk(child);
       }
     };
@@ -1112,10 +1122,16 @@ const DEFINITION_REF = "#/definitions/";
  * of a schema that does not flag it, an object-wide constraint, or (under a
  * condition) a keyword that tells the object with the name from the one without.
  */
-function needsFlagged(entry: ClosureEntry, declarers: ReadonlyMap<string, ReadonlySet<object>>): AccessConflict | undefined {
+function needsFlagged(
+  entry: ClosureEntry,
+  declarers: ReadonlyMap<string, ReadonlySet<object>>,
+  ignored: string | undefined,
+): AccessConflict | undefined {
   const { schema, conditional } = entry;
   const [first] = declarers.keys();
-  const constraint = (conditional ? NAME_SENSITIVE : INSTANCE_CONSTRAINTS).find((keyword) => Object.hasOwn(schema, keyword));
+  const constraint = (conditional ? NAME_SENSITIVE : INSTANCE_CONSTRAINTS).find(
+    (keyword) => keyword !== ignored && Object.hasOwn(schema, keyword),
+  );
   if (constraint !== undefined) return { name: first!, by: constraint };
   if (conditional && !opens(schema.additionalProperties)) {
     return { name: first!, by: "additionalProperties under a condition" };
@@ -1148,23 +1164,49 @@ function comparesWholeValues(entries: ClosureEntry[]): boolean {
  * decided, by looking strings up; any other pattern may match. No document
  * pattern is ever run.
  */
-const MAX_LITERAL_PREFIXES = 16;
-
 function patternMatcher(entries: ClosureEntry[]): (name: string) => boolean {
   const exact = new Set<string>();
-  const prefixes = new Set<string>();
+  // Literal prefixes as a character trie, so a name is matched in one pass.
+  const prefixes: PrefixNode = { next: new Map() };
   let any = false;
   for (const { schema } of entries) {
     for (const [pattern, value] of objectEntries(schema.patternProperties)) {
       if (!constrainsValues(value)) continue;
       const literal = /^\^([A-Za-z0-9_-]*)(\$?)$/.exec(pattern);
       if (!literal) any = true;
-      else (literal[2] ? exact : prefixes).add(literal[1]!);
+      else if (literal[2]) exact.add(literal[1]!);
+      else addPrefix(prefixes, literal[1]!);
     }
   }
-  // Past a few prefixes every name is treated as matched, keeping the check linear.
-  if (prefixes.size > MAX_LITERAL_PREFIXES) any = true;
-  return (name) => any || exact.has(name) || [...prefixes].some((prefix) => name.startsWith(prefix));
+  return (name) => any || exact.has(name) || hasPrefixOf(prefixes, name);
+}
+
+interface PrefixNode {
+  end?: true;
+  next: Map<string, PrefixNode>;
+}
+
+function addPrefix(root: PrefixNode, prefix: string): void {
+  let node = root;
+  for (const character of prefix) {
+    let child = node.next.get(character);
+    if (!child) {
+      child = { next: new Map() };
+      node.next.set(character, child);
+    }
+    node = child;
+  }
+  node.end = true;
+}
+
+function hasPrefixOf(root: PrefixNode, name: string): boolean {
+  let node: PrefixNode | undefined = root;
+  for (const character of name) {
+    if (node.end) return true;
+    node = node.next.get(character);
+    if (!node) return false;
+  }
+  return node.end === true;
 }
 
 function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {

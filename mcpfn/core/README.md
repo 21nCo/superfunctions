@@ -171,20 +171,23 @@ for (const { operation, code, reason } of skipped) {
   `$dynamicRef`, `unevaluatedProperties`, `unevaluatedItems`,
   `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
   translated to draft-07 `dependencies`). A 3.1 `jsonSchemaDialect` or
-  `$schema` other than the OAS 3.1 base dialect (`.../dialect/base` or a
-  dated id) or JSON Schema 2020-12, or any `$schema` in a 3.0 document, skips
-  the schemas it governs (`unsupported-dialect`); a schema root that names a
-  supported `$schema` itself is read in it, and a JSON body without `schema`
-  accepts any JSON value in any dialect. A schema that would expand to more
+  `$schema` other than a published OAS 3.1 base dialect id
+  (`.../dialect/base` or `.../dialect/2024-11-10`) or JSON Schema 2020-12,
+  or any `$schema` in a 3.0 document, skips the schemas it governs
+  (`unsupported-dialect`), boolean schemas and a JSON body without `schema`
+  included; a schema root that names a supported `$schema` itself is read in
+  it. A 3.1 `dependencies` keyword is ignored, since 2020-12 defines none. A schema that would expand to more
   than 100,000 nodes, or that repeats objects the document shares between
   positions into more than four times the values they hold, is skipped
   (`schema-too-large`), and so is every schema converted after one call's
   conversions have produced 1,000,000 nodes plus 64 per value of the
-  document (copies of produced schemas for each tool do not count). A schema
+  document, copies of the produced tool schemas included (tools whose
+  schemas are identical share one). A schema
   or reference chain nested too deeply to walk is skipped the same way. A
   Swagger 2.0 document throws.
-- **Catalog.** `tools` holds copies of the registered schemas, so changing
-  them changes neither what the registry lists nor what it validates.
+- **Catalog.** `tools` holds the registered schemas, deeply frozen, so
+  nothing can change what the registry lists or validates; tools whose
+  schemas are identical share one object.
   `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.

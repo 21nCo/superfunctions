@@ -244,8 +244,8 @@ class OperationConverter {
   private readonly components: JsonObject;
   private readonly schemas: SchemaConverter;
   private compiler: SchemaCompiler | undefined;
-  /** Produced tool schemas by content (see `share`). */
-  private readonly shared = new Map<string, McpFnObjectSchema>();
+  /** Produced tool schemas (or none, for an output) by content (see `share`). */
+  private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
   /** Why a schema checked as written failed to compile (null: it compiled), by content. */
   private readonly verdicts = new Map<string, string | null>();
 
@@ -357,7 +357,7 @@ class OperationConverter {
     if (body) {
       // A media type object without `schema` accepts any JSON value (`{}`),
       // which is still read in the document's dialect.
-      groups.push(["body", this.schemas.convertRoot(body.schema ?? {}, "input", refs)]);
+      groups.push(["body", this.schemas.convertRoot(body.schema === undefined ? {} : body.schema, "input", refs)]);
       this.assertProjectable(body.schema, "input", "request body");
       if (body.info.required) required.push("body");
     }
@@ -368,7 +368,9 @@ class OperationConverter {
       ...(required.length > 0 ? { required } : {}),
       additionalProperties: false,
     };
-    return this.share("input", root, definitions);
+    return this.share("input", root, definitions, () =>
+      finished(Object.keys(definitions).length > 0 ? { ...root, definitions } : root, this.schemas.copyBudget()),
+    )!;
   }
 
   /**
@@ -383,26 +385,26 @@ class OperationConverter {
   }
 
   /**
-   * One tree-shaped copy per distinct produced schema, charged to the call's
-   * total. Tools with identical schemas share it, so the registry's validator
-   * compiles it once (Ajv caches by schema object). Within one call, equal
-   * definition names are the same converted components, so only the root is
-   * compared by content.
+   * The tool schema `produce` makes from a converted `root` and its
+   * `definitions`, made once per distinct result. Within one call, equal
+   * definition names are the same converted components, so only the root
+   * (before any inlining) is compared by content, and only it is copied for
+   * the comparison. Tools with identical schemas share one frozen copy, so
+   * the registry's validator compiles it once (Ajv caches by schema object)
+   * and no tool's schema can change another's.
    */
   private share(
     kind: "input" | "output",
-    root: McpFnObjectSchema,
+    root: unknown,
     definitions: Record<string, McpFnJsonSchema | boolean>,
-  ): McpFnObjectSchema {
-    const budget = this.schemas.copyBudget();
+    produce: () => McpFnObjectSchema | undefined,
+  ): McpFnObjectSchema | undefined {
     const values = { json: true };
-    const copy = treeCopy(root, budget, values);
-    const key = contentKey(kind, copy, values, definitions);
-    const known = key === undefined ? undefined : this.shared.get(key);
-    if (known) return known;
-    const schema = Object.keys(definitions).length > 0 ? { ...copy, definitions: treeCopy(definitions, budget) } : copy;
-    if (key !== undefined) this.shared.set(key, schema);
-    return schema;
+    const key = contentKey(kind, treeCopy(root, this.schemas.copyBudget(), values), values, definitions);
+    if (key !== undefined && this.shared.has(key)) return this.shared.get(key);
+    const result = produce();
+    if (key !== undefined) this.shared.set(key, result);
+    return result;
   }
 
   /**
@@ -431,7 +433,7 @@ class OperationConverter {
 
   private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const refs = new Set<string>();
-    let root = this.schemas.convertRoot(schema, "output", refs);
+    const root = this.schemas.convertRoot(schema, "output", refs);
     const definitions = this.schemas.definitions(refs, "output");
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
@@ -446,6 +448,14 @@ class OperationConverter {
     // An output that cannot be projected soundly skips the operation, so no
     // tool returns structured content its schema would not have checked.
     this.assertProjectable(schema, "output", "response");
+    return this.share("output", root, definitions, () => this.finishOutput(root, definitions));
+  }
+
+  private finishOutput(
+    converted: McpFnJsonSchema | boolean,
+    definitions: Record<string, McpFnJsonSchema | boolean>,
+  ): McpFnObjectSchema | undefined {
+    let root = converted;
     // A root `$ref` is inlined: draft-07 ignores keywords beside `$ref`, and
     // mcpFn needs `type: "object"` on the root itself.
     const seen = new Set<string>();
@@ -461,7 +471,8 @@ class OperationConverter {
     // The root may carry its object type only through a reference or a
     // composition (`{ $ref, description }` in 3.1, `allOf: [...]`); stating it
     // on the root narrows nothing, since only objects are accepted.
-    return this.share("output", { ...root, type: "object" } as McpFnObjectSchema, definitions);
+    const schema = { ...root, type: "object" } as McpFnObjectSchema;
+    return finished(Object.keys(definitions).length > 0 ? { ...schema, definitions } : schema, this.schemas.copyBudget());
   }
 
   private assertCompilesAsWritten(schema: unknown, subject: string): void {
@@ -697,6 +708,11 @@ const PRIMITIVE_KINDS = ["string", "number", "integer", "boolean"] as const;
  * that shares one object many times cannot expand without bound. `values`
  * records whether every copied value is one JSON represents exactly.
  */
+/** A tool schema: a tree-shaped copy, charged to `budget`, frozen because tools and the catalog share it. */
+function finished(schema: McpFnObjectSchema, budget: NodeBudget): McpFnObjectSchema {
+  return deepFreeze(treeCopy(schema, budget));
+}
+
 function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json: true }, ancestors = new Set<object>()): T {
   budget.charge(value);
   if (typeof value !== "object" || value === null) {
@@ -768,12 +784,22 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
  * Convert the operations of an OpenAPI 3.0/3.1 document into MCP tools on an
  * `McpFnRegistry`. Operations outside the supported set, or filtered out, are
  * listed in `skipped` with a reason. Tool calls are delegated to the executor.
+ *
+ * The first signature takes an `OpenApiDocument` (a literal with `x-*`
+ * extensions, also when the context type is given explicitly); the second
+ * takes any type with the standard fields, such as a producer interface that
+ * declares no index signature.
  */
-export function fromOpenAPI<
-  TContext = undefined,
-  TDocument extends OpenApiDocumentFields = OpenApiDocument,
->(
+export function fromOpenAPI<TContext = undefined>(
+  document: OpenApiDocument,
+  options: FromOpenApiOptions<TContext>,
+): FromOpenApiResult<TContext>;
+export function fromOpenAPI<TContext = undefined, TDocument extends OpenApiDocumentFields = OpenApiDocumentFields>(
   document: TDocument,
+  options: FromOpenApiOptions<TContext>,
+): FromOpenApiResult<TContext>;
+export function fromOpenAPI<TContext>(
+  document: OpenApiDocumentFields,
   options: FromOpenApiOptions<TContext>,
 ): FromOpenApiResult<TContext> {
   if (!isObject(document)) {
@@ -916,14 +942,14 @@ function register<TContext>(
       return;
     }
     names.claim(name);
-    // The catalog gets its own copies: changing them cannot make the listed
-    // schemas disagree with the ones the registry compiled.
+    // The catalog shares the registry's frozen schemas: neither can change,
+    // so they cannot disagree, and nothing is copied per tool.
     tools.push({
       name,
       description,
       operation,
-      inputSchema: structuredClone(inputSchema),
-      ...(outputSchema ? { outputSchema: structuredClone(outputSchema) } : {}),
+      inputSchema,
+      ...(outputSchema ? { outputSchema } : {}),
       annotations: { ...annotations },
     });
   });

@@ -371,7 +371,7 @@ describe("fromOpenAPI tool metadata", () => {
     expect(tool(tools, "unusableEntries").operation.servers).toEqual([{ url: "/" }]);
   });
 
-  it("lists and validates with the registered schemas whatever is done to the returned catalog", async () => {
+  it("lists and validates with the registered schemas, which the catalog cannot change", async () => {
     const { registry, tools } = fromOpenAPI(
       {
         openapi: "3.1.0",
@@ -395,8 +395,12 @@ describe("fromOpenAPI tool metadata", () => {
     const entry = tool(tools, "getItem");
     const listedBefore = JSON.stringify(registry.listTools());
     const path = (entry.inputSchema.properties!.path as { properties: Record<string, { maxLength?: number }> }).properties;
-    path.id!.maxLength = 100;
-    (entry.outputSchema!.properties as Record<string, unknown>).n = { type: "string" };
+    expect(() => {
+      path.id!.maxLength = 100;
+    }).toThrow(TypeError);
+    expect(() => {
+      (entry.outputSchema!.properties as Record<string, unknown>).n = { type: "string" };
+    }).toThrow(TypeError);
     entry.annotations.readOnlyHint = false;
     expect(JSON.stringify(registry.listTools())).toBe(listedBefore);
     await expect(

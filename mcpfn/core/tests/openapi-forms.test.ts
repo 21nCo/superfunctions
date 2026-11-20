@@ -481,7 +481,6 @@ describe("fromOpenAPI skip reasons", () => {
     const result = convert("skip-access-flag-conflicts");
     expect(skips(result)).toEqual([
       ["readOnlyRequiredInOneOf", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
-      ["readOnlyInDependencies", "unsupported-access-flag", constrained("id", "dependencies")],
       ["readOnlyInDependentRequired", "unsupported-access-flag", constrained("id", "dependentRequired")],
       ["readOnlyRequiredInThen", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
       ["readOnlyInNot", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
@@ -494,11 +493,17 @@ describe("fromOpenAPI skip reasons", () => {
       ["writeOnlyRequiredInOneOf", "unsupported-access-flag", constrained("password", REQUIRED_ELSEWHERE, "writeOnly")],
     ]);
     expect(registered(result)).toEqual([
+      // OpenAPI 3.1 (2020-12) has no `dependencies` keyword: it constrains nothing.
+      ["readOnlyInDependencies", false],
       ["nullableReadOnlyReference", false],
       ["readOnlyBesideUnrelatedOneOf", false],
       ["nullableWriteOnlyReference", true],
     ]);
     const { tools } = result;
+    expectArguments(tool(tools, "readOnlyInDependencies").inputSchema, {
+      valid: [{ body: { kind: "a" } }],
+      invalid: [{ body: { kind: "a", id: "client-chosen-id" } }],
+    });
     // The nullable reference idiom: readOnly when every non-null alternative is.
     expectArguments(tool(tools, "nullableReadOnlyReference").inputSchema, {
       valid: [{ body: { name: "a" } }],
@@ -1751,15 +1756,17 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       ]),
     );
     const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 160; index += 1) {
+    // Past the point where charging each operation a full copy would exceed the document total.
+    for (let index = 0; index < 600; index += 1) {
       paths[`/h${index}`] = { head: { operationId: `h${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
       paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
+      paths[`/p${index}`] = post(`p${index}`, { $ref: "#/components/schemas/Big" });
     }
     const started = performance.now();
     const shared = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Big: { type: "object", properties } } } }, options());
     expect(performance.now() - started).toBeLessThan(5000);
     expect(shared.skipped).toEqual([]);
-    expect(shared.tools).toHaveLength(320);
+    expect(shared.tools).toHaveLength(1800);
     // Distinct roots over one large component are copied each time, and charged to the document total.
     const distinct: Record<string, unknown> = {};
     for (let index = 0; index < 400; index += 1) {
@@ -1809,5 +1816,53 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expectArguments(tool(modern.tools, "p").inputSchema, { valid: [{ body: { a: 1, b: 1 } }], invalid: [{ body: { a: 1, c: 1 } }] });
     const legacy = fromOpenAPI({ openapi: "3.0.3", paths: { "/p": post("p", { type: "object", dependencies: { a: ["c"] } }) } }, options());
     expectArguments(tool(legacy.tools, "p").inputSchema, { valid: [{ body: { a: 1, c: 1 } }], invalid: [{ body: { a: 1, b: 1 } }] });
+  });
+
+  it("skips a request body whose schema is null, keeping valid siblings", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/n": { post: { operationId: "nullSchema", requestBody: { content: { "application/json": { schema: null } } }, responses: ok } },
+          "/v": post("valid", { type: "object" }),
+        },
+      },
+      options(),
+    );
+    expect(skips(result)).toEqual([["nullSchema", "invalid-schema", "a schema is not an object"]]);
+    expect(registered(result)).toEqual([["valid", false]]);
+  });
+
+  it("shares identical tool schemas only as frozen objects, so no tool can change another's", () => {
+    const resource = { type: "object", properties: { name: { type: "string" } } };
+    const result = fromOpenAPI({ openapi: "3.1.0", paths: { "/a": { get: { operationId: "a", responses: json(resource) } }, "/b": { get: { operationId: "b", responses: json(resource) } } } }, options());
+    const [first, second] = ["a", "b"].map((name) => result.registry.getListedTool(name)!);
+    expect(Object.isFrozen(first!.outputSchema)).toBe(true);
+    expect(() => {
+      (first!.outputSchema!.properties!.name as { type: string }).type = "integer";
+    }).toThrow(TypeError);
+    expect(second!.outputSchema).toMatchObject({ properties: { name: { type: "string" } } });
+    expect(tool(result.tools, "a").outputSchema).toBe(first!.outputSchema);
+  });
+
+  it("decides more than a handful of anchored literal prefixes exactly", () => {
+    const patternProperties = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`^p${index}-`, { type: "string" }]));
+    const Record = { type: "object", properties: { id: { type: "string", readOnly: true }, n: { type: "string" } } };
+    const run = (name: string) =>
+      fromOpenAPI(
+        { openapi: "3.1.0", paths: { "/r": post("r", { type: "object", patternProperties, properties: { [name]: { $ref: "#/components/schemas/Record" } } }) }, components: { schemas: { Record } } },
+        options(),
+      );
+    expect(run("record").skipped).toEqual([]);
+    expect(skips(run("p39-record"))).toEqual([["r", "unsupported-access-flag", child('property "p39-record"', "patternProperties of a schema for the same object")]]);
+  });
+
+  it("ignores 3.1 dependencies in projection too, and keeps the 3.0 keyword as a constraint", () => {
+    const schema = { type: "object", properties: { id: { type: "string", readOnly: true }, foo: { type: "string" }, bar: { type: "string" } }, dependencies: { foo: ["bar"] } };
+    const modern = fromOpenAPI({ openapi: "3.1.0", paths: { "/p": post("p", schema) } }, options());
+    expect(modern.skipped).toEqual([]);
+    expectArguments(tool(modern.tools, "p").inputSchema, { valid: [{ body: { foo: "x" } }], invalid: [{ body: { id: "x" } }] });
+    const legacy = fromOpenAPI({ openapi: "3.0.3", paths: { "/p": post("p", schema) } }, options());
+    expect(skips(legacy)).toEqual([["p", "unsupported-access-flag", constrained("id", "dependencies")]]);
   });
 });

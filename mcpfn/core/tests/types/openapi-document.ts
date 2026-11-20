@@ -87,16 +87,25 @@ fromOpenAPI({ title: "not a document" }, { executor });
 // @ts-expect-error a document is an object, not a primitive
 fromOpenAPI(42, { executor });
 
-// Named and explicit-context paths also accept producer interfaces without an
-// index signature, fromRouter-style interfaces and parsed records.
-const namedPlain: OpenApiDocument = plainDocument;
-const namedRouter: OpenApiDocument = routerDocument;
-const namedParsed: OpenApiDocument = parsed;
-fromOpenAPI(namedPlain, { executor });
+// Explicit-context calls also accept producer interfaces without an index
+// signature, fromRouter-style interfaces and parsed records.
 fromOpenAPI<undefined>(plainDocument, { executor });
 fromOpenAPI<undefined>(routerDocument, { executor });
 fromOpenAPI<undefined>(parsed, { executor });
-void namedRouter;
-void namedParsed;
+const namedRouter: OpenApiDocument = routerDocument;
+const namedParsed: OpenApiDocument = parsed;
+fromOpenAPI(namedRouter, { executor });
+fromOpenAPI<undefined>(namedParsed, { executor });
 // @ts-expect-error a value sharing no standard field is refused
 fromOpenAPI<undefined>({ title: "misplaced" }, { executor });
+
+// The named type stays extensible, and x-* fields read as unknown.
+interface ConsumerDocument extends OpenApiDocument {
+  readonly "x-generated": string;
+}
+declare const consumerDocument: ConsumerDocument;
+fromOpenAPI(consumerDocument, { executor });
+const generated: string = consumerDocument["x-generated"];
+const extension: unknown = annotated["x-generated-by"];
+void generated;
+void extension;

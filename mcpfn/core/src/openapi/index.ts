@@ -4,7 +4,6 @@ export type {
   FromOpenApiResult,
   OpenApiDocument,
   OpenApiDocumentFields,
-  OpenApiDocumentWithExtensions,
   OpenApiExecuteRequest,
   OpenApiExecutor,
   OpenApiMethod,

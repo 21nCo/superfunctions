@@ -187,15 +187,11 @@ export interface OpenApiDocumentFields {
   readonly externalDocs?: unknown;
 }
 
-/** The standard fields plus `x-*` extensions, for literals of a named document type. */
-export interface OpenApiDocumentWithExtensions extends OpenApiDocumentFields {
+/**
+ * A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. Also
+ * accepts `x-*` extensions where the type is named, such as an annotated
+ * literal or a call that supplies the context type explicitly.
+ */
+export interface OpenApiDocument extends OpenApiDocumentFields {
   readonly [extension: `x-${string}`]: unknown;
 }
-
-/**
- * A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. A
- * union, so where the type is named (an annotated literal, or a call that
- * supplies the context type explicitly) it accepts both `x-*` extensions on
- * a literal and producer interfaces that declare no index signature.
- */
-export type OpenApiDocument = OpenApiDocumentFields | OpenApiDocumentWithExtensions;
