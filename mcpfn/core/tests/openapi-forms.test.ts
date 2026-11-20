@@ -1665,25 +1665,22 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
   });
 
   it("does not keep a clean result that depends on a later conflict in the same reference cycle", () => {
-    // A -> B -> A is a cycle; A -> D -> B reaches B while its result is still provisional; A -> C conflicts.
+    // Shared reference objects, as a parsed document has them. A -> B -> A is a
+    // cycle; D -> B reaches B while its result is still provisional; A's
+    // property c conflicts only after that.
+    const refA = { $ref: "#/components/schemas/A" };
+    const refB = { $ref: "#/components/schemas/B" };
+    const refD = { $ref: "#/components/schemas/D" };
     const schemas = {
       A: {
         type: "object",
-        properties: {
-          b: { $ref: "#/components/schemas/B" },
-          d: { $ref: "#/components/schemas/D" },
-          c: { type: "object", minProperties: 1, properties: { id: { type: "string", readOnly: true } } },
-        },
+        properties: { b: refB, d: refD, c: { type: "object", minProperties: 1, properties: { id: { type: "string", readOnly: true } } } },
       },
-      B: { type: "object", properties: { a: { $ref: "#/components/schemas/A" } } },
-      D: { type: "object", properties: { b: { $ref: "#/components/schemas/B" } } },
+      B: { type: "object", properties: { a: refA } },
+      D: { type: "object", properties: { b: refB } },
     };
     const result = fromOpenAPI(
-      {
-        openapi: "3.1.0",
-        paths: { "/a": post("a", { $ref: "#/components/schemas/A" }), "/d": post("d", { $ref: "#/components/schemas/D" }) },
-        components: { schemas },
-      },
+      { openapi: "3.1.0", paths: { "/a": post("a", refA), "/d": post("d", refD) }, components: { schemas } },
       options(),
     );
     expect(result.tools).toEqual([]);
