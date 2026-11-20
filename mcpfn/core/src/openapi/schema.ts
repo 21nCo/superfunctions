@@ -67,7 +67,7 @@ const SCHEMA_MAP_KEYWORDS = new Set([
   "$defs",
 ]);
 
-const SCHEMA_ARRAY_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
+const SCHEMA_ARRAY_KEYWORDS = new Set(["anyOf", "oneOf"]);
 
 const SCHEMA_KEYWORDS = new Set([
   "additionalProperties",
@@ -138,6 +138,26 @@ type DirectionalKeyword = "readOnly" | "writeOnly";
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
+interface RegionSummary {
+  /** Names flagged in this region itself: the names its conversion removes. */
+  names: ReadonlySet<string>;
+  /** Names flagged in this region or any nested one. */
+  flagged: Set<string>;
+  /** Names some region (this or a nested one) uses in properties/required without flagging them. */
+  unflagged: Set<string>;
+  /** Names used by dependencies/dependentRequired in this region or a nested one. */
+  dependencies: Set<string>;
+  /** A name flagged inside not, if/then/else or a schema-valued dependency. */
+  conditionalFlag?: string;
+}
+
+const EMPTY_REGION: RegionSummary = {
+  names: new Set(),
+  flagged: new Set(),
+  unflagged: new Set(),
+  dependencies: new Set(),
+};
+
 function directionalKeyword(mode: SchemaMode): DirectionalKeyword {
   return mode === "input" ? "readOnly" : "writeOnly";
 }
@@ -153,6 +173,8 @@ export class SchemaConverter {
   private readonly variantKeys = new Map<string, string>();
   private readonly flaggedNames = new Map<string, ReadonlySet<string>>();
   private readonly mentionedNames = new Map<string, ReadonlySet<string>>();
+  private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
+  private readonly summaries = new Map<DirectionalKeyword, WeakMap<object, RegionSummary>>();
 
   constructor(
     private readonly version: OpenApiVersion,
@@ -287,7 +309,15 @@ export class SchemaConverter {
       return this.convertObject({ ...rest, allOf: [...allOf, { $ref }] }, mode, refs, strip);
     }
 
-    const own = this.directionalNames(schema, directionalKeyword(mode));
+    const keyword = directionalKeyword(mode);
+    const { names: own, conflict } = this.directionalAnalysis(schema, keyword);
+    if (conflict !== undefined) {
+      throw new OpenApiSkip(
+        "unsupported-access-flag",
+        `property ${JSON.stringify(conflict)} is ${keyword} but is also constrained by ` +
+          "anyOf/oneOf, not, if/then/else or dependencies, so it cannot be removed soundly",
+      );
+    }
     const removed = own.size === 0 ? strip : new Set([...strip, ...own]);
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
@@ -295,8 +325,14 @@ export class SchemaConverter {
       if (DROPPED_KEYWORDS.has(keyword)) continue;
       if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
         entries.push([keyword, this.convertMap(value, mode, refs)]);
-      } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
+      } else if (keyword === "allOf" && Array.isArray(value)) {
+        // allOf members validate the same instance unconditionally, so the
+        // removed names are removed from them too. anyOf/oneOf members are
+        // converted on their own: directionalAnalysis has already rejected a
+        // member that mentions a removed name.
         entries.push([keyword, value.map((item) => this.convert(item, mode, refs, removed))]);
+      } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
+        entries.push([keyword, value.map((item) => this.convert(item, mode, refs))]);
       } else if (keyword === "items") {
         entries.push([
           keyword,
@@ -406,7 +442,7 @@ export class SchemaConverter {
     let key = name;
     if (strip.size > 0) {
       const own = this.componentNames(name, directionalKeyword(mode), this.flaggedNames, (schema, keyword) =>
-        this.directionalNames(schema, keyword),
+        this.directionalAnalysis(schema, keyword).names,
       );
       const mentioned = this.componentNames(name, directionalKeyword(mode), this.mentionedNames, (schema) =>
         this.mentions(schema),
@@ -449,18 +485,120 @@ export class SchemaConverter {
   /**
    * Names of properties the instance described by `schema` carries with
    * `keyword` set: its own `properties`, and those of its `allOf` members and
-   * `$ref` target, which constrain the same instance.
+   * `$ref` target, which constrain the same instance unconditionally. These
+   * are the names conversion removes.
+   *
+   * `conflict` names a flagged property that removal would not handle
+   * soundly, so the schema is skipped instead of rewritten:
+   * - a name flagged in one region (the unconditional part above, or one
+   *   `anyOf`/`oneOf` member with its own `allOf`/`$ref` closure) and
+   *   mentioned in `properties` or `required` of another region that does
+   *   not flag it too: for example `required: [id]` beside `oneOf` members
+   *   that mark `id` readOnly, or a readOnly `id` that a `oneOf` member requires;
+   * - a flagged name inside `not`, `if`, `then`, `else` or a schema-valued
+   *   dependency, where removing it would invert or move the condition;
+   * - a flagged name used by `dependencies` or `dependentRequired`.
+   * An `anyOf`/`oneOf` member that flags and uses a name only itself is
+   * converted on its own and removes the name there.
    */
-  private directionalNames(schema: unknown, keyword: DirectionalKeyword): ReadonlySet<string> {
-    const names = new Set<string>();
-    this.inPlaceMembers(schema, (member) => {
-      if (isObject(member.properties)) {
-        for (const [name, property] of Object.entries(member.properties)) {
-          if (this.hasFlag(property, keyword, new Set())) names.add(name);
+  private directionalAnalysis(
+    schema: unknown,
+    keyword: DirectionalKeyword,
+  ): { names: ReadonlySet<string>; conflict?: string } {
+    const summary = this.regionSummary(schema, keyword);
+    const names = summary.names;
+    if (summary.conditionalFlag !== undefined) return { names, conflict: summary.conditionalFlag };
+    // A name some region uses without flagging it conflicts with any region
+    // that flags it (never the same region: there it would count as flagged).
+    for (const name of summary.flagged) {
+      if (summary.unflagged.has(name) || summary.dependencies.has(name)) return { names, conflict: name };
+    }
+    return { names };
+  }
+
+  /**
+   * The flags and uses of property names in the region rooted at `schema`
+   * (its `allOf`/`$ref` closure) and, aggregated, in every region nested in it
+   * through `anyOf`/`oneOf`, `not`, `if`/`then`/`else` and dependencies.
+   * Memoised per schema object; a cycle back to a schema being summarised adds
+   * nothing (an in-place cycle is rejected by `definitions` anyway).
+   */
+  private regionSummary(schema: unknown, keyword: DirectionalKeyword): RegionSummary {
+    if (!isObject(schema)) return EMPTY_REGION;
+    let memo = this.summaries.get(keyword);
+    if (!memo) {
+      memo = new WeakMap();
+      this.summaries.set(keyword, memo);
+    }
+    const known = memo.get(schema);
+    if (known) return known;
+    memo.set(schema, EMPTY_REGION);
+    const flagged = new Set<string>();
+    const mentioned = new Set<string>();
+    const dependencies = new Set<string>();
+    const nested: RegionSummary[] = [];
+    let conditionalFlag: string | undefined;
+    const conditional = (member: unknown) => {
+      const summary = this.regionSummary(member, keyword);
+      conditionalFlag ??= summary.conditionalFlag ?? summary.flagged.values().next().value;
+      nested.push(summary);
+    };
+    const seen = new Set<object>();
+    const walk = (current: unknown): void => {
+      if (!isObject(current) || seen.has(current)) return;
+      seen.add(current);
+      if (Object.hasOwn(current, "$ref")) {
+        walk(this.target(current.$ref));
+        if (this.version === "3.0") return;
+      }
+      if (isObject(current.properties)) {
+        for (const [name, property] of Object.entries(current.properties)) {
+          if (this.hasFlag(property, keyword)) flagged.add(name);
+          else mentioned.add(name);
         }
       }
-    }, false);
-    return names;
+      if (Array.isArray(current.required)) {
+        for (const name of current.required) if (typeof name === "string") mentioned.add(name);
+      }
+      for (const dependencyKeyword of ["dependencies", "dependentRequired"] as const) {
+        const map = current[dependencyKeyword];
+        if (!isObject(map)) continue;
+        for (const [name, dependency] of Object.entries(map)) {
+          dependencies.add(name);
+          if (Array.isArray(dependency)) {
+            for (const entry of dependency) if (typeof entry === "string") dependencies.add(entry);
+          } else {
+            conditional(dependency);
+          }
+        }
+      }
+      if (Array.isArray(current.allOf)) for (const member of current.allOf) walk(member);
+      for (const alternatives of ["anyOf", "oneOf"] as const) {
+        const members = current[alternatives];
+        if (Array.isArray(members)) {
+          for (const member of members) nested.push(this.regionSummary(member, keyword));
+        }
+      }
+      for (const condition of ["not", "if", "then", "else"] as const) {
+        if (current[condition] !== undefined) conditional(current[condition]);
+      }
+    };
+    walk(schema);
+    const summary: RegionSummary = {
+      names: flagged,
+      flagged: new Set(flagged),
+      unflagged: new Set([...mentioned].filter((name) => !flagged.has(name))),
+      dependencies,
+      ...(conditionalFlag !== undefined ? { conditionalFlag } : {}),
+    };
+    for (const inner of nested) {
+      for (const name of inner.flagged) summary.flagged.add(name);
+      for (const name of inner.unflagged) summary.unflagged.add(name);
+      for (const name of inner.dependencies) summary.dependencies.add(name);
+      if (inner.conditionalFlag !== undefined) summary.conditionalFlag ??= inner.conditionalFlag;
+    }
+    memo.set(schema, summary);
+    return summary;
   }
 
   /** Property names in `properties` or `required` of `schema` or any schema validating the same instance. */
@@ -509,14 +647,49 @@ export class SchemaConverter {
 
   /**
    * Whether a property schema carries `keyword`: on itself, on a schema it
-   * references (an alias's own sibling included) or on an `allOf` member.
+   * references (an alias's own sibling included), on an `allOf` member, or on
+   * every alternative of an `anyOf`/`oneOf` other than a null-only one (the
+   * nullable reference idiom `anyOf: [{ $ref }, { type: "null" }]`).
    */
-  private hasFlag(property: unknown, keyword: DirectionalKeyword, seen: Set<object>): boolean {
-    if (!isObject(property) || seen.has(property)) return false;
-    seen.add(property);
+  private hasFlag(property: unknown, keyword: DirectionalKeyword): boolean {
+    if (!isObject(property)) return false;
+    let memo = this.flags.get(keyword);
+    if (!memo) {
+      memo = new WeakMap();
+      this.flags.set(keyword, memo);
+    }
+    const known = memo.get(property);
+    if (known !== undefined) return known;
+    // A cycle back to this schema adds no flag; a cycle that never descends
+    // into a child is rejected by `definitions` anyway.
+    memo.set(property, false);
+    const result = this.computeFlag(property, keyword);
+    memo.set(property, result);
+    return result;
+  }
+
+  private computeFlag(property: JsonObject, keyword: DirectionalKeyword): boolean {
     if (property[keyword] === true) return true;
-    if (Object.hasOwn(property, "$ref") && this.hasFlag(this.target(property.$ref), keyword, seen)) return true;
-    return Array.isArray(property.allOf) && property.allOf.some((member) => this.hasFlag(member, keyword, seen));
+    if (Object.hasOwn(property, "$ref") && this.hasFlag(this.target(property.$ref), keyword)) return true;
+    if (Array.isArray(property.allOf) && property.allOf.some((member) => this.hasFlag(member, keyword))) {
+      return true;
+    }
+    for (const alternatives of ["anyOf", "oneOf"] as const) {
+      const members = property[alternatives];
+      if (!Array.isArray(members)) continue;
+      const values = members.filter((member) => !this.isNullOnly(member));
+      if (values.length > 0 && values.every((member) => this.hasFlag(member, keyword))) return true;
+    }
+    return false;
+  }
+
+  private isNullOnly(schema: unknown): boolean {
+    try {
+      const { values } = this.admits(schema);
+      return values.size === 1 && values.has("null");
+    } catch {
+      return false;
+    }
   }
 
   private convertedComponent(key: string, mode: SchemaMode): ConvertedComponent {

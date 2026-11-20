@@ -8,6 +8,13 @@
   that stay supported, to show the classification both ways.
   `skip-nonproductive-recursion.json` also keeps a schema that recurses
   through a property, which stays supported.
+- `skip-access-flag-conflicts.json` skips readOnly/writeOnly properties that
+  `anyOf`/`oneOf`, `not`, `if`/`then` or dependencies constrain, and keeps the
+  nullable-reference idiom, polymorphic members that each mark `id` readOnly
+  and a `oneOf` that does not use the flagged name.
+- `skip-malformed-request-body.json` skips declared request bodies with no
+  usable JSON media entry, and keeps a `*+json` entry beside a null
+  `application/json` one and a media entry without a schema.
 - `form-read-only-composed.json` covers readOnly and writeOnly reached through
   `allOf` and a sibling `allOf` member that requires the removed field.
 - `apifn-from-router.json`: output of `fromRouter()` from `@apifn/core`,

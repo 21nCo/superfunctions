@@ -93,7 +93,9 @@ export type OpenApiSkipCode =
   | "parameter-content"
   | "missing-path-parameter"
   | "non-json-body"
+  | "invalid-request-body"
   | "unsupported-schema-keyword"
+  | "unsupported-access-flag"
   | "unsupported-component-name"
   | "circular-object"
   | "invalid-operation"
@@ -154,5 +156,15 @@ export interface FromOpenApiResult<TContext = undefined> {
   skipped: OpenApiSkippedOperation[];
 }
 
-/** A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. */
-export type OpenApiDocument = Record<string, unknown>;
+/**
+ * A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. Typed
+ * loosely so that documents typed by their producer (such as the interface
+ * `@apifn/core`'s `fromRouter` returns, which has only an `x-*` index
+ * signature) are accepted as they are; the content is validated at run time.
+ */
+export interface OpenApiDocument {
+  readonly openapi?: unknown;
+  readonly swagger?: unknown;
+  readonly paths?: unknown;
+  readonly components?: unknown;
+}

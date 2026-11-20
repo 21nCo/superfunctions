@@ -101,10 +101,20 @@ for (const { operation, code, reason } of skipped) {
   present only when the operation has such inputs, with
   `additionalProperties: false` throughout. Referenced component schemas are
   copied under `definitions` (draft-07). `readOnly` properties (flagged on the
-  property, on a schema it references or on an `allOf` member) are removed
-  from inputs, also from the `required` of other `allOf` members of the same
-  object, and refused when the object otherwise accepts additional properties,
-  and `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
+  property, on a schema it references, on an `allOf` member, or on every
+  non-null alternative of an `anyOf`/`oneOf` such as
+  `anyOf: [{ $ref }, { type: "null" }]`) are removed from inputs, also from the
+  `required` of other `allOf` members of the same object, and refused when the
+  object otherwise accepts additional properties. An `anyOf`/`oneOf` member
+  that marks a property readOnly removes it within that member. When a flagged
+  property is also used by another `anyOf`/`oneOf` member or the enclosing
+  object without the flag, or inside `not`, `if`/`then`/`else` or
+  `dependencies`/`dependentRequired`, removing it would change what the schema
+  means, so the operation is skipped (`unsupported-access-flag`). The request
+  body is the first `application/json` media entry that is an object, else the
+  first such `*+json` one; a declared body without one is skipped
+  (`invalid-request-body`), and a media entry without `schema` accepts any
+  JSON value. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
   `Accept` and `Content-Type` headers are never inputs: credentials and
   transport headers belong to the executor.
 - **Parameters.** A path, query or header parameter must accept either single
@@ -113,11 +123,12 @@ for (const { operation, code, reason } of skipped) {
   object (including a schema without `type`, `enum` or `const`, such as `{}`),
   an array of objects or arrays, or both an array and a single value is skipped.
 - **Outputs.** The schema of the first 2xx response with `application/json`
-  content is always converted, so the skip rules apply to it whatever its
-  shape. It becomes the output schema (`writeOnly` properties removed the same
+  content is always converted, for `HEAD` too, so the skip rules apply to it
+  whatever its shape or method. `HEAD` never declares an output schema. It becomes the output schema (`writeOnly` properties removed the same
   way `readOnly` ones are from inputs) when it
   accepts objects and nothing else, also through a 3.1 `$ref` with sibling
   keywords or an `allOf`; otherwise the tool declares none.
+- **Paths.** `x-*` entries of the Paths Object are extensions and are ignored.
 - **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
   is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
   `openWorldHint`. The description is the trimmed summary and description,

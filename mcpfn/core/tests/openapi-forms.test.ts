@@ -451,6 +451,58 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
+  it("skips readOnly and writeOnly properties that alternatives, conditions or dependencies constrain", () => {
+    const { tools, skipped } = convert("skip-access-flag-conflicts");
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["readOnlyRequiredInOneOf", "unsupported-access-flag"],
+      ["readOnlyInDependencies", "unsupported-access-flag"],
+      ["readOnlyInDependentRequired", "unsupported-access-flag"],
+      ["readOnlyRequiredInThen", "unsupported-access-flag"],
+      ["readOnlyInNot", "unsupported-access-flag"],
+      ["readOnlyFlaggedInIf", "unsupported-access-flag"],
+      ["requiredButReadOnlyInEveryBranch", "unsupported-access-flag"],
+      ["readOnlyRequiredByReferencedBranch", "unsupported-access-flag"],
+      ["writeOnlyRequiredInOneOf", "unsupported-access-flag"],
+    ]);
+    expect(skipped[0]!.reason).toMatch(/property "id" is readOnly/);
+    // The nullable reference idiom: readOnly when every non-null alternative is.
+    expectArguments(tool(tools, "nullableReadOnlyReference").inputSchema, {
+      valid: [{ body: { name: "a" } }],
+      invalid: [{ body: { name: "a", createdAt: "2026-01-01T00:00:00Z" } }, { body: { name: "a", createdAt: null } }, { body: {} }],
+    });
+    // Each oneOf member marks id readOnly and removes it itself.
+    expectArguments(tool(tools, "polymorphicReadOnlyId").inputSchema, {
+      valid: [{ body: { kind: "cat", indoor: true } }, { body: { kind: "dog" } }],
+      invalid: [{ body: { kind: "cat", id: "client-chosen-id" } }, { body: { kind: "fish" } }, { body: {} }],
+    });
+    // A oneOf that never uses the readOnly name keeps its meaning.
+    expectArguments(tool(tools, "readOnlyBesideUnrelatedOneOf").inputSchema, {
+      valid: [{ body: { a: "x" } }, { body: { b: "y" } }],
+      invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
+    });
+    const output = tool(tools, "nullableWriteOnlyReference").outputSchema!;
+    expect(output.required).toEqual(["name"]);
+    expectArguments(output, { valid: [{ name: "a" }], invalid: [{}] });
+    expect(output.properties).not.toHaveProperty("password");
+  });
+
+  it("skips declared request bodies without a usable JSON media entry", () => {
+    const { tools, skipped } = convert("skip-malformed-request-body");
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["requiredBodyWithoutContent", "invalid-request-body"],
+      ["optionalBodyWithoutContent", "invalid-request-body"],
+      ["emptyContent", "invalid-request-body"],
+      ["contentNotAnObject", "invalid-request-body"],
+      ["nullJsonMedia", "invalid-request-body"],
+    ]);
+    const fallback = tool(tools, "nullJsonMediaBesidePlusJson");
+    expect(fallback.operation.requestBody).toEqual({ required: true, contentType: "application/merge-patch+json" });
+    expectArguments(fallback.inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { n: "x" } }, {}] });
+    const anyBody = tool(tools, "jsonMediaWithoutSchema");
+    expect(anyBody.operation.requestBody).toEqual({ required: true, contentType: "application/json" });
+    expectArguments(anyBody.inputSchema, { valid: [{ body: { anything: [1] } }, { body: "text" }], invalid: [{}] });
+  });
+
   it("skips query arrays with explode: false and keeps converting other operations", () => {
     const { tools, skipped } = fromOpenAPI(
       {
@@ -675,12 +727,55 @@ describe("fromOpenAPI conversion edge cases", () => {
     ]);
   });
 
-  it("declares no output schema for HEAD", () => {
-    const { tools } = fromOpenAPI(
-      { openapi: "3.1.0", paths: { "/a": { head: { operationId: "probe", responses: { "200": { description: "OK", content: { "application/json": { schema: { type: "object" } } } } } } } } },
+  it("declares no output schema for HEAD but applies the response skip rules as for GET", () => {
+    const response = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/a": { head: { operationId: "probe", responses: response({ type: "object" }) } },
+          "/tuple": {
+            head: { operationId: "headTuple", responses: response({ type: "array", prefixItems: [{ type: "string" }] }) },
+            get: { operationId: "getTuple", responses: response({ type: "array", prefixItems: [{ type: "string" }] }) },
+          },
+          "/external": {
+            head: { operationId: "headExternal", responses: response({ $ref: "other.yaml#/Pet" }) },
+            get: { operationId: "getExternal", responses: response({ $ref: "other.yaml#/Pet" }) },
+          },
+          "/loop": {
+            head: { operationId: "headLoop", responses: response({ $ref: "#/components/schemas/Loop" }) },
+            get: { operationId: "getLoop", responses: response({ $ref: "#/components/schemas/Loop" }) },
+          },
+        },
+        components: { schemas: { Loop: { $ref: "#/components/schemas/Loop", type: "object" } } },
+      },
       { executor: recordingExecutor() },
     );
-    expect(tool(tools, "probe").outputSchema).toBeUndefined();
+    expect(tools.map((entry) => [entry.name, entry.outputSchema])).toEqual([["probe", undefined]]);
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["headTuple", "unsupported-schema-keyword"],
+      ["getTuple", "unsupported-schema-keyword"],
+      ["headExternal", "external-ref"],
+      ["getExternal", "external-ref"],
+      ["headLoop", "unresolved-ref"],
+      ["getLoop", "unresolved-ref"],
+    ]);
+  });
+
+  it("ignores Paths Object extensions whatever their value", () => {
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "x-example": { get: { operationId: "notAnOperation", responses: {} } },
+          "x-scalar": 5,
+          "/a": { get: { operationId: "real", responses: {} } },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(tools.map((entry) => entry.name)).toEqual(["real"]);
+    expect(skipped).toEqual([]);
   });
 
   it("skips parameters described by content instead of schema", () => {

@@ -565,54 +565,61 @@ export function validateSchemaCollection(
  * once and shares the generated function (each caller keeps its own error
  * state).
  *
- * The key is built from exactly the data Ajv reads: own enumerable data
- * properties of plain objects and dense arrays holding strings, booleans,
- * null and finite numbers. Anything that could make the key differ from what
- * Ajv compiles (a toJSON method, an accessor, a symbol or non-enumerable key,
- * a class instance, a hole, undefined, -0, a non-finite number, a cycle) gives
- * no key, as does `$id` (Ajv rejects a repeated id); such schemas are compiled
- * every time.
+ * The snapshot reads each value once, from own enumerable data properties of
+ * objects whose prototype is Object.prototype and of dense arrays, holding
+ * strings, booleans, null and finite numbers, and builds both the key and a
+ * private copy of that data. Ajv compiles the copy, never the caller's object,
+ * so the key always describes exactly what was compiled (a Proxy or getter
+ * cannot answer differently on a second read), and a validator never depends
+ * on data another caller can mutate. Anything else (a toJSON method, an
+ * accessor, a symbol or non-enumerable key, a null-prototype or class
+ * instance, a hole, undefined, -0, a non-finite number, a cycle) gives no
+ * snapshot, as does `$id` (Ajv rejects a repeated id); such schemas are
+ * compiled from the caller's object every time, as before.
  */
-function schemaContentKey(schema: object): string | undefined {
+function schemaContentSnapshot(schema: object): { key: string; copy: object } | undefined {
   const parts: string[] = [];
   const active = new Set<object>();
-  const walk = (value: unknown): boolean => {
+  const NO_SNAPSHOT = Symbol("no snapshot");
+  const walk = (value: unknown): unknown => {
     if (value === null || typeof value === "string" || typeof value === "boolean") {
       parts.push(JSON.stringify(value));
-      return true;
+      return value;
     }
     if (typeof value === "number") {
-      if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+      if (!Number.isFinite(value) || Object.is(value, -0)) return NO_SNAPSHOT;
       parts.push(JSON.stringify(value));
-      return true;
+      return value;
     }
-    if (typeof value !== "object" || active.has(value) || "toJSON" in value) return false;
+    if (typeof value !== "object" || active.has(value) || "toJSON" in value) return NO_SNAPSHOT;
     const isArray = Array.isArray(value);
-    const prototype = Object.getPrototypeOf(value);
-    if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
-      return false;
-    }
+    if (Object.getPrototypeOf(value) !== (isArray ? Array.prototype : Object.prototype)) return NO_SNAPSHOT;
     const ownKeys = Reflect.ownKeys(value);
     // An array's own keys are its indices and "length"; any other key or a hole fails.
     const keys = isArray
       ? Array.from({ length: (value as unknown[]).length }, (_, index) => String(index))
       : ownKeys;
-    if (isArray && ownKeys.length !== keys.length + 1) return false;
+    if (isArray && ownKeys.length !== keys.length + 1) return NO_SNAPSHOT;
     active.add(value);
+    const copy: unknown[] | Record<string, unknown> = isArray ? [] : {};
     parts.push(isArray ? "[" : "{");
     for (const key of keys) {
-      if (typeof key === "symbol" || (!isArray && key === "$id")) return false;
+      if (typeof key === "symbol" || (!isArray && key === "$id")) return NO_SNAPSHOT;
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return false;
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return NO_SNAPSHOT;
       if (!isArray) parts.push(JSON.stringify(key), ":");
-      if (!walk(descriptor.value)) return false;
+      const item = walk(descriptor.value);
+      if (item === NO_SNAPSHOT) return NO_SNAPSHOT;
+      if (isArray) (copy as unknown[]).push(item);
+      else Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
       parts.push(",");
     }
     parts.push(isArray ? "]" : "}");
     active.delete(value);
-    return true;
+    return copy;
   };
-  return walk(schema) ? parts.join("") : undefined;
+  const copy = walk(schema);
+  return copy === NO_SNAPSHOT ? undefined : { key: parts.join(""), copy: copy as object };
 }
 
 /**
@@ -633,11 +640,11 @@ export function createSchemaCompiler(
       engine,
       compile(schema) {
         assertNoLegacySchemaIds(schema);
-        const key = schemaContentKey(schema);
-        let validate = key === undefined ? undefined : compiledByContent.get(key);
+        const snapshot = schemaContentSnapshot(schema);
+        let validate = snapshot === undefined ? undefined : compiledByContent.get(snapshot.key);
         if (!validate) {
-          validate = ajv.compile(schema as never);
-          if (key !== undefined) compiledByContent.set(key, validate);
+          validate = ajv.compile((snapshot?.copy ?? schema) as never);
+          if (snapshot !== undefined) compiledByContent.set(snapshot.key, validate);
         }
         const compiled = ((data: unknown): boolean => {
           const valid = validate(data);

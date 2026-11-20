@@ -485,27 +485,38 @@ class OperationConverter {
     return "array";
   }
 
+  /**
+   * The JSON media entry of a declared request body: the first usable
+   * (object-valued) `application/json` entry, otherwise the first usable
+   * `*+json` one. A declared body without such an entry is skipped, whether
+   * or not it is required, since the tool could never send it.
+   */
   private requestBody(raw: JsonObject): ResolvedBody | undefined {
     if (raw.requestBody === undefined) return undefined;
     const body = this.resolve(raw.requestBody, "requestBodies");
-    const content = isObject(body.content) ? body.content : {};
+    if (!isObject(body.content) || Object.keys(body.content).length === 0) {
+      throw new OpenApiSkip("invalid-request-body", "request body declares no content");
+    }
+    const content = body.content;
     const keys = Object.keys(content);
-    let result: ResolvedBody | undefined;
-    if (keys.length > 0) {
-      const contentType = keys.find(isApplicationJson) ?? keys.find(isJsonMediaType);
-      if (contentType === undefined) {
+    const usable = (key: string) => isObject(content[key]);
+    const contentType = keys.find((key) => isApplicationJson(key) && usable(key)) ??
+      keys.find((key) => isJsonMediaType(key) && usable(key));
+    if (contentType === undefined) {
+      if (keys.some(isJsonMediaType)) {
         throw new OpenApiSkip(
-          "non-json-body",
-          `request body has no JSON media type (${keys.join(", ")})`,
+          "invalid-request-body",
+          `request body has no JSON media type object (${keys.join(", ")})`,
         );
       }
-      const media = content[contentType];
-      result = {
-        info: { required: body.required === true, contentType },
-        schema: isObject(media) && media.schema !== undefined ? media.schema : {},
-      };
+      throw new OpenApiSkip("non-json-body", `request body has no JSON media type (${keys.join(", ")})`);
     }
-    return result;
+    const media = content[contentType] as JsonObject;
+    return {
+      info: { required: body.required === true, contentType },
+      // A media type object without `schema` accepts any JSON value.
+      schema: media.schema !== undefined ? media.schema : {},
+    };
   }
 }
 
@@ -588,7 +599,7 @@ export function fromOpenAPI<TContext = undefined>(
   if (!isObject(document)) {
     throw new McpFnValidationError("fromOpenAPI expects a parsed OpenAPI document object");
   }
-  const version = documentVersion(document);
+  const version = documentVersion(document as JsonObject);
   validateOptions(options);
   const include = compileSelectors("include", options.include);
   const exclude = compileSelectors("exclude", options.exclude);
@@ -596,7 +607,7 @@ export function fromOpenAPI<TContext = undefined>(
   try {
     // Work on a private copy: later changes to the caller's object cannot
     // alter registered schemas or the operations given to the executor.
-    source = structuredClone(document);
+    source = structuredClone(document) as JsonObject;
   } catch (error) {
     throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
       cause: error instanceof Error ? error.message : String(error),
@@ -608,6 +619,8 @@ export function fromOpenAPI<TContext = undefined>(
   const paths = isObject(source.paths) ? source.paths : {};
 
   for (const [path, pathItem] of Object.entries(paths)) {
+    // Paths Object extensions carry arbitrary values and are not path items.
+    if (path.startsWith("x-")) continue;
     if (!isObject(pathItem)) {
       skipped.push({ operation: { path }, code: "invalid-operation", reason: "path item is not an object" });
       continue;
@@ -651,8 +664,10 @@ export function fromOpenAPI<TContext = undefined>(
       try {
         const inputs = converter.inputs(path, pathItem, value);
         const operation = deepFreeze(converter.operation(path, pathItem, method, value, inputs));
-        // A HEAD response has no body, so it never has structured output.
-        const outputSchema = method === "HEAD" ? undefined : converter.outputSchema(value);
+        // The selected response is converted for every method so its skip
+        // rules apply alike; a HEAD response has no body, so no structured output.
+        const selectedOutput = converter.outputSchema(value);
+        const outputSchema = method === "HEAD" ? undefined : selectedOutput;
         // Each tool owns its schema objects: component conversions are cached
         // and shared, and a schema must not reach one object by two paths.
         candidates.push({

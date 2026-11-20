@@ -673,4 +673,35 @@ describe("Ajv compilation of repeated schemas", () => {
     const fresh = createSchemaCompiler("ajv").compile(bounded);
     expect(compiler.compile(bounded)(1)).toBe(fresh(1));
   });
+
+  it("does not share a validator between a plain and a null-prototype const object", () => {
+    const compiler = createSchemaCompiler("ajv");
+    expect(compiler.compile({ const: { n: 5 } })({ n: 5 })).toBe(true);
+    const nullPrototype = () => ({ const: Object.assign(Object.create(null) as object, { n: 5 }) });
+    const fresh = createSchemaCompiler("ajv").compile(nullPrototype());
+    expect(compiler.compile(nullPrototype())({ n: 5 })).toBe(fresh({ n: 5 }));
+  });
+
+  it("keeps a validator independent of later changes to an equal schema compiled earlier", () => {
+    const compiler = createSchemaCompiler("ajv");
+    const schema = () => ({ type: "object", properties: { v: { const: { n: 5 } } }, required: ["v"] });
+    const first = schema();
+    compiler.compile(first);
+    const second = compiler.compile(schema());
+    first.properties.v.const.n = 6;
+    expect(second({ v: { n: 5 } })).toBe(true);
+    expect(second({ v: { n: 6 } })).toBe(false);
+  });
+
+  it("validates a Proxy schema the same way whether or not an equal-looking schema was compiled first", () => {
+    const proxy = () =>
+      new Proxy({ type: "number", minimum: 1 } as Record<string, unknown>, {
+        get: (target, key) => (key === "minimum" ? 5 : Reflect.get(target, key)),
+      });
+    const alone = createSchemaCompiler("ajv").compile(proxy());
+    const compiler = createSchemaCompiler("ajv");
+    compiler.compile({ type: "number", minimum: 1 });
+    const afterEqual = compiler.compile(proxy());
+    for (const value of [0, 2, 6]) expect(afterEqual(value)).toBe(alone(value));
+  });
 });
