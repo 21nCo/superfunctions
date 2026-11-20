@@ -246,8 +246,9 @@ function assertProjectedCatalog(
     const visibleTool = projectedTools.find((tool) => tool.name === toolName);
     if (!visibleTool) continue;
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema)));
+    const previous = anonymousBefore(schemaResources, canonicalTool.inputSchema);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources, previous);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema)), previous);
     const canonicalProperties = canonicalShape.properties;
     const canonicalRequired = canonicalShape.required;
     const visibleProperties = visibleShape.properties;
@@ -278,8 +279,9 @@ function assertProjectedCatalog(
     const projectedResources = schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema));
     assertValidProfileSchema(visibleTool.inputSchema, projectedResources);
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, projectedResources);
+    const previous = anonymousBefore(schemaResources, canonicalTool.inputSchema);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources, previous);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, projectedResources, previous);
     const visibleRequired = visibleShape.required;
     const visibleProperties = visibleShape.properties;
     const owned = new Set(
@@ -566,12 +568,28 @@ function mapSchemaKeyword(key: string, value: unknown, visit: (schema: unknown) 
   return value;
 }
 
+// The runtime registry compiles schemaResources in order with one Ajv, whose ""
+// entry is the last anonymous schema compiled. Returns that schema's canonical
+// JSON for a root (null when none precedes it), or undefined when the root is
+// not registered or its registrations see different ones.
+function anonymousBefore(resources: readonly object[], root: object): string | null | undefined {
+  const rootJson = canonicalJson(root);
+  const seen = new Set<string | null>();
+  let last: string | null = null;
+  for (const resource of resources) {
+    const json = canonicalJson(resource);
+    if (json === rootJson) seen.add(last);
+    if (namedSchemaId(resource) === undefined) last = json;
+  }
+  return seen.size === 1 ? [...seen][0] : undefined;
+}
+
 /** Resolve only root object composition; never traverse argument values. */
 // Ajv and draft-07 clients both ignore assertion siblings of $ref. Resource IDs
 // still affect reference resolution, so keep those fail-closed.
 const DRAFT07_REF_UNSAFE_KEYWORDS = new Set(["$id", "id"]);
 
-function rootShape(root: Record<string, unknown>, owned = new Set<string>(), schemaResources: readonly object[] = []): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
+function rootShape(root: Record<string, unknown>, owned = new Set<string>(), schemaResources: readonly object[] = [], previousAnonymous?: string | null): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
   // JSON transports duplicate aliases. Give each occurrence its own identity so
   // relative references inherit the resource at that occurrence, not the first one.
   root = JSON.parse(JSON.stringify(root)) as Record<string, unknown>;
@@ -616,6 +634,7 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // they are aliases of "<top-level path>#<pointer>"), and anchors of anonymous
   // resources by "<private key>#name" (Ajv's per-root localRefs).
   const ajvAliases = new Map<string, object>();
+  const ajvAliasTexts = new Map<string, string>();
   const localAnchors = new Map<string, object>();
   const resourceKey = (address: string) => address.split("#", 1)[0]!;
   const fragment = (address: string) => {
@@ -645,6 +664,25 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // reference from this schema reaches that node, its subtree or its ancestors.
   const deferred = new WeakMap<object, string>();
   const parents = new WeakMap<object, object>();
+  // JSON pointer tokens from a resource root to a node indexed beneath it.
+  const pathFromTop = (node: object): string[] => {
+    const keys: string[] = [];
+    for (let child = node, parent = parents.get(node); parent; child = parent, parent = parents.get(parent)) {
+      for (const [key, value] of Object.entries(parent)) {
+        if (value === child) { keys.unshift(key); break; }
+        const nested = value && typeof value === "object" ? Object.entries(value).find(([, item]) => item === child) : undefined;
+        if (nested) { keys.unshift(key, nested[0]); break; }
+      }
+    }
+    return keys;
+  };
+  // A top-level resource's serialized path: "" for an anonymous one, whose
+  // runtime base is "" (each tool is compiled without a key).
+  const topPath = (top: string) => privateKeys.has(top) ? "" : ajvPath(top);
+  // Ajv's stored alias pointer: escaped tokens, not percent-encoded.
+  const pointerText = (node: object) => pathFromTop(node).map(key => `/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`).join("");
+  // Anonymous siblings by canonical JSON, to find the runtime's "" entry.
+  const anonymousSiblings = new Map(siblings.flatMap((sibling, position) => namedSchemaId(sibling) === undefined ? [[canonicalJson(sibling), privateKey(`resource-${position}`)] as const] : []));
   // Ajv (compile/resolve.ts getSchemaRefs) registers a nested ID or anchor under
   // its URI resolved against the enclosing base, or as written when that base
   // is "" (then a "#name" key stays local to its top-level resource).
@@ -652,10 +690,14 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     const key = (base ? resolveUri(base, id) : id)?.replace(/#$/, "");
     if (key === undefined) return;
     if (key.startsWith("#")) { localAnchors.set(`${top}${key}`, node); return; }
-    // Ajv keeps the last registration of a key claimed twice, so its target
-    // depends on registration order: refuse references to it.
-    if ((ajvAliases.has(key) && ajvAliases.get(key) !== node) || (resourceRoots.has(key) && !privateKeys.has(key))) ambiguousKeys.add(key);
+    // Ajv keeps the last registration of a key claimed twice. Registrations with
+    // the same alias text (the same pointer in two anonymous tools, or in a tool's
+    // input and output) resolve alike; otherwise the target depends on
+    // registration order, so references to it are refused.
+    const text = `${topPath(top)}#${pointerText(node)}`;
+    if ((ajvAliasTexts.has(key) && ajvAliasTexts.get(key) !== text) || (resourceRoots.has(key) && !privateKeys.has(key))) ambiguousKeys.add(key);
     ajvAliases.set(key, node);
+    ajvAliasTexts.set(key, text);
   };
   const index = (value: unknown, resource: Record<string, unknown>, parentBase: string, parentLocal: string, strict: boolean, parent?: object, top?: string) => {
     if (!value || typeof value !== "object" || scopes.has(value)) return;
@@ -767,21 +809,6 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
     for (const key of keys) target = target && typeof target === "object" && Object.hasOwn(target, key) ? (target as Record<string, unknown>)[key] : undefined;
     return target;
   };
-  // JSON pointer tokens from a resource root to a node indexed beneath it.
-  const pathFromTop = (node: object): string[] => {
-    const keys: string[] = [];
-    for (let child = node, parent = parents.get(node); parent; child = parent, parent = parents.get(parent)) {
-      for (const [key, value] of Object.entries(parent)) {
-        if (value === child) { keys.unshift(key); break; }
-        const nested = value && typeof value === "object" ? Object.entries(value).find(([, item]) => item === child) : undefined;
-        if (nested) { keys.unshift(key, nested[0]); break; }
-      }
-    }
-    return keys;
-  };
-  // A top-level resource's serialized path: "" for an anonymous one, whose
-  // runtime base is "" (each tool is compiled without a key).
-  const topPath = (top: string) => privateKeys.has(top) ? "" : ajvPath(top);
   const ajvResource = (key: string) => privateKeys.has(key) ? undefined : resourceRoots.get(key);
   // Ajv (compile/index.ts resolveSchema) resolves "<path>#<fragment>" in the
   // top-level resource being compiled when that resource's serialized path is
@@ -793,8 +820,14 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       // Each anonymous tool is the runtime registry's "" entry while it compiles.
       return keys ? walk(resourceRoots.get(top), keys) : fragmentText === undefined && privateKeys.has(top) ? resourceRoots.get(top) : undefined;
     }
-    // "" names whichever anonymous schema the runtime registered last.
-    if (path === "" || ambiguousKeys.has(path)) throw invalidCatalog("Ambiguous schema resource ID");
+    if (path === "") {
+      // The runtime's "" entry is the last anonymous schema compiled before this
+      // root; elsewhere, or when that is unknown, the target is not fixed.
+      if (top !== scopes.get(root)?.top || previousAnonymous === undefined) throw invalidCatalog("Ambiguous schema resource ID");
+      const previous = previousAnonymous === null ? undefined : anonymousSiblings.get(previousAnonymous);
+      return keys && previous !== undefined ? walk(resourceRoots.get(previous), keys) : undefined;
+    }
+    if (ambiguousKeys.has(path)) throw invalidCatalog("Ambiguous schema resource ID");
     const alias = ajvAliases.get(path);
     const resource = alias ? ajvAlias(alias, top) : ajvResource(path);
     if (keys) return walk(resource, keys);
@@ -807,7 +840,8 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   const ajvAlias = (node: object, top: string): unknown => {
     const owner = scopes.get(node)!.top;
     if (owner === top) return node;
-    return ajvSchema(topPath(owner), `/${pathFromTop(node).map(key => key.replaceAll("~", "~0").replaceAll("/", "~1")).join("/")}`, top);
+    // Ajv parses the stored alias as a URI, so its pointer is percent-decoded.
+    return ajvSchema(topPath(owner), fragment(`#${pointerText(node)}`), top);
   };
   // Ajv's order (vocabularies/core/ref.ts, compile/index.ts resolveRef): "#"
   // from the compiled root's own base; then an exact registry key (a top-level
