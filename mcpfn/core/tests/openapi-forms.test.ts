@@ -1677,8 +1677,10 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       const array = { type: "array", properties: { child: leaf } };
       // The same member with its kind stated in a composition beside the properties.
       const composed = { allOf: [{ type: "array" }, { properties: { child: leaf } }] };
+      // patternProperties never applies to an array either.
+      const patterned = { type: "array", patternProperties: { "^x-": leaf } };
       const object = { type: "object", additionalProperties: leaf };
-      for (const members of [[array, object], [object, array], [composed, object], [object, composed]]) {
+      for (const members of [[array, object], [object, array], [composed, object], [object, composed], [patterned, object]]) {
         const schema = { oneOf: members };
         const path = flag === "readOnly"
           ? post("op", schema)
@@ -1692,6 +1694,17 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
           invalid: [wrap({ k: { id: "x" } }), wrap({ child: { id: "x" } })],
         });
       }
+      // contains of an object-only member never applies to an array of leaves.
+      const items = { oneOf: [{ type: "object", contains: leaf }, { type: "array", items: leaf }] };
+      const listed = fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          components: { schemas: { Leaf } },
+          paths: { "/x": flag === "readOnly" ? post("op", items) : { get: { operationId: "op", responses: json({ type: "object", properties: { data: items } }) } } },
+        },
+        options(),
+      );
+      expect(listed.skipped).toEqual([]);
       // Members that both accept objects still constrain the same property twice.
       const overlapping = { allOf: [{ type: "object", properties: { child: leaf } }, { type: "object", additionalProperties: leaf }] };
       const path = flag === "readOnly"

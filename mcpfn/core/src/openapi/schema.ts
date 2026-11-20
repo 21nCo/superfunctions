@@ -290,7 +290,9 @@ const NAME_SENSITIVE = [
 ] as const;
 
 /** Positions whose subschemas are never projected: a flag below them skips the projection. */
-const UNPROJECTED_POSITIONS = ["patternProperties", "contains", "additionalItems", "propertyNames"] as const;
+// Child positions a flag may not be under, by the kind of value they apply to.
+const UNPROJECTED_OBJECT_POSITIONS = ["patternProperties", "propertyNames"] as const;
+const UNPROJECTED_ARRAY_POSITIONS = ["contains", "additionalItems"] as const;
 
 function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<object, V> {
   let memo = memos.get(key);
@@ -670,7 +672,7 @@ export class SchemaConverter {
       // array items only in schemas that can accept an array.
       const objects = entries.filter((entry) => entry.kinds.has("object"));
       const arrays = entries.filter((entry) => entry.kinds.has("array"));
-      const conflict = this.flagConflict(objects, keyword) ?? this.childConflict(entries, objects, arrays, keyword);
+      const conflict = this.flagConflict(objects, keyword) ?? this.childConflict(objects, arrays, keyword);
       if (conflict !== undefined) memo.set(schema, conflict);
       else if (this.lowest >= index) this.settle(schema, mark, memo);
       else {
@@ -821,16 +823,22 @@ export class SchemaConverter {
    * (`arrays`): a schema of another kind never applies them.
    */
   private childConflict(
-    entries: ClosureEntry[],
     objects: ClosureEntry[],
     arrays: ClosureEntry[],
     keyword: DirectionalKeyword,
   ): AccessConflict | undefined {
     const reaches = (value: unknown) => this.reachesFlag(value, keyword);
-    for (const { schema } of entries) {
-      for (const position of UNPROJECTED_POSITIONS) {
-        if (this.childSchemas(schema, position).some(reaches)) return childConflict(keyword, position, "its position");
+    for (const [members, positions] of [
+      [objects, UNPROJECTED_OBJECT_POSITIONS],
+      [arrays, UNPROJECTED_ARRAY_POSITIONS],
+    ] as const) {
+      for (const { schema } of members) {
+        for (const position of positions) {
+          if (this.childSchemas(schema, position).some(reaches)) return childConflict(keyword, position, "its position");
+        }
       }
+    }
+    for (const { schema } of arrays) {
       if (Array.isArray(schema.items) && schema.items.some(reaches)) {
         return childConflict(keyword, "items", "its position in a tuple");
       }
