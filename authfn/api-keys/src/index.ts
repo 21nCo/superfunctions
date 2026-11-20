@@ -30,7 +30,13 @@ export type {
 export function authFnApiKeyPlugin(
   config: ApiKeyPluginConfig = {}
 ): AuthFnPlugin<'apiKey', ApiKeyPluginRuntimeConfig, false> {
-  const options: ApiKeyPluginConfig = { ...config };
+  const options: ApiKeyPluginConfig = {
+    schema: config.schema,
+    secretPrefix: config.secretPrefix,
+    recentAuthenticationSeconds: config.recentAuthenticationSeconds,
+    defaultExpiresInSeconds: config.defaultExpiresInSeconds,
+    maxExpiresInSeconds: config.maxExpiresInSeconds
+  };
   assertPositiveSeconds(options.recentAuthenticationSeconds, 'recentAuthenticationSeconds');
   assertPositiveSeconds(options.defaultExpiresInSeconds, 'defaultExpiresInSeconds');
   assertPositiveSeconds(options.maxExpiresInSeconds, 'maxExpiresInSeconds');

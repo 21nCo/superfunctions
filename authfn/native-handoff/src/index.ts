@@ -47,7 +47,12 @@ type ResolvedNativeHandoffPluginConfig = NativeHandoffPluginConfig & NativeHando
 export function authFnNativeHandoffPlugin(
   config: NativeHandoffPluginConfig = {}
 ): AuthFnPlugin<'nativeHandoff', NativeHandoffPluginRuntimeConfig, false> {
-  const options: NativeHandoffPluginConfig = { ...config };
+  const options: NativeHandoffPluginConfig = {
+    schema: config.schema,
+    codeTtlSeconds: config.codeTtlSeconds,
+    webHandoff: config.webHandoff,
+    requireWebHandoffVerifier: config.requireWebHandoffVerifier
+  };
   return {
     name: 'nativeHandoff',
     schema: () => options.schema ?? createNativeHandoffSchema(),

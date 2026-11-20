@@ -180,7 +180,14 @@ const MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS = 3600;
 export function authFnSocialOAuthPlugin(
   config: SocialOAuthPluginConfig = {}
 ): AuthFnPlugin<'socialOAuth', SocialOAuthPluginRuntimeConfig, true> {
-  const options: SocialOAuthPluginConfig = { ...config };
+  const options: SocialOAuthPluginConfig = {
+    schema: config.schema,
+    defaultHandoffMode: config.defaultHandoffMode,
+    bindBrowserState: config.bindBrowserState,
+    allowWebSessionTokenHandoff: config.allowWebSessionTokenHandoff,
+    requireHandoffChallenge: config.requireHandoffChallenge,
+    handoffCodeTtlSeconds: config.handoffCodeTtlSeconds
+  };
   const ttl = options.handoffCodeTtlSeconds;
   if (
     ttl !== undefined &&

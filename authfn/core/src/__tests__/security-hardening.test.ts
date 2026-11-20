@@ -165,6 +165,24 @@ describe('web handoff verifier and route toggle (F-08)', () => {
     expect(unbound.status).toBe(400);
   });
 
+  it('reads options exposed through getters', async () => {
+    class HandoffOptions {
+      get requireWebHandoffVerifier() {
+        return true;
+      }
+    }
+    const config = createConfig();
+    config.plugins = [authFnPasswordPlugin(), authFnMultiRegionPlugin(), authFnNativeHandoffPlugin(new HandoffOptions())];
+    const auth = createTestServer(config);
+    const token = await bearer(auth);
+    const unbound = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}'
+    }));
+    expect(unbound.status).toBe(400);
+  });
+
   it('does not register the web handoff routes when webHandoff is false', async () => {
     const auth = createTestServer(createConfig(false));
     const token = await bearer(auth);
