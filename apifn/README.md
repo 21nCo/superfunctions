@@ -175,6 +175,20 @@ apifn diff .apifn/base-openapi.yml .apifn/openapi.yml --format json
 apifn test .apifn/collection --env development --reporter json
 ```
 
+## Operator administration
+
+`@apifn/admin` is ApiFn's optional Super Console capability, backed by a
+project-scoped `ApiFnOperatorStore`. Applications inject a durable store; the
+package has no default backend, and the included `MemoryApiFnOperatorStore` is
+intended for tests and local self-hosting only. Specification registration and
+comparison use `@apifn/core` parsing, validation, and diffing, and the package
+also manages non-secret API environment URLs.
+
+Specifications and environments are isolated by installation, workspace,
+project, and optional environment. Raw OpenAPI documents are write-only through
+the admin transport, while typed metadata and redacted diff summaries remain
+available to Console, REST, SDK, and MCP consumers.
+
 ## License
 
 MIT

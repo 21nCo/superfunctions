@@ -22,6 +22,11 @@ When you publish or consume the packaged SDK from an index:
 pip install billfn
 ```
 
+If an earlier BillFn release installed the old `superfunctions` distribution,
+uninstall it first (`pip uninstall superfunctions`); BillFn now depends on
+`superfunctions-core`, which installs the same `superfunctions` package. See
+`packages/python-core/README.md`.
+
 For local development in this monorepo:
 
 ```bash
