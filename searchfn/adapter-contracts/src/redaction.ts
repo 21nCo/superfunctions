@@ -32,9 +32,12 @@ const SENSITIVE_KEY =
 // [REDACTED] are printed. After any other key the text after the scheme word is
 // never printed unless this pattern itself masks it, decided once per word:
 // (1) when the next token, after one optional quote, starts a match of this
-// pattern at its first character (password=basic token= x), the word is the
+// pattern at its first character (password=basic token: x), the word is the
 // whole value, so it is redacted and scanning resumes there, where that match
-// masks x; (2) when the word does not stand alone (a credential such as
+// masks x; but when that token could itself be the credential (it is
+// CREDENTIAL_TOKEN-shaped, = padding included, as in token= or abcToken=, or
+// user:pass-shaped, as in api_key:x), word, token and that match's value are
+// redacted together and scanning resumes after it; (2) when the word does not stand alone (a credential such as
 // accessToken: Bearer x, or user:pass), word and token are redacted together
 // and later fields stay readable; (3) otherwise (Bearer sv=1&sig=x,
 // Basic admin:mytoken=, password=basic status = 401) the word may start a
@@ -59,6 +62,8 @@ const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 const LINE_BREAK = /[\r\n]/g;
 // A credential token after a scheme label: RFC 6750 b64token / RFC 7617 base64.
 const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
+// A user:pass-shaped token: a ':' with more text after it.
+const USER_PASS_TOKEN = /^[^:]+:./;
 // At the token after a scheme word: a quoted name followed by optional
 // whitespace and : or =, or an unquoted name followed by whitespace and : or =,
 // by a : that ends the token, or by an = that is not only trailing base64
@@ -338,6 +343,7 @@ function schemeWordStandsAlone(input: string, start: number, end: number): boole
  * Whether the token at start, after one optional quote, begins a sensitive
  * key/value of the redactor's own grammar at its first character. The main scan
  * resumed after the scheme word then finds that same match and masks its value.
+ * On a match, KEY_VALUE_AT.lastIndex is the end of that match.
  */
 function keyValueStartsAt(input: string, start: number): boolean {
   KEY_VALUE_AT.lastIndex = input[start] === '"' || input[start] === "'" ? start + 1 : start;
@@ -373,9 +379,15 @@ function redactKeyValues(input: string): string {
       if (standsAlone) {
         const tokenStart = end - credential.length;
         if (keyValueStartsAt(input, tokenStart)) {
-          // The scheme word is the whole value: end right after it and resume
-          // scanning at the following key/value, which masks its own value.
-          end = tokenStart - scheme.length + scheme.trimEnd().length;
+          if (CREDENTIAL_TOKEN.test(credential) || USER_PASS_TOKEN.test(credential)) {
+            // The token may itself be the credential (abcToken=, api_key:x):
+            // mask word, token and that key/value's value together.
+            end = KEY_VALUE_AT.lastIndex;
+          } else {
+            // The scheme word is the whole value: end right after it and resume
+            // scanning at the following key/value, which masks its own value.
+            end = tokenStart - scheme.length + scheme.trimEnd().length;
+          }
         } else {
           // The word may begin a credential holding = or :; fail closed.
           end = endOfLine(input, end);
