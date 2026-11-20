@@ -40,5 +40,6 @@ test('resolve emits every root Package.swift library product', () => {
   const { products } = JSON.parse(resolved.stdout);
   assert.deepEqual([...products].sort(byCodeUnit), declared);
   assert.ok(products.includes('UIFnSwiftUI'));
-  assert.equal(products.length, 13);
+  for (const billfn of ['BillFnClient', 'BillFnStoreKit', 'BillFnWebViewBridgeHost']) assert.ok(products.includes(billfn), billfn);
+  assert.equal(products.length, 16);
 });
