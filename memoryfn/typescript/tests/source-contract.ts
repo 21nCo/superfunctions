@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryInsert, SourceScope, StorageAdapter } from '../src/storage/adapter';
+import type { MemoryInsert, MemoryUpdate, SourceScope, StorageAdapter } from '../src/storage/adapter';
 import type { Memory } from '../src/core/types';
 
 const chunkId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -84,6 +84,63 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(liveCounts[1 - winner]).toBe(0);
       expect(await adapter().getSourceState(source))
         .toEqual({ contentHash: winner === 0 ? 'hash-left' : 'hash-right', chunkCount: results[winner].length });
+    });
+
+    it('serializes same-source writes made through one transaction', async () => {
+      await adapter().replaceSource({ ...source, contentHash: 'hash-0', chunks: chunks(source, 'seed') });
+      const [left, right] = await adapter().transaction!(tx => Promise.all([
+        tx.replaceSource({ ...source, contentHash: 'hash-left', chunks: chunks(source, 'l1', 'l2') }),
+        tx.replaceSource({ ...source, contentHash: 'hash-right', chunks: chunks(source, 'r1') }),
+      ]));
+      const leftLive = (await live(source, left)).length; const rightLive = (await live(source, right)).length;
+      expect([leftLive, rightLive]).toContainEqual(0);
+      expect(await adapter().getSourceState(source))
+        .toEqual(leftLive ? { contentHash: 'hash-left', chunkCount: 2 } : { contentHash: 'hash-right', chunkCount: 1 });
+
+      const [replaced, deleted] = await adapter().transaction!(tx => Promise.all([
+        tx.replaceSource({ ...source, contentHash: 'hash-new', chunks: chunks(source, 'n1', 'n2', 'n3') }),
+        tx.deleteSource(source),
+      ]));
+      const state = await adapter().getSourceState(source);
+      // Replace then delete removes the three new chunks; delete then replace removes the previous ones.
+      if (state === null) expect([deleted, (await live(source, replaced)).length]).toEqual([3, 0]);
+      else expect([deleted, state]).toEqual([leftLive ? 2 : 1, { contentHash: 'hash-new', chunkCount: 3 }]);
+    });
+
+    it('writes the source scope and chunks given at call time', async () => {
+      const other = { ...source, sourceKey: 'docs/other.md' };
+      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      await adapter().replaceSource({ ...other, contentHash: 'hash-o', chunks: chunks(other, 'o') });
+      const input = { ...source, containerTags: [...source.containerTags], contentHash: 'hash-2', chunks: chunks(source, 'x') };
+      const pending = adapter().replaceSource(input);
+      Object.assign(input, { sourceKey: other.sourceKey, tenantId: 'tenant-b', contentHash: 'hash-mutated' });
+      input.containerTags.push('extra'); input.chunks[0].content = 'mutated'; input.chunks.push(chunks(source, 'pushed')[0]);
+      expect((await pending).map(row => [row.content, row.sourceKey, row.contentHash])).toEqual([['x', source.sourceKey, 'hash-2']]);
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
+      expect(await adapter().getSourceState(other)).toEqual({ contentHash: 'hash-o', chunkCount: 1 });
+
+      const scope = { ...source, containerTags: [...source.containerTags] };
+      const deleting = adapter().deleteSource(scope);
+      scope.sourceKey = other.sourceKey; scope.containerTags.push('extra');
+      expect(await deleting).toBe(1);
+      expect(await adapter().getSourceState(source)).toBeNull();
+      expect(await adapter().getSourceState(other)).toEqual({ contentHash: 'hash-o', chunkCount: 1 });
+    });
+
+    it('never lets updateMemory change source fields', async () => {
+      const [chunk] = await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      const [plain] = await adapter().insertMemories([{ tenantId: source.tenantId, containerTags: source.containerTags, content: 'plain' }]);
+      // A Memory read back from storage, passed whole as the changes of another memory.
+      const changes = { ...chunk, content: 'edited', embedding: null } as unknown as MemoryUpdate['changes'];
+      const updated = await adapter().updateMemory({ ...source, id: plain.id, expectedRevision: plain.revision!, changes });
+      expect(updated).toMatchObject({ id: plain.id, content: 'edited', revision: plain.revision! + 1 });
+      expect(updated).not.toHaveProperty('sourceKey');
+      const moved = { content: 'chunk edited', embedding: null, sourceKey: 'docs/other.md', contentHash: 'hash-x', chunkIndex: 7 } as MemoryUpdate['changes'];
+      expect(await adapter().updateMemory({ ...source, id: chunk.id, expectedRevision: chunk.revision!, changes: moved }))
+        .toMatchObject({ sourceKey: source.sourceKey, contentHash: 'hash-1', chunkIndex: 0 });
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+      expect(await adapter().deleteSource(source)).toBe(1);
+      expect(await adapter().getMemory({ ...source, id: plain.id })).toMatchObject({ content: 'edited' });
     });
 
     it('leaves the previous chunks live when a replacement fails', async () => {

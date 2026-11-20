@@ -49,6 +49,45 @@ suite('Postgres lifecycle integration', () => {
     expect(raw.deleted_at).not.toBeNull();
     expect(await client`SELECT * FROM memory_relationships`).toHaveLength(0);
   });
+  describe('source writes under REPEATABLE READ', () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const waitingAdvisoryLocks = async () => (await client`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)[0].n;
+    it('serializes replacements from a client whose transactions default to REPEATABLE READ', async () => {
+      const repeatable = postgres(url!, { connection: { default_transaction_isolation: 'repeatable read' } });
+      try {
+        const storage = new PostgresAdapter(drizzle(repeatable, { schema }));
+        let pending!: Promise<unknown>;
+        // Both replacements take their first snapshot while a third session holds the source lock.
+        await client.begin(async holder => {
+          await holder`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([scope.tenantId, scope.sourceKey])}, 0))`;
+          pending = Promise.all([
+            storage.replaceSource({ ...scope, contentHash: 'hash-left', chunks: [chunk('l1'), chunk('l2')] }),
+            storage.replaceSource({ ...scope, contentHash: 'hash-right', chunks: [chunk('r1')] }),
+          ]);
+          for (let tries = 0; await waitingAdvisoryLocks() < 2; tries++) {
+            if (tries > 250) throw new Error('replacements never waited on the source lock');
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+        });
+        await pending;
+        expect([{ contentHash: 'hash-left', chunkCount: 2 }, { contentHash: 'hash-right', chunkCount: 1 }])
+          .toContainEqual(await adapter.getSourceState(scope));
+      } finally { await repeatable.end(); }
+    });
+    it('rejects source writes nested in a REPEATABLE READ transaction before writing', async () => {
+      await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('a')] });
+      const db = drizzle(client, { schema });
+      for (const write of [
+        (storage: PostgresAdapter) => storage.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [chunk('x')] }),
+        (storage: PostgresAdapter) => storage.deleteSource(scope),
+      ]) {
+        await expect(db.transaction(tx => write(new PostgresAdapter(tx as unknown as typeof db)), { isolationLevel: 'repeatable read' }))
+          .rejects.toThrow('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
+      }
+      expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+    });
+  });
   it('preserves explicit relationship IDs and zero confidence', async () => {
     const rows = await adapter.insertMemories([0, 1].map(i => ({ tenantId: 'a', containerTags: [], content: String(i) })));
     const id = '550e8400-e29b-41d4-a716-446655440000';

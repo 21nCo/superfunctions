@@ -216,8 +216,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
     // Recheck after the await: two competing revisions cannot both win.
     const current = this.memories.get(input.id)!;
     if (current.deletedAt != null || current.revision !== input.expectedRevision) throw new Error('MEMORY_REVISION_CONFLICT');
-    const updated = cloneMemory({ ...current, ...input.changes, metadata: input.changes.metadata ?? current.metadata, isLatest: input.changes.isLatest ?? current.isLatest, id: current.id, tenantId: current.tenantId,
-      containerTags: current.containerTags, revision: current.revision! + 1, updatedAt: Date.now() });
+    // Only the updatable fields are read from changes, as in the Postgres adapter:
+    // a Memory passed as changes cannot move this one into a source or tombstone it.
+    const { content, embedding, metadata, isLatest } = input.changes;
+    const updated = cloneMemory({ ...current,
+      ...(content === undefined ? {} : { content }),
+      ...(embedding === undefined ? {} : { embedding }),
+      metadata: metadata ?? current.metadata, isLatest: isLatest ?? current.isLatest,
+      revision: current.revision! + 1, updatedAt: Date.now() });
     this.mutationVersion++;
     this.memories.set(updated.id, updated);
     return cloneMemory(updated);
@@ -251,9 +257,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
       && sameTagSet(memory.containerTags, scope.containerTags));
   }
 
-  async getSourceState(scope: SourceScope): Promise<SourceState | null> {
-    requireSourceScope(scope);
-    const live = this.liveSourceChunks(scope);
+  async getSourceState(input: SourceScope): Promise<SourceState | null> {
+    const live = this.liveSourceChunks(requireSourceScope(input).scope);
     if (!live.length) return null;
     const hashes = new Set(live.map(memory => memory.contentHash ?? null));
     return { contentHash: hashes.size === 1 ? [...hashes][0]! : null, chunkCount: live.length };
@@ -262,12 +267,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
   // replaceSource and deleteSource never await between reading and writing, so
   // each call runs to completion before another call for any source can start.
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    requireSourceReplace(input);
+    const { scope, contentHash, chunks } = requireSourceReplace(input);
     const now = Date.now();
-    const live = this.liveSourceChunks(input);
-    const saved = input.chunks.map((chunk, chunkIndex) => ({
-      ...this.buildMemory({ ...chunk, tenantId: input.tenantId, containerTags: input.containerTags }, now),
-      sourceKey: input.sourceKey, contentHash: input.contentHash, chunkIndex,
+    const live = this.liveSourceChunks(scope);
+    const saved = chunks.map((chunk, chunkIndex) => ({
+      ...this.buildMemory(chunk, now), sourceKey: scope.sourceKey, contentHash, chunkIndex,
     }));
     this.requireNewIds(saved);
     if (!live.length && !saved.length) return [];
@@ -277,9 +281,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return saved.map(cloneMemory);
   }
 
-  async deleteSource(scope: SourceScope): Promise<number> {
-    requireSourceScope(scope);
-    const live = this.liveSourceChunks(scope);
+  async deleteSource(input: SourceScope): Promise<number> {
+    const live = this.liveSourceChunks(requireSourceScope(input).scope);
     if (!live.length) return 0;
     this.mutationVersion++;
     this.tombstone(live, Date.now());
