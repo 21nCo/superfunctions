@@ -29,16 +29,23 @@ const SENSITIVE_KEY =
 // token on the same line is a valid credential token (RFC 6750 b64token /
 // RFC 7617 base64: CREDENTIAL_TOKEN) and the scheme word does not stand alone;
 // otherwise the label may itself be the secret, so key, separator and
-// [REDACTED] are printed. After any other key the scheme word may be the secret
-// too: when it stands alone it is the whole value, so it is redacted and
-// scanning resumes at the next token (password=basic connectionTimeout=5000
-// keeps connectionTimeout=5000, and password=basic token= x still redacts x);
-// otherwise (a credential such as accessToken: Bearer x, or user:pass) word and
-// token are redacted together, so the credential is never printed.
+// [REDACTED] are printed. After any other key the text after the scheme word is
+// never printed unless this pattern itself masks it, decided once per word:
+// (1) when the next token, after one optional quote, starts a match of this
+// pattern at its first character (password=basic token= x), the word is the
+// whole value, so it is redacted and scanning resumes there, where that match
+// masks x; (2) when the word does not stand alone (a credential such as
+// accessToken: Bearer x, or user:pass), word and token are redacted together
+// and later fields stay readable; (3) otherwise (Bearer sv=1&sig=x,
+// Basic admin:mytoken=, password=basic status = 401) the word may start a
+// credential that holds = or :, so key, separator and [REDACTED] are printed
+// to the end of the line, as after an authorization key.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 // The key group of KEY_VALUE_SECRET and its separator, with or without a value,
 // searched from one position (see sensitiveKeyStartsWithin).
+// A KEY_VALUE_SECRET match that begins exactly at one position.
+const KEY_VALUE_AT = new RegExp(KEY_VALUE_SECRET.source, "iy");
 const SENSITIVE_KEY_SEPARATOR_FIND =
   /\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?["']?\s*[:=]/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
@@ -49,7 +56,7 @@ const ENCODED_REDACTED = /%5BREDACTED%5D/g;
 const MAX_KEY_DECODE_PASSES = 3;
 
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
-const LINE_BREAK = /[\r\n]/;
+const LINE_BREAK = /[\r\n]/g;
 // A credential token after a scheme label: RFC 6750 b64token / RFC 7617 base64.
 const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
 // At the token after a scheme word: a quoted name followed by optional
@@ -327,6 +334,22 @@ function schemeWordStandsAlone(input: string, start: number, end: number): boole
   return ASSIGNMENT_START.test(input);
 }
 
+/**
+ * Whether the token at start, after one optional quote, begins a sensitive
+ * key/value of the redactor's own grammar at its first character. The main scan
+ * resumed after the scheme word then finds that same match and masks its value.
+ */
+function keyValueStartsAt(input: string, start: number): boolean {
+  KEY_VALUE_AT.lastIndex = input[start] === '"' || input[start] === "'" ? start + 1 : start;
+  return KEY_VALUE_AT.test(input);
+}
+
+function endOfLine(input: string, from: number): number {
+  LINE_BREAK.lastIndex = from;
+  const lineBreak = LINE_BREAK.exec(input);
+  return lineBreak === null ? input.length : lineBreak.index;
+}
+
 function redactKeyValues(input: string): string {
   const pattern = new RegExp(KEY_VALUE_SECRET.source, KEY_VALUE_SECRET.flags);
   let output = "";
@@ -343,15 +366,20 @@ function redactKeyValues(input: string): string {
     } else if (openQuote) {
       replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
     } else if (AUTHORIZATION_KEY.test(key)) {
-      const lineBreak = input.slice(end).search(LINE_BREAK);
-      end = lineBreak === -1 ? input.length : end + lineBreak;
+      end = endOfLine(input, end);
       const label = scheme !== undefined && !standsAlone && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
       replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
       if (standsAlone) {
-        // The scheme word is the whole value: end right after it and resume
-        // scanning at the following key/value or assignment.
-        end = end - credential.length - scheme.length + scheme.trimEnd().length;
+        const tokenStart = end - credential.length;
+        if (keyValueStartsAt(input, tokenStart)) {
+          // The scheme word is the whole value: end right after it and resume
+          // scanning at the following key/value, which masks its own value.
+          end = tokenStart - scheme.length + scheme.trimEnd().length;
+        } else {
+          // The word may begin a credential holding = or :; fail closed.
+          end = endOfLine(input, end);
+        }
       }
       replacement = `${key}${keyQuote}${separator}${REDACTED}`;
     }

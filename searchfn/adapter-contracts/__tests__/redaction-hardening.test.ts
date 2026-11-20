@@ -8,11 +8,11 @@ const userinfo = (secret: string) => ["user", secret].join(":");
 const REDACTED_MARK = "[REDACTED]";
 
 describe("auth scheme words as secret values", () => {
-  it("redacts the scheme word as the value when a non-authorization key holds bearer, basic or token", () => {
+  it("redacts a lone scheme word held by a non-authorization key, failing closed to the end of the line", () => {
     const cases: Array<[string, string]> = [
-      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
-      ["token=bearer connectionTimeout=5000", "token=[REDACTED] connectionTimeout=5000"],
-      ["api_key=token connectionTimeout=5000", "api_key=[REDACTED] connectionTimeout=5000"],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
+      ["token=bearer connectionTimeout=5000", "token=[REDACTED]"],
+      ["api_key=token connectionTimeout=5000", "api_key=[REDACTED]"],
       ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
     ];
     for (const [input, expected] of cases) {
@@ -124,7 +124,7 @@ describe("auth scheme on its own line", () => {
       "Authorization:\tBasic\t[REDACTED]\nstatus=401",
     );
     expect(redactSensitiveString("Authorization: Bearer test-leak")).toBe("Authorization: Bearer [REDACTED]");
-    expect(redactSensitiveString(`${PW}=basic connectionTimeout=5000`)).toBe(`${PW}=[REDACTED] connectionTimeout=5000`);
+    expect(redactSensitiveString(`${PW}=basic connectionTimeout=5000`)).toBe(`${PW}=[REDACTED]`);
   });
 });
 
@@ -337,10 +337,10 @@ describe("round-8 URL component and scheme-word repairs", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  it("ends a non-authorization value after a scheme word that precedes an assignment", () => {
+  it("ends a non-authorization value after a scheme word only before a sensitive key/value", () => {
     const cases: Array<[string, string]> = [
       [`${PW}=basic token: test-hidden`, `${PW}=[REDACTED] token: [REDACTED]`],
-      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
       [`${PW}=token token=test-hidden q=x`, `${PW}=[REDACTED] token=[REDACTED] q=x`],
       ["accessToken: Basic test-user:test-pass", "accessToken: [REDACTED]"],
       [`accessToken: Basic ${btoa("test")} q=x`, "accessToken: [REDACTED] q=x"],
@@ -362,7 +362,7 @@ describe("round-9 scheme word before a key the redactor's own grammar recognises
       [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey}= [REDACTED] q=x`],
       [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey} = [REDACTED] q=x`],
       [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED]`],
-      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
       [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
       ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
     ];
@@ -391,12 +391,12 @@ describe("round-10 scheme words and URL parameter boundaries", () => {
   const tokenKey = ["to", "ken"].join("");
   const hidden = ["test", "hidden"].join("-");
 
-  it("treats a dotted, quoted or spaced assignment after a scheme word as a new key", () => {
+  it("treats a quoted or spaced sensitive key after a scheme word as a new key and masks other assignments to the end of the line", () => {
     const cases: Array<[string, string]> = [
-      [`${PW}=basic db.${PW} = ${hidden} q=x`, `${PW}=[REDACTED] db.${PW} = [REDACTED] q=x`],
+      [`${PW}=basic db.${PW} = ${hidden} q=x`, `${PW}=[REDACTED]`],
       [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
       [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED] '${tokenKey}'= [REDACTED] q=x`],
-      [`${PW}=basic status = 401`, `${PW}=[REDACTED] status = 401`],
+      [`${PW}=basic status = 401`, `${PW}=[REDACTED]`],
       ["Authorization: bearer status = 401", "Authorization: [REDACTED]"],
       [`Authorization: bearer db.${PW} = x`, "Authorization: [REDACTED]"],
       // Round-9 cases still hold.
@@ -533,12 +533,12 @@ describe("round-12 scheme word before an empty sensitive field", () => {
       [`Authorization: token ${secretKey}=;`, "Authorization: [REDACTED]"],
       [`Authorization: bearer db.${PW}=`, "Authorization: [REDACTED]"],
       [`Authorization: Basic ${tokenKey}=`, "Authorization: [REDACTED]"],
-      [`${PW}=basic ${tokenKey}=`, `${PW}=[REDACTED] ${tokenKey}=`],
+      [`${PW}=basic ${tokenKey}=`, `${PW}=[REDACTED]`],
       // Earlier cases still hold.
       ["Authorization: Bearer test-token", "Authorization: Bearer [REDACTED]"],
       [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
       [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
-      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED] connectionTimeout=5000`],
+      [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
       ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
     ];
     for (const [input, expected] of cases) {
@@ -552,6 +552,54 @@ describe("round-12 scheme word before an empty sensitive field", () => {
     expect(redactSensitiveString("authorization: bearer x ".repeat(64_000))).toBe("authorization: bearer [REDACTED]");
     expect(redactSensitiveString(`${PW}=basic tok.`.repeat(64_000))).not.toContain("basic");
     expect(redactSensitiveString(`${PW}=basic ${tokenKey}= `.repeat(64_000))).not.toContain("basic");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("round-13 scheme word under a non-authorization key", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const accessKey = ["access", "Token"].join("");
+  const hidden = ["test", "hidden"].join("-");
+  const sig = ["test", "sig"].join("-");
+
+  it("never prints a credential holding = or : after a scheme word", () => {
+    const cases: Array<[string, string]> = [
+      [`${accessKey}: Bearer sv=1&sig=${sig}`, `${accessKey}: [REDACTED]`],
+      [`${tokenKey}: Token k=test-value`, `${tokenKey}: [REDACTED]`],
+      [`${accessKey}: Bearer abc.${tokenKey}=`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Basic admin:my${tokenKey}=`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Basic admin:my${tokenKey}=x`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Bearer test/${tokenKey}=`, `${accessKey}: [REDACTED]`],
+      // Masking stops at the end of the line.
+      [`${accessKey}: Bearer sv=1&sig=${sig}\nstatus=401`, `${accessKey}: [REDACTED]\nstatus=401`],
+      // A sensitive key/value at the next token still ends the value after the word.
+      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED]`],
+      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey}= [REDACTED] q=x`],
+      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
+      // A credential without = or : keeps later fields readable.
+      [`${accessKey}: Bearer test-x status=401`, `${accessKey}: [REDACTED] status=401`],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      // Authorization keys are unchanged.
+      ["Authorization: Bearer test-token", "Authorization: Bearer [REDACTED]"],
+      [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
+      [`Authorization: bearer ${tokenKey}=`, "Authorization: [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(sig);
+      expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("decides non-authorization scheme words in linear time", () => {
+    const started = performance.now();
+    expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x `.repeat(64_000))).toBe(`${accessKey}: [REDACTED]`);
+    expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x\n`.repeat(64_000))).not.toContain("sv=1");
+    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = `.repeat(64_000))).not.toContain("basic");
+    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = "${"a".repeat(200_000)}`)).toBe(
+      `${PW}=[REDACTED] "${tokenKey}" = "[REDACTED]`,
+    );
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
