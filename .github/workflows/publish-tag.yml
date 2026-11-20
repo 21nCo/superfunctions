@@ -28,6 +28,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # actions and checks: read let the release CI gate read the CI result of the tag commit.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     outputs:
@@ -64,6 +69,18 @@ jobs:
       - name: Require immutable release tag
         id: ref
         run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+
+      # SFNS-124: only the repository that owns the slug publishes it, and only a commit that passed CI; both run
+      # before anything is installed, built or packed. A channel-only dispatch republishes nothing, so it skips the CI gate.
+      - name: Require this repository to own the release
+        run: node ./scripts/assert-release-owner.mjs npm "${RELEASE_TAG}"
+
+      - name: Require successful CI on the release commit
+        if: '!inputs.channel_only'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node ./scripts/assert-release-ci.mjs "${{ steps.ref.outputs.release_commit }}"
+
       - name: Resolve publish target
         id: resolve
         run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"

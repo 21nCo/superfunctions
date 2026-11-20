@@ -11,6 +11,8 @@ export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
 export const REPOS = Object.freeze(["public", "next"]);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** CI a release tag's commit must pass when a manifest has no `ci` section (SFNS-124): the GitHub Actions workflow "CI". */
+export const DEFAULT_RELEASE_CI = Object.freeze({ kind: "workflow", name: "CI", app: null });
 
 export class OwnersError extends Error {
   /**
@@ -91,8 +93,32 @@ function nameList(file, where, value) {
 }
 
 /**
+ * The optional `ci` section names the CI a release tag's commit must pass in the repository that reads this manifest
+ * (SFNS-124): `{"workflow": "<GitHub Actions workflow name>"}` or `{"checkRun": "<check run name>", "app": "<GitHub
+ * App slug>"}` for CI that reports check runs from another app, such as Depot on `next`. Absent means null.
+ */
+function releaseCi(file, value) {
+  if (value === undefined) return null;
+  if (!isPlainObject(value)) throw malformed(file, "ci must be an object");
+  checkKeys(file, "ci", value, ["workflow", "checkRun", "app"]);
+  const nonEmpty = (key) => {
+    if (typeof value[key] !== "string" || value[key] === "" || value[key].trim() !== value[key]) {
+      throw malformed(file, `ci.${key} must be a non-empty string without surrounding spaces`);
+    }
+    return value[key];
+  };
+  if ((value.workflow === undefined) === (value.checkRun === undefined)) throw malformed(file, "ci needs exactly one of workflow or checkRun");
+  if (value.workflow !== undefined) {
+    if (value.app !== undefined) throw malformed(file, "ci.app applies only to checkRun");
+    return Object.freeze({ kind: "workflow", name: nonEmpty("workflow"), app: null });
+  }
+  return Object.freeze({ kind: "check-run", name: nonEmpty("checkRun"), app: value.app === undefined ? null : nonEmpty("app") });
+}
+
+/**
  * Validates a parsed manifest. The public manifest assigns "public" and classifies root files as public or
- * generated; the next manifest assigns "next" and lists next-owned root files. `python` is keyed by the PEP 503
+ * generated; the next manifest assigns "next" and lists next-owned root files. `ci` is the release CI (see
+ * releaseCi) or null. `python` is keyed by the PEP 503
  * canonical name (see canonicalPythonName); `pythonNames` maps each canonical name to its manifest spelling.
  * @param {unknown} data
  * @param {{ kind?: "public" | "next", file?: string }} [options]
@@ -100,7 +126,7 @@ function nameList(file, where, value) {
 export function parseManifest(data, { kind = "public", file = kind === "next" ? NEXT_MANIFEST : PUBLIC_MANIFEST } = {}) {
   if (!REPOS.includes(kind)) throw malformed(file, `manifest kind must be "public" or "next", not ${JSON.stringify(kind)}`);
   if (!isPlainObject(data)) throw malformed(file, "manifest must be a JSON object");
-  checkKeys(file, "the manifest", data, ["version", "paths", "rootFiles", "releases", "python"]);
+  checkKeys(file, "the manifest", data, ["version", "paths", "rootFiles", "releases", "python", "ci"]);
   if (data.version !== 1) throw malformed(file, `version must be 1, not ${JSON.stringify(data.version)}`);
   const owner = kind;
   if (kind === "public" && data.paths === undefined) throw malformed(file, "paths is required");
@@ -126,7 +152,7 @@ export function parseManifest(data, { kind = "public", file = kind === "next" ? 
   for (const name of rootFiles.keys()) {
     if (paths.has(name)) throw malformed(file, `${JSON.stringify(name)} is listed both as a path and as a root file`);
   }
-  return { kind, file, paths, rootFiles, releases, python, pythonNames };
+  return { kind, file, paths, rootFiles, releases, python, pythonNames, ci: releaseCi(file, data.ci) };
 }
 
 /** Reads and validates a manifest file; a missing optional file returns null. */

@@ -122,6 +122,31 @@ test("Python projects are one distribution per PEP 503 canonical name", () => {
   throwsCode(() => parseManifest({ ...nextData(), python: { "a.b": "next", A_B: "next" } }, { kind: "next" }), "malformed-manifest");
 });
 
+test("the optional ci section names the release CI as a workflow or a check run (SFNS-124)", () => {
+  assert.equal(parseManifest(publicData(), { kind: "public" }).ci, null);
+  assert.deepEqual(parseManifest({ ...publicData(), ci: { workflow: "CI" } }, { kind: "public" }).ci, { kind: "workflow", name: "CI", app: null });
+  assert.deepEqual(parseManifest({ ...nextData(), ci: { checkRun: "Depot CI", app: "depot" } }, { kind: "next" }).ci, {
+    kind: "check-run",
+    name: "Depot CI",
+    app: "depot",
+  });
+  assert.deepEqual(parseManifest({ ...nextData(), ci: { checkRun: "CI" } }, { kind: "next" }).ci, { kind: "check-run", name: "CI", app: null });
+  for (const ci of [
+    "CI",
+    [],
+    {},
+    { workflow: "CI", checkRun: "CI" },
+    { workflow: "CI", app: "depot" },
+    { workflow: "" },
+    { checkRun: " CI" },
+    { checkRun: "CI", app: "" },
+    { checkRun: 1 },
+    { checkRun: "CI", branch: "dev" },
+  ]) {
+    throwsCode(() => parseManifest({ ...nextData(), ci }, { kind: "next" }), "malformed-manifest");
+  }
+});
+
 test("parseManifest rejects an unsupported kind with a typed error", () => {
   for (const kind of ["typo", "generated", "", null, 1]) {
     throwsCode(() => parseManifest({ version: 1, paths: { datafn: "typo" } }, { kind }), "malformed-manifest");

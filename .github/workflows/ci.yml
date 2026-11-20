@@ -354,6 +354,9 @@ jobs:
       - name: Workspace globs and npm release targets
         run: node --test scripts/workspaces.test.mjs scripts/resolve-release-tag.test.mjs
 
+      - name: Release owner and CI gates (SFNS-124)
+        run: node --test scripts/assert-release-owner.test.mjs scripts/assert-release-ci.test.mjs scripts/release-gate-workflows.test.mjs
+
       - name: Python release targets
         run: |
           python -m pip install --only-binary=:all: packaging==25.0
