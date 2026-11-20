@@ -67,6 +67,18 @@ export function compareCodeUnits(left: string, right: string): number {
   return left > right ? 1 : 0;
 }
 
+/**
+ * Source tags must all be non-empty strings. Unlike Array#some, this visits the
+ * holes of a sparse array, which would otherwise be stored as missing tags.
+ */
+function requireSourceTags(tags: unknown): asserts tags is string[] {
+  if (!Array.isArray(tags)) throw new Error('MEMORY_SCOPE_REQUIRED');
+  for (let index = 0; index < tags.length; index++) {
+    const tag: unknown = tags[index];
+    if (typeof tag !== 'string' || !tag.trim()) throw new Error('MEMORY_SCOPE_REQUIRED');
+  }
+}
+
 /** A source scope copied at call time, with its tag set in canonical (sorted, unique) form. */
 export interface SourceSnapshot { scope: SourceScope; tags: string[] }
 export interface SourceReplaceSnapshot extends SourceSnapshot { contentHash: string; chunks: MemoryInsert[] }
@@ -78,6 +90,7 @@ export interface SourceReplaceSnapshot extends SourceSnapshot { contentHash: str
 export function requireSourceScope(input: SourceScope): SourceSnapshot {
   const { tenantId, containerTags, sourceKey } = input;
   requireScope(tenantId, containerTags);
+  requireSourceTags(containerTags);
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
   const scope: SourceScope = { tenantId, containerTags: [...containerTags], sourceKey };
   return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
@@ -98,9 +111,9 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
   if (typeof contentHash !== 'string' || !contentHash.trim()) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   const copies = [...chunks].map((chunk): MemoryInsert => {
-    if (!chunk || chunk.tenantId !== scope.tenantId || !Array.isArray(chunk.containerTags) || !sameTagSet(chunk.containerTags, scope.containerTags)) {
-      throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
-    }
+    if (!chunk || chunk.tenantId !== scope.tenantId) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
+    requireSourceTags(chunk.containerTags);
+    if (!sameTagSet(chunk.containerTags, scope.containerTags)) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
     return {
       ...chunk, tenantId: scope.tenantId, containerTags: [...scope.containerTags],
       ...(chunk.embedding ? { embedding: [...chunk.embedding] } : {}),

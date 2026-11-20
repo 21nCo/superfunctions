@@ -9,39 +9,17 @@ import { and, eq, sql, isNull, or, arrayContains, inArray, is } from 'drizzle-or
 import { PgTransaction } from 'drizzle-orm/pg-core';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
-/**
- * Runs source writes of one database session one at a time. A session that
- * holds an advisory lock acquires it again at once, so writes through one
- * transaction (and its savepoints) cannot rely on the lock to serialize.
- */
-class SessionWriteQueue {
-  private tail: Promise<unknown> = Promise.resolve();
-  run<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.tail.then(operation);
-    this.tail = result.catch(() => undefined);
-    return result;
-  }
-}
-
 // We assume the DB passed is compatible with PostgresJsDatabase schema
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
   private db: PostgresJsDatabase<any>;
-  /** Set when `db` is a transaction: one session, shared by adapters on its savepoints. */
-  private sourceQueue?: SessionWriteQueue;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
     this.db = db;
-    if (is(db, PgTransaction)) this.sourceQueue = new SessionWriteQueue();
   }
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
-    return this.db.transaction(tx => {
-      const storage = new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>);
-      // A savepoint runs in this adapter's session, so it shares this session's queue.
-      if (this.sourceQueue) storage.sourceQueue = this.sourceQueue;
-      return operation(storage);
-    });
+    return this.db.transaction(tx => operation(new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>)));
   }
 
   async close(): Promise<void> { await this.dispose?.(); }
@@ -223,11 +201,15 @@ export class PostgresAdapter implements StorageAdapter {
   /**
    * Runs `operation` in a transaction that holds the source's advisory lock until
    * the top-level transaction ends, so writes to one (tenant, source key) are
-   * serialized across connections; writes in one session also queue in process.
-   * A new transaction runs at READ COMMITTED, so statements after the lock see
-   * chunks committed while it waited. A savepoint inherits the enclosing
-   * isolation level, and any other level is rejected before a write: its
-   * snapshot can predate the previous holder's commit.
+   * serialized across connections. A new transaction runs at READ COMMITTED, so
+   * statements after the lock see chunks committed while it waited. A savepoint
+   * inherits the enclosing isolation level, and any other level is rejected
+   * before a write: its snapshot can predate the previous holder's commit.
+   *
+   * The lock is re-entrant within one session, so it does not order writes made
+   * through one transaction (by any adapter or savepoint on it). `operation`
+   * must therefore make its whole change in one statement: statements of one
+   * session run one at a time and each sees the session's earlier writes.
    */
   private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
@@ -237,22 +219,31 @@ export class PostgresAdapter implements StorageAdapter {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
       return operation(tx);
     };
-    const run = () => (is(this.db, PgTransaction)
+    return is(this.db, PgTransaction)
       ? this.db.transaction(tx => locked(tx as unknown as PostgresJsDatabase<any>))
-      : this.db.transaction(tx => locked(tx as unknown as PostgresJsDatabase<any>), { isolationLevel: 'read committed' }));
-    return this.sourceQueue ? this.sourceQueue.run(run) : run();
+      : this.db.transaction(tx => locked(tx as unknown as PostgresJsDatabase<any>), { isolationLevel: 'read committed' });
   }
 
-  /** Clears and soft-deletes every live chunk of the source and drops their relationships. */
-  private async tombstoneSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date): Promise<number> {
-    const deleted = await tx.update(memories).set({ content: '', embedding: null, metadata: {}, isLatest: false,
+  /**
+   * Common table expressions that clear and soft-delete every live chunk of the
+   * source and drop their relationships. PostgreSQL runs data-modifying CTEs to
+   * completion as part of the statement that carries them.
+   */
+  private tombstoneSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date) {
+    const tombstoned = tx.$with('source_tombstoned').as(tx.update(memories).set({ content: '', embedding: null, metadata: {}, isLatest: false,
       deletedAt: now, updatedAt: now, revision: sql`${memories.revision} + 1` })
-      .where(this.liveSource(scope, tags)).returning({ id: memories.id });
-    const ids = deleted.map(row => row.id);
-    if (ids.length) {
-      await tx.delete(memoryRelationships).where(or(inArray(memoryRelationships.fromId, ids), inArray(memoryRelationships.toId, ids)));
-    }
-    return ids.length;
+      .where(this.liveSource(scope, tags)).returning({ id: memories.id }));
+    const ids = tx.select({ id: tombstoned.id }).from(tombstoned);
+    const unlinked = tx.$with('source_unlinked').as(tx.delete(memoryRelationships)
+      .where(or(inArray(memoryRelationships.fromId, ids), inArray(memoryRelationships.toId, ids))).returning({ id: memoryRelationships.id }));
+    return { tombstoned, unlinked };
+  }
+
+  /** Tombstones the source in one statement and returns how many chunks it removed. */
+  private async clearSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date): Promise<number> {
+    const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
+    const [row] = await tx.with(tombstoned, unlinked).select({ count: sql<number>`count(*)::int` }).from(tombstoned);
+    return Number(row?.count ?? 0);
   }
 
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
@@ -273,16 +264,16 @@ export class PostgresAdapter implements StorageAdapter {
       ...this.toRow(chunk, now), sourceKey: scope.sourceKey, contentHash, chunkIndex,
     }));
     return this.withSourceLock(scope, async tx => {
-      await this.tombstoneSource(tx, scope, tags, now);
-      if (!values.length) return [];
-      const rows = await tx.insert(memories).values(values).returning();
+      if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
+      const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
+      const rows = await tx.with(tombstoned, unlinked).insert(memories).values(values).returning();
       return rows.map(row => this.mapToDomain(row));
     });
   }
 
   async deleteSource(input: SourceScope): Promise<number> {
     const { scope, tags } = requireSourceScope(input);
-    return this.withSourceLock(scope, tx => this.tombstoneSource(tx, scope, tags, new Date()));
+    return this.withSourceLock(scope, tx => this.clearSource(tx, scope, tags, new Date()));
   }
 
   private mapToDomain(row: typeof memories.$inferSelect): Memory {

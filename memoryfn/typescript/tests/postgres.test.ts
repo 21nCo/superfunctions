@@ -49,6 +49,38 @@ suite('Postgres lifecycle integration', () => {
     expect(raw.deleted_at).not.toBeNull();
     expect(await client`SELECT * FROM memory_relationships`).toHaveLength(0);
   });
+  it('orders same-source writes of separate adapters on one transaction', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const db = drizzle(client, { schema });
+    type Db = typeof db;
+    // Each arrangement gives two adapters on one database session: the advisory lock is re-entrant there.
+    const arrangements: Array<(tx: Db, run: (left: PostgresAdapter, right: PostgresAdapter) => Promise<unknown[]>) => Promise<unknown[]>> = [
+      (tx, run) => run(new PostgresAdapter(tx), new PostgresAdapter(tx)),
+      (tx, run) => tx.transaction(inner => run(new PostgresAdapter(tx), new PostgresAdapter(inner as unknown as Db))),
+    ];
+    for (const arrange of arrangements) {
+      await client`TRUNCATE memory_relationships, memories`;
+      await adapter.replaceSource({ ...scope, contentHash: 'hash-0', chunks: [chunk('seed')] });
+      await db.transaction(tx => arrange(tx as unknown as Db, (left, right) => Promise.all([
+        left.replaceSource({ ...scope, contentHash: 'hash-left', chunks: [chunk('l1'), chunk('l2')] }),
+        right.replaceSource({ ...scope, contentHash: 'hash-right', chunks: [chunk('r1')] }),
+      ])));
+      const state = await adapter.getSourceState(scope);
+      expect([{ contentHash: 'hash-left', chunkCount: 2 }, { contentHash: 'hash-right', chunkCount: 1 }]).toContainEqual(state);
+
+      const [, deleted] = await db.transaction(tx => arrange(tx as unknown as Db, (left, right) => Promise.all([
+        left.replaceSource({ ...scope, contentHash: 'hash-new', chunks: [chunk('n1'), chunk('n2'), chunk('n3')] }),
+        right.deleteSource(scope),
+      ])));
+      // Replace then delete removes the three new chunks; delete then replace removes the previous ones.
+      const after = await adapter.getSourceState(scope);
+      if (after === null) expect(deleted).toBe(3);
+      else expect([deleted, after]).toEqual([state!.chunkCount, { contentHash: 'hash-new', chunkCount: 3 }]);
+      const [{ n }] = await client`SELECT count(*)::int AS n FROM memories WHERE deleted_at IS NULL`;
+      expect(n).toBe(after?.chunkCount ?? 0);
+    }
+  });
   describe('source writes under REPEATABLE READ', () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
     const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });

@@ -158,6 +158,21 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await live(source, before)).toHaveLength(2);
     });
 
+    it('rejects sparse or empty source tags before writing', async () => {
+      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
+      const holed = (...tags: string[]) => { const sparse = [...tags]; sparse.length += 1; return sparse; };
+      for (const containerTags of [new Array<string>(1), holed(...source.containerTags), [...source.containerTags, ' ']]) {
+        const scope = { ...source, containerTags };
+        await expect(adapter().getSourceState(scope)).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+        await expect(adapter().deleteSource(scope)).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(source, 'x') })).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+      }
+      const sparseChunk = { ...chunks(source, 'x')[0], containerTags: holed(...source.containerTags) };
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [sparseChunk] })).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
+      expect(await adapter().getSourceState({ ...source, containerTags: [...source.containerTags, 'undefined'] })).toBeNull();
+    });
+
     it('rolls a replacement back with its enclosing transaction', async () => {
       await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
       await expect(adapter().transaction!(async tx => {
