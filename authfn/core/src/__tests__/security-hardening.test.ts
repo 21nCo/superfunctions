@@ -131,6 +131,19 @@ describe('web handoff verifier and route toggle (F-08)', () => {
     expect(withVerifier.status).toBe(302);
   });
 
+  it('requires a verifier on every web handoff when requireWebHandoffVerifier is set', async () => {
+    const config = createConfig();
+    config.plugins = [authFnPasswordPlugin(), authFnMultiRegionPlugin(), authFnNativeHandoffPlugin({ requireWebHandoffVerifier: true })];
+    const auth = createTestServer(config);
+    const token = await bearer(auth);
+    const unbound = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}'
+    }));
+    expect(unbound.status).toBe(400);
+  });
+
   it('does not register the web handoff routes when webHandoff is false', async () => {
     const auth = createTestServer(createConfig(false));
     const token = await bearer(auth);
@@ -190,7 +203,11 @@ describe('two-factor challenge attempts (F-11)', () => {
       new Request(`https://account.example.com/auth/2fa/challenge${index % 2 ? '/' : ''}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.113.${index}` },
-        body: JSON.stringify({ challengeId: 'chal_bypass', code: '000000', email: `random-${index}@example.com` })
+        body: JSON.stringify({
+        challengeId: index % 3 === 0 ? 'chal_bypass' : index % 3 === 1 ? ' CHAL_BYPASS' : 'Chal_Bypass ',
+        code: '000000',
+        email: `random-${index}@example.com`
+      })
       }),
       {} as never,
       async () => new Response('ok')
@@ -215,7 +232,8 @@ describe('two-factor challenge attempts (F-11)', () => {
         headers: {
           'content-type': 'application/json',
           'cf-connecting-ip': `203.0.113.${index}`,
-          cookie: '__Secure-authfn.session=test-session-token'
+          cookie: '__Secure-authfn.session=test-session-token',
+          authorization: `Bearer test-other-${index}`
         },
         body: JSON.stringify({ code: '000000' })
       }),
@@ -423,6 +441,29 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
       const elsewhere = await callback(auth, stateId);
       expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
     }
+  });
+
+  it('binds a JSON session-token start even when it sends a handoff challenge', async () => {
+    const auth = createTestServer(createConfig({ bindBrowserState: true }));
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const started = await start(auth, {
+      callbackMode: 'json',
+      handoffMode: 'session-token',
+      handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
+    });
+    expect(started.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.'))).toBe(true);
+    const elsewhere = await callback(auth, (await started.json()).data.stateId as string);
+    expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
+  });
+
+  it('keeps the binding cookie Secure and SameSite=None on an https origin when session cookies are not secure', async () => {
+    const config = createConfig({ bindBrowserState: true });
+    const auth = createTestServer({ ...config, cookie: { secure: false } });
+    const started = await start(auth, { returnTo: 'https://app.example.com/post-auth' });
+    const binding = started.headers.getSetCookie().find((cookie) => cookie.includes('oauth_binding.'));
+    expect(binding).toMatch(/^__Host-/);
+    expect(binding).toMatch(/Secure/i);
+    expect(binding).toMatch(/SameSite=None/i);
   });
 
   it('refuses handoff grants presented as OAuth states at the callback', async () => {

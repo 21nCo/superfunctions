@@ -1,6 +1,7 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
 import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
+import { resolveCookiePolicy } from './cookies.js';
 import type {
   AuthFnRateLimitCategory,
   AuthFnRateLimitConfig,
@@ -50,7 +51,7 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
     const scope = scopeForPath(path);
     const policy = policyForScope(config, scope);
     const identifier = scope === 'two-factor'
-      ? await readTwoFactorIdentifier(request.clone(), config)
+      ? await readTwoFactorIdentifier(request.clone(), config, normalizePath(path))
       : await readIdentifier(request.clone());
     const ip = (await rateLimit.resolveClientIp?.(request))?.trim() || 'unknown';
     const identifierHash = identifier && policy.identifierLimit ? await hashIdentifier(identifier) : null;
@@ -143,8 +144,12 @@ function assertValidWindows(config: AuthFnRuntimeConfig): void {
   }
 }
 
+function normalizePath(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, '') : path;
+}
+
 function scopeForPath(rawPath: string): AuthFnRateLimitScope {
-  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
+  const path = normalizePath(rawPath);
   if (path.endsWith('/sign-in/password') || path.endsWith('/sign-up/password')) return 'password';
   if (path.endsWith('/otp/send')) return 'otp-send';
   if (path.endsWith('/otp/verify')) return 'otp-verify';
@@ -326,42 +331,39 @@ async function readIdentifier(request: Request): Promise<string | null> {
 }
 
 /**
- * Two-factor attempts are counted per sign-in challenge (`challengeId`) or,
- * for `/2fa/confirm` and `/2fa/disable`, per session credential. Other body
- * fields are ignored so a caller cannot change the counter by adding them.
+ * Two-factor attempts are counted per sign-in challenge (`challengeId`,
+ * trimmed and lower-cased so differently spelled ids of one challenge share a
+ * counter) or, for `/2fa/confirm` and `/2fa/disable`, per session cookie,
+ * which is the only credential those routes accept. Other body fields and
+ * headers are ignored so a caller cannot change the counter by adding them.
  */
 async function readTwoFactorIdentifier(
   request: Request,
-  config: AuthFnRuntimeConfig
+  config: AuthFnRuntimeConfig,
+  path: string
 ): Promise<string | null> {
-  if (request.method === 'POST') {
+  if (path.endsWith('/2fa/challenge')) {
+    if (request.method !== 'POST') return null;
     try {
       const body = await request.json() as { challengeId?: unknown };
-      if (typeof body.challengeId === 'string' && body.challengeId.length > 0) {
-        return `two-factor-challenge:${body.challengeId}`;
-      }
+      const challengeId = typeof body.challengeId === 'string' ? body.challengeId.trim().toLowerCase() : '';
+      return challengeId ? `two-factor-challenge:${challengeId}` : null;
     } catch {
-      // Fall through to the session credential.
+      return null;
     }
   }
-  const credential = readSessionCredential(request, config);
+  const sessionCookieName = resolveCookiePolicy(config, request).sessionCookieName;
+  const credential = readCookieValue(request, sessionCookieName);
   return credential ? `two-factor-session:${credential}` : null;
 }
 
-function readSessionCredential(request: Request, config: AuthFnRuntimeConfig): string | null {
-  const authorization = request.headers.get('authorization')?.trim();
-  if (authorization?.toLowerCase().startsWith('bearer ')) {
-    const token = authorization.slice('bearer '.length).trim();
-    if (token) return token;
-  }
-  const prefix = config.cookie?.prefix?.trim() || 'authfn';
-  const names = new Set([`__Secure-${prefix}.session`, `${prefix}.session`]);
+function readCookieValue(request: Request, name: string): string | null {
   for (const part of (request.headers.get('cookie') ?? '').split(';')) {
     const separator = part.indexOf('=');
     if (separator < 0) continue;
-    if (names.has(part.slice(0, separator).trim())) {
+    if (part.slice(0, separator).trim() === name) {
       const value = part.slice(separator + 1).trim();
-      if (value) return value;
+      return value || null;
     }
   }
   return null;

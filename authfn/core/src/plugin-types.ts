@@ -89,6 +89,13 @@ export interface NativeHandoffPluginConfig extends AuthFnBundledPluginConfig {
    * pages signed in as the native user.
    */
   webHandoff?: boolean;
+  /**
+   * Requires every web handoff to be bound to the app that started it:
+   * `/handoff/web/start` must send `verifierChallenge`, and consume refuses any
+   * code without one. Without this, the caller of `/handoff/web/start` (who
+   * may be an attacker using their own session) decides whether a code is bound.
+   */
+  requireWebHandoffVerifier?: boolean;
 }
 export interface NativeHandoffPluginRuntimeConfig {
   /** Clock source used for native handoff code timestamps and expiry checks; primarily useful for tests. */

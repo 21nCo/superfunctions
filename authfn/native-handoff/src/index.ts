@@ -96,6 +96,7 @@ function createNativeHandoffRoutes(
   const config: ResolvedNativeHandoffPluginConfig = {
     codeTtlSeconds: pluginConfig.codeTtlSeconds,
     webHandoff: pluginConfig.webHandoff,
+    requireWebHandoffVerifier: pluginConfig.requireWebHandoffVerifier,
     ...readPluginRuntimeConfig<NativeHandoffPluginRuntimeConfig>(ctx, 'nativeHandoff')
   };
 
@@ -182,6 +183,9 @@ function createNativeHandoffRoutes(
           verifierChallenge?: string;
         }>(request);
         const verifierChallenge = readVerifierChallenge(body.verifierChallenge);
+        if (config.requireWebHandoffVerifier && !verifierChallenge) {
+          throw new AuthFnValidationError('verifierChallenge is required', { field: 'verifierChallenge' });
+        }
         const code = await createHandoffCode(ctx, config, {
           request,
           sourceSessionId: session.record.id,
@@ -219,6 +223,10 @@ function createNativeHandoffRoutes(
         const consumed = await consumeHandoffCode(ctx, request, code, 'web', async (record) => {
           const challenge = record.metadata?.verifierChallenge;
           if (typeof challenge !== 'string') {
+            if (config.requireWebHandoffVerifier) {
+              await emitHandoffFailure(ctx, request, 'web', 'verifier-missing', record);
+              throw new AuthFnValidationError('Handoff code is not bound to an app');
+            }
             return;
           }
           const verifier = request.headers.get(WEB_HANDOFF_VERIFIER_HEADER)?.trim() ?? '';

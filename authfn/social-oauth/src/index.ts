@@ -35,7 +35,7 @@ import {
   type AuthFnSchemaDefinition,
   type AuthFnUserRecord
 } from 'authfn';
-import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
+import { assertValidCsrf, issueSession, requireCookieSession, revokeSessionById } from 'authfn/core/sessions';
 import { issueSessionCookies, resolveCookiePolicy } from 'authfn/core/cookies';
 import { serializeSetCookie } from '@superfunctions/http';
 import { resolveEnvironment } from 'authfn/core/environment';
@@ -331,9 +331,7 @@ function createSocialRoutes(
             regionId: pending.regionId
           });
         }
-        const now = config.now?.() ?? new Date();
-        const consumed = await stateStore.consume(stateId, now.toISOString());
-        if (!consumed) {
+        if (Date.parse(pending.expiresAt) <= (config.now?.() ?? new Date()).getTime() || pending.consumedAt) {
           throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
         }
         const userId = readRequiredString(metadata.userId, 'userId');
@@ -344,6 +342,7 @@ function createSocialRoutes(
         const methods = Array.isArray(metadata.methods)
           ? metadata.methods.filter((method): method is string => typeof method === 'string')
           : [];
+        // Issue first so placement and session hooks can refuse without using up the code.
         const issued = await issueSession(ctx.config, ctx.hooks, {
           request,
           userId: user.id,
@@ -351,6 +350,12 @@ function createSocialRoutes(
           regionId: pending.regionId ?? runtime.regionId,
           methods: methods as Parameters<typeof issueSession>[2]['methods']
         });
+        const now = config.now?.() ?? new Date();
+        const consumed = await stateStore.consume(stateId, now.toISOString());
+        if (!consumed) {
+          await revokeSessionById(ctx.config, issued.session.id, { userId: user.id }).catch(() => undefined);
+          throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
+        }
 
         await emitAuthEvent(ctx.config, {
           type: 'authfn.handoff.exchanged',
@@ -496,14 +501,24 @@ function createSocialRoutes(
           }
         }
 
+        const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
+        if (readOptionalBoolean(resolvedIdentity.metadata?.linkedExistingUser)) {
+          await emitAccountLinkedEvent(ctx.config, {
+            request,
+            user,
+            method: SOCIAL_PROVIDER_METHODS[providerId],
+            provider: providerId,
+            regionId: runtime.regionId,
+            metadata: {
+              oauthAccountId,
+              connectionId: callbackResult.connectionId
+            }
+          });
+        }
         const handoffChallenge = readOptionalString(
           callbackResult.subject.metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]
         );
-        if (
-          handoffChallenge
-          && readStoredCallbackMode(callbackResult) === 'redirect'
-          && readStoredHandoffMode(callbackResult, config.defaultHandoffMode) === 'session-token'
-        ) {
+        if (handoffChallenge && isHandoffCodeFlow(callbackResult.subject.metadata, config.defaultHandoffMode)) {
           const redirectTo = callbackResult.subject.returnTo;
           assertAllowedReturnTarget(providerSettings, redirectTo, 'redirect');
           const handoffCode = await createSocialHandoffCode(ctx, config, {
@@ -521,7 +536,7 @@ function createSocialRoutes(
             handoffMode: 'session-token',
             redirectTo,
             userId: user.id,
-            oauthAccountId: readOptionalString(resolvedIdentity.metadata?.oauthAccountId),
+            oauthAccountId,
             connectionId: callbackResult.connectionId,
             handoffCodeIssued: true
           } as Record<string, unknown>;
@@ -564,7 +579,6 @@ function createSocialRoutes(
         if (config.bindBrowserState) {
           cookies.push(clearBrowserBindingCookie(ctx, request, runtime, stateId));
         }
-        const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
         const completion: SocialCallbackCompletion = {
           provider: providerId,
           linked: true,
@@ -598,19 +612,6 @@ function createSocialRoutes(
             connectionId: callbackResult.connectionId
           }
         });
-        if (readOptionalBoolean(resolvedIdentity.metadata?.linkedExistingUser)) {
-          await emitAccountLinkedEvent(ctx.config, {
-            request,
-            user,
-            method: SOCIAL_PROVIDER_METHODS[providerId],
-            provider: providerId,
-            regionId: runtime.regionId,
-            metadata: {
-              oauthAccountId,
-              connectionId: callbackResult.connectionId
-            }
-          });
-        }
 
         if (completion.callbackMode === 'redirect') {
           assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
@@ -766,6 +767,9 @@ function createSocialRoutes(
         const body = await request.json() as NativeAppleCompleteBody;
         const requestId = resolveRequestId(request);
         const stateId = readRequiredString(body.stateId, 'stateId');
+        if (stateId.startsWith(SOCIAL_HANDOFF_STATE_PREFIX)) {
+          throw new AuthFnOAuthStateInvalidError('OAuth state is invalid');
+        }
         const identityToken = readRequiredString(body.identityToken, 'identityToken');
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, 'apple');
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, 'apple', callbackUri);
@@ -2586,17 +2590,18 @@ function serializeBrowserBindingCookie(
   expiresAt: string | undefined
 ): string {
   const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const secure = bindingCookieSecure(policy.secure, runtime);
   const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
   const maxAge = Number.isFinite(expiresAtMs)
     ? Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000))
     : 600;
   return serializeSetCookie({
-    name: browserBindingCookieName(policy.prefix, policy.secure, stateId),
+    name: browserBindingCookieName(policy.prefix, secure, stateId),
     value,
     path: '/',
-    secure: policy.secure,
+    secure,
     httpOnly: true,
-    sameSite: policy.secure ? 'none' : 'lax',
+    sameSite: secure ? 'none' : 'lax',
     maxAge
   });
 }
@@ -2608,13 +2613,14 @@ function clearBrowserBindingCookie(
   stateId: string
 ): string {
   const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const secure = bindingCookieSecure(policy.secure, runtime);
   return serializeSetCookie({
-    name: browserBindingCookieName(policy.prefix, policy.secure, stateId),
+    name: browserBindingCookieName(policy.prefix, secure, stateId),
     value: '',
     path: '/',
-    secure: policy.secure,
+    secure,
     httpOnly: true,
-    sameSite: policy.secure ? 'none' : 'lax',
+    sameSite: secure ? 'none' : 'lax',
     maxAge: 0,
     expires: new Date(0)
   });
@@ -2640,17 +2646,47 @@ async function assertBrowserBinding(
   const metadata = subject?.kind === 'browser-auth' ? subject.metadata : undefined;
   const expected = readOptionalString(metadata?.[CALLBACK_METADATA_BINDING]);
   if (!expected) {
-    const isHandoffCodeFlow = Boolean(readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]));
-    if (config.bindBrowserState && state && !isHandoffCodeFlow) {
+    if (config.bindBrowserState && state && !isHandoffCodeFlow(metadata, config.defaultHandoffMode)) {
       throw new AuthFnOAuthStateInvalidError('OAuth sign-in was not bound to a browser');
     }
     return;
   }
   const policy = resolveCookiePolicy(ctx.config, request, runtime);
-  const provided = readCookie(request, browserBindingCookieName(policy.prefix, policy.secure, stateId));
+  const secure = bindingCookieSecure(policy.secure, runtime);
+  const provided = readCookie(request, browserBindingCookieName(policy.prefix, secure, stateId));
   if (!provided || !safeEqual(hashBindingValue(provided), expected)) {
     throw new AuthFnOAuthStateInvalidError('OAuth sign-in was started in a different browser');
   }
+}
+
+/**
+ * The binding cookie must reach Apple's cross-site form POST, so it is Secure
+ * and SameSite=None whenever the public origin is https, even when the session
+ * cookie is configured without `secure` (for example behind a TLS proxy).
+ */
+function bindingCookieSecure(sessionCookieSecure: boolean, runtime: AuthFnSocialOAuthEnvironment): boolean {
+  return sessionCookieSecure || isHttpsOrigin(runtime.baseUrl);
+}
+
+function isHttpsOrigin(value: string | undefined): boolean {
+  try {
+    return value ? new URL(value).protocol === 'https:' : false;
+  } catch {
+    return false;
+  }
+}
+
+/** True for a redirect session-token start with a handoff challenge: its callback sets no cookies. */
+function isHandoffCodeFlow(
+  metadata: Record<string, unknown> | undefined,
+  defaultHandoffMode: AuthFnSocialHandoffMode | undefined
+): boolean {
+  if (!readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE])) {
+    return false;
+  }
+  const callbackMode = readOptionalString(metadata?.[CALLBACK_METADATA_MODE]);
+  const handoffMode = readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF]) ?? defaultHandoffMode;
+  return callbackMode === 'redirect' && handoffMode === 'session-token';
 }
 
 function readCookie(request: Request, name: string): string | undefined {
