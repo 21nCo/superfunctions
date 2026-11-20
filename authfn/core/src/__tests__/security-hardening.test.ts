@@ -218,6 +218,30 @@ describe('two-factor challenge attempts (F-11)', () => {
     await expect(attempt(5)).rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
   });
 
+  it('counts non-ASCII challenge ids together', async () => {
+    const config: AuthFnRuntimeConfig = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn-2fa-accent',
+      plugins: [],
+      rateLimit: { enabled: true, mode: 'local' }
+    };
+    const middleware = createAuthFnRateLimitMiddleware(config)!;
+    const attempt = (challengeId: string, index: number) => middleware(
+      new Request('https://account.example.com/auth/2fa/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': `192.0.2.${index}` },
+        body: JSON.stringify({ challengeId, code: '000000' })
+      }),
+      {} as never,
+      async () => new Response('ok')
+    );
+    const variants = ['chál_x', 'chàl_x', 'châl_x', 'chäl_x', 'chãl_x'];
+    for (let index = 0; index < variants.length; index += 1) {
+      expect((await attempt(variants[index], index)).status).toBe(200);
+    }
+    await expect(attempt('chål_x', 9)).rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
   it('limits /2fa/disable attempts per session', async () => {
     const config: AuthFnRuntimeConfig = {
       database: memoryAdapter({ debug: false }),
@@ -232,7 +256,9 @@ describe('two-factor challenge attempts (F-11)', () => {
         headers: {
           'content-type': 'application/json',
           'cf-connecting-ip': `203.0.113.${index}`,
-          cookie: '__Secure-authfn.session=test-session-token',
+          cookie: index % 2
+            ? `__Secure-authfn.session=junk-${index}; __Secure-authfn.session=test-session-token`
+            : `__Secure-authfn.session=${index === 0 ? 'test-session-token' : 'test-session-%74oken'}`,
           authorization: `Bearer test-other-${index}`
         },
         body: JSON.stringify({ code: '000000' })
@@ -464,6 +490,49 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     expect(binding).toMatch(/^__Host-/);
     expect(binding).toMatch(/Secure/i);
     expect(binding).toMatch(/SameSite=None/i);
+  });
+
+  it('re-checks the handoff policy at the callback for states started under an older policy', async () => {
+    const database = memoryAdapter({ debug: false });
+    const lax = createTestServer({ ...createConfig({}), database });
+    const strict = createTestServer({ ...createConfig({ requireHandoffChallenge: true }), database });
+    const started = await start(lax, { returnTo: 'nucleum://oauthsignin' });
+    const stateId = (await started.json()).data.stateId as string;
+    const completed = await callback(strict, stateId);
+    const location = completed.headers.get('location') ?? '';
+    expect(location).not.toContain('token=st_');
+    expect(completed.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
+  });
+
+  it('keeps the code usable when session issuance is refused', async () => {
+    let refuse = true;
+    const config = createConfig({ requireHandoffChallenge: true });
+    const auth = createTestServer({
+      ...config,
+      hooks: {
+        beforeSessionIssue: async (_ctx, input) => {
+          if (refuse) {
+            refuse = false;
+            throw new Error('placement refused');
+          }
+          return input;
+        }
+      }
+    });
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const started = await start(auth, {
+      returnTo: 'nucleum://oauthsignin',
+      handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
+    });
+    const completed = await callback(auth, (await started.json()).data.stateId as string);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+    const exchange = () => auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier })
+    }));
+    expect((await exchange()).ok).toBe(false);
+    expect((await exchange()).status).toBe(200);
   });
 
   it('refuses handoff grants presented as OAuth states at the callback', async () => {

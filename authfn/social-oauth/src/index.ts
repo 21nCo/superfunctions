@@ -35,7 +35,7 @@ import {
   type AuthFnSchemaDefinition,
   type AuthFnUserRecord
 } from 'authfn';
-import { assertValidCsrf, issueSession, requireCookieSession, revokeSessionById } from 'authfn/core/sessions';
+import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
 import { issueSessionCookies, resolveCookiePolicy } from 'authfn/core/cookies';
 import { serializeSetCookie } from '@superfunctions/http';
 import { resolveEnvironment } from 'authfn/core/environment';
@@ -342,19 +342,24 @@ function createSocialRoutes(
         const methods = Array.isArray(metadata.methods)
           ? metadata.methods.filter((method): method is string => typeof method === 'string')
           : [];
-        // Issue first so placement and session hooks can refuse without using up the code.
-        const issued = await issueSession(ctx.config, ctx.hooks, {
-          request,
-          userId: user.id,
-          primaryEmail: user.primaryEmail,
-          regionId: pending.regionId ?? runtime.regionId,
-          methods: methods as Parameters<typeof issueSession>[2]['methods']
-        });
         const now = config.now?.() ?? new Date();
         const consumed = await stateStore.consume(stateId, now.toISOString());
         if (!consumed) {
-          await revokeSessionById(ctx.config, issued.session.id, { userId: user.id }).catch(() => undefined);
           throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
+        }
+        let issued: Awaited<ReturnType<typeof issueSession>>;
+        try {
+          issued = await issueSession(ctx.config, ctx.hooks, {
+            request,
+            userId: user.id,
+            primaryEmail: user.primaryEmail,
+            regionId: pending.regionId ?? runtime.regionId,
+            methods: methods as Parameters<typeof issueSession>[2]['methods']
+          });
+        } catch (error) {
+          // A refused issuance (for example a placement check) leaves the code usable until it expires.
+          await stateStore.put({ ...pending, consumedAt: undefined }).catch(() => undefined);
+          throw error;
         }
 
         await emitAuthEvent(ctx.config, {
@@ -518,6 +523,12 @@ function createSocialRoutes(
         const handoffChallenge = readOptionalString(
           callbackResult.subject.metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]
         );
+        assertAllowedHandoff(config, {
+          returnTo: callbackResult.subject.returnTo,
+          callbackMode: readStoredCallbackMode(callbackResult),
+          handoffMode: readStoredHandoffMode(callbackResult, config.defaultHandoffMode),
+          handoffChallenge
+        });
         if (handoffChallenge && isHandoffCodeFlow(callbackResult.subject.metadata, config.defaultHandoffMode)) {
           const redirectTo = callbackResult.subject.returnTo;
           assertAllowedReturnTarget(providerSettings, redirectTo, 'redirect');

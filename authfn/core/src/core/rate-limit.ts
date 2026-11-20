@@ -1,7 +1,8 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
 import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
-import { resolveCookiePolicy } from './cookies.js';
+import { readCookieValues, resolveCookiePolicy } from './cookies.js';
+import { resolveEnvironment } from './environment.js';
 import type {
   AuthFnRateLimitCategory,
   AuthFnRateLimitConfig,
@@ -346,25 +347,20 @@ async function readTwoFactorIdentifier(
     if (request.method !== 'POST') return null;
     try {
       const body = await request.json() as { challengeId?: unknown };
-      const challengeId = typeof body.challengeId === 'string' ? body.challengeId.trim().toLowerCase() : '';
-      return challengeId ? `two-factor-challenge:${challengeId}` : null;
+      if (typeof body.challengeId !== 'string') return null;
+      const challengeId = body.challengeId.trim().toLowerCase();
+      if (!challengeId) return null;
+      // Ids are ASCII; anything else shares one counter so collation tricks gain nothing.
+      return CANONICAL_CHALLENGE_ID.test(challengeId)
+        ? `two-factor-challenge:${challengeId}`
+        : 'two-factor-challenge:non-canonical';
     } catch {
       return null;
     }
   }
-  const sessionCookieName = resolveCookiePolicy(config, request).sessionCookieName;
-  const credential = readCookieValue(request, sessionCookieName);
-  return credential ? `two-factor-session:${credential}` : null;
+  const runtime = await resolveEnvironment(config, request);
+  const { sessionToken } = readCookieValues(request, resolveCookiePolicy(config, request, runtime));
+  return sessionToken ? `two-factor-session:${sessionToken}` : null;
 }
 
-function readCookieValue(request: Request, name: string): string | null {
-  for (const part of (request.headers.get('cookie') ?? '').split(';')) {
-    const separator = part.indexOf('=');
-    if (separator < 0) continue;
-    if (part.slice(0, separator).trim() === name) {
-      const value = part.slice(separator + 1).trim();
-      return value || null;
-    }
-  }
-  return null;
-}
+const CANONICAL_CHALLENGE_ID = /^[a-z0-9_-]{1,255}$/;
