@@ -206,17 +206,25 @@ export class PostgresAdapter implements StorageAdapter {
    * inherits the enclosing isolation level, and any other level is rejected
    * before a write: its snapshot can predate the previous holder's commit.
    *
-   * The lock is re-entrant within one session, so it does not order writes made
-   * through one transaction (by any adapter or savepoint on it). `operation`
-   * must therefore make its whole change in one statement: statements of one
-   * session run one at a time and each sees the session's earlier writes.
+   * It then row-locks the source's live chunks (in id order, like
+   * insertRelationships), waiting for any transaction that holds one, such as a
+   * relationship insert. The write statement that follows therefore takes its
+   * snapshot after that transaction committed and removes its relationships too;
+   * later relationship inserts wait on the row lock and then find a tombstone.
+   *
+   * The advisory and row locks are re-entrant within one session, so they do not
+   * order writes made through one transaction (by any adapter or savepoint on
+   * it). `operation` must therefore make its whole change in one statement:
+   * statements of one session run one at a time and each sees the session's
+   * earlier writes.
    */
-  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
+  private withSourceLock<T>(scope: SourceScope, tags: string[], operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
       const [setting] = await tx.execute<{ isolation: string }>(sql`SELECT current_setting('transaction_isolation') AS isolation`);
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
       const key = JSON.stringify([scope.tenantId, scope.sourceKey]);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+      await tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags)).orderBy(memories.id).for('update');
       return operation(tx);
     };
     return is(this.db, PgTransaction)
@@ -263,7 +271,7 @@ export class PostgresAdapter implements StorageAdapter {
     const values = chunks.map((chunk, chunkIndex) => ({
       ...this.toRow(chunk, now), sourceKey: scope.sourceKey, contentHash, chunkIndex,
     }));
-    return this.withSourceLock(scope, async tx => {
+    return this.withSourceLock(scope, tags, async tx => {
       if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
       const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
       const rows = await tx.with(tombstoned, unlinked).insert(memories).values(values).returning();
@@ -273,7 +281,7 @@ export class PostgresAdapter implements StorageAdapter {
 
   async deleteSource(input: SourceScope): Promise<number> {
     const { scope, tags } = requireSourceScope(input);
-    return this.withSourceLock(scope, tx => this.clearSource(tx, scope, tags, new Date()));
+    return this.withSourceLock(scope, tags, tx => this.clearSource(tx, scope, tags, new Date()));
   }
 
   private mapToDomain(row: typeof memories.$inferSelect): Memory {

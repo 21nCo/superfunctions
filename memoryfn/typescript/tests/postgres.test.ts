@@ -49,6 +49,36 @@ suite('Postgres lifecycle integration', () => {
     expect(raw.deleted_at).not.toBeNull();
     expect(await client`SELECT * FROM memory_relationships`).toHaveLength(0);
   });
+  it('removes a relationship committed while the source write waits on its chunk', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
+    const waitingRowLocks = async () => (await client`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted`)[0].n;
+    const writes = {
+      deleteSource: () => adapter.deleteSource(scope),
+      emptyReplace: () => adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [] }),
+      replace: () => adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: [chunk('new')] }),
+    };
+    for (const [name, write] of Object.entries(writes)) {
+      await client`TRUNCATE memory_relationships, memories`;
+      const [source] = await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old')] });
+      const [plain] = await adapter.insertMemories([chunk('plain')]);
+      let pending!: Promise<unknown>;
+      // A relationship insert locks both endpoints first (as insertRelationships does); the source write must wait for it.
+      await client.begin(async relate => {
+        await relate`SELECT id FROM memories WHERE id IN (${source.id}, ${plain.id}) AND deleted_at IS NULL ORDER BY id FOR UPDATE`;
+        await relate`INSERT INTO memory_relationships (from_id, to_id, type, confidence, reasoning) VALUES (${plain.id}, ${source.id}, 'extends', 1, 'reasoning')`;
+        pending = write();
+        for (let tries = 0; await waitingRowLocks() < 1; tries++) {
+          if (tries > 250) throw new Error(`${name} never waited on the chunk lock`);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      });
+      await pending;
+      const [raw] = await client`SELECT deleted_at FROM memories WHERE id = ${source.id}`;
+      expect(raw.deleted_at, name).not.toBeNull();
+      expect(await client`SELECT reasoning FROM memory_relationships`, name).toHaveLength(0);
+    }
+  });
   it('orders same-source writes of separate adapters on one transaction', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
     const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
