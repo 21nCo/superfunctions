@@ -478,6 +478,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
       const stateId = (await started.json()).data.stateId as string;
       const elsewhere = await callback(auth, stateId);
       expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
+      expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.') && /Max-Age=0/i.test(cookie))).toBe(true);
     }
   });
 

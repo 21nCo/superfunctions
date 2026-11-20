@@ -67,7 +67,7 @@ import {
 import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
-import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
+import { jsonError, jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
 import { emitAuthEvent } from 'authfn/core/observability';
 import { createOAuthTokenDiagnosticFetcher } from './oauth-support.js';
 import {
@@ -492,7 +492,7 @@ function createSocialRoutes(
                   pendingChallenge.challenge.id,
                   SOCIAL_PROVIDER_METHODS[providerId]
                 ),
-                [],
+                config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
                 303
               );
             }
@@ -669,6 +669,11 @@ function createSocialRoutes(
               config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
               303
             );
+          }
+          if (config.bindBrowserState) {
+            const response = jsonError(request, error);
+            response.headers.append('set-cookie', clearBrowserBindingCookie(ctx, request, runtime, stateId));
+            return response;
           }
           throw error;
         }
