@@ -1,0 +1,31 @@
+flowfn/admin/README.md
+  s_8416c77629c405::t_f2443eecfc751b 23-31
+flowfn/admin/src/__tests__/admin.test.ts
+  s_8416c77629c405::t_4ebcba384d6642 668-669,671-672,676,681-689,728,743-801
+flowfn/admin/src/domain-service.ts
+  s_8416c77629c405::t_62f116ff2305af 338-339,342,352-372,378-412,414
+flowfn/typescript/docs/queue-ownership.md
+  s_8416c77629c405::t_86be7989f16332 15-17
+flowfn/typescript/src/adapters/memory.ts
+  s_8416c77629c405::t_b6870e54ef1c41 21-22
+flowfn/typescript/src/queue/dlq.ts
+  s_8416c77629c405::t_789d53375c171d 94-96,98-101,209-219
+flowfn/typescript/tests/dlq.test.ts
+  s_8416c77629c405::t_9a0bb43a7ae94e 222,226,230,232-233,235-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c9257b6c5b471a52d868d934f0467473a5898ae",
+  "prompts": {},
+  "sessions": {
+    "s_8416c77629c405": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8416c77629c405",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
