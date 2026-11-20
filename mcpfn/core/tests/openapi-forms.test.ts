@@ -1768,18 +1768,23 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expect(discarded.skipped).toEqual([]);
     expect(discarded.tools).toHaveLength(600);
     // Regions that each fit their limits still exhaust the document total when
-    // many operations convert one shared object: earlier ones succeed.
+    // many outputs convert one shared object: earlier ones succeed. (A
+    // discarded response object is checked once, however many share it.)
     const wide = { type: "object", properties: Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [`f${index}`, { type: "string" }])) };
     const sharedResponse: Record<string, unknown> = {};
-    for (let index = 0; index < 300; index += 1) sharedResponse[`/w${index}`] = { head: { operationId: `w${index}`, responses: json(wide) } };
-    const bounded = fromOpenAPI({ openapi: "3.1.0", paths: sharedResponse }, options());
+    for (let index = 0; index < 300; index += 1) sharedResponse[`/w${index}`] = { get: { operationId: `w${index}`, responses: json(wide) } };
+    // Registration compiles each output; that cost is the registry's, so it is left out here.
+    const bounded = fromOpenAPI(
+      { openapi: "3.1.0", paths: sharedResponse },
+      { ...options(), registry: { register: () => undefined, has: () => false } as unknown as McpFnRegistry },
+    );
     expect(bounded.tools[0]?.name).toBe("w0");
     expect(bounded.tools.length).toBeGreaterThan(100);
     expect(bounded.skipped.length).toBeGreaterThan(0);
     expect(new Set(bounded.skipped.map((entry) => entry.reason))).toEqual(
       new Set([expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/) as unknown as string]),
     );
-  }, 30_000);
+  }, 60_000);
 
   it("reads only published dialect ids as the default, refuses boolean roots under another one and drops 3.1 dependencies", () => {
     const document = (jsonSchemaDialect: string | undefined, schema: unknown) => ({

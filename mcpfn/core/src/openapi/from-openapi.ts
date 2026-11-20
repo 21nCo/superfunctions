@@ -435,19 +435,20 @@ class OperationConverter {
   }
 
   private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
-    const refs = new Set<string>();
-    const root = this.schemas.convertRoot(schema, "output", refs);
-    const definitions = this.schemas.definitions(refs, "output");
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
     const { values } = this.schemas.admits(schema);
     const objectOnly = method !== "HEAD" && values.size === 1 && values.has("object");
     // A schema the registry would reject is not hidden by discarding it, nor
-    // by leaving out writeOnly properties: those are checked as written.
+    // by leaving out writeOnly properties: those are checked as written
+    // (which applies the same skip rules as converting it).
     if (!objectOnly) {
       this.assertCompilesAsWritten(schema, "response");
       return undefined;
     }
+    const refs = new Set<string>();
+    const root = this.schemas.convertRoot(schema, "output", refs);
+    const definitions = this.schemas.definitions(refs, "output");
     // An output that cannot be projected soundly skips the operation, so no
     // tool returns structured content its schema would not have checked.
     this.assertProjectable(schema, "output", "response");

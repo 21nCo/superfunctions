@@ -50,6 +50,8 @@ const UNSUPPORTED_KEYWORDS = [
   "$dynamicAnchor",
   "$recursiveAnchor",
   "$vocabulary",
+  // Draft-04's schema id: mcpFn's validators refuse it at registration.
+  "id",
 ] as const;
 
 // OpenAPI-only annotations dropped from the produced draft-07 schema. `nullable`
@@ -1102,6 +1104,26 @@ export class SchemaConverter {
    * recurse on the same value without end.
    */
   definitions(refs: Iterable<string>, mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
+    // Kept per call by mode and names: many operations reach the same closure.
+    const names = [...refs];
+    const key = `${mode}\0${names.join("\0")}`;
+    let known = this.closures.get(key);
+    if (!known) {
+      try {
+        known = { value: this.closureOf(names, mode) };
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        known = { error };
+      }
+      this.closures.set(key, known);
+    }
+    if (known.error) throw known.error;
+    return known.value!;
+  }
+
+  private readonly closures = new Map<string, { value?: Record<string, McpFnJsonSchema | boolean>; error?: OpenApiSkip }>();
+
+  private closureOf(refs: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
     const entries = new Map<string, ConvertedComponent>();
     const queue = [...refs];
