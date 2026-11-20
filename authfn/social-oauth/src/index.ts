@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
+  AuthFnConfigError,
   type AuthFnRuntimeConfig,
   type AuthFnHookContext,
   type AuthFnHooks,
@@ -177,6 +178,13 @@ interface ResolvedProviderSettings {
 export function authFnSocialOAuthPlugin(
   config: SocialOAuthPluginConfig = {}
 ): AuthFnPlugin<'socialOAuth', SocialOAuthPluginRuntimeConfig, true> {
+  const ttl = config.handoffCodeTtlSeconds;
+  if (ttl !== undefined && (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl <= 0)) {
+    throw new AuthFnConfigError('socialOAuth handoffCodeTtlSeconds must be a positive whole number of seconds', {
+      option: 'handoffCodeTtlSeconds',
+      value: String(ttl)
+    });
+  }
   return {
     name: 'socialOAuth',
     schema: () => createSocialSchema(config),

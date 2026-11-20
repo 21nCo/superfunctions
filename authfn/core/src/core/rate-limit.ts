@@ -9,6 +9,7 @@ import type {
   AuthFnRateLimitMode,
   AuthFnRuntimeConfig
 } from '../types.js';
+import { CANONICAL_CHALLENGE_ID } from './challenge-id.js';
 
 interface RateLimitCheck {
   /** Counter key: namespace, route scope, dimension, hashed value and window index. */
@@ -317,14 +318,12 @@ async function readIdentifier(request: Request): Promise<string | null> {
   }
 
   try {
-    const body = await request.json() as { email?: unknown; identifier?: unknown; challengeId?: unknown };
+    const body = await request.json() as { email?: unknown; identifier?: unknown };
     const value = typeof body.email === 'string'
       ? body.email
       : typeof body.identifier === 'string'
         ? body.identifier
-        : typeof body.challengeId === 'string'
-          ? `two-factor-challenge:${body.challengeId}`
-          : undefined;
+        : undefined;
     return value?.trim().toLowerCase() ?? null;
   } catch {
     return null;
@@ -363,4 +362,3 @@ async function readTwoFactorIdentifier(
   return sessionToken ? `two-factor-session:${sessionToken}` : null;
 }
 
-const CANONICAL_CHALLENGE_ID = /^[a-z0-9_-]{1,255}$/;

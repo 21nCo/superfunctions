@@ -24,6 +24,7 @@ import {
   AuthFnTwoFactorInvalidCodeError,
   AuthFnTwoFactorRequiredError
 } from './errors.js';
+import { CANONICAL_CHALLENGE_ID } from './challenge-id.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
@@ -278,9 +279,7 @@ export async function satisfyTwoFactorChallenge(
   code: string,
   pluginConfig: TwoFactorPluginRuntimeConfig = {}
 ): Promise<SatisfiedTwoFactorChallenge> {
-  // Challenge ids are generated in this form; refusing other spellings keeps
-  // case- or accent-insensitive database collations from matching them.
-  if (!/^[a-z0-9_-]{1,255}$/.test(challengeId)) {
+  if (!CANONICAL_CHALLENGE_ID.test(challengeId)) {
     throw new AuthFnTwoFactorInvalidCodeError('Two-factor challenge is invalid or expired', {
       challengeId
     });

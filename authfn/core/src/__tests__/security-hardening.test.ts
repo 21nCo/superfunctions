@@ -60,7 +60,7 @@ describe('web handoff consume navigation (F-08)', () => {
     const signUp = await auth.router.handle(new Request('https://us.account.example.com/auth/sign-up/password', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password: 'Sup3rSecurePassphrase!', sessionMode: 'hybrid' })
+      body: JSON.stringify({ email, password: 'test-password-long-enough', sessionMode: 'hybrid' })
     }));
     const token = (await signUp.json()).data.token as string;
     const start = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
@@ -109,7 +109,7 @@ describe('web handoff verifier and route toggle (F-08)', () => {
     const signUp = await auth.router.handle(new Request('https://us.account.example.com/auth/sign-up/password', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'verifier@example.com', password: 'Sup3rSecurePassphrase!', sessionMode: 'hybrid' })
+      body: JSON.stringify({ email: 'verifier@example.com', password: 'test-password-long-enough', sessionMode: 'hybrid' })
     }));
     return (await signUp.json()).data.token as string;
   }
@@ -191,6 +191,28 @@ describe('two-factor challenge attempts (F-11)', () => {
       details: expect.objectContaining({ scope: 'two-factor', dimension: 'identifier' })
     });
     expect((await attempt('chal_other', '198.51.100.99')).status).toBe(200);
+  });
+
+  it('does not count challenge ids on other routes', async () => {
+    const config: AuthFnRuntimeConfig = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn-2fa-other-route',
+      plugins: [],
+      rateLimit: { enabled: true, mode: 'local' }
+    };
+    const middleware = createAuthFnRateLimitMiddleware(config)!;
+    for (let index = 0; index < 12; index += 1) {
+      const response = await middleware(
+        new Request('https://account.example.com/auth/sign-in/password', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'cf-connecting-ip': `198.51.100.${index}` },
+          body: JSON.stringify({ challengeId: 'chal_test' })
+        }),
+        {} as never,
+        async () => new Response('ok')
+      );
+      expect(response.status).toBe(200);
+    }
   });
 
   it('ignores extra body fields and trailing slashes when counting challenge attempts', async () => {
@@ -436,6 +458,13 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
       { headers: cookie ? { cookie } : {} }
     ));
   }
+
+  it('rejects an invalid handoff code lifetime when the plugin is created', () => {
+    for (const value of [Number.NaN, 0, -1, 1.5]) {
+      expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: value })).toThrow(/positive whole number/);
+    }
+    expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: 120 })).not.toThrow();
+  });
 
   it('only completes a browser-bound sign-in in the browser that started it', async () => {
     const auth = createTestServer(createConfig({ bindBrowserState: true }));
