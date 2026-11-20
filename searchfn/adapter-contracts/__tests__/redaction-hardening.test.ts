@@ -376,3 +376,61 @@ describe("round-9 scheme word before a key the redactor's own grammar recognises
     }
   });
 });
+
+describe("round-10 scheme words and URL parameter boundaries", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const hidden = ["test", "hidden"].join("-");
+
+  it("treats a dotted, quoted or spaced assignment after a scheme word as a new key", () => {
+    const cases: Array<[string, string]> = [
+      [`${PW}=basic db.${PW} = ${hidden} q=x`, `${PW}=[REDACTED] db.${PW} = [REDACTED] q=x`],
+      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
+      [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED] '${tokenKey}'= [REDACTED] q=x`],
+      [`${PW}=basic status = 401`, `${PW}=[REDACTED] status = 401`],
+      ["Authorization: bearer status = 401", "Authorization: [REDACTED]"],
+      [`Authorization: bearer db.${PW} = x`, "Authorization: [REDACTED]"],
+      // Round-9 cases still hold.
+      ["Authorization: Bearer test-token", "Authorization: Bearer [REDACTED]"],
+      [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("decides scheme words in linear time", () => {
+    const started = performance.now();
+    expect(redactSensitiveString(`${PW}=basic x.`.repeat(64_000))).not.toContain("basic");
+    expect(redactSensitiveString(`${PW}=basic "${"a".repeat(200_000)}`)).toBe(`${PW}=[REDACTED]`);
+    expect(redactSensitiveString(`authorization: bearer "${"a".repeat(200_000)}`)).toBe("authorization: [REDACTED]");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("keeps userinfo masking inside one URL parameter", () => {
+    const value = ["sec", "ret"].join("@");
+    for (const delimiter of ["?", "#"]) {
+      const url = new URL(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=${value}&q=1`);
+      expect(redactSensitive(url)).toBe(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=[REDACTED]&q=1`);
+    }
+    const email = "https://example.test/?next=https://api.example.test&email=a@b.test";
+    expect(redactSensitive(new URL(email))).toBe(email);
+  });
+
+  it("extends a colon-delimited fragment credential up to the next parameter", () => {
+    const authorizationKey = ["author", "ization"].join("");
+    const cases: Array<[string, string]> = [
+      [`#${authorizationKey}:test-part1&test-part2`, `#${authorizationKey}:[REDACTED]`],
+      [`#${tokenKey}:abc&def`, `#${tokenKey}:[REDACTED]`],
+      [`#${tokenKey}:x&state=ok`, `#${tokenKey}:[REDACTED]&state=ok`],
+      [`#${tokenKey}:x&${tokenKey}:y&z`, `#${tokenKey}:[REDACTED]&${tokenKey}:[REDACTED]`],
+      [`#${tokenKey}:abc&&def&`, `#${tokenKey}:[REDACTED]&&`],
+    ];
+    for (const [fragment, expected] of cases) {
+      expect(redactSensitive(new URL(`https://example.test/${fragment}`))).toBe(`https://example.test/${expected}`);
+    }
+  });
+});

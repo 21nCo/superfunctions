@@ -16,27 +16,34 @@ const SENSITIVE_KEY =
 // line, because schemes such as Digest or AWS4-HMAC-SHA256 carry
 // comma-separated name=value parameters (Credential=..., Signature=...) that
 // cannot be told apart from trailing diagnostics such as status=401, so no
-// following field is kept. Whether the text after a scheme word starts a new
-// key/value is decided by this pattern itself (startsKeyValue, a sticky match
-// at the next token), so token=, token = x and token: x all count as keys.
-// Only a leading Bearer, Basic or Token label is kept, and only when the next
+// following field is kept. One rule (schemeWordStandsAlone) decides, for both
+// key kinds, whether a Bearer, Basic or Token word is followed by a new key or
+// assignment rather than a credential: it is when a match of this pattern
+// begins anywhere inside the next token (token=, db.password = x, "token" = x),
+// or when that token, optionally quoted, is a name followed by optional
+// whitespace and : or = (status = 401, name=value, name:), where an = attached
+// to an unquoted token and followed only by more = is base64 padding, not an
+// assignment. After an authorization key the label is kept only when the next
 // token on the same line is a valid credential token (RFC 6750 b64token /
-// RFC 7617 base64: CREDENTIAL_TOKEN) and does not start a key/value; before
-// anything else the label may itself be the secret, so key, separator and
+// RFC 7617 base64: CREDENTIAL_TOKEN) and the scheme word does not stand alone;
+// otherwise the label may itself be the secret, so key, separator and
 // [REDACTED] are printed. After any other key the scheme word may be the secret
-// too: when a key/value starts at the next token, or that token is a name=value
-// or "name:" assignment (ASSIGNMENT_TOKEN), the scheme word alone is the value,
-// so it is redacted and scanning resumes at the next token
-// (password=basic connectionTimeout=5000 keeps connectionTimeout=5000, and
-// password=basic token= x still redacts x); before anything else (a credential
-// such as accessToken: Bearer x, or user:pass) word and token are redacted
-// together, so the credential is never printed.
+// too: when it stands alone it is the whole value, so it is redacted and
+// scanning resumes at the next token (password=basic connectionTimeout=5000
+// keeps connectionTimeout=5000, and password=basic token= x still redacts x);
+// otherwise (a credential such as accessToken: Bearer x, or user:pass) word and
+// token are redacted together, so the credential is never printed.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
-// The same grammar, anchored at one position (see startsKeyValue).
+// The same grammar, searched from one position (see keyValueStartsWithin) or
+// anchored at one position (see startsKeyValue).
+const KEY_VALUE_FIND = new RegExp(KEY_VALUE_SECRET.source, "gi");
 const KEY_VALUE_START = new RegExp(KEY_VALUE_SECRET.source, "iy");
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
+// Userinfo of one URL authority embedded in a URL query or fragment: it never
+// spans a parameter or route delimiter, an @ or whitespace.
+const COMPONENT_URL_CREDENTIALS = /((?:https?|postgres(?:ql)?):\/\/)([^\s/?#@&]+)@/gi;
 const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
 const REDACTED = "[REDACTED]";
 const ENCODED_REDACTED = /%5BREDACTED%5D/g;
@@ -46,9 +53,12 @@ const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 const LINE_BREAK = /[\r\n]/;
 // A credential token after a scheme label: RFC 6750 b64token / RFC 7617 base64.
 const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
-// A name=value assignment (an = that is not only trailing base64 padding) or a
-// "name:" key whose value follows after whitespace.
-const ASSIGNMENT_TOKEN = /^[^=:]+(?:=(?!=*$)|:$)/;
+// At the token after a scheme word: a quoted name followed by optional
+// whitespace and : or =, or an unquoted name followed by whitespace and : or =,
+// by a : that ends the token, or by an = that is not only trailing base64
+// padding (name=value). user:pass and dGVzdA== are not assignments.
+const ASSIGNMENT_START =
+  /(?:(["'])[^\s"'=:,;]+\1[ \t]*[:=]|[^\s"'=:,;]+(?:[ \t]+[:=]|:(?=[\s,;]|$)|=(?!=*(?:[\s,;]|$))))/y;
 const PLUS_SIGN = /\+/g;
 const URL_PARAM_SEPARATOR = "&";
 const URL_ROUTE_DELIMITERS = ["/", "?", "#"];
@@ -147,17 +157,35 @@ function redactUrlParam(param: string): string {
 /**
  * Redacts the raw text of a URL query (without ?) or fragment (without #) and
  * keeps everything else as written: route text, empty parameters, encodings
- * and delimiters. URL userinfo is masked over the whole component first, so a
- * parameter split can never cut through it; then the component is split on &
- * once and each parameter is redacted on its own, so the work stays linear.
+ * and delimiters. Parameter boundaries are decided once and every masking step
+ * stays inside them: userinfo of one embedded URL authority (which never spans
+ * &, /, ?, #, @ or whitespace) is masked first, so the split cannot cut through
+ * it; then the component is split on & once and each parameter is redacted on
+ * its own, so the work stays linear.
  */
 function redactUrlComponent(raw: string): string {
-  return raw
-    .replace(URL_CREDENTIALS, "$1[REDACTED]@")
-    .replace(POSTGRES_CREDENTIALS, "$1[REDACTED]@")
-    .split(URL_PARAM_SEPARATOR)
-    .map(redactUrlParam)
-    .join(URL_PARAM_SEPARATOR);
+  const params = raw.replace(COMPONENT_URL_CREDENTIALS, `$1${REDACTED}@`).split(URL_PARAM_SEPARATOR);
+  const output: string[] = [];
+  let credentialOpen = false;
+  for (const param of params) {
+    // Empty pieces hold nothing to mask and are kept as written.
+    if (param === "") {
+      output.push(param);
+      continue;
+    }
+    const hasValue = param.includes("=");
+    // A colon-delimited credential that reached the end of its parameter
+    // (token:abc&def) also covers the following pieces up to the next
+    // name=value parameter or key/value of its own.
+    if (credentialOpen && !hasValue && !startsKeyValue(param, 0)) {
+      continue;
+    }
+    const redacted = redactUrlParam(param);
+    const head = hasValue ? param.slice(0, param.indexOf("=")) : param;
+    credentialOpen = redacted.endsWith(REDACTED) && redactSensitiveString(head) !== head;
+    output.push(redacted);
+  }
+  return output.join(URL_PARAM_SEPARATOR);
 }
 
 /**
@@ -291,6 +319,27 @@ export function redactSensitiveString(input: string): string {
     .replace(POSTGRES_CREDENTIALS, "$1[REDACTED]@");
 }
 
+/**
+ * Whether a match of KEY_VALUE_SECRET begins at or after start and before end.
+ * The search stops at the first match, which the caller's own scan reaches
+ * next anyway, so repeated calls stay linear overall.
+ */
+function keyValueStartsWithin(input: string, start: number, end: number): boolean {
+  KEY_VALUE_FIND.lastIndex = start;
+  const match = KEY_VALUE_FIND.exec(input);
+  return match !== null && match.index < end;
+}
+
+/**
+ * Whether the scheme word before the token at [start, end) stands alone: a
+ * key/value begins inside that token, or the token is a name assignment.
+ */
+function schemeWordStandsAlone(input: string, start: number, end: number): boolean {
+  if (keyValueStartsWithin(input, start, end)) return true;
+  ASSIGNMENT_START.lastIndex = start;
+  return ASSIGNMENT_START.test(input);
+}
+
 /** Whether a sensitive key/value of KEY_VALUE_SECRET starts exactly at index. */
 function startsKeyValue(input: string, index: number): boolean {
   KEY_VALUE_START.lastIndex = index;
@@ -305,8 +354,8 @@ function redactKeyValues(input: string): string {
   while ((match = pattern.exec(input)) !== null) {
     const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme, credential] = match;
     let end = match.index + whole.length;
-    // The token after a scheme word starts a new key/value of its own.
-    const nextIsKey = scheme !== undefined && startsKeyValue(input, end - credential.length);
+    // The scheme word is followed by a new key or assignment, not a credential.
+    const standsAlone = scheme !== undefined && schemeWordStandsAlone(input, end - credential.length, end);
     let replacement: string;
     if (valueQuote) {
       replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
@@ -315,10 +364,10 @@ function redactKeyValues(input: string): string {
     } else if (AUTHORIZATION_KEY.test(key)) {
       const lineBreak = input.slice(end).search(LINE_BREAK);
       end = lineBreak === -1 ? input.length : end + lineBreak;
-      const label = scheme !== undefined && !nextIsKey && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
+      const label = scheme !== undefined && !standsAlone && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
       replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
-      if (scheme !== undefined && (nextIsKey || ASSIGNMENT_TOKEN.test(credential))) {
+      if (standsAlone) {
         // The scheme word is the whole value: end right after it and resume
         // scanning at the following key/value or assignment.
         end = end - credential.length - scheme.length + scheme.trimEnd().length;
