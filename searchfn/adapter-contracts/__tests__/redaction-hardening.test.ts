@@ -66,3 +66,58 @@ describe("query containers", () => {
     expect(redactSensitive(params)).toBe("note=token%3D[REDACTED]");
   });
 });
+
+describe("keys that still hold percent escapes after parsing", () => {
+  it("redacts URLSearchParams and URL keys whose decoded form is sensitive", () => {
+    // user[password] with the w escaped, built at runtime for the secret scan.
+    const escapedKey = ["user%5B", "pass%77ord", "%5D"].join("");
+    const params = new URLSearchParams([
+      [escapedKey, "test-leak"],
+      ["q", "x"],
+    ]);
+    const fromParams = redactSensitive(params);
+    expect(fromParams).toBe("user%255Bpass%2577ord%255D=[REDACTED]&q=x");
+    expect(fromParams).not.toContain("test-leak");
+
+    const url = new URL("https://example.test/search?q=x");
+    url.searchParams.set(escapedKey, "test-leak");
+    const fromUrl = redactSensitive(url);
+    expect(fromUrl).toBe("https://example.test/search?q=x&user%255Bpass%2577ord%255D=[REDACTED]");
+    expect(fromUrl).not.toContain("test-leak");
+  });
+
+  it("keeps non-sensitive keys and malformed escapes readable", () => {
+    const params = new URLSearchParams([
+      ["filter%5Bcolor%5D", "red"],
+      ["bad%E0%A4%A", "ok"],
+    ]);
+    expect(redactSensitive(params)).toBe("filter%255Bcolor%255D=red&bad%25E0%25A4%25A=ok");
+  });
+});
+
+describe("bracketed keys in plain strings", () => {
+  it("redacts values after ] or %5D closers and keeps quotes", () => {
+    const cases: Array<[string, string]> = [
+      [`GET /_search?user%5B${PW}%5D=test-leak`, `GET /_search?user%5B${PW}%5D=[REDACTED]`],
+      [`GET /_search?user%5b${PW}%5d=test-leak&q=x`, `GET /_search?user%5b${PW}%5d=[REDACTED]`],
+      [`user[${PW}]=test-leak`, `user[${PW}]=[REDACTED]`],
+      [`{"user[${PW}]":"test-leak","q":"x"}`, `{"user[${PW}]":"[REDACTED]","q":"x"}`],
+      ["headers[authorization]=Bearer test-leak", "headers[authorization]=Bearer [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+});
+
+describe("auth scheme on its own line", () => {
+  it("does not carry the scheme match across a line break", () => {
+    expect(redactSensitiveString("Authorization: Bearer\nstatus=401")).toBe("Authorization: [REDACTED]\nstatus=401");
+    expect(redactSensitiveString("Authorization: Bearer\r\nstatus=401")).toBe("Authorization: [REDACTED]\r\nstatus=401");
+    expect(redactSensitiveString("Authorization:\tBasic\ttest-leak\nstatus=401")).toBe(
+      "Authorization:\tBasic\t[REDACTED]\nstatus=401",
+    );
+    expect(redactSensitiveString("Authorization: Bearer test-leak")).toBe("Authorization: Bearer [REDACTED]");
+    expect(redactSensitiveString(`${PW}=basic connectionTimeout=5000`)).toBe(`${PW}=[REDACTED]`);
+  });
+});

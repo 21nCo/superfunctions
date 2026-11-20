@@ -10,17 +10,43 @@ const SENSITIVE_KEY =
 // boundary is replaced whole, including spaces; any other quote (unclosed, or
 // closed with more characters attached) redacts to the end of the line;
 // an unquoted value runs to the next whitespace, comma or semicolon (quotes and
-// & inside it are redacted too). An authorization scheme such as Bearer is
-// kept, and its credential redacted, only after an authorization key; after
-// any other key the scheme word may itself be the secret, so the whole value
-// is redacted.
+// & inside it are redacted too). A bracketed key such as user[password] or
+// user%5Bpassword%5D may close with "]" or "%5D" before the separator. An
+// authorization scheme such as Bearer is kept, and its credential redacted,
+// only after an authorization key and only when the credential is on the same
+// line; after any other key the scheme word may itself be the secret, so the
+// whole value is redacted.
 const KEY_VALUE_SECRET =
-  /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?))(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)\s+)?([^\s,;]+))/gi;
+  /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
-const AUTHORIZATION_KEY = /authorization$/i;
+const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
 const REDACTED = "[REDACTED]";
 const ENCODED_REDACTED = /%5BREDACTED%5D/g;
+const MAX_KEY_DECODE_PASSES = 3;
+
+/**
+ * Tests a key against SENSITIVE_KEY as written and after up to
+ * MAX_KEY_DECODE_PASSES percent-decoding passes, so keys that still carry
+ * escapes after parsing (user%5Bpass%77ord%5D) are recognised. Malformed
+ * escapes stop decoding.
+ */
+function isSensitiveKey(key: string): boolean {
+  let candidate = key;
+  for (let pass = 0; pass <= MAX_KEY_DECODE_PASSES; pass += 1) {
+    if (SENSITIVE_KEY.test(candidate)) return true;
+    if (pass === MAX_KEY_DECODE_PASSES || !candidate.includes("%")) return false;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      return false;
+    }
+    if (decoded === candidate) return false;
+    candidate = decoded;
+  }
+  return false;
+}
 
 /** Form-encodes one query component, keeping the redaction marker readable. */
 function encodeQueryComponent(input: string): string {
@@ -29,13 +55,14 @@ function encodeQueryComponent(input: string): string {
 
 /**
  * Redacts query parameters by their decoded keys, so bracketed or
- * percent-encoded keys such as user%5Bpassword%5D are recognised. A sensitive
+ * percent-encoded keys such as user%5Bpassword%5D are recognised, including
+ * keys that still hold escapes after parsing. A sensitive
  * key hides its whole value; other parameters stay readable.
  */
 function redactSearchParams(params: URLSearchParams): string {
   const pairs: string[] = [];
   params.forEach((entry, key) => {
-    const value = SENSITIVE_KEY.test(key) ? REDACTED : redactSensitiveString(entry);
+    const value = isSensitiveKey(key) ? REDACTED : redactSensitiveString(entry);
     pairs.push(`${encodeQueryComponent(redactSensitiveString(key))}=${encodeQueryComponent(value)}`);
   });
   return pairs.join("&");
@@ -83,7 +110,7 @@ function redactError(error: Error, seen: WeakSet<object>): Record<string, unknow
   }
   for (const [key, entry] of Object.entries(error)) {
     if (key === "cause") continue;
-    output[key] = SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
+    output[key] = isSensitiveKey(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
   }
   return output;
 }
@@ -122,7 +149,7 @@ function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): any {
         for (const [key, entry] of value) {
           output.set(
             key,
-            typeof key === "string" && SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen),
+            typeof key === "string" && isSensitiveKey(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen),
           );
         }
         return output;
@@ -138,7 +165,7 @@ function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): any {
 
       const output: Record<string, unknown> = {};
       for (const [key, entry] of entries) {
-        if (SENSITIVE_KEY.test(key)) {
+        if (isSensitiveKey(key)) {
           output[key] = "[REDACTED]";
         } else {
           output[key] = redactSensitiveInternal(entry, seen);
