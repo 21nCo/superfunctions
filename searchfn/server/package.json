@@ -19,7 +19,7 @@
   "dependencies": {
     "@superfunctions/http": "0.2.0",
     "@superfunctions/observability": "0.0.4",
-    "@searchfn/adapter-contracts": "0.4.1"
+    "@searchfn/adapter-contracts": "0.4.2"
   },
   "devDependencies": {
     "@searchfn/adapter-memory": "0.1.1",

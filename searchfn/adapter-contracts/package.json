@@ -1,6 +1,6 @@
 {
   "name": "@searchfn/adapter-contracts",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Shared adapter interfaces and error primitives for SearchFn adapters.",
   "license": "MIT",
   "repository": {

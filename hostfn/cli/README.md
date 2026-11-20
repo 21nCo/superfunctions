@@ -89,7 +89,13 @@ runtime adapters. It supports the same Node.js >=18 runtime as the CLI, includin
 processes without a global Web Crypto object. Inject a `HostFnDeploymentExecutor`
 to perform provider operations; the memory store is reference persistence for
 development and single-process installations. `@hostfn/admin` consumes this
-published subpath, not sibling source files.
+published subpath, not sibling source files, and binds it into Super Console,
+REST/OpenAPI, SDK, and MCP surfaces without moving deployment logic into the
+console.
+
+Every target, deployment, domain, and variable key is owned by an exact
+installation/workspace/project/environment scope. Variable secret values are
+write-only: `putVariable` accepts them and no read method returns them.
 
 Domain attachment persists a pending intent before provider work, transitions to
 active on success or failed on provider failure, and reuses the same domain ID
