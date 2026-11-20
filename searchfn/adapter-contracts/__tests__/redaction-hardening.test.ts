@@ -1361,3 +1361,123 @@ describe("round-23 only an authority's userinfo is masked first and never ends b
     SCALING_TIMEOUT,
   );
 });
+
+describe("round-24 userinfo masks end with the authority, quoted URL values continue across # and stacked bracket keys", () => {
+  const first = ["test", "first"].join("-");
+  const bearerLeak = ["test", "bearer", "leak"].join("-");
+  const wordsLeak = ["words", "leak"].join("-");
+  const yLeak = ["y", "leak"].join("-");
+  const zLeak = ["z", "leak"].join("-");
+  const bLeak = ["b", "leak"].join("-");
+  const secretTail = ["test", "secret", "tail"].join("-");
+  const value = ["test", "val"].join("-");
+  const leak = ["test", "leak"].join("-");
+  const tokenKey = ["to", "ken"].join("");
+  const authorizationKey = ["author", "ization"].join("");
+  const href = (url: string) => String(redactSensitive(new URL(url)));
+  const embedded = (user: string, rest: string) => [user, rest].join(":");
+
+  it("never removes a later field's key without its value after secret-holding userinfo", () => {
+    const remote = `https://${embedded(`x-access-${tokenKey}`, "abc")}@github.example.test/o/r.git`;
+    const cases: Array<[string, string]> = [
+      [
+        `{"remote":"${remote}","${authorizationKey}":"Bearer ${bearerLeak}"}`,
+        `{"remote":"https://[REDACTED],"${authorizationKey}":"[REDACTED]"}`,
+      ],
+      [`{"remote":"${remote}","${PW}": "two ${wordsLeak}"}`, `{"remote":"https://[REDACTED],"${PW}": "[REDACTED]"}`],
+      [
+        `remote=https://${embedded("svc", `${tokenKey}=abc`)}@h/x,${PW}="two ${wordsLeak}" next=ok`,
+        `remote=https://[REDACTED],${PW}="[REDACTED]" next=ok`,
+      ],
+      [
+        `https://${embedded("u", `${PW}=a`)}@h&${authorizationKey}=Bearer ${bearerLeak} more\nnext=1`,
+        "https://[REDACTED]\nnext=1",
+      ],
+      [`https://${embedded("u", `${PW}=a`)}@h#${PW}='x ${yLeak}' z=ok`, "https://[REDACTED] z=ok"],
+      [`connect https://${embedded(`x-access-${tokenKey}`, value)}@github.example.test/org/repo.git failed`, "connect https://[REDACTED] failed"],
+      [
+        `connect https://${embedded("svc", `test-prefix&pass%77ord=${value}`)}@inner.test:8443/path?q=ok#fine`,
+        "connect https://[REDACTED]/path?q=ok#fine",
+      ],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      for (const hidden of [bearerLeak, wordsLeak, yLeak, value]) expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("carries a quoted secret value still open at the end of the query into the fragment", () => {
+    const cases: Array<[string, string]> = [
+      [`https://out.test/?note=${tokenKey}=%22${first}#${secretTail}%22&keep=1`, "https://out.test/?note=[REDACTED]&keep=1"],
+      [`https://out.test/?note=${tokenKey}='${first}#${zLeak}'&keep=1`, "https://out.test/?note=[REDACTED]&keep=1"],
+      [`https://out.test/?a=1&note=${tokenKey}='first&x=y#${zLeak}'&keep=1`, "https://out.test/?a=1&note=[REDACTED]&keep=1"],
+      [`https://out.test/?note=${tokenKey}=%27first#${zLeak}`, "https://out.test/?note=[REDACTED]"],
+      [`https://out.test/?note=pass%77ord=%22${first}#${secretTail}%22&keep=1`, "https://out.test/?note=[REDACTED]&keep=1"],
+      [`https://out.test/?pass%77ord='${first}#${secretTail}'&keep=1`, "https://out.test/?pass%77ord=%27[REDACTED]'&keep=1"],
+      [`https://out.test/?${tokenKey}=%22${first}#${secretTail}%22&keep=1`, `https://out.test/?${tokenKey}="[REDACTED]"&keep=1`],
+      [
+        `https://example.test/?next=https://${embedded("svc", `${tokenKey}='a`)}@h#${bLeak}'&q=ok`,
+        "https://example.test/?next=https://[REDACTED]&q=ok",
+      ],
+      [
+        `https://example.test/?next=https://${embedded("svc", `${tokenKey}=%22a`)}@h#${bLeak}%22&q=ok`,
+        "https://example.test/?next=https://[REDACTED]&q=ok",
+      ],
+      [`https://example.test/?next=https://${embedded("svc", `${tokenKey}='a`)}@h#${bLeak}&q=ok`, "https://example.test/?next=https://[REDACTED]"],
+    ];
+    for (const [url, expected] of cases) {
+      const output = href(url);
+      expect(output).toBe(expected);
+      for (const hidden of [secretTail, zLeak, bLeak]) expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("keeps quotes that close inside the query and fragment routes", () => {
+    expect(href(`https://out.test/?${tokenKey}='${first}#${secretTail}'&keep=1`)).toBe(
+      `https://out.test/?${tokenKey}='[REDACTED]'&keep=1`,
+    );
+    expect(href(`https://out.test/?note=${tokenKey}='a'&q=1#/r?state=ok`)).toBe("https://out.test/?note=[REDACTED]&q=1#/r?state=ok");
+    expect(href(`https://e.test/?note=${tokenKey}='a&note=${tokenKey}='a&#b&q=1`)).toBe("https://e.test/?note=[REDACTED]&#b&q=1");
+    expect(href("https://e.test/#note='a&b'&q=1")).toBe("https://e.test/#note='a&b'&q=1");
+    expect(href("https://e.test/#/callback?state=ok")).toBe("https://e.test/#/callback?state=ok");
+    expect(href("https://e.test/?note=it's&q=1#/r?x=1")).toBe("https://e.test/?note=it%27s&q=1#/r?x=1");
+  });
+
+  it("masks a sensitive key followed by stacked bracket segments in strings", () => {
+    const cases: Array<[string, string]> = [
+      [`GET /_search?user[${PW}][0]=${leak}`, `GET /_search?user[${PW}][0]=[REDACTED]`],
+      [`GET /_search?user%5B${PW}%5D%5B0%5D=${leak}`, `GET /_search?user%5B${PW}%5D%5B0%5D=[REDACTED]`],
+      [`user[${tokenKey}][]=${leak}`, `user[${tokenKey}][]=[REDACTED]`],
+      [`headers[${authorizationKey}][0]=Bearer ${leak} status=401`, `headers[${authorizationKey}][0]=Bearer [REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(leak);
+    }
+  });
+
+  it(
+    "stays linear for userinfo fields, fragment carries and stacked bracket keys",
+    () => {
+      const userinfoField = `https://${embedded("u", `${tokenKey}=a`)}@h,"${PW}":"x y",`;
+      const nested = `https://${embedded("u", `${PW}=a`)}@h&`;
+      expectLinearScaling(64_000, (n) => {
+        expect(redactSensitiveString(userinfoField.repeat(n))).toBe(`https://[REDACTED],"${PW}":"[REDACTED]",`.repeat(n));
+        expect(redactSensitiveString(`${nested}${`${authorizationKey}=x&`.repeat(n)}`)).toBe("https://[REDACTED]");
+        expect(redactSensitiveString(`${nested}${`${tokenKey}=a&`.repeat(n)} z`)).toBe("https://[REDACTED] z");
+        expect(redactSensitiveString(`${nested}${`${tokenKey}="a"&`.repeat(n)} z`)).toBe("https://[REDACTED] z");
+        expect(redactSensitiveString(`${nested}${tokenKey}="x" `.repeat(n))).toBe("https://[REDACTED] ".repeat(n));
+        // The last credential's trailing blank goes with its fold check.
+        expect(redactSensitiveString(`${nested}${tokenKey}=bearer x `.repeat(n))).toBe("https://[REDACTED] ".repeat(n).trimEnd());
+        expect(href(`https://e.test/?${`note=${tokenKey}='a&`.repeat(n)}#${"b&".repeat(n)}`)).toBe(
+          `https://e.test/?note=[REDACTED]&#${"b&".repeat(n)}`,
+        );
+        expect(href(`https://e.test/?note=${tokenKey}='a&${"c&".repeat(n)}#${"b&".repeat(n)}`)).toBe("https://e.test/?note=[REDACTED]");
+        expect(redactSensitiveString(`a[${PW}][0][1][2][3][4]`.repeat(n))).toBe(`a[${PW}][0][1][2][3][4]`.repeat(n));
+      });
+    },
+    SCALING_TIMEOUT,
+  );
+});
