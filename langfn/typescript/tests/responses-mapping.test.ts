@@ -85,6 +85,40 @@ describe("server-sent event parsing", () => {
     expect(events).toEqual([{ event: "a", data: "one\ntwo" }, { data: "three" }]);
   });
 
+  /** A body that delivers `chunks` and stays open. */
+  function open(chunks: string[]): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+      },
+    });
+  }
+
+  it("delivers a bare-CR event while the stream is still open", async () => {
+    const iterator = readServerSentEvents(open(["data: fir", "st\r\r"]))[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { data: "first" } });
+    await iterator.return?.();
+  });
+
+  it("treats a CRLF split across chunks as one line end, not an empty line", async () => {
+    const chunked = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of ["data: a\r", "\ndata: b\r", "\n\r", "\n"]) controller.enqueue(new TextEncoder().encode(chunk));
+        controller.close();
+      },
+    });
+    expect(await collect(readServerSentEvents(chunked))).toEqual([{ data: "a\nb" }]);
+  });
+
+  it("applies the line limit to each CR-separated line, not to the whole event", async () => {
+    const line = `data: ${"x".repeat(20)}\r`;
+    const events = await collect(readServerSentEvents(body(`${line.repeat(4)}\r`), 40));
+    expect(events).toEqual([{ data: Array(4).fill("x".repeat(20)).join("\n") }]);
+    await expect(collect(readServerSentEvents(body(`data: ${"x".repeat(50)}\r\r`), 40))).rejects.toMatchObject({
+      code: "RESPONSE_TOO_LARGE",
+    });
+  });
+
   it("uses the SSE event name when the JSON payload has no type", async () => {
     const response = completed([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }]);
     const frames = [{ event: "response.completed", data: JSON.stringify({ response }) }];
@@ -116,6 +150,23 @@ describe("stream mapping", () => {
     const message = events.find((event) => event.type === "message") as { message: ResponsesMessage };
     expect(message.message.content).toBe("hello");
     expect(message.message.responsesOutput).toEqual([item]);
+  });
+
+  it("rejects a malformed terminal output before any tool call, as the JSON path does", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    for (const output of ["not-an-array", { 0: call }, 7]) {
+      const terminal = { ...completed([]), output };
+      expect(() => parseResponsesResponse(terminal, "fixture")).toThrow(ProviderError);
+      const seen: StreamEvent[] = [];
+      const text = [
+        { type: "response.output_item.done", output_index: 0, item: call },
+        { type: "response.completed", response: terminal },
+      ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
+      await expect((async () => {
+        for await (const event of mapResponsesStream(readServerSentEvents(body(text)), "fixture")) seen.push(event);
+      })()).rejects.toThrow("Responses output must be an array");
+      expect(seen).toEqual([]);
+    }
   });
 
   it("maps raw reasoning text deltas and an OpenAI-shaped error event", async () => {
@@ -261,6 +312,23 @@ describe("request mapping", () => {
     expect(input[1]).not.toBe(replayed.responsesOutput[1]);
   });
 
+  it("replays a provider message without a role as an assistant message", () => {
+    const item = { id: "msg_fixture", type: "message", status: "completed", content: [{ type: "output_text", text: "Hi." }] };
+    const input = payload([{ role: "user", content: "go" }, { role: "assistant", content: "Hi.", responsesOutput: [item] }])
+      .input as Record<string, unknown>[];
+    expect(input[1]).toEqual({ ...item, role: "assistant" });
+  });
+
+  it("rejects item_reference history, which needs server-side state", () => {
+    const message = {
+      role: "assistant",
+      content: "",
+      responsesOutput: [{ type: "item_reference", id: "msg_fixture" }],
+    } as unknown as ResponsesMessage;
+    expect(() => payload([{ role: "user", content: "go" }, message])).toThrow(ValidationError);
+    expect(() => payload([{ role: "user", content: "go" }, message])).toThrow("item_reference");
+  });
+
   it("rejects a default reasoning configuration on a profile without reasoning", () => {
     expect(() =>
       buildResponsesPayload(
@@ -397,6 +465,9 @@ describe("ResponsesChatModel configuration", () => {
       .toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, baseUrl: `https://${["test-user", "test-password"].join(":")}@gateway.example.test` })).toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, baseUrl: "ftp://gateway.example.test" })).toThrow(ValidationError);
+    for (const baseUrl of ["https://gateway.example.test/v1?", "https://gateway.example.test/v1#", "https://gateway.example.test/v1?a=1"]) {
+      expect(() => new ResponsesChatModel({ ...base, baseUrl })).toThrow("must not have a query or fragment");
+    }
     expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": "a\r\nb" } })).toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, reasoning: { effort: "low" } })).toThrow(UnsupportedCapabilityError);
     expect(() => defineCapabilityProfile({ ...customProfile, vision: "yes" as never })).toThrow(ValidationError);

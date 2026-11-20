@@ -211,7 +211,8 @@ function validateBaseUrl(value: unknown): string {
     throw new ValidationError("ResponsesChatModel baseUrl must use http or https");
   }
   if (url.username || url.password) throw new ValidationError("ResponsesChatModel baseUrl must not embed credentials");
-  if (url.search || url.hash) throw new ValidationError("ResponsesChatModel baseUrl must not have a query or fragment");
+  // A bare trailing "?" or "#" leaves url.search and url.hash empty but would still swallow the path.
+  if (url.search || url.hash || value.includes("?") || value.includes("#")) throw new ValidationError("ResponsesChatModel baseUrl must not have a query or fragment");
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 

@@ -185,8 +185,9 @@ function toAssistantItems(message: ResponsesMessage, index: number, profile: Cap
  * Replay the provider items of an earlier assistant turn unchanged, with their ids and
  * statuses, as the Responses input schema expects. Reasoning items without encrypted content
  * cannot be resolved without stored state, so they are not replayed; unfinished function
- * calls are never replayed (see {@link parseOutputItems}). An empty item list (a turn cut off
- * before any output) replays as nothing.
+ * calls are never replayed (see {@link parseOutputItems}). A message item without a role is
+ * replayed as an assistant message. `item_reference` items are rejected because they need
+ * server-side state. An empty item list (a turn cut off before any output) replays as nothing.
  */
 function replayOutputItems(
   message: ResponsesMessage,
@@ -197,6 +198,12 @@ function replayOutputItems(
   const output = message.responsesOutput as unknown;
   if (!Array.isArray(output)) {
     throw new ValidationError(`Message ${index}: responsesOutput must be an array of items`);
+  }
+  for (const item of output) {
+    if (item && typeof item === "object" && (item as Record<string, unknown>).type === "item_reference") {
+      // An item reference resolves against stored server state, which store: false never has.
+      throw new ValidationError(`Message ${index}: responsesOutput must not contain item_reference items in stateless mode`);
+    }
   }
   let parsed: ReturnType<typeof parseOutputItems>;
   try {
@@ -217,7 +224,10 @@ function replayOutputItems(
       if (!encrypted) continue;
       requireCapability(profile, "reasoning", "the history contains encrypted reasoning items");
     }
-    items.push(structuredClone(item));
+    const replayed = structuredClone(item) as Record<string, unknown>;
+    // Compatible servers may omit the role of an output message; the input item requires it.
+    if (replayed.type === "message" && replayed.role === undefined) replayed.role = "assistant";
+    items.push(replayed);
   }
   return items;
 }

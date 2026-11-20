@@ -15,23 +15,21 @@ export async function* readServerSentEvents(
 ): AsyncIterable<ServerSentEvent> {
   let data: string[] = [];
   let event: string | undefined;
-  for await (const rawLine of readStreamLines(body, maxLineBytes)) {
-    // Lines arrive split on LF; a trailing CR is the CRLF ending and any other CR is a line end too.
-    for (const line of (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).split("\r")) {
-      if (line === "") {
-        if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
-        data = [];
-        event = undefined;
-        continue;
-      }
-      if (line.startsWith(":")) continue;
-      const colon = line.indexOf(":");
-      const field = colon === -1 ? line : line.slice(0, colon);
-      let value = colon === -1 ? "" : line.slice(colon + 1);
-      if (value.startsWith(" ")) value = value.slice(1);
-      if (field === "data") data.push(value);
-      else if (field === "event") event = value;
+  // Lines split incrementally on LF, CRLF or a bare CR, and the byte limit applies per line.
+  for await (const line of readStreamLines(body, maxLineBytes, { crLineBreaks: true })) {
+    if (line === "") {
+      if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
+      data = [];
+      event = undefined;
+      continue;
     }
+    if (line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon === -1 ? line : line.slice(0, colon);
+    let value = colon === -1 ? "" : line.slice(colon + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "data") data.push(value);
+    else if (field === "event") event = value;
   }
   if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
 }
@@ -93,10 +91,14 @@ export async function* mapResponsesStream(
       case "response.incomplete": {
         const response = payload.response;
         if (!isRecord(response)) throw fail(`Responses ${type} event requires a response`);
-        // Some compatible servers omit the output in the terminal event; rebuild it from the items.
-        const output = Array.isArray(response.output) && response.output.length
-          ? response.output
-          : [...doneItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item);
+        // Some compatible servers omit the output (or send it empty) in the terminal event;
+        // only then is it rebuilt from the finished items. Any other non-array output is
+        // malformed and fails in parseResponsesResponse, as it does for a JSON response.
+        const omitted = response.output === undefined || response.output === null
+          || (Array.isArray(response.output) && response.output.length === 0);
+        const output = omitted
+          ? [...doneItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item)
+          : response.output;
         // The event type is authoritative: a response.incomplete event never yields executable calls.
         const status = type === "response.incomplete" ? "incomplete" : response.status;
         const result = parseResponsesResponse({ ...response, status, output }, provider);

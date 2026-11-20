@@ -30,3 +30,36 @@ it("cancels the upstream reader when budget enforcement stops consumption", asyn
   expect(cancelled).toBe(true);
   expect(body.locked).toBe(false);
 });
+it("keeps the byte-limit error when cancelling the reader also fails", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("x".repeat(32)));
+    },
+    cancel() {
+      throw new Error("cancel failed");
+    },
+  });
+  const read = async () => {
+    for await (const _line of readStreamLines(body, 8)) {
+      // drain
+    }
+  };
+  await expect(read()).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+  expect(body.locked).toBe(false);
+});
+it("splits on bare CR and CRLF across chunks only when asked", async () => {
+  const chunks = ["a\r", "\nb\rc", "\r", "\n"];
+  const stream = () =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(new TextEncoder().encode(chunk));
+        c.close();
+      },
+    });
+  const lines: string[] = [];
+  for await (const line of readStreamLines(stream(), 1024, { crLineBreaks: true })) lines.push(line);
+  expect(lines).toEqual(["a", "b", "c"]);
+  const lfOnly: string[] = [];
+  for await (const line of readStreamLines(stream())) lfOnly.push(line);
+  expect(lfOnly).toEqual(["a\r", "b\rc\r"]);
+});
