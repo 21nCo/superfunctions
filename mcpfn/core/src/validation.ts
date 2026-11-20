@@ -1,6 +1,6 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
-import uri from "fast-uri";
 import {
   dereference,
   encodePointer,
@@ -56,6 +56,7 @@ function isCloudflareWorker(): boolean {
 
 function createAjv(): Ajv {
   const ajv = new Ajv({
+    uriResolver: schemaUriResolver,
     allErrors: true,
     strict: false,
     allowUnionTypes: true,
@@ -147,12 +148,24 @@ const authoredResourceBase = "https://authored-schema.mcpfn.invalid/";
 // Ajv uses RFC 3986 URI resolution. Keep that identity separate from the
 // WHATWG-only URI index used by @cfworker/json-schema.
 function resolveSchemaUri(reference: string, base: string): string {
-  return uri.resolve(base, reference);
+  return schemaUriResolver.resolve(base, reference);
 }
 
 function schemaResourceUri(reference: string): string {
   const fragment = reference.indexOf("#");
   return fragment < 0 ? reference : reference.slice(0, fragment);
+}
+
+function normalizePointerFragment(reference: string): string {
+  const hash = reference.indexOf("#");
+  if (hash < 0) return reference;
+  // RFC 6901 decodes the fragment before interpreting pointer separators.
+  // cfworker indexes escaped pointer tokens with encodeURI, but does not
+  // canonicalize references. Match that representation without decoding a
+  // literal percent sequence twice or changing the resource/anchor identity.
+  const fragment = decodeURIComponent(reference.slice(hash + 1));
+  if (!fragment.startsWith("/")) return reference;
+  return `${reference.slice(0, hash + 1)}${encodeURI(fragment)}`;
 }
 
 // Encode every authored resource, including URIs that happen to parse under
@@ -283,7 +296,7 @@ function normalizeSchemaUris(
   }
 
   if (typeof schema.$ref === "string") {
-    schema.$ref = effectiveSchemaUri(schema.$ref, originalBase, effectiveBase);
+    schema.$ref = normalizePointerFragment(effectiveSchemaUri(schema.$ref, originalBase, effectiveBase));
   }
 
   forEachDraft7Subschema(schema, (subschema) => {
@@ -651,33 +664,50 @@ export function createSchemaCompiler(
 export const schemaEngine: SchemaEngine = defaultSchemaEngine();
 
 const MAX_STRUCTURAL_FIELD_LENGTH = 256;
+const MAX_SCHEMA_ISSUES = 100;
 
-function boundedStructuralField(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0) return undefined;
-  return value.slice(0, MAX_STRUCTURAL_FIELD_LENGTH);
+function boundedStructuralField(value: unknown): { value?: string; truncated: boolean } {
+  if (typeof value !== "string" || value.length === 0) return { truncated: false };
+  return {
+    value: value.slice(0, MAX_STRUCTURAL_FIELD_LENGTH),
+    truncated: value.length > MAX_STRUCTURAL_FIELD_LENGTH,
+  };
 }
 
-/** Convert normalized engine failures into a bounded public diagnostic shape. */
+/**
+ * Convert normalized engine failures into a bounded public diagnostic shape:
+ * at most 100 issues; property names, keywords and messages are cut to 256
+ * characters; instance and schema paths longer than 256 characters are
+ * replaced by the root (`/`, `#`). Any such shortening sets `truncated: true`.
+ */
 export function formatMcpFnSchemaIssues(
   errors: SchemaIssue[] | null | undefined,
 ): McpFnSchemaIssue[] {
-  return (errors ?? []).slice(0, 100).map((error) => {
+  return (errors ?? []).slice(0, MAX_SCHEMA_ISSUES).map((error) => {
     const rawPath = error.instancePath || "/";
-    const instancePath = rawPath.length <= MAX_STRUCTURAL_FIELD_LENGTH ? rawPath : "/";
-    const rejectedProperty = boundedStructuralField(
+    const pathTruncated = rawPath.length > MAX_STRUCTURAL_FIELD_LENGTH;
+    const instancePath = pathTruncated ? "/" : rawPath;
+    const rawSchemaPath = typeof error.schemaPath === "string" ? error.schemaPath : "";
+    const schemaPathTruncated = rawSchemaPath.length > MAX_STRUCTURAL_FIELD_LENGTH;
+    const rejected = boundedStructuralField(
       error.rejectedProperty ?? (error.keyword === "additionalProperties" ? error.params?.additionalProperty : undefined),
     );
-    const missingProperty = boundedStructuralField(
+    const missing = boundedStructuralField(
       error.missingProperty ?? (error.keyword === "required" ? error.params?.missingProperty : undefined),
     );
+    const keyword = boundedStructuralField(error.keyword);
+    const message = boundedStructuralField(error.message);
+    const truncated = pathTruncated || schemaPathTruncated || rejected.truncated || missing.truncated
+      || keyword.truncated || message.truncated;
     return {
       path: instancePath,
       instancePath,
-      schemaPath: typeof error.schemaPath === "string" && error.schemaPath.length > 0 && error.schemaPath.length <= 256 ? error.schemaPath : "#",
-      keyword: boundedStructuralField(error.keyword) ?? "validation",
-      message: boundedStructuralField(error.message) ?? "Schema validation failed",
-      ...(rejectedProperty ? { rejectedProperty } : {}),
-      ...(missingProperty ? { missingProperty } : {}),
+      schemaPath: rawSchemaPath.length > 0 && !schemaPathTruncated ? rawSchemaPath : "#",
+      keyword: keyword.value ?? "validation",
+      message: message.value ?? "Schema validation failed",
+      ...(rejected.value ? { rejectedProperty: rejected.value } : {}),
+      ...(missing.value ? { missingProperty: missing.value } : {}),
+      ...(truncated ? { truncated: true as const } : {}),
     };
   });
 }

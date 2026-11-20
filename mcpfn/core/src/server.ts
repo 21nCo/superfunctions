@@ -226,6 +226,16 @@ export class McpFnServer<TContext = undefined> {
   private readonly pageSize: number;
   private readonly serverOptions: McpFnServerOptions<TContext>;
   private readonly requestServers = new Set<McpFnServer<TContext>>();
+  // Resource URIs this server's client subscribed to through a successful
+  // resources/subscribe request. Each HTTP session has its own server, so this
+  // is the session's subscription set; it is dropped when the session closes.
+  private readonly resourceSubscriptions = new Set<string>();
+  // resources/subscribe requests still running, by URI. The SDK handles
+  // requests concurrently, so an unsubscribe can finish while an earlier
+  // subscribe for the same URI is still awaiting its handler. Unsubscribe and
+  // close() drop these tokens, and a subscribe whose token is gone does not
+  // record its subscription: the later unsubscribe wins.
+  private readonly pendingResourceSubscriptions = new Map<string, Set<symbol>>();
   private connected = false;
 
   constructor(options: McpFnServerOptions<TContext>) {
@@ -433,10 +443,13 @@ export class McpFnServer<TContext = undefined> {
                 extra as McpFnTaskRequestExtra,
                 observer,
               );
+              // Result writes during the creation callback validate output
+              // before the callback returns, so their evidence precedes handler.
               await this.emitCompletedToolStages(
                 completedStages,
                 resolved,
                 request.params.name,
+                flushTaskOutput,
               );
               await flushTaskOutput();
               return result;
@@ -457,7 +470,7 @@ export class McpFnServer<TContext = undefined> {
           } catch (error) {
             completedStages.delete(currentStage);
             if ((currentStage as McpFnClientProfileLifecycleStage) === "invalid-arguments-handler") completedStages.delete("input-validation");
-            if (resolved) await this.emitCompletedToolStages(completedStages, resolved, request.params.name);
+            if (resolved) await this.emitCompletedToolStages(completedStages, resolved, request.params.name, flushTaskOutput);
             await flushTaskOutput();
             const profile = this.profileReference(resolved);
             const details =
@@ -544,19 +557,37 @@ export class McpFnServer<TContext = undefined> {
         this.protocol.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
-            const context = await this.contextFactory(extra);
-            await this.registry.changeSubscription(
-              request.params.uri,
-              true,
-              context,
-              extra,
-            );
-            return {};
+            const uri = request.params.uri;
+            const token = Symbol(uri);
+            let pending = this.pendingResourceSubscriptions.get(uri);
+            if (!pending) {
+              pending = new Set();
+              this.pendingResourceSubscriptions.set(uri, pending);
+            }
+            pending.add(token);
+            try {
+              const context = await this.contextFactory(extra);
+              await this.registry.changeSubscription(uri, true, context, extra);
+              // Record it only if no unsubscribe or close() ran since it began.
+              if (this.pendingResourceSubscriptions.get(uri)?.has(token)) {
+                this.resourceSubscriptions.add(uri);
+              }
+              return {};
+            } finally {
+              const current = this.pendingResourceSubscriptions.get(uri);
+              current?.delete(token);
+              if (current?.size === 0) this.pendingResourceSubscriptions.delete(uri);
+            }
           },
         );
         this.protocol.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
+            // Stop delivery first: a client that asked to unsubscribe gets no
+            // further updates even when the registry handler then fails, and a
+            // subscribe for this URI that is still running does not restore it.
+            this.pendingResourceSubscriptions.delete(request.params.uri);
+            this.resourceSubscriptions.delete(request.params.uri);
             const context = await this.contextFactory(extra);
             await this.registry.changeSubscription(
               request.params.uri,
@@ -688,6 +719,7 @@ export class McpFnServer<TContext = undefined> {
       const result = await buildMcpFnEffectiveCatalog({
         canonicalTools: tools,
         knownTools,
+        schemaResources: this.registry.schemaDefinitions(),
         resolved,
       });
       await this.emitProfileEvidence({
@@ -714,6 +746,7 @@ export class McpFnServer<TContext = undefined> {
     stages: Set<McpFnClientProfileLifecycleStage>,
     resolved: McpFnResolvedClientProfile<TContext>,
     tool: string,
+    beforeHandler?: () => Promise<void>,
   ): Promise<void> {
     for (const stage of [
       "input-validation",
@@ -721,6 +754,7 @@ export class McpFnServer<TContext = undefined> {
       "handler",
       "output-validation",
     ] as const) {
+      if (stage === "handler") await beforeHandler?.();
       if (!stages.has(stage)) continue;
       await this.emitProfileEvidence({
         stage,
@@ -868,6 +902,8 @@ export class McpFnServer<TContext = undefined> {
     params: McpFnSamplingParams,
     options?: McpFnClientRequestOptions,
   ): Promise<McpFnSamplingResult> {
+    const unavailable = this.directClientRequestError("sample", "sampleForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.createMessage(params, options);
   }
 
@@ -890,6 +926,8 @@ export class McpFnServer<TContext = undefined> {
     params: McpFnElicitationParams,
     options?: McpFnClientRequestOptions,
   ): Promise<McpFnElicitationResult> {
+    const unavailable = this.directClientRequestError("elicit", "elicitForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.elicitInput(params, options);
   }
 
@@ -906,7 +944,21 @@ export class McpFnServer<TContext = undefined> {
   }
 
   listRoots(options?: RequestOptions): Promise<McpFnRootsResult> {
+    const unavailable = this.directClientRequestError("listRoots", "listRootsForRequest");
+    if (unavailable) return Promise.reject(unavailable);
     return this.protocol.listRoots(undefined, options);
+  }
+
+  // sample(), elicit() and listRoots() send a request to the client on this
+  // server's own transport. With createWebStandardHandler, each request or
+  // session is served by its own server, so there is no single client to ask:
+  // tool handlers use the *ForRequest variants with their `extra` instead.
+  private directClientRequestError(method: string, alternative: string): McpFnError | undefined {
+    if (this.connected) return undefined;
+    return new McpFnError(
+      "MCPFN_CLIENT_REQUEST_NEEDS_REQUEST",
+      `${method}() needs a directly connected transport. Over createWebStandardHandler, call ${alternative}(extra, ...) from the tool handler instead.`,
+    );
   }
 
   listRootsForRequest(
@@ -920,33 +972,98 @@ export class McpFnServer<TContext = undefined> {
     );
   }
 
-  sendLoggingMessage(
+  // The per-request or per-session servers created by createWebStandardHandler
+  // that currently have a client. Each one owns a single HTTP client's transport.
+  private connectedRequestServers(): McpFnServer<TContext>[] {
+    return [...this.requestServers].filter((server) => server.connected);
+  }
+
+  // This server and every per-request or per-session server with a client.
+  private connectedServers(): McpFnServer<TContext>[] {
+    return [...(this.connected ? [this] : []), ...this.connectedRequestServers()];
+  }
+
+  // Deliver to every recipient. A failure on this server's own transport is
+  // still reported; a per-request or per-session server whose client went
+  // away does not stop the others from receiving the notification.
+  private async broadcast(
+    servers: McpFnServer<TContext>[],
+    send: (server: McpFnServer<TContext>) => Promise<void>,
+  ): Promise<void> {
+    const results = await Promise.allSettled(servers.map((server) => send(server)));
+    const own = servers.indexOf(this);
+    const ownResult = own === -1 ? undefined : results[own];
+    if (ownResult?.status === "rejected") throw ownResult.reason;
+  }
+
+  /**
+   * Sends `notifications/message` to one client, never to every session.
+   *
+   * Without `sessionId`, only the transport connected with `connect()` or
+   * `serveStdio()` receives it. With `sessionId`, only the client whose
+   * transport has that session id receives it: the directly connected
+   * transport or one `createWebStandardHandler()` session. Tool handlers
+   * behind `createWebStandardHandler()` pass `extra.sessionId`; a stateless
+   * handler has no session to name and logs through `extra.sendNotification`.
+   * The recipient's `logging/setLevel` choice is honoured.
+   */
+  async sendLoggingMessage(
     params: LoggingMessageNotification["params"],
     sessionId?: string,
-  ) {
-    return this.protocol.sendLoggingMessage(params, sessionId);
+  ): Promise<void> {
+    const recipients = sessionId === undefined
+      ? this.connected ? [this] : []
+      : this.connectedServers().filter((server) => server.protocol.transport?.sessionId === sessionId);
+    await this.broadcast(
+      recipients,
+      // The SDK keeps each HTTP client's logging level under its transport's
+      // session id, so pass the recipient's own id unless one was given.
+      (server) => server.protocol.sendLoggingMessage(params, sessionId ?? server.protocol.transport?.sessionId),
+    );
   }
 
-  sendResourceUpdated(params: ResourceUpdatedNotification["params"]) {
-    return this.protocol.sendResourceUpdated(params);
+  /**
+   * Sends `notifications/resources/updated` for `params.uri`. The transport
+   * connected with `connect()` or `serveStdio()` receives it as before; a
+   * `createWebStandardHandler()` session receives it only while it holds a
+   * subscription to that exact URI from a successful `resources/subscribe`
+   * (until it unsubscribes or the session closes).
+   */
+  async sendResourceUpdated(params: ResourceUpdatedNotification["params"]): Promise<void> {
+    await this.broadcast(
+      [
+        ...(this.connected ? [this] : []),
+        ...this.connectedRequestServers().filter((server) => server.resourceSubscriptions.has(params.uri)),
+      ],
+      (server) => server.protocol.sendResourceUpdated(params),
+    );
   }
 
-  sendResourceListChanged() {
-    return this.protocol.sendResourceListChanged();
+  /**
+   * Sends `notifications/resources/list_changed` to every connected client:
+   * the direct transport and every `createWebStandardHandler()` session. The
+   * notification carries no data and every client shares the registry.
+   */
+  async sendResourceListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendResourceListChanged());
   }
 
-  sendToolListChanged() {
-    return this.protocol.sendToolListChanged();
+  /** Sends `notifications/tools/list_changed` to every connected client, like `sendResourceListChanged()`. */
+  async sendToolListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendToolListChanged());
   }
 
-  sendPromptListChanged() {
-    return this.protocol.sendPromptListChanged();
+  /** Sends `notifications/prompts/list_changed` to every connected client, like `sendResourceListChanged()`. */
+  async sendPromptListChanged(): Promise<void> {
+    await this.broadcast(this.connectedServers(), (server) => server.protocol.sendPromptListChanged());
   }
 
   async close(): Promise<void> {
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));
+    this.pendingResourceSubscriptions.clear();
+    this.resourceSubscriptions.clear();
     await this.protocol.close();
     this.connected = false;
   }
