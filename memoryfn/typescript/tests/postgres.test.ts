@@ -193,6 +193,13 @@ suite('Postgres lifecycle integration', () => {
     expect(rows[2].content.endsWith('ender')).toBe(true);
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-long', chunkCount: 4 });
   });
+  it('replaces a source with more chunks than it sends as separate content parameters', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const many = Array.from({ length: 40000 }, (_, index) => ({ tenantId: 'a', containerTags: ['docs'], content: `chunk ${index}\n"quoted"` }));
+    const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-many', chunks: many });
+    expect(rows.map(row => row.content)).toEqual(many.map(chunk => chunk.content));
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-many', chunkCount: 40000 });
+  });
   it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
     const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
     const keys = ['b.md', 'a.md'].sort();

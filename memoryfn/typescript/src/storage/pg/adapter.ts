@@ -11,7 +11,13 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 /** Characters of row JSON per json parameter of a source replacement. */
 const JSON_PART_LENGTH = 1 << 26;
-/** Content this long travels as its own text parameter, not inside row JSON. */
+/**
+ * A replacement of at most this many chunks sends every content as its own text
+ * parameter, unescaped, as the per-column insert did (it could bind about 5,400
+ * chunks). A larger one sends as its own parameter only content of at least
+ * SIDE_TEXT_LENGTH characters, so its bind count stays below the driver limit.
+ */
+const SIDE_TEXT_ROWS = 1 << 15;
 const SIDE_TEXT_LENGTH = 1 << 20;
 
 /**
@@ -327,18 +333,18 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   /**
-   * A SELECT of the replacement rows whose bind count grows with the payload's
-   * size, not its chunk count. Rows travel as JSON arrays in json parameters of at
-   * most JSON_PART_LENGTH characters each; content of SIDE_TEXT_LENGTH characters
-   * or more travels as its own text parameter, unescaped, and the row names it by
-   * position (type needs no such path: its btree index bounds it far lower). No
-   * JavaScript string grows beyond one part or one input value, and the statement
-   * stays within the protocol message limit that per-column parameters had.
+   * A SELECT of the replacement rows whose bind count stays below the driver
+   * limit. Rows travel as JSON arrays in json parameters of at most
+   * JSON_PART_LENGTH characters each, and content chosen by SIDE_TEXT_ROWS and
+   * SIDE_TEXT_LENGTH travels as its own text parameter, unescaped, which the row
+   * names by position (type needs no such path: its btree index bounds it far
+   * lower). No JavaScript string grows beyond one part or one input value.
    * Columns follow the table order drizzle inserts in.
    */
   private replacementRows(values: Array<ReturnType<PostgresAdapter['toRow']> & { sourceKey: string; contentHash: string; chunkIndex: number }>) {
     const texts: string[] = [];
-    const inline = (value: string) => value.length < SIDE_TEXT_LENGTH ? { text: storedText(value), ref: null } : { text: null, ref: texts.push(value) };
+    const allSide = values.length <= SIDE_TEXT_ROWS;
+    const inline = (value: string) => !allSide && value.length < SIDE_TEXT_LENGTH ? { text: storedText(value), ref: null } : { text: null, ref: texts.push(value) };
     const parts: string[][] = [[]];
     let partLength = 0;
     for (const row of values) {
@@ -353,15 +359,14 @@ export class PostgresAdapter implements StorageAdapter {
       if (partLength && partLength + json.length > JSON_PART_LENGTH) { parts.push([]); partLength = 0; }
       parts[parts.length - 1].push(json); partLength += json.length + 1;
     }
-    const contentSql = texts.length
-      ? sql`CASE (e->>'content_ref')::int ${sql.join(texts.map((text, index) => sql`WHEN ${sql.raw(String(index + 1))} THEN ${text}::text`), sql` `)} ELSE r.content END`
-      : sql`r.content`;
     const partValues = sql.join(parts.map(part => sql`(${`[${part.join(',')}]`}::text::json)`), sql`, `);
+    const sideValues = sql.join(texts.map((text, index) => sql`(${sql.raw(String(index + 1))}, ${text}::text)`), sql`, `);
     return sql`SELECT coalesce(r.id, gen_random_uuid()), r.tenant_id, r.container_tags,
-      r.type, ${contentSql},
+      r.type, ${texts.length ? sql`CASE WHEN side.ref IS NULL THEN r.content ELSE side.content END` : sql`r.content`},
       r.embedding, r.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, r.source_key, r.content_hash, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
-      CROSS JOIN json_populate_record(NULL::${memories}, e) AS r`;
+      CROSS JOIN json_populate_record(NULL::${memories}, e) AS r
+      ${texts.length ? sql`LEFT JOIN (VALUES ${sideValues}) AS side(ref, content) ON side.ref = (e->>'content_ref')::int` : sql``}`;
   }
 
   async deleteSource(input: SourceScope): Promise<number> {
