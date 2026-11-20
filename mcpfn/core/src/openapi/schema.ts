@@ -23,8 +23,16 @@ export function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// 2020-12 keywords outside the closed set (D12), plus identifiers that change
-// the base URI so `#/definitions/<name>` would no longer resolve.
+// 2019-09/2020-12 keywords outside the closed set (D12), plus identifiers
+// that change the base URI so `#/definitions/<name>` would no longer resolve.
+// Every 2019-09/2020-12 keyword draft-07 does not define is either listed
+// here or handled in convertObject: `dependentRequired` is translated to
+// `dependencies`, `$defs` is converted like `definitions` (refs only ever
+// target components), and the annotations `$comment`, `deprecated`,
+// `contentSchema` and `examples` change no result in either engine. A listed
+// keyword would be validated by @cfworker/json-schema but ignored by Ajv's
+// draft-07 dialect (or change reference resolution), so the engines would
+// accept different payloads.
 const UNSUPPORTED_KEYWORDS = [
   "prefixItems",
   "$dynamicRef",
@@ -32,10 +40,13 @@ const UNSUPPORTED_KEYWORDS = [
   "unevaluatedProperties",
   "unevaluatedItems",
   "dependentSchemas",
+  "minContains",
+  "maxContains",
   "$id",
   "$anchor",
   "$dynamicAnchor",
   "$recursiveAnchor",
+  "$vocabulary",
 ] as const;
 
 // OpenAPI-only annotations dropped from the produced draft-07 schema. `nullable`
@@ -112,7 +123,23 @@ export function parseComponentRef(
 interface ConvertedComponent {
   schema?: McpFnJsonSchema | boolean;
   refs?: Set<string>;
+  /** Definitions this one validates the same instance against (allOf/anyOf/oneOf/not/if/then/else/dependencies). */
+  inPlace?: Set<string>;
   error?: OpenApiSkip;
+}
+
+/** A component converted with extra property names removed (see `reference`). */
+interface DefinitionVariant {
+  name: string;
+  strip: ReadonlySet<string>;
+}
+
+type DirectionalKeyword = "readOnly" | "writeOnly";
+
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+function directionalKeyword(mode: SchemaMode): DirectionalKeyword {
+  return mode === "input" ? "readOnly" : "writeOnly";
 }
 
 /**
@@ -122,24 +149,15 @@ interface ConvertedComponent {
 export class SchemaConverter {
   private readonly cache = new Map<string, ConvertedComponent>();
   private readonly ancestors = new Set<object>();
+  private readonly variants = new Map<string, DefinitionVariant>();
+  private readonly variantKeys = new Map<string, string>();
+  private readonly flaggedNames = new Map<string, ReadonlySet<string>>();
+  private readonly mentionedNames = new Map<string, ReadonlySet<string>>();
 
   constructor(
     private readonly version: OpenApiVersion,
     private readonly schemas: JsonObject,
   ) {}
-
-  /** Follow `$ref` chains to the component schema object, for shape checks. */
-  resolve(schema: unknown): unknown {
-    let current = schema;
-    const seen = new Set<string>();
-    while (isObject(current) && "$ref" in current) {
-      const name = parseComponentRef(current.$ref, "schemas");
-      if (seen.has(name)) throw aliasCycle(name);
-      seen.add(name);
-      current = this.component(name);
-    }
-    return current;
-  }
 
   private component(name: string): unknown {
     if (!Object.hasOwn(this.schemas, name)) {
@@ -213,7 +231,12 @@ export class SchemaConverter {
    * Convert a schema rooted in a tool's input or output schema. Referenced
    * component names are added to `refs`; call `definitions` for their closure.
    */
-  convert(schema: unknown, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema | boolean {
+  convert(
+    schema: unknown,
+    mode: SchemaMode,
+    refs: Set<string>,
+    strip: ReadonlySet<string> = NO_NAMES,
+  ): McpFnJsonSchema | boolean {
     if (typeof schema === "boolean") return schema;
     if (!isObject(schema)) {
       throw new OpenApiSkip("invalid-schema", "a schema is not an object");
@@ -223,13 +246,23 @@ export class SchemaConverter {
     }
     this.ancestors.add(schema);
     try {
-      return this.convertObject(schema, mode, refs);
+      return this.convertObject(schema, mode, refs, strip);
     } finally {
       this.ancestors.delete(schema);
     }
   }
 
-  private convertObject(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
+  /**
+   * `strip` holds property names an enclosing schema marks readOnly (input) or
+   * writeOnly (output) for the same instance; they are removed from this
+   * schema's `properties` and `required` and from its in-place members.
+   */
+  private convertObject(
+    schema: JsonObject,
+    mode: SchemaMode,
+    refs: Set<string>,
+    strip: ReadonlySet<string> = NO_NAMES,
+  ): McpFnJsonSchema {
     for (const keyword of UNSUPPORTED_KEYWORDS) {
       if (Object.hasOwn(schema, keyword)) {
         throw new OpenApiSkip(
@@ -241,17 +274,21 @@ export class SchemaConverter {
     if (Object.hasOwn(schema, "$ref")) {
       const name = parseComponentRef(schema.$ref, "schemas");
       this.component(name);
-      refs.add(name);
-      const reference = { $ref: `#/definitions/${name}` };
-      // OpenAPI 3.0 ignores $ref siblings; 3.1 (2020-12) applies them too.
-      if (this.version === "3.0") return reference;
-      const { $ref: _ref, ...rest } = schema;
-      if (Object.keys(rest).length === 0) return reference;
-      const siblings = this.convertObject(rest, mode, refs);
-      const allOf = Array.isArray(siblings.allOf) ? siblings.allOf : [];
-      return { ...siblings, allOf: [...allOf, reference] };
+      // OpenAPI 3.0 ignores $ref siblings; 3.1 (2020-12) applies them too,
+      // which is an allOf of the siblings and the reference.
+      const { $ref, ...rest } = schema;
+      if (this.version === "3.0" || Object.keys(rest).length === 0) {
+        return this.reference(name, mode, refs, strip);
+      }
+      if (rest.allOf !== undefined && !Array.isArray(rest.allOf)) {
+        throw new OpenApiSkip("invalid-schema", "allOf is not an array");
+      }
+      const allOf = (rest.allOf as unknown[] | undefined) ?? [];
+      return this.convertObject({ ...rest, allOf: [...allOf, { $ref }] }, mode, refs, strip);
     }
 
+    const own = this.directionalNames(schema, directionalKeyword(mode));
+    const removed = own.size === 0 ? strip : new Set([...strip, ...own]);
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
     for (const [keyword, value] of Object.entries(schema)) {
@@ -259,7 +296,7 @@ export class SchemaConverter {
       if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
         entries.push([keyword, this.convertMap(value, mode, refs)]);
       } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
-        entries.push([keyword, value.map((item) => this.convert(item, mode, refs))]);
+        entries.push([keyword, value.map((item) => this.convert(item, mode, refs, removed))]);
       } else if (keyword === "items") {
         entries.push([
           keyword,
@@ -287,7 +324,7 @@ export class SchemaConverter {
     if (dependencies) entries.push(["dependencies", dependencies]);
     const converted = Object.fromEntries(entries) as McpFnJsonSchema;
     this.foldExclusiveBounds(converted);
-    this.removeDirectionalProperties(schema, converted, mode);
+    this.removeDirectionalProperties(converted, removed, own, mode);
     return this.version === "3.0" && schema.nullable === true
       ? nullableSchema(converted)
       : converted;
@@ -319,107 +356,265 @@ export class SchemaConverter {
     }
   }
 
+  /**
+   * Remove `removed` from `properties` and `required`. In input mode the names
+   * this schema itself marks readOnly (`own`) are also refused through
+   * `propertyNames` unless the object is closed, so a caller cannot send one
+   * as an additional property.
+   */
   private removeDirectionalProperties(
-    source: JsonObject,
     converted: McpFnJsonSchema,
+    removed: ReadonlySet<string>,
+    own: ReadonlySet<string>,
     mode: SchemaMode,
   ): void {
-    const properties = source.properties;
-    if (!isObject(properties) || !isObject(converted.properties)) return;
-    const keyword = mode === "input" ? "readOnly" : "writeOnly";
-    const removed = new Set<string>();
-    for (const [name, property] of Object.entries(properties)) {
-      if (this.hasFlag(property, keyword)) removed.add(name);
-    }
     if (removed.size === 0) return;
-    converted.properties = Object.fromEntries(
-      Object.entries(converted.properties).filter(([name]) => !removed.has(name)),
-    );
+    if (isObject(converted.properties)) {
+      converted.properties = Object.fromEntries(
+        Object.entries(converted.properties).filter(([name]) => !removed.has(name)),
+      );
+    }
     if (Array.isArray(converted.required)) {
       converted.required = converted.required.filter(
         (name) => typeof name !== "string" || !removed.has(name),
       );
       if ((converted.required as unknown[]).length === 0) delete converted.required;
     }
-    // An input must not carry a readOnly field even when the object accepts
-    // other additional properties. A closed object already rejects it.
-    if (mode === "input" && !(converted.additionalProperties === false && converted.patternProperties === undefined)) {
-      const forbidden = { not: { enum: [...removed] } };
+    if (
+      mode === "input" &&
+      own.size > 0 &&
+      !(converted.additionalProperties === false && converted.patternProperties === undefined)
+    ) {
+      const forbidden = { not: { enum: [...own] } };
       converted.propertyNames =
         converted.propertyNames === undefined ? forbidden : { allOf: [converted.propertyNames, forbidden] };
     }
   }
 
-  private hasFlag(property: unknown, keyword: "readOnly" | "writeOnly"): boolean {
-    if (!isObject(property)) return false;
-    if (property[keyword] === true) return true;
-    if (!("$ref" in property)) return false;
+  /**
+   * A reference to component `name` for an instance whose enclosing schemas
+   * remove `strip`. When the component mentions a name it does not already
+   * remove itself, the reference targets a variant definition converted
+   * without those names; otherwise it targets the shared definition.
+   */
+  private reference(
+    name: string,
+    mode: SchemaMode,
+    refs: Set<string>,
+    strip: ReadonlySet<string>,
+  ): McpFnJsonSchema {
+    let key = name;
+    if (strip.size > 0) {
+      const own = this.componentNames(name, directionalKeyword(mode), this.flaggedNames, (schema, keyword) =>
+        this.directionalNames(schema, keyword),
+      );
+      const mentioned = this.componentNames(name, directionalKeyword(mode), this.mentionedNames, (schema) =>
+        this.mentions(schema),
+      );
+      const pending = [...strip].filter((entry) => !own.has(entry) && mentioned.has(entry)).sort();
+      if (pending.length > 0) key = this.variantKey(name, mode, pending);
+    }
+    refs.add(key);
+    return { $ref: `${DEFINITION_REF}${key}` };
+  }
+
+  private variantKey(name: string, mode: SchemaMode, strip: string[]): string {
+    const identity = JSON.stringify([mode, name, strip]);
+    let key = this.variantKeys.get(identity);
+    if (!key) {
+      // ":" is outside component names, so a variant never collides with one.
+      key = `${name}:${directionalKeyword(mode)}-${this.variantKeys.size + 1}`;
+      this.variantKeys.set(identity, key);
+      this.variants.set(key, { name, strip: new Set(strip) });
+    }
+    return key;
+  }
+
+  private componentNames(
+    name: string,
+    keyword: DirectionalKeyword,
+    cache: Map<string, ReadonlySet<string>>,
+    compute: (schema: unknown, keyword: DirectionalKeyword) => ReadonlySet<string>,
+  ): ReadonlySet<string> {
+    const key = `${keyword}:${name}`;
+    let names = cache.get(key);
+    if (!names) {
+      cache.set(key, NO_NAMES); // a cycle back to this component adds nothing new
+      names = Object.hasOwn(this.schemas, name) ? compute(this.schemas[name], keyword) : NO_NAMES;
+      cache.set(key, names);
+    }
+    return names;
+  }
+
+  /**
+   * Names of properties the instance described by `schema` carries with
+   * `keyword` set: its own `properties`, and those of its `allOf` members and
+   * `$ref` target, which constrain the same instance.
+   */
+  private directionalNames(schema: unknown, keyword: DirectionalKeyword): ReadonlySet<string> {
+    const names = new Set<string>();
+    this.inPlaceMembers(schema, (member) => {
+      if (isObject(member.properties)) {
+        for (const [name, property] of Object.entries(member.properties)) {
+          if (this.hasFlag(property, keyword, new Set())) names.add(name);
+        }
+      }
+    }, false);
+    return names;
+  }
+
+  /** Property names in `properties` or `required` of `schema` or any schema validating the same instance. */
+  private mentions(schema: unknown): ReadonlySet<string> {
+    const names = new Set<string>();
+    this.inPlaceMembers(schema, (member) => {
+      if (isObject(member.properties)) for (const name of Object.keys(member.properties)) names.add(name);
+      if (Array.isArray(member.required)) {
+        for (const name of member.required) if (typeof name === "string") names.add(name);
+      }
+    }, true);
+    return names;
+  }
+
+  /**
+   * Visit `schema` and the schemas applied to the same instance: `$ref`
+   * targets, `allOf` members and, when `alternatives` is set, `anyOf`/`oneOf`
+   * members. Unresolvable references are left for conversion to report.
+   */
+  private inPlaceMembers(schema: unknown, visit: (member: JsonObject) => void, alternatives: boolean): void {
+    const seen = new Set<object>();
+    const walk = (current: unknown): void => {
+      if (!isObject(current) || seen.has(current)) return;
+      seen.add(current);
+      if (Object.hasOwn(current, "$ref")) {
+        walk(this.target(current.$ref));
+        if (this.version === "3.0") return;
+      }
+      visit(current);
+      const keywords = alternatives ? ["allOf", "anyOf", "oneOf"] : ["allOf"];
+      for (const keyword of keywords) {
+        const members = current[keyword];
+        if (Array.isArray(members)) for (const member of members) walk(member);
+      }
+    };
+    walk(schema);
+  }
+
+  private target(ref: unknown): unknown {
     try {
-      const target = this.resolve(property);
-      return isObject(target) && target[keyword] === true;
+      return this.component(parseComponentRef(ref, "schemas"));
     } catch {
-      return false; // the reference itself fails when the property is converted
+      return undefined;
     }
   }
 
-  private convertedComponent(name: string, mode: SchemaMode): ConvertedComponent {
-    const key = `${mode}:${name}`;
-    let entry = this.cache.get(key);
+  /**
+   * Whether a property schema carries `keyword`: on itself, on a schema it
+   * references (an alias's own sibling included) or on an `allOf` member.
+   */
+  private hasFlag(property: unknown, keyword: DirectionalKeyword, seen: Set<object>): boolean {
+    if (!isObject(property) || seen.has(property)) return false;
+    seen.add(property);
+    if (property[keyword] === true) return true;
+    if (Object.hasOwn(property, "$ref") && this.hasFlag(this.target(property.$ref), keyword, seen)) return true;
+    return Array.isArray(property.allOf) && property.allOf.some((member) => this.hasFlag(member, keyword, seen));
+  }
+
+  private convertedComponent(key: string, mode: SchemaMode): ConvertedComponent {
+    const cacheKey = `${mode}:${key}`;
+    let entry = this.cache.get(cacheKey);
     if (!entry) {
+      const variant = this.variants.get(key);
+      const name = variant?.name ?? key;
       try {
         const refs = new Set<string>();
-        entry = { schema: this.convert(this.component(name), mode, refs), refs };
+        const schema = this.convert(this.component(name), mode, refs, variant?.strip);
+        entry = { schema, refs, inPlace: inPlaceReferences(schema) };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
           error: new OpenApiSkip(error.code, `${error.message} (in #/components/schemas/${name})`),
         };
       }
-      this.cache.set(key, entry);
+      this.cache.set(cacheKey, entry);
     }
     return entry;
   }
 
-  /** The transitive closure of referenced component schemas, as `definitions`. */
+  /**
+   * The transitive closure of referenced component schemas, as `definitions`.
+   * A closure in which a definition reaches itself without descending into a
+   * property, item or other child instance is rejected: validators would
+   * recurse on the same value without end.
+   */
   definitions(refs: Iterable<string>, mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
-    const seen = new Set<string>();
+    const entries = new Map<string, ConvertedComponent>();
     const queue = [...refs];
     while (queue.length > 0) {
-      const name = queue.shift()!;
-      if (seen.has(name)) continue;
-      seen.add(name);
-      const entry = this.convertedComponent(name, mode);
+      const key = queue.shift()!;
+      if (entries.has(key)) continue;
+      const entry = this.convertedComponent(key, mode);
       if (entry.error) throw entry.error;
-      result.push([name, entry.schema!]);
-      for (const next of entry.refs!) if (!seen.has(next)) queue.push(next);
+      entries.set(key, entry);
+      result.push([key, entry.schema!]);
+      for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
     }
-    const definitions = Object.fromEntries(result);
-    for (const name of seen) assertNoAliasCycle(definitions, name);
-    return definitions;
+    assertProductiveRecursion(entries, (key) => this.variants.get(key)?.name ?? key);
+    return Object.fromEntries(result);
   }
-}
-
-function aliasCycle(name: string): OpenApiSkip {
-  return new OpenApiSkip(
-    "unresolved-ref",
-    `#/components/schemas/${name} is a $ref cycle with no schema of its own`,
-  );
 }
 
 const DEFINITION_REF = "#/definitions/";
 
-/** `A: { $ref: B }, B: { $ref: A }` never reaches a schema; validators may loop on it. */
-function assertNoAliasCycle(definitions: Record<string, McpFnJsonSchema | boolean>, start: string): void {
-  const seen = new Set<string>();
-  let name = start;
-  for (;;) {
-    const schema = definitions[name];
-    if (!isObject(schema) || typeof schema.$ref !== "string" || Object.keys(schema).length !== 1) return;
-    if (seen.has(name)) throw aliasCycle(start);
-    seen.add(name);
-    name = schema.$ref.slice(DEFINITION_REF.length);
-  }
+const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
+const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
+
+/** Definitions a converted schema applies to the same instance it validates. */
+function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
+  const found = new Set<string>();
+  const walk = (current: unknown): void => {
+    if (!isObject(current)) return;
+    if (typeof current.$ref === "string" && current.$ref.startsWith(DEFINITION_REF)) {
+      found.add(current.$ref.slice(DEFINITION_REF.length));
+    }
+    for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
+      const members = current[keyword];
+      if (Array.isArray(members)) for (const member of members) walk(member);
+    }
+    for (const keyword of IN_PLACE_KEYWORDS) walk(current[keyword]);
+    if (isObject(current.dependencies)) {
+      for (const dependency of Object.values(current.dependencies)) walk(dependency);
+    }
+  };
+  walk(schema);
+  return found;
+}
+
+/**
+ * `A: { $ref: B }, B: { $ref: A }` or a 3.1 `X: { $ref: X, type: object }`
+ * never descends into a child value; validators recurse on it without end.
+ */
+function assertProductiveRecursion(
+  entries: ReadonlyMap<string, ConvertedComponent>,
+  componentOf: (key: string) => string,
+): void {
+  const done = new Set<string>();
+  const active = new Set<string>();
+  const visit = (key: string): void => {
+    if (done.has(key)) return;
+    if (active.has(key)) {
+      const name = componentOf(key);
+      throw new OpenApiSkip(
+        "unresolved-ref",
+        `#/components/schemas/${name} refers back to itself without descending into a property or array item`,
+      );
+    }
+    active.add(key);
+    for (const next of entries.get(key)?.inPlace ?? []) visit(next);
+    active.delete(key);
+    done.add(key);
+  };
+  for (const key of entries.keys()) visit(key);
 }
 
 // OpenAPI 3.0.3: `nullable: true` adds "null" only to an explicitly defined

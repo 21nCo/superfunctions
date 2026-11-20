@@ -115,6 +115,70 @@
           }
         }
       }
+    },
+    "/mincontains": {
+      "post": {
+        "operationId": "usesMinContains",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "contains": {
+                      "type": "integer",
+                      "minimum": 10
+                    },
+                    "minContains": 2
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/maxcontains": {
+      "post": {
+        "operationId": "usesMaxContains",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "contains": {
+                      "type": "integer",
+                      "minimum": 10
+                    },
+                    "maxContains": 2
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {

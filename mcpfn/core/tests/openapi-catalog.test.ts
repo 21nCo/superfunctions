@@ -311,6 +311,24 @@ describe("fromOpenAPI tool metadata", () => {
     expect(Object.isFrozen(tool(tools, "docServer").operation.parameters)).toBe(true);
   });
 
+  it("treats an empty servers level as absent and falls back to the next level, then to /", () => {
+    const { tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        servers: [],
+        paths: {
+          "/a": { servers: [], get: { operationId: "emptyEverywhere", servers: [], responses: ok } },
+          "/b": { servers: [{ url: "https://path.example.com" }], get: { operationId: "emptyOperation", servers: [], responses: ok } },
+          "/c": { get: { operationId: "unusableEntries", servers: [{ description: "no url" }], responses: ok } },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(tool(tools, "emptyEverywhere").operation.servers).toEqual([{ url: "/" }]);
+    expect(tool(tools, "emptyOperation").operation.servers).toEqual([{ url: "https://path.example.com" }]);
+    expect(tool(tools, "unusableEntries").operation.servers).toEqual([{ url: "/" }]);
+  });
+
   it("is not affected by later changes to the caller's document", () => {
     const document = catalogDocument();
     const { tools } = fromOpenAPI(document, { executor: recordingExecutor() });

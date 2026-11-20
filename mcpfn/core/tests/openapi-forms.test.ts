@@ -226,6 +226,90 @@ describe("fromOpenAPI closed form set (D12)", () => {
     });
   });
 
+  it("finds readOnly and writeOnly through allOf members and keeps unrelated uses of a component", () => {
+    const { tools } = convert("form-read-only-composed");
+    const createAccount = tool(tools, "createAccount");
+    const account = (createAccount.inputSchema.definitions as Record<string, Record<string, unknown>>).Account!;
+    expect(Object.keys(account.properties as object)).toEqual(["name", "password"]);
+    expect(account.required).toEqual(["name", "password"]);
+    expectArguments(createAccount.inputSchema, {
+      valid: [{ body: { name: "a", password: "test-password" } }],
+      invalid: [{ body: { name: "a", password: "test-password", createdAt: "2026-01-01T00:00:00Z" } }],
+    });
+    // The server leaves the writeOnly password out of its response.
+    expect(createAccount.outputSchema!.required).toEqual(["createdAt", "name"]);
+    expectArguments(createAccount.outputSchema!, {
+      valid: [{ createdAt: "2026-01-01T00:00:00Z", name: "a" }],
+      invalid: [{ name: "a" }],
+    });
+
+    // Identified marks id readOnly; its allOf sibling Named requires it.
+    const createProfile = tool(tools, "createProfile");
+    expectArguments(createProfile.inputSchema, {
+      valid: [{ body: { name: "a" } }, { body: { name: "a", nickname: "extra" } }],
+      invalid: [{ body: { id: "client-chosen-id", name: "a" } }, { body: {} }],
+    });
+    // Named itself is unchanged where nothing marks id readOnly.
+    const createRecord = tool(tools, "createRecord");
+    expect((createRecord.inputSchema.definitions as Record<string, Record<string, unknown>>).Named!.required).toEqual(["id", "name"]);
+    expectArguments(createRecord.inputSchema, {
+      valid: [{ body: { named: { id: "1", name: "a" } } }],
+      invalid: [{ body: { named: { name: "a" } } }],
+    });
+  });
+
+  it("finds readOnly on a 3.1 alias that adds it beside its $ref, and on an allOf sibling of a $ref", () => {
+    const { tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/items": {
+            post: {
+              operationId: "createItem",
+              requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Item" } } } },
+              responses: { "200": { description: "OK" } },
+            },
+          },
+          "/tagged": {
+            post: {
+              operationId: "createTagged",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/Named", properties: { id: { type: "string", readOnly: true } } },
+                  },
+                },
+              },
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        },
+        components: {
+          schemas: {
+            Timestamp: { type: "string", format: "date-time" },
+            ServerTime: { $ref: "#/components/schemas/Timestamp", readOnly: true },
+            Item: {
+              type: "object",
+              properties: { createdAt: { $ref: "#/components/schemas/ServerTime" }, name: { type: "string" } },
+              required: ["createdAt", "name"],
+            },
+            Named: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"] },
+          },
+        },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expectArguments(tool(tools, "createItem").inputSchema, {
+      valid: [{ body: { name: "a" } }],
+      invalid: [{ body: { name: "a", createdAt: "2026-01-01T00:00:00Z" } }],
+    });
+    expectArguments(tool(tools, "createTagged").inputSchema, {
+      valid: [{ body: { name: "a" } }],
+      invalid: [{ body: { id: "client-chosen-id", name: "a" } }],
+    });
+  });
+
   it("declares an output schema only for the first 2xx application/json object response", () => {
     const { tools } = convert("form-output-schema");
     expect(tool(tools, "objectResponse").outputSchema).toEqual({
@@ -314,13 +398,57 @@ describe("fromOpenAPI skip reasons", () => {
       ["usesDynamicRef", "unsupported-schema-keyword"],
       ["usesUnevaluatedProperties", "unsupported-schema-keyword"],
       ["usesDependentSchemas", "unsupported-schema-keyword"],
+      ["usesMinContains", "unsupported-schema-keyword"],
+      ["usesMaxContains", "unsupported-schema-keyword"],
     ]);
     expect(skipped.map((entry) => entry.reason)).toEqual([
       "schema keyword prefixItems is not supported",
       "schema keyword $dynamicRef is not supported (in #/components/schemas/Dynamic)",
       "schema keyword unevaluatedProperties is not supported",
       "schema keyword dependentSchemas is not supported",
+      "schema keyword minContains is not supported",
+      "schema keyword maxContains is not supported",
     ]);
+  });
+
+  it("keeps contains without count bounds, which both engines validate alike", () => {
+    const { tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/ids": {
+            post: {
+              operationId: "usesContains",
+              requestBody: { content: { "application/json": { schema: { type: "array", items: { type: "integer" }, contains: { minimum: 10 } } } } },
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expectArguments(tool(tools, "usesContains").inputSchema, {
+      valid: [{ body: [1, 10] }, {}],
+      invalid: [{ body: [1, 2] }, { body: [] }],
+    });
+  });
+
+  it("skips a $ref cycle that never descends into a property or item, and keeps one that does", () => {
+    const { tools, skipped } = convert("skip-nonproductive-recursion");
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["selfWithSibling", "unresolved-ref"],
+      ["selfInAnyOf", "unresolved-ref"],
+      ["mutualAllOf", "unresolved-ref"],
+      ["cycleBelowProperty", "unresolved-ref"],
+    ]);
+    expect(skipped[0]!.reason).toBe(
+      "#/components/schemas/SelfObject refers back to itself without descending into a property or array item",
+    );
+    expect(tools.map((entry) => entry.name)).toEqual(["productiveTree"]);
+    expectArguments(tool(tools, "productiveTree").inputSchema, {
+      valid: [{ body: { name: "root", children: [{ name: "leaf", children: [] }] } }],
+      invalid: [{ body: { name: "root", children: [{ children: [] }] } }],
+    });
   });
 
   it("skips query arrays with explode: false and keeps converting other operations", () => {

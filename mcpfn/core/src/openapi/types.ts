@@ -59,7 +59,7 @@ export interface OpenApiOperation {
   /** Parameters exposed as tool inputs. Forbidden headers (D9) are never listed. */
   parameters: readonly OpenApiOperationParameter[];
   requestBody?: OpenApiOperationRequestBody;
-  /** Effective servers: operation, then path item, then document level. */
+  /** Effective servers: the first non-empty level of operation, path item and document, else `[{ url: "/" }]`. */
   servers: readonly OpenApiServer[];
   /** Effective security requirements: operation level, else document level. */
   security?: readonly Record<string, readonly string[]>[];

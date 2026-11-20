@@ -100,8 +100,10 @@ for (const { operation, code, reason } of skipped) {
 - **Inputs.** The input schema is `{ path, query, header, body }`, each group
   present only when the operation has such inputs, with
   `additionalProperties: false` throughout. Referenced component schemas are
-  copied under `definitions` (draft-07). `readOnly` properties are removed from
-  inputs and refused when the object otherwise accepts additional properties,
+  copied under `definitions` (draft-07). `readOnly` properties (flagged on the
+  property, on a schema it references or on an `allOf` member) are removed
+  from inputs, also from the `required` of other `allOf` members of the same
+  object, and refused when the object otherwise accepts additional properties,
   and `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
   `Accept` and `Content-Type` headers are never inputs: credentials and
   transport headers belong to the executor.
@@ -112,7 +114,8 @@ for (const { operation, code, reason } of skipped) {
   an array of objects or arrays, or both an array and a single value is skipped.
 - **Outputs.** The schema of the first 2xx response with `application/json`
   content is always converted, so the skip rules apply to it whatever its
-  shape. It becomes the output schema (`writeOnly` properties removed) when it
+  shape. It becomes the output schema (`writeOnly` properties removed the same
+  way `readOnly` ones are from inputs) when it
   accepts objects and nothing else, also through a 3.1 `$ref` with sibling
   keywords or an `allOf`; otherwise the tool declares none.
 - **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
@@ -120,15 +123,21 @@ for (const { operation, code, reason } of skipped) {
   `openWorldHint`. The description is the trimmed summary and description,
   joined by a blank line and capped at 2,000 characters.
 - **Supported forms.** Local `#/components/{schemas,parameters,requestBodies,responses}/<name>`
-  references (recursive schemas included); path- and operation-level parameters
+  references (recursive schemas included when the recursion descends into a
+  property or item); path- and operation-level parameters
   in `path`, `query` and `header` with their default styles over primitives and
   arrays of primitives; `application/json` and `*+json` bodies; OpenAPI 3.0
   `nullable`, which adds `null` to an explicit `type` only (an `enum` keeps
   excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
   external or URL references, `cookie` parameters, non-default styles,
-  object-valued or mixed parameters, bodies without a JSON media type, and the 2020-12
-  keywords `prefixItems`, `$dynamicRef`, `unevaluatedProperties`,
-  `unevaluatedItems` and `dependentSchemas`. A Swagger 2.0 document throws.
+  object-valued or mixed parameters, bodies without a JSON media type, a
+  `$ref` cycle that returns to the same value without descending into a
+  property or item, and the 2019-09/2020-12 keywords `prefixItems`,
+  `$dynamicRef`, `unevaluatedProperties`, `unevaluatedItems`,
+  `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
+  translated to draft-07 `dependencies`). A Swagger 2.0 document throws.
+- **Servers.** `operation.servers` is the first non-empty `servers` list of
+  the operation, path item and document, else `[{ url: "/" }]`.
 
 ## Server context and errors
 

@@ -561,35 +561,58 @@ export function validateSchemaCollection(
 /**
  * Registration compiles every tool schema eagerly, and a catalog generated
  * from one API description repeats the same schemas across its tools. Equal
- * JSON compiles to an equal validator, so the Ajv engine compiles it once and
- * shares the generated function (each caller keeps its own error state).
- * Schemas with `$id` (Ajv rejects a repeated id) or with values JSON does not
- * represent exactly have no key and are compiled every time.
+ * schema data compiles to an equal validator, so the Ajv engine compiles it
+ * once and shares the generated function (each caller keeps its own error
+ * state).
+ *
+ * The key is built from exactly the data Ajv reads: own enumerable data
+ * properties of plain objects and dense arrays holding strings, booleans,
+ * null and finite numbers. Anything that could make the key differ from what
+ * Ajv compiles (a toJSON method, an accessor, a symbol or non-enumerable key,
+ * a class instance, a hole, undefined, -0, a non-finite number, a cycle) gives
+ * no key, as does `$id` (Ajv rejects a repeated id); such schemas are compiled
+ * every time.
  */
 function schemaContentKey(schema: object): string | undefined {
-  let exact = true;
-  let key: string | undefined;
-  try {
-    key = JSON.stringify(schema, function (this: Record<string, unknown>, name: string, value: unknown) {
-      // `this[name]` is the value before toJSON(), such as a Date.
-      const raw = this[name];
-      if (
-        raw === undefined ||
-        typeof raw === "function" ||
-        typeof raw === "symbol" ||
-        typeof raw === "bigint" ||
-        (typeof raw === "number" && !Number.isFinite(raw)) ||
-        (typeof raw === "object" && raw !== null && !Array.isArray(raw) &&
-          Object.getPrototypeOf(raw) !== Object.prototype && Object.getPrototypeOf(raw) !== null)
-      ) {
-        exact = false;
-      }
-      return value;
-    });
-  } catch {
-    return undefined;
-  }
-  return exact && key !== undefined && !key.includes('"$id"') ? key : undefined;
+  const parts: string[] = [];
+  const active = new Set<object>();
+  const walk = (value: unknown): boolean => {
+    if (value === null || typeof value === "string" || typeof value === "boolean") {
+      parts.push(JSON.stringify(value));
+      return true;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+      parts.push(JSON.stringify(value));
+      return true;
+    }
+    if (typeof value !== "object" || active.has(value) || "toJSON" in value) return false;
+    const isArray = Array.isArray(value);
+    const prototype = Object.getPrototypeOf(value);
+    if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+      return false;
+    }
+    const ownKeys = Reflect.ownKeys(value);
+    // An array's own keys are its indices and "length"; any other key or a hole fails.
+    const keys = isArray
+      ? Array.from({ length: (value as unknown[]).length }, (_, index) => String(index))
+      : ownKeys;
+    if (isArray && ownKeys.length !== keys.length + 1) return false;
+    active.add(value);
+    parts.push(isArray ? "[" : "{");
+    for (const key of keys) {
+      if (typeof key === "symbol" || (!isArray && key === "$id")) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return false;
+      if (!isArray) parts.push(JSON.stringify(key), ":");
+      if (!walk(descriptor.value)) return false;
+      parts.push(",");
+    }
+    parts.push(isArray ? "]" : "}");
+    active.delete(value);
+    return true;
+  };
+  return walk(schema) ? parts.join("") : undefined;
 }
 
 /**

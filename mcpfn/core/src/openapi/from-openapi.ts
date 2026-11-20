@@ -166,10 +166,12 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+// OpenAPI 3.0/3.1: an absent or empty `servers` array means `[{ url: "/" }]`.
+// An empty level (or one with no usable entry) defers to the next outer level.
 function servers(...levels: unknown[]): OpenApiServer[] {
   for (const level of levels) {
     if (!Array.isArray(level)) continue;
-    return level
+    const usable = level
       .filter((server): server is JsonObject => isObject(server) && typeof server.url === "string")
       .map((server) => ({
         url: server.url as string,
@@ -178,6 +180,7 @@ function servers(...levels: unknown[]): OpenApiServer[] {
           ? { variables: server.variables as OpenApiServer["variables"] }
           : {}),
       }));
+    if (usable.length > 0) return usable;
   }
   return [{ url: "/" }];
 }

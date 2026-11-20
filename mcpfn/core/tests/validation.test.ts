@@ -638,4 +638,39 @@ describe("Ajv compilation of repeated schemas", () => {
     expect(asString("2026-01-01T00:00:00.000Z")).toBe(true);
     expect(asDate("2026-01-01T00:00:00.000Z")).toBe(false);
   });
+
+  it.each([
+    ["an enumerable toJSON", (schema: Record<string, unknown>, shown: object) => {
+      schema.toJSON = () => shown;
+    }],
+    ["a non-enumerable toJSON", (schema: Record<string, unknown>, shown: object) => {
+      Object.defineProperty(schema, "toJSON", { value: () => shown, enumerable: false });
+    }],
+    ["an inherited toJSON", (schema: Record<string, unknown>, shown: object) => {
+      Object.setPrototypeOf(schema, { toJSON: () => shown });
+    }],
+  ] as const)("compiles a schema with %s from its own data, not its JSON form", (_label, disguise) => {
+    const compiler = createSchemaCompiler("ajv");
+    const stringSchema = { type: "object", properties: { n: { type: "string" } }, required: ["n"] };
+    const viaString = compiler.compile(stringSchema);
+    const integerSchema: Record<string, unknown> = {
+      type: "object",
+      properties: { n: { type: "integer" } },
+      required: ["n"],
+    };
+    disguise(integerSchema, structuredClone(stringSchema));
+    const viaInteger = compiler.compile(integerSchema);
+    expect(viaString({ n: "x" })).toBe(true);
+    expect(viaInteger({ n: 1 })).toBe(true);
+    expect(viaInteger({ n: "x" })).toBe(false);
+  });
+
+  it("compiles a schema with a non-enumerable keyword as Ajv reads it, not as its JSON form", () => {
+    const compiler = createSchemaCompiler("ajv");
+    expect(compiler.compile({ type: "integer" })(1)).toBe(true);
+    const bounded = { type: "integer" } as Record<string, unknown>;
+    Object.defineProperty(bounded, "minimum", { value: 5, enumerable: false });
+    const fresh = createSchemaCompiler("ajv").compile(bounded);
+    expect(compiler.compile(bounded)(1)).toBe(fresh(1));
+  });
 });

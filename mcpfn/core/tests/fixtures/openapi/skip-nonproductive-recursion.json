@@ -1,0 +1,165 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/self-sibling": {
+      "post": {
+        "operationId": "selfWithSibling",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelfObject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/self-any-of": {
+      "post": {
+        "operationId": "selfInAnyOf",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelfChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/mutual-all-of": {
+      "post": {
+        "operationId": "mutualAllOf",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Left"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/nested": {
+      "post": {
+        "operationId": "cycleBelowProperty",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "loop": {
+                    "$ref": "#/components/schemas/SelfObject"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tree": {
+      "post": {
+        "operationId": "productiveTree",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tree"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SelfObject": {
+        "$ref": "#/components/schemas/SelfObject",
+        "type": "object"
+      },
+      "SelfChoice": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/SelfChoice"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "Left": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Right"
+          }
+        ],
+        "type": "object"
+      },
+      "Right": {
+        "not": {
+          "$ref": "#/components/schemas/Left"
+        }
+      },
+      "Tree": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Node"
+          }
+        ],
+        "description": "recursion through a property is productive"
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tree"
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  }
+}
