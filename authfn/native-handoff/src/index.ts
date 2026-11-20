@@ -47,10 +47,11 @@ type ResolvedNativeHandoffPluginConfig = NativeHandoffPluginConfig & NativeHando
 export function authFnNativeHandoffPlugin(
   config: NativeHandoffPluginConfig = {}
 ): AuthFnPlugin<'nativeHandoff', NativeHandoffPluginRuntimeConfig, false> {
+  const options: NativeHandoffPluginConfig = { ...config };
   return {
     name: 'nativeHandoff',
-    schema: () => config.schema ?? createNativeHandoffSchema(),
-    routes: (ctx) => createNativeHandoffRoutes(ctx, config)
+    schema: () => options.schema ?? createNativeHandoffSchema(),
+    routes: (ctx) => createNativeHandoffRoutes(ctx, options)
   };
 }
 
@@ -97,7 +98,7 @@ function createNativeHandoffRoutes(
     codeTtlSeconds: pluginConfig.codeTtlSeconds,
     webHandoff: pluginConfig.webHandoff,
     requireWebHandoffVerifier: pluginConfig.requireWebHandoffVerifier,
-    ...readPluginRuntimeConfig<NativeHandoffPluginRuntimeConfig>(ctx, 'nativeHandoff')
+    now: readPluginRuntimeConfig<NativeHandoffPluginRuntimeConfig>(ctx, 'nativeHandoff')?.now
   };
 
   const routes: Route[] = [

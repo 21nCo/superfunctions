@@ -30,13 +30,14 @@ export type {
 export function authFnApiKeyPlugin(
   config: ApiKeyPluginConfig = {}
 ): AuthFnPlugin<'apiKey', ApiKeyPluginRuntimeConfig, false> {
-  assertPositiveSeconds(config.recentAuthenticationSeconds, 'recentAuthenticationSeconds');
-  assertPositiveSeconds(config.defaultExpiresInSeconds, 'defaultExpiresInSeconds');
-  assertPositiveSeconds(config.maxExpiresInSeconds, 'maxExpiresInSeconds');
+  const options: ApiKeyPluginConfig = { ...config };
+  assertPositiveSeconds(options.recentAuthenticationSeconds, 'recentAuthenticationSeconds');
+  assertPositiveSeconds(options.defaultExpiresInSeconds, 'defaultExpiresInSeconds');
+  assertPositiveSeconds(options.maxExpiresInSeconds, 'maxExpiresInSeconds');
   if (
-    config.defaultExpiresInSeconds !== undefined
-    && config.maxExpiresInSeconds !== undefined
-    && config.defaultExpiresInSeconds > config.maxExpiresInSeconds
+    options.defaultExpiresInSeconds !== undefined
+    && options.maxExpiresInSeconds !== undefined
+    && options.defaultExpiresInSeconds > options.maxExpiresInSeconds
   ) {
     throw new AuthFnConfigError('apiKey defaultExpiresInSeconds must not exceed maxExpiresInSeconds', {
       option: 'defaultExpiresInSeconds'
@@ -44,8 +45,8 @@ export function authFnApiKeyPlugin(
   }
   return {
     name: 'apiKey',
-    schema: () => config.schema ?? createApiKeySchema(),
-    routes: (ctx) => createApiKeyRoutes(ctx, config)
+    schema: () => options.schema ?? createApiKeySchema(),
+    routes: (ctx) => createApiKeyRoutes(ctx, options)
   };
 }
 

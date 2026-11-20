@@ -146,6 +146,25 @@ describe('web handoff verifier and route toggle (F-08)', () => {
     expect(unbound.status).toBe(400);
   });
 
+  it('ignores runtime fields and later caller changes that would relax the factory settings', async () => {
+    const config = createConfig();
+    const factoryOptions = { requireWebHandoffVerifier: true, webHandoff: true };
+    config.plugins = [authFnPasswordPlugin(), authFnMultiRegionPlugin(), authFnNativeHandoffPlugin(factoryOptions)];
+    factoryOptions.requireWebHandoffVerifier = false;
+    config.pluginRuntime = {
+      ...config.pluginRuntime,
+      nativeHandoff: { now: () => new Date(), requireWebHandoffVerifier: false } as never
+    };
+    const auth = createTestServer(config);
+    const token = await bearer(auth);
+    const unbound = await auth.router.handle(new Request('https://us.account.example.com/auth/handoff/web/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: '{}'
+    }));
+    expect(unbound.status).toBe(400);
+  });
+
   it('does not register the web handoff routes when webHandoff is false', async () => {
     const auth = createTestServer(createConfig(false));
     const token = await bearer(auth);
@@ -607,8 +626,10 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     }
   });
 
-  it('keeps the factory handoff code lifetime when runtime options carry extra fields', async () => {
-    const config = createConfig({ requireHandoffChallenge: true, handoffCodeTtlSeconds: 60 });
+  it('keeps the factory handoff code lifetime despite runtime extras and later caller changes', async () => {
+    const options: SocialOAuthPluginConfig = { requireHandoffChallenge: true, handoffCodeTtlSeconds: 60 };
+    const config = createConfig(options);
+    options.handoffCodeTtlSeconds = 3600;
     let clock = Date.parse('2026-11-21T00:00:00.000Z');
     const runtime = (config.pluginRuntime as Record<string, Record<string, unknown>>).socialOAuth;
     runtime.handoffCodeTtlSeconds = 3600;
