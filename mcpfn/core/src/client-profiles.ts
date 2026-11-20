@@ -413,11 +413,13 @@ function validateDefinitionContainers(schema: unknown, ajv: Ajv | Ajv2019 | Ajv2
 
 // Cache only syntax validation; identity, projection and ownership checks still run per request.
 const validProfileSchemas = new Set<string>();
-// A top-level $id that Ajv normalizes to its empty key (absent, "", "#" or "#/")
-// leaves a schema anonymous, as at runtime: Ajv compiles it with base "".
+// An absent or empty top-level $id leaves a schema anonymous, as at runtime. On
+// Ajv so does "#" or "#/", which it normalizes to the same empty key and compiles
+// with base ""; the edge engine keeps those IDs, so they stay named there.
 function namedSchemaId(schema: object): string | undefined {
   const id = (schema as Record<string, unknown>).$id;
-  return typeof id === "string" && !/^(?:#\/?)?$/.test(id) ? id : undefined;
+  if (typeof id !== "string" || id === "") return undefined;
+  return schemaEngine !== "cfworker" && (id === "#" || id === "#/") ? undefined : id;
 }
 function profileSchemaResources(schema: Record<string, unknown>, resources: readonly object[]): object[] {
   const rootId = namedSchemaId(schema);
@@ -847,10 +849,15 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // the resource being compiled: an owner whose path another resource shares
   // (literal "./shared" beside "shared", or two anonymous tools) yields that
   // resource's node at the same pointer, as Ajv does. Ajv parses the stored
-  // alias as a URI, so its pointer is percent-decoded even within the owner
-  // itself: an ID under definitions["%41"] names definitions.A, never itself.
-  const ajvAlias = (node: object, top: string): unknown =>
-    ajvSchema(topPath(scopes.get(node)!.top), fragment(`#${pointerText(node)}`), top);
+  // alias with the runtime URI resolver and decodes each token, even within the
+  // owner itself: an ID under definitions["%41"] names definitions.A, while a
+  // stray "%" (as in "100%") stays literal.
+  const ajvAlias = (node: object, top: string): unknown => {
+    let pointer: string;
+    try { pointer = (schemaUriResolver.parse(`#${pointerText(node)}`).fragment ?? "").split("/").map(decodeURIComponent).join("/"); }
+    catch { throw invalidCatalog("Invalid schema reference encoding"); }
+    return ajvSchema(topPath(scopes.get(node)!.top), pointer, top);
+  };
   // Ajv's order (vocabularies/core/ref.ts, compile/index.ts resolveRef): "#"
   // from the compiled root's own base; then an exact registry key (a top-level
   // resource, or a nested ID or anchor alias); then resolveSchema; then the

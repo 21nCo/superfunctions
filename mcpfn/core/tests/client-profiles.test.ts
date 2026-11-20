@@ -1785,6 +1785,44 @@ describe("anonymous schema scopes beside registered schema resources", () => {
     await expect(run(consumer("boolean"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
   });
 
+  // The runtime URI resolver escapes a stray "%" in a stored alias pointer, so
+  // these keys name their literal definitions; retyping that definition matters.
+  it.each([
+    ["a named tool", { $id: "own" }, "100%", "nested", "nested"],
+    ["an anonymous tool", {}, "%zz", "nested", "nested"],
+    ["a named anchor", { $id: "own" }, "a%4", "#node", "#node"],
+  ] as const)("compares a nested ID under a key with a stray percent sign in %s as Ajv resolves it", async (_label, identity, key, id, reference) => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const schema = (type: string) => ({ ...identity, type: "object" as const, properties: { v: { $ref: reference } }, definitions: { [key]: { $id: id, type } } });
+    const validate = createSchemaCompiler("ajv").compile(schema("string"));
+    expect([validate({ v: "ok" }), validate({ v: 1 })]).toEqual([true, false]);
+    const run = (projected?: object) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "own", inputSchema: schema("string") }], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "own", inputSchema: projected as McpFnObjectSchema }] } : {}) },
+    } });
+    expect((await run()).tools.map((tool) => tool.name)).toEqual(["own"]);
+    await expect(run(schema("number"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
+  });
+
+  // The edge engine keeps a root $id "#/" and binds the reference "#/" to the root
+  // itself, so the comparison must not treat that root as anonymous and walk
+  // "#/" as a pointer to the empty-name field: it refuses the root fragment.
+  it("refuses a root $id of #/ on the edge engine instead of walking it as a pointer", async () => {
+    vi.resetModules();
+    vi.stubGlobal("WebSocketPair", class {});
+    try {
+      const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+      const { createSchemaCompiler: edgeCompiler } = await import("../src/validation.js");
+      const schema = { $id: "#/", type: "object" as const, "": { type: "string" }, properties: { v: { $ref: "#/" } } };
+      const validate = edgeCompiler("cfworker").compile(schema);
+      expect([validate({ v: {} }), validate({ v: "text" })]).toEqual([true, false]);
+      await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "own", inputSchema: schema }], resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "noop", version: "1", matches: () => true },
+      } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+    } finally { vi.unstubAllGlobals(); vi.resetModules(); }
+  });
+
   // Named tools "a" and "b" each register "address" with a different alias text,
   // so the target is the last registered one: references to it are refused.
   it("refuses a nested ID that two named resources register at different aliases", async () => {
