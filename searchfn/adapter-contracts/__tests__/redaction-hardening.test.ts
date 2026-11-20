@@ -1275,3 +1275,89 @@ describe("round-22 one quote state machine per URL secret and fail-closed userin
     SCALING_TIMEOUT,
   );
 });
+
+describe("round-23 only an authority's userinfo is masked first and never ends before the key/value mask", () => {
+  const first = ["test", "first"].join("-");
+  const middle = ["test", "middle"].join("-");
+  const tail = ["test", "tail"].join("-");
+  const secret = ["test", "secret"].join("-");
+  const tokenKey = ["to", "ken"].join("");
+  const authorizationKey = ["author", "ization"].join("");
+  const href = (url: string) => String(redactSensitive(new URL(url)));
+  const embedded = (user: string, rest: string) => [user, rest].join(":");
+
+  it("never lets userinfo cross ?, # or a double quote in strings", () => {
+    const cases: Array<[string, string]> = [
+      [
+        `request https://api.example.test?${tokenKey}='${[first, middle].join("@")}#${tail}' state=ok`,
+        `request https://api.example.test?${tokenKey}='[REDACTED]' state=ok`,
+      ],
+      [
+        `{"url":"https://api.example.test","${PW}":"${["user", `host ${secret}`].join("@")}"}`,
+        `{"url":"https://api.example.test","${PW}":"[REDACTED]"}`,
+      ],
+      [
+        `postgres://db.test?user=app&${PW}=@${secret} failed`,
+        `postgres://db.test?user=app&${PW}=[REDACTED] failed`,
+      ],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      for (const hidden of [first, middle, tail, secret]) expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("masks secret-holding userinfo through its quote and the key/value mask in strings", () => {
+    const cases: Array<[string, string]> = [
+      [`url=https://api.example.test,${tokenKey}='${["user", `host ${secret}`].join("@")}'`, "url=https://[REDACTED]"],
+      [
+        `x https://${embedded("a", `${authorizationKey}=Bearer`)}@h ${tail} more\nnext=1`,
+        "x https://[REDACTED]\nnext=1",
+      ],
+      [`connect https://${embedded("u", `${tokenKey}=a`)}@h/p?x=1&q=${tail} failed`, "connect https://[REDACTED] failed"],
+      [`connect https://${embedded("u", `${tokenKey}='a`)}@h ${tail}' failed`, "connect https://[REDACTED] failed"],
+      [`x https://h,${tokenKey}='a@b ${tail}\nnext=1`, "x https://[REDACTED]\nnext=1"],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain(tail);
+    }
+  });
+
+  it("masks a sensitive key with an empty value before the @ and quoted values across # in URLs", () => {
+    const cases: Array<[string, string]> = [
+      [
+        `https://example.test/#next=https://api.example.test&${tokenKey}='${[first, middle].join("@")}#${tail}'&state=ok`,
+        "https://example.test/#next=https://[REDACTED]&state=ok",
+      ],
+      [`https://example.test/?next=https://a.test&${tokenKey}=@${secret}&q=1`, "https://example.test/?next=https://[REDACTED]&q=1"],
+      [`https://example.test/#next=https://a.test&${tokenKey}=x@h#${tail}&q=1`, "https://example.test/#next=https://[REDACTED]&q=1"],
+      [`postgres://db.test?${PW}=@${secret}`, `postgres://db.test?${PW}=[REDACTED]`],
+    ];
+    for (const [url, expected] of cases) {
+      const output = href(url);
+      expect(output).toBe(expected);
+      for (const hidden of [first, middle, tail, secret]) expect(output).not.toContain(hidden);
+    }
+  });
+
+  it(
+    "masks userinfo in linear time in both entry points",
+    () => {
+      const emptyValue = `https://a.test&${tokenKey}=@x `;
+      const quoted = `${tokenKey}='a@b `;
+      expectLinearScaling(64_000, (n) => {
+        expect(redactSensitiveString(emptyValue.repeat(n))).toBe("https://[REDACTED] ".repeat(n));
+        expect(redactSensitiveString(`x=https://h,${quoted.repeat(n)}`)).toBe("x=https://[REDACTED]");
+        expect(href(`https://example.test/?${`n=${emptyValue.trim()}&`.repeat(n)}`)).toBe(
+          `https://example.test/?${"n=https://[REDACTED]&".repeat(n)}`,
+        );
+        expect(href(`https://example.test/#x=https://h,${quoted.repeat(n)}`)).not.toContain("@b");
+      });
+    },
+    SCALING_TIMEOUT,
+  );
+});

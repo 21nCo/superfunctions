@@ -56,12 +56,15 @@ const SENSITIVE_KEY_SEPARATOR_FIND =
   /\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?["']?\s*[:=]/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
-// Embedded URL or Postgres userinfo (see maskUserinfo).
-const USERINFO_CREDENTIALS = /((?:https?|postgres(?:ql)?):\/\/)([^\s/@]+)@/gi;
-// The end of the run after a userinfo @ or of a following URL &-part.
-const USERINFO_RUN_END = /[\s&#]/g;
-// The end of a span whose quote never closes.
-const USERINFO_OPEN_QUOTE_END = /[\s#]/g;
+// Embedded URL or Postgres userinfo (see maskUserinfo): only an authority's
+// userinfo, so a match never crosses /, ?, #, whitespace or a double quote.
+const USERINFO_CREDENTIALS = /((?:https?|postgres(?:ql)?):\/\/)([^\s/@?#"]+)@/gi;
+// KEY_VALUE_SECRET tried at one position (see keyValueMaskEnd).
+const KEY_VALUE_SECRET_AT = new RegExp(KEY_VALUE_SECRET.source, "iy");
+// The end of a chunk of the text after a userinfo @: in a string, whitespace,
+// & or #; in a URL href part (the text before its first # or the fragment), &.
+const STRING_USERINFO_CHUNK_END = /[\s&#]/g;
+const URL_USERINFO_CHUNK_END = /&/g;
 const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
 const REDACTED = "[REDACTED]";
 const ENCODED_REDACTED = /%5BREDACTED%5D/g;
@@ -580,34 +583,47 @@ function maskQuotedUrlComponents(href: string): string {
 /**
  * The one userinfo rule of both entry points (redactUrl and
  * redactSensitiveString), applied before the key/value pass so that pass never
- * splits userinfo. Userinfo (USERINFO_CREDENTIALS) that holds no secret, as
- * written or decoded, becomes scheme[REDACTED]@ and its host is kept. Userinfo
- * that holds a secret fails closed: scheme[REDACTED] replaces it, its @ and the
- * run after the @ (to whitespace, & or #), so no tail of the secret's value is
- * printed and the host is lost. When the secret's value, decoded and read from
- * its own start, leaves a quote open (see scanQuotes), the span also covers
- * each following &-part until the quote closes, or the run to whitespace or #
- * when it never closes. Matches never overlap and each character is read a
- * bounded number of times, so this stays linear.
+ * splits userinfo. Only an authority's userinfo counts (USERINFO_CREDENTIALS
+ * never crosses /, ?, #, whitespace or a double quote). Userinfo that holds no
+ * secret becomes scheme[REDACTED]@ and its host is kept. Userinfo holds a
+ * secret when the string redactor finds one in it as written or decoded, or
+ * when a sensitive key and its separator appear in it as written or decoded
+ * (its value then starts after the @, as in a.test&token=@abc). Such userinfo
+ * fails closed: scheme[REDACTED] replaces it, its @ and the chunk after the @
+ * (see STRING_USERINFO_CHUNK_END and URL_USERINFO_CHUNK_END), so no tail of
+ * the secret's value is printed and the host is lost. When the secret's value,
+ * decoded and read from its own start, leaves a quote open at the @ (see
+ * scanQuotes), the span also covers each following chunk until a chunk
+ * closes the quote (same character and escape depth), or, with no close, to
+ * the end of the line (in a URL, the end of the text given). In a string the
+ * span also never ends before the key/value pass would end a mask that starts
+ * inside the userinfo (see keyValueMaskEnd), so this step never prints a
+ * character that pass would mask. In a URL, & separates parameters, so a
+ * value without an open quote ends at the next &. Matches never overlap and
+ * each character is read a bounded number of times, so this stays linear.
  */
-function maskUserinfo(input: string): string {
+function maskUserinfo(input: string, inUrl = false): string {
+  const chunkEnd = inUrl ? URL_USERINFO_CHUNK_END : STRING_USERINFO_CHUNK_END;
   let output = "";
   let position = 0;
   const pattern = USERINFO_CREDENTIALS;
   pattern.lastIndex = 0;
   for (let match = pattern.exec(input); match !== null; match = pattern.exec(input)) {
     const [whole, scheme, userinfo] = match;
+    const userinfoStart = match.index + scheme.length;
     let end = match.index + whole.length;
     output += input.slice(position, match.index);
-    if (holdsSecret(userinfo, true)) {
-      end = runEnd(input, end, USERINFO_RUN_END);
-      let state = userinfoOpenQuote(input.slice(match.index + scheme.length, end));
-      while (state !== undefined && input[end] === URL_PARAM_SEPARATOR) {
-        const partEnd = runEnd(input, end + 1, USERINFO_RUN_END);
-        state = continueQuote(input.slice(end + 1, partEnd), state);
-        end = partEnd;
+    if (userinfoHoldsSecret(userinfo)) {
+      let state = userinfoOpenQuote(userinfo);
+      let chunkStart = end;
+      for (;;) {
+        end = runEnd(input, chunkStart, chunkEnd);
+        if (state !== undefined) state = continueQuote(input.slice(chunkStart, end), state);
+        const next = input[end];
+        if (state === undefined || end >= input.length || next === "\r" || next === "\n") break;
+        chunkStart = end + 1;
       }
-      if (state !== undefined) end = runEnd(input, end, USERINFO_OPEN_QUOTE_END);
+      if (!inUrl) end = Math.max(end, keyValueMaskEnd(input, userinfoStart, userinfo));
       output += `${scheme}${REDACTED}`;
     } else {
       output += `${scheme}${REDACTED}@`;
@@ -619,6 +635,48 @@ function maskUserinfo(input: string): string {
   return output + input.slice(position);
 }
 
+/**
+ * Whether userinfo holds a secret: the string redactor finds one in it as
+ * written or decoded, or a sensitive key and its separator appear in it as
+ * written or decoded, with or without a value before the @.
+ */
+function userinfoHoldsSecret(userinfo: string): boolean {
+  if (holdsSecret(userinfo, true)) return true;
+  for (const form of [userinfo, decodeUrlText(userinfo)]) {
+    SENSITIVE_KEY_SEPARATOR_FIND.lastIndex = 0;
+    if (SENSITIVE_KEY_SEPARATOR_FIND.test(form)) return true;
+  }
+  return false;
+}
+
+/**
+ * The end of the last key/value mask (see redactKeyValues) that starts inside
+ * userinfo, which begins at start in input; start when none does. Every such
+ * mask starts at a sensitive key whose key and separator lie inside the
+ * userinfo (a key holds no @ or whitespace), so KEY_VALUE_SECRET is only tried
+ * where SENSITIVE_KEY_SEPARATOR_FIND finds one in the userinfo, and the scan
+ * resumes after each mask, as that pass does.
+ */
+function keyValueMaskEnd(input: string, start: number, userinfo: string): number {
+  let maskEnd = start;
+  let offset = 0;
+  while (offset < userinfo.length) {
+    SENSITIVE_KEY_SEPARATOR_FIND.lastIndex = offset;
+    const key = SENSITIVE_KEY_SEPARATOR_FIND.exec(userinfo);
+    if (key === null) break;
+    KEY_VALUE_SECRET_AT.lastIndex = start + key.index;
+    const match = KEY_VALUE_SECRET_AT.exec(input);
+    if (match === null) {
+      offset = key.index + 1;
+      continue;
+    }
+    const end = keyValueMask(input, match).end;
+    maskEnd = Math.max(maskEnd, end);
+    offset = end - start;
+  }
+  return maskEnd;
+}
+
 /** The end of the run of text from position that ends before a stop match. */
 function runEnd(input: string, position: number, stop: RegExp): number {
   stop.lastIndex = position;
@@ -626,9 +684,9 @@ function runEnd(input: string, position: number, stop: RegExp): number {
 }
 
 /**
- * The open quote of the secret value in masked userinfo and the run after its
- * @, decoded and read from after the first sensitive key and its separator (or
- * from its start when the key is only found as written).
+ * The open quote of the secret value at the @ of masked userinfo, decoded and
+ * read from after the first sensitive key and its separator (or from its start
+ * when the key is only found as written).
  */
 function userinfoOpenQuote(text: string): UrlQuote | undefined {
   const decoded = decodeUrlTextWithDepth(text);
@@ -644,7 +702,9 @@ function userinfoOpenQuote(text: string): UrlQuote | undefined {
  * Redacts a URL and keeps every delimiter of its href, including an empty ?
  * or #. Its first step is the pin's step: the base URL's own userinfo (any
  * scheme) becomes [REDACTED]@, embedded URL and Postgres userinfo is masked
- * (see maskUserinfo) and the whole href goes through the string
+ * (see maskUserinfo; the text before the first # and the fragment are masked
+ * separately, as URL text, where & ends a value) and the whole href goes
+ * through the string
  * redactor, so key/value secrets are masked before any & split. Before that
  * pass, and after the userinfo masking, maskQuotedUrlSpans judges each
  * parameter of the original query and fragment on its decoded text: it masks
@@ -660,7 +720,12 @@ function redactUrl(url: URL): string {
   base.username = "";
   base.password = "";
   const href = hasUserinfo ? base.href.replace("//", `//${REDACTED}@`) : base.href;
-  const redacted = redactSensitiveString(maskQuotedUrlComponents(maskUserinfo(href)));
+  const hashStart = href.indexOf("#");
+  const masked =
+    hashStart === -1
+      ? maskUserinfo(href, true)
+      : `${maskUserinfo(href.slice(0, hashStart), true)}#${maskUserinfo(href.slice(hashStart + 1), true)}`;
+  const redacted = redactSensitiveString(maskQuotedUrlComponents(masked));
   return mapUrlComponents(redacted, maskUrlComponent);
 }
 
@@ -840,6 +905,40 @@ function foldEnd(input: string, end: number): number {
   return foldedContinuationEnd(input, lineEnd);
 }
 
+/**
+ * The mask of one KEY_VALUE_SECRET match: the end of the masked span (which
+ * may extend past the match, see the rules above KEY_VALUE_SECRET) and its
+ * replacement.
+ */
+function keyValueMask(input: string, match: RegExpExecArray): { end: number; replacement: string } {
+  const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme, credential] = match;
+  let end = match.index + whole.length;
+  // The scheme word is followed by a new key or assignment, not a credential.
+  const standsAlone = scheme !== undefined && schemeWordStandsAlone(input, end - credential.length, end);
+  let replacement: string;
+  if (valueQuote) {
+    replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
+  } else if (openQuote) {
+    // An unclosed quoted authorization or scheme-labelled value may continue
+    // on folded lines, as its unquoted form does.
+    const quoted = input.slice(match.index + key.length + keyQuote.length + separator.length + 1, end);
+    if (AUTHORIZATION_KEY.test(key) || QUOTED_SCHEME_START.test(quoted)) end = foldEnd(input, end);
+    replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
+  } else if (AUTHORIZATION_KEY.test(key)) {
+    end = foldEnd(input, endOfLine(input, end));
+    const label = scheme !== undefined && !standsAlone && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
+    replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
+  } else {
+    // The word may begin a credential holding =, :, quotes or spaces; fail
+    // closed and never resume scanning inside the text after it.
+    if (scheme !== undefined && (standsAlone || !CREDENTIAL_TOKEN.test(credential))) end = endOfLine(input, end);
+    // A scheme-labelled credential may continue on folded lines.
+    if (scheme !== undefined || BARE_SCHEME_WORD.test(credential)) end = foldEnd(input, end);
+    replacement = `${key}${keyQuote}${separator}${REDACTED}`;
+  }
+  return { end, replacement };
+}
+
 function redactKeyValues(input: string): string {
   // The shared global pattern is reset here; nothing below re-enters this
   // function, so its lastIndex is never shared between two scans.
@@ -849,31 +948,7 @@ function redactKeyValues(input: string): string {
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(input)) !== null) {
-    const [whole, key, keyQuote, separator, valueQuote, , openQuote, scheme, credential] = match;
-    let end = match.index + whole.length;
-    // The scheme word is followed by a new key or assignment, not a credential.
-    const standsAlone = scheme !== undefined && schemeWordStandsAlone(input, end - credential.length, end);
-    let replacement: string;
-    if (valueQuote) {
-      replacement = `${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
-    } else if (openQuote) {
-      // An unclosed quoted authorization or scheme-labelled value may continue
-      // on folded lines, as its unquoted form does.
-      const quoted = input.slice(match.index + key.length + keyQuote.length + separator.length + 1, end);
-      if (AUTHORIZATION_KEY.test(key) || QUOTED_SCHEME_START.test(quoted)) end = foldEnd(input, end);
-      replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
-    } else if (AUTHORIZATION_KEY.test(key)) {
-      end = foldEnd(input, endOfLine(input, end));
-      const label = scheme !== undefined && !standsAlone && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
-      replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
-    } else {
-      // The word may begin a credential holding =, :, quotes or spaces; fail
-      // closed and never resume scanning inside the text after it.
-      if (scheme !== undefined && (standsAlone || !CREDENTIAL_TOKEN.test(credential))) end = endOfLine(input, end);
-      // A scheme-labelled credential may continue on folded lines.
-      if (scheme !== undefined || BARE_SCHEME_WORD.test(credential)) end = foldEnd(input, end);
-      replacement = `${key}${keyQuote}${separator}${REDACTED}`;
-    }
+    const { end, replacement } = keyValueMask(input, match);
     output += input.slice(cursor, match.index) + replacement;
     cursor = end;
     pattern.lastIndex = end;
