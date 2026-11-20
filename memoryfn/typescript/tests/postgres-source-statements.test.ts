@@ -63,7 +63,7 @@ describe('PostgresAdapter source statements', () => {
     expect(statements).toHaveLength(0);
   });
 
-  it('keeps a replacement at every limit to one statement of under 260 MiB of parameters', async () => {
+  it('keeps a replacement at every limit (distinct tags) to one statement of under 260 MiB of parameters', async () => {
     const { adapter, statements } = recorder();
     const containerTags = Array.from({ length: pgEntry.MAX_SOURCE_TAG_BYTES / 1024 }, (_, index) => `${index}`.padEnd(1024, 't'));
     // Each chunk is its share of the byte limit: type 'document', metadata '{}' and content.
