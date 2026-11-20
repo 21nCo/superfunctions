@@ -24,6 +24,19 @@ export interface SourceReplace extends SourceScope {
   /** Each chunk must carry the source's tenantId and tag set; chunkIndex is its array position. */
   chunks: MemoryInsert[];
 }
+
+// Input limits shared by every adapter. A source call over a limit is rejected
+// with MEMORY_SOURCE_LIMIT_EXCEEDED before any lock or write.
+/** Most chunks one replaceSource call may write. */
+export const MAX_SOURCE_CHUNKS = 16_384;
+/**
+ * Most UTF-8 bytes one replaceSource call may write: the content hash and the
+ * scope tags once, plus each chunk's id, type, content, JSON-serialized metadata
+ * and JSON-serialized embedding, as given.
+ */
+export const MAX_SOURCE_REPLACE_BYTES = 256 * 1024 * 1024;
+/** Most UTF-8 bytes of a source's tenantId and of its sourceKey, each. */
+export const MAX_SOURCE_IDENTITY_BYTES = 1024;
 export interface StorageAdapter {
   /** Fixed vector dimension, shared across bundled entrypoints. */
   readonly embeddingDimensions?: number;
@@ -83,6 +96,25 @@ function isSourceText(value: unknown): value is string {
 }
 
 /**
+ * UTF-8 length of `value` as PostgreSQL stores it (a lone surrogate becomes the
+ * 3-byte U+FFFD), counted without encoding it or any runtime-specific API.
+ */
+function utf8Bytes(value: string): number {
+  let bytes = value.length;
+  for (let index = 0; index < value.length; index++) {
+    const unit = value.charCodeAt(index);
+    if (unit < 0x80) continue;
+    if (unit < 0x800) { bytes += 1; continue; }
+    // A surrogate pair is 2 units and 4 bytes; any other unit here is 3 bytes.
+    if (unit >= 0xD800 && unit <= 0xDBFF && (value.charCodeAt(index + 1) & 0xFC00) === 0xDC00) index++;
+    bytes += 2;
+  }
+  return bytes;
+}
+
+function sourceLimitExceeded(): Error { return new Error('MEMORY_SOURCE_LIMIT_EXCEEDED'); }
+
+/**
  * Source tags must all be non-empty, storable strings. Unlike Array#some, this
  * visits the holes of a sparse array, which would otherwise be stored as missing tags.
  */
@@ -108,6 +140,7 @@ export function requireSourceScope(input: SourceScope): SourceSnapshot {
   if (!isSourceText(tenantId)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
   if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
+  if (utf8Bytes(tenantId) > MAX_SOURCE_IDENTITY_BYTES || utf8Bytes(sourceKey) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
   const scope: SourceScope = { tenantId, containerTags: [...containerTags], sourceKey };
   return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
 }
@@ -117,19 +150,32 @@ export function sameTagSet(left: string[], right: string[]): boolean {
   return a.size === b.size && [...a].every(tag => b.has(tag));
 }
 
+/** Bytes a chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
+function chunkBytes(chunk: MemoryInsert): number {
+  const text = (value: unknown) => typeof value === 'string' ? utf8Bytes(value) : 0;
+  return text(chunk.id) + text(chunk.type) + text(chunk.content) + utf8Bytes(JSON.stringify(chunk.metadata ?? {}))
+    + (chunk.embedding ? utf8Bytes(JSON.stringify(chunk.embedding)) : 0);
+}
+
 /**
  * Validates a replacement before any write (hash present, every chunk in the
- * source's scope) and copies the scope and chunks it will write.
+ * source's scope, within the source limits) and copies the scope and chunks it
+ * will write.
  */
 export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapshot {
   const { scope, tags } = requireSourceScope(input);
   const { contentHash, chunks } = input;
   if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
-  const copies = [...chunks].map((chunk): MemoryInsert => {
+  const given = [...chunks];
+  if (given.length > MAX_SOURCE_CHUNKS) throw sourceLimitExceeded();
+  let bytes = utf8Bytes(contentHash) + scope.containerTags.reduce((total, tag) => total + utf8Bytes(tag), 0);
+  const copies = given.map((chunk): MemoryInsert => {
     if (!chunk || chunk.tenantId !== scope.tenantId) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
     requireSourceTags(chunk.containerTags);
     if (!sameTagSet(chunk.containerTags, scope.containerTags)) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
+    bytes += chunkBytes(chunk);
+    if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
     return {
       ...chunk, tenantId: scope.tenantId, containerTags: [...scope.containerTags],
       ...(chunk.embedding ? { embedding: [...chunk.embedding] } : {}),

@@ -5,7 +5,8 @@ import { describeSourceContract } from './source-contract';
 let storage: MemoryStorageAdapter;
 beforeEach(() => { storage = new MemoryStorageAdapter(); });
 
-describeSourceContract('MemoryStorageAdapter', () => storage);
+describeSourceContract('MemoryStorageAdapter', () => storage,
+  async () => (storage as unknown as { relationships: Map<string, unknown> }).relationships.size);
 
 it('clears tombstoned chunk content and drops their relationships', async () => {
   const scope = { tenantId: 'tenant-a', containerTags: ['docs'], sourceKey: 'guide.md' };

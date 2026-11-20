@@ -9,26 +9,12 @@ import { and, eq, sql, isNull, or, arrayContains, inArray, is, type SQL } from '
 import { PgTransaction } from 'drizzle-orm/pg-core';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
-/** Characters of row JSON per json parameter of a source replacement. */
+/**
+ * Characters of row JSON per json parameter of a source replacement. The row
+ * JSON holds only fixed-shape fields, and MAX_SOURCE_REPLACE_BYTES bounds the
+ * embeddings it carries.
+ */
 const JSON_PART_LENGTH = 1 << 26;
-/**
- * A replacement of at most this many chunks sends each chunk's type, content and
- * metadata as their own parameters, unescaped, as the per-column insert did (it
- * could bind about 5,400 chunks). A larger one sends as its own parameter only content
- * of at least SIDE_TEXT_LENGTH characters, so its bind count stays below the
- * driver limit.
- */
-const SIDE_TEXT_ROWS = 1 << 14;
-const SIDE_TEXT_LENGTH = 1 << 20;
-
-/**
- * postgres-js sends a text parameter as UTF-8, which stores a lone surrogate as
- * U+FFFD. JSON would carry it as an escape that PostgreSQL rejects, so a text
- * column sent inside a json payload gets the same replacement first.
- */
-function storedText(value: string): string {
-  return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
-}
 
 // We assume the DB passed is compatible with PostgresJsDatabase schema
 export class PostgresAdapter implements StorageAdapter {
@@ -332,44 +318,35 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   /**
-   * A SELECT of the replacement rows whose bind count stays below the driver
-   * limit. The tenant, tags (in the column's own array encoding), source key and
-   * content hash are bound once. Each row travels as a JSON array in json
-   * parameters of at most JSON_PART_LENGTH characters; values chosen by SIDE_TEXT_ROWS and SIDE_TEXT_LENGTH travel as
-   * their own parameters, unescaped, joined to the row by chunk index. Up to
-   * SIDE_TEXT_ROWS chunks, the type, content and metadata of every chunk travel
-   * as they did in the per-column insert, and the row JSON holds only fixed-size
-   * values, so the bound values are no larger than that insert's.
-   * Columns follow the table order drizzle inserts in.
+   * A SELECT of the replacement rows in one statement. The tenant, tags (in the
+   * column's own array encoding), source key and content hash are bound once.
+   * Each chunk's type, content and metadata travel as their own parameters,
+   * unescaped, as in a per-column insert: at most 3 x MAX_SOURCE_CHUNKS binds.
+   * The other fields (chunk index, id, embedding, is_latest, timestamps) travel
+   * as JSON arrays in json parameters of at most JSON_PART_LENGTH characters,
+   * joined to the text by chunk index. Columns follow the table order drizzle
+   * inserts in.
    */
   private replacementRows(scope: SourceScope, contentHash: string, values: Array<ReturnType<PostgresAdapter['toRow']>>) {
-    const allSide = values.length <= SIDE_TEXT_ROWS;
-    const side: SQL[] = [];
+    const text: SQL[] = [];
     const parts: string[][] = [[]];
     let partLength = 0;
     values.forEach((row, chunkIndex) => {
-      const sideContent = allSide || row.content.length >= SIDE_TEXT_LENGTH;
-      const index = sql.raw(String(chunkIndex));
-      if (allSide) side.push(sql`(${index}, ${row.type}::text, ${row.content}::text, ${JSON.stringify(row.metadata)}::text::jsonb)`);
-      else if (sideContent) side.push(sql`(${index}, NULL::text, ${row.content}::text, NULL::jsonb)`);
-      const json = JSON.stringify([
-        chunkIndex, row.id ?? null, allSide ? null : storedText(row.type), sideContent ? null : storedText(row.content),
-        row.embedding ? JSON.stringify(row.embedding) : null, allSide ? null : row.metadata, row.isLatest,
-        row.createdAt.toISOString(), row.updatedAt.toISOString(),
-      ]);
+      text.push(sql`(${sql.raw(String(chunkIndex))}, ${row.type}::text, ${row.content}::text, ${JSON.stringify(row.metadata)}::text::jsonb)`);
+      const json = JSON.stringify([chunkIndex, row.id ?? null, row.embedding ? JSON.stringify(row.embedding) : null,
+        row.isLatest, row.createdAt.toISOString(), row.updatedAt.toISOString()]);
       if (partLength && partLength + json.length > JSON_PART_LENGTH) { parts.push([]); partLength = 0; }
       parts[parts.length - 1].push(json); partLength += json.length + 1;
     });
     const partValues = sql.join(parts.map(part => sql`(${`[${part.join(',')}]`}::text::json)`), sql`, `);
-    const fields = ['chunk_index', 'id', 'type', 'content', 'embedding', 'metadata', 'is_latest', 'created_at', 'updated_at']
+    const fields = ['chunk_index', 'id', 'embedding', 'is_latest', 'created_at', 'updated_at']
       .map((name, index) => sql.raw(`'${name}', e->${index}`));
     return sql`SELECT coalesce(r.id, gen_random_uuid()), ${scope.tenantId}::text,
-      ${sql.param(scope.containerTags, memories.containerTags)}::text[],
-      ${side.length ? sql`coalesce(side.type, r.type), coalesce(side.content, r.content)` : sql`r.type, r.content`}, r.embedding,
-      ${side.length ? sql`coalesce(side.metadata, r.metadata)` : sql`r.metadata`}, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
+      ${sql.param(scope.containerTags, memories.containerTags)}::text[], t.type, t.content, r.embedding,
+      t.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
       CROSS JOIN json_populate_record(NULL::${memories}, json_build_object(${sql.join(fields, sql`, `)})) AS r
-      ${side.length ? sql`LEFT JOIN (VALUES ${sql.join(side, sql`, `)}) AS side(chunk_index, type, content, metadata) ON side.chunk_index = r.chunk_index` : sql``}`;
+      JOIN (VALUES ${sql.join(text, sql`, `)}) AS t(chunk_index, type, content, metadata) ON t.chunk_index = r.chunk_index`;
   }
 
   async deleteSource(input: SourceScope): Promise<number> {

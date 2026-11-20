@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { Cache, type MutationOption } from 'drizzle-orm/cache/core';
 import postgres from 'postgres';
 import { PostgresAdapter } from '../src/storage/pg/adapter';
+import { MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES } from '../src/storage/adapter';
 import { MemoryFn } from '../src/core/pipeline';
 import * as schema from '../src/storage/pg/schema';
 import { describeSourceContract } from './source-contract';
@@ -38,7 +39,7 @@ suite('Postgres lifecycle integration', () => {
   });
   beforeEach(async () => { await client`TRUNCATE memory_relationships, memories`; });
   afterAll(async () => { await client?.end(); });
-  describeSourceContract('PostgresAdapter', () => adapter);
+  describeSourceContract('PostgresAdapter', () => adapter, async () => (await client`SELECT 1 FROM memory_relationships`).length);
   it('re-runs every migration and keeps the source columns and live-source index', async () => {
     for (const name of migrations) {
       await client.unsafe(await readFile(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
@@ -164,25 +165,26 @@ suite('Postgres lifecycle integration', () => {
     })).rejects.toThrow('abort');
     expect(await cached.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
   });
-  it('keeps the previous chunks and relationships when a replacement above the bind limit fails', async () => {
+  it('keeps the previous chunks and relationships when a replacement at the chunk limit fails', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
     const chunk = (content: string) => ({ tenantId: 'a', containerTags: ['docs'], content });
     const [source] = await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk('old-1'), chunk('old-2')] });
     const [plain] = await adapter.insertMemories([chunk('plain')]);
     await adapter.insertRelationships([{ tenantId: 'a', containerTags: ['docs'], fromId: plain.id, toId: source.id }]);
-    const many = Array.from({ length: 7000 }, (_, index) => chunk(`chunk ${index}`));
+    const many = Array.from({ length: MAX_SOURCE_CHUNKS }, (_, index) => ({ ...chunk(`chunk ${index}\n"quoted"\u0001`), type: `type "${index}"` }));
     const duplicateId = '00000000-0000-4000-8000-000000000001';
-    const failing = many.map((row, index) => index === 0 || index === 6999 ? { ...row, id: duplicateId } : row);
+    const failing = many.map((row, index) => index === 0 || index === MAX_SOURCE_CHUNKS - 1 ? { ...row, id: duplicateId } : row);
     await expect(adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: failing })).rejects.toThrow();
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-1', chunkCount: 2 });
-    expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(1);
+    expect((await client`SELECT content FROM memories WHERE deleted_at IS NULL AND source_key IS NOT NULL ORDER BY chunk_index`).map(row => row.content)).toEqual(['old-1', 'old-2']);
+    expect(await client`SELECT 1 FROM memory_relationships WHERE to_id = ${source.id}`).toHaveLength(1);
     await adapter.replaceSource({ ...scope, contentHash: 'hash-2', chunks: many });
-    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: MAX_SOURCE_CHUNKS });
     expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(0);
-  });
+  }, 120_000);
   it('stores chunk text and source fields sent as their own parameters exactly', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
-    // Control characters grow six-fold under JSON escaping; a small replacement sends every text unescaped.
+    // Control characters grow six-fold under JSON escaping; every replacement sends its text unescaped.
     const long = String.fromCharCode(1).repeat(1 << 20) + 'end';
     const metadata = { note: `${String.fromCharCode(1).repeat(1024)}"quoted"`, nested: { list: [1, 'two'] } };
     const chunks = [{ content: 'short' }, { content: long, metadata }, { content: long + 'er' }, { content: 'tail\u0001' }]
@@ -196,21 +198,23 @@ suite('Postgres lifecycle integration', () => {
     expect(rows.map(row => row.metadata)).toEqual([{}, metadata, {}, {}]);
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash, chunkCount: 4 });
   });
-  it('replaces a source with more chunks than it sends as separate text parameters', async () => {
+  it('replaces an escape-heavy source at the chunk limit and the byte limit', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs', 'team', 'docs'], sourceKey: 'guide.md' };
-    // Above 16,384 chunks short text travels inside the row JSON and only content of 1 Mi characters or more on its own.
-    const long = (mark: string) => `${mark}${String.fromCharCode(1).repeat(1 << 20)}`;
-    const many = Array.from({ length: 20000 }, (_, index) => ({
-      tenantId: 'a', containerTags: ['team', 'docs'], type: `type "${index}"`, metadata: { index, note: '"quoted"' },
-      content: index === 3 || index === 15000 ? long(`long ${index}`) : `chunk ${index}\n"quoted"`,
+    // Every text is ASCII, so its UTF-8 size is its length; control characters and quotes would grow under JSON escaping.
+    const many = Array.from({ length: MAX_SOURCE_CHUNKS }, (_, index) => ({
+      tenantId: 'a', containerTags: ['team', 'docs'], type: `type "${index}"\u0001`, metadata: { index, note: '"quoted"\u0001' },
+      content: `chunk ${index}\n"quoted"\u0001`,
     }));
+    const used = 'hash-many'.length + scope.containerTags.join('').length
+      + many.reduce((total, chunk) => total + chunk.type.length + chunk.content.length + JSON.stringify(chunk.metadata).length, 0);
+    many[3].content += String.fromCharCode(1).repeat(MAX_SOURCE_REPLACE_BYTES - used);
     const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-many', chunks: many });
     expect(rows.map(row => [row.chunkIndex, row.type, row.content, row.metadata, row.containerTags]))
       .toEqual(many.map((chunk, index) => [index, chunk.type, chunk.content, chunk.metadata, scope.containerTags]));
-    const stored = await client`SELECT chunk_index FROM memories WHERE deleted_at IS NULL AND (content = ${long('long 3')} OR content = ${long('long 15000')}) ORDER BY 1`;
-    expect(stored.map(row => row.chunk_index)).toEqual([3, 15000]);
-    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-many', chunkCount: 20000 });
-  });
+    const stored = await client`SELECT chunk_index FROM memories WHERE deleted_at IS NULL AND content = ${many[3].content}`;
+    expect(stored.map(row => row.chunk_index)).toEqual([3]);
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-many', chunkCount: MAX_SOURCE_CHUNKS });
+  }, 120_000);
   it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
     const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
     const keys = ['b.md', 'a.md'].sort();

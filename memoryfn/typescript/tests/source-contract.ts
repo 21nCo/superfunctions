@@ -1,14 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryInsert, MemoryUpdate, SourceScope, StorageAdapter } from '../src/storage/adapter';
+import {
+  MAX_SOURCE_CHUNKS, MAX_SOURCE_IDENTITY_BYTES, MAX_SOURCE_REPLACE_BYTES,
+  type MemoryInsert, type MemoryUpdate, type SourceScope, type StorageAdapter,
+} from '../src/storage/adapter';
 import type { Memory } from '../src/core/types';
 
 const chunkId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
+const LIMIT = 'MEMORY_SOURCE_LIMIT_EXCEEDED';
+/** Large limit payloads take seconds to build, count and store. */
+const LARGE = 120_000;
+
 /**
  * Source-keyed document contract shared by every StorageAdapter. `adapter`
- * returns a storage that is empty at the start of each test.
+ * returns a storage that is empty at the start of each test, and
+ * `relationshipCount` counts the relationships it stores.
  */
-export function describeSourceContract(name: string, adapter: () => StorageAdapter): void {
+export function describeSourceContract(name: string, adapter: () => StorageAdapter, relationshipCount: () => Promise<number>): void {
   describe(`${name} source-keyed documents`, () => {
     const source: SourceScope = { tenantId: 'tenant-a', containerTags: ['team', 'docs'], sourceKey: 'docs/guide.md' };
     const chunks = (scope: SourceScope, ...contents: string[]): MemoryInsert[] =>
@@ -199,13 +207,67 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 1 });
     });
 
-    it('replaces a source with more chunks than one PostgreSQL statement can bind one by one', async () => {
-      await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a') });
-      const many = chunks(source, ...Array.from({ length: 7000 }, (_, index) => `chunk ${index}`));
-      const rows = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: many });
-      expect(rows).toHaveLength(7000);
-      expect([rows[0], rows[6999]].map(row => [row.content, row.chunkIndex])).toEqual([['chunk 0', 0], ['chunk 6999', 6999]]);
-      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
+    /** Seeds two chunks and a relationship, and returns a check that a rejected call left all of them unchanged. */
+    const seed = async () => {
+      const before = await adapter().replaceSource({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a', 'b') });
+      const [plain] = await adapter().insertMemories([{ tenantId: source.tenantId, containerTags: source.containerTags, content: 'plain' }]);
+      await adapter().insertRelationships([{ tenantId: source.tenantId, containerTags: source.containerTags, fromId: plain.id, toId: before[0].id }]);
+      return async () => {
+        expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-1', chunkCount: 2 });
+        expect((await live(source, before)).map(row => row.content)).toEqual(['a', 'b']);
+        expect(await relationshipCount()).toBe(1);
+      };
+    };
+
+    it('accepts a replacement at the chunk limit and rejects one more chunk without writing', async () => {
+      const unchanged = await seed();
+      const over = chunks(source, ...Array.from({ length: MAX_SOURCE_CHUNKS + 1 }, (_, index) => `chunk ${index}`));
+      await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over })).rejects.toThrow(LIMIT);
+      await unchanged();
+      const rows = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: over.slice(0, MAX_SOURCE_CHUNKS) });
+      expect([rows.length, rows[MAX_SOURCE_CHUNKS - 1].content, rows[MAX_SOURCE_CHUNKS - 1].chunkIndex]).toEqual([MAX_SOURCE_CHUNKS, `chunk ${MAX_SOURCE_CHUNKS - 1}`, MAX_SOURCE_CHUNKS - 1]);
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: MAX_SOURCE_CHUNKS });
+    }, LARGE);
+
+    it('accepts a replacement at the byte limit and rejects one more byte without writing', async () => {
+      const unchanged = await seed();
+      // Bytes outside the chunk text: hash 'hash-2' (6), tags 'team' and 'docs' (8), type 'document' (8).
+      const fixed = 6 + 8 + 8;
+      const replace = (chunk: Partial<MemoryInsert>) => adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [{ ...chunks(source, '')[0], ...chunk }] });
+      const control = String.fromCharCode(1);
+      // Metadata counts as its JSON text ('{}' when absent), where a control character takes 6 bytes.
+      const overByEscapes = (MAX_SOURCE_REPLACE_BYTES + 1 - fixed - '{"v":""}'.length) % 6;
+      const overCases: Array<Partial<MemoryInsert>> = [
+        { content: 'x'.repeat(MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2) },
+        // 3-byte and 4-byte characters: under the limit in UTF-16 code units, over it in UTF-8.
+        { content: `😀${'€'.repeat(Math.floor((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) / 3))}${'x'.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) % 3)}` },
+        { content: 'x'.repeat(overByEscapes), metadata: { v: control.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 8 - overByEscapes) / 6) } },
+      ];
+      for (const chunk of overCases) await expect(replace(chunk)).rejects.toThrow(LIMIT);
+      await unchanged();
+      const content = `😀${'€'.repeat(1000)}${'x'.repeat(MAX_SOURCE_REPLACE_BYTES - fixed - '{"v":""}'.length - 6 * 1000 - 4 - 3 * 1000)}`;
+      const [row] = await replace({ content, metadata: { v: control.repeat(1000) } });
+      expect(row.content === content && row.metadata?.v === control.repeat(1000)).toBe(true);
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
+    }, LARGE);
+
+    it('rejects a tenant or source key over the identity limit in every source method', async () => {
+      const unchanged = await seed();
+      // 1,024 bytes each: 341 3-byte characters and one ASCII character, and 256 4-byte characters.
+      const atLimit = { ...source, tenantId: `${'€'.repeat(341)}x`, sourceKey: '😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4) };
+      await adapter().replaceSource({ ...atLimit, contentHash: 'hash-k', chunks: chunks(atLimit, 'k') });
+      expect(await adapter().getSourceState(atLimit)).toEqual({ contentHash: 'hash-k', chunkCount: 1 });
+      const overScopes: SourceScope[] = [
+        { ...source, sourceKey: 'k'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, sourceKey: `${atLimit.sourceKey}x` },
+        { ...source, tenantId: 't'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1) }, { ...source, tenantId: `${'é'.repeat(512)}x` },
+      ];
+      for (const scope of overScopes) {
+        await expect(adapter().getSourceState(scope)).rejects.toThrow(LIMIT);
+        await expect(adapter().deleteSource(scope)).rejects.toThrow(LIMIT);
+        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(scope, 'x') })).rejects.toThrow(LIMIT);
+      }
+      await unchanged();
+      expect(await adapter().deleteSource(atLimit)).toBe(1);
     });
 
     it('rolls a replacement back with its enclosing transaction', async () => {
