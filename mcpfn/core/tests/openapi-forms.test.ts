@@ -566,14 +566,17 @@ describe("fromOpenAPI skip reasons", () => {
 
   it("skips readOnly properties flagged inside nested alternatives that can overlap", () => {
     const result = convert("skip-access-flag-oneof-nested");
-    expect(skips(result)).toEqual(
+    // A malformed declaration is reported before any projection is considered.
+    const [invalid] = result.skipped.filter((entry) => entry.operation.operationId === "readOnlyInvalidPattern");
+    expect(invalid?.code).toBe("invalid-schema");
+    expect(invalid?.reason).toMatch(/^the request body schema is not a valid JSON Schema: /);
+    expect(skips(result).filter(([operationId]) => operationId !== "readOnlyInvalidPattern")).toEqual(
       [
         ["readOnlyNestedOneOf", "kind"],
         ["readOnlyNestedAnyOf", "kind"],
         ["readOnlyReferencedAnyOf", "kind"],
         ["readOnlyAllOfOneOf", "kind"],
         ["readOnlyPatternDiscriminator", "id"],
-        ["readOnlyInvalidPattern", "id"],
         ["readOnlyMaxPropertiesInOneOf", "id"],
         ["readOnlyPropertyNamesInOneOf", "id"],
         ["readOnlyPatternNotMatching", "id"],
@@ -1218,7 +1221,6 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     const result = fromOpenAPI(
       {
         openapi: "3.1.0",
-        jsonSchemaDialect: "http://json-schema.org/draft-07/schema#",
         "x-data": Array.from({ length: 200_000 }, (_, index) => index),
         paths: {
           "/raw": { post: { operationId: "schemaLess", requestBody: { required: true, content: { "application/json": {} } }, responses: ok } },
@@ -1616,5 +1618,199 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     expect(performance.now() - started).toBeLessThan(1000);
     expect(result.skipped).toEqual([]);
     expect(registered(result)).toEqual([["unclosed", false], ["variables", false]]);
+  });
+});
+
+describe("fromOpenAPI projection, work and dialect bounds", () => {
+  const ok = { "200": { description: "OK" } };
+  const options = () => ({ executor: recordingExecutor(), allowMutations: true });
+  const body = (schema: unknown) => ({ required: true, content: { "application/json": { schema } } });
+  const post = (operationId: string, schema: unknown) => ({ post: { operationId, requestBody: body(schema), responses: ok } });
+  const json = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+
+  it("skips a component flagged under a condition anywhere in the closure, whatever the branch or operation order", () => {
+    const Metadata = { properties: { id: { type: "string", readOnly: true } }, required: ["id"] };
+    const array = { type: "array", allOf: [{ $ref: "#/components/schemas/Metadata" }] };
+    const object = {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" }, id: { type: "string" } },
+      if: { $ref: "#/components/schemas/Metadata" },
+      then: { required: ["a"] },
+      else: { required: ["b"] },
+    };
+    for (const members of [[array, object], [object, array]]) {
+      for (const operations of [["first", "second"], ["second", "first"]]) {
+        const schemas: Record<string, unknown> = { first: { oneOf: members }, second: { $ref: "#/components/schemas/Metadata" } };
+        const result = fromOpenAPI(
+          {
+            openapi: "3.1.0",
+            paths: Object.fromEntries(operations.map((name) => [`/${name}`, post(name, schemas[name])])),
+            components: { schemas: { Metadata } },
+          },
+          options(),
+        );
+        expect(skips(result).filter(([name]) => name === "first")).toEqual([["first", "unsupported-access-flag", constrained("id", OVERLAP)]]);
+      }
+    }
+    // Members that are disjoint by kind of value and flag only unconditionally still project.
+    const disjoint = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/d": post("disjoint", { oneOf: [{ type: "string" }, { type: "object", properties: { id: { type: "string", readOnly: true }, n: { type: "string" } } }] }) } },
+      options(),
+    );
+    expect(disjoint.skipped).toEqual([]);
+    expectArguments(tool(disjoint.tools, "disjoint").inputSchema, {
+      valid: [{ body: "s" }, { body: { n: "x" } }],
+      invalid: [{ body: { id: "x" } }],
+    });
+  });
+
+  it("does not keep a clean result that depends on a later conflict in the same reference cycle", () => {
+    // A -> B -> A is a cycle; A -> D -> B reaches B while its result is still provisional; A -> C conflicts.
+    const schemas = {
+      A: {
+        type: "object",
+        properties: {
+          b: { $ref: "#/components/schemas/B" },
+          d: { $ref: "#/components/schemas/D" },
+          c: { type: "object", minProperties: 1, properties: { id: { type: "string", readOnly: true } } },
+        },
+      },
+      B: { type: "object", properties: { a: { $ref: "#/components/schemas/A" } } },
+      D: { type: "object", properties: { b: { $ref: "#/components/schemas/B" } } },
+    };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: { "/a": post("a", { $ref: "#/components/schemas/A" }), "/d": post("d", { $ref: "#/components/schemas/D" }) },
+        components: { schemas },
+      },
+      options(),
+    );
+    expect(result.tools).toEqual([]);
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["a", "unsupported-access-flag"],
+      ["d", "unsupported-access-flag"],
+    ]);
+  });
+
+  it("skips flagged items beside a tuple items list for the same array", () => {
+    const flagged = { type: "object", properties: { id: { type: "string", readOnly: true } } };
+    const result = fromOpenAPI(
+      { openapi: "3.0.3", paths: { "/t": post("tuple", { type: "array", items: flagged, allOf: [{ items: [{ type: "object", required: ["id"] }] }] }) } },
+      options(),
+    );
+    expect(skips(result)).toEqual([["tuple", "unsupported-access-flag", child("items", "a tuple items list for the same array")]]);
+  });
+
+  it("projects through many same-child constraints in linear work", () => {
+    const Leaf = { type: "object", properties: { id: { type: "string", readOnly: true }, n: { type: "string" } } };
+    const run = (count: number, registry?: McpFnRegistry) => {
+      const members = Array.from({ length: count }, () => ({ properties: { child: { $ref: "#/components/schemas/Leaf" } } }));
+      const items = Array.from({ length: count }, () => ({ items: { $ref: "#/components/schemas/Leaf" } }));
+      return fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: { "/p": post("properties", { type: "object", allOf: members }), "/i": post("items", { type: "array", allOf: items }) },
+          components: { schemas: { Leaf } },
+        },
+        { ...options(), ...(registry ? { registry } : {}) },
+      );
+    };
+    const small = run(3);
+    expect(small.skipped).toEqual([]);
+    expectArguments(tool(small.tools, "properties").inputSchema, { valid: [{ body: { child: { n: "x" } } }], invalid: [{ body: { child: { id: "x" } } }] });
+    expectArguments(tool(small.tools, "items").inputSchema, { valid: [{ body: [{ n: "x" }] }], invalid: [{ body: [{ id: "x" }] }] });
+    const started = performance.now();
+    const large = run(5000, { register: () => undefined, has: () => false } as unknown as McpFnRegistry);
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(large.skipped).toEqual([]);
+  });
+
+  it("checks a readOnly-flagged request body or parameter as written before leaving properties out", () => {
+    const malformed = { type: "object", properties: { id: { type: "bogus", readOnly: true }, n: { type: "integer" } } };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/m": post("malformedBody", malformed),
+          "/q": { get: { operationId: "malformedParameter", parameters: [{ name: "q", in: "query", schema: { type: "string", properties: { x: { type: "bogus", readOnly: true } } } }], responses: ok } },
+          "/v": post("validBody", { ...malformed, properties: { ...malformed.properties, id: { type: "string", readOnly: true } } }),
+        },
+      },
+      options(),
+    );
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason.split(":")[0]])).toEqual([
+      ["malformedBody", "invalid-schema", "the request body schema is not a valid JSON Schema"],
+      ["malformedParameter", "invalid-schema", "the parameter q schema is not a valid JSON Schema"],
+    ]);
+    expectArguments(tool(result.tools, "validBody").inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { id: "x" } }] });
+  });
+
+  it("copies and compiles a schema many operations share once, and bounds distinct copies by the document total", () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 100 }, (_, outer) => [
+        `p${outer}`,
+        { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, inner) => [`q${inner}`, { type: "string", maxLength: 5 }])) },
+      ]),
+    );
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 160; index += 1) {
+      paths[`/h${index}`] = { head: { operationId: `h${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
+      paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Big" }) } };
+    }
+    const started = performance.now();
+    const shared = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Big: { type: "object", properties } } } }, options());
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(shared.skipped).toEqual([]);
+    expect(shared.tools).toHaveLength(320);
+    // Distinct roots over one large component are copied each time, and charged to the document total.
+    const distinct: Record<string, unknown> = {};
+    for (let index = 0; index < 400; index += 1) {
+      distinct[`/d${index}`] = post(`d${index}`, { allOf: [{ $ref: "#/components/schemas/Big" }], description: `variant ${index}` });
+    }
+    const bounded = fromOpenAPI(
+      { openapi: "3.1.0", paths: distinct, components: { schemas: { Big: { type: "object", properties } } } },
+      { ...options(), registry: { register: () => undefined, has: () => false } as unknown as McpFnRegistry },
+    );
+    expect(bounded.tools[0]?.name).toBe("d0");
+    expect(bounded.skipped.length).toBeGreaterThan(0);
+    expect(new Set(bounded.skipped.map((entry) => entry.reason))).toEqual(
+      new Set([expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/) as unknown as string]),
+    );
+  });
+
+  it("reads only published dialect ids as the default, refuses boolean roots under another one and drops 3.1 dependencies", () => {
+    const document = (jsonSchemaDialect: string | undefined, schema: unknown) => ({
+      openapi: "3.1.0",
+      ...(jsonSchemaDialect ? { jsonSchemaDialect } : {}),
+      paths: { "/p": post("p", schema) },
+    });
+    for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/base", "https://spec.openapis.org/oas/3.1/dialect/2024-11-10"]) {
+      expect(fromOpenAPI(document(uri, { type: "object" }), options()).skipped).toEqual([]);
+    }
+    for (const uri of ["https://spec.openapis.org/oas/3.1/dialect/2099-12-31", "https://example.com/my-dialect"]) {
+      for (const schema of [{ type: "object" }, true, undefined]) {
+        const result = fromOpenAPI(
+          schema === undefined
+            ? { openapi: "3.1.0", jsonSchemaDialect: uri, paths: { "/p": { post: { operationId: "p", requestBody: { content: { "application/json": {} } }, responses: ok } } } }
+            : document(uri, schema),
+          options(),
+        );
+        expect(result.skipped.map((entry) => entry.code)).toEqual(["unsupported-dialect"]);
+      }
+      // A root that names a supported dialect itself is still read in it.
+      expect(fromOpenAPI(document(uri, { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" }), options()).skipped).toEqual([]);
+    }
+    const schemaLess = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/p": { post: { operationId: "p", requestBody: { content: { "application/json": {} } }, responses: ok } } } },
+      options(),
+    );
+    expectArguments(tool(schemaLess.tools, "p").inputSchema, { valid: [{ body: { any: ["json"] } }, {}] });
+    // 2020-12 has no `dependencies`: only dependentRequired applies in 3.1; 3.0 keeps the draft-07 keyword.
+    const dependent = { type: "object", dependentRequired: { a: ["b"] }, dependencies: { a: ["c"] } };
+    const modern = fromOpenAPI(document(undefined, dependent), options());
+    expectArguments(tool(modern.tools, "p").inputSchema, { valid: [{ body: { a: 1, b: 1 } }], invalid: [{ body: { a: 1, c: 1 } }] });
+    const legacy = fromOpenAPI({ openapi: "3.0.3", paths: { "/p": post("p", { type: "object", dependencies: { a: ["c"] } }) } }, options());
+    expectArguments(tool(legacy.tools, "p").inputSchema, { valid: [{ body: { a: 1, c: 1 } }], invalid: [{ body: { a: 1, b: 1 } }] });
   });
 });

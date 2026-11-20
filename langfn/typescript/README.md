@@ -2,7 +2,7 @@
 
 LangFn for TypeScript ships the canonical `langfn` package plus the documented subpath exports used throughout the SDK examples and tests.
 
-Current release target: `0.1.0`.
+Current release targets: TypeScript `0.1.1` (npm), Python `0.1.0` (PyPI).
 
 ## Install
 

@@ -86,3 +86,17 @@ fromOpenAPI({ title: "not a document" }, { executor });
 
 // @ts-expect-error a document is an object, not a primitive
 fromOpenAPI(42, { executor });
+
+// Named and explicit-context paths also accept producer interfaces without an
+// index signature, fromRouter-style interfaces and parsed records.
+const namedPlain: OpenApiDocument = plainDocument;
+const namedRouter: OpenApiDocument = routerDocument;
+const namedParsed: OpenApiDocument = parsed;
+fromOpenAPI(namedPlain, { executor });
+fromOpenAPI<undefined>(plainDocument, { executor });
+fromOpenAPI<undefined>(routerDocument, { executor });
+fromOpenAPI<undefined>(parsed, { executor });
+void namedRouter;
+void namedParsed;
+// @ts-expect-error a value sharing no standard field is refused
+fromOpenAPI<undefined>({ title: "misplaced" }, { executor });

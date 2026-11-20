@@ -86,17 +86,21 @@ const SCHEMA_KEYWORDS = new Set([
 const COMPONENT_NAME = /^[A-Za-z0-9._-]+$/;
 
 /**
- * Whether a 3.1 `jsonSchemaDialect` or `$schema` names the dialect the
- * converter implements: the OAS 3.1 base dialect or JSON Schema 2020-12.
+ * Whether a 3.1 `jsonSchemaDialect` or `$schema` names a dialect the
+ * converter implements: JSON Schema 2020-12 or a published OAS 3.1 base
+ * dialect id (`base` for 3.1.0, `2024-11-10` for 3.1.1). Any other id,
+ * including an unpublished dated one, is not known to mean the same.
  */
 export function isDefaultDialect(uri: unknown): boolean {
   if (typeof uri !== "string") return false;
-  const base = uri.endsWith("#") ? uri.slice(0, -1) : uri;
-  return base === "https://json-schema.org/draft/2020-12/schema" || OAS_DIALECT.test(base);
+  return SUPPORTED_DIALECTS.has(uri.endsWith("#") ? uri.slice(0, -1) : uri);
 }
 
-// The OAS 3.1 base dialect: `base` (3.1.0) or a dated release id (3.1.1 and later).
-const OAS_DIALECT = /^https:\/\/spec\.openapis\.org\/oas\/3\.1\/dialect\/(?:base|\d{4}-\d{2}-\d{2})$/;
+const SUPPORTED_DIALECTS = new Set([
+  "https://json-schema.org/draft/2020-12/schema",
+  "https://spec.openapis.org/oas/3.1/dialect/base",
+  "https://spec.openapis.org/oas/3.1/dialect/2024-11-10",
+]);
 
 /**
  * Schema nodes one operation's input, one operation's output or one
@@ -109,9 +113,9 @@ export const MAX_SCHEMA_NODES = 100_000;
 /**
  * Schema nodes all of one `fromOpenAPI` call's conversions may produce: a
  * floor plus a multiple of the document's own size, so a document that shares
- * one schema object between many operations cannot multiply the work. Copies
- * of produced schemas are not charged to it: each tool's schemas are output
- * the registry compiles anyway, and each copy has its own limits.
+ * one schema object between many operations cannot multiply the work.
+ * Copies of produced schemas are charged to it too; identical tool schemas
+ * share one copy (see `OperationConverter`), so only distinct ones count.
  */
 const DOCUMENT_NODE_FLOOR = 1_000_000;
 const DOCUMENT_NODE_FACTOR = 64;
@@ -342,9 +346,9 @@ export class SchemaConverter {
     this.budget = total.child();
   }
 
-  /** A budget for one copy of a produced schema (not charged to the call's total). */
+  /** A budget for one copy of a produced schema, also charged to the call's total. */
   copyBudget(): NodeBudget {
-    return new NodeBudget();
+    return this.total.child();
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -437,12 +441,15 @@ export class SchemaConverter {
   /**
    * A schema resource root (a media type, parameter or component schema) is
    * read in its own `$schema` (checked with the other keywords), else in the
-   * document's `jsonSchemaDialect`. A root holding only `$ref`, or a boolean,
-   * means the same in every dialect.
+   * document's `jsonSchemaDialect`. A root holding only `$ref` is read in the
+   * dialect of its target component, which is checked as a root itself; a
+   * boolean root is refused like any other.
    */
   private checkRootDialect(schema: unknown): void {
-    if (this.unsupportedDialect === undefined || !isObject(schema) || Object.hasOwn(schema, "$schema")) return;
-    if (Object.keys(schema).length === 1 && Object.hasOwn(schema, "$ref")) return;
+    if (this.unsupportedDialect === undefined) return;
+    if (isObject(schema) && Object.hasOwn(schema, "$schema")) return;
+    if (isObject(schema) && Object.keys(schema).length === 1 && Object.hasOwn(schema, "$ref")) return;
+    if (!isObject(schema) && typeof schema !== "boolean") return;
     throw new OpenApiSkip("unsupported-dialect", `the document's jsonSchemaDialect ${this.unsupportedDialect} is not supported`);
   }
 
@@ -508,6 +515,8 @@ export class SchemaConverter {
     let dependencies: JsonObject | undefined;
     for (const [keyword, value] of Object.entries(schema)) {
       if (DROPPED_KEYWORDS.has(keyword)) continue;
+      // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
+      if (keyword === "dependencies" && this.version === "3.1") continue;
       if (keyword === "dependencies" && isObject(value)) {
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
@@ -618,49 +627,71 @@ export class SchemaConverter {
 
   /**
    * Memoised per schema object. A check that reaches a schema still being
-   * checked (a reference cycle) does not know that schema's result yet, so a
-   * clean result is kept only for the outermost schema of its cycle (as in
-   * Tarjan's algorithm); a conflict is always final.
+   * checked (a reference cycle), or one whose clean result is still
+   * provisional, does not know that schema's result yet; as in Tarjan's
+   * algorithm, checks are numbered in the order they start, and a clean
+   * result that depends on an earlier one stays provisional until the check
+   * it depends on ends clean as the first of its cycle. A conflict is always
+   * final and ends every check up to the outermost one.
    */
   private projectionConflict(schema: unknown, keyword: DirectionalKeyword): AccessConflict | undefined {
     if (!isObject(schema) || !this.reachesFlag(schema, keyword)) return undefined;
     const memo = memoFor(this.projections, keyword);
     const known = memo.get(schema);
     if (known !== undefined) return known ?? undefined;
-    const active = this.checking.get(schema);
-    if (active !== undefined) {
-      this.lowest = Math.min(this.lowest, active);
+    const unknown = this.checking.get(schema) ?? this.provisional.get(schema);
+    if (unknown !== undefined) {
+      this.lowest = Math.min(this.lowest, unknown);
       return undefined;
     }
-    if (this.provisional.has(schema)) return undefined;
-    const depth = this.checking.size;
+    const index = this.started++;
+    const mark = this.pending.length;
     const outer = this.lowest;
-    this.checking.set(schema, depth);
+    this.checking.set(schema, index);
     this.lowest = Number.POSITIVE_INFINITY;
     try {
       const entries = this.closure(schema);
       const conflict = this.flagConflict(entries, keyword) ?? this.childConflict(entries, keyword);
       if (conflict !== undefined) memo.set(schema, conflict);
-      else if (this.lowest >= depth) memo.set(schema, null);
-      else this.provisional.add(schema);
+      else if (this.lowest >= index) this.settle(schema, mark, memo);
+      else {
+        this.provisional.set(schema, index);
+        this.pending.push(schema);
+      }
       return conflict;
     } finally {
       this.checking.delete(schema);
-      this.lowest = Math.min(outer, this.lowest >= depth ? Number.POSITIVE_INFINITY : this.lowest);
-      if (this.checking.size === 0) this.provisional.clear();
+      this.lowest = Math.min(outer, this.lowest >= index ? Number.POSITIVE_INFINITY : this.lowest);
+      if (this.checking.size === 0) {
+        this.provisional.clear();
+        this.pending.length = 0;
+      }
     }
   }
 
+  /** `schema` ends clean, first of its cycle: so do the provisional results that started inside its check. */
+  private settle(schema: object, mark: number, memo: WeakMap<object, AccessConflict | null>): void {
+    memo.set(schema, null);
+    for (const settled of this.pending.splice(mark)) {
+      memo.set(settled, null);
+      this.provisional.delete(settled);
+    }
+  }
+
+  /** Checks in progress and provisional clean results, by the order their checks started. */
   private readonly checking = new Map<object, number>();
-  /** Clean results that depend on a schema still being checked; valid only until the outermost check ends. */
-  private readonly provisional = new Set<object>();
+  private readonly provisional = new Map<object, number>();
+  private readonly pending: object[] = [];
+  private started = 0;
   private lowest = Number.POSITIVE_INFINITY;
 
   /**
    * `root` and every schema applied to the same instance: `$ref` targets
    * (OpenAPI 3.0 ignores the siblings), `allOf` members and `anyOf`/`oneOf`
    * members, plus, marked `conditional`, `not`/`if`/`then`/`else`, schema
-   * dependencies and alternatives that can accept the same kind of value.
+   * dependencies and alternatives that can accept the same kind of value. A
+   * schema reached both ways is also recorded as conditional, whatever the
+   * order of the visits, because its converted form is shared by both.
    */
   private closure(root: JsonObject): ClosureEntry[] {
     const entries: ClosureEntry[] = [];
@@ -668,7 +699,7 @@ export class SchemaConverter {
     const walk = (current: unknown, conditional: boolean): void => {
       if (!isObject(current)) return;
       const before = visited.get(current);
-      if (before === false || (before === true && conditional)) return;
+      if (before === true || before === conditional) return;
       visited.set(current, conditional);
       if (Object.hasOwn(current, "$ref")) {
         walk(this.target(current.$ref), conditional);
@@ -777,16 +808,23 @@ export class SchemaConverter {
         listed.set(name, known);
       }
     }
+    // How many schemas with a constraining additionalProperties list each
+    // name: one that does not list it validates its value as well.
     const additional = entries.filter(({ schema }) => constrainsValues(schema.additionalProperties));
-    const patterns = entries.flatMap(({ schema }) =>
-      objectEntries(schema.patternProperties).filter(([, value]) => constrainsValues(value)).map(([pattern]) => pattern),
-    );
+    const listedByAdditional = new Map<string, number>();
+    for (const { schema } of additional) {
+      for (const [name] of objectEntries(schema.properties)) {
+        listedByAdditional.set(name, (listedByAdditional.get(name) ?? 0) + 1);
+      }
+    }
+    const patterned = patternMatcher(entries);
     for (const [name, { values, conditional }] of listed) {
       if (!values.some((value) => this.reachesFlag(value, keyword))) continue;
-      const { sources, underCondition } = withAdditional(name, values, conditional, additional);
-      const patterned = patterns.some((pattern) => patternMayMatch(pattern, name));
       const subject = `property ${JSON.stringify(name)}`;
-      const conflict = this.singleSource(entries, keyword, subject, sources, underCondition, patterned);
+      if ((listedByAdditional.get(name) ?? 0) < additional.length) {
+        return childConflict(keyword, subject, "additionalProperties of another schema for the same object");
+      }
+      const conflict = this.singleSource(entries, keyword, subject, values, conditional, patterned(name));
       if (conflict !== undefined) return conflict;
     }
     return undefined;
@@ -825,6 +863,7 @@ export class SchemaConverter {
     }
     if (!sources.some((source) => this.reachesFlag(source, keyword))) return undefined;
     for (const { schema } of entries) {
+      if (Array.isArray(schema.items)) return childConflict(keyword, "items", "a tuple items list for the same array");
       if (schema.uniqueItems === true) return childConflict(keyword, "items", "uniqueItems");
       if (!opens(schema.contains) || !opens(schema.additionalItems)) {
         return childConflict(keyword, "items", "contains or additionalItems");
@@ -844,10 +883,13 @@ export class SchemaConverter {
   ): AccessConflict | undefined {
     if (conditional) return childConflict(keyword, subject, CONDITIONAL);
     if (patterned) return childConflict(keyword, subject, "patternProperties of a schema for the same object");
-    const distinct = sources.filter((source, index) => sources.findIndex((other) => sameReference(other, source)) === index);
-    if (distinct.length > 1) return childConflict(keyword, subject, "another schema for the same value");
+    // sameReference is an equivalence, so comparing with the first suffices.
+    const [first] = sources;
+    if (sources.some((source) => !sameReference(first, source))) {
+      return childConflict(keyword, subject, "another schema for the same value");
+    }
     if (comparesWholeValues(entries)) return childConflict(keyword, subject, "const or enum");
-    return this.projectionConflict(distinct[0], keyword);
+    return this.projectionConflict(first, keyword);
   }
 
   /** The subschemas `schema` holds under `keyword` (a schema, an array of them or a map of them). */
@@ -1088,23 +1130,6 @@ function needsFlagged(entry: ClosureEntry, declarers: ReadonlyMap<string, Readon
     : { name: foreign as string, by: "a required list of another schema for the same object" };
 }
 
-/** The listed schemas of property `name` plus the constraining `additionalProperties` of schemas that do not list it. */
-function withAdditional(
-  name: string,
-  values: unknown[],
-  conditional: boolean,
-  additional: ClosureEntry[],
-): { sources: unknown[]; underCondition: boolean } {
-  const sources = [...values];
-  let underCondition = conditional;
-  for (const entry of additional) {
-    if (isObject(entry.schema.properties) && Object.hasOwn(entry.schema.properties, name)) continue;
-    sources.push(entry.schema.additionalProperties);
-    underCondition ||= entry.conditional;
-  }
-  return { sources, underCondition };
-}
-
 const wholeValueChecks = new WeakMap<ClosureEntry[], boolean>();
 
 /** Whether some schema for the instance has an object or array `const`/`enum` (computed once per closure). */
@@ -1118,14 +1143,28 @@ function comparesWholeValues(entries: ClosureEntry[]): boolean {
 }
 
 /**
- * Whether a `patternProperties` key may match `name`. Only an anchored
- * literal prefix (`^x-`) or literal (`^id$`) is decided, by comparing
- * strings; any other pattern may match. No document pattern is ever run.
+ * Whether a constraining `patternProperties` key of `entries` may match a
+ * name. Only an anchored literal prefix (`^x-`) or literal (`^id$`) is
+ * decided, by looking strings up; any other pattern may match. No document
+ * pattern is ever run.
  */
-function patternMayMatch(pattern: string, name: string): boolean {
-  const literal = /^\^([A-Za-z0-9_-]*)(\$?)$/.exec(pattern);
-  if (!literal) return true;
-  return literal[2] ? name === literal[1] : name.startsWith(literal[1]!);
+const MAX_LITERAL_PREFIXES = 16;
+
+function patternMatcher(entries: ClosureEntry[]): (name: string) => boolean {
+  const exact = new Set<string>();
+  const prefixes = new Set<string>();
+  let any = false;
+  for (const { schema } of entries) {
+    for (const [pattern, value] of objectEntries(schema.patternProperties)) {
+      if (!constrainsValues(value)) continue;
+      const literal = /^\^([A-Za-z0-9_-]*)(\$?)$/.exec(pattern);
+      if (!literal) any = true;
+      else (literal[2] ? exact : prefixes).add(literal[1]!);
+    }
+  }
+  // Past a few prefixes every name is treated as matched, keeping the check linear.
+  if (prefixes.size > MAX_LITERAL_PREFIXES) any = true;
+  return (name) => any || exact.has(name) || [...prefixes].some((prefix) => name.startsWith(prefix));
 }
 
 function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {

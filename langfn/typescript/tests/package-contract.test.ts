@@ -47,6 +47,11 @@ describe("package contract", () => {
     const tsRoutes = read(resolve(langfnRoot, "typescript/src/http/routes.ts"));
     expect(tsRoutes).toContain('version: "0.1.1"');
     expect(tsManifest.version).toBe("0.1.1");
+    // The MCP client and server advertise the TypeScript package version on the wire.
+    const client = read(resolve(langfnRoot, "typescript/src/mcp/client.ts"));
+    const server = read(resolve(langfnRoot, "typescript/src/mcp/server.ts"));
+    expect(client).toContain(`{ name: "langfn-mcp-client", version: "${tsManifest.version}" }`);
+    expect(server).toMatch(new RegExp(`name: "langfn",\\s+version: "${tsManifest.version.replaceAll(".", "\\.")}"`));
   });
 
   it("documents the same release version and install story across readmes", () => {
@@ -54,7 +59,7 @@ describe("package contract", () => {
     const tsReadme = read(resolve(langfnRoot, "typescript/README.md"));
 
     for (const content of [rootReadme, tsReadme]) {
-      expect(content).toContain("0.1.0");
+      expect(content).toContain("Current release targets: TypeScript `0.1.1` (npm), Python `0.1.0` (PyPI).");
       expect(content).toContain("npm install langfn@0.1.1");
       expect(content).toContain("pip install langfn==0.1.0");
     }

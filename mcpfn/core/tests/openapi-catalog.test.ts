@@ -125,6 +125,11 @@ describe("fromOpenAPI filtering (D8)", () => {
       "POST /b": "excluded",
     });
     expect(() => run({ include: [{ operationId: "" }] })).toThrow(/non-empty string or \{ operationId \}/);
+    // Only an own operationId key counts: an inherited one neither includes, excludes nor opts in.
+    const inherited = Object.assign(Object.create({ operationId: "POST /b" }) as object, { other: "x" });
+    for (const option of ["include", "exclude"] as const) {
+      expect(() => run({ [option]: [inherited] })).toThrow(/non-empty string or \{ operationId \}/);
+    }
   });
 
   it("rejects malformed selectors and options", () => {
