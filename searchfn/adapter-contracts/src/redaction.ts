@@ -17,11 +17,11 @@ const SENSITIVE_KEY =
 // comma-separated name=value parameters (Credential=..., Signature=...) that
 // cannot be told apart from trailing diagnostics such as status=401, so no
 // following field is kept. Only a leading Bearer, Basic or Token label is kept,
-// and only when the next token on the same line is a credential rather than a
-// name=value assignment (an = that is only trailing base64 padding still counts
-// as a credential); otherwise the label may itself be the secret. After any
-// other key the scheme word may be the secret too, so the whole value is
-// redacted.
+// and only when the next token on the same line is a valid credential token
+// (RFC 6750 b64token / RFC 7617 base64: CREDENTIAL_TOKEN); before anything else
+// (name=value, name:value, other punctuation) the label may itself be the
+// secret, so key, separator and [REDACTED] are printed. After any other key the
+// scheme word may be the secret too, so the whole value is redacted.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
@@ -33,10 +33,10 @@ const MAX_KEY_DECODE_PASSES = 3;
 
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 const LINE_BREAK = /[\r\n]/;
-// An = anywhere but trailing base64 padding marks a name=value assignment.
-const ASSIGNMENT = /=(?!=*$)/;
-// One key=value segment of a URL fragment; route text (/, ?, #) is not a key.
-const FRAGMENT_SEGMENT = /([^&?#/=]+)=([^&]*)/g;
+// A credential token after a scheme label: RFC 6750 b64token / RFC 7617 base64.
+const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
+const FRAGMENT_PARAM_SEPARATOR = "&";
+const FRAGMENT_ROUTE_DELIMITERS = ["/", "?", "#"];
 
 /**
  * Decodes each well-formed %XX escape on its own and leaves malformed %
@@ -85,27 +85,45 @@ function redactSearchParams(params: URLSearchParams): string {
   return pairs.join("&");
 }
 
-/**
- * Keeps a URL fragment as written (route prefix, ?, / and delimiters) and
- * redacts only the value of each key=value segment whose key is sensitive;
- * other values and the text between segments go through redactSensitiveString.
- */
-function redactFragment(fragment: string): string {
-  let output = "";
-  let cursor = 0;
-  for (const match of fragment.matchAll(FRAGMENT_SEGMENT)) {
-    const [whole, key, value] = match;
-    const index = match.index ?? 0;
-    const redactedValue = isSensitiveKey(key) ? REDACTED : redactSensitiveString(value);
-    output += `${redactSensitiveString(fragment.slice(cursor, index))}${key}=${redactedValue}`;
-    cursor = index + whole.length;
-  }
-  return output + redactSensitiveString(fragment.slice(cursor));
+/** The key of one fragment parameter: its text after the last route delimiter. */
+function fragmentParamKey(name: string): string {
+  const start = Math.max(...FRAGMENT_ROUTE_DELIMITERS.map((delimiter) => name.lastIndexOf(delimiter)));
+  return name.slice(start + 1);
 }
 
+/**
+ * Redacts a URL fragment and keeps its route text and delimiters as written.
+ * First, in one linear pass over the &-separated parameters, the value of each
+ * parameter whose decoded key is sensitive (user%5Bpass%77ord%5D included) is
+ * replaced with [REDACTED]. Then the whole fragment, keys included, goes
+ * through the string redactor as one string, so key=value secrets and URL
+ * userinfo that span parameter or route boundaries are still found. In that
+ * pass & ends a non-authorization value, as it ends a URL parameter, so the
+ * following parameters stay readable; an authorization value is still masked
+ * to the end of the line.
+ */
+function redactFragment(fragment: string): string {
+  const params = fragment.split(FRAGMENT_PARAM_SEPARATOR).map((param) => {
+    const separator = param.indexOf("=");
+    if (separator === -1 || !isSensitiveKey(fragmentParamKey(param.slice(0, separator)))) {
+      return param;
+    }
+    return `${param.slice(0, separator)}=${REDACTED}`;
+  });
+  return redactStringValues(params.join(FRAGMENT_PARAM_SEPARATOR), true);
+}
+
+/**
+ * Redacts a URL and keeps every delimiter of its href, including an empty ?
+ * or #. The query is redacted by decoded parameter keys and the fragment by
+ * redactFragment; userinfo becomes [REDACTED]@.
+ */
 function redactUrl(url: URL): string {
   const base = new URL(url.href);
   const hasUserinfo = base.username !== "" || base.password !== "";
+  const hashStart = url.href.indexOf("#");
+  const hasHash = hashStart !== -1;
+  const hasQuery = (hasHash ? url.href.slice(0, hashStart) : url.href).includes("?");
   base.username = "";
   base.password = "";
   base.search = "";
@@ -114,10 +132,10 @@ function redactUrl(url: URL): string {
   if (hasUserinfo) {
     output = output.replace("//", `//${REDACTED}@`);
   }
-  if (url.search !== "") {
+  if (hasQuery) {
     output += `?${redactSearchParams(url.searchParams)}`;
   }
-  if (url.hash !== "") {
+  if (hasHash) {
     output += `#${redactFragment(url.hash.slice(1))}`;
   }
   return output;
@@ -218,12 +236,16 @@ export function redactSensitive(value: unknown): any {
 }
 
 export function redactSensitiveString(input: string): string {
-  return redactKeyValues(input)
+  return redactStringValues(input, false);
+}
+
+function redactStringValues(input: string, ampersandEndsValue: boolean): string {
+  return redactKeyValues(input, ampersandEndsValue)
     .replace(URL_CREDENTIALS, "$1[REDACTED]@")
     .replace(POSTGRES_CREDENTIALS, "$1[REDACTED]@");
 }
 
-function redactKeyValues(input: string): string {
+function redactKeyValues(input: string, ampersandEndsValue: boolean): string {
   const pattern = new RegExp(KEY_VALUE_SECRET.source, KEY_VALUE_SECRET.flags);
   let output = "";
   let cursor = 0;
@@ -239,9 +261,14 @@ function redactKeyValues(input: string): string {
     } else if (AUTHORIZATION_KEY.test(key)) {
       const lineBreak = input.slice(end).search(LINE_BREAK);
       end = lineBreak === -1 ? input.length : end + lineBreak;
-      const label = scheme !== undefined && !ASSIGNMENT.test(credential) ? scheme : "";
+      const label = scheme !== undefined && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
       replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
+      // The unquoted credential is the last group, so it ends the match.
+      const ampersand = ampersandEndsValue ? credential.indexOf(FRAGMENT_PARAM_SEPARATOR) : -1;
+      if (ampersand !== -1) {
+        end = end - credential.length + ampersand;
+      }
       replacement = `${key}${keyQuote}${separator}${REDACTED}`;
     }
     output += input.slice(cursor, match.index) + replacement;

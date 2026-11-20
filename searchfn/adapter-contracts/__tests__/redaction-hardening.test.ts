@@ -178,7 +178,7 @@ describe("credentials after an authorization key", () => {
       ["Authorization: Bearer , test-token", "Authorization: [REDACTED]"],
       ["Proxy-Authorization: Digest test-response, nc=1", "Proxy-Authorization: [REDACTED]"],
       ["headers[authorization]=ApiKey test-api-key", "headers[authorization]=[REDACTED]"],
-      ["Authorization: Bearer ***", "Authorization: Bearer [REDACTED]"],
+      ["Authorization: Bearer ***", "Authorization: [REDACTED]"],
     ];
     for (const [input, expected] of cases) {
       expect(redactSensitiveString(input)).toBe(expected);
@@ -244,5 +244,42 @@ describe("URL fragments", () => {
     const tokenKey = ["access", "token"].join("_");
     const url = new URL(`https://example.test/#/cb?state=ok&${tokenKey}=test-leak&next=/home`);
     expect(redactSensitive(url)).toBe(`https://example.test/#/cb?state=ok&${tokenKey}=[REDACTED]&next=/home`);
+  });
+});
+
+describe("round-7 fragment and scheme repairs", () => {
+  it("drops the scheme label when the next token is not a credential token", () => {
+    expect(redactSensitiveString("Authorization: Bearer status:401")).toBe("Authorization: [REDACTED]");
+    expect(redactSensitiveString("Authorization: Bearer test-token")).toBe("Authorization: Bearer [REDACTED]");
+    expect(redactSensitiveString(`Authorization: Basic ${btoa("test")}`)).toBe("Authorization: Basic [REDACTED]");
+  });
+
+  it("redacts secrets that span fragment parameters or route text, as the pin does", () => {
+    const authorizationKey = ["author", "ization"].join("");
+    expect(redactSensitive(new URL(`https://example.test/#${authorizationKey}:test-token=`))).toBe(
+      `https://example.test/#${authorizationKey}:[REDACTED]`,
+    );
+    const url = new URL(`https://example.test/#https://${userinfo("test-pass=")}@example.test/path`);
+    expect(redactSensitive(url)).toBe("https://example.test/#https://[REDACTED]@example.test/path");
+  });
+
+  it("keeps empty query and fragment delimiters", () => {
+    for (const href of [
+      "https://example.test/#",
+      "https://example.test/?",
+      "https://example.test/?#",
+      "https://example.test/path?q=1#",
+    ]) {
+      expect(redactSensitive(new URL(href))).toBe(href);
+    }
+  });
+
+  it("redacts long fragments in linear time", () => {
+    const routes = new URL(`https://example.test/#/${"x".repeat(48_000)}`);
+    const params = new URL(`https://example.test/#/cb?${"q=1&".repeat(12_000)}state=ok`);
+    const started = performance.now();
+    expect(redactSensitive(routes)).toBe(routes.href);
+    expect(redactSensitive(params)).toBe(params.href);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
