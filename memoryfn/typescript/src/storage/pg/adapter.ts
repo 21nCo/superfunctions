@@ -333,9 +333,9 @@ export class PostgresAdapter implements StorageAdapter {
 
   /**
    * A SELECT of the replacement rows whose bind count stays below the driver
-   * limit. The tenant, tags, source key and content hash are bound once. Each row
-   * travels as a JSON array in json parameters of at most JSON_PART_LENGTH
-   * characters; values chosen by SIDE_TEXT_ROWS and SIDE_TEXT_LENGTH travel as
+   * limit. The tenant, tags (in the column's own array encoding), source key and
+   * content hash are bound once. Each row travels as a JSON array in json
+   * parameters of at most JSON_PART_LENGTH characters; values chosen by SIDE_TEXT_ROWS and SIDE_TEXT_LENGTH travel as
    * their own parameters, unescaped, joined to the row by chunk index. Up to
    * SIDE_TEXT_ROWS chunks, the type, content and metadata of every chunk travel
    * as they did in the per-column insert, and the row JSON holds only fixed-size
@@ -364,7 +364,7 @@ export class PostgresAdapter implements StorageAdapter {
     const fields = ['chunk_index', 'id', 'type', 'content', 'embedding', 'metadata', 'is_latest', 'created_at', 'updated_at']
       .map((name, index) => sql.raw(`'${name}', e->${index}`));
     return sql`SELECT coalesce(r.id, gen_random_uuid()), ${scope.tenantId}::text,
-      ARRAY(SELECT tag FROM json_array_elements_text(${JSON.stringify(scope.containerTags)}::text::json) WITH ORDINALITY AS t(tag, n) ORDER BY n),
+      ${sql.param(scope.containerTags, memories.containerTags)}::text[],
       ${side.length ? sql`coalesce(side.type, r.type), coalesce(side.content, r.content)` : sql`r.type, r.content`}, r.embedding,
       ${side.length ? sql`coalesce(side.metadata, r.metadata)` : sql`r.metadata`}, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
