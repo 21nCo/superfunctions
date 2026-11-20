@@ -513,8 +513,8 @@ export class SchemaConverter {
     const { $ref, ...rest } = schema;
     this.checkKeywords(rest);
     if (Object.keys(rest).length === 0) return this.reference(name, refs);
-    if (rest.allOf !== undefined && !Array.isArray(rest.allOf)) {
-      throw new OpenApiSkip("invalid-schema", "allOf is not an array");
+    if (rest.allOf !== undefined && !(Array.isArray(rest.allOf) && rest.allOf.length > 0)) {
+      throw new OpenApiSkip("invalid-schema", "allOf is not a non-empty array");
     }
     return this.convertObject({ ...rest, allOf: [...arrayOf(rest.allOf), { $ref }] }, mode, refs);
   }
@@ -531,7 +531,9 @@ export class SchemaConverter {
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
         dependencies = { ...value, ...dependencies };
-      } else if (keyword === "$defs" && isObject(value)) {
+      } else if (keyword === "$defs") {
+        // Draft-07 has no $defs, so Ajv would not refuse a malformed one.
+        if (!isObject(value)) throw new OpenApiSkip("invalid-schema", "$defs is not an object");
         defs = this.convertMap(value, mode, refs);
       } else {
         const entry = this.convertEntry(schema, keyword, value, mode, refs);

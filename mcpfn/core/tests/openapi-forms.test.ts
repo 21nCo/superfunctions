@@ -1835,15 +1835,26 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
               post(`malformedAllOf${index}`, { type: "string", definitions: { A: { type: "string" } }, $defs: { B: { type: "string" } }, allOf }),
             ]),
           ),
+          // A $ref sibling allOf is checked before the reference joins it; $defs must be an object.
+          "/ra": post("refEmptyAllOf", { $ref: "#/components/schemas/Text", allOf: [], definitions: { A: {} }, $defs: { B: {} } }),
+          "/rq": { get: { operationId: "refEmptyAllOfQuery", parameters: [{ name: "q", in: "query", schema: { $ref: "#/components/schemas/Text", allOf: [] } }], responses: ok } },
+          "/dn": post("defsNull", { type: "object", $defs: null }),
+          "/dr": { get: { operationId: "defsNullOutput", responses: json({ type: "object", $defs: null }) } },
+          "/dh": { head: { operationId: "defsArrayDiscarded", responses: json({ type: "object", $defs: [] }) } },
         },
       },
       options(),
     );
     expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code]).sort()).toEqual([
+      ["defsArrayDiscarded", "invalid-schema"],
       ["defsBody", "invalid-schema"],
+      ["defsNull", "invalid-schema"],
+      ["defsNullOutput", "invalid-schema"],
       ["defsUnflagged", "invalid-schema"],
       ...[0, 1, 2, 3].map((index) => [`malformedAllOf${index}`, "invalid-schema"]),
       ["ownOutput", "invalid-schema"],
+      ["refEmptyAllOf", "invalid-schema"],
+      ["refEmptyAllOfQuery", "invalid-schema"],
     ]);
     const body = (tool(result.tools, "validDefs").inputSchema.properties as Record<string, Record<string, unknown>>).body!;
     expect(body.$defs).toBeUndefined();
