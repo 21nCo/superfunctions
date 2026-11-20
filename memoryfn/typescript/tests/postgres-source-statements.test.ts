@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import type postgres from 'postgres';
+import { PostgresAdapter } from '../src/storage/pg/adapter';
+import { MemorySourceLimitError } from '../src/storage/adapter';
+import * as pgEntry from '../src/storage/pg/index';
+import * as schema from '../src/storage/pg/schema';
+
+/** A postgres-js stand-in that records each statement and answers it without a database. */
+function recorder(onQuery: (query: string) => void = () => {}) {
+  const statements: Array<{ query: string; params: unknown[] }> = [];
+  const client: Record<string, unknown> = {
+    options: { parsers: {}, serializers: {} },
+    unsafe(query: string, params: unknown[] = []) {
+      onQuery(query);
+      statements.push({ query, params });
+      const rows = /transaction_isolation/.test(query) ? [{ isolation: 'read committed' }] : [];
+      return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve([]) });
+    },
+    begin: (operation: (tx: unknown) => unknown) => operation(client),
+    savepoint: (operation: (tx: unknown) => unknown) => operation(client),
+  };
+  const adapter = new PostgresAdapter(drizzle(client as unknown as postgres.Sql, { schema }));
+  return { adapter, statements };
+}
+
+const TAG = 'probe-tag-0001';
+const scope = { tenantId: 'tenant-a', containerTags: [TAG, 'docs', TAG], sourceKey: 'guide.md' };
+const chunk = { tenantId: 'tenant-a', containerTags: ['docs', TAG], content: 'text' };
+
+describe('PostgresAdapter source statements', () => {
+  it('binds the tag set once in every statement that matches the source', async () => {
+    const calls: Array<[string, (adapter: PostgresAdapter) => Promise<unknown>]> = [
+      ['getSourceState', adapter => adapter.getSourceState(scope)],
+      ['replace', adapter => adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [chunk, chunk] })],
+      ['empty replace', adapter => adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [] })],
+      ['deleteSource', adapter => adapter.deleteSource(scope)],
+    ];
+    for (const [name, call] of calls) {
+      const { adapter, statements } = recorder();
+      await call(adapter);
+      const binds = statements.map(({ params }) => params.filter(param => String(param).includes(TAG)).length).filter(count => count > 0);
+      // getSourceState is one statement; a write has the row lock and then its write statement.
+      expect([name, binds]).toEqual([name, name === 'getSourceState' ? [1] : [1, 1]]);
+    }
+  });
+
+  it('rejects over-limit input and invalid chunk fields before any statement', async () => {
+    const { adapter, statements } = recorder(query => { throw new Error(`DATABASE_TOUCHED: ${query}`); });
+    await expect(adapter.getSourceState({ ...scope, sourceKey: 'k'.repeat(1025) })).rejects.toThrow(pgEntry.MemorySourceLimitError);
+    await expect(adapter.deleteSource({ ...scope, tenantId: 't'.repeat(1025) })).rejects.toThrow(MemorySourceLimitError);
+    const over = Array.from({ length: pgEntry.MAX_SOURCE_CHUNKS + 1 }, () => chunk);
+    await expect(adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: over })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    for (const id of ['memory-1', `${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}x`]) {
+      await expect(adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [{ ...chunk, id }] })).rejects.toThrow('MEMORY_SOURCE_CHUNK_INVALID');
+    }
+    expect(statements).toHaveLength(0);
+  });
+
+  it('recognizes a limit error thrown by another bundle of the class', () => {
+    const foreign = Object.assign(new Error('MEMORY_SOURCE_LIMIT_EXCEEDED'), { name: 'MemorySourceLimitError', code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect([foreign instanceof MemorySourceLimitError, new MemorySourceLimitError() instanceof pgEntry.MemorySourceLimitError]).toEqual([true, true]);
+    const others = [new Error('MEMORY_SOURCE_LIMIT_EXCEEDED'), Object.assign(new Error('x'), { code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' }), { name: 'MemorySourceLimitError', code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' }];
+    expect(others.map(value => value instanceof MemorySourceLimitError)).toEqual([false, false, false]);
+  });
+});

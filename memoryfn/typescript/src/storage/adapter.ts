@@ -30,9 +30,10 @@ export interface SourceReplace extends SourceScope {
 /** Most chunks one replaceSource call may write. */
 export const MAX_SOURCE_CHUNKS = 16_384;
 /**
- * Most UTF-8 bytes one replaceSource call may write: the content hash and the
- * scope tags once, plus each chunk's type, content, JSON-serialized metadata
- * and JSON-serialized embedding.
+ * Most bytes of chunk data one replaceSource call may write: the UTF-8 bytes of
+ * each chunk's type (an omitted or empty type counts as the 'conversational'
+ * written for it), content, JSON-serialized metadata and JSON-serialized
+ * embedding. The content hash and the scope tags are not counted.
  */
 export const MAX_SOURCE_REPLACE_BYTES = 256 * 1024 * 1024;
 /** Most UTF-8 bytes of a source's tenantId and of its sourceKey, each. */
@@ -43,6 +44,15 @@ export class MemorySourceLimitError extends Error {
   constructor() {
     super('MEMORY_SOURCE_LIMIT_EXCEEDED');
     this.name = 'MemorySourceLimitError';
+  }
+
+  /**
+   * Each package entry point (the root and ./storage/pg) bundles its own copy
+   * of this class, so `instanceof` matches the error by its name and code.
+   */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return value instanceof Error && value.name === 'MemorySourceLimitError'
+      && (value as { code?: unknown }).code === 'MEMORY_SOURCE_LIMIT_EXCEEDED';
   }
 }
 export interface StorageAdapter {
@@ -80,12 +90,6 @@ export function requireScope(tenantId: string | undefined, tags: string[] | unde
   if (typeof tenantId !== 'string' || !tenantId.trim() || !Array.isArray(tags) || tags.some(tag => typeof tag !== 'string' || !tag.trim())) {
     throw new Error('MEMORY_SCOPE_REQUIRED');
   }
-}
-
-/** Code-unit order, independent of the runtime locale. */
-export function compareCodeUnits(left: string, right: string): number {
-  if (left < right) return -1;
-  return left > right ? 1 : 0;
 }
 
 /**
@@ -133,8 +137,8 @@ function requireSourceTags(tags: unknown): asserts tags is string[] {
   }
 }
 
-/** A source scope copied at call time, with its tag set in canonical (sorted, unique) form. */
-export interface SourceSnapshot { scope: SourceScope; tags: string[] }
+/** A source scope copied at call time. */
+export interface SourceSnapshot { scope: SourceScope }
 export interface SourceReplaceSnapshot extends SourceSnapshot { contentHash: string; chunks: MemoryInsert[] }
 
 /**
@@ -153,7 +157,7 @@ export function requireSourceScope(input: SourceScope): SourceSnapshot {
   if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (utf8Bytes(tenantId) > MAX_SOURCE_IDENTITY_BYTES || utf8Bytes(sourceKey) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
   const scope: SourceScope = { tenantId, containerTags, sourceKey };
-  return { scope, tags: [...new Set(scope.containerTags)].sort(compareCodeUnits) };
+  return { scope };
 }
 
 export function sameTagSet(left: string[], right: string[]): boolean {
@@ -174,11 +178,25 @@ function jsonBytes(value: unknown): number {
   }
 }
 
-/** Bytes a copied chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
+/** Bytes a copied (normalized) chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
 function chunkBytes(chunk: MemoryInsert): number {
-  const text = (value: unknown) => typeof value === 'string' ? utf8Bytes(value) : 0;
-  return text(chunk.type) + text(chunk.content) + jsonBytes(chunk.metadata ?? {})
+  return utf8Bytes(chunk.type!) + utf8Bytes(chunk.content!) + jsonBytes(chunk.metadata ?? {})
     + (chunk.embedding ? jsonBytes(chunk.embedding) : 0);
+}
+
+type ChunkFields = Pick<MemoryInsert, 'type' | 'content' | 'id' | 'isLatest'>;
+/**
+ * A chunk's fields in the form every adapter writes: a missing or empty type
+ * becomes 'conversational' and missing content ''. A type, content, id or
+ * isLatest of another type is rejected, so no adapter stores it differently or
+ * writes a value the limits did not count.
+ */
+function chunkFields({ type, content, id, isLatest }: ChunkFields): ChunkFields {
+  if ((type != null && typeof type !== 'string') || (content != null && typeof content !== 'string')
+    || (id != null && (typeof id !== 'string' || id === '')) || (isLatest != null && typeof isLatest !== 'boolean')) {
+    throw new Error('MEMORY_SOURCE_CHUNK_INVALID');
+  }
+  return { type: type || 'conversational', content: content ?? '', ...(id == null ? {} : { id }), ...(isLatest == null ? {} : { isLatest }) };
 }
 
 /**
@@ -187,7 +205,7 @@ function chunkBytes(chunk: MemoryInsert): number {
  * will write.
  */
 export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapshot {
-  const { scope, tags } = requireSourceScope(input);
+  const { scope } = requireSourceScope(input);
   const { contentHash, chunks } = input;
   if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
@@ -195,18 +213,16 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
   const count = chunks.length;
   if (count > MAX_SOURCE_CHUNKS) throw sourceLimitExceeded();
   const given = Array.from({ length: count }, (_, index) => chunks[index]);
-  let bytes = utf8Bytes(contentHash);
-  for (const tag of scope.containerTags) bytes += utf8Bytes(tag);
-  if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
+  let bytes = 0;
   // Each chunk is copied first, reading every field once, and the copy that the
   // adapters write is the value measured.
   const copies = given.map((chunk): MemoryInsert => {
     if (!chunk || chunk.tenantId !== scope.tenantId) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
     requireSourceTags(chunk.containerTags);
     if (!sameTagSet(chunk.containerTags, scope.containerTags)) throw new Error('MEMORY_SOURCE_SCOPE_MISMATCH');
-    const { embedding, metadata, ...fields } = chunk;
+    const { embedding, metadata, type, content, id, isLatest, ...fields } = chunk;
     const copy: MemoryInsert = {
-      ...fields, tenantId: scope.tenantId, containerTags: [...scope.containerTags],
+      ...fields, ...chunkFields({ type, content, id, isLatest }), tenantId: scope.tenantId, containerTags: [...scope.containerTags],
       ...(embedding ? { embedding: [...embedding] } : {}),
       ...(metadata === undefined ? {} : { metadata: structuredClone(metadata) }),
     };
@@ -214,5 +230,5 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
     if (bytes > MAX_SOURCE_REPLACE_BYTES) throw sourceLimitExceeded();
     return copy;
   });
-  return { scope, tags, contentHash, chunks: copies };
+  return { scope, contentHash, chunks: copies };
 }

@@ -229,16 +229,19 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: MAX_SOURCE_CHUNKS });
     }, LARGE);
 
-    it('accepts a replacement at the byte limit and rejects one more byte without writing', async () => {
+    it('accepts chunks totalling the byte limit and rejects one more byte without writing', async () => {
       const unchanged = await seed();
-      // Bytes outside the chunk text: hash 'hash-2' (6), tags 'team' and 'docs' (8), type 'document' (8).
-      const fixed = 6 + 8 + 8;
+      // Only chunk data counts, here the type 'document' (8 bytes) besides the text; the hash and the tags do not.
+      const fixed = 'document'.length;
+      const defaulted = MAX_SOURCE_REPLACE_BYTES + 1 - 'conversational'.length - 2;
       const replace = (chunk: Partial<MemoryInsert>) => adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [{ ...chunks(source, '')[0], ...chunk }] });
       const control = String.fromCharCode(1);
       // Metadata counts as its JSON text ('{}' when absent), where a control character takes 6 bytes.
       const overByEscapes = (MAX_SOURCE_REPLACE_BYTES + 1 - fixed - '{"v":""}'.length) % 6;
       const overCases: Array<Partial<MemoryInsert>> = [
         { content: 'x'.repeat(MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2) },
+        // An omitted or empty type counts as the 'conversational' that every adapter writes.
+        { type: undefined, content: 'x'.repeat(defaulted) }, { type: '' as MemoryInsert['type'], content: 'x'.repeat(defaulted) },
         // 3-byte and 4-byte characters: under the limit in UTF-16 code units, over it in UTF-8.
         { content: `😀${'€'.repeat(Math.floor((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) / 3))}${'x'.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 2 - 4) % 3)}` },
         { content: 'x'.repeat(overByEscapes), metadata: { v: control.repeat((MAX_SOURCE_REPLACE_BYTES + 1 - fixed - 8 - overByEscapes) / 6) } },
@@ -249,14 +252,24 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       await expect(replace({ metadata: new Hidden('x'.repeat(MAX_SOURCE_REPLACE_BYTES)) as unknown as Record<string, unknown> })).rejects.toThrow(MemorySourceLimitError);
       // JSON text beyond the runtime's string capacity.
       await expect(replace({ metadata: { list: new Array(90).fill(control.repeat(1 << 20)) } })).rejects.toThrow(MemorySourceLimitError);
-      // The hash and tags count even without chunks.
-      await expect(adapter().replaceSource({ ...source, contentHash: 'h'.repeat(MAX_SOURCE_REPLACE_BYTES + 1), chunks: [] })).rejects.toThrow(MemorySourceLimitError);
       await unchanged();
       const content = `😀${'€'.repeat(1000)}${'x'.repeat(MAX_SOURCE_REPLACE_BYTES - fixed - '{"v":""}'.length - 6 * 1000 - 4 - 3 * 1000)}`;
       const [row] = await replace({ content, metadata: { v: control.repeat(1000) } });
       expect(row.content === content && row.metadata?.v === control.repeat(1000)).toBe(true);
       expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
     }, LARGE);
+
+    it('rejects chunk fields of another type and writes defaulted fields as counted', async () => {
+      const unchanged = await seed();
+      const [chunk] = chunks(source, 'x');
+      for (const fields of [{ type: 5 }, { content: { text: 'x' } }, { id: 7 }, { id: '' }, { isLatest: 'yes' }]) {
+        const invalid = { ...chunk, ...fields } as unknown as MemoryInsert;
+        await expect(adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [invalid] })).rejects.toThrow('MEMORY_SOURCE_CHUNK_INVALID');
+      }
+      await unchanged();
+      const [row] = await adapter().replaceSource({ ...source, contentHash: 'hash-2', chunks: [{ ...chunk, type: '' as MemoryInsert['type'], content: undefined }] });
+      expect([row.type, row.content]).toEqual(['conversational', '']);
+    });
 
     it('rejects a tenant or source key over the identity limit in every source method', async () => {
       const unchanged = await seed();

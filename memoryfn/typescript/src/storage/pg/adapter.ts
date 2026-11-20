@@ -15,6 +15,8 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
  * embeddings it carries.
  */
 const JSON_PART_LENGTH = 1 << 26;
+/** The canonical text form of the id column's uuid type. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // We assume the DB passed is compatible with PostgresJsDatabase schema
 export class PostgresAdapter implements StorageAdapter {
@@ -199,9 +201,18 @@ export class PostgresAdapter implements StorageAdapter {
     });
   }
 
-  /** Live chunks of exactly this tenant, tag set (as a set) and source key. */
-  private liveSource(scope: SourceScope, tags: string[]) {
-    const tagSet = sql`ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(tags)}::jsonb))::text[]`;
+  /**
+   * The source's tag set as a CTE named source_tags, bound once in the column's
+   * own array encoding. Every source statement carries it and liveSource reads
+   * it, so a statement sends the tag set once however often it matches it.
+   */
+  private sourceTags(db: PostgresJsDatabase<any>, scope: SourceScope) {
+    return db.$with('source_tags', {}).as(sql`SELECT ${sql.param(scope.containerTags, memories.containerTags)}::text[] AS tags`);
+  }
+
+  /** Live chunks of exactly this tenant, tag set (as a set) and source key; the statement must carry sourceTags. */
+  private liveSource(scope: SourceScope) {
+    const tagSet = sql`(SELECT tags FROM source_tags)`;
     return and(eq(memories.tenantId, scope.tenantId), eq(memories.sourceKey, scope.sourceKey), isNull(memories.deletedAt),
       sql`${memories.containerTags} @> ${tagSet}`, sql`${memories.containerTags} <@ ${tagSet}`);
   }
@@ -239,13 +250,14 @@ export class PostgresAdapter implements StorageAdapter {
    * so the relationship delete inside the write's CTE would leave cached
    * relationship reads stale.
    */
-  private withSourceLock<T>(scope: SourceScope, tags: string[], operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
+  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
       const [setting] = await tx.execute<{ isolation: string }>(sql`SELECT current_setting('transaction_isolation') AS isolation`);
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
       // The key is built from the values as the server received them, so it names the stored source.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(json_build_array(${scope.tenantId}::text, ${scope.sourceKey}::text)::text, 0))`);
-      await tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags)).orderBy(memories.id).for('update').$withCache(false);
+      await tx.with(this.sourceTags(tx, scope)).select({ id: memories.id }).from(memories).where(this.liveSource(scope))
+        .orderBy(memories.id).for('update').$withCache(false);
       const result = await operation(tx);
       await tx.delete(memoryRelationships).where(sql`false`);
       return result;
@@ -265,9 +277,9 @@ export class PostgresAdapter implements StorageAdapter {
    * source and drop their relationships. PostgreSQL runs data-modifying CTEs to
    * completion as part of the statement that carries them.
    */
-  private tombstoneSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date) {
+  private tombstoneSource(tx: PostgresJsDatabase<any>, scope: SourceScope, now: Date) {
     const tombstoned = tx.$with('source_tombstoned').as(tx.update(memories).set(this.tombstone(now))
-      .where(this.liveSource(scope, tags)).returning({ id: memories.id }));
+      .where(this.liveSource(scope)).returning({ id: memories.id }));
     const ids = tx.select({ id: tombstoned.id }).from(tombstoned);
     const unlinked = tx.$with('source_unlinked').as(tx.delete(memoryRelationships)
       .where(or(inArray(memoryRelationships.fromId, ids), inArray(memoryRelationships.toId, ids))).returning({ id: memoryRelationships.id }));
@@ -278,15 +290,17 @@ export class PostgresAdapter implements StorageAdapter {
    * Tombstones the source in one statement and returns how many chunks it removed.
    * The statement is an UPDATE builder so a drizzle cache sees the mutation of
    * `memories` (a SELECT over data-modifying CTEs would be cached as a read).
-   * Its relationship CTE selects the same live chunks the UPDATE changes: the
-   * advisory and row locks held by withSourceLock keep that set fixed.
+   * The live chunks are selected once, in a CTE that the relationship delete
+   * and the UPDATE both read: the advisory and row locks held by
+   * withSourceLock keep that set fixed.
    */
-  private async clearSource(tx: PostgresJsDatabase<any>, scope: SourceScope, tags: string[], now: Date): Promise<number> {
-    const live = tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope, tags));
+  private async clearSource(tx: PostgresJsDatabase<any>, scope: SourceScope, now: Date): Promise<number> {
+    const live = tx.$with('source_live').as(tx.select({ id: memories.id }).from(memories).where(this.liveSource(scope)));
+    const ids = tx.select({ id: live.id }).from(live);
     const unlinked = tx.$with('source_unlinked').as(tx.delete(memoryRelationships)
-      .where(or(inArray(memoryRelationships.fromId, live), inArray(memoryRelationships.toId, live))).returning({ id: memoryRelationships.id }));
-    const rows = await tx.with(unlinked).update(memories).set(this.tombstone(now))
-      .where(this.liveSource(scope, tags)).returning({ id: memories.id });
+      .where(or(inArray(memoryRelationships.fromId, ids), inArray(memoryRelationships.toId, ids))).returning({ id: memoryRelationships.id }));
+    const rows = await tx.with(this.sourceTags(tx, scope), live, unlinked).update(memories).set(this.tombstone(now))
+      .where(inArray(memories.id, ids)).returning({ id: memories.id });
     return rows.length;
   }
 
@@ -295,9 +309,9 @@ export class PostgresAdapter implements StorageAdapter {
    * otherwise publish state that never commits.
    */
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
-    const { scope, tags } = requireSourceScope(input);
-    const rows = await this.db.select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
-      .from(memories).where(this.liveSource(scope, tags)).groupBy(memories.contentHash).$withCache(false);
+    const { scope } = requireSourceScope(input);
+    const rows = await this.db.with(this.sourceTags(this.db, scope)).select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
+      .from(memories).where(this.liveSource(scope)).groupBy(memories.contentHash).$withCache(false);
     if (!rows.length) return null;
     return {
       contentHash: rows.length === 1 ? rows[0].contentHash : null,
@@ -306,20 +320,22 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    const { scope, tags, contentHash, chunks } = requireSourceReplace(input);
+    const { scope, contentHash, chunks } = requireSourceReplace(input);
+    // The id column is a uuid, so the row JSON carries only fixed-size ids.
+    if (chunks.some(chunk => chunk.id !== undefined && !UUID.test(chunk.id))) throw new Error('MEMORY_SOURCE_CHUNK_INVALID');
     const now = new Date();
     const values = chunks.map(chunk => this.toRow(chunk, now));
-    return this.withSourceLock(scope, tags, async tx => {
-      if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
-      const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
-      const rows = await tx.with(tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
+    return this.withSourceLock(scope, async tx => {
+      if (!values.length) { await this.clearSource(tx, scope, now); return []; }
+      const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
+      const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
       return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
     });
   }
 
   /**
-   * A SELECT of the replacement rows in one statement. The tenant, tags (in the
-   * column's own array encoding), source key and content hash are bound once.
+   * A SELECT of the replacement rows in one statement. The tenant, source key
+   * and content hash are bound once, and the tags come from source_tags.
    * Each chunk's type, content and metadata travel as their own parameters,
    * unescaped, as in a per-column insert: at most 3 x MAX_SOURCE_CHUNKS binds.
    * The other fields (chunk index, id, embedding, is_latest, timestamps) travel
@@ -342,7 +358,7 @@ export class PostgresAdapter implements StorageAdapter {
     const fields = ['chunk_index', 'id', 'embedding', 'is_latest', 'created_at', 'updated_at']
       .map((name, index) => sql.raw(`'${name}', e->${index}`));
     return sql`SELECT coalesce(r.id, gen_random_uuid()), ${scope.tenantId}::text,
-      ${sql.param(scope.containerTags, memories.containerTags)}::text[], t.type, t.content, r.embedding,
+      (SELECT tags FROM source_tags), t.type, t.content, r.embedding,
       t.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
       CROSS JOIN json_populate_record(NULL::${memories}, json_build_object(${sql.join(fields, sql`, `)})) AS r
@@ -350,8 +366,8 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async deleteSource(input: SourceScope): Promise<number> {
-    const { scope, tags } = requireSourceScope(input);
-    return this.withSourceLock(scope, tags, tx => this.clearSource(tx, scope, tags, new Date()));
+    const { scope } = requireSourceScope(input);
+    return this.withSourceLock(scope, tx => this.clearSource(tx, scope, new Date()));
   }
 
   private mapToDomain(row: typeof memories.$inferSelect): Memory {

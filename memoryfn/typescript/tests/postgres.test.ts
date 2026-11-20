@@ -205,8 +205,8 @@ suite('Postgres lifecycle integration', () => {
       tenantId: 'a', containerTags: ['team', 'docs'], type: `type "${index}"\u0001`, metadata: { index, note: '"quoted"\u0001' },
       content: `chunk ${index}\n"quoted"\u0001`,
     }));
-    const used = 'hash-many'.length + scope.containerTags.join('').length
-      + many.reduce((total, chunk) => total + chunk.type.length + chunk.content.length + JSON.stringify(chunk.metadata).length, 0);
+    // Only chunk data counts against the byte limit, not the hash or the tags.
+    const used = many.reduce((total, chunk) => total + chunk.type.length + chunk.content.length + JSON.stringify(chunk.metadata).length, 0);
     many[3].content += String.fromCharCode(1).repeat(MAX_SOURCE_REPLACE_BYTES - used);
     const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-many', chunks: many });
     expect(rows.map(row => [row.chunkIndex, row.type, row.content, row.metadata, row.containerTags]))
