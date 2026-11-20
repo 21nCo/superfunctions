@@ -189,7 +189,8 @@ suite('Postgres lifecycle integration', () => {
     const metadata = { note: `${String.fromCharCode(1).repeat(1024)}"quoted"`, nested: { list: [1, 'two'] } };
     const chunks = [{ content: 'short' }, { content: long, metadata }, { content: long + 'er' }, { content: 'tail\u0001' }]
       .map(chunk => ({ tenantId: 'a', containerTags: ['docs'], ...chunk }));
-    const contentHash = `hash-${String.fromCharCode(1).repeat(1024)}`;
+    // 1,024 bytes, the most a content hash may hold.
+    const contentHash = `hash-${String.fromCharCode(1).repeat(1019)}`;
     const rows = await adapter.replaceSource({ ...scope, contentHash, chunks });
     expect(rows.map(row => [row.chunkIndex, row.content.length])).toEqual([[0, 5], [1, (1 << 20) + 3], [2, (1 << 20) + 5], [3, 5]]);
     const stored = await client`SELECT chunk_index, content = ${long} AS same FROM memories WHERE deleted_at IS NULL ORDER BY chunk_index`;

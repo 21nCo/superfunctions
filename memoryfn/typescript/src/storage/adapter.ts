@@ -36,8 +36,10 @@ export const MAX_SOURCE_CHUNKS = 16_384;
  * embedding. The content hash and the scope tags are not counted.
  */
 export const MAX_SOURCE_REPLACE_BYTES = 256 * 1024 * 1024;
-/** Most UTF-8 bytes of a source's tenantId and of its sourceKey, each. */
+/** Most UTF-8 bytes of a source's tenantId, of its sourceKey and of a replacement's contentHash, each. */
 export const MAX_SOURCE_IDENTITY_BYTES = 1024;
+/** Most UTF-8 bytes of a source's distinct container tags together (a repeated tag counts once). */
+export const MAX_SOURCE_TAG_BYTES = 64 * 1024;
 /** Rejects a source call over one of the limits above; `code` is stable for callers to test. */
 export class MemorySourceLimitError extends Error {
   readonly code = 'MEMORY_SOURCE_LIMIT_EXCEEDED' as const;
@@ -159,6 +161,9 @@ export function requireSourceScope(input: SourceScope): SourceSnapshot {
   if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('MEMORY_SOURCE_KEY_REQUIRED');
   if (!isSourceText(sourceKey)) throw new Error('MEMORY_SCOPE_REQUIRED');
   if (utf8Bytes(tenantId) > MAX_SOURCE_IDENTITY_BYTES || utf8Bytes(sourceKey) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+  let tagBytes = 0;
+  for (const tag of new Set(containerTags)) tagBytes += utf8Bytes(tag);
+  if (tagBytes > MAX_SOURCE_TAG_BYTES) throw sourceLimitExceeded();
   const scope: SourceScope = { tenantId, containerTags, sourceKey };
   return { scope };
 }
@@ -211,6 +216,7 @@ export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapsho
   const { scope } = requireSourceScope(input);
   const { contentHash, chunks } = input;
   if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+  if (utf8Bytes(contentHash) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   // The length is checked before the array is read, and the copy is taken by index, not through its iterator.
   const count = chunks.length;

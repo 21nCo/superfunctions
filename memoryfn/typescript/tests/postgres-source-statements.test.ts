@@ -51,6 +51,10 @@ describe('PostgresAdapter source statements', () => {
     const { adapter, statements } = recorder(query => { throw new Error(`DATABASE_TOUCHED: ${query}`); });
     await expect(adapter.getSourceState({ ...scope, sourceKey: 'k'.repeat(1025) })).rejects.toThrow(pgEntry.MemorySourceLimitError);
     await expect(adapter.deleteSource({ ...scope, tenantId: 't'.repeat(1025) })).rejects.toThrow(MemorySourceLimitError);
+    const wide = { ...scope, containerTags: Array.from({ length: pgEntry.MAX_SOURCE_TAG_BYTES / 1024 + 1 }, (_, index) => `${index}`.padEnd(1024, 't')) };
+    await expect(adapter.getSourceState(wide)).rejects.toThrow(pgEntry.MemorySourceLimitError);
+    await expect(adapter.deleteSource(wide)).rejects.toThrow(pgEntry.MemorySourceLimitError);
+    await expect(adapter.replaceSource({ ...scope, contentHash: 'h'.repeat(1025), chunks: [] })).rejects.toThrow(pgEntry.MemorySourceLimitError);
     const over = Array.from({ length: pgEntry.MAX_SOURCE_CHUNKS + 1 }, () => chunk);
     await expect(adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: over })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
     for (const id of ['memory-1', `${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}x`]) {
@@ -58,6 +62,19 @@ describe('PostgresAdapter source statements', () => {
     }
     expect(statements).toHaveLength(0);
   });
+
+  it('keeps a replacement at every limit to one statement of under 260 MiB of parameters', async () => {
+    const { adapter, statements } = recorder();
+    const containerTags = Array.from({ length: pgEntry.MAX_SOURCE_TAG_BYTES / 1024 }, (_, index) => `${index}`.padEnd(1024, 't'));
+    // Each chunk is its share of the byte limit: type 'document', metadata '{}' and content.
+    const content = String.fromCharCode(1).repeat(pgEntry.MAX_SOURCE_REPLACE_BYTES / pgEntry.MAX_SOURCE_CHUNKS - 'document'.length - '{}'.length);
+    const chunks = Array.from({ length: pgEntry.MAX_SOURCE_CHUNKS }, () => ({ tenantId: scope.tenantId, containerTags, type: 'document' as const, content }));
+    await adapter.replaceSource({ ...scope, containerTags, contentHash: 'h'.repeat(pgEntry.MAX_SOURCE_IDENTITY_BYTES), chunks });
+    // A Bind message frames each value with a 4-byte length.
+    const sizes = statements.map(({ params }) => params.reduce<number>((total, param) => total + 4 + Buffer.byteLength(typeof param === 'string' ? param : JSON.stringify(param)), 0));
+    expect(Math.max(...sizes)).toBeGreaterThan(pgEntry.MAX_SOURCE_REPLACE_BYTES);
+    expect(Math.max(...sizes)).toBeLessThan(260 * 1024 * 1024);
+  }, 120_000);
 
   it('passes every uuid spelling PostgreSQL accepts to the database', async () => {
     for (const id of ['00000000-0000-4000-8000-000000000001', '00000000000040008000000000000001', '{00000000-0000-4000-8000-000000000001}', '0000-0000-0000-4000-8000-0000-0000-0001']) {

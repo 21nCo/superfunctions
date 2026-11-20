@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_SOURCE_CHUNKS, MAX_SOURCE_IDENTITY_BYTES, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
+  MAX_SOURCE_CHUNKS, MAX_SOURCE_IDENTITY_BYTES, MAX_SOURCE_REPLACE_BYTES, MAX_SOURCE_TAG_BYTES, MemorySourceLimitError,
   type MemoryInsert, type MemoryUpdate, type SourceScope, type StorageAdapter,
 } from '../src/storage/adapter';
 import type { Memory } from '../src/core/types';
@@ -291,8 +291,43 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
       expect(await adapter().deleteSource(atLimit)).toBe(1);
     });
 
+    it('accepts a content hash at the identity limit and rejects one byte more without writing', async () => {
+      const unchanged = await seed();
+      for (const contentHash of ['h'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1), `${'€'.repeat(341)}xx`, `${'😀'.repeat(MAX_SOURCE_IDENTITY_BYTES / 4)}x`]) {
+        for (const replacement of [chunks(source, 'x'), []]) {
+          await expect(adapter().replaceSource({ ...source, contentHash, chunks: replacement })).rejects.toThrow(MemorySourceLimitError);
+        }
+      }
+      await unchanged();
+      // 1,024 bytes: 341 3-byte characters and one ASCII character.
+      const contentHash = `${'€'.repeat(341)}x`;
+      await adapter().replaceSource({ ...source, contentHash, chunks: chunks(source, 'x') });
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash, chunkCount: 1 });
+    });
+
+    it('bounds the distinct tag set by its total bytes in every source method', async () => {
+      const unchanged = await seed();
+      // 64 distinct 1,024-byte tags total MAX_SOURCE_TAG_BYTES; repeats count once.
+      const tags = Array.from({ length: MAX_SOURCE_TAG_BYTES / 1024 }, (_, index) => `${String(index).padStart(2, '0')}${'t'.repeat(1022)}`);
+      const overSets = [[...tags, 'x'], [...tags.slice(1), `${'t'.repeat(1023)}é`, tags[1]]];
+      for (const containerTags of overSets) {
+        const scope = { ...source, containerTags };
+        await expect(adapter().getSourceState(scope)).rejects.toThrow(MemorySourceLimitError);
+        await expect(adapter().deleteSource(scope)).rejects.toThrow(MemorySourceLimitError);
+        await expect(adapter().replaceSource({ ...scope, contentHash: 'hash-2', chunks: chunks(scope, 'x') })).rejects.toThrow(MemorySourceLimitError);
+      }
+      await unchanged();
+      const atLimit = { ...source, containerTags: [...tags, ...tags.slice(0, 8)] };
+      const [row] = await adapter().replaceSource({ ...atLimit, contentHash: 'hash-t', chunks: chunks(atLimit, 't') });
+      expect(row.containerTags.length).toBe(tags.length + 8);
+      const equivalent = { ...source, containerTags: [...tags].reverse() };
+      expect(await adapter().getSourceState(equivalent)).toEqual({ contentHash: 'hash-t', chunkCount: 1 });
+      expect(await adapter().deleteSource(equivalent)).toBe(1);
+      await unchanged();
+    });
+
     it('reads, replaces and deletes a source with a long or repeated tag set', async () => {
-      // Tags are not bound by the identity limit; equivalent tag sets name one source.
+      // A tag is not bound by the identity limit; equivalent tag sets name one source.
       for (const containerTags of [['docs', 'x'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1)], new Array<string>(257).fill('docs')]) {
         const scope = { ...source, containerTags };
         const [row] = await adapter().replaceSource({ ...scope, contentHash: 'hash-t', chunks: chunks(scope, 't') });
