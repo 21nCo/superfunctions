@@ -54,6 +54,7 @@ import {
 import {
   AuthFnConflictError,
   AuthFnError,
+  AuthFnErrorWithCookies,
   AuthFnOAuthCallbackInvalidError,
   AuthFnOAuthStateInvalidError,
   AuthFnOAuthStateReplayedError,
@@ -670,10 +671,10 @@ function createSocialRoutes(
               303
             );
           }
-          if (config.bindBrowserState && error && typeof error === 'object') {
-            Object.assign(error, {
-              authfnSetCookies: [clearBrowserBindingCookie(ctx, request, runtime, stateId)]
-            });
+          if (config.bindBrowserState) {
+            throw new AuthFnErrorWithCookies(error, [
+              clearBrowserBindingCookie(ctx, request, runtime, stateId)
+            ]);
           }
           throw error;
         }

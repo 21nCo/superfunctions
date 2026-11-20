@@ -568,3 +568,20 @@ function resolveOAuthInternalMessage(code: string, message: string): string {
       return sanitizedMessage || 'OAuth request failed';
   }
 }
+
+/**
+ * Carries a route's error together with cookies its shared error response must
+ * still set (for example clearing an OAuth browser-binding cookie). A fresh
+ * wrapper per failure leaves the original error untouched.
+ */
+export class AuthFnErrorWithCookies extends Error {
+  readonly original: unknown;
+  readonly setCookies: string[];
+
+  constructor(original: unknown, setCookies: string[]) {
+    super(original instanceof Error ? original.message : 'AuthFn error');
+    this.name = 'AuthFnErrorWithCookies';
+    this.original = original;
+    this.setCookies = setCookies;
+  }
+}

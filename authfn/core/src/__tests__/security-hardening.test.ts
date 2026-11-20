@@ -497,6 +497,22 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     expect(elsewhere.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
   });
 
+  it('reports a frozen error thrown during a bound JSON callback and still clears the cookie', async () => {
+    const events: string[] = [];
+    const frozen = Object.freeze(new Error('test-frozen-hook-error'));
+    const auth = createTestServer({
+      ...createConfig({ bindBrowserState: true }),
+      hooks: { beforeSessionIssue: async () => { throw frozen; } },
+      observability: { events: { emit: async (event: { type: string }) => { events.push(event.type); } } } as never
+    });
+    const started = await start(auth, { callbackMode: 'json' });
+    const stateId = (await started.json()).data.stateId as string;
+    const response = await callback(auth, stateId, cookieHeaderFromSetCookies(started.headers.getSetCookie()));
+    expect(response.ok).toBe(false);
+    expect(response.headers.getSetCookie().some((cookie) => cookie.includes('oauth_binding.') && /Max-Age=0/i.test(cookie))).toBe(true);
+    expect(events).toContain('authfn.request.failed');
+  });
+
   it('keeps the binding cookie Secure and SameSite=None on an https origin when session cookies are not secure', async () => {
     const config = createConfig({ bindBrowserState: true });
     const auth = createTestServer({ ...config, cookie: { secure: false } });

@@ -1,7 +1,7 @@
 import { createObservabilityMiddleware, createRouter, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnRuntimeConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
-import { AuthFnValidationError } from '../core/errors.js';
+import { AuthFnErrorWithCookies, AuthFnValidationError } from '../core/errors.js';
 import { clearSessionCookies, issueSessionCookies } from '../core/cookies.js';
 import {
   assertValidCsrf,
@@ -48,7 +48,8 @@ export function createAuthFnRouter(
     basePath: config.basePath ?? '/auth',
     middleware: middleware.length > 0 ? middleware : undefined,
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
-    onError: async (error, request) => {
+    onError: async (thrown, request) => {
+      const error = thrown instanceof AuthFnErrorWithCookies ? thrown.original : thrown;
       const metadata = sanitizeErrorMetadata(describeRouteError(error, request));
       if (isDebugErrorLoggingEnabled()) {
         console.error('[authfn route error]', JSON.stringify(metadata));
@@ -65,25 +66,16 @@ export function createAuthFnRouter(
       }
 
       const response = jsonError(request, error);
-      for (const cookie of readErrorSetCookies(error)) {
-        response.headers.append('set-cookie', cookie);
+      if (thrown instanceof AuthFnErrorWithCookies) {
+        for (const cookie of thrown.setCookies) {
+          response.headers.append('set-cookie', cookie);
+        }
       }
       return response;
     }
   });
 }
 
-/**
- * Cookies a route attached to a thrown error (as `authfnSetCookies`) so the
- * shared error response can still clear per-request state, such as an OAuth
- * browser-binding cookie.
- */
-function readErrorSetCookies(error: unknown): string[] {
-  const cookies = error && typeof error === 'object'
-    ? (error as { authfnSetCookies?: unknown }).authfnSetCookies
-    : undefined;
-  return Array.isArray(cookies) ? cookies.filter((cookie): cookie is string => typeof cookie === 'string') : [];
-}
 
 function isDebugErrorLoggingEnabled(): boolean {
   const globalProcess = globalThis as unknown as {
