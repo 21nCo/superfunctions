@@ -1,5 +1,5 @@
 // Type-checked by tests/openapi-document-type.test.ts (not run).
-import { fromOpenAPI, type OpenApiExecutor } from "../../src/openapi/index.js";
+import { fromOpenAPI, type OpenApiDocument, type OpenApiExecutor } from "../../src/openapi/index.js";
 
 declare const executor: OpenApiExecutor;
 
@@ -50,6 +50,36 @@ fromOpenAPI(plainDocument, { executor });
 
 // With the context type given explicitly the standard fields are still accepted.
 fromOpenAPI<undefined>({ openapi: "3.0.3", info: { title: "t", version: "1" }, servers: [], paths: {} }, { executor });
+
+// x-* extensions are accepted where the document type is named: with the
+// context type given explicitly, and on a literal annotated as OpenApiDocument.
+fromOpenAPI<undefined>({ openapi: "3.1.0", paths: {}, "x-internal": true }, { executor });
+const annotated: OpenApiDocument = { openapi: "3.1.0", paths: {}, "x-generated-by": "test" };
+fromOpenAPI(annotated, { executor });
+// @ts-expect-error a top-level field outside the standard set and x-* is still refused there
+fromOpenAPI<undefined>({ openapi: "3.1.0", title: "misplaced" }, { executor });
+
+// The operation given to name() and to the executor is deeply frozen, and typed read-only.
+fromOpenAPI(parsed, {
+  executor: {
+    execute({ operation }) {
+      // @ts-expect-error read-only
+      operation.path = "/changed";
+      // @ts-expect-error read-only
+      operation.parameters[0]!.name = "changed";
+      // @ts-expect-error read-only
+      operation.servers[0]!.url = "https://changed.example.test";
+      return { content: [{ type: "text", text: operation.path }] };
+    },
+  },
+  name(operation) {
+    // @ts-expect-error read-only
+    operation.tags.push("changed");
+    // @ts-expect-error read-only
+    operation.requestBody!.contentType = "text/plain";
+    return operation.operationId ?? operation.path;
+  },
+});
 
 // @ts-expect-error an object sharing no OpenAPI field is not a document
 fromOpenAPI({ title: "not a document" }, { executor });

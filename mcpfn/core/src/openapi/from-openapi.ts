@@ -3,13 +3,17 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 // bundle shares the root entry's classes (instanceof, private fields) instead
 // of carrying a second copy. Tests and typecheck map the name to src/index.ts.
 import {
+  createSchemaCompiler,
   McpFnRegistry,
   McpFnValidationError,
   type McpFnJsonSchema,
   type McpFnObjectSchema,
+  type SchemaCompiler,
 } from "@mcpfn/core";
 import {
+  isDefaultDialect,
   isObject,
+  NodeBudget,
   OpenApiSkip,
   parseComponentRef,
   SchemaConverter,
@@ -19,6 +23,7 @@ import type {
   FromOpenApiOptions,
   FromOpenApiResult,
   OpenApiDocument,
+  OpenApiDocumentFields,
   OpenApiMethod,
   OpenApiOperation,
   OpenApiOperationParameter,
@@ -65,6 +70,8 @@ function isForbiddenHeader(name: string): boolean {
   return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
 }
 
+const OPERATION_ID_SELECTOR = "operationId:";
+
 interface SelectorSet {
   operationIds: Set<string>;
   tags: Set<string>;
@@ -80,26 +87,33 @@ function compileSelectors(
     throw new McpFnValidationError(`fromOpenAPI ${option} must be an array of selectors`);
   }
   const set: SelectorSet = { operationIds: new Set(), tags: new Set(), routes: new Set() };
-  for (const selector of selectors) {
-    if (typeof selector !== "string" || selector.trim() === "") {
-      throw new McpFnValidationError(
-        `fromOpenAPI ${option} selector ${JSON.stringify(selector)} must be a non-empty string`,
-      );
-    }
-    const route = /^([A-Za-z]+)\s+(\/\S*)$/.exec(selector);
-    if (selector.startsWith("tag:")) {
-      const tag = selector.slice(4);
-      if (!tag) {
-        throw new McpFnValidationError(`fromOpenAPI ${option} selector "tag:" needs a tag name`);
-      }
-      set.tags.add(tag);
-    } else if (route && METHODS.has(route[1]!.toLowerCase())) {
-      set.routes.add(`${route[1]!.toUpperCase()} ${route[2]}`);
-    } else {
-      set.operationIds.add(selector);
-    }
-  }
+  for (const selector of selectors) addSelector(set, option, selector);
   return set;
+}
+
+function addSelector(set: SelectorSet, option: "include" | "exclude", selector: unknown): void {
+  if (typeof selector !== "string" || selector.trim() === "") {
+    throw new McpFnValidationError(
+      `fromOpenAPI ${option} selector ${JSON.stringify(selector)} must be a non-empty string`,
+    );
+  }
+  const route = /^([A-Za-z]+)\s+(\/\S*)$/.exec(selector);
+  if (selector.startsWith(OPERATION_ID_SELECTOR)) {
+    // Exact form, for operationIds that read as a tag or route selector.
+    set.operationIds.add(selectorValue(option, selector, OPERATION_ID_SELECTOR, "an operationId"));
+  } else if (selector.startsWith("tag:")) {
+    set.tags.add(selectorValue(option, selector, "tag:", "a tag name"));
+  } else if (route && METHODS.has(route[1]!.toLowerCase())) {
+    set.routes.add(`${route[1]!.toUpperCase()} ${route[2]}`);
+  } else {
+    set.operationIds.add(selector);
+  }
+}
+
+function selectorValue(option: "include" | "exclude", selector: string, prefix: string, needs: string): string {
+  const value = selector.slice(prefix.length);
+  if (!value) throw new McpFnValidationError(`fromOpenAPI ${option} selector "${prefix}" needs ${needs}`);
+  return value;
 }
 
 type OperationIdentity = Pick<OpenApiOperation, "method" | "path" | "operationId" | "tags">;
@@ -203,6 +217,25 @@ function isApplicationJson(key: string): boolean {
   return key.split(";")[0]!.trim().toLowerCase() === "application/json";
 }
 
+const SUCCESS_STATUS = /^2(?:\d\d|XX)$/i;
+
+// Codes that leave a tool without an output schema instead of skipping it:
+// the contract allows "otherwise no output schema".
+const OUTPUT_OMIT_CODES = new Set(["schema-too-large", "unsupported-access-flag", "unsupported-dialect"]);
+
+/** The `{name}` variables of a path template, scanned without backtracking. */
+function templateVariables(path: string): string[] {
+  const names: string[] = [];
+  let start = path.indexOf("{");
+  while (start !== -1) {
+    const end = path.indexOf("}", start + 1);
+    if (end === -1) break;
+    if (end > start + 1) names.push(path.slice(start + 1, end));
+    start = path.indexOf("{", end + 1);
+  }
+  return names;
+}
+
 interface Candidate {
   operation: OpenApiOperation;
   inputSchema: McpFnObjectSchema;
@@ -211,17 +244,36 @@ interface Candidate {
 
 class OperationConverter {
   private readonly components: JsonObject;
-  readonly schemas: SchemaConverter;
+  private readonly schemas: SchemaConverter;
+  private compiler: SchemaCompiler | undefined;
 
   constructor(
     private readonly document: JsonObject,
     version: OpenApiVersion,
   ) {
     this.components = isObject(document.components) ? document.components : {};
+    const dialect = document.jsonSchemaDialect;
     this.schemas = new SchemaConverter(
       version,
       isObject(this.components.schemas) ? this.components.schemas : {},
+      version === "3.1" && dialect !== undefined && !isDefaultDialect(dialect) ? JSON.stringify(dialect) : undefined,
     );
+  }
+
+  /**
+   * One operation as a tool candidate. The input and the output each get
+   * their own node budget, which conversion and copying both charge.
+   */
+  candidate(path: string, pathItem: JsonObject, method: OpenApiMethod, raw: JsonObject): Candidate {
+    const { inputs, inputSchema } = this.schemas.budgeted(() => {
+      const resolved = this.inputs(path, pathItem, raw);
+      // Each tool owns its schema objects: component conversions are cached
+      // and shared, and a schema must not reach one object by two paths.
+      return { inputs: resolved, inputSchema: treeCopy(this.inputSchema(resolved), new NodeBudget()) };
+    });
+    const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
+    const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
+    return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
   }
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
@@ -303,6 +355,7 @@ class OperationConverter {
     }
     if (body) {
       groups.push(["body", this.schemas.convert(body.schema, "input", refs)]);
+      this.schemas.checkProjection(body.schema, "input");
       if (body.info.required) required.push("body");
     }
     const definitions = this.schemas.definitions(refs, "input");
@@ -316,31 +369,48 @@ class OperationConverter {
   }
 
   /**
-   * The first 2xx response with `application/json` content. Its schema is
-   * always converted, so the skip rules apply whatever its shape; it becomes
-   * the output schema only when it accepts objects and nothing else.
+   * The schema of the first 2xx `application/json` response entry that has
+   * one. It is always converted, so the skip rules apply whatever its shape
+   * or method; it becomes the output schema only when it accepts objects and
+   * nothing else, and never for `HEAD`, whose response has no body.
    */
-  outputSchema(raw: JsonObject): McpFnObjectSchema | undefined {
+  outputSchema(raw: JsonObject, method: OpenApiMethod): McpFnObjectSchema | undefined {
+    const schema = this.responseSchema(raw);
+    if (schema === undefined) return undefined;
+    try {
+      return this.convertOutput(schema, method);
+    } catch (error) {
+      if (error instanceof OpenApiSkip && OUTPUT_OMIT_CODES.has(error.code)) return undefined;
+      throw error;
+    }
+  }
+
+  private responseSchema(raw: JsonObject): unknown {
     if (!isObject(raw.responses)) return undefined;
-    let media: unknown;
     // Key order: integer status codes ascend (JavaScript object order), then 2XX.
     for (const [status, value] of Object.entries(raw.responses)) {
-      if (!/^2(?:\d\d|XX)$/i.test(status)) continue;
-      const response = this.resolve(value, "responses");
-      const content = isObject(response.content) ? response.content : {};
-      const mediaType = Object.keys(content).find(isApplicationJson);
-      if (mediaType === undefined) continue;
-      media = content[mediaType];
-      break;
+      if (!SUCCESS_STATUS.test(status)) continue;
+      const content = this.resolve(value, "responses").content;
+      for (const [mediaType, media] of Object.entries(isObject(content) ? content : {})) {
+        if (isApplicationJson(mediaType) && isObject(media) && media.schema !== undefined) return media.schema;
+      }
     }
-    if (!isObject(media) || media.schema === undefined) return undefined;
+    return undefined;
+  }
+
+  private convertOutput(schema: unknown, method: OpenApiMethod): McpFnObjectSchema | undefined {
     const refs = new Set<string>();
-    let root = this.schemas.convert(media.schema, "output", refs);
+    let root = this.schemas.convert(schema, "output", refs);
     const definitions = this.schemas.definitions(refs, "output");
     // structuredContent is always an object: a nullable or mixed schema
     // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
-    const { values } = this.schemas.admits(media.schema);
-    if (values.size !== 1 || !values.has("object")) return undefined;
+    const { values } = this.schemas.admits(schema);
+    // A schema the registry would reject is not hidden by discarding it.
+    if (method === "HEAD" || values.size !== 1 || !values.has("object")) {
+      this.assertCompiles(root, definitions);
+      return undefined;
+    }
+    this.schemas.checkProjection(schema, "output");
     // A root `$ref` is inlined: draft-07 ignores keywords beside `$ref`, and
     // mcpFn needs `type: "object"` on the root itself.
     const seen = new Set<string>();
@@ -351,14 +421,35 @@ class OperationConverter {
       root = definitions[name]!;
     }
     if (!isObject(root)) return undefined;
+    // Nor by replacing a root type, such as `["object", "bogus"]`.
+    if (root.type !== undefined && root.type !== "object") this.assertCompiles(root, definitions);
     // The root may carry its object type only through a reference or a
     // composition (`{ $ref, description }` in 3.1, `allOf: [...]`); stating it
     // on the root narrows nothing, since only objects are accepted.
-    return {
-      ...root,
-      type: "object",
-      ...(Object.keys(definitions).length > 0 ? { definitions } : {}),
-    } as McpFnObjectSchema;
+    return treeCopy(
+      {
+        ...root,
+        type: "object",
+        ...(Object.keys(definitions).length > 0 ? { definitions } : {}),
+      } as McpFnObjectSchema,
+      new NodeBudget(),
+    );
+  }
+
+  /** Compile a selected schema as the registry would, before it is discarded or rewritten. */
+  private assertCompiles(root: McpFnJsonSchema | boolean, definitions: Record<string, unknown>): void {
+    if (!isObject(root)) return;
+    const schema = Object.keys(definitions).length > 0 ? { ...root, definitions } : root;
+    this.compiler ??= createSchemaCompiler();
+    try {
+      this.compiler.compile(treeCopy(schema, new NodeBudget()));
+    } catch (error) {
+      if (error instanceof OpenApiSkip) throw error;
+      throw new OpenApiSkip(
+        "invalid-schema",
+        `the response schema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**
@@ -371,6 +462,26 @@ class OperationConverter {
   }
 
   private parameters(path: string, pathItem: JsonObject, raw: JsonObject): ResolvedParameter[] {
+    const resolved: ResolvedParameter[] = [];
+    for (const parameter of this.mergedParameters(pathItem, raw)) {
+      const converted = this.parameter(parameter);
+      if (converted) resolved.push(converted);
+    }
+    const templateNames = templateVariables(path);
+    const declared = new Set(resolved.filter(({ parameter }) => parameter.in === "path").map(({ parameter }) => parameter.name));
+    const missing = templateNames.find((name) => !declared.has(name));
+    if (missing !== undefined) {
+      throw new OpenApiSkip("missing-path-parameter", `path template variable {${missing}} has no path parameter`);
+    }
+    const extra = [...declared].find((name) => !templateNames.includes(name));
+    if (extra !== undefined) {
+      throw new OpenApiSkip("invalid-operation", `path parameter ${extra} is not in the path template`);
+    }
+    return resolved;
+  }
+
+  /** Path-level then operation-level parameters; an operation-level one overrides by name and location. */
+  private mergedParameters(pathItem: JsonObject, raw: JsonObject): Iterable<JsonObject> {
     const merged = new Map<string, JsonObject>();
     for (const list of [pathItem.parameters, raw.parameters]) {
       if (list === undefined) continue;
@@ -386,24 +497,7 @@ class OperationConverter {
         merged.set(key, parameter);
       }
     }
-    const resolved: ResolvedParameter[] = [];
-    for (const parameter of merged.values()) {
-      const converted = this.parameter(parameter);
-      if (converted) resolved.push(converted);
-    }
-    const templateNames = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]!);
-    const declared = new Set(resolved.filter(({ parameter }) => parameter.in === "path").map(({ parameter }) => parameter.name));
-    for (const name of templateNames) {
-      if (!declared.has(name)) {
-        throw new OpenApiSkip("missing-path-parameter", `path template variable {${name}} has no path parameter`);
-      }
-    }
-    for (const name of declared) {
-      if (!templateNames.includes(name)) {
-        throw new OpenApiSkip("invalid-operation", `path parameter ${name} is not in the path template`);
-      }
-    }
-    return resolved;
+    return merged.values();
   }
 
   private parameter(raw: JsonObject): ResolvedParameter | undefined {
@@ -540,8 +634,13 @@ interface OperationInputs {
 
 const PRIMITIVE_KINDS = ["string", "number", "integer", "boolean"] as const;
 
-/** Deep copy in which no object is reachable by two paths (structuredClone keeps sharing). */
-function treeCopy<T>(value: T, ancestors = new Set<object>()): T {
+/**
+ * Deep copy in which no object is reachable by two paths (structuredClone
+ * keeps sharing). Every copied node is charged to `budget`, so a document
+ * that shares one object many times cannot expand without bound.
+ */
+function treeCopy<T>(value: T, budget: NodeBudget, ancestors = new Set<object>()): T {
+  budget.charge();
   if (typeof value !== "object" || value === null) return value;
   // YAML parsers can produce Date values (for example a timestamp `default`).
   if (value instanceof Date) return value.toISOString() as T;
@@ -550,8 +649,8 @@ function treeCopy<T>(value: T, ancestors = new Set<object>()): T {
   }
   ancestors.add(value);
   const copy = Array.isArray(value)
-    ? value.map((item) => treeCopy(item, ancestors))
-    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, treeCopy(item, ancestors)]));
+    ? value.map((item) => treeCopy(item, budget, ancestors))
+    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, treeCopy(item, budget, ancestors)]));
   ancestors.delete(value);
   return copy as T;
 }
@@ -594,7 +693,7 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
  */
 export function fromOpenAPI<
   TContext = undefined,
-  TDocument extends OpenApiDocument = OpenApiDocument,
+  TDocument extends OpenApiDocumentFields = OpenApiDocument,
 >(
   document: TDocument,
   options: FromOpenApiOptions<TContext>,
@@ -604,87 +703,111 @@ export function fromOpenAPI<
   }
   const version = documentVersion(document as JsonObject);
   validateOptions(options);
-  const include = compileSelectors("include", options.include);
-  const exclude = compileSelectors("exclude", options.exclude);
-  let source: JsonObject;
+  const filters: Filters<TContext> = {
+    include: compileSelectors("include", options.include),
+    exclude: compileSelectors("exclude", options.exclude),
+    options,
+  };
+  const source = privateCopy(document);
+  const converter = new OperationConverter(source, version);
+  const skipped: OpenApiSkippedOperation[] = [];
+  const candidates: Candidate[] = [];
+  for (const [path, pathItem] of Object.entries(isObject(source.paths) ? source.paths : {})) {
+    // Paths Object extensions carry arbitrary values and are not path items.
+    if (path.startsWith("x-")) continue;
+    const unusable = pathItemSkip(path, pathItem);
+    if (unusable) skipped.push(unusable);
+    else convertPathItem(converter, filters, path, pathItem as JsonObject, skipped, candidates);
+  }
+  return register(candidates, skipped, options);
+}
+
+function convertPathItem<TContext>(
+  converter: OperationConverter,
+  filters: Filters<TContext>,
+  path: string,
+  pathItem: JsonObject,
+  skipped: OpenApiSkippedOperation[],
+  candidates: Candidate[],
+): void {
+  for (const [key, value] of Object.entries(pathItem)) {
+    const method = METHODS.get(key);
+    if (!method) continue;
+    const outcome = convertOperation(converter, filters, path, pathItem, method, value);
+    if ("skip" in outcome) skipped.push(outcome.skip);
+    else candidates.push(outcome.candidate);
+  }
+}
+
+interface Filters<TContext> {
+  include: SelectorSet | undefined;
+  exclude: SelectorSet | undefined;
+  options: FromOpenApiOptions<TContext>;
+}
+
+function privateCopy(document: object): JsonObject {
   try {
     // Work on a private copy: later changes to the caller's object cannot
     // alter registered schemas or the operations given to the executor.
-    source = structuredClone(document) as JsonObject;
+    return structuredClone(document) as JsonObject;
   } catch (error) {
     throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
       cause: error instanceof Error ? error.message : String(error),
     });
   }
-  const converter = new OperationConverter(source, version);
-  const skipped: OpenApiSkippedOperation[] = [];
-  const candidates: Candidate[] = [];
-  const paths = isObject(source.paths) ? source.paths : {};
+}
 
-  for (const [path, pathItem] of Object.entries(paths)) {
-    // Paths Object extensions carry arbitrary values and are not path items.
-    if (path.startsWith("x-")) continue;
-    if (!isObject(pathItem)) {
-      skipped.push({ operation: { path }, code: "invalid-operation", reason: "path item is not an object" });
-      continue;
-    }
-    if ("$ref" in pathItem) {
-      const ref = pathItem.$ref;
-      const external = typeof ref === "string" && !ref.startsWith("#");
-      skipped.push({
-        operation: { path },
-        code: external ? "external-ref" : "unsupported-ref",
-        reason: `path item reference ${JSON.stringify(ref)} is not supported`,
-      });
-      continue;
-    }
-    for (const [key, value] of Object.entries(pathItem)) {
-      const method = METHODS.get(key);
-      if (!method) continue;
-      const ref: OpenApiOperationRef = {
-        method,
-        path,
-        ...(isObject(value) && typeof value.operationId === "string" && value.operationId
-          ? { operationId: value.operationId }
-          : {}),
-      };
-      if (!isObject(value)) {
-        skipped.push({ operation: ref, code: "invalid-operation", reason: "operation is not an object" });
-        continue;
-      }
-      // Filtering needs only identity fields, so it runs before conversion.
-      const identity: OperationIdentity = {
-        method,
-        path,
-        operationId: ref.operationId,
-        tags: Array.isArray(value.tags) ? value.tags.filter((tag): tag is string => typeof tag === "string") : [],
-      };
-      const filtered = filterReason(identity, value.deprecated === true, include, exclude, options);
-      if (filtered) {
-        skipped.push({ operation: ref, ...filtered });
-        continue;
-      }
-      try {
-        const inputs = converter.inputs(path, pathItem, value);
-        const operation = deepFreeze(converter.operation(path, pathItem, method, value, inputs));
-        // The selected response is converted for every method so its skip
-        // rules apply alike; a HEAD response has no body, so no structured output.
-        const selectedOutput = converter.outputSchema(value);
-        const outputSchema = method === "HEAD" ? undefined : selectedOutput;
-        // Each tool owns its schema objects: component conversions are cached
-        // and shared, and a schema must not reach one object by two paths.
-        candidates.push({
-          operation,
-          inputSchema: treeCopy(converter.inputSchema(inputs)),
-          ...(outputSchema ? { outputSchema: treeCopy(outputSchema) } : {}),
-        });
-      } catch (error) {
-        if (!(error instanceof OpenApiSkip)) throw error;
-        skipped.push({ operation: ref, code: error.code, reason: error.message });
-      }
-    }
+function pathItemSkip(path: string, pathItem: unknown): OpenApiSkippedOperation | undefined {
+  if (!isObject(pathItem)) {
+    return { operation: { path }, code: "invalid-operation", reason: "path item is not an object" };
   }
+  if (!("$ref" in pathItem)) return undefined;
+  const ref = pathItem.$ref;
+  const external = typeof ref === "string" && !ref.startsWith("#");
+  return {
+    operation: { path },
+    code: external ? "external-ref" : "unsupported-ref",
+    reason: `path item reference ${JSON.stringify(ref)} is not supported`,
+  };
+}
 
+function convertOperation<TContext>(
+  converter: OperationConverter,
+  { include, exclude, options }: Filters<TContext>,
+  path: string,
+  pathItem: JsonObject,
+  method: OpenApiMethod,
+  value: unknown,
+): { skip: OpenApiSkippedOperation } | { candidate: Candidate } {
+  const operationId = isObject(value) && typeof value.operationId === "string" && value.operationId
+    ? value.operationId
+    : undefined;
+  const ref: OpenApiOperationRef = { method, path, ...(operationId ? { operationId } : {}) };
+  if (!isObject(value)) {
+    return { skip: { operation: ref, code: "invalid-operation", reason: "operation is not an object" } };
+  }
+  // Filtering needs only identity fields, so it runs before conversion.
+  const identity: OperationIdentity = {
+    method,
+    path,
+    operationId,
+    tags: Array.isArray(value.tags) ? value.tags.filter((tag): tag is string => typeof tag === "string") : [],
+  };
+  const filtered = filterReason(identity, value.deprecated === true, include, exclude, options);
+  if (filtered) return { skip: { operation: ref, ...filtered } };
+  try {
+    return { candidate: converter.candidate(path, pathItem, method, value) };
+  } catch (error) {
+    if (!(error instanceof OpenApiSkip)) throw error;
+    return { skip: { operation: ref, code: error.code, reason: error.message } };
+  }
+}
+
+function register<TContext>(
+  candidates: Candidate[],
+  skipped: OpenApiSkippedOperation[],
+  options: FromOpenApiOptions<TContext>,
+): FromOpenApiResult<TContext> {
   const registry = options.registry ?? new McpFnRegistry<TContext>();
   const names = new ToolNames(options, registry);
   // name() results are checked before anything is registered.
@@ -707,30 +830,35 @@ export function fromOpenAPI<
       });
     } catch (error) {
       if (!isValidationError(error)) throw error;
-      const ref: OpenApiOperationRef = {
-        method: operation.method,
-        path: operation.path,
-        ...(operation.operationId ? { operationId: operation.operationId } : {}),
-      };
-      const cause = (error.details as { cause?: unknown } | undefined)?.cause;
-      skipped.push({
-        operation: ref,
-        code: "invalid-schema",
-        reason: `${error.message}${typeof cause === "string" ? `: ${cause}` : ""}`,
-      });
+      skipped.push(registrationSkip(operation, error));
       return;
     }
     names.claim(name);
+    // The catalog gets its own copies: changing them cannot make the listed
+    // schemas disagree with the ones the registry compiled.
     tools.push({
       name,
       description,
       operation,
-      inputSchema,
-      ...(outputSchema ? { outputSchema } : {}),
-      annotations,
+      inputSchema: structuredClone(inputSchema),
+      ...(outputSchema ? { outputSchema: structuredClone(outputSchema) } : {}),
+      annotations: { ...annotations },
     });
   });
   return { registry, tools, skipped };
+}
+
+function registrationSkip(operation: OpenApiOperation, error: McpFnValidationError): OpenApiSkippedOperation {
+  const cause = (error.details as { cause?: unknown } | undefined)?.cause;
+  return {
+    operation: {
+      method: operation.method,
+      path: operation.path,
+      ...(operation.operationId ? { operationId: operation.operationId } : {}),
+    },
+    code: "invalid-schema",
+    reason: typeof cause === "string" ? `${error.message}: ${cause}` : error.message,
+  };
 }
 
 /**

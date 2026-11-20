@@ -21,54 +21,57 @@ export type OpenApiParameterLocation = "path" | "query" | "header";
  * path and header parameters, `form` with `explode: true` for query parameters.
  */
 export interface OpenApiOperationParameter {
-  name: string;
-  in: OpenApiParameterLocation;
-  required: boolean;
-  style: "simple" | "form";
-  explode: boolean;
+  readonly name: string;
+  readonly in: OpenApiParameterLocation;
+  readonly required: boolean;
+  readonly style: "simple" | "form";
+  readonly explode: boolean;
   /** Query only: reserved characters are sent without percent-encoding. */
-  allowReserved?: true;
+  readonly allowReserved?: true;
   /**
    * `primitive` or `array` of primitives: the shape the executor serialises.
    * The input schema accepts no other shape, except `null` when the
    * parameter's schema allows it.
    */
-  shape: "primitive" | "array";
+  readonly shape: "primitive" | "array";
 }
 
 /** The JSON request body the tool accepts. */
 export interface OpenApiOperationRequestBody {
-  required: boolean;
+  readonly required: boolean;
   /** The selected media type key: `application/json` or a `*+json` type. */
-  contentType: string;
+  readonly contentType: string;
 }
 
 /**
- * Everything an executor needs to send one operation. The object is frozen and
- * the same instance is passed to every call of the tool.
+ * Everything an executor needs to send one operation. The object is deeply
+ * frozen, so every field is read-only, and the same instance is passed to the
+ * `name` callback and to every call of the tool.
  */
 export interface OpenApiOperation {
-  method: OpenApiMethod;
+  readonly method: OpenApiMethod;
   /** Path template exactly as written in the document, such as `/users/{id}`. */
-  path: string;
-  operationId?: string;
-  summary?: string;
-  description?: string;
-  tags: readonly string[];
-  deprecated: boolean;
+  readonly path: string;
+  readonly operationId?: string;
+  readonly summary?: string;
+  readonly description?: string;
+  readonly tags: readonly string[];
+  readonly deprecated: boolean;
   /** Parameters exposed as tool inputs. Forbidden headers (D9) are never listed. */
-  parameters: readonly OpenApiOperationParameter[];
-  requestBody?: OpenApiOperationRequestBody;
+  readonly parameters: readonly OpenApiOperationParameter[];
+  readonly requestBody?: OpenApiOperationRequestBody;
   /** Effective servers: the first non-empty level of operation, path item and document, else `[{ url: "/" }]`. */
-  servers: readonly OpenApiServer[];
+  readonly servers: readonly OpenApiServer[];
   /** Effective security requirements: operation level, else document level. */
-  security?: readonly Record<string, readonly string[]>[];
+  readonly security?: readonly Readonly<Record<string, readonly string[]>>[];
 }
 
 export interface OpenApiServer {
-  url: string;
-  description?: string;
-  variables?: Record<string, { default: string; enum?: string[]; description?: string }>;
+  readonly url: string;
+  readonly description?: string;
+  readonly variables?: Readonly<
+    Record<string, { readonly default: string; readonly enum?: readonly string[]; readonly description?: string }>
+  >;
 }
 
 /** Identifies an operation that was not turned into a tool. */
@@ -96,6 +99,8 @@ export type OpenApiSkipCode =
   | "invalid-request-body"
   | "unsupported-schema-keyword"
   | "unsupported-access-flag"
+  | "unsupported-dialect"
+  | "schema-too-large"
   | "unsupported-component-name"
   | "circular-object"
   | "invalid-operation"
@@ -120,15 +125,16 @@ export interface OpenApiExecutor {
   execute(request: OpenApiExecuteRequest): CallToolResult | Promise<CallToolResult>;
 }
 
-/** An operation selector: an operationId, `tag:<name>` or `METHOD /path`. */
-export type OpenApiSelector = string;
-
 export interface FromOpenApiOptions<TContext = undefined> {
   executor: OpenApiExecutor;
-  /** When present, only matching operations are exposed. */
-  include?: readonly OpenApiSelector[];
-  /** Matching operations are never exposed; `exclude` wins over `include`. */
-  exclude?: readonly OpenApiSelector[];
+  /**
+   * When present, only matching operations are exposed. A selector is an
+   * operationId, `operationId:<id>` (exact, for ids that read as another
+   * form), `tag:<name>` or `METHOD /path`.
+   */
+  include?: readonly string[];
+  /** Matching operations (same selectors as `include`) are never exposed; `exclude` wins. */
+  exclude?: readonly string[];
   /** Expose methods other than GET and HEAD without listing their operationId in `include`. */
   allowMutations?: boolean;
   /** Expose operations marked `deprecated: true`. */
@@ -157,15 +163,14 @@ export interface FromOpenApiResult<TContext = undefined> {
 }
 
 /**
- * A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. Typed
- * loosely so that documents typed by their producer (such as the interface
- * `@apifn/core`'s `fromRouter` returns, which has only an `x-*` index
- * signature) are accepted as they are; the content is validated at run time.
- * `fromOpenAPI` takes the document as a type parameter constrained by this
- * interface, so a fresh object literal may also carry `x-*` extensions and
- * any other top-level field.
+ * The standard top-level fields of an OpenAPI 3.0/3.1 document, typed loosely
+ * so that documents typed by their producer (such as the interface
+ * `@apifn/core`'s `fromRouter` returns) are accepted as they are; the content
+ * is validated at run time. `fromOpenAPI` constrains its document type
+ * parameter by this interface, so an inferred literal may carry any other
+ * top-level field, while a value sharing none of these fields is refused.
  */
-export interface OpenApiDocument {
+export interface OpenApiDocumentFields {
   readonly openapi?: unknown;
   readonly swagger?: unknown;
   readonly info?: unknown;
@@ -177,4 +182,13 @@ export interface OpenApiDocument {
   readonly security?: unknown;
   readonly tags?: unknown;
   readonly externalDocs?: unknown;
+}
+
+/**
+ * A parsed OpenAPI 3.0/3.1 document. YAML parsing is the caller's job. Also
+ * accepts `x-*` extensions where the type is named, such as an annotated
+ * literal or a call that supplies the context type explicitly.
+ */
+export interface OpenApiDocument extends OpenApiDocumentFields {
+  readonly [extension: `x-${string}`]: unknown;
 }

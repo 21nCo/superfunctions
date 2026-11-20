@@ -9,7 +9,7 @@ Current release target: `0.1.0`.
 TypeScript:
 
 ```bash
-npm install langfn@0.1.0
+npm install langfn@0.1.1
 ```
 
 Python:

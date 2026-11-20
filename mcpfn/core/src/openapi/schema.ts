@@ -50,7 +50,7 @@ const UNSUPPORTED_KEYWORDS = [
 ] as const;
 
 // OpenAPI-only annotations dropped from the produced draft-07 schema. `nullable`
-// is folded into the type first; `$schema` names the 2020-12 dialect.
+// is folded into the type first. A default `$schema` is dropped too (see checkKeywords).
 const DROPPED_KEYWORDS = new Set([
   "example",
   "discriminator",
@@ -67,7 +67,7 @@ const SCHEMA_MAP_KEYWORDS = new Set([
   "$defs",
 ]);
 
-const SCHEMA_ARRAY_KEYWORDS = new Set(["anyOf", "oneOf"]);
+const SCHEMA_ARRAY_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
 
 const SCHEMA_KEYWORDS = new Set([
   "additionalProperties",
@@ -82,14 +82,40 @@ const SCHEMA_KEYWORDS = new Set([
 
 const COMPONENT_NAME = /^[A-Za-z0-9._-]+$/;
 
-function decodePointerToken(token: string): string {
-  let decoded = token;
-  try {
-    decoded = decodeURIComponent(token);
-  } catch {
-    // Keep the raw token; it then fails the component-name check below.
+/**
+ * Whether a 3.1 `jsonSchemaDialect` or `$schema` names the dialect the
+ * converter implements: the OAS 3.1 base dialect or JSON Schema 2020-12.
+ */
+export function isDefaultDialect(uri: unknown): boolean {
+  if (typeof uri !== "string") return false;
+  const base = uri.endsWith("#") ? uri.slice(0, -1) : uri;
+  return (
+    base === "https://json-schema.org/draft/2020-12/schema" ||
+    base.startsWith("https://spec.openapis.org/oas/3.1/dialect/")
+  );
+}
+
+/**
+ * Schema nodes one operation's input, one operation's output or one
+ * component may produce, counted while converting and while copying. A
+ * parsed document can share one object between many schema positions, so
+ * the produced tree can be exponentially larger than the document.
+ */
+export const MAX_SCHEMA_NODES = 100_000;
+
+export class NodeBudget {
+  private remaining = MAX_SCHEMA_NODES;
+
+  charge(): void {
+    this.remaining -= 1;
+    if (this.remaining < 0) {
+      throw new OpenApiSkip("schema-too-large", `a schema expands to more than ${MAX_SCHEMA_NODES} nodes`);
+    }
   }
-  return decoded.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+function unescapePointerToken(token: string): string {
+  return token.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
 /** Parse a local component reference, rejecting external and URL references. */
@@ -103,14 +129,23 @@ export function parseComponentRef(
   if (!ref.startsWith("#")) {
     throw new OpenApiSkip("external-ref", `external reference ${JSON.stringify(ref)}`);
   }
-  const match = /^#\/components\/([^/]+)\/([^/]+)$/.exec(ref);
-  if (!match || match[1] !== kind) {
-    throw new OpenApiSkip(
+  const unsupported = () =>
+    new OpenApiSkip(
       "unsupported-ref",
       `reference ${JSON.stringify(ref)} is not a #/components/${kind}/<name> reference`,
     );
+  // The fragment is percent-decoded first, then read as a JSON Pointer (RFC 6901 §6).
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(ref.slice(1));
+  } catch {
+    throw unsupported();
   }
-  const name = decodePointerToken(match[2]!);
+  const tokens = pointer.split("/").map(unescapePointerToken);
+  if (tokens.length !== 4 || tokens[0] !== "" || tokens[1] !== "components" || tokens[2] !== kind) {
+    throw unsupported();
+  }
+  const name = tokens[3]!;
   if (!COMPONENT_NAME.test(name)) {
     throw new OpenApiSkip(
       "unsupported-component-name",
@@ -128,88 +163,118 @@ interface ConvertedComponent {
   error?: OpenApiSkip;
 }
 
-/** A component converted with extra property names removed (see `reference`). */
-interface DefinitionVariant {
-  name: string;
-  strip: ReadonlySet<string>;
-}
-
 type DirectionalKeyword = "readOnly" | "writeOnly";
-
-const NO_NAMES: ReadonlySet<string> = new Set();
-
-interface RegionSummary {
-  /** Names flagged in this region itself: the names its conversion removes. */
-  names: ReadonlySet<string>;
-  /** Names flagged in this region or any nested one. */
-  flagged: Set<string>;
-  /** Names some region (this or a nested one) uses in properties/required without flagging them. */
-  unflagged: Set<string>;
-  /** A name flagged inside not, if/then/else or a schema-valued dependency. */
-  conditionalFlag?: string;
-  /**
-   * A `oneOf` (in this region or a nested one) whose members removal would
-   * not change identically, so they could overlap after it (see `oneOfConflict`).
-   */
-  oneOfConflict?: AccessConflict;
-}
-
-/**
- * Why a flagged property cannot be removed soundly: `name` is the property
- * and `by` what else constrains it; `message`, when set, replaces the
- * sentence built from them (for a property that only contains flagged ones).
- */
-interface AccessConflict {
-  name: string;
-  by: string;
-  message?: string;
-}
-
-const ONE_OF_CONFLICT = "a oneOf whose members do not all mark it the same way";
-
-/**
- * Keywords that constrain the whole instance, its property set or its
- * property count wherever they apply, so removing a property changes what
- * they accept.
- */
-const INSTANCE_CONSTRAINTS = [
-  "const",
-  "enum",
-  "minProperties",
-  "propertyNames",
-  "dependencies",
-  "dependentRequired",
-  "dependentSchemas",
-] as const;
-
-const EMPTY_REGION: RegionSummary = {
-  names: new Set(),
-  flagged: new Set(),
-  unflagged: new Set(),
-};
 
 function directionalKeyword(mode: SchemaMode): DirectionalKeyword {
   return mode === "input" ? "readOnly" : "writeOnly";
 }
 
+/** Why removing flagged properties from a schema would not be sound. */
+interface AccessConflict {
+  name: string;
+  by: string;
+  /** Replaces the sentence built from `name` and `by`. */
+  message?: string;
+}
+
+/** A schema applied to an instance, and whether only under a condition or an overlapping alternative. */
+interface ClosureEntry {
+  schema: JsonObject;
+  conditional: boolean;
+}
+
+const CONDITIONAL = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
+
+/**
+ * Keywords that constrain the whole object or its property count, so a
+ * flagged property cannot be left out of a value they accepted.
+ */
+const INSTANCE_CONSTRAINTS = [
+  "const",
+  "enum",
+  "minProperties",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+] as const;
+
+/**
+ * Keywords whose result can change when a property is left out, wherever the
+ * schema holding them applies only under a condition (where a changed result
+ * can turn a pass into a failure).
+ */
+const NAME_SENSITIVE = [
+  ...INSTANCE_CONSTRAINTS,
+  "maxProperties",
+  "patternProperties",
+  "propertyNames",
+] as const;
+
+/** Positions whose subschemas are never projected: a flag below them skips the projection. */
+const UNPROJECTED_POSITIONS = ["patternProperties", "contains", "additionalItems", "propertyNames"] as const;
+
+function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<object, V> {
+  let memo = memos.get(key);
+  if (!memo) {
+    memo = new WeakMap();
+    memos.set(key, memo);
+  }
+  return memo;
+}
+
+function arrayOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** A keyword that takes one value or an array of them (such as `type`). */
+function listOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [value];
+}
+
+function objectEntries(value: unknown): Array<[string, unknown]> {
+  return isObject(value) ? Object.entries(value) : [];
+}
+
 /**
  * Converts OpenAPI 3.0/3.1 Schema Objects to draft-07 for mcpFn's validators.
  * Component schemas are converted once per mode and shared between tools.
+ *
+ * Properties flagged `readOnly` (input) or `writeOnly` (output) are projected
+ * out where they are declared: `properties[name]` becomes `false` (or is
+ * deleted from a closed object) and leaves that object's `required`. Because
+ * the converted schema is shared, `checkProjection` first proves that every
+ * flag reachable from a root sits on a plain applicator chain (`properties`,
+ * one `items` schema, a schema `additionalProperties`, `allOf`, `$ref`, or an
+ * `anyOf`/`oneOf` member no other member overlaps by kind of value) and that
+ * nothing else needs the property; otherwise the root is not projected.
  */
 export class SchemaConverter {
   private readonly cache = new Map<string, ConvertedComponent>();
   private readonly ancestors = new Set<object>();
-  private readonly variants = new Map<string, DefinitionVariant>();
-  private readonly variantKeys = new Map<string, string>();
-  private readonly flaggedNames = new Map<string, ReadonlySet<string>>();
-  private readonly mentionedNames = new Map<string, ReadonlySet<string>>();
+  private readonly admitted = new WeakMap<object, AdmittedKinds>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
-  private readonly summaries = new Map<DirectionalKeyword, WeakMap<object, RegionSummary>>();
+  private readonly reaches = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
+  private readonly reaching = new Map<DirectionalKeyword, ReadonlySet<string>>();
+  private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
+  private budget = new NodeBudget();
 
   constructor(
     private readonly version: OpenApiVersion,
     private readonly schemas: JsonObject,
+    /** Set when the document's `jsonSchemaDialect` is not the default; every schema is then refused. */
+    private readonly unsupportedDialect?: string,
   ) {}
+
+  /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
+  budgeted<T>(task: () => T): T {
+    const outer = this.budget;
+    this.budget = new NodeBudget();
+    try {
+      return task();
+    } finally {
+      this.budget = outer;
+    }
+  }
 
   private component(name: string): unknown {
     if (!Object.hasOwn(this.schemas, name)) {
@@ -221,19 +286,22 @@ export class SchemaConverter {
     return this.schemas[name];
   }
 
-  private readonly admitted = new Map<string, AdmittedKinds>();
-
   /**
    * The kinds of value `schema` accepts, following local `$ref`s and
    * `allOf`/`anyOf`/`oneOf`. A schema without `type`, `enum` or `const`
    * accepts every kind; a reference cycle is treated as accepting every kind.
+   * Results are memoised per schema object (a cycle cut only widens them).
    */
   admits(schema: unknown, stack: Set<unknown> = new Set()): AdmittedKinds {
     if (schema === false) return NOTHING;
     if (!isObject(schema) || stack.has(schema)) return EVERYTHING;
+    const known = this.admitted.get(schema);
+    if (known) return known;
     stack.add(schema);
     try {
-      return this.admitsObject(schema, stack);
+      const result = this.admitsObject(schema, stack);
+      this.admitted.set(schema, result);
+      return result;
     } finally {
       stack.delete(schema);
     }
@@ -242,53 +310,48 @@ export class SchemaConverter {
   private admitsObject(schema: JsonObject, stack: Set<unknown>): AdmittedKinds {
     let result = EVERYTHING;
     if (Object.hasOwn(schema, "$ref")) {
-      const name = parseComponentRef(schema.$ref, "schemas");
-      let target = this.admitted.get(name);
-      if (!target) {
-        // A cycle cut below this point widens the result, which stays safe to reuse.
-        target = this.admits(this.component(name), stack);
-        this.admitted.set(name, target);
-      }
+      const target = this.admits(this.component(parseComponentRef(schema.$ref, "schemas")), stack);
       // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
       if (this.version === "3.0") return target;
       result = target;
     }
-    if (schema.type !== undefined) {
-      const kinds = (Array.isArray(schema.type) ? schema.type : [schema.type]).flatMap(kindsOfType);
-      if (this.version === "3.0" && schema.nullable === true) kinds.push("null");
-      result = { ...result, values: intersect(result.values, kinds) };
-    }
-    if (Array.isArray(schema.enum)) {
-      result = { ...result, values: intersect(result.values, schema.enum.map(kindOfValue)) };
-    }
-    if (Object.hasOwn(schema, "const")) {
-      result = { ...result, values: intersect(result.values, [kindOfValue(schema.const)]) };
-    }
+    result = this.narrowByValues(result, schema);
     if (Object.hasOwn(schema, "items") && !Array.isArray(schema.items)) {
       result = { ...result, items: intersect(result.items, this.admits(schema.items, stack).values) };
     }
-    if (Array.isArray(schema.allOf)) {
-      for (const member of schema.allOf) result = both(result, this.admits(member, stack));
-    }
+    for (const member of arrayOf(schema.allOf)) result = both(result, this.admits(member, stack));
     for (const keyword of ["anyOf", "oneOf"] as const) {
       const members = schema[keyword];
       if (Array.isArray(members)) {
         result = both(result, either(members.map((member) => this.admits(member, stack))));
       }
     }
-    return result;
+    const excluded = typeOnlyKinds(schema.not);
+    return excluded.length === 0 ? result : { ...result, values: without(result.values, excluded) };
+  }
+
+  /** `type` (with 3.0 `nullable`), `enum` and `const`. */
+  private narrowByValues(result: AdmittedKinds, schema: JsonObject): AdmittedKinds {
+    let narrowed = result;
+    if (schema.type !== undefined) {
+      const kinds = listOf(schema.type).flatMap(kindsOfType);
+      if (this.version === "3.0" && schema.nullable === true) kinds.push("null");
+      narrowed = { ...narrowed, values: intersect(narrowed.values, kinds) };
+    }
+    if (Array.isArray(schema.enum)) narrowed = narrowByLiterals(narrowed, schema.enum);
+    if (Object.hasOwn(schema, "const")) narrowed = narrowByLiterals(narrowed, [schema.const]);
+    return narrowed;
   }
 
   /**
    * Convert a schema rooted in a tool's input or output schema. Referenced
    * component names are added to `refs`; call `definitions` for their closure.
    */
-  convert(
-    schema: unknown,
-    mode: SchemaMode,
-    refs: Set<string>,
-    strip: ReadonlySet<string> = NO_NAMES,
-  ): McpFnJsonSchema | boolean {
+  convert(schema: unknown, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema | boolean {
+    if (this.unsupportedDialect !== undefined) {
+      throw new OpenApiSkip("unsupported-dialect", `the document's jsonSchemaDialect ${this.unsupportedDialect} is not supported`);
+    }
+    this.budget.charge();
     if (typeof schema === "boolean") return schema;
     if (!isObject(schema)) {
       throw new OpenApiSkip("invalid-schema", "a schema is not an object");
@@ -298,23 +361,13 @@ export class SchemaConverter {
     }
     this.ancestors.add(schema);
     try {
-      return this.convertObject(schema, mode, refs, strip);
+      return this.convertObject(schema, mode, refs);
     } finally {
       this.ancestors.delete(schema);
     }
   }
 
-  /**
-   * `strip` holds property names an enclosing schema marks readOnly (input) or
-   * writeOnly (output) for the same instance; they are removed from this
-   * schema's `properties` and `required` and from its in-place members.
-   */
-  private convertObject(
-    schema: JsonObject,
-    mode: SchemaMode,
-    refs: Set<string>,
-    strip: ReadonlySet<string> = NO_NAMES,
-  ): McpFnJsonSchema {
+  private checkKeywords(schema: JsonObject): void {
     for (const keyword of UNSUPPORTED_KEYWORDS) {
       if (Object.hasOwn(schema, keyword)) {
         throw new OpenApiSkip(
@@ -323,78 +376,81 @@ export class SchemaConverter {
         );
       }
     }
-    if (Object.hasOwn(schema, "$ref")) {
-      const name = parseComponentRef(schema.$ref, "schemas");
-      this.component(name);
-      // OpenAPI 3.0 ignores $ref siblings; 3.1 (2020-12) applies them too,
-      // which is an allOf of the siblings and the reference.
-      const { $ref, ...rest } = schema;
-      if (this.version === "3.0" || Object.keys(rest).length === 0) {
-        return this.reference(name, mode, refs, strip);
-      }
-      if (rest.allOf !== undefined && !Array.isArray(rest.allOf)) {
-        throw new OpenApiSkip("invalid-schema", "allOf is not an array");
-      }
-      const allOf = (rest.allOf as unknown[] | undefined) ?? [];
-      return this.convertObject({ ...rest, allOf: [...allOf, { $ref }] }, mode, refs, strip);
+    if (Object.hasOwn(schema, "$schema") && (this.version === "3.0" || !isDefaultDialect(schema.$schema))) {
+      throw new OpenApiSkip("unsupported-dialect", `schema dialect ${JSON.stringify(schema.$schema)} is not supported`);
     }
+  }
 
-    const keyword = directionalKeyword(mode);
-    const { names: own, conflict } = this.directionalAnalysis(schema, keyword);
-    if (conflict !== undefined) {
-      throw new OpenApiSkip(
-        "unsupported-access-flag",
-        conflict.message ??
-          `property ${JSON.stringify(conflict.name)} is ${keyword} but is also constrained by ` +
-            `${conflict.by}, so it cannot be removed soundly`,
-      );
+  private convertObject(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
+    if (Object.hasOwn(schema, "$ref")) return this.convertReference(schema, mode, refs);
+    this.checkKeywords(schema);
+    const converted = this.convertKeywords(schema, mode, refs);
+    foldExclusiveBounds(converted);
+    this.project(converted, schema, mode);
+    return this.version === "3.0" && schema.nullable === true
+      ? nullableSchema(converted)
+      : converted;
+  }
+
+  private convertReference(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
+    const name = parseComponentRef(schema.$ref, "schemas");
+    this.component(name);
+    // OpenAPI 3.0 ignores every $ref sibling, so they are neither checked nor kept.
+    if (this.version === "3.0") return this.reference(name, refs);
+    // 3.1 (2020-12) applies the siblings too: an allOf of them and the reference.
+    const { $ref, ...rest } = schema;
+    this.checkKeywords(rest);
+    if (Object.keys(rest).length === 0) return this.reference(name, refs);
+    if (rest.allOf !== undefined && !Array.isArray(rest.allOf)) {
+      throw new OpenApiSkip("invalid-schema", "allOf is not an array");
     }
-    const removed = own.size === 0 ? strip : new Set([...strip, ...own]);
+    return this.convertObject({ ...rest, allOf: [...arrayOf(rest.allOf), { $ref }] }, mode, refs);
+  }
+
+  private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
     for (const [keyword, value] of Object.entries(schema)) {
       if (DROPPED_KEYWORDS.has(keyword)) continue;
-      if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
-        entries.push([keyword, this.convertMap(value, mode, refs)]);
-      } else if (keyword === "allOf" && Array.isArray(value)) {
-        // allOf members validate the same instance unconditionally, so the
-        // removed names are removed from them too. anyOf/oneOf members are
-        // converted on their own: directionalAnalysis has already rejected a
-        // member that mentions a removed name.
-        entries.push([keyword, value.map((item) => this.convert(item, mode, refs, removed))]);
-      } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
-        entries.push([keyword, value.map((item) => this.convert(item, mode, refs))]);
-      } else if (keyword === "items") {
-        entries.push([
-          keyword,
-          Array.isArray(value)
-            ? value.map((item) => this.convert(item, mode, refs))
-            : this.convert(value, mode, refs),
-        ]);
-      } else if (SCHEMA_KEYWORDS.has(keyword)) {
-        entries.push([keyword, this.convert(value, mode, refs)]);
-      } else if (keyword === "dependencies" && isObject(value)) {
+      if (keyword === "dependencies" && isObject(value)) {
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
         dependencies = { ...value, ...dependencies };
-      } else if (
-        (keyword === "exclusiveMinimum" || keyword === "exclusiveMaximum") &&
-        typeof value === "boolean"
-      ) {
-        // OpenAPI 3.0 (draft-04 style) boolean form; draft-07 takes the bound.
-        const bound = schema[keyword === "exclusiveMinimum" ? "minimum" : "maximum"];
-        if (value && typeof bound === "number") entries.push([keyword, bound]);
       } else {
-        entries.push([keyword, value]);
+        const entry = this.convertEntry(schema, keyword, value, mode, refs);
+        if (entry) entries.push(entry);
       }
     }
     if (dependencies) entries.push(["dependencies", dependencies]);
-    const converted = Object.fromEntries(entries) as McpFnJsonSchema;
-    this.foldExclusiveBounds(converted);
-    this.removeDirectionalProperties(converted, removed, own, mode);
-    return this.version === "3.0" && schema.nullable === true
-      ? nullableSchema(converted)
-      : converted;
+    return Object.fromEntries(entries) as McpFnJsonSchema;
+  }
+
+  private convertEntry(
+    schema: JsonObject,
+    keyword: string,
+    value: unknown,
+    mode: SchemaMode,
+    refs: Set<string>,
+  ): [string, unknown] | undefined {
+    if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
+      return [keyword, this.convertMap(value, mode, refs)];
+    }
+    if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
+      return [keyword, value.map((item) => this.convert(item, mode, refs))];
+    }
+    if (keyword === "items") {
+      return [
+        keyword,
+        Array.isArray(value) ? value.map((item) => this.convert(item, mode, refs)) : this.convert(value, mode, refs),
+      ];
+    }
+    if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
+    if ((keyword === "exclusiveMinimum" || keyword === "exclusiveMaximum") && typeof value === "boolean") {
+      // OpenAPI 3.0 (draft-04 style) boolean form; draft-07 takes the bound.
+      const bound = schema[keyword === "exclusiveMinimum" ? "minimum" : "maximum"];
+      return value && typeof bound === "number" ? [keyword, bound] : undefined;
+    }
+    return [keyword, value];
   }
 
   private convertMap(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
@@ -412,586 +468,241 @@ export class SchemaConverter {
     );
   }
 
-  private foldExclusiveBounds(converted: McpFnJsonSchema): void {
-    // `{ minimum: 1, exclusiveMinimum: true }` became `exclusiveMinimum: 1`;
-    // the inclusive bound it replaced is redundant.
-    if (typeof converted.exclusiveMinimum === "number" && converted.minimum === converted.exclusiveMinimum) {
-      delete converted.minimum;
-    }
-    if (typeof converted.exclusiveMaximum === "number" && converted.maximum === converted.exclusiveMaximum) {
-      delete converted.maximum;
-    }
-  }
-
   /**
-   * Remove `removed` from `properties` and `required`. In input mode the names
-   * this schema itself marks readOnly (`own`) are also refused through
-   * `propertyNames` unless the object is closed, so a caller cannot send one
-   * as an additional property.
+   * Leave out the properties `source` itself flags for `mode`: `false` refuses
+   * the name whatever `patternProperties` or `additionalProperties` say, and a
+   * closed object refuses it once it is no longer listed.
    */
-  private removeDirectionalProperties(
-    converted: McpFnJsonSchema,
-    removed: ReadonlySet<string>,
-    own: ReadonlySet<string>,
-    mode: SchemaMode,
-  ): void {
-    if (removed.size === 0) return;
-    if (isObject(converted.properties)) {
-      converted.properties = Object.fromEntries(
-        Object.entries(converted.properties).filter(([name]) => !removed.has(name)),
-      );
+  private project(converted: McpFnJsonSchema, source: JsonObject, mode: SchemaMode): void {
+    const keyword = directionalKeyword(mode);
+    const flagged = objectEntries(source.properties)
+      .filter(([, property]) => this.hasFlag(property, keyword))
+      .map(([name]) => name);
+    if (flagged.length === 0 || !isObject(converted.properties)) return;
+    const closed = converted.additionalProperties === false && converted.patternProperties === undefined;
+    const properties: JsonObject = { ...converted.properties };
+    for (const name of flagged) {
+      if (closed) delete properties[name];
+      else properties[name] = false;
     }
+    converted.properties = properties as McpFnJsonSchema["properties"];
     if (Array.isArray(converted.required)) {
-      converted.required = converted.required.filter(
-        (name) => typeof name !== "string" || !removed.has(name),
-      );
+      converted.required = converted.required.filter((name) => !flagged.includes(name as string));
       if ((converted.required as unknown[]).length === 0) delete converted.required;
     }
-    if (
-      mode === "input" &&
-      own.size > 0 &&
-      !(converted.additionalProperties === false && converted.patternProperties === undefined)
-    ) {
-      const forbidden = { not: { enum: [...own] } };
-      converted.propertyNames =
-        converted.propertyNames === undefined ? forbidden : { allOf: [converted.propertyNames, forbidden] };
-    }
+  }
+
+  private reference(name: string, refs: Set<string>): McpFnJsonSchema {
+    refs.add(name);
+    return { $ref: `${DEFINITION_REF}${name}` };
   }
 
   /**
-   * A reference to component `name` for an instance whose enclosing schemas
-   * remove `strip`. When the component mentions a name it does not already
-   * remove itself, the reference targets a variant definition converted
-   * without those names; otherwise it targets the shared definition.
+   * Throw `unsupported-access-flag` unless leaving out the properties flagged
+   * for `mode` everywhere `schema` applies is sound: the result refuses every
+   * flagged name and still accepts what the source accepted without them.
    */
-  private reference(
-    name: string,
-    mode: SchemaMode,
-    refs: Set<string>,
-    strip: ReadonlySet<string>,
-  ): McpFnJsonSchema {
-    let key = name;
-    if (strip.size > 0) {
-      const own = this.componentNames(name, directionalKeyword(mode), this.flaggedNames, (schema, keyword) =>
-        this.directionalAnalysis(schema, keyword).names,
-      );
-      const mentioned = this.componentNames(name, directionalKeyword(mode), this.mentionedNames, (schema) =>
-        this.mentions(schema),
-      );
-      const pending = [...strip].filter((entry) => !own.has(entry) && mentioned.has(entry)).sort();
-      if (pending.length > 0) key = this.variantKey(name, mode, pending);
-    }
-    refs.add(key);
-    return { $ref: `${DEFINITION_REF}${key}` };
+  checkProjection(schema: unknown, mode: SchemaMode): void {
+    const keyword = directionalKeyword(mode);
+    const conflict = this.projectionConflict(schema, keyword);
+    if (conflict === undefined) return;
+    throw new OpenApiSkip(
+      "unsupported-access-flag",
+      conflict.message ??
+        `property ${JSON.stringify(conflict.name)} is ${keyword} but is also constrained by ` +
+          `${conflict.by}, so it cannot be removed soundly`,
+    );
   }
 
-  private variantKey(name: string, mode: SchemaMode, strip: string[]): string {
-    const identity = JSON.stringify([mode, name, strip]);
-    let key = this.variantKeys.get(identity);
-    if (!key) {
-      // ":" is outside component names, so a variant never collides with one.
-      key = `${name}:${directionalKeyword(mode)}-${this.variantKeys.size + 1}`;
-      this.variantKeys.set(identity, key);
-      this.variants.set(key, { name, strip: new Set(strip) });
-    }
-    return key;
-  }
-
-  private componentNames(
-    name: string,
-    keyword: DirectionalKeyword,
-    cache: Map<string, ReadonlySet<string>>,
-    compute: (schema: unknown, keyword: DirectionalKeyword) => ReadonlySet<string>,
-  ): ReadonlySet<string> {
-    const key = `${keyword}:${name}`;
-    let names = cache.get(key);
-    if (!names) {
-      cache.set(key, NO_NAMES); // a cycle back to this component adds nothing new
-      names = Object.hasOwn(this.schemas, name) ? compute(this.schemas[name], keyword) : NO_NAMES;
-      cache.set(key, names);
-    }
-    return names;
+  /** Memoised per schema object; a cycle back to a schema being checked adds nothing new. */
+  private projectionConflict(schema: unknown, keyword: DirectionalKeyword): AccessConflict | undefined {
+    if (!isObject(schema) || !this.reachesFlag(schema, keyword)) return undefined;
+    const memo = memoFor(this.projections, keyword);
+    const known = memo.get(schema);
+    if (known !== undefined) return known ?? undefined;
+    memo.set(schema, null);
+    const entries = this.closure(schema);
+    const conflict = this.flagConflict(entries, keyword) ?? this.childConflict(entries, keyword);
+    memo.set(schema, conflict ?? null);
+    return conflict;
   }
 
   /**
-   * Names of properties the instance described by `schema` carries with
-   * `keyword` set: its own `properties`, and those of its `allOf` members and
-   * `$ref` target, which constrain the same instance unconditionally. These
-   * are the names conversion removes.
-   *
-   * `conflict` names a flagged property that removal would not handle
-   * soundly, so the schema is skipped instead of rewritten:
-   * - a name flagged in one region (the unconditional part above, or one
-   *   `anyOf`/`oneOf` member with its own `allOf`/`$ref` closure) and
-   *   mentioned in `properties` or `required` of another region that does
-   *   not flag it too: for example `required: [id]` beside `oneOf` members
-   *   that mark `id` readOnly, or a readOnly `id` that a `oneOf` member requires;
-   * - a flagged name inside `not`, `if`, `then`, `else` or a schema-valued
-   *   dependency, where removing it would invert or move the condition;
-   * - a name removed anywhere inside a `oneOf` member that every member able
-   *   to be an object does not remove in its own region through the same
-   *   property schemas with the same required status (see `oneOfConflict`);
-   * - any keyword other than `properties` and `required` that constrains a
-   *   flagged name, the property set or the property count anywhere it
-   *   applies to the instance (see `nameConstraint`);
-   * - removal inside a child value (a property's object, array items, map
-   *   values) that something other than the projected subschema also
-   *   constrains, or that changes `oneOf` members differently (see
-   *   `childConstraint` and `oneOfConflict`), even with no name flagged here.
-   * An `anyOf`/`oneOf` member that flags and uses a name only itself is
-   * converted on its own and removes the name there.
+   * `root` and every schema applied to the same instance: `$ref` targets
+   * (OpenAPI 3.0 ignores the siblings), `allOf` members and `anyOf`/`oneOf`
+   * members, plus, marked `conditional`, `not`/`if`/`then`/`else`, schema
+   * dependencies and alternatives that can accept the same kind of value.
    */
-  private directionalAnalysis(
-    schema: unknown,
-    keyword: DirectionalKeyword,
-  ): { names: ReadonlySet<string>; conflict?: AccessConflict } {
-    const summary = this.regionSummary(schema, keyword);
-    const names = summary.names;
-    // Checked first: removal inside a member's child instance (a property's
-    // schema, items) can make members overlap with no name flagged here.
-    if (summary.oneOfConflict !== undefined) return { names, conflict: summary.oneOfConflict };
-    const child = this.childConstraint(schema, keyword);
-    if (child !== undefined) return { names, conflict: child };
-    if (summary.flagged.size === 0) return { names };
-    const elsewhere = "anyOf/oneOf, not, if/then/else or a schema dependency";
-    if (summary.conditionalFlag !== undefined) {
-      return { names, conflict: { name: summary.conditionalFlag, by: elsewhere } };
-    }
-    // A name some region uses without flagging it conflicts with any region
-    // that flags it (never the same region: there it would count as flagged).
-    for (const name of summary.flagged) {
-      if (summary.unflagged.has(name)) return { names, conflict: { name, by: elsewhere } };
-    }
-    const constraint = this.nameConstraint(schema, summary.flagged);
-    return constraint === undefined ? { names } : { names, conflict: constraint };
-  }
-
-  /**
-   * Removal inside a child instance (a property's value, an array item, a
-   * map value) is sound only when the subschema it projects is the only
-   * thing constraining that child: then a value the source schema accepted,
-   * with the flagged properties left out, satisfies the projected subschema.
-   * This walks every schema applied to the instance rooted at `schema` (as
-   * `nameConstraint` does) and reports a child whose schema removes a name at
-   * any depth (`reachesFlag`) when anything else constrains its value:
-   * - `const` or `enum` (they constrain the whole value, children included);
-   * - for a property: subschemas that are not all the same schema, a
-   *   `patternProperties` key matching it, a schema-valued
-   *   `additionalProperties` of a schema that does not list it, or any of
-   *   these inside `not`, `if`/`then`/`else` or a dependency;
-   * - for `patternProperties` or `additionalProperties` values: any other
-   *   schema for the property names they could cover, or the holder inside
-   *   `not`, `if`/`then`/`else` or a dependency;
-   * - for array items (`items`, `additionalItems`, `contains`): more than one
-   *   distinct item schema, `uniqueItems` (projected items can become equal),
-   *   or the holder inside `not`, `if`/`then`/`else` or a dependency.
-   * Members of a `oneOf` are compared by `oneOfConflict` as well.
-   */
-  private childConstraint(schema: unknown, keyword: DirectionalKeyword): AccessConflict | undefined {
-    const entries = this.inPlaceEntries(schema);
-    const reaches = (value: unknown) => this.reachesFlag(value, keyword);
-    const affected = new Set<string>();
-    const patterns: Array<{ entry: InPlaceEntry; pattern: string }> = [];
-    const additional: InPlaceEntry[] = [];
-    const items: InPlaceEntry[] = [];
-    for (const entry of entries) {
-      const current = entry.schema;
-      if (isObject(current.properties)) {
-        for (const [name, value] of Object.entries(current.properties)) if (reaches(value)) affected.add(name);
-      }
-      if (isObject(current.patternProperties)) {
-        for (const [pattern, value] of Object.entries(current.patternProperties)) {
-          if (reaches(value)) patterns.push({ entry, pattern });
-        }
-      }
-      if (reaches(current.additionalProperties)) additional.push(entry);
-      if (ITEM_KEYWORDS.some((item) => this.childSchemas(current, item).some(reaches))) items.push(entry);
-    }
-    if (affected.size === 0 && patterns.length === 0 && additional.length === 0 && items.length === 0) {
-      return undefined;
-    }
-    const conflict = (subject: string, by: string): AccessConflict => ({
-      name: subject,
-      by,
-      message: `${subject} contains ${keyword} properties but is also constrained by ${by}, so they cannot be removed soundly`,
-    });
-    const firstSubject = (): string => {
-      const [name] = affected;
-      if (name !== undefined) return `property ${JSON.stringify(name)}`;
-      if (patterns.length > 0) return `patternProperties ${JSON.stringify(patterns[0]!.pattern)}`;
-      return additional.length > 0 ? "additionalProperties" : "items";
-    };
-    // A const/enum of strings or numbers only constrains the kind of value,
-    // which removal keeps; an object or array value constrains its children.
-    for (const entry of entries) {
-      if (Object.hasOwn(entry.schema, "const") && isComposite(entry.schema.const)) {
-        return conflict(firstSubject(), "const");
-      }
-      if (Array.isArray(entry.schema.enum) && entry.schema.enum.some(isComposite)) {
-        return conflict(firstSubject(), "enum");
-      }
-    }
-    const conditional = "not, if/then/else or a schema dependency";
-    for (const name of affected) {
-      const subject = `property ${JSON.stringify(name)}`;
-      const schemas: unknown[] = [];
-      for (const entry of entries) {
-        const current = entry.schema;
-        const listed = isObject(current.properties) && Object.hasOwn(current.properties, name);
-        const pattern = isObject(current.patternProperties)
-          ? Object.keys(current.patternProperties).find((key) => patternMatches(key, name))
-          : undefined;
-        const valued = !listed && pattern === undefined && constrainsValues(current.additionalProperties);
-        if (!listed && pattern === undefined && !valued) continue;
-        if (entry.conditional) return conflict(subject, conditional);
-        if (pattern !== undefined) return conflict(subject, `patternProperties ${JSON.stringify(pattern)}`);
-        if (valued) return conflict(subject, "additionalProperties of a schema that does not list it");
-        const value = (current.properties as JsonObject)[name];
-        if (schemas.length > 0 && !schemas.some((known) => sameSchema(known, value))) {
-          return conflict(subject, "another schema for the same property");
-        }
-        schemas.push(value);
-      }
-    }
-    const holders = [
-      ...patterns.map(({ entry, pattern }) => ({ entry, subject: `patternProperties ${JSON.stringify(pattern)}`, pattern })),
-      ...additional.map((entry) => ({ entry, subject: "additionalProperties", pattern: undefined })),
-    ];
-    for (const { entry: holder, subject, pattern } of holders) {
-      if (holder.conditional) return conflict(subject, conditional);
-      for (const entry of entries) {
-        const current = entry.schema;
-        if (current === holder.schema) {
-          // Additional properties exclude the listed ones; a pattern also covers them.
-          const names = isObject(current.properties) ? Object.keys(current.properties) : [];
-          const covered = pattern === undefined ? undefined : names.find((name) => patternMatches(pattern, name));
-          if (covered !== undefined) return conflict(subject, `property ${JSON.stringify(covered)} it also covers`);
-          const others = isObject(current.patternProperties) ? Object.keys(current.patternProperties) : [];
-          if (pattern !== undefined && others.length > 1) {
-            return conflict(subject, "another patternProperties key that may cover the same names");
-          }
-          continue;
-        }
-        if (isObject(current.properties) && Object.keys(current.properties).length > 0) {
-          return conflict(subject, "properties of another schema for the same object");
-        }
-        if (isObject(current.patternProperties) && Object.keys(current.patternProperties).length > 0) {
-          return conflict(subject, "patternProperties of another schema for the same object");
-        }
-        if (constrainsValues(current.additionalProperties)) {
-          return conflict(subject, "additionalProperties of another schema for the same object");
-        }
-      }
-    }
-    if (items.length > 0) {
-      if (items.some((entry) => entry.conditional)) return conflict("items", conditional);
-      const schemas: unknown[] = [];
-      for (const entry of entries) {
-        if (entry.schema.uniqueItems === true) return conflict("items", "uniqueItems");
-        for (const item of ITEM_KEYWORDS) {
-          for (const value of this.childSchemas(entry.schema, item)) {
-            if (value === true || (isObject(value) && Object.keys(value).length === 0)) continue;
-            if (entry.conditional) return conflict("items", conditional);
-            if (schemas.length > 0 && !schemas.some((known) => sameSchema(known, value))) {
-              return conflict("items", "another schema for the same items");
-            }
-            schemas.push(value);
-          }
-        }
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * `schema` and every schema applied to the same instance: `$ref` targets
-   * (OpenAPI 3.0 ignores the siblings), `allOf`/`anyOf`/`oneOf` members and,
-   * marked `conditional`, `not`/`if`/`then`/`else` and schema-valued
-   * dependencies and whatever they apply in turn.
-   */
-  private inPlaceEntries(schema: unknown): InPlaceEntry[] {
-    const entries: InPlaceEntry[] = [];
+  private closure(root: JsonObject): ClosureEntry[] {
+    const entries: ClosureEntry[] = [];
     const visited = new Map<object, boolean>();
     const walk = (current: unknown, conditional: boolean): void => {
       if (!isObject(current)) return;
       const before = visited.get(current);
-      if (before === true || (before === false && !conditional)) return;
+      if (before === false || (before === true && conditional)) return;
       visited.set(current, conditional);
       if (Object.hasOwn(current, "$ref")) {
         walk(this.target(current.$ref), conditional);
         if (this.version === "3.0") return;
       }
       entries.push({ schema: current, conditional });
-      for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
-        const members = current[keyword];
-        if (Array.isArray(members)) for (const member of members) walk(member, conditional);
+      for (const member of arrayOf(current.allOf)) walk(member, conditional);
+      for (const keyword of ["anyOf", "oneOf"] as const) {
+        const members = arrayOf(current[keyword]);
+        const exclusive = this.exclusive(members);
+        for (const member of members) walk(member, conditional || !exclusive);
       }
-      for (const keyword of IN_PLACE_KEYWORDS) walk(current[keyword], true);
+      for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], true);
       for (const keyword of ["dependencies", "dependentSchemas"] as const) {
-        for (const dependency of this.childSchemas(current, keyword)) walk(dependency, true);
+        for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, true);
       }
     };
-    walk(schema, false);
+    walk(root, false);
     return entries;
   }
 
-  /**
-   * The single check of every keyword other than `properties[name]` and
-   * `required` that constrains a flagged name, run over every schema applied
-   * to the instance rooted at `schema`: `$ref` targets (OpenAPI 3.0 ignores
-   * the siblings), `allOf`/`anyOf`/`oneOf` members, `not`/`if`/`then`/`else`
-   * and schema-valued dependencies. Removing a flagged property is sound only
-   * when none of these is present:
-   * - `const`, `enum`, `minProperties`, `propertyNames`, `dependencies`,
-   *   `dependentRequired` or `dependentSchemas`, anywhere;
-   * - `maxProperties` inside `anyOf`/`oneOf`, `not`, `if`/`then`/`else` or a
-   *   dependency (unconditional `maxProperties` only gains from removal);
-   * - a `patternProperties` key matching the name (an invalid pattern counts
-   *   as a match);
-   * - `additionalProperties` other than absent, `true` or `{}` in a schema
-   *   that neither lists the name in its own `properties` nor matches it by
-   *   its own `patternProperties`.
-   */
-  private nameConstraint(
-    schema: unknown,
-    names: ReadonlySet<string>,
-  ): { name: string; by: string } | undefined {
-    const [first] = names;
-    if (first === undefined) return undefined;
-    // object -> whether it was already visited as a nested (conditional or alternative) schema
-    const visited = new Map<object, boolean>();
-    const walk = (current: unknown, nested: boolean): { name: string; by: string } | undefined => {
-      if (!isObject(current)) return undefined;
-      const before = visited.get(current);
-      if (before === true || (before === false && !nested)) return undefined;
-      visited.set(current, nested);
-      if (Object.hasOwn(current, "$ref")) {
-        const found = walk(this.target(current.$ref), nested);
-        if (found !== undefined || this.version === "3.0") return found;
+  /** Whether no two alternatives accept the same kind of value, so each value meets at most one. */
+  private exclusive(members: unknown[]): boolean {
+    if (members.length <= 1) return true;
+    const seen = new Set<ValueKind>();
+    for (const member of members) {
+      for (const kind of this.admittedValues(member)) {
+        if (seen.has(kind)) return false;
+        seen.add(kind);
       }
-      const keyword = INSTANCE_CONSTRAINTS.find((entry) => Object.hasOwn(current, entry));
-      if (keyword !== undefined) return { name: first, by: keyword };
-      if (nested && Object.hasOwn(current, "maxProperties")) {
-        return { name: first, by: "maxProperties inside anyOf/oneOf, not, if/then/else or a dependency" };
-      }
-      const patterns = isObject(current.patternProperties) ? Object.keys(current.patternProperties) : [];
-      for (const name of names) {
-        const pattern = patterns.find((entry) => patternMatches(entry, name));
-        if (pattern !== undefined) return { name, by: `patternProperties ${JSON.stringify(pattern)}` };
-        if (
-          !opensAdditional(current.additionalProperties) &&
-          !(isObject(current.properties) && Object.hasOwn(current.properties, name))
-        ) {
-          return { name, by: "additionalProperties of a schema that does not list it" };
-        }
-      }
-      for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
-        const members = current[keyword];
-        if (!Array.isArray(members)) continue;
-        for (const member of members) {
-          const found = walk(member, nested || keyword !== "allOf");
-          if (found !== undefined) return found;
-        }
-      }
-      for (const keyword of IN_PLACE_KEYWORDS) {
-        const found = walk(current[keyword], true);
-        if (found !== undefined) return found;
-      }
-      return undefined;
-    };
-    return walk(schema, false);
+    }
+    return true;
   }
 
   /**
-   * The flags and uses of property names in the region rooted at `schema`
-   * (its `allOf`/`$ref` closure) and, aggregated, in every region nested in it
-   * through `anyOf`/`oneOf`, `not`, `if`/`then`/`else` and dependencies.
-   * Memoised per schema object; a cycle back to a schema being summarised adds
-   * nothing (an in-place cycle is rejected by `definitions` anyway).
+   * Flags on this instance's own properties: each must be declared in an
+   * unconditional schema, no schema that can accept an object may need the
+   * name (a `required` list of another schema, `const`, `enum`,
+   * `minProperties` or a dependency), and no conditional one may tell the
+   * object with the name from the object without it (listing it, counting
+   * or matching property names, or closing the object).
    */
-  private regionSummary(schema: unknown, keyword: DirectionalKeyword): RegionSummary {
-    if (!isObject(schema)) return EMPTY_REGION;
-    let memo = this.summaries.get(keyword);
-    if (!memo) {
-      memo = new WeakMap();
-      this.summaries.set(keyword, memo);
-    }
-    const known = memo.get(schema);
-    if (known) return known;
-    memo.set(schema, EMPTY_REGION);
-    const flagged = new Set<string>();
-    const mentioned = new Set<string>();
-    const nested: RegionSummary[] = [];
-    let conditionalFlag: string | undefined;
-    let oneOfConflict: AccessConflict | undefined;
-    const conditional = (member: unknown) => {
-      const summary = this.regionSummary(member, keyword);
-      conditionalFlag ??= summary.conditionalFlag ?? summary.flagged.values().next().value;
-      nested.push(summary);
-    };
-    const seen = new Set<object>();
-    const walk = (current: unknown): void => {
-      if (!isObject(current) || seen.has(current)) return;
-      seen.add(current);
-      if (Object.hasOwn(current, "$ref")) {
-        walk(this.target(current.$ref));
-        if (this.version === "3.0") return;
-      }
-      if (isObject(current.properties)) {
-        for (const [name, property] of Object.entries(current.properties)) {
-          if (this.hasFlag(property, keyword)) flagged.add(name);
-          else mentioned.add(name);
-        }
-      }
-      if (Array.isArray(current.required)) {
-        for (const name of current.required) if (typeof name === "string") mentioned.add(name);
-      }
-      for (const dependencyKeyword of ["dependencies", "dependentSchemas"] as const) {
-        const map = current[dependencyKeyword];
-        if (!isObject(map)) continue;
-        for (const dependency of Object.values(map)) if (!Array.isArray(dependency)) conditional(dependency);
-      }
-      if (Array.isArray(current.allOf)) for (const member of current.allOf) walk(member);
-      for (const alternatives of ["anyOf", "oneOf"] as const) {
-        const members = current[alternatives];
-        if (!Array.isArray(members)) continue;
-        const summaries = members.map((member) => this.regionSummary(member, keyword));
-        nested.push(...summaries);
-        if (alternatives === "oneOf") oneOfConflict ??= this.oneOfConflict(members, summaries, keyword);
-      }
-      for (const condition of ["not", "if", "then", "else"] as const) {
-        if (current[condition] !== undefined) conditional(current[condition]);
-      }
-    };
-    walk(schema);
-    const summary: RegionSummary = {
-      names: flagged,
-      flagged: new Set(flagged),
-      unflagged: new Set([...mentioned].filter((name) => !flagged.has(name))),
-      ...(conditionalFlag !== undefined ? { conditionalFlag } : {}),
-      ...(oneOfConflict !== undefined ? { oneOfConflict } : {}),
-    };
-    for (const inner of nested) {
-      for (const name of inner.flagged) summary.flagged.add(name);
-      for (const name of inner.unflagged) summary.unflagged.add(name);
-      if (inner.conditionalFlag !== undefined) summary.conditionalFlag ??= inner.conditionalFlag;
-      if (inner.oneOfConflict !== undefined) summary.oneOfConflict ??= inner.oneOfConflict;
-    }
-    memo.set(schema, summary);
-    return summary;
-  }
-
-  /**
-   * Why removal could make the members of this `oneOf` overlap, so `oneOf`
-   * would reject a value exactly one member accepted; undefined when every
-   * member that removal changes changes the same way. Two rules:
-   *
-   * - A name removed anywhere inside a member (its own region or a nested
-   *   `anyOf`/`oneOf`/`$ref` region) must be removed by every member that can
-   *   be an object in its own region (not only inside a nested composition),
-   *   through the same property schemas with the same required status, as
-   *   polymorphic members sharing one base schema do (patterns,
-   *   `propertyNames`, `maxProperties` and the rest are `nameConstraint`'s).
-   *   Otherwise a member that differs on the name (another type, `const` or
-   *   `enum`, required in one member only, absent or forbidden in one) could
-   *   overlap with another once it is removed.
-   * - Removal inside a child instance counts too. A property of a member
-   *   whose schema removes a name at any depth (see `reachesFlag`) must be
-   *   given the same property schemas with the same required status by every
-   *   member that can be an object; a member changed through `items`,
-   *   `additionalProperties`, `patternProperties`, `propertyNames` or a nested
-   *   composition instead of a named property conflicts with any other member
-   *   that admits a kind of value it admits.
-   */
-  private oneOfConflict(
-    members: unknown[],
-    summaries: RegionSummary[],
-    keyword: DirectionalKeyword,
-  ): AccessConflict | undefined {
-    const removed = new Set<string>();
-    for (const summary of summaries) for (const name of summary.flagged) removed.add(name);
-    const projections = members.map((member) => this.memberProjection(member, keyword));
-    if (removed.size === 0 && projections.every((entry) => entry.properties.size === 0 && !entry.other)) {
-      return undefined;
-    }
-    // Removal only changes what objects a member accepts, so a member that
-    // accepts no object (the `{ type: "null" }` of a nullable reference)
-    // cannot start overlapping through a property.
-    const objects = members.map((member) => this.mayBeObject(member));
-    const differs = (name: string): boolean => {
-      let first: PropertyFacts | undefined;
-      for (const [index, member] of members.entries()) {
-        if (!objects[index]) continue;
-        const facts = this.propertyFacts(member, name);
-        if (first === undefined) first = facts;
-        else if (!sameFacts(first, facts)) return true;
-      }
-      return false;
-    };
-    for (const name of removed) {
-      const unremoved = summaries.some((summary, index) => objects[index] && !summary.names.has(name));
-      if (unremoved || differs(name)) return { name, by: ONE_OF_CONFLICT };
-    }
-    const kinds = members.map((member) => this.admittedValues(member));
-    for (const [index, projection] of projections.entries()) {
-      if (!projection.other) continue;
-      const overlaps = kinds.some(
-        (other, at) => at !== index && [...other].some((kind) => kinds[index]!.has(kind)),
-      );
-      if (overlaps) {
-        return {
-          name: projection.other,
-          by: ONE_OF_CONFLICT,
-          message:
-            `a oneOf member removes ${keyword} properties through ${projection.other}, ` +
-            "so its members could overlap once they are removed",
-        };
+  private flagConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    const declarers = new Map<string, Set<object>>();
+    for (const { schema, conditional } of entries) {
+      for (const [name, property] of objectEntries(schema.properties)) {
+        if (!this.hasFlag(property, keyword)) continue;
+        if (conditional) return { name, by: CONDITIONAL };
+        const known = declarers.get(name) ?? new Set<object>();
+        known.add(schema);
+        declarers.set(name, known);
       }
     }
-    const affected = new Set<string>();
-    for (const [index, projection] of projections.entries()) {
-      if (objects[index]) for (const name of projection.properties) affected.add(name);
-    }
-    for (const name of affected) {
-      if (removed.has(name) || !differs(name)) continue;
-      return {
-        name,
-        by: ONE_OF_CONFLICT,
-        message:
-          `property ${JSON.stringify(name)} contains ${keyword} properties but the members of a oneOf ` +
-          "do not all give it the same schema, so they could overlap once those are removed",
-      };
+    if (declarers.size === 0) return undefined;
+    for (const entry of entries) {
+      const conflict = this.mayBeObject(entry.schema) ? needsFlagged(entry, declarers) : undefined;
+      if (conflict !== undefined) return conflict;
     }
     return undefined;
   }
 
   /**
-   * How removal changes the instances `member` describes below its own
-   * level: the names of its properties (over its `allOf`/`$ref` closure)
-   * whose schemas remove a name at any depth, and `other`, the first keyword
-   * through which it removes one elsewhere.
+   * Flags below this instance: a child value (a property, the additional
+   * properties, the items) is projected only when exactly one schema
+   * constrains it, unconditionally, and nothing compares whole values.
    */
-  private memberProjection(
-    member: unknown,
+  private childConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    const reaches = (value: unknown) => this.reachesFlag(value, keyword);
+    for (const { schema } of entries) {
+      for (const position of UNPROJECTED_POSITIONS) {
+        if (this.childSchemas(schema, position).some(reaches)) return childConflict(keyword, position, "its position");
+      }
+      if (Array.isArray(schema.items) && schema.items.some(reaches)) {
+        return childConflict(keyword, "items", "its position in a tuple");
+      }
+    }
+    return (
+      this.propertyConflict(entries, keyword) ??
+      this.additionalConflict(entries, keyword) ??
+      this.itemsConflict(entries, keyword)
+    );
+  }
+
+  private propertyConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    const names = new Set<string>();
+    for (const { schema } of entries) {
+      for (const [name, property] of objectEntries(schema.properties)) {
+        // A flagged property is refused outright, so its value is never checked.
+        if (!this.hasFlag(property, keyword)) names.add(name);
+      }
+    }
+    const patterned = entries.some(({ schema }) =>
+      objectEntries(schema.patternProperties).some(([, value]) => constrainsValues(value)),
+    );
+    for (const name of names) {
+      const { sources, conditional } = propertySources(entries, name);
+      if (!sources.some((source) => this.reachesFlag(source, keyword))) continue;
+      const subject = `property ${JSON.stringify(name)}`;
+      const conflict = this.singleSource(entries, keyword, subject, sources, conditional, patterned);
+      if (conflict !== undefined) return conflict;
+    }
+    return undefined;
+  }
+
+  private additionalConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    for (const entry of entries) {
+      const value = entry.schema.additionalProperties;
+      if (!this.reachesFlag(value, keyword)) continue;
+      // Names another schema lists or patterns are validated by both schemas.
+      const shared = entries.some(
+        ({ schema }) =>
+          schema !== entry.schema &&
+          this.mayBeObject(schema) &&
+          (objectEntries(schema.properties).length > 0 ||
+            objectEntries(schema.patternProperties).length > 0 ||
+            constrainsValues(schema.additionalProperties)),
+      );
+      const subject = "additionalProperties";
+      const conflict = shared
+        ? childConflict(keyword, subject, "properties of another schema for the same object")
+        : this.singleSource(entries, keyword, subject, [value], entry.conditional, false);
+      if (conflict !== undefined) return conflict;
+    }
+    return undefined;
+  }
+
+  private itemsConflict(entries: ClosureEntry[], keyword: DirectionalKeyword): AccessConflict | undefined {
+    const sources: unknown[] = [];
+    let conditional = false;
+    for (const entry of entries) {
+      const { schema } = entry;
+      if (schema.items === undefined || Array.isArray(schema.items) || opens(schema.items)) continue;
+      sources.push(schema.items);
+      conditional ||= entry.conditional;
+    }
+    if (!sources.some((source) => this.reachesFlag(source, keyword))) return undefined;
+    for (const { schema } of entries) {
+      if (schema.uniqueItems === true) return childConflict(keyword, "items", "uniqueItems");
+      if (!opens(schema.contains) || !opens(schema.additionalItems)) {
+        return childConflict(keyword, "items", "contains or additionalItems");
+      }
+    }
+    return this.singleSource(entries, keyword, "items", sources, conditional, false);
+  }
+
+  /** A child value projected through exactly one unconditional schema, which is then checked in turn. */
+  private singleSource(
+    entries: ClosureEntry[],
     keyword: DirectionalKeyword,
-  ): { properties: Set<string>; other?: string } {
-    const properties = new Set<string>();
-    let other: string | undefined;
-    this.inPlaceMembers(member, (schema) => {
-      if (isObject(schema.properties)) {
-        for (const [name, property] of Object.entries(schema.properties)) {
-          if (this.reachesFlag(property, keyword)) properties.add(name);
-        }
-      }
-      if (other !== undefined) return;
-      for (const entry of PROJECTION_KEYWORDS) {
-        if (this.childSchemas(schema, entry).some((child) => this.reachesFlag(child, keyword))) {
-          other = entry;
-          return;
-        }
-      }
-    }, false);
-    return other === undefined ? { properties } : { properties, other };
+    subject: string,
+    sources: unknown[],
+    conditional: boolean,
+    patterned: boolean,
+  ): AccessConflict | undefined {
+    if (conditional) return childConflict(keyword, subject, CONDITIONAL);
+    if (patterned) return childConflict(keyword, subject, "patternProperties of a schema for the same object");
+    const distinct = sources.filter((source, index) => sources.findIndex((other) => sameReference(other, source)) === index);
+    if (distinct.length > 1) return childConflict(keyword, subject, "another schema for the same value");
+    const literal = entries.find(
+      ({ schema }) => isComposite(schema.const) || arrayOf(schema.enum).some(isComposite),
+    );
+    if (literal !== undefined) return childConflict(keyword, subject, "const or enum");
+    return this.projectionConflict(distinct[0], keyword);
   }
 
   /** The subschemas `schema` holds under `keyword` (a schema, an array of them or a map of them). */
@@ -1014,11 +725,7 @@ export class SchemaConverter {
    */
   private reachesFlag(schema: unknown, keyword: DirectionalKeyword): boolean {
     if (!isObject(schema)) return false;
-    let memo = this.reaches.get(keyword);
-    if (!memo) {
-      memo = new WeakMap();
-      this.reaches.set(keyword, memo);
-    }
+    const memo = memoFor(this.reaches, keyword);
     let result = memo.get(schema);
     if (result === undefined) {
       const reaching = this.componentsReachingFlag(keyword);
@@ -1028,10 +735,6 @@ export class SchemaConverter {
     }
     return result;
   }
-
-  private readonly reaches = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
-
-  private readonly reaching = new Map<DirectionalKeyword, ReadonlySet<string>>();
 
   private componentsReachingFlag(keyword: DirectionalKeyword): ReadonlySet<string> {
     const known = this.reaching.get(keyword);
@@ -1046,9 +749,9 @@ export class SchemaConverter {
         queue.push(name);
       }
       for (const ref of refs) {
-        let list = referrers.get(ref);
-        if (!list) referrers.set(ref, (list = []));
+        const list = referrers.get(ref) ?? [];
         list.push(name);
+        referrers.set(ref, list);
       }
     }
     while (queue.length > 0) {
@@ -1081,10 +784,8 @@ export class SchemaConverter {
         }
         if (this.version === "3.0") return;
       }
-      if (isObject(current.properties)) {
-        for (const property of Object.values(current.properties)) {
-          if (this.hasFlag(property, keyword)) flagged = true;
-        }
+      for (const [, property] of objectEntries(current.properties)) {
+        if (this.hasFlag(property, keyword)) flagged = true;
       }
       for (const entry of SUBSCHEMA_KEYWORDS) {
         for (const child of this.childSchemas(current, entry)) walk(child);
@@ -1103,60 +804,7 @@ export class SchemaConverter {
   }
 
   private mayBeObject(schema: unknown): boolean {
-    try {
-      return this.admits(schema).values.has("object");
-    } catch {
-      return true;
-    }
-  }
-
-  /** The schemas given to property `name` and whether it is required, over `schema`'s allOf/$ref closure. */
-  private propertyFacts(schema: unknown, name: string): PropertyFacts {
-    const schemas: unknown[] = [];
-    let required = false;
-    this.inPlaceMembers(schema, (member) => {
-      if (isObject(member.properties) && Object.hasOwn(member.properties, name)) {
-        schemas.push(member.properties[name]);
-      }
-      if (Array.isArray(member.required) && member.required.includes(name)) required = true;
-    }, false);
-    return { schemas, required };
-  }
-
-  /** Property names in `properties` or `required` of `schema` or any schema validating the same instance. */
-  private mentions(schema: unknown): ReadonlySet<string> {
-    const names = new Set<string>();
-    this.inPlaceMembers(schema, (member) => {
-      if (isObject(member.properties)) for (const name of Object.keys(member.properties)) names.add(name);
-      if (Array.isArray(member.required)) {
-        for (const name of member.required) if (typeof name === "string") names.add(name);
-      }
-    }, true);
-    return names;
-  }
-
-  /**
-   * Visit `schema` and the schemas applied to the same instance: `$ref`
-   * targets, `allOf` members and, when `alternatives` is set, `anyOf`/`oneOf`
-   * members. Unresolvable references are left for conversion to report.
-   */
-  private inPlaceMembers(schema: unknown, visit: (member: JsonObject) => void, alternatives: boolean): void {
-    const seen = new Set<object>();
-    const walk = (current: unknown): void => {
-      if (!isObject(current) || seen.has(current)) return;
-      seen.add(current);
-      if (Object.hasOwn(current, "$ref")) {
-        walk(this.target(current.$ref));
-        if (this.version === "3.0") return;
-      }
-      visit(current);
-      const keywords = alternatives ? ["allOf", "anyOf", "oneOf"] : ["allOf"];
-      for (const keyword of keywords) {
-        const members = current[keyword];
-        if (Array.isArray(members)) for (const member of members) walk(member);
-      }
-    };
-    walk(schema);
+    return this.admittedValues(schema).has("object");
   }
 
   private target(ref: unknown): unknown {
@@ -1176,11 +824,7 @@ export class SchemaConverter {
    */
   private hasFlag(property: unknown, keyword: DirectionalKeyword): boolean {
     if (!isObject(property)) return false;
-    let memo = this.flags.get(keyword);
-    if (!memo) {
-      memo = new WeakMap();
-      this.flags.set(keyword, memo);
-    }
+    const memo = memoFor(this.flags, keyword);
     const known = memo.get(property);
     if (known !== undefined) return known;
     // A cycle back to this schema adds no flag; a cycle that never descends
@@ -1197,36 +841,26 @@ export class SchemaConverter {
       if (this.version === "3.0" || referenced) return referenced;
     }
     if (property[keyword] === true) return true;
-    if (Array.isArray(property.allOf) && property.allOf.some((member) => this.hasFlag(member, keyword))) {
-      return true;
-    }
+    if (arrayOf(property.allOf).some((member) => this.hasFlag(member, keyword))) return true;
     for (const alternatives of ["anyOf", "oneOf"] as const) {
-      const members = property[alternatives];
-      if (!Array.isArray(members)) continue;
-      const values = members.filter((member) => !this.isNullOnly(member));
+      const values = arrayOf(property[alternatives]).filter((member) => !this.isNullOnly(member));
       if (values.length > 0 && values.every((member) => this.hasFlag(member, keyword))) return true;
     }
     return false;
   }
 
   private isNullOnly(schema: unknown): boolean {
-    try {
-      const { values } = this.admits(schema);
-      return values.size === 1 && values.has("null");
-    } catch {
-      return false;
-    }
+    const values = this.admittedValues(schema);
+    return values.size === 1 && values.has("null");
   }
 
-  private convertedComponent(key: string, mode: SchemaMode): ConvertedComponent {
-    const cacheKey = `${mode}:${key}`;
+  private convertedComponent(name: string, mode: SchemaMode): ConvertedComponent {
+    const cacheKey = `${mode}:${name}`;
     let entry = this.cache.get(cacheKey);
     if (!entry) {
-      const variant = this.variants.get(key);
-      const name = variant?.name ?? key;
       try {
         const refs = new Set<string>();
-        const schema = this.convert(this.component(name), mode, refs, variant?.strip);
+        const schema = this.budgeted(() => this.convert(this.component(name), mode, refs));
         entry = { schema, refs, inPlace: inPlaceReferences(schema) };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
@@ -1258,57 +892,105 @@ export class SchemaConverter {
       result.push([key, entry.schema!]);
       for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
     }
-    assertProductiveRecursion(entries, (key) => this.variants.get(key)?.name ?? key);
+    assertProductiveRecursion(entries);
     return Object.fromEntries(result);
   }
 }
 
 const DEFINITION_REF = "#/definitions/";
 
-interface PropertyFacts {
-  schemas: unknown[];
-  required: boolean;
+/**
+ * Why `entry`, a schema for an object whose flagged properties `declarers`
+ * maps to the schemas flagging them, needs a flagged name: a `required` list
+ * of a schema that does not flag it, an object-wide constraint, or (under a
+ * condition) a keyword that tells the object with the name from the one without.
+ */
+function needsFlagged(entry: ClosureEntry, declarers: ReadonlyMap<string, ReadonlySet<object>>): AccessConflict | undefined {
+  const { schema, conditional } = entry;
+  const [first] = declarers.keys();
+  const constraint = (conditional ? NAME_SENSITIVE : INSTANCE_CONSTRAINTS).find((keyword) => Object.hasOwn(schema, keyword));
+  if (constraint !== undefined) return { name: first!, by: constraint };
+  if (conditional && !opens(schema.additionalProperties)) {
+    return { name: first!, by: "additionalProperties under a condition" };
+  }
+  const listed = conditional ? objectEntries(schema.properties).find(([name]) => declarers.has(name)) : undefined;
+  if (listed !== undefined) return { name: listed[0], by: CONDITIONAL };
+  const foreign = arrayOf(schema.required).find(
+    (name) => typeof name === "string" && declarers.get(name)?.has(schema) === false,
+  );
+  return foreign === undefined
+    ? undefined
+    : { name: foreign as string, by: "a required list of another schema for the same object" };
 }
 
-function sameFacts(left: PropertyFacts, right: PropertyFacts): boolean {
+/** The schemas `entries` give property `name` (listed, or through a constraining `additionalProperties`). */
+function propertySources(entries: ClosureEntry[], name: string): { sources: unknown[]; conditional: boolean } {
+  const sources: unknown[] = [];
+  let conditional = false;
+  for (const entry of entries) {
+    const { schema } = entry;
+    const listed = isObject(schema.properties) && Object.hasOwn(schema.properties, name);
+    const value = listed ? (schema.properties as JsonObject)[name] : schema.additionalProperties;
+    if (!listed && !constrainsValues(value)) continue;
+    sources.push(value);
+    conditional ||= entry.conditional;
+  }
+  return { sources, conditional };
+}
+
+function childConflict(keyword: DirectionalKeyword, subject: string, by: string): AccessConflict {
+  return {
+    name: subject,
+    by,
+    message: `${subject} contains ${keyword} properties but is also constrained by ${by}, so they cannot be removed soundly`,
+  };
+}
+
+/** The same object, or two references to the same component. */
+function sameReference(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
   return (
-    left.required === right.required &&
-    left.schemas.length === right.schemas.length &&
-    left.schemas.every((schema, index) => sameSchema(schema, right.schemas[index]))
+    isObject(left) &&
+    isObject(right) &&
+    Object.keys(left).length === 1 &&
+    Object.keys(right).length === 1 &&
+    typeof left.$ref === "string" &&
+    left.$ref === right.$ref
   );
 }
 
-/** The same object, or equal JSON (a schema JSON cannot represent counts as different). */
-function sameSchema(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  try {
-    const encoded = JSON.stringify(left);
-    return encoded !== undefined && encoded === JSON.stringify(right);
-  } catch {
-    return false;
-  }
-}
-
-/** Whether an `additionalProperties` value accepts every additional property. */
-function opensAdditional(value: unknown): boolean {
+/** Whether a subschema accepts every value (absent, `true` or `{}`). */
+function opens(value: unknown): boolean {
   return value === undefined || value === true || (isObject(value) && Object.keys(value).length === 0);
 }
 
-/** Whether a `patternProperties` key matches `name`; a pattern that does not compile counts as a match. */
+/** Whether a `const` or `enum` value is an object or array, which constrains child values. */
+function isComposite(value: unknown): boolean {
+  return typeof value === "object" && value !== null;
+}
 
-function patternMatches(pattern: string, name: string): boolean {
-  try {
-    return new RegExp(pattern, "u").test(name);
-  } catch {
-    return true;
+/** Whether an `additionalProperties` value constrains the values (not only the presence) of properties. */
+function constrainsValues(value: unknown): boolean {
+  return isObject(value) && Object.keys(value).length > 0;
+}
+
+function foldExclusiveBounds(converted: McpFnJsonSchema): void {
+  // `{ minimum: 1, exclusiveMinimum: true }` became `exclusiveMinimum: 1`;
+  // the inclusive bound it replaced is redundant.
+  if (typeof converted.exclusiveMinimum === "number" && converted.minimum === converted.exclusiveMinimum) {
+    delete converted.minimum;
+  }
+  if (typeof converted.exclusiveMaximum === "number" && converted.maximum === converted.exclusiveMaximum) {
+    delete converted.maximum;
   }
 }
 
-/**
- * Keywords through which a `oneOf` member can change below its own level
- * other than a named property (see `memberProjection`).
- */
-const PROJECTION_KEYWORDS = [
+/** Every keyword holding subschemas, for `localFlags`. */
+const SUBSCHEMA_KEYWORDS = [
+  "properties",
+  "definitions",
+  "$defs",
+  "allOf",
   "items",
   "additionalItems",
   "contains",
@@ -1325,28 +1007,6 @@ const PROJECTION_KEYWORDS = [
   "dependentSchemas",
 ] as const;
 
-/** Keywords whose subschemas validate array items. */
-const ITEM_KEYWORDS = ["items", "additionalItems", "contains"] as const;
-
-/** A schema applied to an instance, and whether only under `not`, `if`/`then`/`else` or a dependency. */
-interface InPlaceEntry {
-  schema: JsonObject;
-  conditional: boolean;
-}
-
-/** Whether a `const` or `enum` value is an object or array, which constrains child values. */
-function isComposite(value: unknown): boolean {
-  return typeof value === "object" && value !== null;
-}
-
-/** Whether an `additionalProperties` value constrains the values (not only the presence) of properties. */
-function constrainsValues(value: unknown): boolean {
-  return isObject(value) && Object.keys(value).length > 0;
-}
-
-/** Every keyword holding subschemas, for `localFlags`. */
-const SUBSCHEMA_KEYWORDS = ["properties", "definitions", "$defs", "allOf", ...PROJECTION_KEYWORDS] as const;
-
 const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
@@ -1359,13 +1019,10 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
       found.add(current.$ref.slice(DEFINITION_REF.length));
     }
     for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
-      const members = current[keyword];
-      if (Array.isArray(members)) for (const member of members) walk(member);
+      for (const member of arrayOf(current[keyword])) walk(member);
     }
     for (const keyword of IN_PLACE_KEYWORDS) walk(current[keyword]);
-    if (isObject(current.dependencies)) {
-      for (const dependency of Object.values(current.dependencies)) walk(dependency);
-    }
+    for (const [, dependency] of objectEntries(current.dependencies)) walk(dependency);
   };
   walk(schema);
   return found;
@@ -1375,19 +1032,15 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
  * `A: { $ref: B }, B: { $ref: A }` or a 3.1 `X: { $ref: X, type: object }`
  * never descends into a child value; validators recurse on it without end.
  */
-function assertProductiveRecursion(
-  entries: ReadonlyMap<string, ConvertedComponent>,
-  componentOf: (key: string) => string,
-): void {
+function assertProductiveRecursion(entries: ReadonlyMap<string, ConvertedComponent>): void {
   const done = new Set<string>();
   const active = new Set<string>();
   const visit = (key: string): void => {
     if (done.has(key)) return;
     if (active.has(key)) {
-      const name = componentOf(key);
       throw new OpenApiSkip(
         "unresolved-ref",
-        `#/components/schemas/${name} refers back to itself without descending into a property or array item`,
+        `#/components/schemas/${key} refers back to itself without descending into a property or array item`,
       );
     }
     active.add(key);
@@ -1418,8 +1071,9 @@ const ALL_KINDS: readonly ValueKind[] = ["string", "number", "integer", "boolean
 
 /**
  * The kinds of value a schema can accept, and for arrays the kinds its items
- * can accept. It over-approximates: keywords that only narrow (`not`, `if`,
- * bounds) are ignored, so a kind outside the set is never accepted.
+ * can accept. It over-approximates: keywords that only narrow (`if`, bounds,
+ * a `not` other than one of bare types) are ignored, so a kind outside the
+ * set is never accepted.
  */
 export interface AdmittedKinds {
   values: ReadonlySet<ValueKind>;
@@ -1454,9 +1108,31 @@ function kindOfValue(value: unknown): ValueKind {
   return "object";
 }
 
+const ANNOTATION_KEYWORDS = new Set(["type", "title", "description", "$comment"]);
+
+/** The kinds a `not` refuses when it holds nothing but `type` (and annotations). */
+function typeOnlyKinds(not: unknown): ValueKind[] {
+  if (!isObject(not) || not.type === undefined) return [];
+  if (!Object.keys(not).every((key) => ANNOTATION_KEYWORDS.has(key))) return [];
+  return listOf(not.type).flatMap(kindsOfType);
+}
+
+/** `enum`/`const`: the value is one of `literals`, and an array value's items are among theirs. */
+function narrowByLiterals(result: AdmittedKinds, literals: unknown[]): AdmittedKinds {
+  const items = new Set<ValueKind>();
+  for (const literal of literals) {
+    for (const item of arrayOf(literal)) items.add(kindOfValue(item));
+  }
+  return { values: intersect(result.values, literals.map(kindOfValue)), items: intersect(result.items, items) };
+}
+
 function intersect(left: ReadonlySet<ValueKind>, right: Iterable<ValueKind>): Set<ValueKind> {
   const allowed = new Set(right);
   return new Set([...left].filter((kind) => allowed.has(kind)));
+}
+
+function without(left: ReadonlySet<ValueKind>, removed: readonly ValueKind[]): Set<ValueKind> {
+  return new Set([...left].filter((kind) => !removed.includes(kind)));
 }
 
 function both(left: AdmittedKinds, right: AdmittedKinds): AdmittedKinds {

@@ -90,6 +90,35 @@ describe("fromOpenAPI filtering (D8)", () => {
     expect(names({ include: ["legacyPurge"] }).skipped).toMatchObject({ legacyPurge: "deprecated" });
   });
 
+  it("selects an operationId that reads as a tag or route exactly with operationId:", () => {
+    const document = {
+      openapi: "3.1.0",
+      paths: {
+        "/a": { get: { operationId: "tag:pets", tags: ["other"], responses: ok } },
+        "/b": { post: { operationId: "POST /b", responses: ok } },
+        "/c": { get: { operationId: "plain", tags: ["pets"], responses: ok } },
+      },
+    };
+    const run = (options: Partial<Parameters<typeof fromOpenAPI>[1]>) => {
+      const result = fromOpenAPI(document, { executor: recordingExecutor(), ...options });
+      return {
+        names: result.tools.map((entry) => entry.name),
+        skipped: Object.fromEntries(result.skipped.map((entry) => [entry.operation.operationId, entry.code])),
+      };
+    };
+    // "tag:pets" as a selector is the tag; the exact form names the operationId.
+    expect(run({ include: ["tag:pets"] }).names).toEqual(["plain"]);
+    expect(run({ include: ["operationId:tag:pets"] }).names).toEqual(["tag_pets"]);
+    // The exact form opts a mutation in like a plain operationId; a route never does.
+    expect(run({ include: ["operationId:POST /b"] }).names).toEqual(["POST__b"]);
+    expect(run({ include: ["POST /b"] }).skipped).toMatchObject({ "POST /b": "mutation-not-allowed" });
+    // exclude still wins.
+    expect(run({ include: ["operationId:POST /b"], exclude: ["operationId:POST /b"] }).skipped).toMatchObject({
+      "POST /b": "excluded",
+    });
+    expect(() => run({ include: ["operationId:"] })).toThrow(/needs an operationId/);
+  });
+
   it("rejects malformed selectors and options", () => {
     const executor = recordingExecutor();
     expect(() => fromOpenAPI(catalogDocument(), { executor, include: [""] })).toThrow(McpFnValidationError);
@@ -327,6 +356,42 @@ describe("fromOpenAPI tool metadata", () => {
     expect(tool(tools, "emptyEverywhere").operation.servers).toEqual([{ url: "/" }]);
     expect(tool(tools, "emptyOperation").operation.servers).toEqual([{ url: "https://path.example.com" }]);
     expect(tool(tools, "unusableEntries").operation.servers).toEqual([{ url: "/" }]);
+  });
+
+  it("lists and validates with the registered schemas whatever is done to the returned catalog", async () => {
+    const { registry, tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/items/{id}": {
+            get: {
+              operationId: "getItem",
+              parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", maxLength: 3 } }],
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: { "application/json": { schema: { type: "object", properties: { n: { type: "integer" } } } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      { executor: { execute: () => ({ content: [], structuredContent: { n: 1 } }) } },
+    );
+    const entry = tool(tools, "getItem");
+    const listedBefore = JSON.stringify(registry.listTools());
+    const path = (entry.inputSchema.properties!.path as { properties: Record<string, { maxLength?: number }> }).properties;
+    path.id!.maxLength = 100;
+    (entry.outputSchema!.properties as Record<string, unknown>).n = { type: "string" };
+    entry.annotations.readOnlyHint = false;
+    expect(JSON.stringify(registry.listTools())).toBe(listedBefore);
+    await expect(
+      registry.callTool("getItem", { path: { id: "toolong" } }, undefined, requestExtra()),
+    ).rejects.toThrow(McpFnValidationError);
+    await expect(registry.callTool("getItem", { path: { id: "abc" } }, undefined, requestExtra())).resolves.toMatchObject({
+      structuredContent: { n: 1 },
+    });
   });
 
   it("is not affected by later changes to the caller's document", () => {

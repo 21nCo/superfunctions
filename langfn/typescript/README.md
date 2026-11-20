@@ -7,7 +7,7 @@ Current release target: `0.1.0`.
 ## Install
 
 ```bash
-npm install langfn@0.1.0
+npm install langfn@0.1.1
 ```
 
 Python users in the same release line install:

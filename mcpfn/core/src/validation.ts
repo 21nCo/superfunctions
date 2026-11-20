@@ -1,5 +1,5 @@
 import { schemaUriResolver } from "./schema-uri.js";
-import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
+import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
 import {
   dereference,
@@ -558,101 +558,6 @@ export function validateSchemaCollection(
   else validateCfWorkerSchemaCollection(schemas);
 }
 
-function runtimeProxyCheck(): ((value: object) => boolean) | undefined {
-  try {
-    const runtime = (globalThis as {
-      process?: { getBuiltinModule?: (id: string) => unknown };
-    }).process;
-    if (typeof runtime?.getBuiltinModule !== "function") return undefined;
-    const util = runtime.getBuiltinModule("node:util") as
-      | { types?: { isProxy?: (value: unknown) => boolean } }
-      | undefined;
-    const isProxy = util?.types?.isProxy;
-    return typeof isProxy === "function" ? (value) => isProxy(value) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Registration compiles every tool schema eagerly, and a catalog generated
- * from one API description repeats the same schemas across its tools. Equal
- * schema data compiles to an equal validator, so the Ajv engine compiles it
- * once and shares the generated function (each caller keeps its own error
- * state).
- *
- * The snapshot reads each value once, through [[Get]] as Ajv does, from own
- * enumerable data properties of objects whose prototype is Object.prototype
- * and of dense arrays, holding
- * strings, booleans, null and finite numbers, and builds both the key and a
- * private copy of that data. Ajv compiles the copy, never the caller's object,
- * so the key always describes exactly what was compiled, and a validator
- * never depends on data another caller can mutate. Anything else (a toJSON
- * method, an accessor, a symbol or non-enumerable key, a null-prototype or
- * class instance, a hole, undefined, -0, a non-finite number, a cycle) gives
- * no snapshot, as does `$id` (Ajv rejects a repeated id); such schemas are
- * compiled from the caller's object every time, as before.
- *
- * A Proxy anywhere in the schema (objects and arrays alike) also gives no
- * snapshot: its traps can answer a keyword read that no own key backs, or
- * answer differently on each read, so no copy can be proven equal to what Ajv
- * reads from it. Proxies are detected with Node's `util.types.isProxy`. A
- * runtime without it (no `process.getBuiltinModule`, such as Node before
- * 20.16 or a non-Node runtime) cannot prove any copy equal, so the caller
- * never asks for a snapshot there and every schema is compiled from the
- * caller's object, as before.
- */
-function schemaContentSnapshot(
-  schema: object,
-  isProxy: (value: object) => boolean,
-): { key: string; copy: object } | undefined {
-  const parts: string[] = [];
-  const active = new Set<object>();
-  const NO_SNAPSHOT = Symbol("no snapshot");
-  const walk = (value: unknown): unknown => {
-    if (value === null || typeof value === "string" || typeof value === "boolean") {
-      parts.push(JSON.stringify(value));
-      return value;
-    }
-    if (typeof value === "number") {
-      if (!Number.isFinite(value) || Object.is(value, -0)) return NO_SNAPSHOT;
-      parts.push(JSON.stringify(value));
-      return value;
-    }
-    if (typeof value !== "object" || active.has(value)) return NO_SNAPSHOT;
-    if (isProxy(value)) return NO_SNAPSHOT;
-    if ("toJSON" in value) return NO_SNAPSHOT;
-    const isArray = Array.isArray(value);
-    if (Object.getPrototypeOf(value) !== (isArray ? Array.prototype : Object.prototype)) return NO_SNAPSHOT;
-    const ownKeys = Reflect.ownKeys(value);
-    // An array's own keys are its indices and "length"; any other key or a hole fails.
-    const keys = isArray
-      ? Array.from({ length: (value as unknown[]).length }, (_, index) => String(index))
-      : ownKeys;
-    if (isArray && ownKeys.length !== keys.length + 1) return NO_SNAPSHOT;
-    active.add(value);
-    const copy: unknown[] | Record<string, unknown> = isArray ? [] : {};
-    parts.push(isArray ? "[" : "{");
-    for (const key of keys) {
-      if (typeof key === "symbol" || (!isArray && key === "$id")) return NO_SNAPSHOT;
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return NO_SNAPSHOT;
-      if (!isArray) parts.push(JSON.stringify(key), ":");
-      // Read the value the way Ajv would ([[Get]]), once.
-      const item = walk((value as Record<string, unknown>)[key]);
-      if (item === NO_SNAPSHOT) return NO_SNAPSHOT;
-      if (isArray) (copy as unknown[]).push(item);
-      else Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
-      parts.push(",");
-    }
-    parts.push(isArray ? "]" : "}");
-    active.delete(value);
-    return copy;
-  };
-  const copy = walk(schema);
-  return copy === NO_SNAPSHOT ? undefined : { key: parts.join(""), copy: copy as object };
-}
-
 /**
  * Compile a JSON Schema into a runtime-appropriate validator.
  *
@@ -666,19 +571,11 @@ export function createSchemaCompiler(
 ): SchemaCompiler {
   if (engine === "ajv") {
     const ajv = createAjv();
-    const compiledByContent = new Map<string, ValidateFunction>();
-    const isProxy = runtimeProxyCheck();
     return {
       engine,
       compile(schema) {
         assertNoLegacySchemaIds(schema);
-        // Without a Proxy check no copy can be proven equal: compile the caller's object.
-        const snapshot = isProxy === undefined ? undefined : schemaContentSnapshot(schema, isProxy);
-        let validate = snapshot === undefined ? undefined : compiledByContent.get(snapshot.key);
-        if (!validate) {
-          validate = ajv.compile((snapshot?.copy ?? schema) as never);
-          if (snapshot !== undefined) compiledByContent.set(snapshot.key, validate);
-        }
+        const validate = ajv.compile(schema as never);
         const compiled = ((data: unknown): boolean => {
           const valid = validate(data);
           compiled.errors = valid ? null : mapAjvErrors(validate.errors);

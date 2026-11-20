@@ -8,46 +8,33 @@
   that stay supported, to show the classification both ways.
   `skip-nonproductive-recursion.json` also keeps a schema that recurses
   through a property, which stays supported.
-- `skip-access-flag-conflicts.json` skips readOnly/writeOnly properties that
-  `anyOf`/`oneOf`, `not`, `if`/`then` or dependencies constrain, and keeps the
-  nullable-reference idiom, polymorphic members that each mark `id` readOnly
-  and a `oneOf` that does not use the flagged name.
-- `skip-access-flag-instance-constraints.json` skips readOnly/writeOnly
-  properties of objects that `const`, `enum` or `minProperties` constrain (in
-  the object, an `allOf`/`$ref` member or an alternative), and keeps
-  `maxProperties` beside a readOnly property and an object `enum` without
-  flagged properties.
-- `skip-access-flag-oneof-overlap.json` skips readOnly/writeOnly properties
-  removed from `oneOf` members that differ on them (`const`, `enum` or type
-  discriminators, required in one member only, absent in one, and a writeOnly
-  output discriminator), and keeps members that mark the property through
-  equal schemas, a nullable reference and an `anyOf` discriminator.
-- `skip-access-flag-oneof-nested.json` skips readOnly/writeOnly properties
-  removed only inside a nested `oneOf`/`anyOf` of `oneOf` members (direct,
-  through `$ref` and through `allOf`), and properties a member constrains by
-  a matching or invalid `patternProperties` key, `maxProperties` or
-  `propertyNames`, and keeps members whose patterns cannot match the name.
-- `skip-access-flag-name-constraints.json` skips readOnly/writeOnly
-  properties that another applied schema constrains: `additionalProperties`
-  of an `allOf` sibling that does not list them (in `oneOf` members, closed,
-  and in a writeOnly output), a matching `patternProperties` inside `if`,
-  `maxProperties` inside `not`, and `dependentRequired` on other names; it
-  keeps a closed object that lists the property with an unconditional
-  `maxProperties`.
-- `skip-access-flag-oneof-projection.json` skips `oneOf` members that
-  removal changes differently below their own level (a nested property with
-  `const` a/b inside, array items, and a writeOnly nested output), and keeps
-  members sharing the same nested schema and an object-or-array `oneOf`.
-- `skip-access-flag-child-constraints.json` skips child values whose
-  projected schema is not the only constraint on them (under `not` or `if`,
-  a second schema for the property, a matching pattern, an object `enum`,
-  `uniqueItems`, a map beside other properties, a writeOnly output under
-  `not`), and keeps a map of objects and a string `enum` beside the object.
+- `skip-access-flag-*.json` cover the readOnly (input) and writeOnly (output)
+  projection rule. A flagged property is left out only along a plain chain
+  (`properties`, one `items` schema, a schema `additionalProperties`,
+  `allOf`, `$ref`, or an `anyOf`/`oneOf` member no other member overlaps by
+  kind of value) and only when nothing else needs the name. Otherwise an
+  input skips with `unsupported-access-flag` and an output schema is left
+  out. `conflicts` covers alternatives, conditions, dependencies and foreign
+  `required` lists, and keeps the nullable-reference idiom and a `oneOf` that
+  never uses the flagged name. `instance-constraints` covers `const`, `enum`
+  and `minProperties` and keeps `maxProperties`. `oneof-overlap` and
+  `oneof-nested` cover object alternatives that can both match, and keep a
+  nullable reference. `name-constraints` covers conditions that can tell
+  the name apart (`patternProperties` under `if`, `maxProperties` under
+  `not`) and keeps siblings whose `additionalProperties` cannot need it.
+  `oneof-projection` and `child-constraints` cover child values with more
+  than one schema, and keep a map of objects and an object-or-array `oneOf`.
+- `skip-unsupported-dialect.json` sets a `jsonSchemaDialect` other than the
+  OAS 3.1 base or 2020-12 dialect: an operation with a schema is skipped
+  (`unsupported-dialect`) and one without a schema is kept.
+- `schema-too-large` has no fixture: it needs one object shared by many
+  schema positions, which JSON cannot express, so
+  `tests/openapi-forms.test.ts` builds that document in the test.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.
 - `form-read-only-composed.json` covers readOnly and writeOnly reached through
-  `allOf` and a sibling `allOf` member that requires the removed field.
+  `allOf`, and skips a flagged field that a sibling `allOf` member requires.
 - `apifn-from-router.json`: output of `fromRouter()` from `@apifn/core`,
   committed so the tests have no apifn dependency. It was produced with this
   router (`z` is zod 4, `createRouter` from `@superfunctions/http`):

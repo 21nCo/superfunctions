@@ -12,10 +12,26 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
-const NESTED_MAX_PROPERTIES = "maxProperties inside anyOf/oneOf, not, if/then/else or a dependency";
+const OVERLAP = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
+const REQUIRED_ELSEWHERE = "a required list of another schema for the same object";
 
 function constrained(name: string, by: string, keyword = "readOnly"): string {
   return `property "${name}" is ${keyword} but is also constrained by ${by}, so it cannot be removed soundly`;
+}
+
+function child(subject: string, by: string, keyword = "readOnly"): string {
+  return `${subject} contains ${keyword} properties but is also constrained by ${by}, so they cannot be removed soundly`;
+}
+
+type Result = ReturnType<typeof fromOpenAPI>;
+
+function skips(result: Result): string[][] {
+  return result.skipped.map((entry) => [entry.operation.operationId!, entry.code, entry.reason]);
+}
+
+/** Registered tools, each with whether it declares an output schema. */
+function registered(result: Result): Array<[string, boolean]> {
+  return result.tools.map((entry) => [entry.name, entry.outputSchema !== undefined]);
 }
 
 describe("fromOpenAPI closed form set (D12)", () => {
@@ -213,12 +229,17 @@ describe("fromOpenAPI closed form set (D12)", () => {
     const { tools } = convert("form-read-only");
     const createAccount = tool(tools, "createAccount");
     const input = (createAccount.inputSchema.definitions as Record<string, Record<string, unknown>>).Account!;
-    expect(Object.keys(input.properties as object)).toEqual(["name", "secretAnswer"]);
+    // Account accepts additional properties, so a removed name becomes a false schema.
+    expect(input.properties).toMatchObject({ id: false, createdAt: false });
     expect(input.required).toEqual(["name", "secretAnswer"]);
-    expect(Object.keys(createAccount.outputSchema!.properties!)).toEqual(["id", "createdAt", "name"]);
+    expect(input).not.toHaveProperty("propertyNames");
+    expect(createAccount.outputSchema!.properties).toMatchObject({ secretAnswer: false });
     expect(createAccount.outputSchema!.required).toEqual(["id", "createdAt", "name"]);
-    // Account accepts additional properties, so the removed names are refused by name.
-    expect(input.propertyNames).toEqual({ not: { enum: ["id", "createdAt"] } });
+    const created = { id: "a", createdAt: "2026-01-01T00:00:00Z", name: "a" };
+    expectArguments(createAccount.outputSchema!, {
+      valid: [created, { ...created, nickname: "extra fields stay allowed" }],
+      invalid: [{ ...created, secretAnswer: "test-answer" }],
+    });
     expectArguments(createAccount.inputSchema, {
       valid: [
         { body: { name: "a", secretAnswer: "test-answer" } },
@@ -232,11 +253,12 @@ describe("fromOpenAPI closed form set (D12)", () => {
     });
   });
 
-  it("finds readOnly and writeOnly through allOf members and keeps unrelated uses of a component", () => {
-    const { tools } = convert("form-read-only-composed");
+  it("finds readOnly and writeOnly through allOf members, skips a name another schema requires, and keeps unrelated uses of a component", () => {
+    const result = convert("form-read-only-composed");
+    const { tools } = result;
     const createAccount = tool(tools, "createAccount");
     const account = (createAccount.inputSchema.definitions as Record<string, Record<string, unknown>>).Account!;
-    expect(Object.keys(account.properties as object)).toEqual(["name", "password"]);
+    expect(account.properties).toMatchObject({ createdAt: false });
     expect(account.required).toEqual(["name", "password"]);
     expectArguments(createAccount.inputSchema, {
       valid: [{ body: { name: "a", password: "test-password" } }],
@@ -249,12 +271,11 @@ describe("fromOpenAPI closed form set (D12)", () => {
       invalid: [{ name: "a" }],
     });
 
-    // Identified marks id readOnly; its allOf sibling Named requires it.
-    const createProfile = tool(tools, "createProfile");
-    expectArguments(createProfile.inputSchema, {
-      valid: [{ body: { name: "a" } }, { body: { name: "a", nickname: "extra" } }],
-      invalid: [{ body: { id: "client-chosen-id", name: "a" } }, { body: {} }],
-    });
+    // Identified marks id readOnly but its allOf sibling Named requires it,
+    // so leaving id out would refuse every value Profile accepted.
+    expect(skips(result)).toEqual([
+      ["createProfile", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+    ]);
     // Named itself is unchanged where nothing marks id readOnly.
     const createRecord = tool(tools, "createRecord");
     expect((createRecord.inputSchema.definitions as Record<string, Record<string, unknown>>).Named!.required).toEqual(["id", "name"]);
@@ -264,8 +285,8 @@ describe("fromOpenAPI closed form set (D12)", () => {
     });
   });
 
-  it("finds readOnly on a 3.1 alias that adds it beside its $ref, and on an allOf sibling of a $ref", () => {
-    const { tools } = fromOpenAPI(
+  it("finds readOnly on a 3.1 alias that adds it beside its $ref, and skips a $ref sibling flagging a name the target requires", () => {
+    const { tools, skipped } = fromOpenAPI(
       {
         openapi: "3.1.0",
         paths: {
@@ -310,10 +331,9 @@ describe("fromOpenAPI closed form set (D12)", () => {
       valid: [{ body: { name: "a" } }],
       invalid: [{ body: { name: "a", createdAt: "2026-01-01T00:00:00Z" } }],
     });
-    expectArguments(tool(tools, "createTagged").inputSchema, {
-      valid: [{ body: { name: "a" } }],
-      invalid: [{ body: { id: "client-chosen-id", name: "a" } }],
-    });
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["createTagged", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+    ]);
   });
 
   it("declares an output schema only for the first 2xx application/json object response", () => {
@@ -457,29 +477,32 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
-  it("skips readOnly and writeOnly properties that alternatives, conditions or dependencies constrain", () => {
-    const { tools, skipped } = convert("skip-access-flag-conflicts");
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
-      ["readOnlyRequiredInOneOf", "unsupported-access-flag"],
-      ["readOnlyInDependencies", "unsupported-access-flag"],
-      ["readOnlyInDependentRequired", "unsupported-access-flag"],
-      ["readOnlyRequiredInThen", "unsupported-access-flag"],
-      ["readOnlyInNot", "unsupported-access-flag"],
-      ["readOnlyFlaggedInIf", "unsupported-access-flag"],
-      ["requiredButReadOnlyInEveryBranch", "unsupported-access-flag"],
-      ["readOnlyRequiredByReferencedBranch", "unsupported-access-flag"],
-      ["writeOnlyRequiredInOneOf", "unsupported-access-flag"],
+  it("skips readOnly properties that alternatives, conditions or dependencies constrain, and omits such writeOnly outputs", () => {
+    const result = convert("skip-access-flag-conflicts");
+    expect(skips(result)).toEqual([
+      ["readOnlyRequiredInOneOf", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+      ["readOnlyInDependencies", "unsupported-access-flag", constrained("id", "dependencies")],
+      ["readOnlyInDependentRequired", "unsupported-access-flag", constrained("id", "dependentRequired")],
+      ["readOnlyRequiredInThen", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+      ["readOnlyInNot", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+      ["readOnlyFlaggedInIf", "unsupported-access-flag", constrained("id", OVERLAP)],
+      ["requiredButReadOnlyInEveryBranch", "unsupported-access-flag", constrained("id", OVERLAP)],
+      ["readOnlyRequiredByReferencedBranch", "unsupported-access-flag", constrained("id", REQUIRED_ELSEWHERE)],
+      // Object members that can both match each flag id: not a plain chain, so not projected.
+      ["polymorphicReadOnlyId", "unsupported-access-flag", constrained("id", OVERLAP)],
     ]);
-    expect(skipped[0]!.reason).toMatch(/property "id" is readOnly/);
+    // An output that cannot be projected is left out; the tool itself stays.
+    expect(registered(result)).toEqual([
+      ["nullableReadOnlyReference", false],
+      ["readOnlyBesideUnrelatedOneOf", false],
+      ["writeOnlyRequiredInOneOf", false],
+      ["nullableWriteOnlyReference", true],
+    ]);
+    const { tools } = result;
     // The nullable reference idiom: readOnly when every non-null alternative is.
     expectArguments(tool(tools, "nullableReadOnlyReference").inputSchema, {
       valid: [{ body: { name: "a" } }],
       invalid: [{ body: { name: "a", createdAt: "2026-01-01T00:00:00Z" } }, { body: { name: "a", createdAt: null } }, { body: {} }],
-    });
-    // Each oneOf member marks id readOnly and removes it itself.
-    expectArguments(tool(tools, "polymorphicReadOnlyId").inputSchema, {
-      valid: [{ body: { kind: "cat", indoor: true } }, { body: { kind: "dog" } }],
-      invalid: [{ body: { kind: "cat", id: "client-chosen-id" } }, { body: { kind: "fish" } }, { body: {} }],
     });
     // A oneOf that never uses the readOnly name keeps its meaning.
     expectArguments(tool(tools, "readOnlyBesideUnrelatedOneOf").inputSchema, {
@@ -488,20 +511,24 @@ describe("fromOpenAPI skip reasons", () => {
     });
     const output = tool(tools, "nullableWriteOnlyReference").outputSchema!;
     expect(output.required).toEqual(["name"]);
-    expectArguments(output, { valid: [{ name: "a" }], invalid: [{}] });
-    expect(output.properties).not.toHaveProperty("password");
+    expectArguments(output, { valid: [{ name: "a" }], invalid: [{}, { name: "a", password: "test-password" }] });
   });
 
-  it("skips readOnly and writeOnly properties of objects that const, enum or minProperties constrain", () => {
-    const { tools, skipped } = convert("skip-access-flag-instance-constraints");
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlyWithConst", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by const, so it cannot be removed soundly'],
-      ["readOnlyWithEnum", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by enum, so it cannot be removed soundly'],
-      ["readOnlyWithMinProperties", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by minProperties, so it cannot be removed soundly'],
-      ["readOnlyWithInheritedMinProperties", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by minProperties, so it cannot be removed soundly'],
-      ["readOnlyBesideConstInOneOf", "unsupported-access-flag", 'property "id" is readOnly but is also constrained by const, so it cannot be removed soundly'],
-      ["writeOnlyWithEnum", "unsupported-access-flag", 'property "password" is writeOnly but is also constrained by enum, so it cannot be removed soundly'],
+  it("skips readOnly properties of objects that const, enum or minProperties constrain", () => {
+    const result = convert("skip-access-flag-instance-constraints");
+    expect(skips(result)).toEqual([
+      ["readOnlyWithConst", "unsupported-access-flag", constrained("id", "const")],
+      ["readOnlyWithEnum", "unsupported-access-flag", constrained("id", "enum")],
+      ["readOnlyWithMinProperties", "unsupported-access-flag", constrained("id", "minProperties")],
+      ["readOnlyWithInheritedMinProperties", "unsupported-access-flag", constrained("id", "minProperties")],
+      ["readOnlyBesideConstInOneOf", "unsupported-access-flag", constrained("id", "const")],
     ]);
+    expect(registered(result)).toEqual([
+      ["writeOnlyWithEnum", false],
+      ["readOnlyWithMaxProperties", false],
+      ["enumWithoutAccessFlags", false],
+    ]);
+    const { tools } = result;
     // maxProperties only gets easier to meet when a property is removed.
     expectArguments(tool(tools, "readOnlyWithMaxProperties").inputSchema, {
       valid: [{ body: { label: "a" } }, { body: {} }],
@@ -514,134 +541,110 @@ describe("fromOpenAPI skip reasons", () => {
     });
   });
 
-  it("skips readOnly and writeOnly properties whose removal would make oneOf members overlap", () => {
-    const { tools, skipped } = convert("skip-access-flag-oneof-overlap");
-    const oneOf = "a oneOf whose members do not all mark it the same way";
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlyConstDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["readOnlyEnumDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["readOnlyTypeDiscriminator", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["readOnlyRequiredInOneMember", "unsupported-access-flag", `property "id" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["readOnlyAbsentInOneMember", "unsupported-access-flag", `property "id" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["readOnlyDiscriminatorInReferencedMembers", "unsupported-access-flag", `property "kind" is readOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-      ["writeOnlyOutputDiscriminator", "unsupported-access-flag", `property "kind" is writeOnly but is also constrained by ${oneOf}, so it cannot be removed soundly`],
-    ]);
-    // Members that flag id through equal schemas, required in both, stay exclusive on the rest.
-    expectArguments(tool(tools, "readOnlySameInEveryMember").inputSchema, {
-      valid: [{ body: { a: "x" } }, { body: { b: "y" } }],
-      invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
-    });
-    // The null member of a nullable reference accepts no object, so it cannot start overlapping.
-    expectArguments(tool(tools, "readOnlyNullableReference").inputSchema, {
+  it("projects only through alternatives that accept different kinds of value", () => {
+    const result = convert("skip-access-flag-oneof-overlap");
+    expect(skips(result)).toEqual(
+      [
+        ["readOnlyConstDiscriminator", "kind"],
+        ["readOnlyEnumDiscriminator", "kind"],
+        ["readOnlyTypeDiscriminator", "kind"],
+        ["readOnlyRequiredInOneMember", "id"],
+        ["readOnlyAbsentInOneMember", "id"],
+        ["readOnlyDiscriminatorInReferencedMembers", "kind"],
+        ["readOnlySameInEveryMember", "id"],
+        ["readOnlyDiscriminatorInAnyOf", "kind"],
+      ].map(([operationId, name]) => [operationId!, "unsupported-access-flag", constrained(name!, OVERLAP)]),
+    );
+    expect(registered(result)).toEqual([["writeOnlyOutputDiscriminator", false], ["readOnlyNullableReference", false]]);
+    // The null member of a nullable reference accepts no object, so only the object member applies to objects.
+    expectArguments(tool(result.tools, "readOnlyNullableReference").inputSchema, {
       valid: [{ body: { name: "a" } }, { body: null }],
       invalid: [{ body: { name: "a", id: "client-chosen-id" } }, { body: {} }],
     });
-    // anyOf members may overlap, so removing the discriminator keeps the call possible.
-    expectArguments(tool(tools, "readOnlyDiscriminatorInAnyOf").inputSchema, {
-      valid: [{ body: {} }],
-      invalid: [{ body: { kind: "a" } }, { body: { other: 1 } }],
-    });
-    // Polymorphic members sharing one readOnly base property stay supported.
-    const shared = convert("skip-access-flag-conflicts").tools;
-    expectArguments(tool(shared, "polymorphicReadOnlyId").inputSchema, {
-      valid: [{ body: { kind: "cat" } }, { body: { kind: "dog" } }],
-      invalid: [{ body: { kind: "cat", id: "client-chosen-id" } }, { body: {} }],
-    });
   });
 
-  it("skips readOnly and writeOnly properties removed inside nested oneOf members or constrained by member patterns", () => {
-    const { tools, skipped } = convert("skip-access-flag-oneof-nested");
-    const reason = (name: string, keyword = "readOnly") =>
-      `property "${name}" is ${keyword} but is also constrained by a oneOf whose members do not all mark it the same way, so it cannot be removed soundly`;
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlyNestedOneOf", "unsupported-access-flag", reason("kind")],
-      ["readOnlyNestedAnyOf", "unsupported-access-flag", reason("kind")],
-      ["readOnlyReferencedAnyOf", "unsupported-access-flag", reason("kind")],
-      ["readOnlyAllOfOneOf", "unsupported-access-flag", reason("kind")],
-      ["readOnlyPatternDiscriminator", "unsupported-access-flag", constrained("id", 'patternProperties "^id$"')],
-      ["readOnlyInvalidPattern", "unsupported-access-flag", constrained("id", 'patternProperties "("')],
-      ["readOnlyMaxPropertiesInOneOf", "unsupported-access-flag", constrained("id", NESTED_MAX_PROPERTIES)],
-      ["readOnlyPropertyNamesInOneOf", "unsupported-access-flag", constrained("id", "propertyNames")],
-      ["writeOnlyNestedOutput", "unsupported-access-flag", reason("kind", "writeOnly")],
-    ]);
-    // A pattern that cannot match the removed name keeps the members exclusive on the rest.
-    expectArguments(tool(tools, "readOnlyPatternNotMatching").inputSchema, {
-      valid: [{ body: { a: "x" } }, { body: { b: "y", "x-tag": "t" } }],
-      invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
-    });
+  it("skips readOnly properties flagged inside nested alternatives that can overlap", () => {
+    const result = convert("skip-access-flag-oneof-nested");
+    expect(skips(result)).toEqual(
+      [
+        ["readOnlyNestedOneOf", "kind"],
+        ["readOnlyNestedAnyOf", "kind"],
+        ["readOnlyReferencedAnyOf", "kind"],
+        ["readOnlyAllOfOneOf", "kind"],
+        ["readOnlyPatternDiscriminator", "id"],
+        ["readOnlyInvalidPattern", "id"],
+        ["readOnlyMaxPropertiesInOneOf", "id"],
+        ["readOnlyPropertyNamesInOneOf", "id"],
+        ["readOnlyPatternNotMatching", "id"],
+      ].map(([operationId, name]) => [operationId!, "unsupported-access-flag", constrained(name!, OVERLAP)]),
+    );
+    expect(registered(result)).toEqual([["writeOnlyNestedOutput", false]]);
   });
 
-  it("skips readOnly and writeOnly properties any applied schema constrains beyond properties and required", () => {
-    const { tools, skipped } = convert("skip-access-flag-name-constraints");
-    const unlisted = "additionalProperties of a schema that does not list it";
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlySiblingAdditionalProperties", "unsupported-access-flag", constrained("id", unlisted)],
-      ["readOnlySiblingClosed", "unsupported-access-flag", constrained("id", unlisted)],
-      ["readOnlyIfPattern", "unsupported-access-flag", constrained("id", 'patternProperties "^id$"')],
-      ["readOnlyNotMaxProperties", "unsupported-access-flag", constrained("id", NESTED_MAX_PROPERTIES)],
+  it("projects past keywords that cannot need the removed name, and skips conditions that can tell it apart", () => {
+    const result = convert("skip-access-flag-name-constraints");
+    expect(skips(result)).toEqual([
+      ["readOnlySiblingAdditionalProperties", "unsupported-access-flag", constrained("id", OVERLAP)],
+      ["readOnlyIfPattern", "unsupported-access-flag", constrained("id", "patternProperties")],
+      ["readOnlyNotMaxProperties", "unsupported-access-flag", constrained("id", "maxProperties")],
       ["readOnlyBesideDependentRequired", "unsupported-access-flag", constrained("id", "dependentRequired")],
-      ["writeOnlyOutputSiblingAdditionalProperties", "unsupported-access-flag", constrained("password", unlisted, "writeOnly")],
     ]);
+    expect(registered(result)).toEqual([
+      ["readOnlySiblingClosed", false],
+      ["writeOnlyOutputSiblingAdditionalProperties", true],
+      ["readOnlyClosedListing", false],
+    ]);
+    const { tools } = result;
+    // A false schema refuses the name whatever a sibling's additionalProperties says.
+    expectArguments(tool(tools, "readOnlySiblingClosed").inputSchema, {
+      valid: [{ body: { x: "a" } }],
+      invalid: [{ body: { id: "client-chosen-id", x: "a" } }, { body: { x: "a", other: 1 } }],
+    });
+    expectArguments(tool(tools, "writeOnlyOutputSiblingAdditionalProperties").outputSchema!, {
+      valid: [{ user: "u" }, { user: "u", other: 1 }],
+      invalid: [{ user: "u", password: 1 }, { user: "u", password: "test-password" }, {}],
+    });
     // A closed object that lists the flagged property, with an unconditional maxProperties, is still converted.
-    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyClosedListing"]);
     expectArguments(tool(tools, "readOnlyClosedListing").inputSchema, {
       valid: [{ body: { name: "n" } }],
       invalid: [{ body: {} }, { body: { id: "client-chosen-id", name: "n" } }, { body: { name: "n", other: 1 } }],
     });
   });
 
-  it("skips a oneOf whose members removal would change differently below their own level", () => {
-    const { tools, skipped } = convert("skip-access-flag-oneof-projection");
-    const nested = (name: string, keyword = "readOnly") =>
-      `property "${name}" contains ${keyword} properties but the members of a oneOf do not all give it the same schema, so they could overlap once those are removed`;
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlyNestedProperty", "unsupported-access-flag", nested("data")],
-      [
-        "readOnlyArrayItems",
-        "unsupported-access-flag",
-        "a oneOf member removes readOnly properties through items, so its members could overlap once they are removed",
-      ],
-      ["writeOnlyNestedOutput", "unsupported-access-flag", nested("data", "writeOnly")],
+  it("skips projection below alternatives that accept the same kind of value", () => {
+    const result = convert("skip-access-flag-oneof-projection");
+    expect(skips(result)).toEqual([
+      ["readOnlyNestedProperty", "unsupported-access-flag", child('property "data"', OVERLAP)],
+      ["readOnlyArrayItems", "unsupported-access-flag", child("items", OVERLAP)],
+      ["readOnlyIdenticalNested", "unsupported-access-flag", child('property "data"', OVERLAP)],
     ]);
-    // Members giving the nested property the same schema, and members that
-    // admit different kinds of value, still convert and keep exactly one match.
-    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyIdenticalNested", "readOnlyOneOrMany"]);
-    expectArguments(tool(tools, "readOnlyIdenticalNested").inputSchema, {
-      valid: [{ body: { type: "x", data: { label: "l" } } }, { body: { type: "y", data: { label: "l" } } }],
-      invalid: [
-        { body: { type: "z", data: { label: "l" } } },
-        { body: { type: "x", data: { kind: "client-chosen", label: "l" } } },
-        { body: { type: "x", data: {} } },
-      ],
-    });
-    expectArguments(tool(tools, "readOnlyOneOrMany").inputSchema, {
+    // Members that admit different kinds of value convert and keep exactly one match.
+    expect(registered(result)).toEqual([["writeOnlyNestedOutput", false], ["readOnlyOneOrMany", false]]);
+    expectArguments(tool(result.tools, "readOnlyOneOrMany").inputSchema, {
       valid: [{ body: { label: "l" } }, { body: [{ label: "l" }, { label: "m" }] }],
       invalid: [{ body: { kind: "client-chosen", label: "l" } }, { body: [{ kind: "client-chosen", label: "l" }] }],
     });
   });
 
   it("skips a child value whose projected schema is not the only thing constraining it", () => {
-    const { tools, skipped } = convert("skip-access-flag-child-constraints");
-    const child = (subject: string, by: string, keyword = "readOnly") =>
-      `${subject} contains ${keyword} properties but is also constrained by ${by}, so they cannot be removed soundly`;
-    const conditional = "not, if/then/else or a schema dependency";
-    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
-      ["readOnlyChildUnderNot", "unsupported-access-flag", child('property "data"', conditional)],
-      ["readOnlyChildTwoSchemas", "unsupported-access-flag", child('property "data"', "another schema for the same property")],
-      ["readOnlyChildPattern", "unsupported-access-flag", child('property "data"', 'patternProperties "^da"')],
-      ["readOnlyChildObjectEnum", "unsupported-access-flag", child('property "data"', "enum")],
+    const result = convert("skip-access-flag-child-constraints");
+    expect(skips(result)).toEqual([
+      ["readOnlyChildUnderNot", "unsupported-access-flag", child('property "data"', OVERLAP)],
+      ["readOnlyChildTwoSchemas", "unsupported-access-flag", child('property "data"', "another schema for the same value")],
+      ["readOnlyChildPattern", "unsupported-access-flag", child('property "data"', "patternProperties of a schema for the same object")],
+      ["readOnlyChildObjectEnum", "unsupported-access-flag", child('property "data"', "const or enum")],
       ["readOnlyUniqueItems", "unsupported-access-flag", child("items", "uniqueItems")],
-      ["readOnlyItemsUnderIf", "unsupported-access-flag", child("items", conditional)],
-      [
-        "readOnlyMapSibling",
-        "unsupported-access-flag",
-        child("additionalProperties", "properties of another schema for the same object"),
-      ],
-      ["writeOnlyChildUnderNot", "unsupported-access-flag", child('property "login"', conditional, "writeOnly")],
+      ["readOnlyItemsUnderIf", "unsupported-access-flag", child("items", OVERLAP)],
+      ["readOnlyMapSibling", "unsupported-access-flag", child('property "x"', "another schema for the same value")],
     ]);
     // A map of objects with readOnly properties, and a string enum beside the
     // object member, constrain nothing else and still convert.
-    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyMap", "readOnlyBesideStringEnum"]);
+    expect(registered(result)).toEqual([
+      ["writeOnlyChildUnderNot", false],
+      ["readOnlyMap", false],
+      ["readOnlyBesideStringEnum", false],
+    ]);
+    const { tools } = result;
     expectArguments(tool(tools, "readOnlyMap").inputSchema, {
       valid: [{ body: {} }, { body: { a: { label: "l" }, b: { label: "m" } } }],
       invalid: [{ body: { a: { kind: "client-chosen", label: "l" } } }, { body: { a: {} } }],
@@ -1015,5 +1018,341 @@ describe("fromOpenAPI conversion edge cases", () => {
     expect(skipped).toMatchObject([{ operation: { operationId: "bad" }, code: "invalid-schema" }]);
     expect(skipped[0]!.reason).toMatch(/Tool bad contains an invalid JSON Schema/);
     expect(registry.has("bad")).toBe(false);
+  });
+});
+
+describe("fromOpenAPI bounded and dialect-aware conversion", () => {
+  const ok = { "200": { description: "OK" } };
+  const options = () => ({ executor: recordingExecutor(), allowMutations: true });
+  const body = (schema: unknown) => ({ required: true, content: { "application/json": { schema } } });
+  const json = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+
+  it("skips readOnly properties of anyOf members that can overlap, and never evaluates document patterns", () => {
+    const overlapping = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { id: { type: "string", readOnly: true }, name: { type: "string" } },
+          required: ["name"],
+          additionalProperties: false,
+        },
+        { type: "object", properties: { kind: { type: "string" } } },
+      ],
+    };
+    const name = `${"a".repeat(28)}!`;
+    const patterned = {
+      type: "object",
+      properties: { [name]: { type: "string", readOnly: true }, label: { type: "string" } },
+      patternProperties: { "^(a+)+$": { type: "string" } },
+    };
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/a": { post: { operationId: "make", requestBody: body(overlapping), responses: ok } },
+          "/b": { post: { operationId: "patterned", requestBody: body(patterned), responses: ok } },
+        },
+      },
+      options(),
+    );
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(skips(result)).toEqual([["make", "unsupported-access-flag", constrained("id", OVERLAP)]]);
+    // The flagged name is refused by a false schema, whatever the pattern matches.
+    // (Validating that name would run the pattern itself, in either engine.)
+    const patternedInput = tool(result.tools, "patterned").inputSchema;
+    expect((patternedInput.properties!.body as { properties: Record<string, unknown> }).properties[name]).toBe(false);
+    expectArguments(patternedInput, {
+      valid: [{ body: { label: "l", aaa: "x" } }],
+      invalid: [{ body: { aaa: 1 } }],
+    });
+  });
+
+  it("skips an input and leaves out an output that expand past the node budget, keeping the rest", () => {
+    let node: Record<string, unknown> = { type: "string" };
+    let literal: Record<string, unknown> = { leaf: true };
+    for (let depth = 0; depth < 20; depth += 1) {
+      node = { type: "object", properties: { a: node, b: node } };
+      literal = { a: literal, b: literal };
+    }
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/dag": {
+            get: { operationId: "dagOutput", responses: json(node) },
+            post: { operationId: "dagInput", requestBody: body(node), responses: ok },
+          },
+          "/default": { post: { operationId: "dagDefault", requestBody: body({ type: "object", default: literal }), responses: ok } },
+          "/tree": { get: { operationId: "tree", responses: json({ $ref: "#/components/schemas/Resource" }) } },
+        },
+        components: {
+          schemas: {
+            Resource: {
+              type: "object",
+              properties: { name: { type: "string" }, children: { type: "array", items: { $ref: "#/components/schemas/Resource" } } },
+            },
+          },
+        },
+      },
+      options(),
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    const tooLarge = "a schema expands to more than 100000 nodes";
+    expect(skips(result)).toEqual([
+      ["dagInput", "schema-too-large", tooLarge],
+      ["dagDefault", "schema-too-large", tooLarge],
+    ]);
+    expect(registered(result)).toEqual([["dagOutput", false], ["tree", true]]);
+    expectArguments(tool(result.tools, "tree").outputSchema!, {
+      valid: [{ name: "r", children: [{ name: "c", children: [] }] }],
+      invalid: [{ children: [{ name: 1 }] }],
+    });
+  });
+
+  it("skips schemas in a dialect other than the OAS 3.1 base or 2020-12 one", () => {
+    const documentLevel = convert("skip-unsupported-dialect");
+    expect(skips(documentLevel)).toEqual([
+      ["getNote", "unsupported-dialect", 'the document\'s jsonSchemaDialect "http://json-schema.org/draft-07/schema#" is not supported'],
+    ]);
+    expect(registered(documentLevel)).toEqual([["health", false]]);
+
+    const draft07 = "http://json-schema.org/draft-07/schema#";
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/in": { post: { operationId: "inBody", requestBody: body({ $ref: "#/components/schemas/Name" }), responses: ok } },
+          "/out": { get: { operationId: "inResponse", responses: json({ $ref: "#/components/schemas/Name" }) } },
+          "/default": {
+            post: {
+              operationId: "defaultSchema",
+              requestBody: body({ $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" }),
+              responses: ok,
+            },
+          },
+        },
+        components: {
+          schemas: {
+            // draft-07 would ignore maxLength beside $ref; the default dialect applies it.
+            Name: { $schema: draft07, type: "object", properties: { a: { $ref: "#/components/schemas/Text", maxLength: 1 } } },
+            Text: { type: "string" },
+          },
+        },
+      },
+      options(),
+    );
+    expect(skips(result)).toEqual([
+      ["inBody", "unsupported-dialect", `schema dialect "${draft07}" is not supported (in #/components/schemas/Name)`],
+    ]);
+    expect(registered(result)).toEqual([["inResponse", false], ["defaultSchema", false]]);
+    expect(JSON.stringify(tool(result.tools, "defaultSchema").inputSchema)).not.toContain("$schema");
+
+    const plain = convert("form-openapi-3.1");
+    for (const dialect of ["https://spec.openapis.org/oas/3.1/dialect/base", "https://json-schema.org/draft/2020-12/schema"]) {
+      const converted = fromOpenAPI({ ...fixture("form-openapi-3.1"), jsonSchemaDialect: dialect }, options());
+      expect(converted.skipped).toEqual([]);
+      expect(converted.tools.map((entry) => [entry.inputSchema, entry.outputSchema])).toEqual(
+        plain.tools.map((entry) => [entry.inputSchema, entry.outputSchema]),
+      );
+    }
+    const legacy = fromOpenAPI(
+      { openapi: "3.0.3", paths: { "/in": { post: { operationId: "legacy", requestBody: body({ $schema: draft07, type: "object" }), responses: ok } } } },
+      options(),
+    );
+    expect(skips(legacy)).toEqual([["legacy", "unsupported-dialect", `schema dialect "${draft07}" is not supported`]]);
+  });
+
+  it("ignores every OpenAPI 3.0 $ref sibling, unsupported keywords included, and still checks 3.1 siblings", () => {
+    const document = (openapi: string) => ({
+      openapi,
+      paths: {
+        "/p/{id}": {
+          get: {
+            operationId: "parameterSibling",
+            parameters: [{ name: "id", in: "path", required: true, schema: { $ref: "#/components/schemas/Id", unevaluatedItems: false } }],
+            responses: ok,
+          },
+        },
+        "/b": {
+          post: { operationId: "bodySibling", requestBody: body({ $ref: "#/components/schemas/Name", prefixItems: [] }), responses: ok },
+        },
+        "/r": { get: { operationId: "responseSibling", responses: json({ $ref: "#/components/schemas/Name", dependentSchemas: {} }) } },
+      },
+      components: { schemas: { Id: { type: "string" }, Name: { type: "object", properties: { n: { type: "string" } } } } },
+    });
+    const legacy = fromOpenAPI(document("3.0.3"), options());
+    expect(legacy.skipped).toEqual([]);
+    expect(registered(legacy)).toEqual([["parameterSibling", false], ["bodySibling", false], ["responseSibling", true]]);
+    expect(skips(fromOpenAPI(document("3.1.0"), options()))).toEqual([
+      ["parameterSibling", "unsupported-schema-keyword", "schema keyword unevaluatedItems is not supported"],
+      ["bodySibling", "unsupported-schema-keyword", "schema keyword prefixItems is not supported"],
+      ["responseSibling", "unsupported-schema-keyword", "schema keyword dependentSchemas is not supported"],
+    ]);
+  });
+
+  it("skips a response schema mcpFn rejects even where it does not become the output schema", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/head": { head: { operationId: "headBad", responses: json({ type: "object", properties: { a: { type: "bogus" } } }) } },
+          "/list": { get: { operationId: "listBad", responses: json({ type: "array", items: { type: "bogus" } }) } },
+          "/mixed": { get: { operationId: "rootTypeBad", responses: json({ type: ["object", "bogus"] }) } },
+          "/ok": {
+            get: { operationId: "listGood", responses: json({ type: "array", items: { type: "string" } }) },
+            head: { operationId: "headGood", responses: json({ type: "object" }) },
+          },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(result.skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["headBad", "invalid-schema"],
+      ["listBad", "invalid-schema"],
+      ["rootTypeBad", "invalid-schema"],
+    ]);
+    expect(result.skipped[0]!.reason).toMatch(/^the response schema is not a valid JSON Schema: /);
+    expect(registered(result)).toEqual([["listGood", false], ["headGood", false]]);
+  });
+
+  it("takes the output schema from the first successful application/json entry that has a schema", () => {
+    const object = { type: "object", properties: { n: { type: "integer" } } };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/within": {
+            get: {
+              operationId: "withinResponse",
+              responses: { "200": { description: "OK", content: { "application/json": {}, "application/json; charset=utf-8": { schema: object } } } },
+            },
+          },
+          "/across": {
+            get: {
+              operationId: "acrossResponses",
+              responses: {
+                "200": { description: "OK", content: { "application/json": {} } },
+                "201": { description: "Created", content: { "application/json": { schema: object } } },
+              },
+            },
+          },
+          "/first": {
+            get: {
+              operationId: "firstSchemaWins",
+              responses: {
+                "200": { description: "OK", content: { "application/json": { schema: { type: "array" } } } },
+                "201": { description: "Created", content: { "application/json": { schema: object } } },
+              },
+            },
+          },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(registered(result)).toEqual([["withinResponse", true], ["acrossResponses", true], ["firstSchemaWins", false]]);
+    expectArguments(tool(result.tools, "acrossResponses").outputSchema!, { valid: [{ n: 1 }], invalid: [{ n: "x" }] });
+  });
+
+  it("classifies array literals in enum and const as arrays of their item kinds", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/a": { get: { operationId: "enumArrays", parameters: [{ name: "pair", in: "query", schema: { enum: [["a", "b"], ["c"]] } }], responses: ok } },
+          "/b": { get: { operationId: "constArray", parameters: [{ name: "ids", in: "query", schema: { $ref: "#/components/schemas/Fixed" } }], responses: ok } },
+          "/c": { get: { operationId: "objectItems", parameters: [{ name: "o", in: "query", schema: { enum: [[{ a: 1 }]] } }], responses: ok } },
+        },
+        components: { schemas: { Fixed: { allOf: [{ const: [1, 2] }] } } },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(skips(result)).toEqual([
+      ["objectItems", "unsupported-parameter-schema", "query parameter o is an array whose items can be objects or arrays"],
+    ]);
+    expect(tool(result.tools, "enumArrays").operation.parameters[0]!.shape).toBe("array");
+    expect(tool(result.tools, "constArray").operation.parameters[0]!.shape).toBe("array");
+    expectArguments(tool(result.tools, "enumArrays").inputSchema, {
+      valid: [{ query: { pair: ["a", "b"] } }, { query: { pair: ["c"] } }],
+      invalid: [{ query: { pair: ["a"] } }, { query: { pair: "c" } }],
+    });
+  });
+
+  it("keeps the output schema of a mixed reference that not narrows to objects", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/a": { get: { operationId: "notNull", responses: json({ $ref: "#/components/schemas/MaybeItem", not: { type: "null" } }) } },
+          "/b": { get: { operationId: "allOfNotNull", responses: json({ allOf: [{ $ref: "#/components/schemas/MaybeItem" }, { not: { type: ["null"] } }] }) } },
+          "/c": { get: { operationId: "stillMixed", responses: json({ $ref: "#/components/schemas/MaybeItem", not: { type: "null", minLength: 1 } }) } },
+        },
+        components: { schemas: { MaybeItem: { type: ["object", "null"], properties: { n: { type: "integer" } }, required: ["n"] } } },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(registered(result)).toEqual([["notNull", true], ["allOfNotNull", true], ["stillMixed", false]]);
+    for (const name of ["notNull", "allOfNotNull"]) {
+      expectArguments(tool(result.tools, name).outputSchema!, { valid: [{ n: 1 }], invalid: [{}, { n: "x" }] });
+    }
+  });
+
+  it("decodes a percent-encoded reference fragment before reading it as a JSON Pointer", () => {
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/p/{id}": {
+            put: {
+              operationId: "encoded",
+              parameters: [{ $ref: "#/components/p%61rameters/Id" }],
+              requestBody: { $ref: "#/components/request%42odies/Body" },
+              responses: { "200": { $ref: "#/components/%72esponses/Ok" } },
+            },
+          },
+          "/bad": { get: { operationId: "malformed", parameters: [{ $ref: "#/components/parameters/%E0%A4%A" }], responses: ok } },
+        },
+        components: {
+          parameters: { Id: { name: "id", in: "path", required: true, schema: { $ref: "#/components/sch%65mas/Text" } } },
+          requestBodies: { Body: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Te%78t" } } } } },
+          responses: { Ok: { description: "OK", content: { "application/json": { schema: { type: "object" } } } } },
+          schemas: { Text: { type: "string" } },
+        },
+      },
+      options(),
+    );
+    expect(skips(result)).toEqual([
+      ["malformed", "unsupported-ref", 'reference "#/components/parameters/%E0%A4%A" is not a #/components/parameters/<name> reference'],
+    ]);
+    const encoded = tool(result.tools, "encoded");
+    expect(encoded.outputSchema).toEqual({ type: "object" });
+    expectArguments(encoded.inputSchema, { valid: [{ path: { id: "a" }, body: "b" }], invalid: [{ path: { id: 1 }, body: "b" }] });
+  });
+
+  it("reads path templates without rescanning unclosed braces", () => {
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          [`/x/${"{".repeat(100_000)}`]: { get: { operationId: "unclosed", responses: ok } },
+          "/u/{id}/{{v}": {
+            get: {
+              operationId: "variables",
+              parameters: [
+                { name: "id", in: "path", required: true, schema: { type: "string" } },
+                { name: "{v", in: "path", required: true, schema: { type: "string" } },
+              ],
+              responses: ok,
+            },
+          },
+        },
+      },
+      options(),
+    );
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.skipped).toEqual([]);
+    expect(registered(result)).toEqual([["unclosed", false], ["variables", false]]);
   });
 });

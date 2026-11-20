@@ -87,6 +87,9 @@ for (const { operation, code, reason } of skipped) {
 - **Exposure.** Only `GET` and `HEAD` are exposed by default. Any other method
   needs its operationId in `include` or `allowMutations: true`; a `tag:` or
   `METHOD /path` selector selects an operation but does not opt a mutation in.
+  `operationId:<id>` selects an operationId exactly, for one that reads as a
+  tag or route selector (such as `operationId:tag:pets`), and opts it in like
+  a plain operationId.
   When `include` is given, nothing outside it is exposed, and `exclude` always
   wins. Deprecated operations need `includeDeprecated: true`.
 - **Names.** The operationId, with `prefix` prepended, characters outside
@@ -98,59 +101,56 @@ for (const { operation, code, reason } of skipped) {
   callback replaces this; an invalid or duplicate result throws an error naming
   the operation before anything is registered.
 - **Inputs.** The input schema is `{ path, query, header, body }`, each group
-  present only when the operation has such inputs, with
-  `additionalProperties: false` throughout. Referenced component schemas are
-  copied under `definitions` (draft-07). `readOnly` properties (flagged on the
+  present only when the operation has such inputs. The wrapper and the
+  `path`, `query` and `header` groups have `additionalProperties: false`;
+  `body` follows its own schema. Referenced component schemas are copied
+  under `definitions` (draft-07). `readOnly` properties (flagged on the
   property, on a schema it references, on an `allOf` member, or on every
   non-null alternative of an `anyOf`/`oneOf` such as
-  `anyOf: [{ $ref }, { type: "null" }]`) are removed from inputs, also from the
-  `required` of other `allOf` members of the same object, and refused when the
-  object otherwise accepts additional properties. An `anyOf`/`oneOf` member
-  that marks a property readOnly removes it within that member. A flagged
-  property may only be constrained, by any schema applied to the object
-  (`$ref`, `allOf`/`anyOf`/`oneOf`, `not`, `if`/`then`/`else`,
-  dependencies), through `properties` and `required`. The operation is
-  skipped (`unsupported-access-flag`) when the property is also used by
-  another `anyOf`/`oneOf` member or the enclosing object without the flag,
-  or inside `not` or `if`/`then`/`else`; when it is removed anywhere inside a
-  `oneOf` member (including a nested `anyOf`/`oneOf`) but the members do not
-  all remove it in their own `allOf`/`$ref` closure through the same
-  property schema with the same required status (a member that accepts no
-  object, like the `null` of a nullable reference, does not count); or when
-  any applied schema has `const`, `enum`, `minProperties`, `propertyNames`,
-  `dependencies` or `dependentRequired`, `maxProperties` other than
-  unconditionally, a `patternProperties` key matching the name (an invalid
-  pattern counts as a match), or an `additionalProperties` other than `true`
-  or `{}` without listing the name in its own `properties`. Removal inside a
-  child value (a property's object, array items, a map's values) is kept
-  only when the projected subschema is the only thing constraining that
-  child: the operation is skipped when the members of a `oneOf` that can be
-  objects do not all give such a property the same schema with the same
-  required status, when a `oneOf` member changes through `items`,
-  `additionalProperties`, `patternProperties` or a nested composition and
-  another member admits the same kind of value, or when any applied schema
-  gives the child another subschema, constrains it inside `not`,
-  `if`/`then`/`else` or a dependency, has an object or array `const`/`enum`,
-  or (for items) `uniqueItems`. In
-  OpenAPI 3.0 a `readOnly` beside a `$ref` is ignored, as 3.0 ignores every
-  `$ref` sibling; in 3.1 it applies. The request
+  `anyOf: [{ $ref }, { type: "null" }]`) are left out of inputs where they are
+  declared: the property becomes `false` (or is dropped from an object closed
+  by `additionalProperties: false`) and leaves that object's `required`, so
+  the name is refused whatever `patternProperties` or `additionalProperties`
+  say. This is done only along a plain chain from the body: `properties`, one
+  `items` schema, a schema-valued `additionalProperties`, `allOf`, `$ref`, and
+  `anyOf`/`oneOf` members that accept different kinds of value (an object
+  and `null`, an object and an array). The operation is skipped
+  (`unsupported-access-flag`) when a flagged property sits under alternatives
+  that can accept the same kind of value, `not`, `if`/`then`/`else`, a
+  dependency, `patternProperties`, `contains`, tuple `items`,
+  `additionalItems` or `propertyNames`; when another schema for the object
+  requires the name or has `const`, `enum`, `minProperties` or a dependency;
+  when a conditional schema for the object lists the name or has
+  `maxProperties`, `patternProperties`, `propertyNames` or a closed
+  `additionalProperties`; or when a child value holding flagged properties
+  has more than one schema, sits under a condition, or is compared whole
+  (`const`, `enum`, `uniqueItems`, `contains`). Patterns in the document are
+  never evaluated. In OpenAPI 3.0 every `$ref` sibling is ignored, `readOnly`
+  and unsupported keywords included; in 3.1 they apply. The request
   body is the first `application/json` media entry that is an object, else the
-  first such `*+json` one; a declared body without one is skipped
-  (`invalid-request-body`), and a media entry without `schema` accepts any
-  JSON value. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
-  `Accept` and `Content-Type` headers are never inputs: credentials and
-  transport headers belong to the executor.
+  first such `*+json` one; a declared body without a JSON media type is
+  skipped (`non-json-body`), one whose JSON entries are not usable objects or
+  that declares no content is skipped (`invalid-request-body`), and a media
+  entry without `schema` accepts any JSON value. `Authorization`, `Cookie`,
+  `Host`, `Content-Length`, `Proxy-*`, `Accept` and `Content-Type` headers are
+  never inputs: credentials and transport headers belong to the executor.
 - **Parameters.** A path, query or header parameter must accept either single
   primitive values or arrays of primitives, judged through `$ref`, `allOf`,
   `anyOf` and `oneOf`; `null` may accompany either. A parameter that can be an
   object (including a schema without `type`, `enum` or `const`, such as `{}`),
   an array of objects or arrays, or both an array and a single value is skipped.
-- **Outputs.** The schema of the first 2xx response with `application/json`
-  content is always converted, for `HEAD` too, so the skip rules apply to it
-  whatever its shape or method. `HEAD` never declares an output schema. It becomes the output schema (`writeOnly` properties removed the same
-  way `readOnly` ones are from inputs) when it
-  accepts objects and nothing else, also through a 3.1 `$ref` with sibling
-  keywords or an `allOf`; otherwise the tool declares none.
+- **Outputs.** The selected response schema is the first `application/json`
+  entry with a `schema`, scanning 2xx responses in order. It is always
+  converted and, unless it becomes the output schema as it is, compiled by
+  mcpFn's validator, for `HEAD` too, so the skip rules apply to it whatever
+  its shape or method. A `HEAD` tool never declares an output schema, since
+  its response has no body. Otherwise the schema becomes the output schema
+  when it accepts objects and nothing else (also through a 3.1 `$ref` with
+  sibling keywords, an `allOf`, or a `not` of bare types such as
+  `not: { type: "null" }`), with `writeOnly` properties left out by the same
+  rule as `readOnly` ones in inputs. When that rule cannot be applied, or the
+  schema is too large or in another dialect, the tool declares no output
+  schema instead of being skipped.
 - **Paths.** `x-*` entries of the Paths Object are extensions and are ignored.
 - **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
   is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
@@ -169,7 +169,15 @@ for (const { operation, code, reason } of skipped) {
   property or item, and the 2019-09/2020-12 keywords `prefixItems`,
   `$dynamicRef`, `unevaluatedProperties`, `unevaluatedItems`,
   `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
-  translated to draft-07 `dependencies`). A Swagger 2.0 document throws.
+  translated to draft-07 `dependencies`). A 3.1 `jsonSchemaDialect` or
+  `$schema` other than the OAS 3.1 base dialect or JSON Schema 2020-12, or
+  any `$schema` in a 3.0 document, skips the schemas it governs
+  (`unsupported-dialect`). An input or a component that would expand to more
+  than 100,000 schema nodes (a document can share one object between many
+  positions) is skipped (`schema-too-large`). A Swagger 2.0 document throws.
+- **Catalog.** `tools` holds copies of the registered schemas, so changing
+  them changes neither what the registry lists nor what it validates.
+  `operation` is deeply frozen and typed read-only.
 - **Servers.** `operation.servers` is the first non-empty `servers` list of
   the operation, path item and document, else `[{ url: "/" }]`.
 
