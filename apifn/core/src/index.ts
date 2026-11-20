@@ -111,5 +111,4 @@ export type {
 } from "./integrations/authfn.js";
 export { fetchRateLimits } from "./integrations/secfn.js";
 export { logfnReporter, createCliLogger } from "./integrations/logfn.js";
-export { ApifnTestAdapter } from "./integrations/testfn.js";
 export type { CliLoggerOptions } from "./integrations/logfn.js";
