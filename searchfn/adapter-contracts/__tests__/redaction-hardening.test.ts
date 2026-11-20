@@ -337,11 +337,11 @@ describe("round-8 URL component and scheme-word repairs", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  it("ends a non-authorization value after a scheme word only before a sensitive key/value", () => {
+  it("masks a non-authorization value after a standing-alone scheme word to the end of the line", () => {
     const cases: Array<[string, string]> = [
-      [`${PW}=basic token: test-hidden`, `${PW}=[REDACTED] token: [REDACTED]`],
+      [`${PW}=basic token: test-hidden`, `${PW}=[REDACTED]`],
       [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
-      [`${PW}=token token=test-hidden q=x`, `${PW}=[REDACTED] token=[REDACTED] q=x`],
+      [`${PW}=token token=test-hidden q=x`, `${PW}=[REDACTED]`],
       ["accessToken: Basic test-user:test-pass", "accessToken: [REDACTED]"],
       [`accessToken: Basic ${btoa("test")} q=x`, "accessToken: [REDACTED] q=x"],
     ];
@@ -357,11 +357,11 @@ describe("round-9 scheme word before a key the redactor's own grammar recognises
   const tokenKey = ["to", "ken"].join("");
   const hidden = ["test", "hidden"].join("-");
 
-  it("ends a non-authorization value after the scheme word when a key/value starts next", () => {
+  it("masks a non-authorization value to the end of the line when a key/value starts after the scheme word", () => {
     const cases: Array<[string, string]> = [
-      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] q=x`],
-      [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED] q=x`],
-      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED]`],
+      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED]`],
       [`${PW}=basic connectionTimeout=5000`, `${PW}=[REDACTED]`],
       [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
       ["accessToken: Bearer test-token", "accessToken: [REDACTED]"],
@@ -391,11 +391,11 @@ describe("round-10 scheme words and URL parameter boundaries", () => {
   const tokenKey = ["to", "ken"].join("");
   const hidden = ["test", "hidden"].join("-");
 
-  it("treats a quoted or spaced sensitive key after a scheme word as a new key and masks other assignments to the end of the line", () => {
+  it("masks a quoted, spaced or other assignment after a scheme word to the end of the line", () => {
     const cases: Array<[string, string]> = [
       [`${PW}=basic db.${PW} = ${hidden} q=x`, `${PW}=[REDACTED]`],
-      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
-      [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED] '${tokenKey}'= [REDACTED] q=x`],
+      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED]`],
       [`${PW}=basic status = 401`, `${PW}=[REDACTED]`],
       ["Authorization: bearer status = 401", "Authorization: [REDACTED]"],
       [`Authorization: bearer db.${PW} = x`, "Authorization: [REDACTED]"],
@@ -572,10 +572,10 @@ describe("round-13 scheme word under a non-authorization key", () => {
       [`${accessKey}: Bearer test/${tokenKey}=`, `${accessKey}: [REDACTED]`],
       // Masking stops at the end of the line.
       [`${accessKey}: Bearer sv=1&sig=${sig}\nstatus=401`, `${accessKey}: [REDACTED]\nstatus=401`],
-      // A sensitive key/value at the next token still ends the value after the word.
-      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED]`],
-      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] q=x`],
-      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
+      // Round 15: a sensitive key/value at the next token is masked to the end of the line.
+      [`${PW}=basic ${tokenKey}: ${hidden}`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED]`],
       // A credential without = or : keeps later fields readable.
       [`${accessKey}: Bearer test-x status=401`, `${accessKey}: [REDACTED] status=401`],
       [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
@@ -597,9 +597,7 @@ describe("round-13 scheme word under a non-authorization key", () => {
     expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x `.repeat(64_000))).toBe(`${accessKey}: [REDACTED]`);
     expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x\n`.repeat(64_000))).not.toContain("sv=1");
     expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = `.repeat(64_000))).not.toContain("basic");
-    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = "${"a".repeat(200_000)}`)).toBe(
-      `${PW}=[REDACTED] "${tokenKey}" = "[REDACTED]`,
-    );
+    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = "${"a".repeat(200_000)}`)).toBe(`${PW}=[REDACTED]`);
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
@@ -619,12 +617,12 @@ describe("round-14 token after a scheme word that may itself be the credential",
   it("masks a credential-shaped or user:pass-shaped token together with the scheme word", () => {
     const cases: Array<[string, string]> = [
       [`${accessKey}: Bearer ${abcToken}= status=401`, `${accessKey}: [REDACTED]`],
-      [`${accessKey}: Bearer ${abcToken}=\nstatus=401`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Bearer ${abcToken}=\nstatus=401`, `${accessKey}: [REDACTED]\nstatus=401`],
       [`${accessKey}: Bearer ${abcSecret}= status=401`, `${accessKey}: [REDACTED]`],
       [`${accessKey}: Bearer ${fToken}==`, `${accessKey}: [REDACTED]`],
       [`${accessKey}: Basic ${yxToken}==`, `${accessKey}: [REDACTED]`],
       [`${accessKey}: Basic ${userPass}`, `${accessKey}: [REDACTED]`],
-      [`${accessKey}: Basic ${userPass} q=1`, `${accessKey}: [REDACTED] q=1`],
+      [`${accessKey}: Basic ${userPass} q=1`, `${accessKey}: [REDACTED]`],
       [`${accessKey}: Basic admin:${myToken}=`, `${accessKey}: [REDACTED]`],
     ];
     for (const [input, expected] of cases) {
@@ -638,14 +636,13 @@ describe("round-14 token after a scheme word that may itself be the credential",
 
   it("keeps the other scheme-word outcomes", () => {
     const cases: Array<[string, string]> = [
-      // Changed in round 14: the key name is masked with the word, later fields stay.
-      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED] q=x`],
-      [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED] q=x`],
-      // A token that cannot be the credential still starts a new key.
-      [`${PW}=basic ${tokenKey}: ${hidden} q=x`, `${PW}=[REDACTED] ${tokenKey}: [REDACTED] q=x`],
-      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED] "${tokenKey}" = [REDACTED] q=x`],
-      [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED] '${tokenKey}'= [REDACTED] q=x`],
-      [`${PW}=basic ${tokenKey}=hid,next=1`, `${PW}=[REDACTED] ${tokenKey}=[REDACTED],next=1`],
+      // Round 15: a key/value after the word is masked to the end of the line.
+      [`${PW}=basic ${tokenKey}= ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey} = ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey}: ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic "${tokenKey}" = ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic '${tokenKey}'= ${hidden} q=x`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey}=hid,next=1`, `${PW}=[REDACTED]`],
       [`${PW}=basic ${tokenKey}=`, `${PW}=[REDACTED]`],
       [`${accessKey}: Bearer test-x status=401`, `${accessKey}: [REDACTED] status=401`],
       [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
@@ -666,6 +663,61 @@ describe("round-14 token after a scheme word that may itself be the credential",
     const started = performance.now();
     expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= x `.repeat(64_000))).not.toContain(abcToken);
     expect(redactSensitiveString(`${accessKey}: Basic ${userPass} `.repeat(64_000))).not.toContain(apiKey);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("round-15 scanning never resumes inside the text after a scheme word", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const accessKey = ["access", "Token"].join("");
+  const abcToken = ["abc", tokenKey].join("");
+  const apiKey = ["api", "key"].join("_");
+  const authKey = ["Author", "ization"].join("");
+  const secret = ["test", "secret"].join("-");
+  const sig = ["test", "sig"].join("-");
+  const last = ["test", "last"].join("-");
+  const response = ["test", "response"].join("-");
+  const apiKeyValue = ["test", "key"].join("-");
+
+  it("masks everything after a standing-alone scheme word on its line", () => {
+    const cases: Array<[string, string]> = [
+      [`${accessKey}: Bearer ${abcToken}= ${PW}: ${secret}`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Bearer ${abcToken}=\n${PW}: ${secret}`, `${accessKey}: [REDACTED]\n${PW}: [REDACTED]`],
+      [`${accessKey}: Bearer ${abcToken}=\nstatus=401`, `${accessKey}: [REDACTED]\nstatus=401`],
+      [`${PW}=basic ${tokenKey}= ${apiKey}= ${secret}`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${tokenKey}= ${apiKey}=${secret}`, `${PW}=[REDACTED]`],
+      [`${accessKey}: Basic ${apiKey}:'x'&sig=${last}`, `${accessKey}: [REDACTED]`],
+      [`${accessKey}: Bearer "${abcToken}=" status=401`, `${accessKey}: [REDACTED]`],
+      [`${PW}=basic ${tokenKey}= bearer status=401 sig=${sig}`, `${PW}=[REDACTED]`],
+      [`${PW}=${tokenKey} ${authKey}= Digest response="${response}"`, `${PW}=[REDACTED]`],
+      [`${PW}=basic ${authKey.toLowerCase()}:ApiKey ${apiKeyValue}`, `${PW}=[REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      for (const value of [secret, sig, last, response, apiKeyValue, abcToken]) {
+        expect(output).not.toContain(value);
+      }
+    }
+  });
+
+  it("keeps the credential and authorization outcomes of earlier rounds", () => {
+    const cases: Array<[string, string]> = [
+      [`${accessKey}: Bearer test-x status=401`, `${accessKey}: [REDACTED] status=401`],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      ["Authorization: Bearer test-token\nnext=line", "Authorization: Bearer [REDACTED]\nnext=line"],
+      [`Authorization: Basic ${btoa("test")}`, "Authorization: Basic [REDACTED]"],
+      [`Authorization: bearer ${tokenKey}=`, "Authorization: [REDACTED]"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("masks to the end of the line in linear time", () => {
+    const started = performance.now();
+    expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= ${PW}: x\n`.repeat(64_000))).not.toContain(abcToken);
+    expect(redactSensitiveString(`${PW}=basic ${tokenKey}= ${apiKey}= x `.repeat(64_000))).toBe(`${PW}=[REDACTED]`);
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
