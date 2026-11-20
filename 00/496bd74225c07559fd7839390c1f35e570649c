@@ -1,0 +1,43 @@
+testfn/typescript/tests/dodo-webhook-templates-contract.test.ts
+  s_b996deaa3d01f1::t_ff32c6f7ac02d1 1-143
+testfn/contracts/dodo-webhook-templates.json
+  s_b996deaa3d01f1::t_ec1fcb87551a40 1-541
+testfn/python/tests/test_fixtures_billfn.py
+  s_b996deaa3d01f1::t_22fce8447a07a6 1-377
+testfn/python/README.md
+  s_b996deaa3d01f1::t_c40b448e12821c 85-141
+testfn/python/scripts/packed_consumer.py
+  s_b996deaa3d01f1::t_82e5d7a7393cca 1-6,9,12-13,15-17,20-22,24-26,64-201
+testfn/python/tests/test_fixtures_authfn.py
+  s_b996deaa3d01f1::t_7c0432cb571874 1-304
+testfn/python/testfn/fixtures/billfn.py
+  s_b996deaa3d01f1::t_7248b0353ee136 1-480
+testfn/python/testfn/fixtures/__init__.py
+  s_b996deaa3d01f1::t_2a9641975b5b30 1-168
+testfn/python/tests/test_fixtures_plugin.py
+  s_b996deaa3d01f1::t_68d5e67168376d 1-180
+testfn/python/testfn/fixtures/authfn.py
+  s_b996deaa3d01f1::t_3a24348d03382b 1-342
+testfn/python/testfn/fixtures/_js_json.py
+  s_b996deaa3d01f1::t_30265d4ce04a67 1-134
+testfn/python/pyproject.toml
+  s_b996deaa3d01f1::t_8fdb99793cf4b0 7,34-35,38-40
+testfn/python/testfn/fixtures/_guard.py
+  s_b996deaa3d01f1::t_5396deede6c9bc 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00496bd74225c07559fd7839390c1f35e570649c",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
