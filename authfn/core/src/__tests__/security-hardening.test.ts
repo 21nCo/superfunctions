@@ -607,6 +607,31 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     }
   });
 
+  it('keeps the factory handoff code lifetime when runtime options carry extra fields', async () => {
+    const config = createConfig({ requireHandoffChallenge: true, handoffCodeTtlSeconds: 60 });
+    let clock = Date.parse('2026-11-21T00:00:00.000Z');
+    const runtime = (config.pluginRuntime as Record<string, Record<string, unknown>>).socialOAuth;
+    runtime.handoffCodeTtlSeconds = 3600;
+    runtime.now = () => new Date(clock);
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const handoffChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge });
+    const stateId = (await started.json()).data.stateId as string;
+    const completed = await callback(auth, stateId);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+    clock += 120_000;
+    const exchanged = await auth.router.handle(
+      new Request('https://account.example.com/auth/social/handoff/exchange', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code, verifier })
+      })
+    );
+    expect(exchanged.ok).toBe(false);
+    expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_STATE_REPLAYED');
+  });
+
   it('returns a one-time code instead of a session token and exchanges it only with the verifier', async () => {
     const auth = createTestServer(createConfig({ requireHandoffChallenge: true }));
     const verifier = 'test-verifier-'.padEnd(64, 'v');

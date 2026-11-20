@@ -208,14 +208,18 @@ function createSocialRoutes(
   ctx: AuthFnPluginRuntimeContext,
   schemaConfig: SocialOAuthPluginConfig
 ): Route[] {
+  const runtimeConfig = readPluginRuntimeConfig<SocialOAuthPluginRuntimeConfig>(ctx, 'socialOAuth');
   const config: ResolvedSocialOAuthPluginConfig = {
     defaultHandoffMode: schemaConfig.defaultHandoffMode,
     bindBrowserState: schemaConfig.bindBrowserState,
     allowWebSessionTokenHandoff: schemaConfig.allowWebSessionTokenHandoff,
     requireHandoffChallenge: schemaConfig.requireHandoffChallenge,
     handoffCodeTtlSeconds: schemaConfig.handoffCodeTtlSeconds,
-    providers: {},
-    ...readPluginRuntimeConfig<SocialOAuthPluginRuntimeConfig>(ctx, 'socialOAuth')
+    providers: runtimeConfig?.providers ?? {},
+    fetcher: runtimeConfig?.fetcher,
+    tokenHttpClient: runtimeConfig?.tokenHttpClient,
+    diagnostics: runtimeConfig?.diagnostics,
+    now: runtimeConfig?.now
   };
   const routes: Route[] = [
     {
