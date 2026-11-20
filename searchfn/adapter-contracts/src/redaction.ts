@@ -37,11 +37,13 @@ const SENSITIVE_KEY =
 // Basic admin:mytoken=, Basic user:pass, basic "a b", password=basic
 // status = 401) the word may start a credential that holds =, :, quotes or
 // spaces, so key, separator and [REDACTED] are printed to the end of the line,
-// as after an authorization key. A value that is only a scheme word at the end
-// of its line may continue on folded lines (RFC 7230 obs-fold): blank lines are
-// skipped, and when the next non-blank line begins with a space or tab, that
-// line and each following folded line are redacted too (see
-// foldedContinuationEnd); a next line that starts in column 0 stays readable.
+// as after an authorization key. A credential may continue on folded lines
+// (RFC 7230 obs-fold): after an unquoted authorization value, and after a
+// scheme-labelled value (a bare scheme word, or a word with its token) under
+// any sensitive key, when only spaces or tabs remain before the line break,
+// blank lines are skipped and each following line that begins with a space or
+// tab is redacted too (see foldEnd); a next line that starts in column 0 stays
+// readable.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
 // The key group of KEY_VALUE_SECRET and its separator, with or without a value,
@@ -362,26 +364,31 @@ function foldedContinuationEnd(input: string, lineEnd: number): number {
   let position = lineEnd;
   while (position < input.length) {
     position += input.startsWith("\r\n", position) ? 2 : 1;
-    const nextLineEnd = endOfLine(input, position);
     const contentStart = skipBlanks(input, position);
-    if (contentStart < nextLineEnd) {
-      if (contentStart === position) break;
-      end = nextLineEnd;
+    if (contentStart >= input.length) break;
+    const next = input[contentStart];
+    if (next === "\r" || next === "\n") {
+      // A blank line: skipped, not redacted.
+      position = contentStart;
+      continue;
     }
-    position = nextLineEnd;
+    // A line that starts in column 0 ends the credential.
+    if (contentStart === position) break;
+    end = endOfLine(input, contentStart);
+    position = end;
   }
   return end;
 }
 
 /**
- * For a value that is only a scheme word ending at end: the end of its line
- * and of any folded continuation lines when nothing but spaces or tabs follow
- * the word on its line, otherwise end.
+ * The end of a redacted span ending at end, extended over its folded
+ * continuation lines when only spaces or tabs follow it on its line. Reads
+ * only those blanks and the one character after them, so repeated calls on a
+ * long line stay linear.
  */
-function bareSchemeWordEnd(input: string, end: number, scheme: string | undefined, credential: string): number {
-  if (scheme !== undefined || !BARE_SCHEME_WORD.test(credential)) return end;
+function foldEnd(input: string, end: number): number {
   const lineEnd = skipBlanks(input, end);
-  if (lineEnd !== endOfLine(input, end)) return end;
+  if (lineEnd < input.length && input[lineEnd] !== "\r" && input[lineEnd] !== "\n") return end;
   return foldedContinuationEnd(input, lineEnd);
 }
 
@@ -401,14 +408,15 @@ function redactKeyValues(input: string): string {
     } else if (openQuote) {
       replacement = `${key}${keyQuote}${separator}${openQuote}${REDACTED}`;
     } else if (AUTHORIZATION_KEY.test(key)) {
-      end = Math.max(endOfLine(input, end), bareSchemeWordEnd(input, end, scheme, credential));
+      end = foldEnd(input, endOfLine(input, end));
       const label = scheme !== undefined && !standsAlone && CREDENTIAL_TOKEN.test(credential) ? scheme : "";
       replacement = `${key}${keyQuote}${separator}${label}${REDACTED}`;
     } else {
       // The word may begin a credential holding =, :, quotes or spaces; fail
       // closed and never resume scanning inside the text after it.
       if (scheme !== undefined && (standsAlone || !CREDENTIAL_TOKEN.test(credential))) end = endOfLine(input, end);
-      end = bareSchemeWordEnd(input, end, scheme, credential);
+      // A scheme-labelled credential may continue on folded lines.
+      if (scheme !== undefined || BARE_SCHEME_WORD.test(credential)) end = foldEnd(input, end);
       replacement = `${key}${keyQuote}${separator}${REDACTED}`;
     }
     output += input.slice(cursor, match.index) + replacement;

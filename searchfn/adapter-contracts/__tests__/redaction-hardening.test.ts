@@ -789,3 +789,60 @@ describe("round-16 text after a scheme word is printed only outside the credenti
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
+
+describe("round-17 folded continuation lines belong to the credential they continue", () => {
+  const accessKey = ["access", "Token"].join("");
+  const continuation = ["test", "continuation"].join("-");
+  const response = ["test", "response"].join("-");
+  const tail = ["test", "y"].join("-");
+  const leaked = [continuation, response, tail];
+
+  it("masks folded lines after an authorization value and after a scheme word with its token", () => {
+    const cases: Array<[string, string]> = [
+      [`Authorization: Bearer test-token\r\n ${continuation}\r\nstatus=401`, "Authorization: Bearer [REDACTED]\r\nstatus=401"],
+      [`Authorization: Bearer test-token\n ${continuation}\nstatus=401`, "Authorization: Bearer [REDACTED]\nstatus=401"],
+      [`Authorization: Bearer test-token \n\n\t${continuation}\nstatus=401`, "Authorization: Bearer [REDACTED]\nstatus=401"],
+      [`Authorization: Digest username="u",\n  response="${response}"\nnext=1`, "Authorization: [REDACTED]\nnext=1"],
+      [`${accessKey}: Bearer test-x\n ${tail}\nq=1`, `${accessKey}: [REDACTED]\nq=1`],
+      [`${accessKey}: Bearer test-x \r\n\t${tail}`, `${accessKey}: [REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      for (const value of leaked) expect(output).not.toContain(value);
+    }
+  });
+
+  it("keeps column-0 lines, later fields on the same line and indented lines after values without a scheme", () => {
+    const cases: Array<[string, string]> = [
+      ["Authorization: Bearer test-token\nstatus=401", "Authorization: Bearer [REDACTED]\nstatus=401"],
+      ["Authorization: Bearer test-token\n\nstatus=401", "Authorization: Bearer [REDACTED]\n\nstatus=401"],
+      [`${accessKey}: Bearer test-x status=401\n next=1`, `${accessKey}: [REDACTED] status=401\n next=1`],
+      [`${PW}=test-value\n indented=1`, `${PW}=[REDACTED]\n indented=1`],
+      [`${PW}=basic ${btoa("test")} next`, `${PW}=[REDACTED] next`],
+      [`${PW}: bearer`, `${PW}: [REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactSensitiveString(input)).toBe(expected);
+    }
+  });
+
+  it("checks for folded lines in linear time on long lines and long blank runs", () => {
+    const started = performance.now();
+    expect(redactSensitiveString(`${"token=basic; ".repeat(64_000)}x`)).toBe(`${"token=[REDACTED]; ".repeat(64_000)}x`);
+    const url = redactSensitive(new URL(`https://example.test/#${"token=basic;&".repeat(64_000)}q=ok`));
+    expect(String(url)).toContain("q=ok");
+    expect(String(url)).not.toContain("basic");
+    expect(redactSensitiveString("Authorization: Bearer x\n\n".repeat(64_000))).toBe(
+      "Authorization: Bearer [REDACTED]\n\n".repeat(64_000),
+    );
+    expect(redactSensitiveString("Authorization: Bearer\n x\n".repeat(64_000))).toBe(
+      "Authorization: [REDACTED]\n".repeat(64_000),
+    );
+    const blankRun = "\n".repeat(256_000);
+    expect(redactSensitiveString(`Authorization: Bearer x${blankRun}next=1`)).toBe(
+      `Authorization: Bearer [REDACTED]${blankRun}next=1`,
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
