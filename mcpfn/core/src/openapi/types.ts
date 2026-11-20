@@ -28,7 +28,11 @@ export interface OpenApiOperationParameter {
   explode: boolean;
   /** Query only: reserved characters are sent without percent-encoding. */
   allowReserved?: true;
-  /** `primitive` or `array` of primitives: the shape the executor serialises. */
+  /**
+   * `primitive` or `array` of primitives: the shape the executor serialises.
+   * The input schema accepts no other shape, except `null` when the
+   * parameter's schema allows it.
+   */
   shape: "primitive" | "array";
 }
 

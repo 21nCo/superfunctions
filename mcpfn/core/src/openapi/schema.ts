@@ -151,6 +151,64 @@ export class SchemaConverter {
     return this.schemas[name];
   }
 
+  private readonly admitted = new Map<string, AdmittedKinds>();
+
+  /**
+   * The kinds of value `schema` accepts, following local `$ref`s and
+   * `allOf`/`anyOf`/`oneOf`. A schema without `type`, `enum` or `const`
+   * accepts every kind; a reference cycle is treated as accepting every kind.
+   */
+  admits(schema: unknown, stack: Set<unknown> = new Set()): AdmittedKinds {
+    if (schema === false) return NOTHING;
+    if (!isObject(schema) || stack.has(schema)) return EVERYTHING;
+    stack.add(schema);
+    try {
+      return this.admitsObject(schema, stack);
+    } finally {
+      stack.delete(schema);
+    }
+  }
+
+  private admitsObject(schema: JsonObject, stack: Set<unknown>): AdmittedKinds {
+    let result = EVERYTHING;
+    if (Object.hasOwn(schema, "$ref")) {
+      const name = parseComponentRef(schema.$ref, "schemas");
+      let target = this.admitted.get(name);
+      if (!target) {
+        // A cycle cut below this point widens the result, which stays safe to reuse.
+        target = this.admits(this.component(name), stack);
+        this.admitted.set(name, target);
+      }
+      // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
+      if (this.version === "3.0") return target;
+      result = target;
+    }
+    if (schema.type !== undefined) {
+      const kinds = (Array.isArray(schema.type) ? schema.type : [schema.type]).flatMap(kindsOfType);
+      if (this.version === "3.0" && schema.nullable === true) kinds.push("null");
+      result = { ...result, values: intersect(result.values, kinds) };
+    }
+    if (Array.isArray(schema.enum)) {
+      result = { ...result, values: intersect(result.values, schema.enum.map(kindOfValue)) };
+    }
+    if (Object.hasOwn(schema, "const")) {
+      result = { ...result, values: intersect(result.values, [kindOfValue(schema.const)]) };
+    }
+    if (Object.hasOwn(schema, "items") && !Array.isArray(schema.items)) {
+      result = { ...result, items: intersect(result.items, this.admits(schema.items, stack).values) };
+    }
+    if (Array.isArray(schema.allOf)) {
+      for (const member of schema.allOf) result = both(result, this.admits(member, stack));
+    }
+    for (const keyword of ["anyOf", "oneOf"] as const) {
+      const members = schema[keyword];
+      if (Array.isArray(members)) {
+        result = both(result, either(members.map((member) => this.admits(member, stack))));
+      }
+    }
+    return result;
+  }
+
   /**
    * Convert a schema rooted in a tool's input or output schema. Referenced
    * component names are added to `refs`; call `definitions` for their closure.
@@ -283,6 +341,13 @@ export class SchemaConverter {
       );
       if ((converted.required as unknown[]).length === 0) delete converted.required;
     }
+    // An input must not carry a readOnly field even when the object accepts
+    // other additional properties. A closed object already rejects it.
+    if (mode === "input" && !(converted.additionalProperties === false && converted.patternProperties === undefined)) {
+      const forbidden = { not: { enum: [...removed] } };
+      converted.propertyNames =
+        converted.propertyNames === undefined ? forbidden : { allOf: [converted.propertyNames, forbidden] };
+    }
   }
 
   private hasFlag(property: unknown, keyword: "readOnly" | "writeOnly"): boolean {
@@ -357,21 +422,78 @@ function assertNoAliasCycle(definitions: Record<string, McpFnJsonSchema | boolea
   }
 }
 
+// OpenAPI 3.0.3: `nullable: true` adds "null" only to an explicitly defined
+// `type`; other constraints such as `enum` keep their meaning, and a schema
+// without `type` is unaffected.
 function nullableSchema(schema: McpFnJsonSchema): McpFnJsonSchema {
-  const result: McpFnJsonSchema = { ...schema };
-  let handled = false;
-  if (typeof result.type === "string") {
-    result.type = result.type === "null" ? "null" : [result.type, "null"];
-    handled = true;
-  } else if (Array.isArray(result.type)) {
-    if (!result.type.includes("null")) result.type = [...result.type, "null"];
-    handled = true;
+  if (typeof schema.type === "string") {
+    return schema.type === "null" ? schema : { ...schema, type: [schema.type, "null"] };
   }
-  if (Array.isArray(result.enum)) {
-    if (!result.enum.includes(null)) result.enum = [...result.enum, null];
-    handled = true;
+  if (Array.isArray(schema.type) && !schema.type.includes("null")) {
+    return { ...schema, type: [...schema.type, "null"] };
   }
-  if (handled) return result;
-  // No type of its own (for example `allOf: [{ $ref }]`): accept null beside it.
-  return { anyOf: [schema, { type: "null" }] };
+  return schema;
+}
+
+/** A kind of JSON value. `integer` and `number` are disjoint: 1 is an integer, 1.5 a number. */
+export type ValueKind = "string" | "number" | "integer" | "boolean" | "null" | "array" | "object";
+
+const ALL_KINDS: readonly ValueKind[] = ["string", "number", "integer", "boolean", "null", "array", "object"];
+
+/**
+ * The kinds of value a schema can accept, and for arrays the kinds its items
+ * can accept. It over-approximates: keywords that only narrow (`not`, `if`,
+ * bounds) are ignored, so a kind outside the set is never accepted.
+ */
+export interface AdmittedKinds {
+  values: ReadonlySet<ValueKind>;
+  items: ReadonlySet<ValueKind>;
+}
+
+const EVERYTHING: AdmittedKinds = { values: new Set(ALL_KINDS), items: new Set(ALL_KINDS) };
+const NOTHING: AdmittedKinds = { values: new Set(), items: new Set() };
+
+function kindsOfType(type: unknown): ValueKind[] {
+  switch (type) {
+    case "number":
+      return ["number", "integer"];
+    case "string":
+    case "integer":
+    case "boolean":
+    case "null":
+    case "array":
+    case "object":
+      return [type];
+    default:
+      return [];
+  }
+}
+
+function kindOfValue(value: unknown): ValueKind {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "string") return "string";
+  return "object";
+}
+
+function intersect(left: ReadonlySet<ValueKind>, right: Iterable<ValueKind>): Set<ValueKind> {
+  const allowed = new Set(right);
+  return new Set([...left].filter((kind) => allowed.has(kind)));
+}
+
+function both(left: AdmittedKinds, right: AdmittedKinds): AdmittedKinds {
+  return { values: intersect(left.values, right.values), items: intersect(left.items, right.items) };
+}
+
+/** `anyOf`/`oneOf`: a value matches some member; item kinds come from members that accept arrays. */
+function either(members: AdmittedKinds[]): AdmittedKinds {
+  const values = new Set<ValueKind>();
+  const items = new Set<ValueKind>();
+  for (const member of members) {
+    for (const kind of member.values) values.add(kind);
+    if (member.values.has("array")) for (const kind of member.items) items.add(kind);
+  }
+  return { values, items };
 }

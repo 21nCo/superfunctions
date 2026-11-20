@@ -4,6 +4,8 @@
   `tests/openapi-forms.test.ts`.
 - `skip-*.json`: one document per skip reason. `skip-swagger-2.0.json` is
   rejected as a whole; the others list their operations in `skipped`.
+  `skip-composed-parameter-schemas.json` also keeps the composed parameters
+  that stay supported, to show the classification both ways.
 - `apifn-from-router.json`: output of `fromRouter()` from `@apifn/core`,
   committed so the tests have no apifn dependency. It was produced with this
   router (`z` is zod 4, `createRouter` from `@superfunctions/http`):

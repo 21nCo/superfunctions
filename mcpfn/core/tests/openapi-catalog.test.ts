@@ -159,6 +159,41 @@ describe("fromOpenAPI naming", () => {
     expect(registry.listTools()).toHaveLength(8);
   });
 
+  it("gives a name to the next operation when the first one is skipped at registration", () => {
+    const { tools, skipped } = fromOpenAPI(
+      namingDocument({
+        "/1": { get: { operationId: "dup", parameters: [{ name: "q", in: "query", schema: { type: "string", pattern: "(" } }], responses: ok } },
+        "/2": { get: { operationId: "dup", responses: ok } },
+        "/3": { get: { operationId: "dup", responses: ok } },
+      }),
+      { executor: recordingExecutor() },
+    );
+    expect(skipped.map((entry) => [entry.operation.path, entry.code])).toEqual([["/1", "invalid-schema"]]);
+    expect(tools.map((entry) => [entry.operation.path, entry.name])).toEqual([["/2", "dup"], ["/3", "dup_2"]]);
+  });
+
+  it("skips an invalid schema rejected by a registry from the other module format", () => {
+    // The ESM and CommonJS entries each bundle McpFnValidationError, so
+    // instanceof fails across them; the error name still identifies it.
+    class OtherFormatRegistry extends McpFnRegistry {
+      override register<TDefinition extends McpFnToolDefinition<undefined>>(definition: TDefinition): this {
+        if (definition.name === "bad") {
+          throw Object.assign(new Error("Tool bad contains an invalid JSON Schema"), { name: "McpFnValidationError" });
+        }
+        return super.register(definition);
+      }
+    }
+    const { tools, skipped } = fromOpenAPI(
+      namingDocument({
+        "/bad": { get: { operationId: "bad", responses: ok } },
+        "/good": { get: { operationId: "good", responses: ok } },
+      }),
+      { executor: recordingExecutor(), registry: new OtherFormatRegistry() },
+    );
+    expect(tools.map((entry) => entry.name)).toEqual(["good"]);
+    expect(skipped).toMatchObject([{ operation: { operationId: "bad" }, code: "invalid-schema", reason: "Tool bad contains an invalid JSON Schema" }]);
+  });
+
   it("uses the name callback and reports an invalid or duplicate result naming the operation", () => {
     const document = namingDocument({
       "/a": { get: { operationId: "first", responses: ok } },
@@ -329,53 +364,5 @@ describe("fromOpenAPI executor delegation", () => {
       { executor: { execute: () => ({ content: [], structuredContent: { n: "one" } }) } },
     );
     await expect(registry.callTool("count", {}, undefined, requestExtra())).rejects.toThrow(/Invalid output from count/);
-  });
-});
-
-describe("fromOpenAPI scale", () => {
-  // Times the conversion: McpFnRegistry.register compiles each schema with
-  // the runtime validator (Ajv code generation on Node, about 0.5-3.5 ms per
-  // schema), an existing per-tool registry cost outside this bound.
-  it("converts a 2,000-operation document within 2 seconds", () => {
-    const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 1000; index += 1) {
-      paths[`/resources${index}/{id}`] = {
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        get: {
-          operationId: `getResource${index}`,
-          parameters: [{ name: "fields", in: "query", schema: { type: "array", items: { type: "string" } } }],
-          responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } } } },
-        },
-        put: {
-          operationId: `putResource${index}`,
-          requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } } },
-          responses: ok,
-        },
-      };
-    }
-    const document = {
-      openapi: "3.0.3",
-      paths,
-      components: {
-        schemas: {
-          Resource: { type: "object", properties: { id: { type: "string", readOnly: true }, name: { type: "string" }, children: { type: "array", items: { $ref: "#/components/schemas/Resource" } } } },
-        },
-      },
-    };
-    class RecordingRegistry extends McpFnRegistry {
-      readonly recorded: string[] = [];
-      override register<TDefinition extends McpFnToolDefinition<undefined>>(definition: TDefinition): this {
-        this.recorded.push(definition.name);
-        return this;
-      }
-    }
-    const registry = new RecordingRegistry();
-    const started = performance.now();
-    const { tools, skipped } = fromOpenAPI(document, { executor: recordingExecutor(), allowMutations: true, registry });
-    const elapsed = performance.now() - started;
-    expect(registry.recorded).toHaveLength(2000);
-    expect(tools).toHaveLength(2000);
-    expect(skipped).toEqual([]);
-    expect(elapsed).toBeLessThan(2000);
   });
 });

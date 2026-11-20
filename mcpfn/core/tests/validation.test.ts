@@ -604,3 +604,38 @@ describe("schema validation engines", () => {
     })).not.toThrow();
   });
 });
+
+describe("Ajv compilation of repeated schemas", () => {
+  it("shares one compiled validator between equal schemas while each keeps its own errors", () => {
+    const compiler = createSchemaCompiler("ajv");
+    const schema = () => ({ type: "object", properties: { n: { type: "integer" } }, required: ["n"] });
+    const first = compiler.compile(schema());
+    const second = compiler.compile(schema());
+    expect(first({})).toBe(false);
+    expect(second({ n: 1 })).toBe(true);
+    expect(first.errors).toEqual([expect.objectContaining({ keyword: "required" })]);
+    expect(second.errors).toBeNull();
+    // A different schema is compiled on its own.
+    const other = compiler.compile({ type: "object", properties: { n: { type: "string" } }, required: ["n"] });
+    expect(other({ n: 1 })).toBe(false);
+    expect(first({ n: 1 })).toBe(true);
+  });
+
+  it("still rejects a repeated $id and still rejects an invalid schema each time", () => {
+    const compiler = createSchemaCompiler("ajv");
+    const identified = () => ({ $id: "https://schemas.example.com/thing", type: "string" });
+    compiler.compile(identified());
+    expect(() => compiler.compile(identified())).toThrow(/already exists/);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(() => compiler.compile({ type: "string", pattern: "(" })).toThrow();
+    }
+  });
+
+  it("does not equate a Date with its JSON string", () => {
+    const compiler = createSchemaCompiler("ajv");
+    const asString = compiler.compile({ const: "2026-01-01T00:00:00.000Z" });
+    const asDate = compiler.compile({ const: new Date("2026-01-01T00:00:00.000Z") });
+    expect(asString("2026-01-01T00:00:00.000Z")).toBe(true);
+    expect(asDate("2026-01-01T00:00:00.000Z")).toBe(false);
+  });
+});

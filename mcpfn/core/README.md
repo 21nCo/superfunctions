@@ -93,19 +93,28 @@ for (const { operation, code, reason } of skipped) {
   `[A-Za-z0-9_.-]` replaced by `_`, and truncated to 128 characters. Without an
   operationId the name is `<method>_<path segments>`, such as
   `get_users_userId_posts`. Collisions, including with tools already on a
-  supplied registry, get `_2`, `_3`, ... in document order. A `name(operation)`
+  supplied registry, get `_2`, `_3`, ... in document order; an operation
+  skipped at registration does not take a name. A `name(operation)`
   callback replaces this; an invalid or duplicate result throws an error naming
   the operation before anything is registered.
 - **Inputs.** The input schema is `{ path, query, header, body }`, each group
   present only when the operation has such inputs, with
   `additionalProperties: false` throughout. Referenced component schemas are
   copied under `definitions` (draft-07). `readOnly` properties are removed from
-  inputs, and `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
+  inputs and refused when the object otherwise accepts additional properties,
+  and `Authorization`, `Cookie`, `Host`, `Content-Length`, `Proxy-*`,
   `Accept` and `Content-Type` headers are never inputs: credentials and
   transport headers belong to the executor.
-- **Outputs.** The output schema is the schema of the first 2xx response with
-  `application/json` content when it is a plain object schema (`writeOnly`
-  properties removed); otherwise the tool declares none.
+- **Parameters.** A path, query or header parameter must accept either single
+  primitive values or arrays of primitives, judged through `$ref`, `allOf`,
+  `anyOf` and `oneOf`; `null` may accompany either. A parameter that can be an
+  object (including a schema without `type`, `enum` or `const`, such as `{}`),
+  an array of objects or arrays, or both an array and a single value is skipped.
+- **Outputs.** The schema of the first 2xx response with `application/json`
+  content is always converted, so the skip rules apply to it whatever its
+  shape. It becomes the output schema (`writeOnly` properties removed) when it
+  accepts objects and nothing else, also through a 3.1 `$ref` with sibling
+  keywords or an `allOf`; otherwise the tool declares none.
 - **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
   is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
   `openWorldHint`. The description is the trimmed summary and description,
@@ -114,9 +123,10 @@ for (const { operation, code, reason } of skipped) {
   references (recursive schemas included); path- and operation-level parameters
   in `path`, `query` and `header` with their default styles over primitives and
   arrays of primitives; `application/json` and `*+json` bodies; OpenAPI 3.0
-  `nullable`. Anything else is listed in `skipped` with a code and reason:
+  `nullable`, which adds `null` to an explicit `type` only (an `enum` keeps
+  excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
   external or URL references, `cookie` parameters, non-default styles,
-  object-valued parameters, bodies without a JSON media type, and the 2020-12
+  object-valued or mixed parameters, bodies without a JSON media type, and the 2020-12
   keywords `prefixItems`, `$dynamicRef`, `unevaluatedProperties`,
   `unevaluatedItems` and `dependentSchemas`. A Swagger 2.0 document throws.
 

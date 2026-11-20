@@ -165,17 +165,29 @@ describe("fromOpenAPI closed form set (D12)", () => {
   it("converts OpenAPI 3.0 nullable to a type union", () => {
     const { tools } = convert("form-nullable-3.0");
     const createProfile = tool(tools, "createProfile");
+    // OAS 3.0.3: nullable adds "null" to an explicit type only; enum keeps its
+    // meaning and a schema without type is unaffected.
     expect(createProfile.inputSchema.properties?.body).toMatchObject({
       properties: {
         nickname: { type: ["string", "null"] },
-        color: { type: ["string", "null"], enum: ["red", "blue", null] },
-        address: { anyOf: [{ allOf: [{ $ref: "#/definitions/Address" }] }, { type: "null" }] },
+        color: { type: ["string", "null"], enum: ["red", "blue"] },
+        shade: { type: ["string", "null"], enum: ["light", null] },
+        address: { allOf: [{ $ref: "#/definitions/Address" }] },
       },
     });
     expect(JSON.stringify(createProfile.inputSchema)).not.toContain("nullable");
     expectArguments(createProfile.inputSchema, {
-      valid: [{ body: { nickname: null, color: null, address: null } }, { body: { nickname: "n", color: "red", address: { city: "Oslo" } } }],
-      invalid: [{ body: { nickname: 1 } }, { body: { nickname: null, color: "green" } }, { body: { nickname: null, address: {} } }],
+      valid: [
+        { body: { nickname: null, shade: null } },
+        { body: { nickname: "n", color: "red", shade: "light", address: { city: "Oslo" } } },
+      ],
+      invalid: [
+        { body: { nickname: 1 } },
+        { body: { nickname: null, color: null } },
+        { body: { nickname: null, color: "green" } },
+        { body: { nickname: null, address: null } },
+        { body: { nickname: null, address: {} } },
+      ],
     });
   });
 
@@ -199,9 +211,18 @@ describe("fromOpenAPI closed form set (D12)", () => {
     expect(input.required).toEqual(["name", "secretAnswer"]);
     expect(Object.keys(createAccount.outputSchema!.properties!)).toEqual(["id", "createdAt", "name"]);
     expect(createAccount.outputSchema!.required).toEqual(["id", "createdAt", "name"]);
+    // Account accepts additional properties, so the removed names are refused by name.
+    expect(input.propertyNames).toEqual({ not: { enum: ["id", "createdAt"] } });
     expectArguments(createAccount.inputSchema, {
-      valid: [{ body: { name: "a", secretAnswer: "test-answer" } }],
-      invalid: [{ body: { name: "a" } }],
+      valid: [
+        { body: { name: "a", secretAnswer: "test-answer" } },
+        { body: { name: "a", secretAnswer: "test-answer", nickname: "extra fields stay allowed" } },
+      ],
+      invalid: [
+        { body: { name: "a" } },
+        { body: { name: "a", secretAnswer: "test-answer", id: "client-chosen-id" } },
+        { body: { name: "a", secretAnswer: "test-answer", createdAt: "2026-01-01T00:00:00Z" } },
+      ],
     });
   });
 
@@ -263,7 +284,7 @@ describe("fromOpenAPI skip reasons", () => {
     ["skip-external-ref", "listPets", "external-ref", /pets\.yaml/],
     ["skip-url-ref", "listPets", "external-ref", /https:\/\/schemas\.example\.com/],
     ["skip-cookie-parameter", "getSession", "cookie-parameter", /cookie/],
-    ["skip-object-query-parameter", "search", "unsupported-parameter-schema", /object-valued/],
+    ["skip-object-query-parameter", "search", "unsupported-parameter-schema", /query parameter filter can be an object/],
     ["skip-non-json-body", "upload", "non-json-body", /multipart\/form-data/],
   ])("%s skips %s with %s", (name, operationId, code, reason) => {
     const { tools, skipped } = convert(name);
@@ -321,6 +342,36 @@ describe("fromOpenAPI skip reasons", () => {
         reason: "query parameter ids uses form style with explode: false",
       },
     ]);
+  });
+
+  it("classifies parameter schemas through $ref, allOf, anyOf and oneOf", () => {
+    const { tools, skipped } = convert("skip-composed-parameter-schemas");
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["allOfObject", "unsupported-parameter-schema", "query parameter filter can be an object"],
+      ["oneOfObjectOrString", "unsupported-parameter-schema", "query parameter filter can be an object"],
+      ["untyped", "unsupported-parameter-schema", "query parameter filter can be an object"],
+      ["untypedWithProperties", "unsupported-parameter-schema", "header parameter X-Filter can be an object"],
+      ["composedObjectItems", "unsupported-parameter-schema", "query parameter filters is an array whose items can be objects or arrays"],
+      ["anyOfObjectItems", "unsupported-parameter-schema", "query parameter filters is an array whose items can be objects or arrays"],
+      ["arrayWithoutItems", "unsupported-parameter-schema", "query parameter filters is an array whose items can be objects or arrays"],
+      ["arrayOrString", "unsupported-parameter-schema", "query parameter ids can be both an array and a single value"],
+      ["nestedArray", "unsupported-parameter-schema", "query parameter matrix is an array whose items can be objects or arrays"],
+      ["refToComposedObject", "unsupported-parameter-schema", "query parameter filter can be an object"],
+    ]);
+    // The shape given to the executor matches what the input schema accepts.
+    expect(tools.map((entry) => [entry.name, entry.operation.parameters.map((parameter) => parameter.shape)])).toEqual([
+      ["allOfPrimitive", ["primitive"]],
+      ["enumWithoutType", ["primitive"]],
+      ["nullableArray", ["array"]],
+    ]);
+    expectArguments(tool(tools, "allOfPrimitive").inputSchema, {
+      valid: [{ query: { name: "rex" } }],
+      invalid: [{ query: { name: { q: "rex" } } }, { query: { name: ["rex"] } }],
+    });
+    expectArguments(tool(tools, "nullableArray").inputSchema, {
+      valid: [{ query: { tags: ["a", "b"] } }, { query: { tags: null } }],
+      invalid: [{ query: { tags: [{ q: "a" }] } }, { query: { tags: "a" } }],
+    });
   });
 
   it("skips unresolved, unsupported and cyclic references and path item references", () => {
@@ -396,6 +447,103 @@ describe("fromOpenAPI conversion edge cases", () => {
     expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
       ["body", "unresolved-ref"],
       ["query", "unresolved-ref"],
+    ]);
+  });
+
+  it("declares an object output schema for a 3.1 $ref with sibling keywords", () => {
+    const { tools } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/user": {
+            get: {
+              operationId: "getUser",
+              responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/User", description: "The user", minProperties: 2 } } } } },
+            },
+          },
+          "/pair": {
+            get: {
+              operationId: "getPair",
+              responses: { "200": { description: "OK", content: { "application/json": { schema: { allOf: [{ $ref: "#/components/schemas/User" }, { properties: { tag: { type: "string" } } }] } } } } },
+            },
+          },
+        },
+        components: { schemas: { User: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } } },
+      },
+      { executor: recordingExecutor() },
+    );
+    const getUser = tool(tools, "getUser").outputSchema!;
+    expect(getUser).toEqual({
+      type: "object",
+      description: "The user",
+      minProperties: 2,
+      allOf: [{ $ref: "#/definitions/User" }],
+      definitions: { User: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+    });
+    expectArguments(getUser, { valid: [{ id: "u1", name: "Ada" }], invalid: [{ id: "u1" }, { name: "Ada", other: 1 }, { id: 1, name: "Ada" }] });
+    expectArguments(tool(tools, "getPair").outputSchema!, { valid: [{ id: "u1", tag: "t" }], invalid: [{ tag: "t" }, { id: "u1", tag: 1 }] });
+  });
+
+  it("applies the skip rules to the selected response schema whatever its shape", () => {
+    const response = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/tuple": { get: { operationId: "tupleResponse", responses: response({ type: "array", prefixItems: [{ type: "string" }] }) } },
+          "/external": { get: { operationId: "externalItems", responses: response({ type: "array", items: { $ref: "other.yaml#/Pet" } }) } },
+          "/list": { get: { operationId: "listResponse", responses: response({ type: "array", items: { type: "string" } }) } },
+          "/either": { get: { operationId: "objectOrString", responses: response({ oneOf: [{ type: "object" }, { type: "string" }] }) } },
+          "/later": {
+            get: {
+              operationId: "laterResponseIgnored",
+              responses: { ...response({ type: "object" }), "201": { description: "Created", content: { "application/json": { schema: { prefixItems: [] } } } } },
+            },
+          },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([
+      ["tupleResponse", "unsupported-schema-keyword"],
+      ["externalItems", "external-ref"],
+    ]);
+    expect(tools.map((entry) => [entry.name, entry.outputSchema])).toEqual([
+      ["listResponse", undefined],
+      ["objectOrString", undefined],
+      ["laterResponseIgnored", { type: "object" }],
+    ]);
+  });
+
+  it("resolves parameters per path when path items share one operation object", () => {
+    // YAML aliases and generated documents can share an operation object.
+    const shared = { responses: { "200": { description: "OK" } } };
+    const pathParameter = (name: string) => [{ name, in: "path", required: true, schema: { type: "string" } }];
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/users/{userId}/avatar": { parameters: pathParameter("userId"), get: shared },
+          "/teams/{teamId}/avatar": { parameters: pathParameter("teamId"), get: shared },
+          "/orgs/{orgId}/avatar": { get: shared },
+        },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(tools.map((entry) => [entry.name, entry.operation.path, entry.operation.parameters.map((parameter) => parameter.name)])).toEqual([
+      ["get_users_userId_avatar", "/users/{userId}/avatar", ["userId"]],
+      ["get_teams_teamId_avatar", "/teams/{teamId}/avatar", ["teamId"]],
+    ]);
+    expectArguments(tool(tools, "get_teams_teamId_avatar").inputSchema, {
+      valid: [{ path: { teamId: "t1" } }],
+      invalid: [{ path: { userId: "u1" } }],
+    });
+    expect(skipped).toEqual([
+      {
+        operation: { method: "GET", path: "/orgs/{orgId}/avatar" },
+        code: "missing-path-parameter",
+        reason: "path template variable {orgId} has no path parameter",
+      },
     ]);
   });
 

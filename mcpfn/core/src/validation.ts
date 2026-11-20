@@ -1,5 +1,5 @@
 import { schemaUriResolver } from "./schema-uri.js";
-import Ajv, { type ErrorObject } from "ajv";
+import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import {
   dereference,
@@ -64,6 +64,11 @@ function createAjv(): Ajv {
     // newer default extends that dialect; keep both engines on the spec rule.
     ignoreKeywordsWithRef: true,
     logger: false,
+    // Registration compiles every tool schema eagerly. Ajv's optimisation
+    // pass over the generated code costs more than it saves for these small
+    // validators (a generated catalog registers thousands); validation
+    // results are unchanged.
+    code: { optimize: false },
   });
   // npm workspaces may install ajv-formats with its own compatible Ajv copy.
   // The runtime contract is stable; erase only that duplicate-package type identity.
@@ -554,6 +559,40 @@ export function validateSchemaCollection(
 }
 
 /**
+ * Registration compiles every tool schema eagerly, and a catalog generated
+ * from one API description repeats the same schemas across its tools. Equal
+ * JSON compiles to an equal validator, so the Ajv engine compiles it once and
+ * shares the generated function (each caller keeps its own error state).
+ * Schemas with `$id` (Ajv rejects a repeated id) or with values JSON does not
+ * represent exactly have no key and are compiled every time.
+ */
+function schemaContentKey(schema: object): string | undefined {
+  let exact = true;
+  let key: string | undefined;
+  try {
+    key = JSON.stringify(schema, function (this: Record<string, unknown>, name: string, value: unknown) {
+      // `this[name]` is the value before toJSON(), such as a Date.
+      const raw = this[name];
+      if (
+        raw === undefined ||
+        typeof raw === "function" ||
+        typeof raw === "symbol" ||
+        typeof raw === "bigint" ||
+        (typeof raw === "number" && !Number.isFinite(raw)) ||
+        (typeof raw === "object" && raw !== null && !Array.isArray(raw) &&
+          Object.getPrototypeOf(raw) !== Object.prototype && Object.getPrototypeOf(raw) !== null)
+      ) {
+        exact = false;
+      }
+      return value;
+    });
+  } catch {
+    return undefined;
+  }
+  return exact && key !== undefined && !key.includes('"$id"') ? key : undefined;
+}
+
+/**
  * Compile a JSON Schema into a runtime-appropriate validator.
  *
  * On Node the validator uses Ajv (with formats) so behavior is unchanged. On
@@ -566,11 +605,17 @@ export function createSchemaCompiler(
 ): SchemaCompiler {
   if (engine === "ajv") {
     const ajv = createAjv();
+    const compiledByContent = new Map<string, ValidateFunction>();
     return {
       engine,
       compile(schema) {
         assertNoLegacySchemaIds(schema);
-        const validate = ajv.compile(schema as never);
+        const key = schemaContentKey(schema);
+        let validate = key === undefined ? undefined : compiledByContent.get(key);
+        if (!validate) {
+          validate = ajv.compile(schema as never);
+          if (key !== undefined) compiledByContent.set(key, validate);
+        }
         const compiled = ((data: unknown): boolean => {
           const valid = validate(data);
           compiled.errors = valid ? null : mapAjvErrors(validate.errors);

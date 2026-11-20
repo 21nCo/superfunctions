@@ -27,6 +27,14 @@
                     ],
                     "nullable": true
                   },
+                  "shade": {
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      null
+                    ],
+                    "nullable": true
+                  },
                   "address": {
                     "nullable": true,
                     "allOf": [

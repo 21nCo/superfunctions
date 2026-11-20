@@ -243,9 +243,13 @@ class OperationConverter {
     return current;
   }
 
-  operation(path: string, pathItem: JsonObject, method: OpenApiMethod, raw: JsonObject): OpenApiOperation {
-    const parameters = this.parameters(path, pathItem, raw);
-    const requestBody = this.requestBody(raw);
+  operation(
+    path: string,
+    pathItem: JsonObject,
+    method: OpenApiMethod,
+    raw: JsonObject,
+    { parameters, body }: OperationInputs,
+  ): OpenApiOperation {
     return {
       method,
       path,
@@ -255,7 +259,7 @@ class OperationConverter {
       tags: Array.isArray(raw.tags) ? raw.tags.filter((tag): tag is string => typeof tag === "string") : [],
       deprecated: raw.deprecated === true,
       parameters: parameters.map(({ parameter }) => parameter),
-      ...(requestBody ? { requestBody: requestBody.info } : {}),
+      ...(body ? { requestBody: body.info } : {}),
       servers: servers(raw.servers, pathItem.servers, this.document.servers),
       ...(security(raw.security, this.document.security) !== undefined
         ? { security: security(raw.security, this.document.security) }
@@ -264,17 +268,16 @@ class OperationConverter {
   }
 
   /** Parameters and the request body as one tool input schema (D11). */
-  inputSchema(path: string, pathItem: JsonObject, raw: JsonObject): McpFnObjectSchema {
+  inputSchema({ parameters, body }: OperationInputs): McpFnObjectSchema {
     const refs = new Set<string>();
     const groups: Array<[string, McpFnJsonSchema | boolean]> = [];
     const required: string[] = [];
-    const parameters = this.parameters(path, pathItem, raw);
     for (const location of ["path", "query", "header"] as const) {
       const members = parameters.filter(({ parameter }) => parameter.in === location);
       if (members.length === 0) continue;
       const properties = Object.fromEntries(
-        members.map(({ parameter, schema, description }) => {
-          const converted = this.schemas.convert(schema, "input", refs);
+        members.map(({ parameter, schema: converted, refs: parameterRefs, description }) => {
+          for (const name of parameterRefs) refs.add(name);
           return [
             parameter.name,
             description && isObject(converted) && !("$ref" in converted) && converted.description === undefined
@@ -295,7 +298,6 @@ class OperationConverter {
       ]);
       if (requiredNames.length > 0) required.push(location);
     }
-    const body = this.requestBody(raw);
     if (body) {
       groups.push(["body", this.schemas.convert(body.schema, "input", refs)]);
       if (body.info.required) required.push("body");
@@ -310,7 +312,11 @@ class OperationConverter {
     };
   }
 
-  /** The first 2xx response with `application/json` content, when its schema is an object schema. */
+  /**
+   * The first 2xx response with `application/json` content. Its schema is
+   * always converted, so the skip rules apply whatever its shape; it becomes
+   * the output schema only when it accepts objects and nothing else.
+   */
   outputSchema(raw: JsonObject): McpFnObjectSchema | undefined {
     if (!isObject(raw.responses)) return undefined;
     let media: unknown;
@@ -325,13 +331,15 @@ class OperationConverter {
       break;
     }
     if (!isObject(media) || media.schema === undefined) return undefined;
-    const target = this.schemas.resolve(media.schema);
-    const type = isObject(target) ? target.type : undefined;
-    if (type !== "object" && !isObjectOnly(type)) return undefined;
     const refs = new Set<string>();
     let root = this.schemas.convert(media.schema, "output", refs);
     const definitions = this.schemas.definitions(refs, "output");
-    // A root `$ref` is inlined: mcpFn needs `type: "object"` on the root itself.
+    // structuredContent is always an object: a nullable or mixed schema
+    // (3.0 `nullable`, `type: ["object", "null"]`, `oneOf` with a string) has none.
+    const { values } = this.schemas.admits(media.schema);
+    if (values.size !== 1 || !values.has("object")) return undefined;
+    // A root `$ref` is inlined: draft-07 ignores keywords beside `$ref`, and
+    // mcpFn needs `type: "object"` on the root itself.
     const seen = new Set<string>();
     while (isObject(root) && typeof root.$ref === "string" && Object.keys(root).length === 1) {
       const name = root.$ref.slice("#/definitions/".length);
@@ -339,9 +347,10 @@ class OperationConverter {
       seen.add(name);
       root = definitions[name]!;
     }
-    // A 3.0 `nullable` object became ["object", "null"]: structuredContent is
-    // always an object, so only a plain object schema is declared.
-    if (!isObject(root) || !(root.type === "object" || isObjectOnly(root.type))) return undefined;
+    if (!isObject(root)) return undefined;
+    // The root may carry its object type only through a reference or a
+    // composition (`{ $ref, description }` in 3.1, `allOf: [...]`); stating it
+    // on the root narrows nothing, since only objects are accepted.
     return {
       ...root,
       type: "object",
@@ -349,11 +358,16 @@ class OperationConverter {
     } as McpFnObjectSchema;
   }
 
-  private readonly parameterCache = new WeakMap<JsonObject, ResolvedParameter[]>();
+  /**
+   * Parameters and request body of one operation at one path. Resolved per
+   * occurrence: a parsed document may share one operation object between
+   * path items, and the path-level parameters and template differ.
+   */
+  inputs(path: string, pathItem: JsonObject, raw: JsonObject): OperationInputs {
+    return { parameters: this.parameters(path, pathItem, raw), body: this.requestBody(raw) };
+  }
 
   private parameters(path: string, pathItem: JsonObject, raw: JsonObject): ResolvedParameter[] {
-    const cached = this.parameterCache.get(raw);
-    if (cached) return cached;
     const merged = new Map<string, JsonObject>();
     for (const list of [pathItem.parameters, raw.parameters]) {
       if (list === undefined) continue;
@@ -386,7 +400,6 @@ class OperationConverter {
         throw new OpenApiSkip("invalid-operation", `path parameter ${name} is not in the path template`);
       }
     }
-    this.parameterCache.set(raw, resolved);
     return resolved;
   }
 
@@ -415,6 +428,11 @@ class OperationConverter {
       );
     }
     const explode = typeof raw.explode === "boolean" ? raw.explode : style === "form";
+    // Conversion runs first so its skip reasons (unsupported keywords,
+    // unresolved or cyclic references) take precedence over the shape check.
+    const refs = new Set<string>();
+    const converted = this.schemas.convert(raw.schema, "input", refs);
+    this.schemas.definitions(refs, "input");
     const shape = this.parameterShape(name, location, raw.schema);
     if (location === "query" && shape === "array" && !explode) {
       throw new OpenApiSkip(
@@ -432,44 +450,44 @@ class OperationConverter {
         ...(location === "query" && raw.allowReserved === true ? { allowReserved: true as const } : {}),
         shape,
       },
-      schema: raw.schema,
+      schema: converted,
+      refs,
       ...(typeof raw.description === "string" ? { description: raw.description } : {}),
     };
   }
 
+  /**
+   * The executor serialises a parameter as one primitive or as an array of
+   * primitives, so the schema must accept exactly one of those shapes. Kinds
+   * are derived through `$ref`, `allOf`, `anyOf` and `oneOf`; a schema without
+   * a type (such as `{}`) can be an object and is skipped. `null` may accompany
+   * either shape when the schema allows it.
+   */
   private parameterShape(
     name: string,
     location: OpenApiParameterLocation,
     schema: unknown,
   ): "primitive" | "array" {
-    const target = this.schemas.resolve(schema);
-    if (isObjectValued(target)) {
-      throw new OpenApiSkip(
-        "unsupported-parameter-schema",
-        `${location} parameter ${name} is object-valued`,
-      );
+    const { values, items } = this.schemas.admits(schema);
+    const unsupported = (detail: string) =>
+      new OpenApiSkip("unsupported-parameter-schema", `${location} parameter ${name} ${detail}`);
+    if (values.has("object")) throw unsupported("can be an object");
+    if (!values.has("array")) return "primitive";
+    if (PRIMITIVE_KINDS.some((kind) => values.has(kind))) {
+      throw unsupported("can be both an array and a single value");
     }
-    if (!hasType(target, "array")) return "primitive";
-    const items = isObject(target) ? this.schemas.resolve(target.items) : undefined;
-    if (isObjectValued(items) || hasType(items, "array")) {
-      throw new OpenApiSkip(
-        "unsupported-parameter-schema",
-        `${location} parameter ${name} is an array of non-primitive values`,
-      );
+    if (items.has("object") || items.has("array")) {
+      throw unsupported("is an array whose items can be objects or arrays");
     }
     return "array";
   }
 
-  private readonly bodyCache = new WeakMap<JsonObject, { info: OpenApiOperationRequestBody; schema: unknown } | null>();
-
-  private requestBody(raw: JsonObject): { info: OpenApiOperationRequestBody; schema: unknown } | undefined {
+  private requestBody(raw: JsonObject): ResolvedBody | undefined {
     if (raw.requestBody === undefined) return undefined;
-    const cached = this.bodyCache.get(raw);
-    if (cached !== undefined) return cached ?? undefined;
     const body = this.resolve(raw.requestBody, "requestBodies");
     const content = isObject(body.content) ? body.content : {};
     const keys = Object.keys(content);
-    let result: { info: OpenApiOperationRequestBody; schema: unknown } | null = null;
+    let result: ResolvedBody | undefined;
     if (keys.length > 0) {
       const contentType = keys.find(isApplicationJson) ?? keys.find(isJsonMediaType);
       if (contentType === undefined) {
@@ -484,16 +502,29 @@ class OperationConverter {
         schema: isObject(media) && media.schema !== undefined ? media.schema : {},
       };
     }
-    this.bodyCache.set(raw, result);
-    return result ?? undefined;
+    return result;
   }
 }
 
 interface ResolvedParameter {
   parameter: OpenApiOperationParameter;
-  schema: unknown;
+  /** The converted (draft-07) schema and the component schemas it references. */
+  schema: McpFnJsonSchema | boolean;
+  refs: ReadonlySet<string>;
   description?: string;
 }
+
+interface ResolvedBody {
+  info: OpenApiOperationRequestBody;
+  schema: unknown;
+}
+
+interface OperationInputs {
+  parameters: ResolvedParameter[];
+  body: ResolvedBody | undefined;
+}
+
+const PRIMITIVE_KINDS = ["string", "number", "integer", "boolean"] as const;
 
 /** Deep copy in which no object is reachable by two paths (structuredClone keeps sharing). */
 function treeCopy<T>(value: T, ancestors = new Set<object>()): T {
@@ -509,22 +540,6 @@ function treeCopy<T>(value: T, ancestors = new Set<object>()): T {
     : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, treeCopy(item, ancestors)]));
   ancestors.delete(value);
   return copy as T;
-}
-
-function isObjectOnly(type: unknown): boolean {
-  return Array.isArray(type) && type.length === 1 && type[0] === "object";
-}
-
-function hasType(schema: unknown, type: string): boolean {
-  if (!isObject(schema)) return false;
-  return schema.type === type || (Array.isArray(schema.type) && schema.type.includes(type));
-}
-
-function isObjectValued(schema: unknown): boolean {
-  return (
-    hasType(schema, "object") ||
-    (isObject(schema) && (isObject(schema.properties) || isObject(schema.additionalProperties)))
-  );
 }
 
 function documentVersion(document: JsonObject): OpenApiVersion {
@@ -631,14 +646,15 @@ export function fromOpenAPI<TContext = undefined>(
         continue;
       }
       try {
-        const operation = deepFreeze(converter.operation(path, pathItem, method, value));
+        const inputs = converter.inputs(path, pathItem, value);
+        const operation = deepFreeze(converter.operation(path, pathItem, method, value, inputs));
         // A HEAD response has no body, so it never has structured output.
         const outputSchema = method === "HEAD" ? undefined : converter.outputSchema(value);
         // Each tool owns its schema objects: component conversions are cached
         // and shared, and a schema must not reach one object by two paths.
         candidates.push({
           operation,
-          inputSchema: treeCopy(converter.inputSchema(path, pathItem, value)),
+          inputSchema: treeCopy(converter.inputSchema(inputs)),
           ...(outputSchema ? { outputSchema: treeCopy(outputSchema) } : {}),
         });
       } catch (error) {
@@ -649,12 +665,14 @@ export function fromOpenAPI<TContext = undefined>(
   }
 
   const registry = options.registry ?? new McpFnRegistry<TContext>();
-  const names = assignNames(candidates, options, registry);
+  const names = new ToolNames(options, registry);
+  // name() results are checked before anything is registered.
+  const chosen = options.name ? candidates.map(({ operation }) => names.choose(operation)) : undefined;
   const tools: OpenApiToolInfo[] = [];
   const executor = options.executor;
   candidates.forEach((candidate, index) => {
-    const name = names[index]!;
     const { operation, inputSchema, outputSchema } = candidate;
+    const name = chosen ? chosen[index]! : names.next(operation);
     const description = toolDescription(operation);
     const annotations = toolAnnotations(operation.method);
     try {
@@ -667,7 +685,7 @@ export function fromOpenAPI<TContext = undefined>(
         handler: (args, _context, extra) => executor.execute({ operation, args, signal: extra.signal }),
       });
     } catch (error) {
-      if (!(error instanceof McpFnValidationError)) throw error;
+      if (!isValidationError(error)) throw error;
       const ref: OpenApiOperationRef = {
         method: operation.method,
         path: operation.path,
@@ -681,6 +699,7 @@ export function fromOpenAPI<TContext = undefined>(
       });
       return;
     }
+    names.claim(name);
     tools.push({
       name,
       description,
@@ -691,6 +710,17 @@ export function fromOpenAPI<TContext = undefined>(
     });
   });
   return { registry, tools, skipped };
+}
+
+/**
+ * A registry from the other module format (ESM and CommonJS entries each
+ * bundle their own class) throws an McpFnValidationError that fails instanceof.
+ */
+function isValidationError(error: unknown): error is McpFnValidationError {
+  return (
+    error instanceof McpFnValidationError ||
+    (error instanceof Error && error.name === "McpFnValidationError")
+  );
 }
 
 function filterReason<TContext>(
@@ -722,37 +752,65 @@ function filterReason<TContext>(
   return undefined;
 }
 
-function assignNames<TContext>(
-  candidates: Candidate[],
-  options: FromOpenApiOptions<TContext>,
-  registry: McpFnRegistry<TContext>,
-): string[] {
-  const used = new Set<string>();
-  const taken = (name: string) => used.has(name) || registry.has(name);
-  return candidates.map(({ operation }) => {
-    let name: string;
-    if (options.name) {
-      const chosen: unknown = options.name(operation);
-      if (typeof chosen !== "string" || !TOOL_NAME.test(chosen)) {
-        throw new McpFnValidationError(
-          `name() returned an invalid tool name ${JSON.stringify(chosen)} for ${describeOperation(operation)}`,
-        );
-      }
-      if (taken(chosen)) {
-        throw new McpFnValidationError(
-          `name() returned the duplicate tool name ${JSON.stringify(chosen)} for ${describeOperation(operation)}`,
-        );
-      }
-      name = chosen;
-    } else {
-      const base = defaultName(operation, options.prefix ?? "");
-      name = base;
-      for (let attempt = 2; taken(name); attempt += 1) {
-        const suffix = `_${attempt}`;
-        name = base.slice(0, MAX_NAME_LENGTH - suffix.length) + suffix;
-      }
+/**
+ * Tool names in document order. A name is claimed only once its tool is
+ * registered, so an operation skipped at registration does not push the next
+ * one with the same name to `_2`. Suffix search resumes where the last one for
+ * that base stopped, keeping many collisions linear.
+ */
+class ToolNames<TContext> {
+  private readonly used = new Set<string>();
+  private readonly nextSuffix = new Map<string, number>();
+  private readonly suffixOf = new Map<string, [string, number]>();
+
+  constructor(
+    private readonly options: FromOpenApiOptions<TContext>,
+    private readonly registry: McpFnRegistry<TContext>,
+  ) {}
+
+  private taken(name: string): boolean {
+    return this.used.has(name) || this.registry.has(name);
+  }
+
+  /** The name() callback result; invalid or duplicate names are errors. */
+  choose(operation: OpenApiOperation): string {
+    const chosen: unknown = this.options.name!(operation);
+    if (typeof chosen !== "string" || !TOOL_NAME.test(chosen)) {
+      throw new McpFnValidationError(
+        `name() returned an invalid tool name ${JSON.stringify(chosen)} for ${describeOperation(operation)}`,
+      );
     }
-    used.add(name);
+    if (this.taken(chosen)) {
+      throw new McpFnValidationError(
+        `name() returned the duplicate tool name ${JSON.stringify(chosen)} for ${describeOperation(operation)}`,
+      );
+    }
+    this.used.add(chosen);
+    return chosen;
+  }
+
+  /** The generated name, with `_2`, `_3`, … after a collision. */
+  next(operation: OpenApiOperation): string {
+    const base = defaultName(operation, this.options.prefix ?? "");
+    let attempt = this.nextSuffix.get(base) ?? 1;
+    let name = attempt === 1 ? base : suffixed(base, attempt);
+    while (this.taken(name)) {
+      attempt += 1;
+      name = suffixed(base, attempt);
+    }
+    this.suffixOf.set(name, [base, attempt]);
     return name;
-  });
+  }
+
+  claim(name: string): void {
+    this.used.add(name);
+    const suffix = this.suffixOf.get(name);
+    if (suffix) this.nextSuffix.set(suffix[0], suffix[1] + 1);
+    this.suffixOf.clear();
+  }
+}
+
+function suffixed(base: string, attempt: number): string {
+  const suffix = `_${attempt}`;
+  return base.slice(0, MAX_NAME_LENGTH - suffix.length) + suffix;
 }
