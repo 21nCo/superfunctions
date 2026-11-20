@@ -180,6 +180,19 @@ suite('Postgres lifecycle integration', () => {
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
     expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(0);
   });
+  it('stores long chunk text sent outside the row JSON exactly', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    // Control characters grow six-fold under JSON escaping; values this long travel as their own parameters.
+    const long = String.fromCharCode(1).repeat(1 << 20) + 'end';
+    const chunks = [{ content: 'short' }, { content: long }, { content: long + 'er' }, { content: 'tail\u0001' }]
+      .map(chunk => ({ tenantId: 'a', containerTags: ['docs'], ...chunk }));
+    const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-long', chunks });
+    expect(rows.map(row => [row.chunkIndex, row.content.length])).toEqual([[0, 5], [1, (1 << 20) + 3], [2, (1 << 20) + 5], [3, 5]]);
+    const stored = await client`SELECT chunk_index, content = ${long} AS same FROM memories WHERE deleted_at IS NULL ORDER BY chunk_index`;
+    expect(stored.map(row => [row.chunk_index, row.same])).toEqual([[0, false], [1, true], [2, false], [3, false]]);
+    expect(rows[2].content.endsWith('ender')).toBe(true);
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-long', chunkCount: 4 });
+  });
   it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
     const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
     const keys = ['b.md', 'a.md'].sort();

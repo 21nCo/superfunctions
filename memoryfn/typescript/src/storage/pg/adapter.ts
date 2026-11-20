@@ -9,6 +9,11 @@ import { and, eq, sql, isNull, or, arrayContains, inArray, is } from 'drizzle-or
 import { PgTransaction } from 'drizzle-orm/pg-core';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
+/** Characters of row JSON per json parameter of a source replacement. */
+const JSON_PART_LENGTH = 1 << 26;
+/** Content this long travels as its own text parameter, not inside row JSON. */
+const SIDE_TEXT_LENGTH = 1 << 20;
+
 /**
  * postgres-js sends a text parameter as UTF-8, which stores a lone surrogate as
  * U+FFFD. JSON would carry it as an escape that PostgreSQL rejects, so a text
@@ -316,23 +321,47 @@ export class PostgresAdapter implements StorageAdapter {
     return this.withSourceLock(scope, tags, async tx => {
       if (!values.length) { await this.clearSource(tx, scope, tags, now); return []; }
       const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, tags, now);
-      // Every chunk travels in one json parameter, so the bind count does not grow
-      // with the chunk count. json (unlike jsonb, capped near 256 MB) is stored as
-      // text, so the payload has the same 1 GB ceiling as the protocol message that
-      // carried per-column parameters. Columns follow the table order drizzle inserts in.
-      const payload = JSON.stringify(values.map(row => ({
+      const rows = await tx.with(tombstoned, unlinked).insert(memories).select(this.replacementRows(values)).returning();
+      return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
+    });
+  }
+
+  /**
+   * A SELECT of the replacement rows whose bind count grows with the payload's
+   * size, not its chunk count. Rows travel as JSON arrays in json parameters of at
+   * most JSON_PART_LENGTH characters each; content of SIDE_TEXT_LENGTH characters
+   * or more travels as its own text parameter, unescaped, and the row names it by
+   * position (type needs no such path: its btree index bounds it far lower). No
+   * JavaScript string grows beyond one part or one input value, and the statement
+   * stays within the protocol message limit that per-column parameters had.
+   * Columns follow the table order drizzle inserts in.
+   */
+  private replacementRows(values: Array<ReturnType<PostgresAdapter['toRow']> & { sourceKey: string; contentHash: string; chunkIndex: number }>) {
+    const texts: string[] = [];
+    const inline = (value: string) => value.length < SIDE_TEXT_LENGTH ? { text: storedText(value), ref: null } : { text: null, ref: texts.push(value) };
+    const parts: string[][] = [[]];
+    let partLength = 0;
+    for (const row of values) {
+      const content = inline(row.content);
+      const json = JSON.stringify({
         id: row.id ?? null, tenant_id: row.tenantId, container_tags: row.containerTags,
-        type: storedText(row.type), content: storedText(row.content),
+        type: storedText(row.type), content: content.text, content_ref: content.ref,
         embedding: row.embedding ? JSON.stringify(row.embedding) : null, metadata: row.metadata, is_latest: row.isLatest,
         created_at: row.createdAt.toISOString(), updated_at: row.updatedAt.toISOString(),
         source_key: row.sourceKey, content_hash: row.contentHash, chunk_index: row.chunkIndex,
-      })));
-      const rows = await tx.with(tombstoned, unlinked).insert(memories).select(sql`SELECT coalesce(r.id, gen_random_uuid()),
-        r.tenant_id, r.container_tags, r.type, r.content, r.embedding, r.metadata, 1, r.deleted_at, r.is_latest,
-        r.created_at, r.updated_at, r.source_key, r.content_hash, r.chunk_index
-        FROM json_populate_recordset(NULL::${memories}, ${payload}::text::json) AS r`).returning();
-      return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
-    });
+      });
+      if (partLength && partLength + json.length > JSON_PART_LENGTH) { parts.push([]); partLength = 0; }
+      parts[parts.length - 1].push(json); partLength += json.length + 1;
+    }
+    const contentSql = texts.length
+      ? sql`CASE (e->>'content_ref')::int ${sql.join(texts.map((text, index) => sql`WHEN ${sql.raw(String(index + 1))} THEN ${text}::text`), sql` `)} ELSE r.content END`
+      : sql`r.content`;
+    const partValues = sql.join(parts.map(part => sql`(${`[${part.join(',')}]`}::text::json)`), sql`, `);
+    return sql`SELECT coalesce(r.id, gen_random_uuid()), r.tenant_id, r.container_tags,
+      r.type, ${contentSql},
+      r.embedding, r.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, r.source_key, r.content_hash, r.chunk_index
+      FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
+      CROSS JOIN json_populate_record(NULL::${memories}, e) AS r`;
   }
 
   async deleteSource(input: SourceScope): Promise<number> {
