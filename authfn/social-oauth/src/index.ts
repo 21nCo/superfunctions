@@ -2512,7 +2512,7 @@ type SocialTokenSet = {
 };
 
 function readHandoffChallenge(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     return undefined;
   }
   const challenge = typeof value === 'string' ? value : '';

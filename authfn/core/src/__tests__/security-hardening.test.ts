@@ -542,7 +542,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     expect(nativeWithoutChallenge.status).toBe(400);
     const badChallenge = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge: 'short' });
     expect(badChallenge.status).toBe(400);
-    for (const handoffChallenge of ['', 42]) {
+    for (const handoffChallenge of ['', 42, null]) {
       const malformed = await start(createTestServer(createConfig({})), { returnTo: 'nucleum://oauthsignin', handoffChallenge });
       expect(malformed.status).toBe(400);
     }
