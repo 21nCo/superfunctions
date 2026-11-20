@@ -7,6 +7,35 @@ const PW = ["pass", "word"].join("");
 const userinfo = (secret: string) => ["user", secret].join(":");
 const REDACTED_MARK = "[REDACTED]";
 
+// Generous per-test timeout for the scaling checks below.
+const SCALING_TIMEOUT = 60_000;
+
+/**
+ * Runs fn at size large / 4 and at large (best of three runs each, after a
+ * warm-up) and fails on super-linear growth: linear work grows about 4x,
+ * quadratic about 16x, so the limit of 10x leaves room for garbage-collection
+ * and CPU-load noise. A small run under 50 ms counts as 50 ms, so timer noise
+ * cannot fail a fast run, and the large run has an absolute bound with ample
+ * headroom. This detects growth, not machine speed.
+ */
+function expectLinearScaling(large: number, fn: (n: number) => void): void {
+  const small = Math.floor(large / 4);
+  fn(Math.floor(small / 4));
+  const time = (size: number) => {
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      fn(size);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  };
+  const smallTime = time(small);
+  const largeTime = time(large);
+  expect(largeTime).toBeLessThan(10 * Math.max(smallTime, 50));
+  expect(largeTime).toBeLessThan(5_000);
+}
+
 describe("auth scheme words as secret values", () => {
   it("redacts a lone scheme word held by a non-authorization key, failing closed to the end of the line", () => {
     const cases: Array<[string, string]> = [
@@ -282,13 +311,13 @@ describe("round-7 fragment and scheme repairs", () => {
   });
 
   it("redacts long fragments in linear time", () => {
-    const routes = new URL(`https://example.test/#/${"x".repeat(48_000)}`);
-    const params = new URL(`https://example.test/#/cb?${"q=1&".repeat(12_000)}state=ok`);
-    const started = performance.now();
-    expect(redactSensitive(routes)).toBe(routes.href);
-    expect(redactSensitive(params)).toBe(params.href);
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(48_000, (n) => {
+      const routes = new URL(`https://example.test/#/${"x".repeat(n)}`);
+      const params = new URL(`https://example.test/#/cb?${"q=1&".repeat(n / 4)}state=ok`);
+      expect(redactSensitive(routes)).toBe(routes.href);
+      expect(redactSensitive(params)).toBe(params.href);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-8 URL component and scheme-word repairs", () => {
@@ -327,15 +356,15 @@ describe("round-8 URL component and scheme-word repairs", () => {
   });
 
   it("redacts repeated token parameters in queries and fragments in linear time", () => {
-    const fragmentAssign = new URL(`https://example.test/#${"token=x&".repeat(16_000)}`);
-    const fragmentColon = new URL(`https://example.test/#${"token:x&".repeat(16_000)}`);
-    const queryAssign = new URL(`https://example.test/?${"token=x&".repeat(16_000)}`);
-    const started = performance.now();
-    expect(redactSensitive(fragmentAssign)).toBe("https://example.test/#token=[REDACTED]");
-    expect(redactSensitive(fragmentColon)).toBe("https://example.test/#token:[REDACTED]");
-    expect(redactSensitive(queryAssign)).toBe("https://example.test/?token=[REDACTED]");
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(16_000, (n) => {
+      const fragmentAssign = new URL(`https://example.test/#${"token=x&".repeat(n)}`);
+      const fragmentColon = new URL(`https://example.test/#${"token:x&".repeat(n)}`);
+      const queryAssign = new URL(`https://example.test/?${"token=x&".repeat(n)}`);
+      expect(redactSensitive(fragmentAssign)).toBe("https://example.test/#token=[REDACTED]");
+      expect(redactSensitive(fragmentColon)).toBe("https://example.test/#token:[REDACTED]");
+      expect(redactSensitive(queryAssign)).toBe("https://example.test/?token=[REDACTED]");
+    });
+  }, SCALING_TIMEOUT);
 
   it("masks a non-authorization value after a standing-alone scheme word to the end of the line", () => {
     const cases: Array<[string, string]> = [
@@ -413,19 +442,20 @@ describe("round-10 scheme words and URL parameter boundaries", () => {
   });
 
   it("decides scheme words in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString(`${PW}=basic x.`.repeat(64_000))).not.toContain("basic");
-    expect(redactSensitiveString(`${PW}=basic "${"a".repeat(200_000)}`)).toBe(`${PW}=[REDACTED]`);
-    expect(redactSensitiveString(`authorization: bearer "${"a".repeat(200_000)}`)).toBe("authorization: [REDACTED]");
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString(`${PW}=basic x.`.repeat(n))).not.toContain("basic");
+      expect(redactSensitiveString(`${PW}=basic "${"a".repeat(3 * n)}`)).toBe(`${PW}=[REDACTED]`);
+      expect(redactSensitiveString(`authorization: bearer "${"a".repeat(3 * n)}`)).toBe("authorization: [REDACTED]");
+    });
+  }, SCALING_TIMEOUT);
 
   it("never prints a sensitive value tail after an @", () => {
     const value = ["sec", "ret"].join("@");
     for (const delimiter of ["?", "#"]) {
       const url = new URL(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=${value}&q=1`);
       const redacted = redactSensitive(url);
-      expect(redacted).toBe(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=[REDACTED]`);
+      // Userinfo that holds a secret is masked with the run after its @.
+      expect(redacted).toBe(`https://example.test/${delimiter}next=https://[REDACTED]&q=1`);
       expect(redacted).not.toContain("ret");
     }
     // Pin behaviour (deferred minor): userinfo matching crosses & and over-masks.
@@ -511,15 +541,13 @@ describe("round-11 whole-href string pass with an additive parameter post-pass",
   });
 
   it("stays linear on long components", () => {
-    const long = "a=b&".repeat(32_000);
-    const started = performance.now();
-    expect(href(`?${long}#${long}`)).toBe(`https://example.test/?${long}#${long}`);
-    expect(href(`#${"x".repeat(128_000)}`)).toBe(`https://example.test/#${"x".repeat(128_000)}`);
-    expect(href(`?${`${tokenKey}%3Dx&`.repeat(16_000)}`)).toBe(
-      `https://example.test/?${"[REDACTED]&".repeat(16_000)}`,
-    );
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(32_000, (n) => {
+      const long = "a=b&".repeat(n);
+      expect(href(`?${long}#${long}`)).toBe(`https://example.test/?${long}#${long}`);
+      expect(href(`#${"x".repeat(4 * n)}`)).toBe(`https://example.test/#${"x".repeat(4 * n)}`);
+      expect(href(`?${`${tokenKey}%3Dx&`.repeat(n / 2)}`)).toBe(`https://example.test/?${"[REDACTED]&".repeat(n / 2)}`);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-12 scheme word before an empty sensitive field", () => {
@@ -548,12 +576,12 @@ describe("round-12 scheme word before an empty sensitive field", () => {
   });
 
   it("decides scheme words before empty fields in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString("authorization: bearer x ".repeat(64_000))).toBe("authorization: bearer [REDACTED]");
-    expect(redactSensitiveString(`${PW}=basic tok.`.repeat(64_000))).not.toContain("basic");
-    expect(redactSensitiveString(`${PW}=basic ${tokenKey}= `.repeat(64_000))).not.toContain("basic");
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString("authorization: bearer x ".repeat(n))).toBe("authorization: bearer [REDACTED]");
+      expect(redactSensitiveString(`${PW}=basic tok.`.repeat(n))).not.toContain("basic");
+      expect(redactSensitiveString(`${PW}=basic ${tokenKey}= `.repeat(n))).not.toContain("basic");
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-13 scheme word under a non-authorization key", () => {
@@ -593,13 +621,13 @@ describe("round-13 scheme word under a non-authorization key", () => {
   });
 
   it("decides non-authorization scheme words in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x `.repeat(64_000))).toBe(`${accessKey}: [REDACTED]`);
-    expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x\n`.repeat(64_000))).not.toContain("sv=1");
-    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = `.repeat(64_000))).not.toContain("basic");
-    expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = "${"a".repeat(200_000)}`)).toBe(`${PW}=[REDACTED]`);
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x `.repeat(n))).toBe(`${accessKey}: [REDACTED]`);
+      expect(redactSensitiveString(`${accessKey}: Bearer sv=1&x\n`.repeat(n))).not.toContain("sv=1");
+      expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = `.repeat(n))).not.toContain("basic");
+      expect(redactSensitiveString(`${PW}=basic "${tokenKey}" = "${"a".repeat(3 * n)}`)).toBe(`${PW}=[REDACTED]`);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-14 token after a scheme word that may itself be the credential", () => {
@@ -660,11 +688,11 @@ describe("round-14 token after a scheme word that may itself be the credential",
   });
 
   it("masks ambiguous tokens after scheme words in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= x `.repeat(64_000))).not.toContain(abcToken);
-    expect(redactSensitiveString(`${accessKey}: Basic ${userPass} `.repeat(64_000))).not.toContain(apiKey);
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= x `.repeat(n))).not.toContain(abcToken);
+      expect(redactSensitiveString(`${accessKey}: Basic ${userPass} `.repeat(n))).not.toContain(apiKey);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-15 scanning never resumes inside the text after a scheme word", () => {
@@ -715,11 +743,11 @@ describe("round-15 scanning never resumes inside the text after a scheme word", 
   });
 
   it("masks to the end of the line in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= ${PW}: x\n`.repeat(64_000))).not.toContain(abcToken);
-    expect(redactSensitiveString(`${PW}=basic ${tokenKey}= ${apiKey}= x `.repeat(64_000))).toBe(`${PW}=[REDACTED]`);
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString(`${accessKey}: Bearer ${abcToken}= ${PW}: x\n`.repeat(n))).not.toContain(abcToken);
+      expect(redactSensitiveString(`${PW}=basic ${tokenKey}= ${apiKey}= x `.repeat(n))).toBe(`${PW}=[REDACTED]`);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-16 text after a scheme word is printed only outside the credential", () => {
@@ -780,14 +808,13 @@ describe("round-16 text after a scheme word is printed only outside the credenti
   });
 
   it("masks folded lines and non-token values in linear time", () => {
-    const started = performance.now();
-    expect(redactSensitiveString("Authorization: Bearer\n x\n".repeat(64_000))).toBe(
-      "Authorization: [REDACTED]\n".repeat(64_000),
-    );
-    expect(redactSensitiveString(`${PW}=basic "a b" q=1 `.repeat(64_000))).toBe(`${PW}=[REDACTED]`);
-    expect(redactSensitiveString(`${PW}=basic\n${" \n".repeat(200_000)}x`)).toBe(`${PW}=[REDACTED]\n${" \n".repeat(200_000)}x`);
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString("Authorization: Bearer\n x\n".repeat(n))).toBe("Authorization: [REDACTED]\n".repeat(n));
+      expect(redactSensitiveString(`${PW}=basic "a b" q=1 `.repeat(n))).toBe(`${PW}=[REDACTED]`);
+      const blanks = " \n".repeat(3 * n);
+      expect(redactSensitiveString(`${PW}=basic\n${blanks}x`)).toBe(`${PW}=[REDACTED]\n${blanks}x`);
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-17 folded continuation lines belong to the credential they continue", () => {
@@ -828,23 +855,21 @@ describe("round-17 folded continuation lines belong to the credential they conti
   });
 
   it("checks for folded lines in linear time on long lines and long blank runs", () => {
-    const started = performance.now();
-    expect(redactSensitiveString(`${"token=basic; ".repeat(64_000)}x`)).toBe(`${"token=[REDACTED]; ".repeat(64_000)}x`);
-    const url = redactSensitive(new URL(`https://example.test/#${"token=basic;&".repeat(64_000)}q=ok`));
-    expect(String(url)).toContain("q=ok");
-    expect(String(url)).not.toContain("basic");
-    expect(redactSensitiveString("Authorization: Bearer x\n\n".repeat(64_000))).toBe(
-      "Authorization: Bearer [REDACTED]\n\n".repeat(64_000),
-    );
-    expect(redactSensitiveString("Authorization: Bearer\n x\n".repeat(64_000))).toBe(
-      "Authorization: [REDACTED]\n".repeat(64_000),
-    );
-    const blankRun = "\n".repeat(256_000);
-    expect(redactSensitiveString(`Authorization: Bearer x${blankRun}next=1`)).toBe(
-      `Authorization: Bearer [REDACTED]${blankRun}next=1`,
-    );
-    expect(performance.now() - started).toBeLessThan(1_000);
-  });
+    expectLinearScaling(64_000, (n) => {
+      expect(redactSensitiveString(`${"token=basic; ".repeat(n)}x`)).toBe(`${"token=[REDACTED]; ".repeat(n)}x`);
+      const url = redactSensitive(new URL(`https://example.test/#${"token=basic;&".repeat(n)}q=ok`));
+      expect(String(url)).toContain("q=ok");
+      expect(String(url)).not.toContain("basic");
+      expect(redactSensitiveString("Authorization: Bearer x\n\n".repeat(n))).toBe(
+        "Authorization: Bearer [REDACTED]\n\n".repeat(n),
+      );
+      expect(redactSensitiveString("Authorization: Bearer\n x\n".repeat(n))).toBe("Authorization: [REDACTED]\n".repeat(n));
+      const blankRun = "\n".repeat(4 * n);
+      expect(redactSensitiveString(`Authorization: Bearer x${blankRun}next=1`)).toBe(
+        `Authorization: Bearer [REDACTED]${blankRun}next=1`,
+      );
+    });
+  }, SCALING_TIMEOUT);
 });
 
 describe("round-18 quoted values across & after escaped keys, decoded re-checks and unclosed quoted folds", () => {
@@ -921,11 +946,332 @@ describe("round-18 quoted values across & after escaped keys, decoded re-checks 
   });
 
   it("scans quoted URL values across & in linear time", () => {
-    const started = performance.now();
-    expect(href(`#${`${escapedKey}='a&`.repeat(64_000)}`)).toBe(`https://example.test/#${escapedKey}='[REDACTED]`);
-    expect(href(`?${`${escapedKey}=%27&`.repeat(64_000)}`)).toBe(
-      `https://example.test/?${`${escapedKey}=%27[REDACTED]%27&`.repeat(32_000)}`,
-    );
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expectLinearScaling(64_000, (n) => {
+      // n is even: each later part closes the quote the part before opened.
+      expect(href(`#${`${escapedKey}='a&`.repeat(n)}`)).toBe(`https://example.test/#${escapedKey}=[REDACTED]&`);
+      // Each part after a closed value leaves a quote of the same form open,
+      // so the span continues (fail closed) and the trailing empty part stays.
+      expect(href(`?${`${escapedKey}=%27&`.repeat(n)}`)).toBe(`https://example.test/?${escapedKey}=%27[REDACTED]%27&`);
+    });
+  }, SCALING_TIMEOUT);
+});
+
+describe("round-19 quoted URL values judged on decoded text and blanks after a scheme word", () => {
+  const first = ["test", "first"].join("-");
+  const last = ["test", "last"].join("-");
+  const secret = ["test", "secret"].join("-");
+  const credential = ["test", "token"].join("-");
+  const escapedKey = "pass%77ord";
+  const tokenKey = ["to", "ken"].join("");
+  const href = (suffix: string) => String(redactSensitive(new URL(`https://example.test/${suffix}`)));
+
+  it("masks a quoted secret value across & however its quote reaches the redactor", () => {
+    const cases: Array<[string, string]> = [
+      // A quote after an encoded, plus or double-encoded blank.
+      [`#${escapedKey}=%20%22${first}&chunk=${last}%22&q=ok`, `#${escapedKey}=[REDACTED]&q=ok`],
+      [`#${escapedKey}=+'${first}&chunk=${last}'&q=ok`, `#${escapedKey}=[REDACTED]&q=ok`],
+      [`#${escapedKey}=%2520%2522${first}&chunk=${last}%2522&q=ok`, `#${escapedKey}=[REDACTED]&q=ok`],
+      // A quote the string pass would consume before a comma or semicolon.
+      [`?${tokenKey}='${first},x&chunk=${last}'&q=ok`, `?${tokenKey}='[REDACTED]'&q=ok`],
+      [`#${tokenKey}=%22${first};x&chunk=${last}%22&q=ok`, `#${tokenKey}="[REDACTED]"&q=ok`],
+      // A backslash-escaped quote does not close the value.
+      [`#${escapedKey}='${first}&mid=a\\'&tail=${last}'&state=ok`, `#${escapedKey}='[REDACTED]'&state=ok`],
+      // A quoted secret inside an escaped value.
+      [`?note=${escapedKey}%3D'${first}&chunk=${last}'&state=ok`, "?note=[REDACTED]&state=ok"],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      expect(output).not.toContain(last);
+      expect(output).not.toContain(first);
+    }
   });
+
+  it("keeps unquoted, closed and non-secret parameters as before", () => {
+    const cases: Array<[string, string]> = [
+      [`#${tokenKey}:'${first}&chunk=${last}'&state=ok`, `#${tokenKey}:'[REDACTED]'&state=ok`],
+      [`#${escapedKey}=%22${first}&chunk=${last}%22&q=ok`, `#${escapedKey}=%22[REDACTED]%22&q=ok`],
+      [`?${escapedKey}=x&q=ok`, `?${escapedKey}=[REDACTED]&q=ok`],
+      ["#note='a&b'&q=1", "#note='a&b'&q=1"],
+      ["?note=it's&q=1", "?note=it%27s&q=1"],
+      ["#/callback?state=ok", "#/callback?state=ok"],
+    ];
+    for (const [suffix, expected] of cases) {
+      expect(href(suffix)).toBe(`https://example.test/${expected}`);
+    }
+    const embedded = ["us&er", `${first}&x`].join(":");
+    const withUserinfo = String(redactSensitive(new URL(`https://${embedded}@example.test/?q=1`)));
+    expect(withUserinfo).toBe("https://[REDACTED]@example.test/?q=1");
+  });
+
+  it("treats any whitespace but a line break after a scheme word as a blank", () => {
+    const cases: Array<[string, string]> = [
+      [`accessToken: Bearer ${secret} q=1`, "accessToken: [REDACTED] q=1"],
+      [`${PW}=basic\u000b${secret}`, `${PW}=[REDACTED]`],
+      [`Authorization: Bearer ${credential}\nstatus=401`, "Authorization: Bearer [REDACTED]\nstatus=401"],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain(credential);
+    }
+  });
+
+  it("scans decoded quoted URL values across & in linear time", () => {
+    expectLinearScaling(64_000, (n) => {
+      expect(href(`#${`${escapedKey}=%20'a&`.repeat(n)}`)).toBe(`https://example.test/#${escapedKey}=[REDACTED]&`);
+      expect(href(`?${`note=${escapedKey}%3D'a&`.repeat(n)}`)).toBe("https://example.test/?note=[REDACTED]&");
+    });
+  }, SCALING_TIMEOUT);
+});
+
+describe("round-20 URL parameters judged on their original decoded text and blanks before a quoted scheme word", () => {
+  const first = ["test", "first"].join("-");
+  const last = ["test", "last"].join("-");
+  const tail = ["test", "tail"].join("-");
+  const secret = ["test", "secret"].join("-");
+  const escapedKey = "pass%77ord";
+  const tokenKey = ["to", "ken"].join("");
+  const authorizationKey = ["Author", "ization"].join("");
+  const accessKey = ["access", "Token"].join("");
+  const href = (suffix: string) => String(redactSensitive(new URL(`https://example.test/${suffix}`)));
+
+  it("masks a quote after an escaped backslash or a scheme word, and escaped single-part values, before the string pass", () => {
+    const cases: Array<[string, string[]]> = [
+      // An escaped backslash before a quote does not close the value.
+      [`#${tokenKey}='${first}&mid=a%5C'&tail=${tail}'&state=ok`, [`#${tokenKey}='[REDACTED]'&state=ok`]],
+      // A quote after a scheme word opens a value that spans &.
+      [`#${escapedKey}=Bearer%20'${first}&chunk=${last}'&q=ok`, [`#${escapedKey}=[REDACTED]&q=ok`]],
+      [`#${authorizationKey}%3A%20Bearer%20%27${first}&chunk=${last}%27&q=ok`, ["#[REDACTED]&q=ok"]],
+      // An escaped quoted value in one part: the raw pass never sees it.
+      [`#${tokenKey}:%27${first};${last}%27&state=ok`, ["#[REDACTED]&state=ok", `#${tokenKey}:[REDACTED]&state=ok`]],
+      [`?note=${tokenKey}=%27${first};${last}%27&q=ok`, ["?note=[REDACTED]&q=ok"]],
+      // A closing quote followed by an escaped blank still closes the value.
+      [`#${escapedKey}=%27${first}&chunk=${tail}%27%20&state=ok`, [`#${escapedKey}=[REDACTED]&state=ok`]],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(expected.map((value) => `https://example.test/${value}`)).toContain(output);
+      for (const value of [first, last, tail]) expect(output).not.toContain(value);
+    }
+  });
+
+  it("judges URLSearchParams entries on their original decoded key and value", () => {
+    const cases: Array<[Array<[string, string]>, string]> = [
+      [[["note", `${tokenKey}=%27${first};${secret}%27`], ["q", "ok"]], "note=[REDACTED]&q=ok"],
+      [[["note", `${tokenKey}=%20%22${first};${secret}%22`], ["q", "ok"]], "note=[REDACTED]&q=ok"],
+      [[[`${tokenKey}:%27${first};${secret}%27`, "1"], ["q", "ok"]], "[REDACTED]&q=ok"],
+    ];
+    for (const [entries, expected] of cases) {
+      const output = redactSensitive(new URLSearchParams(entries));
+      expect(output).toBe(expected);
+      expect(output).not.toContain(secret);
+    }
+  });
+
+  it("masks folded lines after a quoted value whose scheme word follows blanks", () => {
+    const cases: Array<[string, string]> = [
+      [`${tokenKey}: " Bearer ${first}\n ${last}" q=ok`, `${tokenKey}: "[REDACTED]`],
+      [`${accessKey}: "\tBearer ${first}\r\n ${last}"`, `${accessKey}: "[REDACTED]`],
+    ];
+    for (const [input, expected] of cases) {
+      const output = redactSensitiveString(input);
+      expect(output).toBe(expected);
+      expect(output).not.toContain(last);
+    }
+  });
+
+  it("keeps non-secret, closed and unfolded values as before", () => {
+    const urls: Array<[string, string]> = [
+      ["#note='a&b'&q=1", "#note='a&b'&q=1"],
+      ["#/callback?state=ok", "#/callback?state=ok"],
+      ["?note=it's&q=1", "?note=it%27s&q=1"],
+      ["?a=1&&b=%2B+c#/r?x=1&&y", "?a=1&&b=%2B+c#/r?x=1&&y"],
+      [`#${tokenKey}:'${first}&chunk=${last}'&state=ok`, `#${tokenKey}:'[REDACTED]'&state=ok`],
+    ];
+    for (const [suffix, expected] of urls) {
+      expect(href(suffix)).toBe(`https://example.test/${expected}`);
+    }
+    const plain = new URLSearchParams([["note", `${tokenKey}=a ${tokenKey}=${secret}`], ["q", "ok"]]);
+    expect(redactSensitive(plain)).toBe(`note=${tokenKey}%3D[REDACTED]+${tokenKey}%3D[REDACTED]&q=ok`);
+    expect(redactSensitiveString(`${PW}: "test-v"\n indented=1`)).toBe(`${PW}: "[REDACTED]"\n indented=1`);
+    expect(redactSensitiveString(`${PW}: "test-v\n indented=1`)).toBe(`${PW}: "[REDACTED]\n indented=1`);
+  });
+
+  it("judges escaped and quoted URL parameters in linear time", () => {
+    expectLinearScaling(64_000, (n) => {
+      expect(href(`#${`${tokenKey}='a%5C'&`.repeat(n)}`)).toBe(`https://example.test/#${tokenKey}='[REDACTED]'&`);
+      expect(href(`?${`note=${tokenKey}%3D%27a;b%27&`.repeat(n)}`)).toBe(
+        `https://example.test/?${"note=[REDACTED]&".repeat(n)}`,
+      );
+    });
+  }, SCALING_TIMEOUT);
+});
+
+describe("round-21 quoted URL secrets judged from their own value and embedded userinfo masked first", () => {
+  const first = ["test", "first"].join("-");
+  const last = ["test", "last"].join("-");
+  const secret = ["test", "secret"].join("-");
+  const escapedKey = "pass%77ord";
+  const tokenKey = ["to", "ken"].join("");
+  const myTokenKey = ["my", "token"].join("");
+  const href = (suffix: string) => String(redactSensitive(new URL(`https://example.test/${suffix}`)));
+  const embedded = (user: string, rest: string) => [user, rest].join(":");
+
+  it("ignores quotes before the secret's value and closes a span only on a quote written in the same form", () => {
+    const cases: Array<[string, string]> = [
+      [`?note=it's%20${tokenKey}=%27${first}&chunk=${last}%27&q=ok`, "?note=[REDACTED]&q=ok"],
+      [`#note=a'b'c'%20${tokenKey}='${first}&chunk=${last}'&q=ok`, "#note=[REDACTED]&q=ok"],
+      [
+        `#/it's?${escapedKey}=%27${first}&chunk=${last}%27&state=ok`,
+        `#/it's?${escapedKey}=%27[REDACTED]%27&state=ok`,
+      ],
+      [`?note=%22hi%20${tokenKey}='${first}&mid=x%22&tail=${last}'&state=ok`, "?note=[REDACTED]&state=ok"],
+      // An escaped quote does not close a value opened by a literal quote.
+      [`#${tokenKey}='${first}&mid=test%27&part=${last}'&state=ok`, `#${tokenKey}='[REDACTED]'&state=ok`],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      expect(output).not.toContain(last);
+    }
+  });
+
+  it("masks embedded URL and Postgres userinfo before any parameter is rewritten", () => {
+    const withEscapedKey = embedded("test-user", `${first}&${escapedKey}=${last}`);
+    const withRawKey = embedded("svc", `${myTokenKey}=a%20b&${secret}`);
+    const cases: Array<[string, string]> = [
+      [
+        `#next=https://${withEscapedKey}@api.example.test/path&state=ok`,
+        "#next=https://[REDACTED]&state=ok",
+      ],
+      [`?next=https://${withRawKey}@db.example.test/&q=x`, "?next=https://[REDACTED]&q=x"],
+      [`#https://${embedded("svc", `${tokenKey}:a%20b&${secret}`)}@db.example.test/`, "#https://[REDACTED]"],
+      [`#next=postgres://${withRawKey}@db.example.test/&q=x`, "#next=postgres://[REDACTED]&q=x"],
+      [`#next=postgres://${withEscapedKey}@db.example.test/&q=x`, "#next=postgres://[REDACTED]&q=x"],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      for (const hidden of [first, last, secret, "a%20b"]) expect(output).not.toContain(hidden);
+    }
+  });
+
+  it("keeps the earlier URL outputs", () => {
+    const urls: Array<[string, string]> = [
+      ["#note='a&b'&q=1", "#note='a&b'&q=1"],
+      ["#/callback?state=ok", "#/callback?state=ok"],
+      [`#${tokenKey}='${first}&mid=a%5C'&tail=${last}'&state=ok`, `#${tokenKey}='[REDACTED]'&state=ok`],
+      [`#${escapedKey}=%20%22${first}&chunk=${last}%22&q=ok`, `#${escapedKey}=[REDACTED]&q=ok`],
+      [`#${tokenKey}:%27${first};${last}%27&state=ok`, "#[REDACTED]&state=ok"],
+      ["?next=https://api.example.test&email=a@b.test", "?next=https://[REDACTED]@b.test"],
+    ];
+    for (const [suffix, expected] of urls) {
+      expect(href(suffix)).toBe(`https://example.test/${expected}`);
+    }
+  });
+
+  it("scans embedded userinfo and same-form closing quotes in linear time", () => {
+    const part = `next=https://${embedded("u", "x&y")}@h&`;
+    expectLinearScaling(64_000, (n) => {
+      // n is even; a literal quote closes the span, %27 does not.
+      expect(href(`#${`${tokenKey}='a&b%27&`.repeat(n)}`)).toBe(
+        `https://example.test/#${`${tokenKey}='[REDACTED]'&b%27&`.repeat(n / 2)}`,
+      );
+      expect(href(`?${part.repeat(n)}`)).toBe(`https://example.test/?${"next=https://[REDACTED]@h&".repeat(n)}`);
+    });
+  }, SCALING_TIMEOUT);
+});
+
+describe("round-22 one quote state machine per URL secret and fail-closed userinfo in both entry points", () => {
+  const first = ["test", "first"].join("-");
+  const last = ["test", "last"].join("-");
+  const value = ["test", "value"].join("-");
+  const escapedKey = "pass%77ord";
+  const tokenKey = ["to", "ken"].join("");
+  const myTokenKey = ["my", "token"].join("");
+  const href = (suffix: string) => String(redactSensitive(new URL(`https://example.test/${suffix}`)));
+  const embedded = (user: string, rest: string) => [user, rest].join(":");
+
+  it("opens and closes a quoted URL value only on the same quote at the same escape depth", () => {
+    const cases: Array<[string, string]> = [
+      [`#note=%22hi%20${tokenKey}='${first}%27&tail=${last}'&q=ok`, "#note=[REDACTED]&q=ok"],
+      [`#${escapedKey}='${first}%27&tail=${last}'&q=ok`, `#${escapedKey}='[REDACTED]'&q=ok`],
+      // A close and a reopen inside one part keep the value open.
+      [`#${escapedKey}='${first}&mid=a'b'&tail=${last}'&state=ok`, `#${escapedKey}='[REDACTED]'&state=ok`],
+      [`#${escapedKey}=%27${first}'&chunk=${last}%27&state=ok`, `#${escapedKey}=%27[REDACTED]%27&state=ok`],
+      // In a query the URL serialiser writes both quotes as %27, so the value
+      // reads as closed in its own part; the next part's unmatched quote of the
+      // same form continues it, failing closed to the end of the query.
+      [`?note=${tokenKey}%3D'${first}%27&chunk=${last}'&state=ok`, "?note=[REDACTED]"],
+    ];
+    for (const [suffix, expected] of cases) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      expect(output).not.toContain(last);
+    }
+  });
+
+  it("masks userinfo that holds a secret with the run after its @ in URLs and strings", () => {
+    const valueAt = [value, "test-ret"].join("@");
+    const quotedAt = [`%27${value};x`, "mid"].join("@");
+    const withRawKey = embedded("test-user", `test-prefix&${myTokenKey}=a%20b&test-tail`);
+    const urls: Array<[string, string]> = [
+      [`?next=https://a.test&${escapedKey}=${valueAt}&q=1`, "?next=https://[REDACTED]&q=1"],
+      [`#next=https://a.test&${tokenKey}=${quotedAt}&tail=${last}%27&q=1`, "#next=https://[REDACTED]&q=1"],
+      [`?next=https://${withRawKey}@db.example.test/path&q=x`, "?next=https://[REDACTED]&q=x"],
+    ];
+    for (const [suffix, expected] of urls) {
+      const output = href(suffix);
+      expect(output).toBe(`https://example.test/${expected}`);
+      for (const hidden of [value, "test-ret", "mid", last, "test-prefix", "test-tail"]) {
+        expect(output).not.toContain(hidden);
+      }
+    }
+    const message = `connect https://${withRawKey}@db.example.test/path failed`;
+    const output = redactSensitiveString(message);
+    expect(output).toBe("connect https://[REDACTED] failed");
+    expect(output).not.toContain("test-prefix");
+    expect(output).not.toContain("test-tail");
+  });
+
+  it("keeps the host of userinfo without a secret and the earlier URL outputs", () => {
+    const plain = embedded("test-user", "test-pass");
+    expect(redactSensitiveString(`connect https://${plain}@db.example.test/path failed`)).toBe(
+      "connect https://[REDACTED]@db.example.test/path failed",
+    );
+    expect(redactSensitiveString(`connect postgres://${plain}@db.example.test/app failed`)).toBe(
+      "connect postgres://[REDACTED]@db.example.test/app failed",
+    );
+    const urls: Array<[string, string]> = [
+      [
+        `#next=https://${plain}@api.example.test/path&state=ok`,
+        "#next=https://[REDACTED]@api.example.test/path&state=ok",
+      ],
+      ["?next=https://api.example.test&email=a@b.test", "?next=https://[REDACTED]@b.test"],
+      ["#note='a&b'&q=1", "#note='a&b'&q=1"],
+      ["#/callback?state=ok", "#/callback?state=ok"],
+    ];
+    for (const [suffix, expected] of urls) {
+      expect(href(suffix)).toBe(`https://example.test/${expected}`);
+    }
+  });
+
+  it(
+    "carries the quote state and masks userinfo in linear time",
+    () => {
+      const userinfoPart = `n=https://a.test&${escapedKey}=${["s", "r"].join("@")}&`;
+      const message = `connect https://${embedded("u", `x&${myTokenKey}=a&y`)}@h/p failed `;
+      expectLinearScaling(64_000, (n) => {
+        // Each part closes the open quote and opens one at the other depth, so
+        // the value never closes; in the second input n is even.
+        expect(href(`#${`${escapedKey}='a%27&`.repeat(n)}`)).toBe(`https://example.test/#${escapedKey}='[REDACTED]`);
+        expect(href(`#${`${escapedKey}='a'b'&`.repeat(n)}`)).toBe(`https://example.test/#${escapedKey}='[REDACTED]'&`);
+        expect(href(`?${userinfoPart.repeat(n)}`)).toBe(`https://example.test/?${"n=https://[REDACTED]&".repeat(n)}`);
+        expect(redactSensitiveString(message.repeat(n))).toBe("connect https://[REDACTED] failed ".repeat(n));
+      });
+    },
+    SCALING_TIMEOUT,
+  );
 });
