@@ -106,19 +106,22 @@ for (const { operation, code, reason } of skipped) {
   `anyOf: [{ $ref }, { type: "null" }]`) are removed from inputs, also from the
   `required` of other `allOf` members of the same object, and refused when the
   object otherwise accepts additional properties. An `anyOf`/`oneOf` member
-  that marks a property readOnly removes it within that member. When a flagged
-  property is also used by another `anyOf`/`oneOf` member or the enclosing
-  object without the flag, or inside `not`, `if`/`then`/`else` or
-  `dependencies`/`dependentRequired`, or when the object or a subschema of it
-  has `const`, `enum` or `minProperties`, or when it is removed anywhere
-  inside a `oneOf` member (including a nested `anyOf`/`oneOf`) but the
-  members do not all remove it in their own `allOf`/`$ref` closure through
-  the same property schema with the same required status, or a member
-  constrains it by a matching (or invalid) `patternProperties` key or has
-  `propertyNames` or `maxProperties` (so removing it could make members
-  overlap; a member that accepts no object, like the `null` of a nullable
-  reference, does not count), removing it would change what the schema means, so the
-  operation is skipped (`unsupported-access-flag`). In
+  that marks a property readOnly removes it within that member. A flagged
+  property may only be constrained, by any schema applied to the object
+  (`$ref`, `allOf`/`anyOf`/`oneOf`, `not`, `if`/`then`/`else`,
+  dependencies), through `properties` and `required`. The operation is
+  skipped (`unsupported-access-flag`) when the property is also used by
+  another `anyOf`/`oneOf` member or the enclosing object without the flag,
+  or inside `not` or `if`/`then`/`else`; when it is removed anywhere inside a
+  `oneOf` member (including a nested `anyOf`/`oneOf`) but the members do not
+  all remove it in their own `allOf`/`$ref` closure through the same
+  property schema with the same required status (a member that accepts no
+  object, like the `null` of a nullable reference, does not count); or when
+  any applied schema has `const`, `enum`, `minProperties`, `propertyNames`,
+  `dependencies` or `dependentRequired`, `maxProperties` other than
+  unconditionally, a `patternProperties` key matching the name (an invalid
+  pattern counts as a match), or an `additionalProperties` other than `true`
+  or `{}` without listing the name in its own `properties`. In
   OpenAPI 3.0 a `readOnly` beside a `$ref` is ignored, as 3.0 ignores every
   `$ref` sibling; in 3.1 it applies. The request
   body is the first `application/json` media entry that is an object, else the

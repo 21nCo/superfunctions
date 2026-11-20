@@ -27,6 +27,13 @@
   through `$ref` and through `allOf`), and properties a member constrains by
   a matching or invalid `patternProperties` key, `maxProperties` or
   `propertyNames`, and keeps members whose patterns cannot match the name.
+- `skip-access-flag-name-constraints.json` skips readOnly/writeOnly
+  properties that another applied schema constrains: `additionalProperties`
+  of an `allOf` sibling that does not list them (in `oneOf` members, closed,
+  and in a writeOnly output), a matching `patternProperties` inside `if`,
+  `maxProperties` inside `not`, and `dependentRequired` on other names; it
+  keeps a closed object that lists the property with an unconditional
+  `maxProperties`.
 - `skip-malformed-request-body.json` skips declared request bodies with no
   usable JSON media entry, and keeps a `*+json` entry beside a null
   `application/json` one and a media entry without a schema.

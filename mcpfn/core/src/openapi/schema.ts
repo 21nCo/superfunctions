@@ -145,16 +145,8 @@ interface RegionSummary {
   flagged: Set<string>;
   /** Names some region (this or a nested one) uses in properties/required without flagging them. */
   unflagged: Set<string>;
-  /** Names used by dependencies/dependentRequired in this region or a nested one. */
-  dependencies: Set<string>;
   /** A name flagged inside not, if/then/else or a schema-valued dependency. */
   conditionalFlag?: string;
-  /**
-   * A keyword (const, enum or minProperties) in this region or a nested one
-   * that constrains the whole instance or its property count, which removing
-   * a property would change.
-   */
-  instanceConstraint?: string;
   /**
    * A name removed from a `oneOf` member (in this region or a nested one)
    * that the members do not all flag through the same property schema with
@@ -163,14 +155,25 @@ interface RegionSummary {
   oneOfConflict?: string;
 }
 
-/** Object keywords whose meaning changes when a property is removed. */
-const INSTANCE_CONSTRAINTS = ["const", "enum", "minProperties"] as const;
+/**
+ * Keywords that constrain the whole instance, its property set or its
+ * property count wherever they apply, so removing a property changes what
+ * they accept.
+ */
+const INSTANCE_CONSTRAINTS = [
+  "const",
+  "enum",
+  "minProperties",
+  "propertyNames",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+] as const;
 
 const EMPTY_REGION: RegionSummary = {
   names: new Set(),
   flagged: new Set(),
   unflagged: new Set(),
-  dependencies: new Set(),
 };
 
 function directionalKeyword(mode: SchemaMode): DirectionalKeyword {
@@ -512,15 +515,12 @@ export class SchemaConverter {
    *   that mark `id` readOnly, or a readOnly `id` that a `oneOf` member requires;
    * - a flagged name inside `not`, `if`, `then`, `else` or a schema-valued
    *   dependency, where removing it would invert or move the condition;
-   * - a flagged name used by `dependencies` or `dependentRequired`;
-   * - any flagged name where the schema or a region nested in it has `const`,
-   *   `enum` or `minProperties`, which constrain the whole instance or its
-   *   property count (`maxProperties` stays allowed: removal only helps it);
    * - a name removed anywhere inside a `oneOf` member that every member able
    *   to be an object does not remove in its own region through the same
-   *   property schemas with the same required status, or that a member
-   *   constrains by pattern, `propertyNames` or `maxProperties`
-   *   (see `oneOfConflict`).
+   *   property schemas with the same required status (see `oneOfConflict`);
+   * - any keyword other than `properties` and `required` that constrains a
+   *   flagged name, the property set or the property count anywhere it
+   *   applies to the instance (see `nameConstraint`).
    * An `anyOf`/`oneOf` member that flags and uses a name only itself is
    * converted on its own and removes the name there.
    */
@@ -530,6 +530,7 @@ export class SchemaConverter {
   ): { names: ReadonlySet<string>; conflict?: { name: string; by: string } } {
     const summary = this.regionSummary(schema, keyword);
     const names = summary.names;
+    if (summary.flagged.size === 0) return { names };
     const elsewhere = "anyOf/oneOf, not, if/then/else or a schema dependency";
     if (summary.conditionalFlag !== undefined) {
       return { names, conflict: { name: summary.conditionalFlag, by: elsewhere } };
@@ -544,13 +545,76 @@ export class SchemaConverter {
     // that flags it (never the same region: there it would count as flagged).
     for (const name of summary.flagged) {
       if (summary.unflagged.has(name)) return { names, conflict: { name, by: elsewhere } };
-      if (summary.dependencies.has(name)) return { names, conflict: { name, by: "dependencies" } };
     }
-    const [first] = summary.flagged;
-    if (first !== undefined && summary.instanceConstraint !== undefined) {
-      return { names, conflict: { name: first, by: summary.instanceConstraint } };
-    }
-    return { names };
+    const constraint = this.nameConstraint(schema, summary.flagged);
+    return constraint === undefined ? { names } : { names, conflict: constraint };
+  }
+
+  /**
+   * The single check of every keyword other than `properties[name]` and
+   * `required` that constrains a flagged name, run over every schema applied
+   * to the instance rooted at `schema`: `$ref` targets (OpenAPI 3.0 ignores
+   * the siblings), `allOf`/`anyOf`/`oneOf` members, `not`/`if`/`then`/`else`
+   * and schema-valued dependencies. Removing a flagged property is sound only
+   * when none of these is present:
+   * - `const`, `enum`, `minProperties`, `propertyNames`, `dependencies`,
+   *   `dependentRequired` or `dependentSchemas`, anywhere;
+   * - `maxProperties` inside `anyOf`/`oneOf`, `not`, `if`/`then`/`else` or a
+   *   dependency (unconditional `maxProperties` only gains from removal);
+   * - a `patternProperties` key matching the name (an invalid pattern counts
+   *   as a match);
+   * - `additionalProperties` other than absent, `true` or `{}` in a schema
+   *   that neither lists the name in its own `properties` nor matches it by
+   *   its own `patternProperties`.
+   */
+  private nameConstraint(
+    schema: unknown,
+    names: ReadonlySet<string>,
+  ): { name: string; by: string } | undefined {
+    const [first] = names;
+    if (first === undefined) return undefined;
+    // object -> whether it was already visited as a nested (conditional or alternative) schema
+    const visited = new Map<object, boolean>();
+    const walk = (current: unknown, nested: boolean): { name: string; by: string } | undefined => {
+      if (!isObject(current)) return undefined;
+      const before = visited.get(current);
+      if (before === true || (before === false && !nested)) return undefined;
+      visited.set(current, nested);
+      if (Object.hasOwn(current, "$ref")) {
+        const found = walk(this.target(current.$ref), nested);
+        if (found !== undefined || this.version === "3.0") return found;
+      }
+      const keyword = INSTANCE_CONSTRAINTS.find((entry) => Object.hasOwn(current, entry));
+      if (keyword !== undefined) return { name: first, by: keyword };
+      if (nested && Object.hasOwn(current, "maxProperties")) {
+        return { name: first, by: "maxProperties inside anyOf/oneOf, not, if/then/else or a dependency" };
+      }
+      const patterns = isObject(current.patternProperties) ? Object.keys(current.patternProperties) : [];
+      for (const name of names) {
+        const pattern = patterns.find((entry) => patternMatches(entry, name));
+        if (pattern !== undefined) return { name, by: `patternProperties ${JSON.stringify(pattern)}` };
+        if (
+          !opensAdditional(current.additionalProperties) &&
+          !(isObject(current.properties) && Object.hasOwn(current.properties, name))
+        ) {
+          return { name, by: "additionalProperties of a schema that does not list it" };
+        }
+      }
+      for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
+        const members = current[keyword];
+        if (!Array.isArray(members)) continue;
+        for (const member of members) {
+          const found = walk(member, nested || keyword !== "allOf");
+          if (found !== undefined) return found;
+        }
+      }
+      for (const keyword of IN_PLACE_KEYWORDS) {
+        const found = walk(current[keyword], true);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    };
+    return walk(schema, false);
   }
 
   /**
@@ -572,10 +636,8 @@ export class SchemaConverter {
     memo.set(schema, EMPTY_REGION);
     const flagged = new Set<string>();
     const mentioned = new Set<string>();
-    const dependencies = new Set<string>();
     const nested: RegionSummary[] = [];
     let conditionalFlag: string | undefined;
-    let instanceConstraint: string | undefined;
     let oneOfConflict: string | undefined;
     const conditional = (member: unknown) => {
       const summary = this.regionSummary(member, keyword);
@@ -590,7 +652,6 @@ export class SchemaConverter {
         walk(this.target(current.$ref));
         if (this.version === "3.0") return;
       }
-      instanceConstraint ??= INSTANCE_CONSTRAINTS.find((constraint) => Object.hasOwn(current, constraint));
       if (isObject(current.properties)) {
         for (const [name, property] of Object.entries(current.properties)) {
           if (this.hasFlag(property, keyword)) flagged.add(name);
@@ -600,17 +661,10 @@ export class SchemaConverter {
       if (Array.isArray(current.required)) {
         for (const name of current.required) if (typeof name === "string") mentioned.add(name);
       }
-      for (const dependencyKeyword of ["dependencies", "dependentRequired"] as const) {
+      for (const dependencyKeyword of ["dependencies", "dependentSchemas"] as const) {
         const map = current[dependencyKeyword];
         if (!isObject(map)) continue;
-        for (const [name, dependency] of Object.entries(map)) {
-          dependencies.add(name);
-          if (Array.isArray(dependency)) {
-            for (const entry of dependency) if (typeof entry === "string") dependencies.add(entry);
-          } else {
-            conditional(dependency);
-          }
-        }
+        for (const dependency of Object.values(map)) if (!Array.isArray(dependency)) conditional(dependency);
       }
       if (Array.isArray(current.allOf)) for (const member of current.allOf) walk(member);
       for (const alternatives of ["anyOf", "oneOf"] as const) {
@@ -629,17 +683,13 @@ export class SchemaConverter {
       names: flagged,
       flagged: new Set(flagged),
       unflagged: new Set([...mentioned].filter((name) => !flagged.has(name))),
-      dependencies,
       ...(conditionalFlag !== undefined ? { conditionalFlag } : {}),
-      ...(instanceConstraint !== undefined ? { instanceConstraint } : {}),
       ...(oneOfConflict !== undefined ? { oneOfConflict } : {}),
     };
     for (const inner of nested) {
       for (const name of inner.flagged) summary.flagged.add(name);
       for (const name of inner.unflagged) summary.unflagged.add(name);
-      for (const name of inner.dependencies) summary.dependencies.add(name);
       if (inner.conditionalFlag !== undefined) summary.conditionalFlag ??= inner.conditionalFlag;
-      if (inner.instanceConstraint !== undefined) summary.instanceConstraint ??= inner.instanceConstraint;
       if (inner.oneOfConflict !== undefined) summary.oneOfConflict ??= inner.oneOfConflict;
     }
     memo.set(schema, summary);
@@ -652,14 +702,12 @@ export class SchemaConverter {
    * members once removed. Removal is sound only when every member that can be
    * an object removes the name in its own region (not only inside a nested
    * composition), gives it the same property schemas with the same required
-   * status, as polymorphic members sharing one base schema do, and has no
-   * `patternProperties` key matching it (an invalid pattern counts as a
-   * match) and no `propertyNames` or `maxProperties` anywhere in it. Otherwise
-   * a member that differs on the name (another type, `const` or `enum`,
-   * required in one member only, absent or forbidden in one, constrained by a
-   * pattern, or removed only in a nested alternative) could overlap with
-   * another after removal, so `oneOf` would reject a value exactly one member
-   * accepted.
+   * status, as polymorphic members sharing one base schema do (patterns,
+   * `propertyNames`, `maxProperties` and the rest are `nameConstraint`'s).
+   * Otherwise a member that differs on the name (another type, `const` or
+   * `enum`, required in one member only, absent or forbidden in one, or
+   * removed only in a nested alternative) could overlap with another after
+   * removal, so `oneOf` would reject a value exactly one member accepted.
    */
   private oneOfConflict(members: unknown[], summaries: RegionSummary[]): string | undefined {
     const removed = new Set<string>();
@@ -672,46 +720,12 @@ export class SchemaConverter {
         // reference) cannot start overlapping.
         if (!this.mayBeObject(member)) continue;
         if (!summaries[index]!.names.has(name)) return name;
-        if (this.constrainsName(member, name)) return name;
         const facts = this.propertyFacts(member, name);
         if (first === undefined) first = facts;
         else if (!sameFacts(first, facts)) return name;
       }
     }
     return undefined;
-  }
-
-  /**
-   * Whether `schema` or any schema applied to the same instance (through
-   * `$ref`, `allOf`/`anyOf`/`oneOf`, `not`/`if`/`then`/`else` or a
-   * schema-valued dependency) constrains property `name` by pattern, or
-   * constrains the property names or count, beyond `properties`/`required`.
-   */
-  private constrainsName(schema: unknown, name: string): boolean {
-    const seen = new Set<object>();
-    const walk = (current: unknown): boolean => {
-      if (!isObject(current) || seen.has(current)) return false;
-      seen.add(current);
-      if (Object.hasOwn(current, "$ref")) {
-        if (walk(this.target(current.$ref))) return true;
-        if (this.version === "3.0") return false;
-      }
-      if (Object.hasOwn(current, "propertyNames") || Object.hasOwn(current, "maxProperties")) return true;
-      if (isObject(current.patternProperties)) {
-        for (const pattern of Object.keys(current.patternProperties)) if (patternMatches(pattern, name)) return true;
-      }
-      for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
-        const members = current[keyword];
-        if (Array.isArray(members) && members.some(walk)) return true;
-      }
-      for (const keyword of IN_PLACE_KEYWORDS) if (walk(current[keyword])) return true;
-      for (const keyword of ["dependencies", "dependentSchemas"] as const) {
-        const map = current[keyword];
-        if (isObject(map) && Object.values(map).some(walk)) return true;
-      }
-      return false;
-    };
-    return walk(schema);
   }
 
   private mayBeObject(schema: unknown): boolean {
@@ -901,7 +915,13 @@ function sameSchema(left: unknown, right: unknown): boolean {
   }
 }
 
+/** Whether an `additionalProperties` value accepts every additional property. */
+function opensAdditional(value: unknown): boolean {
+  return value === undefined || value === true || (isObject(value) && Object.keys(value).length === 0);
+}
+
 /** Whether a `patternProperties` key matches `name`; a pattern that does not compile counts as a match. */
+
 function patternMatches(pattern: string, name: string): boolean {
   try {
     return new RegExp(pattern, "u").test(name);

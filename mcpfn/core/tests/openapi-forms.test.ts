@@ -12,6 +12,12 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
+const NESTED_MAX_PROPERTIES = "maxProperties inside anyOf/oneOf, not, if/then/else or a dependency";
+
+function constrained(name: string, by: string, keyword = "readOnly"): string {
+  return `property "${name}" is ${keyword} but is also constrained by ${by}, so it cannot be removed soundly`;
+}
+
 describe("fromOpenAPI closed form set (D12)", () => {
   it("converts an OpenAPI 3.0.x document, folding boolean exclusiveMinimum", () => {
     const { tools, skipped, registry } = convert("form-openapi-3.0");
@@ -552,16 +558,35 @@ describe("fromOpenAPI skip reasons", () => {
       ["readOnlyNestedAnyOf", "unsupported-access-flag", reason("kind")],
       ["readOnlyReferencedAnyOf", "unsupported-access-flag", reason("kind")],
       ["readOnlyAllOfOneOf", "unsupported-access-flag", reason("kind")],
-      ["readOnlyPatternDiscriminator", "unsupported-access-flag", reason("id")],
-      ["readOnlyInvalidPattern", "unsupported-access-flag", reason("id")],
-      ["readOnlyMaxPropertiesInOneOf", "unsupported-access-flag", reason("id")],
-      ["readOnlyPropertyNamesInOneOf", "unsupported-access-flag", reason("id")],
+      ["readOnlyPatternDiscriminator", "unsupported-access-flag", constrained("id", 'patternProperties "^id$"')],
+      ["readOnlyInvalidPattern", "unsupported-access-flag", constrained("id", 'patternProperties "("')],
+      ["readOnlyMaxPropertiesInOneOf", "unsupported-access-flag", constrained("id", NESTED_MAX_PROPERTIES)],
+      ["readOnlyPropertyNamesInOneOf", "unsupported-access-flag", constrained("id", "propertyNames")],
       ["writeOnlyNestedOutput", "unsupported-access-flag", reason("kind", "writeOnly")],
     ]);
     // A pattern that cannot match the removed name keeps the members exclusive on the rest.
     expectArguments(tool(tools, "readOnlyPatternNotMatching").inputSchema, {
       valid: [{ body: { a: "x" } }, { body: { b: "y", "x-tag": "t" } }],
       invalid: [{ body: {} }, { body: { a: "x", b: "y" } }, { body: { a: "x", id: "client-chosen-id" } }],
+    });
+  });
+
+  it("skips readOnly and writeOnly properties any applied schema constrains beyond properties and required", () => {
+    const { tools, skipped } = convert("skip-access-flag-name-constraints");
+    const unlisted = "additionalProperties of a schema that does not list it";
+    expect(skipped.map((entry) => [entry.operation.operationId, entry.code, entry.reason])).toEqual([
+      ["readOnlySiblingAdditionalProperties", "unsupported-access-flag", constrained("id", unlisted)],
+      ["readOnlySiblingClosed", "unsupported-access-flag", constrained("id", unlisted)],
+      ["readOnlyIfPattern", "unsupported-access-flag", constrained("id", 'patternProperties "^id$"')],
+      ["readOnlyNotMaxProperties", "unsupported-access-flag", constrained("id", NESTED_MAX_PROPERTIES)],
+      ["readOnlyBesideDependentRequired", "unsupported-access-flag", constrained("id", "dependentRequired")],
+      ["writeOnlyOutputSiblingAdditionalProperties", "unsupported-access-flag", constrained("password", unlisted, "writeOnly")],
+    ]);
+    // A closed object that lists the flagged property, with an unconditional maxProperties, is still converted.
+    expect(tools.map((entry) => entry.name)).toEqual(["readOnlyClosedListing"]);
+    expectArguments(tool(tools, "readOnlyClosedListing").inputSchema, {
+      valid: [{ body: { name: "n" } }],
+      invalid: [{ body: {} }, { body: { id: "client-chosen-id", name: "n" } }, { body: { name: "n", other: 1 } }],
     });
   });
 
