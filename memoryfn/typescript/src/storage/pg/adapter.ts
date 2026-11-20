@@ -15,8 +15,11 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
  * embeddings it carries.
  */
 const JSON_PART_LENGTH = 1 << 26;
-/** The canonical text form of the id column's uuid type. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * The spellings PostgreSQL's uuid input accepts: 32 hex digits, optionally with a
+ * hyphen after any group of four, optionally wrapped in braces.
+ */
+const UUID = /^(?:\{(?:[0-9a-f]{4}-?){7}[0-9a-f]{4}\}|(?:[0-9a-f]{4}-?){7}[0-9a-f]{4})$/i;
 
 // We assume the DB passed is compatible with PostgresJsDatabase schema
 export class PostgresAdapter implements StorageAdapter {
@@ -202,12 +205,13 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   /**
-   * The source's tag set as a CTE named source_tags, bound once in the column's
-   * own array encoding. Every source statement carries it and liveSource reads
-   * it, so a statement sends the tag set once however often it matches it.
+   * The source's distinct tags as a CTE named source_tags, bound once in the
+   * column's own array encoding. Every source statement carries it and
+   * liveSource reads it, so a statement sends each tag once however often the
+   * caller repeats it or the statement matches it.
    */
   private sourceTags(db: PostgresJsDatabase<any>, scope: SourceScope) {
-    return db.$with('source_tags', {}).as(sql`SELECT ${sql.param(scope.containerTags, memories.containerTags)}::text[] AS tags`);
+    return db.$with('source_tags', {}).as(sql`SELECT ${sql.param([...new Set(scope.containerTags)], memories.containerTags)}::text[] AS tags`);
   }
 
   /** Live chunks of exactly this tenant, tag set (as a set) and source key; the statement must carry sourceTags. */
@@ -335,7 +339,8 @@ export class PostgresAdapter implements StorageAdapter {
 
   /**
    * A SELECT of the replacement rows in one statement. The tenant, source key
-   * and content hash are bound once, and the tags come from source_tags.
+   * and content hash are bound once; the container tags are rebuilt in the given
+   * order (repeats included) from source_tags and their positions in it.
    * Each chunk's type, content and metadata travel as their own parameters,
    * unescaped, as in a per-column insert: at most 3 x MAX_SOURCE_CHUNKS binds.
    * The other fields (chunk index, id, embedding, is_latest, timestamps) travel
@@ -355,10 +360,13 @@ export class PostgresAdapter implements StorageAdapter {
       parts[parts.length - 1].push(json); partLength += json.length + 1;
     });
     const partValues = sql.join(parts.map(part => sql`(${`[${part.join(',')}]`}::text::json)`), sql`, `);
+    const position = new Map([...new Set(scope.containerTags)].map((tag, index) => [tag, index + 1]));
+    const positions = `{${scope.containerTags.map(tag => position.get(tag)).join(',')}}`;
     const fields = ['chunk_index', 'id', 'embedding', 'is_latest', 'created_at', 'updated_at']
       .map((name, index) => sql.raw(`'${name}', e->${index}`));
     return sql`SELECT coalesce(r.id, gen_random_uuid()), ${scope.tenantId}::text,
-      (SELECT tags FROM source_tags), t.type, t.content, r.embedding,
+      ARRAY(SELECT s.tags[x.p] FROM source_tags AS s CROSS JOIN unnest(${positions}::int[]) WITH ORDINALITY AS x(p, o) ORDER BY x.o),
+      t.type, t.content, r.embedding,
       t.metadata, 1, r.deleted_at, r.is_latest, r.created_at, r.updated_at, ${scope.sourceKey}::text, ${contentHash}::text, r.chunk_index
       FROM (VALUES ${partValues}) AS part(rows) CROSS JOIN json_array_elements(part.rows) AS e
       CROSS JOIN json_populate_record(NULL::${memories}, json_build_object(${sql.join(fields, sql`, `)})) AS r

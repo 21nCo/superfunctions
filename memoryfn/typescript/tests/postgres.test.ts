@@ -198,6 +198,12 @@ suite('Postgres lifecycle integration', () => {
     expect(rows.map(row => row.metadata)).toEqual([{}, metadata, {}, {}]);
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash, chunkCount: 4 });
   });
+  it('accepts every uuid spelling PostgreSQL accepts for a chunk id', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
+    const ids = ['00000000000040008000000000000001', '{00000000-0000-4000-8000-000000000002}', '0000-0000-0000-4000-8000-0000-0000-0003'];
+    const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-1', chunks: ids.map(id => ({ tenantId: 'a', containerTags: ['docs'], content: id, id })) });
+    expect(rows.map(row => row.id)).toEqual([1, 2, 3].map(n => `00000000-0000-4000-8000-00000000000${n}`));
+  });
   it('replaces an escape-heavy source at the chunk limit and the byte limit', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs', 'team', 'docs'], sourceKey: 'guide.md' };
     // Every text is ASCII, so its UTF-8 size is its length; control characters and quotes would grow under JSON escaping.

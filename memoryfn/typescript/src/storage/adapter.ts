@@ -51,6 +51,8 @@ export class MemorySourceLimitError extends Error {
    * of this class, so `instanceof` matches the error by its name and code.
    */
   static [Symbol.hasInstance](value: unknown): boolean {
+    // A subclass keeps the ordinary prototype check.
+    if (this !== MemorySourceLimitError) return Function.prototype[Symbol.hasInstance].call(this, value);
     return value instanceof Error && value.name === 'MemorySourceLimitError'
       && (value as { code?: unknown }).code === 'MEMORY_SOURCE_LIMIT_EXCEEDED';
   }
