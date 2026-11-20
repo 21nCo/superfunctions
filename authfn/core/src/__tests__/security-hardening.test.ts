@@ -13,6 +13,7 @@ import { issueSessionCookies } from '../core/cookies.js';
 import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { issueSession } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
+import { satisfyTwoFactorChallenge } from '../core/two-factor.js';
 
 function cookieHeaderFromSetCookies(setCookies: string[]): string {
   return setCookies
@@ -216,6 +217,15 @@ describe('two-factor challenge attempts (F-11)', () => {
       expect((await attempt(index)).status).toBe(200);
     }
     await expect(attempt(5)).rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
+  it('refuses non-canonical challenge ids before looking them up', async () => {
+    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] };
+    for (const challengeId of ['SIGNIN_2FA_ABC', 'chál_x', ' signin_2fa_abc']) {
+      await expect(satisfyTwoFactorChallenge(config, challengeId, '000000')).rejects.toMatchObject({
+        code: 'AUTHFN_2FA_INVALID_CODE'
+      });
+    }
   });
 
   it('counts non-ASCII challenge ids together', async () => {
@@ -502,37 +512,6 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     const location = completed.headers.get('location') ?? '';
     expect(location).not.toContain('token=st_');
     expect(completed.headers.getSetCookie().some((cookie) => cookie.includes('.session='))).toBe(false);
-  });
-
-  it('keeps the code usable when session issuance is refused', async () => {
-    let refuse = true;
-    const config = createConfig({ requireHandoffChallenge: true });
-    const auth = createTestServer({
-      ...config,
-      hooks: {
-        beforeSessionIssue: async (_ctx, input) => {
-          if (refuse) {
-            refuse = false;
-            throw new Error('placement refused');
-          }
-          return input;
-        }
-      }
-    });
-    const verifier = 'test-verifier-'.padEnd(64, 'v');
-    const started = await start(auth, {
-      returnTo: 'nucleum://oauthsignin',
-      handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
-    });
-    const completed = await callback(auth, (await started.json()).data.stateId as string);
-    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
-    const exchange = () => auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, verifier })
-    }));
-    expect((await exchange()).ok).toBe(false);
-    expect((await exchange()).status).toBe(200);
   });
 
   it('refuses handoff grants presented as OAuth states at the callback', async () => {

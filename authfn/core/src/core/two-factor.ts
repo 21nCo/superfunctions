@@ -278,6 +278,13 @@ export async function satisfyTwoFactorChallenge(
   code: string,
   pluginConfig: TwoFactorPluginRuntimeConfig = {}
 ): Promise<SatisfiedTwoFactorChallenge> {
+  // Challenge ids are generated in this form; refusing other spellings keeps
+  // case- or accent-insensitive database collations from matching them.
+  if (!/^[a-z0-9_-]{1,255}$/.test(challengeId)) {
+    throw new AuthFnTwoFactorInvalidCodeError('Two-factor challenge is invalid or expired', {
+      challengeId
+    });
+  }
   const challenge = await config.database.findOne<AuthFnTwoFactorChallengeRecord>({
     model: 'two_factor_challenges',
     where: [{ field: 'id', operator: 'eq', value: challengeId }],

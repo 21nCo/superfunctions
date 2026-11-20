@@ -347,20 +347,15 @@ function createSocialRoutes(
         if (!consumed) {
           throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
         }
-        let issued: Awaited<ReturnType<typeof issueSession>>;
-        try {
-          issued = await issueSession(ctx.config, ctx.hooks, {
-            request,
-            userId: user.id,
-            primaryEmail: user.primaryEmail,
-            regionId: pending.regionId ?? runtime.regionId,
-            methods: methods as Parameters<typeof issueSession>[2]['methods']
-          });
-        } catch (error) {
-          // A refused issuance (for example a placement check) leaves the code usable until it expires.
-          await stateStore.put({ ...pending, consumedAt: undefined }).catch(() => undefined);
-          throw error;
-        }
+        // The code is single use: if issuance is refused (for example by a
+        // placement hook), the client starts the sign-in again.
+        const issued = await issueSession(ctx.config, ctx.hooks, {
+          request,
+          userId: user.id,
+          primaryEmail: user.primaryEmail,
+          regionId: pending.regionId ?? runtime.regionId,
+          methods: methods as Parameters<typeof issueSession>[2]['methods']
+        });
 
         await emitAuthEvent(ctx.config, {
           type: 'authfn.handoff.exchanged',
