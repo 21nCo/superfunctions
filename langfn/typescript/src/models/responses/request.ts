@@ -7,7 +7,6 @@ import type {
   ResponsesChatRequest,
   ResponsesImageInput,
   ResponsesMessage,
-  ResponsesOutputItem,
   ResponsesReasoningConfig,
   ResponsesTextFormat,
 } from "./types.js";
@@ -23,7 +22,6 @@ export interface ResponsesPayloadOptions {
 
 const ROLES = new Set(["system", "user", "assistant", "tool"]);
 const IMAGE_DETAILS = new Set(["auto", "low", "high"]);
-const STRIPPED_REPLAY_FIELDS = new Set(["id", "status"]);
 
 /**
  * Map a chat request to a stateless Responses API payload (`store: false`; the caller
@@ -72,7 +70,10 @@ export function buildResponsesPayload(
   if (request.reasoning !== undefined) {
     requireCapability(profile, "reasoning", "the request sets reasoning");
   }
-  const reasoning = request.reasoning ?? (profile.reasoning ? options.reasoning : undefined);
+  if (options.reasoning !== undefined) {
+    requireCapability(profile, "reasoning", "the model sets a default reasoning configuration");
+  }
+  const reasoning = request.reasoning ?? options.reasoning;
   if (reasoning !== undefined) payload.reasoning = toReasoning(reasoning);
   // Stateless continuation of a reasoning model needs the encrypted reasoning items back.
   if (profile.reasoning) payload.include = ["reasoning.encrypted_content"];
@@ -181,9 +182,11 @@ function toAssistantItems(message: ResponsesMessage, index: number, profile: Cap
 }
 
 /**
- * Replay the provider items of an earlier assistant turn. Item ids and statuses are removed
- * because stateless requests cannot reference server-side items. Reasoning items without
- * encrypted content cannot be resolved without stored state, so they are not replayed.
+ * Replay the provider items of an earlier assistant turn unchanged, with their ids and
+ * statuses, as the Responses input schema expects. Reasoning items without encrypted content
+ * cannot be resolved without stored state, so they are not replayed; unfinished function
+ * calls are never replayed (see {@link parseOutputItems}). An empty item list (a turn cut off
+ * before any output) replays as nothing.
  */
 function replayOutputItems(
   message: ResponsesMessage,
@@ -192,8 +195,8 @@ function replayOutputItems(
   profile: CapabilityProfile,
 ): Record<string, unknown>[] {
   const output = message.responsesOutput as unknown;
-  if (!Array.isArray(output) || output.length === 0) {
-    throw new ValidationError(`Message ${index}: responsesOutput must be a non-empty array of items`);
+  if (!Array.isArray(output)) {
+    throw new ValidationError(`Message ${index}: responsesOutput must be an array of items`);
   }
   let parsed: ReturnType<typeof parseOutputItems>;
   try {
@@ -208,17 +211,13 @@ function replayOutputItems(
   }
 
   const items: Record<string, unknown>[] = [];
-  for (const item of output as ResponsesOutputItem[]) {
+  for (const item of parsed.replayable) {
     if (item.type === "reasoning") {
       const encrypted = typeof item.encrypted_content === "string" && item.encrypted_content.length > 0;
       if (!encrypted) continue;
       requireCapability(profile, "reasoning", "the history contains encrypted reasoning items");
     }
-    const copy: Record<string, unknown> = {};
-    for (const [field, value] of Object.entries(structuredClone(item))) {
-      if (!STRIPPED_REPLAY_FIELDS.has(field)) copy[field] = value;
-    }
-    items.push(copy);
+    items.push(structuredClone(item));
   }
   return items;
 }

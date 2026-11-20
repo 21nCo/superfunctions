@@ -65,6 +65,32 @@ async function collect(stream: AsyncIterable<StreamEvent>): Promise<StreamEvent[
   return events;
 }
 
+/**
+ * Required fields of the Responses input items LangFn replays, as documented by the OpenAI SDK
+ * (openai/resources/responses/responses.d.ts: ResponseReasoningItem, ResponseOutputMessage,
+ * ResponseFunctionToolCall). OpenRouter's stateless multi-turn history uses the same shape.
+ */
+function expectDocumentedReplayItem(item: Record<string, unknown>) {
+  switch (item.type) {
+    case "reasoning":
+      expect(item).toMatchObject({ id: expect.any(String), summary: expect.any(Array) });
+      break;
+    case "message":
+      expect(item).toMatchObject({
+        id: expect.any(String),
+        role: "assistant",
+        status: expect.stringMatching(/^(in_progress|completed|incomplete)$/),
+        content: expect.any(Array),
+      });
+      break;
+    case "function_call":
+      expect(item).toMatchObject({ call_id: expect.any(String), name: expect.any(String), arguments: expect.any(String) });
+      break;
+    default:
+      throw new Error(`Unexpected replayed item type ${String(item.type)}`);
+  }
+}
+
 const weatherTool = {
   name: "get_weather",
   description: "Current weather for a city",
@@ -185,16 +211,26 @@ describe.each(profiles)("ResponsesChatModel conformance: $name profile", (target
 
     const input = server.requests[1].body.input;
     expect(server.requests[1].body.store).toBe(false);
+    // The provider items go back unchanged, with their ids and statuses.
     expect(input).toEqual([
       { type: "message", role: "user", content: "What is the weather in Paris?" },
       {
+        id: `rs_fixture_${target.name}_tool`,
         type: "reasoning",
         summary: [{ type: "summary_text", text: "The user asks for the weather, so call get_weather." }],
         encrypted_content: `fixture-encrypted-reasoning-${target.name}_tool`,
       },
-      { type: "function_call", call_id: "call_fixture_weather", name: "get_weather", arguments: "{\"city\":\"Paris\"}" },
+      {
+        id: `fc_fixture_${target.name}_tool`,
+        type: "function_call",
+        status: "completed",
+        call_id: "call_fixture_weather",
+        name: "get_weather",
+        arguments: "{\"city\":\"Paris\"}",
+      },
       { type: "function_call_output", call_id: "call_fixture_weather", output: "{\"temperature_c\":18,\"sky\":\"sunny\"}" },
     ]);
+    input.slice(1, 3).forEach(expectDocumentedReplayItem);
     expect(second.message.content).toBe("It is 18 C and sunny in Paris.");
     expect(second.finishReason).toBe("stop");
   });
@@ -269,6 +305,67 @@ describe.each(profiles)("ResponsesChatModel conformance: $name profile", (target
       { type: "tool_call", id: "call_fixture_weather", toolName: "get_weather", args: { city: "Paris" } },
     ]);
     expect(events.at(-1)).toEqual({ type: "end", finish_reason: "tool_calls" });
+  });
+
+  it("never executes a function call cut off by max_output_tokens and replays the rest of the turn", async () => {
+    const server = replay(target.name, ["tool-call-incomplete.json", "text.json"]);
+    const chatModel = model(server.fetchImpl);
+    const history: ResponsesMessage[] = [{ role: "user", content: "What is the weather in Paris?" }];
+
+    const first = await chatModel.chat({ messages: history, tools: [weatherTool] });
+    expect(first.finishReason).toBe("length");
+    expect(first.toolCalls).toBeUndefined();
+    expect(first.message.toolCalls).toBeUndefined();
+    expect(first.message.content).toBe("Checking the forecast.");
+    // The cut call and the reasoning that led into it are not replayable.
+    expect(first.message.responsesOutput?.map((item) => item.id)).toEqual([
+      `rs_fixture_${target.name}_lead`,
+      `msg_fixture_${target.name}_lead`,
+    ]);
+
+    const agent = new ToolAgent({
+      lang: new LangFn({ model: model(replay(target.name, ["tool-call-incomplete.json"]).fetchImpl) }),
+      tools: [
+        new Tool({
+          name: "get_weather",
+          description: "Current weather for a city",
+          schema: { parse: (data) => data as { city: string }, jsonSchema: weatherTool.input_schema },
+          execute: () => {
+            throw new Error("A truncated call must not run");
+          },
+        }),
+      ],
+    });
+    await expect(agent.run("What is the weather in Paris?")).resolves.toMatchObject({ output: "Checking the forecast." });
+
+    await chatModel.chat({ messages: [...history, first.message, { role: "user", content: "Go on." }] });
+    const input = server.requests[1].body.input as Record<string, unknown>[];
+    expect(input.map((item) => item.id ?? item.role)).toEqual([
+      "user",
+      `rs_fixture_${target.name}_lead`,
+      `msg_fixture_${target.name}_lead`,
+      "user",
+    ]);
+    input.slice(1, 3).forEach(expectDocumentedReplayItem);
+  });
+
+  it("streams no tool call for a function call cut off by max_output_tokens", async () => {
+    const server = replay(target.name, ["stream-tool-call-incomplete.sse", "text.json"]);
+    const chatModel = model(server.fetchImpl);
+    const events = await collect(
+      chatModel.streamChat({ messages: [{ role: "user", content: "What is the weather in Paris?" }], tools: [weatherTool] }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual(["token_usage", "message", "end"]);
+    expect(events.at(-1)).toEqual({ type: "end", finish_reason: "length" });
+    const { message } = events[1] as { message: ResponsesMessage };
+    expect(message).toMatchObject({ role: "assistant", content: "", responsesOutput: [] });
+    expect(message.toolCalls).toBeUndefined();
+
+    await chatModel.chat({ messages: [{ role: "user", content: "What is the weather in Paris?" }, message] });
+    expect(server.requests[1].body.input).toEqual([
+      { type: "message", role: "user", content: "What is the weather in Paris?" },
+    ]);
   });
 
   it("maps a rate-limit response to RateLimitError with the retry delay", async () => {

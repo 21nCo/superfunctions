@@ -1,14 +1,14 @@
 import { ProviderError } from "../../core/errors.js";
 import type { StreamEvent } from "../../core/types.js";
 import { readStreamLines } from "../stream-lines.js";
-import { parseFunctionCall, parseResponsesResponse, responsesError } from "./response.js";
+import { parseResponsesResponse, responsesError } from "./response.js";
 
 export interface ServerSentEvent {
   event?: string;
   data: string;
 }
 
-/** Parse server-sent events: multi-line data, CRLF line endings and comment lines. */
+/** Parse server-sent events: multi-line data, LF, CRLF or CR line endings and comment lines. */
 export async function* readServerSentEvents(
   body: ReadableStream<Uint8Array>,
   maxLineBytes?: number,
@@ -16,20 +16,22 @@ export async function* readServerSentEvents(
   let data: string[] = [];
   let event: string | undefined;
   for await (const rawLine of readStreamLines(body, maxLineBytes)) {
-    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-    if (line === "") {
-      if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
-      data = [];
-      event = undefined;
-      continue;
+    // Lines arrive split on LF; a trailing CR is the CRLF ending and any other CR is a line end too.
+    for (const line of (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).split("\r")) {
+      if (line === "") {
+        if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
+        data = [];
+        event = undefined;
+        continue;
+      }
+      if (line.startsWith(":")) continue;
+      const colon = line.indexOf(":");
+      const field = colon === -1 ? line : line.slice(0, colon);
+      let value = colon === -1 ? "" : line.slice(colon + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "data") data.push(value);
+      else if (field === "event") event = value;
     }
-    if (line.startsWith(":")) continue;
-    const colon = line.indexOf(":");
-    const field = colon === -1 ? line : line.slice(0, colon);
-    let value = colon === -1 ? "" : line.slice(colon + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "data") data.push(value);
-    else if (field === "event") event = value;
   }
   if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
 }
@@ -41,18 +43,19 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 /**
- * Map Responses API stream events to LangFn stream events: text deltas to `content`,
- * reasoning summary and reasoning text deltas to `reasoning`, completed function calls to
- * `tool_call`, then `token_usage`, the replayable assistant `message` and `end` from the
- * terminal response. A stream that ends without a terminal event, or that reports a failure,
- * throws a typed error.
+ * Map Responses API stream events to LangFn stream events: text deltas to `content` and
+ * reasoning summary and reasoning text deltas to `reasoning` as they arrive; then, from the
+ * terminal response, `tool_call` for each finished function call, `token_usage`, the
+ * replayable assistant `message` and `end`. Tool calls wait for the terminal event because a
+ * call is only executable once the response completes: an incomplete response (for example
+ * `max_output_tokens`) yields no tool calls and ends with `length`. A stream that ends without
+ * a terminal event, or that reports a failure, throws a typed error.
  */
 export async function* mapResponsesStream(
   events: AsyncIterable<ServerSentEvent>,
   provider: string,
 ): AsyncIterable<StreamEvent> {
   const fail = (message: string) => new ProviderError(message, { provider });
-  const emittedCalls = new Set<string>();
   const doneItems = new Map<number, unknown>();
 
   for await (const frame of events) {
@@ -84,13 +87,6 @@ export async function* mapResponsesStream(
         if (!isRecord(item)) throw fail("Responses output_item.done requires an item");
         if (typeof payload.output_index === "number") doneItems.set(payload.output_index, item);
         else doneItems.set(doneItems.size, item);
-        if (item.type === "function_call") {
-          const call = parseFunctionCall(item, provider);
-          if (!emittedCalls.has(call.id)) {
-            emittedCalls.add(call.id);
-            yield { type: "tool_call", id: call.id, toolName: call.name, args: call.arguments };
-          }
-        }
         break;
       }
       case "response.completed":
@@ -101,10 +97,10 @@ export async function* mapResponsesStream(
         const output = Array.isArray(response.output) && response.output.length
           ? response.output
           : [...doneItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item);
-        const result = parseResponsesResponse({ ...response, output }, provider);
+        // The event type is authoritative: a response.incomplete event never yields executable calls.
+        const status = type === "response.incomplete" ? "incomplete" : response.status;
+        const result = parseResponsesResponse({ ...response, status, output }, provider);
         for (const call of result.toolCalls ?? []) {
-          if (emittedCalls.has(call.id)) continue;
-          emittedCalls.add(call.id);
           yield { type: "tool_call", id: call.id, toolName: call.name, args: call.arguments };
         }
         if (result.usage) {

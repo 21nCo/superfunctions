@@ -24,18 +24,39 @@ function isRecord(value: unknown): value is JsonRecord {
 export interface ParsedOutputItems {
   content: string;
   refusal?: string;
+  /** Completed function calls; only these may be executed. */
   toolCalls: ToolCall[];
   reasoning: ResponsesReasoningSummary[];
+  /**
+   * The items a stateless follow-up can send back, unchanged. Unfinished function calls (and
+   * the reasoning items that led into them) are left out: they are not executable, have no
+   * function_call_output to pair with, and a reasoning item replayed without its following
+   * item is rejected by the provider. For an incomplete response, reasoning at the end of the
+   * output is left out for the same reason.
+   */
+  replayable: ResponsesOutputItem[];
+}
+
+export interface ParseOutputItemsOptions {
+  /** The items come from an incomplete response, so none of its function calls are finished. */
+  incomplete?: boolean;
 }
 
 /** Read the text, refusal, function calls and reasoning out of Responses output items. */
-export function parseOutputItems(output: unknown, provider: string): ParsedOutputItems {
+export function parseOutputItems(
+  output: unknown,
+  provider: string,
+  options: ParseOutputItemsOptions = {},
+): ParsedOutputItems {
   const fail = (message: string) => new ProviderError(message, { provider });
   if (!Array.isArray(output)) throw fail("Responses output must be an array");
   const text: string[] = [];
   const refusals: string[] = [];
   const toolCalls: ToolCall[] = [];
   const reasoning: ResponsesReasoningSummary[] = [];
+  const replayable: ResponsesOutputItem[] = [];
+  // Reasoning items at the end of `replayable` that precede the next output item.
+  let trailingReasoning = 0;
 
   for (const item of output) {
     if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
@@ -56,22 +77,40 @@ export function parseOutputItems(output: unknown, provider: string): ParsedOutpu
         break;
       }
       case "function_call":
-        toolCalls.push(parseFunctionCall(item, provider));
-        break;
+        if (!options.incomplete && isFinishedCall(item)) {
+          toolCalls.push(parseFunctionCall(item, provider));
+          break;
+        }
+        // An unfinished call (truncated arguments) is neither executed nor replayed.
+        replayable.splice(replayable.length - trailingReasoning, trailingReasoning);
+        trailingReasoning = 0;
+        continue;
       case "reasoning":
         reasoning.push(parseReasoning(item, provider));
-        break;
+        replayable.push(item as ResponsesOutputItem);
+        trailingReasoning += 1;
+        continue;
       default:
         // Other item types are kept in responsesOutput but carry no chat content.
         break;
     }
+    replayable.push(item as ResponsesOutputItem);
+    trailingReasoning = 0;
   }
+  // A turn cut off while reasoning has no item for its last reasoning to lead into.
+  if (options.incomplete) replayable.splice(replayable.length - trailingReasoning, trailingReasoning);
   return {
     content: text.join(""),
     ...(refusals.length ? { refusal: refusals.join("") } : {}),
     toolCalls,
     reasoning,
+    replayable,
   };
+}
+
+/** A function call is finished when its status is `completed`, or absent on servers that omit it. */
+function isFinishedCall(item: JsonRecord): boolean {
+  return item.status === undefined || item.status === null || item.status === "completed";
 }
 
 export function parseFunctionCall(item: JsonRecord, provider: string): ToolCall {
@@ -136,7 +175,7 @@ export function parseResponsesResponse(data: unknown, provider: string): Respons
     throw new ProviderError(`Responses returned unexpected status ${String(status)}`, { provider, metadata: { status } });
   }
 
-  const parsed = parseOutputItems(data.output, provider);
+  const parsed = parseOutputItems(data.output, provider, { incomplete: status === "incomplete" });
   const usage = isRecord(data.usage)
     ? providerUsage(data.usage.input_tokens, data.usage.output_tokens, data.usage.total_tokens)
     : undefined;
@@ -159,7 +198,7 @@ export function parseResponsesResponse(data: unknown, provider: string): Respons
     content: parsed.content,
     ...(toolCalls ? { toolCalls } : {}),
     ...(parsed.refusal !== undefined ? { refusal: parsed.refusal } : {}),
-    responsesOutput: structuredClone(data.output as ResponsesOutputItem[]),
+    responsesOutput: structuredClone(parsed.replayable),
   };
   return {
     message,
@@ -202,15 +241,34 @@ export function responsesError(
   return new ProviderError(`${provider} Responses request failed${label}${message ? `: ${message}` : ""}`, { provider, metadata });
 }
 
+function isAbort(error: unknown, signal?: AbortSignal): boolean {
+  return !!signal?.aborted || (error instanceof Error && error.name === "AbortError");
+}
+
+/**
+ * Read a response body as text. Transport errors (a body timeout, an oversized body) and
+ * aborts keep their identity so callers and retry policies can tell them apart.
+ */
+export async function readResponsesBody(provider: string, response: Response, signal?: AbortSignal): Promise<string> {
+  try {
+    return await response.text();
+  } catch (error) {
+    if (error instanceof LangFnError || isAbort(error, signal)) throw error;
+    throw new ProviderError("Responses body could not be read", { provider, cause: error });
+  }
+}
+
 /** Throw the classified error for a non-2xx HTTP response. */
-export async function raiseForResponsesStatus(provider: string, response: Response): Promise<void> {
+export async function raiseForResponsesStatus(provider: string, response: Response, signal?: AbortSignal): Promise<void> {
   if (response.ok) return;
   const retryAfter = parseRetryAfter(response.headers);
   let text = "";
   try {
     text = await response.text();
-  } catch {
-    // An unreadable error body still yields a typed status error.
+  } catch (error) {
+    // A timed-out, oversized or aborted body keeps its own error; any other unreadable error
+    // body still yields a typed status error.
+    if (error instanceof LangFnError || isAbort(error, signal)) throw error;
   }
   let body: unknown = text;
   try {

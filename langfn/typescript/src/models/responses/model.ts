@@ -5,7 +5,7 @@ import { ChatModel } from "../base.js";
 import { defineCapabilityProfile, requireCapability, type CapabilityProfile } from "../profiles/types.js";
 import { getTransportClient } from "../transport.js";
 import { buildResponsesPayload } from "./request.js";
-import { parseResponsesResponse, raiseForResponsesStatus } from "./response.js";
+import { parseResponsesResponse, raiseForResponsesStatus, readResponsesBody } from "./response.js";
 import { mapResponsesStream, readServerSentEvents } from "./stream.js";
 import type { ResponsesChatRequest, ResponsesChatResponse, ResponsesReasoningConfig } from "./types.js";
 
@@ -29,6 +29,11 @@ export interface ResponsesChatModelConfig {
   timeout?: number;
   fetchImpl?: typeof fetch;
   maxResponseBytes?: number;
+  /**
+   * Largest single server-sent event line, in bytes. The terminal event repeats the whole turn
+   * (including encrypted reasoning) on one line, so it defaults to `maxResponseBytes`, or 16 MiB.
+   */
+  maxStreamLineBytes?: number;
   /** Default output token budget; a request's `maxOutputTokens` overrides it. */
   maxOutputTokens?: number;
   /** Default reasoning configuration; needs the profile's `reasoning` capability. */
@@ -41,6 +46,7 @@ export interface ResponsesChatModelConfig {
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const DEFAULT_MAX_STREAM_LINE_BYTES = 16 * 1024 * 1024;
 
 /**
  * A stateless Responses API chat model for OpenAI, OpenRouter and any compatible endpoint.
@@ -60,6 +66,7 @@ export class ResponsesChatModel extends ChatModel {
   private readonly timeout: number;
   private readonly fetchImpl?: typeof fetch;
   private readonly maxResponseBytes?: number;
+  private readonly maxStreamLineBytes: number;
   private readonly maxOutputTokens?: number;
   private readonly reasoning?: ResponsesReasoningConfig;
   private readonly estimateInputTokens?: ResponsesChatModelConfig["estimateInputTokens"];
@@ -87,6 +94,10 @@ export class ResponsesChatModel extends ChatModel {
     this.timeout = config.timeout ?? 60_000;
     this.fetchImpl = config.fetchImpl;
     this.maxResponseBytes = config.maxResponseBytes;
+    this.maxStreamLineBytes = config.maxStreamLineBytes ?? config.maxResponseBytes ?? DEFAULT_MAX_STREAM_LINE_BYTES;
+    if (!Number.isSafeInteger(this.maxStreamLineBytes) || this.maxStreamLineBytes <= 0) {
+      throw new ValidationError("maxStreamLineBytes must be a positive safe integer");
+    }
     this.maxOutputTokens = config.maxOutputTokens;
     if (config.reasoning !== undefined) requireCapability(this.profile, "reasoning", "the model sets a default reasoning configuration");
     this.reasoning = config.reasoning;
@@ -103,11 +114,11 @@ export class ResponsesChatModel extends ChatModel {
   async chat(request: ResponsesChatRequest): Promise<ResponsesChatResponse> {
     const payload = this.payload(request, false);
     const response = await this.send(payload, request.signal, "application/json");
+    const text = await readResponsesBody(this.provider, response, request.signal);
     let data: unknown;
     try {
-      data = await response.json();
+      data = JSON.parse(text);
     } catch (error) {
-      if (request.signal?.aborted) throw error;
       throw new ProviderError("Responses body is not valid JSON", { provider: this.provider, cause: error });
     }
     return parseResponsesResponse(data, this.provider);
@@ -126,7 +137,7 @@ export class ResponsesChatModel extends ChatModel {
     const payload = this.payload(request, true);
     const response = await this.send(payload, request.signal, "text/event-stream");
     if (!response.body) throw new ProviderError("Responses stream body was empty", { provider: this.provider });
-    yield* mapResponsesStream(readServerSentEvents(response.body), this.provider);
+    yield* mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider);
   }
 
   private payload(request: ResponsesChatRequest, stream: boolean): Record<string, unknown> {
@@ -168,8 +179,22 @@ export class ResponsesChatModel extends ChatModel {
       fetchImpl: this.fetchImpl,
       maxResponseBytes: this.maxResponseBytes,
     });
-    const response = await client.request(this.path, { method: "POST", signal, body: JSON.stringify(payload) });
-    await raiseForResponsesStatus(this.provider, response);
+    // Redirects are never followed: a re-sent POST would carry the credentials, custom auth
+    // headers and the caller's history to whatever origin the redirect names.
+    const response = await client.request(this.path, {
+      method: "POST",
+      signal,
+      body: JSON.stringify(payload),
+      redirect: "manual",
+    });
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      await response.body?.cancel().catch(() => {});
+      throw new ProviderError(`${this.provider} Responses endpoint answered with a redirect, which is not followed`, {
+        provider: this.provider,
+        metadata: { status: response.status, redirect: true },
+      });
+    }
+    await raiseForResponsesStatus(this.provider, response, signal);
     return response;
   }
 }
