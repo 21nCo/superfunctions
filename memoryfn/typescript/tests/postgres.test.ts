@@ -180,25 +180,34 @@ suite('Postgres lifecycle integration', () => {
     expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-2', chunkCount: 7000 });
     expect(await client`SELECT 1 FROM memory_relationships`).toHaveLength(0);
   });
-  it('stores long chunk text sent outside the row JSON exactly', async () => {
+  it('stores chunk text and source fields sent as their own parameters exactly', async () => {
     const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
-    // Control characters grow six-fold under JSON escaping; values this long travel as their own parameters.
+    // Control characters grow six-fold under JSON escaping; a small replacement sends every text unescaped.
     const long = String.fromCharCode(1).repeat(1 << 20) + 'end';
     const chunks = [{ content: 'short' }, { content: long }, { content: long + 'er' }, { content: 'tail\u0001' }]
       .map(chunk => ({ tenantId: 'a', containerTags: ['docs'], ...chunk }));
-    const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-long', chunks });
+    const contentHash = `hash-${String.fromCharCode(1).repeat(1024)}`;
+    const rows = await adapter.replaceSource({ ...scope, contentHash, chunks });
     expect(rows.map(row => [row.chunkIndex, row.content.length])).toEqual([[0, 5], [1, (1 << 20) + 3], [2, (1 << 20) + 5], [3, 5]]);
     const stored = await client`SELECT chunk_index, content = ${long} AS same FROM memories WHERE deleted_at IS NULL ORDER BY chunk_index`;
     expect(stored.map(row => [row.chunk_index, row.same])).toEqual([[0, false], [1, true], [2, false], [3, false]]);
     expect(rows[2].content.endsWith('ender')).toBe(true);
-    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-long', chunkCount: 4 });
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash, chunkCount: 4 });
   });
-  it('replaces a source with more chunks than it sends as separate content parameters', async () => {
-    const scope = { tenantId: 'a', containerTags: ['docs'], sourceKey: 'guide.md' };
-    const many = Array.from({ length: 40000 }, (_, index) => ({ tenantId: 'a', containerTags: ['docs'], content: `chunk ${index}\n"quoted"` }));
+  it('replaces a source with more chunks than it sends as separate text parameters', async () => {
+    const scope = { tenantId: 'a', containerTags: ['docs', 'team', 'docs'], sourceKey: 'guide.md' };
+    // Above 16,384 chunks short text travels inside the row JSON and only content of 1 Mi characters or more on its own.
+    const long = (mark: string) => `${mark}${String.fromCharCode(1).repeat(1 << 20)}`;
+    const many = Array.from({ length: 20000 }, (_, index) => ({
+      tenantId: 'a', containerTags: ['team', 'docs'], type: `type "${index}"`,
+      content: index === 3 || index === 15000 ? long(`long ${index}`) : `chunk ${index}\n"quoted"`,
+    }));
     const rows = await adapter.replaceSource({ ...scope, contentHash: 'hash-many', chunks: many });
-    expect(rows.map(row => row.content)).toEqual(many.map(chunk => chunk.content));
-    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-many', chunkCount: 40000 });
+    expect(rows.map(row => [row.chunkIndex, row.type, row.content, row.containerTags]))
+      .toEqual(many.map((chunk, index) => [index, chunk.type, chunk.content, scope.containerTags]));
+    const stored = await client`SELECT chunk_index FROM memories WHERE deleted_at IS NULL AND (content = ${long('long 3')} OR content = ${long('long 15000')}) ORDER BY 1`;
+    expect(stored.map(row => row.chunk_index)).toEqual([3, 15000]);
+    expect(await adapter.getSourceState(scope)).toEqual({ contentHash: 'hash-many', chunkCount: 20000 });
   });
   it('commits transactions that write the same source keys in one order with disjoint tags', async () => {
     const chunk = (tag: string, content: string) => ({ tenantId: 'a', containerTags: [tag], content });
