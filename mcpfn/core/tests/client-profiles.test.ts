@@ -150,13 +150,16 @@ describe("McpFn client profiles", () => {
   });
 
   // An empty $id names no resource, so each sibling keeps its own local pointers.
-  it("lists and calls an anonymous tool beside two distinct empty-ID siblings", async () => {
+  // Ajv normalizes a top-level "#" or "#/" to the same empty key.
+  it.each([["", false], ["", true], ["#", false], ["#", true], ["#/", false], ["#/", true]] as const)("lists and calls an anonymous tool beside two distinct siblings with $id %j (reversed %s)", async (id, reversed) => {
     const handler = async () => structuredResult({ ok: true });
-    const sibling = (type: string) => ({ $id: "", type: "object" as const, properties: { a: { $ref: "#/definitions/d" } }, required: ["a"], definitions: { d: { type } } });
-    const registry = new McpFnRegistry<RequestContext>()
-      .register({ name: "anonymous", description: "Anonymous", inputSchema: { type: "object" as const, properties: { x: { type: "string" } }, required: ["x"] }, handler })
-      .register({ name: "text", description: "Text", inputSchema: sibling("string"), handler })
-      .register({ name: "number", description: "Number", inputSchema: sibling("number"), handler });
+    const sibling = (type: string) => ({ $id: id, type: "object" as const, properties: { a: { $ref: "#/definitions/d" } }, required: ["a"], definitions: { d: { type } } });
+    const definitions = [
+      { name: "anonymous", description: "Anonymous", inputSchema: { type: "object" as const, properties: { x: { type: "string" } }, required: ["x"] }, handler },
+      { name: "text", description: "Text", inputSchema: sibling("string"), handler },
+      { name: "number", description: "Number", inputSchema: sibling("number"), handler },
+    ];
+    const registry = new McpFnRegistry<RequestContext>().registerAll(reversed ? definitions.reverse() : definitions);
     const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
     expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["anonymous", "number", "text"]);
     for (const [name, valid, invalid] of [
@@ -167,6 +170,52 @@ describe("McpFn client profiles", () => {
       expect((await client.callTool({ name, arguments: valid })).isError).not.toBe(true);
       expect((await client.callTool({ name, arguments: invalid })).isError).toBe(true);
     }
+  });
+
+  // Ajv stores a nested ID as an alias "<owner>#<pointer>" and parses it as a URI,
+  // so within its own tool an ID under definitions["%41"] names definitions.A.
+  it.each([["a named", { $id: "own" }], ["an anonymous", {}]] as const)("compares a nested-ID alias at a percent-encoded pointer inside %s tool as tools/call validates it", async (_label, identity) => {
+    const handler = async () => structuredResult({ ok: true });
+    const schema = (type: string) => ({ ...identity, type: "object" as const, properties: { v: { $ref: "nested" } }, required: ["v"], definitions: { "%41": { $id: "nested", type: "string" }, A: { type } } });
+    const registry = new McpFnRegistry<RequestContext>().register({ name: "own", description: "Own", inputSchema: schema("number"), handler });
+    const noop = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await noop.client.listTools()).tools.map(tool => tool.name)).toEqual(["own"]);
+    expect((await noop.client.callTool({ name: "own", arguments: { v: 1 } })).isError).not.toBe(true);
+    expect((await noop.client.callTool({ name: "own", arguments: { v: "text" } })).isError).toBe(true);
+    const retyped = await connect({ subject: "authenticated-client" }, { id: "retyped", version: "1", matches: () => true,
+      projectCatalog: ({ tools }) => tools.map(tool => ({ ...tool, inputSchema: schema("boolean") })),
+    }, registry);
+    await expect(retyped.client.listTools()).rejects.toThrow(/canonical schema/);
+  });
+
+  // The runtime compiles an anonymous tool with base "", where a dot-segment
+  // reference names that tool itself.
+  it.each(["./#/definitions/query", ".#/definitions/query", "../#/definitions/query"])("lists and calls an anonymous tool that references itself through %s", async (reference) => {
+    const registry = new McpFnRegistry<RequestContext>().register({ name: "search", description: "Search", handler: async () => structuredResult({ ok: true }),
+      inputSchema: { type: "object", properties: { query: { $ref: reference } }, required: ["query"], definitions: { query: { type: "string" } } } });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["search"]);
+    expect((await client.callTool({ name: "search", arguments: { query: "text" } })).isError).not.toBe(true);
+    expect((await client.callTool({ name: "search", arguments: { query: 1 } })).isError).toBe(true);
+  });
+
+  // Ajv caches compiled schemas by object: registering the declaring schema
+  // object again leaves the runtime's "" entry on the schema compiled between.
+  it.each([false, true])("lists and calls a named consumer of the anonymous entry after a reused schema object (reversed %s)", async (reversed) => {
+    const handler = async () => structuredResult({ ok: true });
+    const declaring = { type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
+    const between = { type: "object" as const, definitions: { inner: { type: "number" } } };
+    const [first, second] = reversed ? [between, declaring] : [declaring, between];
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "first", description: "First", inputSchema: first, handler })
+      .register({ name: "second", description: "Second", inputSchema: second, handler })
+      .register({ name: "again", description: "Again", inputSchema: first, handler })
+      .register({ name: "consumer", description: "Consumer", inputSchema: { $id: "shared", type: "object", properties: { value: { $ref: "nested" } }, required: ["value"] }, handler });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "noop", version: "1", matches: () => true }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["again", "consumer", "first", "second"]);
+    const [valid, invalid] = reversed ? ["text", 1] : [1, "text"];
+    expect((await client.callTool({ name: "consumer", arguments: { value: valid } })).isError).not.toBe(true);
+    expect((await client.callTool({ name: "consumer", arguments: { value: invalid } })).isError).toBe(true);
   });
 
   const closeables: Array<{ close(): Promise<void> }> = [];
@@ -1469,10 +1518,14 @@ describe("anonymous schema scopes beside registered schema resources", () => {
         context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
         profile: { id: "scoped", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "search", inputSchema: projected }] } : {}) },
       } });
-      if (engine === "cfworker") expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
-      // Ajv cannot resolve a dot-segment reference under a registry key and
-      // refuses the catalog; the edge engine resolves it and compares shapes.
-      await expect(run(schema("number"))).rejects.toMatchObject({ code: engine === "cfworker" ? "MCPFN_PROFILE_ASYMMETRIC" : "MCPFN_INVALID_PROJECTED_CATALOG" });
+      if (engine === "ajv") {
+        // The runtime compiles the tool with base "" and resolves the reference in it.
+        const validate = createSchemaCompiler("ajv").compile(schema("string"));
+        expect([validate({ query: "text" }), validate({ query: 1 })]).toEqual([true, false]);
+      }
+      // Both engines resolve it on the anonymous root and compare shapes.
+      expect((await run()).tools.map((tool) => tool.name)).toEqual(["search"]);
+      await expect(run(schema("number"))).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
     });
   });
 
@@ -1671,20 +1724,47 @@ describe("anonymous schema scopes beside registered schema resources", () => {
   });
 
   // Ajv does not recompile a schema object it has seen, so registering one
-  // anonymous object again leaves the runtime's "" entry on the schema between.
-  it("refuses an anonymous nested ID from a named consumer after a reused anonymous schema", async () => {
+  // anonymous object again leaves the runtime's "" entry on the schema between,
+  // while a copy takes it again. The comparison follows the object identity.
+  it.each([["a reused object", true], ["a copy", false]] as const)("compares a named consumer of the anonymous entry after %s as Ajv resolves it", async (_label, reused) => {
     const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
     const declaring = { type: "object" as const, definitions: { inner: { $id: "nested", type: "string" } } };
     const between = { type: "object" as const, definitions: { inner: { type: "number" } } };
     const consumer = { $id: "shared", type: "object" as const, properties: { value: { $ref: "nested" } } };
+    const types = { $id: "types", type: "object" as const, definitions: { number: { type: "number" } } };
+    const order = [types, declaring, between, reused ? declaring : structuredClone(declaring), consumer];
     const compiler = createSchemaCompiler("ajv");
-    for (const schema of [declaring, between, declaring]) compiler.compile(schema);
+    for (const schema of order.slice(0, -1)) compiler.compile(schema);
     const validate = compiler.compile(consumer);
-    expect([validate({ value: 1 }), validate({ value: "text" })]).toEqual([true, false]);
-    await expect(buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer }], schemaResources: [declaring, between, declaring, consumer], resolved: {
+    expect([validate({ value: 1 }), validate({ value: "text" })]).toEqual(reused ? [true, false] : [false, true]);
+    const run = (projected?: object) => buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "consumer", inputSchema: consumer }], schemaResources: order, resolved: {
       context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
-      profile: { id: "inline", version: "1", matches: () => true, projectCatalog: () => [{ name: "consumer", inputSchema: { $id: "shared", type: "object" as const, properties: { value: { type: "string" } } } }] },
-    } })).rejects.toMatchObject({ code: "MCPFN_INVALID_PROJECTED_CATALOG" });
+      profile: { id: "inline", version: "1", matches: () => true, ...(projected ? { projectCatalog: () => [{ name: "consumer", inputSchema: projected as McpFnObjectSchema }] } : {}) },
+    } });
+    expect((await run()).tools.map((tool) => tool.name)).toEqual(["consumer"]);
+    // Pointing at an equal number schema is symmetric only when the runtime target is that number.
+    const renamed = run({ $id: "shared", type: "object", properties: { value: { $ref: "types#/definitions/number" } } });
+    if (reused) expect((await renamed).tools.map((tool) => tool.name)).toEqual(["consumer"]);
+    else await expect(renamed).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
+  });
+
+  it.each(["ajv", "cfworker"] as const)("compares retyping beside a same-tool nested ID at a percent-encoded pointer as the %s runtime resolves it", async (engine) => {
+    vi.resetModules();
+    if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
+    try {
+      const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+      const schema = (type: string) => ({ $id: "own", type: "object" as const, properties: { v: { $ref: "nested" } }, definitions: { "%41": { $id: "nested", type: "string" }, A: { type } } });
+      // Ajv follows the decoded alias to definitions.A; the edge engine names the node itself.
+      const { createSchemaCompiler: engineCompiler } = await import("../src/validation.js");
+      const validate = engineCompiler(engine).compile(schema("number"));
+      expect([validate({ v: 1 }), validate({ v: "text" })]).toEqual(engine === "ajv" ? [true, false] : [false, true]);
+      const retyped = buildMcpFnEffectiveCatalog({ canonicalTools: [{ name: "own", inputSchema: schema("number") }], resolved: {
+        context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+        profile: { id: "retyped", version: "1", matches: () => true, projectCatalog: () => [{ name: "own", inputSchema: schema("boolean") }] },
+      } });
+      if (engine === "ajv") await expect(retyped).rejects.toMatchObject({ code: "MCPFN_PROFILE_ASYMMETRIC" });
+      else expect((await retyped).tools.map((tool) => tool.name)).toEqual(["own"]);
+    } finally { vi.unstubAllGlobals(); vi.resetModules(); }
   });
 
   // Ajv stores an alias pointer unencoded but parses it as a URI, so the token

@@ -413,10 +413,11 @@ function validateDefinitionContainers(schema: unknown, ajv: Ajv | Ajv2019 | Ajv2
 
 // Cache only syntax validation; identity, projection and ownership checks still run per request.
 const validProfileSchemas = new Set<string>();
-// An absent or empty $id leaves a schema anonymous, as at runtime (validation.ts).
+// A top-level $id that Ajv normalizes to its empty key (absent, "", "#" or "#/")
+// leaves a schema anonymous, as at runtime: Ajv compiles it with base "".
 function namedSchemaId(schema: object): string | undefined {
   const id = (schema as Record<string, unknown>).$id;
-  return typeof id === "string" && id !== "" ? id : undefined;
+  return typeof id === "string" && !/^(?:#\/?)?$/.test(id) ? id : undefined;
 }
 function profileSchemaResources(schema: Record<string, unknown>, resources: readonly object[]): object[] {
   const rootId = namedSchemaId(schema);
@@ -446,13 +447,15 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
         ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
       });
       for (const resource of graph) validateDefinitionContainers(resource, ajv);
-      // Anonymous schemas need distinct registry keys without changing their JSON
+      // Anonymous siblings need distinct registry keys without changing their JSON
       // Schema IDs. A relative key keeps Ajv's shared relative namespace, so an
       // authored relative $ref such as "shared" resolves as it does for every
       // other resource (and at runtime). The key carries a digest of the whole
-      // graph, so no authored $id in that graph can claim it.
+      // graph, so no authored $id in that graph can claim it. The schema itself
+      // is compiled without a key, as the runtime compiles each tool, so an
+      // anonymous root keeps base "" and its dot-segment self references.
       const namespace = sha256(graph).slice(0, 32);
-      for (const [index, resource] of graph.entries()) {
+      for (const [index, resource] of graph.slice(0, -1).entries()) {
         ajv.addSchema(resource as object, namedSchemaId(resource) === undefined ? `mcpfn-profile-${namespace}-${index}` : undefined);
       }
       ajv.compile(schema);
@@ -571,23 +574,20 @@ function mapSchemaKeyword(key: string, value: unknown, visit: (schema: unknown) 
 // The runtime registry compiles schemaResources in order with one Ajv, whose ""
 // entry is the last anonymous schema compiled. Returns that schema's canonical
 // JSON for a root (null when none precedes it), or undefined when the root is
-// not registered or its registrations see different ones. Ajv skips a schema
-// object it has already compiled, so a reused object does not take the entry
-// again; content cannot tell a reused object from a copy, so a repeated
-// anonymous schema before the root also leaves it undefined.
+// not registered or its registrations see different ones. Ajv caches compiled
+// schemas by object identity: a schema object it has already compiled neither
+// takes the "" entry again nor registers again, while a copy does both.
 function anonymousBefore(resources: readonly object[], root: object): string | null | undefined {
   const rootJson = canonicalJson(root);
-  const seen = new Set<string | null | undefined>();
-  const anonymous = new Set<string>();
-  let last: string | null | undefined = null;
+  const seen = new Set<string | null>();
+  const compiled = new Set<object>();
+  let last: string | null = null;
   for (const resource of resources) {
+    if (compiled.has(resource)) continue;
+    compiled.add(resource);
     const json = canonicalJson(resource);
     if (json === rootJson) seen.add(last);
-    if (namedSchemaId(resource) === undefined) {
-      // New content is a new object, which Ajv compiles and enters as "".
-      last = anonymous.has(json) ? undefined : json;
-      anonymous.add(json);
-    }
+    if (namedSchemaId(resource) === undefined) last = json;
   }
   return seen.size === 1 ? [...seen][0] : undefined;
 }
@@ -729,7 +729,9 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
       }
     }
     // An empty $id names no resource, as at runtime: the schema stays anonymous.
-    const authoredId = !Array.isArray(value) && typeof schemaValue.$id === "string" && schemaValue.$id !== "" ? schemaValue.$id : undefined;
+    // So does a top-level "#" or "#/", which Ajv also normalizes to its empty key.
+    const authoredId = Array.isArray(value) ? undefined : parent === undefined ? namedSchemaId(schemaValue) :
+      typeof schemaValue.$id === "string" && schemaValue.$id !== "" ? schemaValue.$id : undefined;
     // A nested dot-segment $id would rename the anonymous resource it sits in.
     if (!invalid && authoredId !== undefined && value !== resource && !authoredId.startsWith("#") && selfReference(authoredId, parentLocal) !== undefined) {
       reject("Schema resource ID collides with an anonymous schema scope");
@@ -844,13 +846,11 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>(), sch
   // A nested ID or anchor is an alias of "<owner path>#<pointer>", resolved in
   // the resource being compiled: an owner whose path another resource shares
   // (literal "./shared" beside "shared", or two anonymous tools) yields that
-  // resource's node at the same pointer, as Ajv does.
-  const ajvAlias = (node: object, top: string): unknown => {
-    const owner = scopes.get(node)!.top;
-    if (owner === top) return node;
-    // Ajv parses the stored alias as a URI, so its pointer is percent-decoded.
-    return ajvSchema(topPath(owner), fragment(`#${pointerText(node)}`), top);
-  };
+  // resource's node at the same pointer, as Ajv does. Ajv parses the stored
+  // alias as a URI, so its pointer is percent-decoded even within the owner
+  // itself: an ID under definitions["%41"] names definitions.A, never itself.
+  const ajvAlias = (node: object, top: string): unknown =>
+    ajvSchema(topPath(scopes.get(node)!.top), fragment(`#${pointerText(node)}`), top);
   // Ajv's order (vocabularies/core/ref.ts, compile/index.ts resolveRef): "#"
   // from the compiled root's own base; then an exact registry key (a top-level
   // resource, or a nested ID or anchor alias); then resolveSchema; then the
