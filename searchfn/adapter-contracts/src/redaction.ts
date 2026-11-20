@@ -35,15 +35,10 @@ const SENSITIVE_KEY =
 // token are redacted together, so the credential is never printed.
 const KEY_VALUE_SECRET =
   /(\b[\w-]{0,64}?(?:api[_-]?key|password|passwd|secret|token|authorization|connection(?:[_-]?string)?)(?:\]|%5D)?)(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.|(?!\4)[^\\\n])*)\4(?=$|[\s,;}\]&])|(["'])[^\n]*|((?:bearer|basic|token)[ \t]+)?([^\s,;]+))/gi;
-// The same grammar, searched from one position (see keyValueStartsWithin) or
-// anchored at one position (see startsKeyValue).
+// The same grammar, searched from one position (see keyValueStartsWithin).
 const KEY_VALUE_FIND = new RegExp(KEY_VALUE_SECRET.source, "gi");
-const KEY_VALUE_START = new RegExp(KEY_VALUE_SECRET.source, "iy");
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
-// Userinfo of one URL authority embedded in a URL query or fragment: it never
-// spans a parameter or route delimiter, an @ or whitespace.
-const COMPONENT_URL_CREDENTIALS = /((?:https?|postgres(?:ql)?):\/\/)([^\s/?#@&]+)@/gi;
 const AUTHORIZATION_KEY = /authorization(?:\]|%5D)?$/i;
 const REDACTED = "[REDACTED]";
 const ENCODED_REDACTED = /%5BREDACTED%5D/g;
@@ -60,6 +55,8 @@ const CREDENTIAL_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
 const ASSIGNMENT_START =
   /(?:(["'])[^\s"'=:,;]+\1[ \t]*[:=]|[^\s"'=:,;]+(?:[ \t]+[:=]|:(?=[\s,;]|$)|=(?!=*(?:[\s,;]|$))))/y;
 const PLUS_SIGN = /\+/g;
+// A URL parameter value the string pass already masked whole, quotes kept.
+const MASKED_VALUE = /^(["']?)\[REDACTED\]\1$/;
 const URL_PARAM_SEPARATOR = "&";
 const URL_ROUTE_DELIMITERS = ["/", "?", "#"];
 
@@ -99,13 +96,23 @@ function encodeQueryComponent(input: string): string {
  * Redacts query parameters by their decoded keys, so bracketed or
  * percent-encoded keys such as user%5Bpassword%5D are recognised, including
  * keys that still hold escapes after parsing. A sensitive
- * key hides its whole value; other parameters stay readable.
+ * key hides its whole value; other parameters stay readable. A key that still
+ * holds escapes and whose decoded form holds a secret (authorization%3Ax) is
+ * printed as [REDACTED] as a whole, and a value whose decoded form holds a
+ * secret is hidden.
  */
 function redactSearchParams(params: URLSearchParams): string {
   const pairs: string[] = [];
   params.forEach((entry, key) => {
-    const value = isSensitiveKey(key) ? REDACTED : redactSensitiveString(entry);
-    pairs.push(`${encodeQueryComponent(redactSensitiveString(key))}=${encodeQueryComponent(value)}`);
+    const redactedKey = redactSensitiveString(key);
+    if (redactedKey === key && holdsSecret(key, false)) {
+      pairs.push(REDACTED);
+      return;
+    }
+    const redactedEntry = redactSensitiveString(entry);
+    const hidden = isSensitiveKey(key) || (redactedEntry === entry && holdsSecret(entry, false));
+    const value = hidden ? REDACTED : redactedEntry;
+    pairs.push(`${encodeQueryComponent(redactedKey)}=${encodeQueryComponent(value)}`);
   });
   return pairs.join("&");
 }
@@ -116,105 +123,79 @@ function urlParamKey(name: string): string {
   return name.slice(start + 1);
 }
 
-/** Decodes a raw query or fragment value (%XX escapes and + as space) for scanning. */
-function decodeUrlValue(value: string): string {
-  return decodePercentEscapes(value.replace(PLUS_SIGN, " "));
+/**
+ * Whether the string redactor finds a secret in text as written or in up to
+ * MAX_KEY_DECODE_PASSES escape-decoded forms of it (the first pass also reads
+ * + as a space when plusAsSpace is set, as URL query text does).
+ */
+function holdsSecret(text: string, plusAsSpace: boolean): boolean {
+  if (redactSensitiveString(text) !== text) return true;
+  let candidate = text;
+  for (let pass = 0; pass < MAX_KEY_DECODE_PASSES; pass += 1) {
+    const source = pass === 0 && plusAsSpace ? candidate.replace(PLUS_SIGN, " ") : candidate;
+    const decoded = decodePercentEscapes(source);
+    if (decoded === candidate) return false;
+    if (redactSensitiveString(decoded) !== decoded) return true;
+    candidate = decoded;
+  }
+  return false;
 }
 
 /**
- * Redacts one &-separated URL parameter on its own. When the text before its
- * first = already holds a secret (authorization:x=), the whole parameter goes
- * through the string redactor, so no part of that secret is copied as a key.
- * Otherwise a parameter whose decoded key is sensitive hides its whole value,
- * and any other parameter goes through the string redactor; if that finds
- * nothing but its decoded value holds a secret (note=token%3Dx), the whole
- * value is hidden.
+ * Additive post-pass over one already-redacted URL query (without ?) or
+ * fragment (without #), split on & once so it stays linear. It only adds
+ * masks and never re-emits raw text that the string pass changed:
+ * (i) a parameter whose key (for a parameter without =, its whole text) holds
+ * a secret as written or decoded becomes [REDACTED] as a whole;
+ * (ii) a parameter whose key after the last route delimiter is sensitive,
+ * and whose value is not already a (quoted) [REDACTED], becomes key=[REDACTED];
+ * (iii) a parameter whose value holds a secret as written or decoded becomes
+ * key=[REDACTED].
+ * Empty parameters, route text and delimiters stay as written.
  */
-function redactUrlParam(param: string): string {
-  const separator = param.indexOf("=");
-  if (separator === -1) {
-    return redactSensitiveString(param);
-  }
-  const key = param.slice(0, separator);
-  const redacted = redactSensitiveString(param);
-  if (redactSensitiveString(key) !== key) {
-    return redacted;
-  }
-  if (isSensitiveKey(urlParamKey(key))) {
-    return `${key}=${REDACTED}`;
-  }
-  if (redacted !== param) {
-    return redacted;
-  }
-  const value = param.slice(separator + 1);
-  const decoded = decodeUrlValue(value);
-  if (decoded !== value && redactSensitiveString(decoded) !== decoded) {
-    return `${key}=${REDACTED}`;
-  }
-  return param;
-}
-
-/**
- * Redacts the raw text of a URL query (without ?) or fragment (without #) and
- * keeps everything else as written: route text, empty parameters, encodings
- * and delimiters. Parameter boundaries are decided once and every masking step
- * stays inside them: userinfo of one embedded URL authority (which never spans
- * &, /, ?, #, @ or whitespace) is masked first, so the split cannot cut through
- * it; then the component is split on & once and each parameter is redacted on
- * its own, so the work stays linear.
- */
-function redactUrlComponent(raw: string): string {
-  const params = raw.replace(COMPONENT_URL_CREDENTIALS, `$1${REDACTED}@`).split(URL_PARAM_SEPARATOR);
-  const output: string[] = [];
-  let credentialOpen = false;
-  for (const param of params) {
-    // Empty pieces hold nothing to mask and are kept as written.
-    if (param === "") {
-      output.push(param);
-      continue;
-    }
-    const hasValue = param.includes("=");
-    // A colon-delimited credential that reached the end of its parameter
-    // (token:abc&def) also covers the following pieces up to the next
-    // name=value parameter or key/value of its own.
-    if (credentialOpen && !hasValue && !startsKeyValue(param, 0)) {
-      continue;
-    }
-    const redacted = redactUrlParam(param);
-    const head = hasValue ? param.slice(0, param.indexOf("=")) : param;
-    credentialOpen = redacted.endsWith(REDACTED) && redactSensitiveString(head) !== head;
-    output.push(redacted);
-  }
-  return output.join(URL_PARAM_SEPARATOR);
+function maskUrlComponent(component: string): string {
+  return component
+    .split(URL_PARAM_SEPARATOR)
+    .map((param) => {
+      if (param === "" || param === REDACTED) return param;
+      const separator = param.indexOf("=");
+      const key = separator === -1 ? param : param.slice(0, separator);
+      if (holdsSecret(key, true)) return REDACTED;
+      if (separator === -1) return param;
+      const value = param.slice(separator + 1);
+      if (MASKED_VALUE.test(value)) return param;
+      if (isSensitiveKey(urlParamKey(key)) || holdsSecret(value, true)) return `${key}=${REDACTED}`;
+      return param;
+    })
+    .join(URL_PARAM_SEPARATOR);
 }
 
 /**
  * Redacts a URL and keeps every delimiter of its href, including an empty ?
- * or #. The raw query and fragment go through redactUrlComponent; userinfo
- * becomes [REDACTED]@. In a serialised href, ? and # outside the query and
- * fragment are always percent-encoded, so the first # starts the fragment and
- * the first ? before it starts the query.
+ * or #. Its first step is the pin's step: the base URL's own userinfo (any
+ * scheme) becomes [REDACTED]@ and the whole href goes through the string
+ * redactor, so embedded userinfo and key/value secrets are masked before any
+ * & split. maskUrlComponent then adds masks to the redacted query and
+ * fragment. In a serialised href, ? and # outside the query and fragment are
+ * percent-encoded, and redaction only removes text or inserts [REDACTED], so
+ * the first # left starts the fragment and the first ? before it the query.
  */
 function redactUrl(url: URL): string {
-  const href = url.href;
-  const hashStart = href.indexOf("#");
-  const beforeHash = hashStart === -1 ? href : href.slice(0, hashStart);
-  const queryStart = beforeHash.indexOf("?");
-  const base = new URL(href);
+  const base = new URL(url.href);
   const hasUserinfo = base.username !== "" || base.password !== "";
   base.username = "";
   base.password = "";
-  base.search = "";
-  base.hash = "";
-  let output = redactSensitiveString(base.href);
-  if (hasUserinfo) {
-    output = output.replace("//", `//${REDACTED}@`);
-  }
+  const href = hasUserinfo ? base.href.replace("//", `//${REDACTED}@`) : base.href;
+  const redacted = redactSensitiveString(href);
+  const hashStart = redacted.indexOf("#");
+  const beforeHash = hashStart === -1 ? redacted : redacted.slice(0, hashStart);
+  const queryStart = beforeHash.indexOf("?");
+  let output = queryStart === -1 ? beforeHash : beforeHash.slice(0, queryStart);
   if (queryStart !== -1) {
-    output += `?${redactUrlComponent(beforeHash.slice(queryStart + 1))}`;
+    output += `?${maskUrlComponent(beforeHash.slice(queryStart + 1))}`;
   }
   if (hashStart !== -1) {
-    output += `#${redactUrlComponent(href.slice(hashStart + 1))}`;
+    output += `#${maskUrlComponent(redacted.slice(hashStart + 1))}`;
   }
   return output;
 }
@@ -338,12 +319,6 @@ function schemeWordStandsAlone(input: string, start: number, end: number): boole
   if (keyValueStartsWithin(input, start, end)) return true;
   ASSIGNMENT_START.lastIndex = start;
   return ASSIGNMENT_START.test(input);
-}
-
-/** Whether a sensitive key/value of KEY_VALUE_SECRET starts exactly at index. */
-function startsKeyValue(input: string, index: number): boolean {
-  KEY_VALUE_START.lastIndex = index;
-  return KEY_VALUE_START.test(input);
 }
 
 function redactKeyValues(input: string): string {

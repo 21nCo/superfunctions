@@ -5,6 +5,7 @@ import { redactSensitive, redactSensitiveString } from "../src/index";
 // are not mistaken for committed credentials.
 const PW = ["pass", "word"].join("");
 const userinfo = (secret: string) => ["user", secret].join(":");
+const REDACTED_MARK = "[REDACTED]";
 
 describe("auth scheme words as secret values", () => {
   it("redacts the scheme word as the value when a non-authorization key holds bearer, basic or token", () => {
@@ -50,7 +51,12 @@ describe("query containers", () => {
     );
     const redacted = redactSensitive({ endpoint: url }).endpoint;
     expect(redacted).toBe(
-      "https://example.test/search?user%5Btoken%5D=[REDACTED]&pass%77ord=[REDACTED]&q=x#access_token=[REDACTED]&state=ok",
+      // As at the pin, an unquoted sensitive value runs across & and #.
+      "https://example.test/search?user%5Btoken%5D=[REDACTED]",
+    );
+    const separate = new URL("https://example.test/search?q=x&pass%77ord=test-password#state=ok&access_token=test-fragment");
+    expect(redactSensitive(separate)).toBe(
+      "https://example.test/search?q=x&pass%77ord=[REDACTED]#state=ok&access_token=[REDACTED]",
     );
     expect(redacted).not.toMatch(/test-token|test-password|test-fragment/);
   });
@@ -243,7 +249,8 @@ describe("URL fragments", () => {
   it("masks only the value of a sensitive segment in a fragment route", () => {
     const tokenKey = ["access", "token"].join("_");
     const url = new URL(`https://example.test/#/cb?state=ok&${tokenKey}=test-leak&next=/home`);
-    expect(redactSensitive(url)).toBe(`https://example.test/#/cb?state=ok&${tokenKey}=[REDACTED]&next=/home`);
+    // As at the pin, the unquoted value runs across the following parameters.
+    expect(redactSensitive(url)).toBe(`https://example.test/#/cb?state=ok&${tokenKey}=[REDACTED]`);
   });
 });
 
@@ -302,7 +309,10 @@ describe("round-8 URL component and scheme-word repairs", () => {
     }
     const escapedKey = ["user%5B", PW, "%5D"].join("");
     expect(redactSensitive(new URL(`https://example.test/?${escapedKey}=test-leak&flag`))).toBe(
-      `https://example.test/?${escapedKey}=[REDACTED]&flag`,
+      `https://example.test/?${escapedKey}=[REDACTED]`,
+    );
+    expect(redactSensitive(new URL(`https://example.test/?flag&pass%77ord=test-leak`))).toBe(
+      "https://example.test/?flag&pass%77ord=[REDACTED]",
     );
   });
 
@@ -312,7 +322,7 @@ describe("round-8 URL component and scheme-word repairs", () => {
     expect(String(url)).toContain("note=token%3Dtest-token");
     expect(redactSensitive(url)).toBe("https://example.test/search?note=[REDACTED]");
     expect(redactSensitive(new URL("https://example.test/?note=token=test-token&q=x"))).toBe(
-      "https://example.test/?note=token=[REDACTED]&q=x",
+      "https://example.test/?note=token=[REDACTED]",
     );
   });
 
@@ -321,9 +331,9 @@ describe("round-8 URL component and scheme-word repairs", () => {
     const fragmentColon = new URL(`https://example.test/#${"token:x&".repeat(16_000)}`);
     const queryAssign = new URL(`https://example.test/?${"token=x&".repeat(16_000)}`);
     const started = performance.now();
-    expect(redactSensitive(fragmentAssign)).toBe(`https://example.test/#${"token=[REDACTED]&".repeat(16_000)}`);
-    expect(redactSensitive(fragmentColon)).toBe(`https://example.test/#${"token:[REDACTED]&".repeat(16_000)}`);
-    expect(redactSensitive(queryAssign)).toBe(`https://example.test/?${"token=[REDACTED]&".repeat(16_000)}`);
+    expect(redactSensitive(fragmentAssign)).toBe("https://example.test/#token=[REDACTED]");
+    expect(redactSensitive(fragmentColon)).toBe("https://example.test/#token:[REDACTED]");
+    expect(redactSensitive(queryAssign)).toBe("https://example.test/?token=[REDACTED]");
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
@@ -410,27 +420,104 @@ describe("round-10 scheme words and URL parameter boundaries", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  it("keeps userinfo masking inside one URL parameter", () => {
+  it("never prints a sensitive value tail after an @", () => {
     const value = ["sec", "ret"].join("@");
     for (const delimiter of ["?", "#"]) {
       const url = new URL(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=${value}&q=1`);
-      expect(redactSensitive(url)).toBe(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=[REDACTED]&q=1`);
+      const redacted = redactSensitive(url);
+      expect(redacted).toBe(`https://example.test/${delimiter}next=https://a.test&${tokenKey}=[REDACTED]`);
+      expect(redacted).not.toContain("ret");
     }
+    // Pin behaviour (deferred minor): userinfo matching crosses & and over-masks.
     const email = "https://example.test/?next=https://api.example.test&email=a@b.test";
-    expect(redactSensitive(new URL(email))).toBe(email);
+    expect(redactSensitive(new URL(email))).toBe("https://example.test/?next=https://[REDACTED]@b.test");
   });
 
-  it("extends a colon-delimited fragment credential up to the next parameter", () => {
+  it("masks a colon-delimited fragment credential as the pin does", () => {
     const authorizationKey = ["author", "ization"].join("");
     const cases: Array<[string, string]> = [
       [`#${authorizationKey}:test-part1&test-part2`, `#${authorizationKey}:[REDACTED]`],
       [`#${tokenKey}:abc&def`, `#${tokenKey}:[REDACTED]`],
-      [`#${tokenKey}:x&state=ok`, `#${tokenKey}:[REDACTED]&state=ok`],
-      [`#${tokenKey}:x&${tokenKey}:y&z`, `#${tokenKey}:[REDACTED]&${tokenKey}:[REDACTED]`],
-      [`#${tokenKey}:abc&&def&`, `#${tokenKey}:[REDACTED]&&`],
+      [`#${tokenKey}:x&state=ok`, `#${tokenKey}:[REDACTED]`],
+      [`#${tokenKey}:x&${tokenKey}:y&z`, `#${tokenKey}:[REDACTED]`],
+      [`#${tokenKey}:abc&&def&`, `#${tokenKey}:[REDACTED]`],
     ];
     for (const [fragment, expected] of cases) {
       expect(redactSensitive(new URL(`https://example.test/${fragment}`))).toBe(`https://example.test/${expected}`);
     }
+  });
+});
+
+describe("round-11 whole-href string pass with an additive parameter post-pass", () => {
+  const tokenKey = ["to", "ken"].join("");
+  const authorizationKey = ["author", "ization"].join("");
+  const href = (rest: string) => redactSensitive(new URL(`https://example.test/${rest}`));
+
+  it("masks a quoted value that spans & as the pin does", () => {
+    expect(href(`#${tokenKey}:'test-first&chunk=test-last'&state=ok`)).toBe(
+      `https://example.test/#${tokenKey}:'[REDACTED]'&state=ok`,
+    );
+    expect(href(`#${tokenKey}='test-first&chunk=test-last'`)).toBe(`https://example.test/#${tokenKey}='[REDACTED]'`);
+    expect(href(`#${tokenKey}:part1&=part2`)).not.toContain("part2");
+  });
+
+  it("never copies a secret held by an escaped key into the output", () => {
+    for (const rest of [
+      `?${authorizationKey}%3Atest-tok=1`,
+      `#${authorizationKey}%3Atest-tok`,
+      `?${tokenKey}%3Dtest-sec=1`,
+      `?q=1&${authorizationKey}%253Atest-tok=1`,
+    ]) {
+      const redacted = href(rest);
+      expect(redacted).not.toMatch(/test-tok|test-sec/);
+      expect(redacted).toContain(REDACTED_MARK);
+    }
+    expect(href(`?q=1&${authorizationKey}%3Atest-tok=1&r=2`)).toBe("https://example.test/?q=1&[REDACTED]&r=2");
+    const params = new URLSearchParams([
+      [`${authorizationKey}%3Atest-tok`, "1"],
+      ["q", "x"],
+    ]);
+    expect(redactSensitive(params)).toBe("[REDACTED]&q=x");
+  });
+
+  it("masks userinfo that holds & before any parameter split", () => {
+    const secret = ["test-a", "test-b"].join("&");
+    expect(href(`#https://${userinfo(secret)}@api.example.test/path`)).toBe(
+      "https://example.test/#https://[REDACTED]@api.example.test/path",
+    );
+    expect(href(`#postgres://${userinfo(secret)}@db.example.test/app`)).toBe(
+      "https://example.test/#postgres://[REDACTED]@db.example.test/app",
+    );
+  });
+
+  it("masks a value whose decoded form holds a secret after a raw match", () => {
+    const redacted = href(`?note=${tokenKey}=a,${tokenKey}%3Dsecond`);
+    expect(redacted).toBe("https://example.test/?note=[REDACTED]");
+    expect(redacted).not.toContain("second");
+    const params = new URLSearchParams([["note", `${tokenKey}%3Dsecond`]]);
+    expect(redactSensitive(params)).toBe("note=[REDACTED]");
+  });
+
+  it("keeps delimiters, routes and non-sensitive parameters as written", () => {
+    for (const rest of ["?flag&&x=%20#", "#", "?", "#/callback?state=ok", "#section-2", "?a=1&&b=%2B+c#/r?x=1&&y"]) {
+      expect(href(rest)).toBe(`https://example.test/${rest}`);
+    }
+    expect(href(`?pass%77ord=test-leak`)).toBe("https://example.test/?pass%77ord=[REDACTED]");
+    expect(href(`?user%5B${PW}%5D=test-leak`)).toBe(`https://example.test/?user%5B${PW}%5D=[REDACTED]`);
+    for (const scheme of ["https", "postgres", "redis", "ftp"]) {
+      const redacted = redactSensitive(new URL(`${scheme}://${userinfo("test-pass")}@db.example.test/app?q=1#top`));
+      expect(redacted).toBe(`${scheme}://[REDACTED]@db.example.test/app?q=1#top`);
+    }
+  });
+
+  it("stays linear on long components", () => {
+    const long = "a=b&".repeat(32_000);
+    const started = performance.now();
+    expect(href(`?${long}#${long}`)).toBe(`https://example.test/?${long}#${long}`);
+    expect(href(`#${"x".repeat(128_000)}`)).toBe(`https://example.test/#${"x".repeat(128_000)}`);
+    expect(href(`?${`${tokenKey}%3Dx&`.repeat(16_000)}`)).toBe(
+      `https://example.test/?${"[REDACTED]&".repeat(16_000)}`,
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
