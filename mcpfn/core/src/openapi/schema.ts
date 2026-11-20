@@ -55,7 +55,9 @@ const UNSUPPORTED_KEYWORDS = [
 ] as const;
 
 // OpenAPI-only annotations dropped from the produced draft-07 schema. `nullable`
-// is folded into the type first. A default `$schema` is dropped too (see checkKeywords).
+// is folded into the type first. A default `$schema` is dropped too (see checkKeywords),
+// and so is Ajv's `$async`, which would make its validator return a promise
+// that mcpFn's synchronous checks read as a pass; no JSON Schema dialect defines it.
 const DROPPED_KEYWORDS = new Set([
   "example",
   "discriminator",
@@ -63,6 +65,7 @@ const DROPPED_KEYWORDS = new Set([
   "externalDocs",
   "nullable",
   "$schema",
+  "$async",
 ]);
 
 const SCHEMA_MAP_KEYWORDS = new Set([
@@ -258,6 +261,8 @@ interface AccessConflict {
 interface ClosureEntry {
   schema: JsonObject;
   conditional: boolean;
+  /** The kinds of value for which the schema applies only under a condition or an overlapping alternative. */
+  conditionalKinds?: ReadonlySet<ValueKind>;
   /** The kinds of value for which the schema matters: those every schema on its path from the root admits. */
   kinds: ReadonlySet<ValueKind>;
 }
@@ -669,9 +674,10 @@ export class SchemaConverter {
     try {
       const entries = this.closure(schema);
       // Object children only matter in schemas that can accept an object,
-      // array items only in schemas that can accept an array.
-      const objects = entries.filter((entry) => entry.kinds.has("object"));
-      const arrays = entries.filter((entry) => entry.kinds.has("array"));
+      // array items only in schemas that can accept an array, each with
+      // whether it applies to that kind of value only under a condition.
+      const objects = entriesFor(entries, "object");
+      const arrays = entriesFor(entries, "array");
       const conflict = this.flagConflict(objects, keyword) ?? this.childConflict(objects, arrays, keyword);
       if (conflict !== undefined) memo.set(schema, conflict);
       else if (this.lowest >= index) this.settle(schema, mark, memo);
@@ -710,46 +716,50 @@ export class SchemaConverter {
    * `root` and every schema applied to the same instance: `$ref` targets
    * (OpenAPI 3.0 ignores the siblings), `allOf` members and `anyOf`/`oneOf`
    * members, plus, marked `conditional`, `not`/`if`/`then`/`else`, schema
-   * dependencies and alternatives that can accept the same kind of value. A
-   * schema reached both ways is also recorded as conditional, whatever the
-   * order of the visits, because its converted form is shared by both.
+   * dependencies and, for each kind of value two alternatives can both
+   * accept, those alternatives. A schema reached both ways is also recorded
+   * as conditional, whatever the order of the visits, because its converted
+   * form is shared by both.
    * Each entry also keeps the kinds of value every schema on a path to it
    * admits: for any other value a schema on that path fails whatever the
    * entry says, so the entry decides nothing for it. A schema reached for
-   * more kinds, or newly under a condition, is visited again (at most once
-   * per kind and once more for the condition).
+   * more kinds, or under a condition for more kinds, is visited again (at
+   * most twice per kind).
    */
   private closure(root: JsonObject): ClosureEntry[] {
     const entries: ClosureEntry[] = [];
-    const visited = new Map<object, { conditional: boolean; kinds: ReadonlySet<ValueKind> }>();
-    const walk = (current: unknown, conditional: boolean, reaching: ReadonlySet<ValueKind>): void => {
+    const visited = new Map<object, { conditionalKinds: ReadonlySet<ValueKind>; kinds: ReadonlySet<ValueKind> }>();
+    const walk = (current: unknown, under: ReadonlySet<ValueKind>, reaching: ReadonlySet<ValueKind>): void => {
       if (!isObject(current)) return;
       const before = visited.get(current);
       let kinds = intersect(reaching, this.admittedValues(current));
+      let conditionalKinds = intersect(under, kinds);
       if (before !== undefined) {
         const covered = [...kinds].every((kind) => before.kinds.has(kind));
-        if (covered && (before.conditional || !conditional)) return;
-        conditional ||= before.conditional;
+        if (covered && [...conditionalKinds].every((kind) => before.conditionalKinds.has(kind))) return;
         kinds = new Set([...before.kinds, ...kinds]);
+        conditionalKinds = new Set([...before.conditionalKinds, ...conditionalKinds]);
       }
-      visited.set(current, { conditional, kinds });
+      visited.set(current, { conditionalKinds, kinds });
       if (Object.hasOwn(current, "$ref")) {
-        walk(this.target(current.$ref), conditional, kinds);
+        walk(this.target(current.$ref), conditionalKinds, kinds);
         if (this.version === "3.0") return;
       }
-      entries.push({ schema: current, conditional, kinds });
-      for (const member of arrayOf(current.allOf)) walk(member, conditional, kinds);
+      entries.push({ schema: current, conditional: conditionalKinds.size > 0, conditionalKinds, kinds });
+      for (const member of arrayOf(current.allOf)) walk(member, conditionalKinds, kinds);
       for (const keyword of ["anyOf", "oneOf"] as const) {
         const members = arrayOf(current[keyword]);
-        const exclusive = this.exclusive(members);
-        for (const member of members) walk(member, conditional || !exclusive, kinds);
+        const shared = this.sharedKinds(members);
+        for (const member of members) {
+          walk(member, new Set([...conditionalKinds, ...intersect(shared, this.admittedValues(member))]), kinds);
+        }
       }
-      for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], true, kinds);
+      for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], kinds, kinds);
       for (const keyword of this.dependencyKeywords()) {
-        for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, true, kinds);
+        for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, kinds, kinds);
       }
     };
-    walk(root, false, EVERYTHING.values);
+    walk(root, new Set(), EVERYTHING.values);
     return entries;
   }
 
@@ -762,17 +772,17 @@ export class SchemaConverter {
     return this.version === "3.1" ? ["dependentSchemas"] : ["dependencies", "dependentSchemas"];
   }
 
-  /** Whether no two alternatives accept the same kind of value, so each value meets at most one. */
-  private exclusive(members: unknown[]): boolean {
-    if (members.length <= 1) return true;
+  /** The kinds of value two or more alternatives accept; a value of any other kind meets at most one. */
+  private sharedKinds(members: unknown[]): Set<ValueKind> {
+    const shared = new Set<ValueKind>();
     const seen = new Set<ValueKind>();
     for (const member of members) {
       for (const kind of this.admittedValues(member)) {
-        if (seen.has(kind)) return false;
+        if (seen.has(kind)) shared.add(kind);
         seen.add(kind);
       }
     }
-    return true;
+    return shared;
   }
 
   /**
@@ -1463,6 +1473,13 @@ function narrowByLiterals(result: AdmittedKinds, literals: unknown[]): AdmittedK
     for (const item of arrayOf(literal)) items.add(kindOfValue(item));
   }
   return { values: intersect(result.values, literals.map(kindOfValue)), items: intersect(result.items, items) };
+}
+
+/** The entries that can apply to a value of `kind`, each conditional when it applies to that kind only under a condition. */
+function entriesFor(entries: ClosureEntry[], kind: ValueKind): ClosureEntry[] {
+  return entries
+    .filter((entry) => entry.kinds.has(kind))
+    .map((entry) => ({ ...entry, conditional: entry.conditionalKinds?.has(kind) ?? entry.conditional }));
 }
 
 function intersect(left: ReadonlySet<ValueKind>, right: Iterable<ValueKind>): Set<ValueKind> {

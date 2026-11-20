@@ -2022,3 +2022,152 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
     expectArguments(tool(sibling.tools, "p").inputSchema, { valid: [{ body: { nested: {} } }], invalid: [{ body: { nested: { id: "x" } } }] });
   });
 });
+
+describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives and suffix search", () => {
+  const ok = { "200": { description: "OK" } };
+  const options = () => ({ executor: recordingExecutor(), allowMutations: true });
+  const json = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+
+  it("drops $async, so every produced schema validates synchronously under both engines", () => {
+    const strict = { $async: true, type: "object", properties: { n: { type: "number" } }, required: ["n"] };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: { "/a": { post: { operationId: "a", requestBody: { required: true, content: { "application/json": { schema: strict } } }, responses: json(strict) } } },
+      },
+      options(),
+    );
+    expect(result.skipped).toEqual([]);
+    const converted = tool(result.tools, "a");
+    expect(JSON.stringify([converted.inputSchema, converted.outputSchema])).not.toContain("$async");
+    expectArguments(converted.outputSchema!, { valid: [{ n: 1 }], invalid: [{ n: "not-a-number" }, {}] });
+    expectArguments(converted.inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { n: "not-a-number" } }] });
+  });
+
+  it("takes the first request body entry whose schema converts, projects and compiles", () => {
+    const usable = { type: "object", properties: { n: { type: "number" } } };
+    for (const broken of [null, 7, { type: "bogus" }, { type: "object", properties: { id: { type: "string", readOnly: true } }, required: ["id"], not: { required: ["id"] } }]) {
+      const content = { "application/json": { schema: broken }, "application/merge-patch+json": { schema: usable } };
+      const result = fromOpenAPI(
+        { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", requestBody: { content }, responses: ok } } } },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      const converted = tool(result.tools, "m");
+      expect(converted.operation.requestBody?.contentType).toBe("application/merge-patch+json");
+      expectArguments(converted.inputSchema, { valid: [{ body: { n: 1 } }, {}], invalid: [{ body: { n: "x" } }] });
+    }
+    // A schema-less entry is usable as written; when no entry is usable, the first failure is reported.
+    const schemaless = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", requestBody: { content: { "application/json": {}, "application/x+json": { schema: 7 } } }, responses: ok } } } },
+      options(),
+    );
+    expect(tool(schemaless.tools, "m").operation.requestBody?.contentType).toBe("application/json");
+    const none = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", requestBody: { content: { "application/json": { schema: 7 }, "application/x+json": { schema: { type: "bogus" } } } }, responses: ok } } } },
+      options(),
+    );
+    expect(none.tools).toEqual([]);
+    expect(none.skipped.map(({ code, reason }) => [code, reason])).toEqual([["invalid-schema", "a schema is not an object"]]);
+  });
+
+  it("checks each request body entry within its own node budget and converts the chosen one once", () => {
+    const large = (count: number) => ({
+      type: "object",
+      $defs: Object.fromEntries(Array.from({ length: count }, (_, index) => [`d${index}`, {}])),
+    });
+    const convertBody = (content: Record<string, unknown>) =>
+      fromOpenAPI(
+        { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", requestBody: { content }, responses: ok } } } },
+        options(),
+      );
+    // More than half the per-schema budget: checking and building the input must not count it twice.
+    const half = convertBody({ "application/json": { schema: large(51_000) }, "application/example+json": { schema: { type: "string" } } });
+    expect(half.skipped).toEqual([]);
+    expect(tool(half.tools, "m").operation.requestBody?.contentType).toBe("application/json");
+    // Over the budget on its own: the next entry still gets its full share.
+    const over = convertBody({ "application/json": { schema: large(100_001) }, "application/example+json": { schema: { type: "string" } } });
+    expect(over.skipped).toEqual([]);
+    expect(tool(over.tools, "m").operation.requestBody?.contentType).toBe("application/example+json");
+    expectArguments(tool(over.tools, "m").inputSchema, { valid: [{ body: "x" }], invalid: [{ body: 1 }] });
+  });
+
+  it("decides alternatives per kind of value, so overlapping arrays leave the sole object member unconditional", () => {
+    for (const flag of ["readOnly", "writeOnly"] as const) {
+      const Leaf = { type: "object", properties: { id: { type: "string", [flag]: true }, v: { type: "string" } } };
+      const object = { type: "object", properties: { child: { $ref: "#/components/schemas/Leaf" } } };
+      const arrays = [{ type: "array", maxItems: 0 }, { type: "array", minItems: 1 }];
+      for (const members of [[...arrays, object], [object, ...arrays], [arrays[0], object, arrays[1]]]) {
+        const schema = { oneOf: members };
+        const path = flag === "readOnly"
+          ? { post: { operationId: "op", requestBody: { required: true, content: { "application/json": { schema } } }, responses: ok } }
+          : { get: { operationId: "op", responses: json({ type: "object", properties: { data: schema } }) } };
+        const result = fromOpenAPI({ openapi: "3.1.0", components: { schemas: { Leaf } }, paths: { "/x": path } }, options());
+        expect(result.skipped).toEqual([]);
+        const converted = tool(result.tools, "op");
+        const wrap = (value: unknown) => (flag === "readOnly" ? { body: value } : { data: value });
+        expectArguments((flag === "readOnly" ? converted.inputSchema : converted.outputSchema)!, {
+          // Each array member keeps its own meaning.
+          valid: [wrap({ child: { v: "x" } }), wrap([]), wrap(["x"])],
+          invalid: [wrap({ child: { id: "x" } }), wrap("x")],
+        });
+      }
+      // Two members that both accept an object still overlap.
+      const overlapping = { oneOf: [{ type: "object", properties: { child: { $ref: "#/components/schemas/Leaf" } } }, { type: "object", required: ["k"] }, ...arrays] };
+      const path = flag === "readOnly"
+        ? { post: { operationId: "op", requestBody: { required: true, content: { "application/json": { schema: overlapping } } }, responses: ok } }
+        : { get: { operationId: "op", responses: json({ type: "object", properties: { data: overlapping } }) } };
+      const skipped = fromOpenAPI({ openapi: "3.1.0", components: { schemas: { Leaf } }, paths: { "/x": path } }, options());
+      expect(skips(skipped)).toEqual([["op", "unsupported-access-flag", child('property "child"', OVERLAP, flag)]]);
+    }
+  });
+
+  it("searches suffixes once per emitted stem, past taken and rejected names, in document order", () => {
+    /** A supplied registry that already holds every tool name with a suffix below `occupiedBelow`. */
+    class Supplied extends McpFnRegistry {
+      probes = 0;
+      occupiedBelow = 0;
+      reject = new Set<string>();
+      override has(name: string): boolean {
+        this.probes += 1;
+        const suffix = /_(\d+)$/.exec(name);
+        return (suffix !== null && Number(suffix[1]) < this.occupiedBelow) || super.has(name);
+      }
+      override register(...args: Parameters<McpFnRegistry["register"]>): ReturnType<McpFnRegistry["register"]> {
+        if (this.reject.delete(args[0].name)) throw new McpFnValidationError(`rejected ${args[0].name}`);
+        return super.register(...args);
+      }
+    }
+    // Distinct 128-character bases that truncate to shared stems, each used twice.
+    const stem = "s".repeat(124);
+    const document = (pairs: number) => {
+      const paths: Record<string, unknown> = {};
+      for (let index = 0; index < pairs; index += 1) {
+        const operationId = stem + String(index).padStart(4, "0");
+        paths[`/a${index}`] = { get: { operationId, responses: ok } };
+        paths[`/b${index}`] = { get: { operationId, responses: ok } };
+      }
+      return { openapi: "3.1.0", paths };
+    };
+    const convertWith = (registry: Supplied, pairs: number) => {
+      const result = fromOpenAPI(document(pairs), { executor: recordingExecutor(), registry });
+      for (const { name, operation } of result.tools) {
+        const suffix = name === operation.operationId ? "" : /_\d+$/.exec(name)![0];
+        expect(name).toBe(operation.operationId!.slice(0, 128 - suffix.length) + suffix);
+      }
+      expect(new Set(result.tools.map(({ name }) => name)).size).toBe(result.tools.length);
+      return result;
+    };
+    // /b1, the first operation to get "<stem>00_3", is rejected: /b2, next in document order, reuses that name.
+    const rejecting = new Supplied();
+    rejecting.reject.add(`${stem}00_3`);
+    const { tools, skipped } = convertWith(rejecting, 3);
+    expect(skipped.map(({ operation }) => operation.path)).toEqual(["/b1"]);
+    expect(tools.map(({ name }) => name)).toEqual([`${stem}0000`, `${stem}00_2`, `${stem}0001`, `${stem}0002`, `${stem}00_3`]);
+    // Names taken before the call are passed once per stem, not once per operation.
+    const occupied = new Supplied();
+    occupied.occupiedBelow = 300;
+    expect(convertWith(occupied, 200).tools.at(1)!.name).toBe(`${stem}_300`);
+    expect(occupied.probes).toBeLessThan(8 * 2 * 200);
+  });
+});

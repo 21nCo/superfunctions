@@ -355,7 +355,11 @@ class OperationConverter {
     }
     if (body) {
       // A media type object without `schema` declares no schema: it accepts any JSON value.
-      groups.push(["body", body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", refs)]);
+      // An entry chosen among several was converted while it was checked.
+      for (const name of body.converted?.refs ?? []) refs.add(name);
+      const converted = body.converted?.schema ??
+        (body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", refs));
+      groups.push(["body", converted]);
       this.assertProjectable(body.schema, "input", "request body");
       if (body.info.required) required.push("body");
     }
@@ -503,7 +507,7 @@ class OperationConverter {
   private compileVerdict(
     root: McpFnJsonSchema | boolean,
     definitions: Record<string, unknown>,
-    mode: "plain" | "output",
+    mode: "plain" | "input" | "output",
   ): string | null {
     if (!isObject(root)) return null;
     const budget = this.schemas.copyBudget(true);
@@ -666,9 +670,11 @@ class OperationConverter {
 
   /**
    * The JSON media entry of a declared request body: the first usable
-   * (object-valued) `application/json` entry, otherwise the first usable
-   * `*+json` one. A declared body without such an entry is skipped, whether
-   * or not it is required, since the tool could never send it.
+   * `application/json` entry, otherwise the first usable `*+json` one. An
+   * entry is usable when it is an object whose schema, if any, converts,
+   * can be projected and compiles; when every entry fails, the operation is
+   * skipped with the first failure. A declared body without such an entry is
+   * skipped, whether or not it is required, since the tool could never send it.
    */
   private requestBody(raw: JsonObject): ResolvedBody | undefined {
     if (raw.requestBody === undefined) return undefined;
@@ -678,10 +684,11 @@ class OperationConverter {
     }
     const content = body.content;
     const keys = Object.keys(content);
-    const usable = (key: string) => isObject(content[key]);
-    const contentType = keys.find((key) => isApplicationJson(key) && usable(key)) ??
-      keys.find((key) => isJsonMediaType(key) && usable(key));
-    if (contentType === undefined) {
+    const candidates = [
+      ...keys.filter(isApplicationJson),
+      ...keys.filter((key) => isJsonMediaType(key) && !isApplicationJson(key)),
+    ].filter((key) => isObject(content[key]));
+    if (candidates.length === 0) {
       if (keys.some(isJsonMediaType)) {
         throw new OpenApiSkip(
           "invalid-request-body",
@@ -690,11 +697,35 @@ class OperationConverter {
       }
       throw new OpenApiSkip("non-json-body", `request body has no JSON media type (${keys.join(", ")})`);
     }
-    const media = content[contentType] as JsonObject;
-    return {
+    const resolved = (contentType: string): ResolvedBody => ({
       info: { required: body.required === true, contentType },
-      schema: media.schema,
-    };
+      schema: (content[contentType] as JsonObject).schema,
+    });
+    // A sole entry is checked when the input schema is built and registered.
+    if (candidates.length === 1) return resolved(candidates[0]!);
+    let failure: OpenApiSkip | undefined;
+    for (const contentType of candidates) {
+      const candidate = resolved(contentType);
+      try {
+        // Each entry converts within its own node budget, so a rejected one leaves the next its full share.
+        const converted = this.schemas.budgeted(() => this.usableBody(candidate.schema));
+        return converted ? { ...candidate, converted } : candidate;
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        failure ??= error;
+      }
+    }
+    throw failure!;
+  }
+
+  /** A request body schema converted for the input schema, once it can be projected and compiles. */
+  private usableBody(schema: unknown): ResolvedBody["converted"] {
+    if (schema === undefined) return undefined;
+    const refs = new Set<string>();
+    const converted = this.schemas.convertRoot(schema, "input", refs);
+    this.assertProjectable(schema, "input", "request body");
+    throwIfInvalid(this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input"), "request body");
+    return { schema: converted, refs };
   }
 }
 
@@ -709,6 +740,8 @@ interface ResolvedParameter {
 interface ResolvedBody {
   info: OpenApiOperationRequestBody;
   schema: unknown;
+  /** The input form of `schema` and the component schemas it references, when converted while choosing the entry. */
+  converted?: { schema: McpFnJsonSchema | boolean; refs: ReadonlySet<string> };
 }
 
 interface OperationInputs {
@@ -1062,11 +1095,14 @@ function filterReason<TContext>(
 /**
  * Tool names in document order. A name is claimed only once its tool is
  * registered, so an operation skipped at registration does not push the next
- * one with the same name to `_2`. Suffix search resumes where the last one for
- * that base stopped, keeping many collisions linear.
+ * one with the same name to `_2`. A taken name stays taken, so suffix search
+ * resumes at the first name not yet seen taken for that emitted stem (distinct
+ * long bases can truncate to the same stem) and suffix width, keeping many
+ * collisions linear.
  */
 class ToolNames<TContext> {
   private readonly used = new Set<string>();
+  /** The first suffix not yet seen taken, by suffix width and emitted stem. */
   private readonly nextSuffix = new Map<string, number>();
   private readonly suffixOf = new Map<string, [string, number]>();
 
@@ -1099,14 +1135,22 @@ class ToolNames<TContext> {
   /** The generated name, with `_2`, `_3`, … after a collision. */
   next(operation: OpenApiOperation): string {
     const base = defaultName(operation, this.options.prefix ?? "");
-    let attempt = this.nextSuffix.get(base) ?? 1;
-    let name = attempt === 1 ? base : suffixed(base, attempt);
-    while (this.taken(name)) {
-      attempt += 1;
-      name = suffixed(base, attempt);
+    this.suffixOf.clear();
+    if (!this.taken(base)) return base;
+    // Suffixes with the same number of digits share the emitted stem.
+    for (let digits = 1; ; digits += 1) {
+      const stem = base.slice(0, MAX_NAME_LENGTH - digits - 1);
+      const key = `${digits}:${stem}`;
+      const end = 10 ** digits;
+      let attempt = this.nextSuffix.get(key) ?? (digits === 1 ? 2 : end / 10);
+      while (attempt < end && this.taken(`${stem}_${attempt}`)) attempt += 1;
+      this.nextSuffix.set(key, attempt);
+      if (attempt < end) {
+        const name = `${stem}_${attempt}`;
+        this.suffixOf.set(name, [key, attempt]);
+        return name;
+      }
     }
-    this.suffixOf.set(name, [base, attempt]);
-    return name;
   }
 
   claim(name: string): void {
@@ -1115,9 +1159,4 @@ class ToolNames<TContext> {
     if (suffix) this.nextSuffix.set(suffix[0], suffix[1] + 1);
     this.suffixOf.clear();
   }
-}
-
-function suffixed(base: string, attempt: number): string {
-  const suffix = `_${attempt}`;
-  return base.slice(0, MAX_NAME_LENGTH - suffix.length) + suffix;
 }
