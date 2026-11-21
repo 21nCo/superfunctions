@@ -685,7 +685,9 @@ async function readOtpEmailUsage(
         id: row.id,
         countedUntilMs,
         attemptCount: Number(row.attemptCount) || 0,
-        consumed: Boolean(row.consumedAt)
+        // Consumed by a matching code. A row that was never admitted (a
+        // refused or retired send) can carry consumedAt without a match.
+        consumed: Boolean(row.consumedAt) && isAdmittedChallenge(row)
       });
     }
   }
