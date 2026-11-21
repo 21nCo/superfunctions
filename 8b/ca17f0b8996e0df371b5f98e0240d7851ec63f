@@ -1,0 +1,21 @@
+authfn/docs/content/docs/recipes/email-verification.md
+  s_666180e3d05c4d::t_1325c16ddef05b 42-44,50-52
+authfn/docs/static/llms-full.txt
+  s_666180e3d05c4d::t_99d8f1fc7ec4b1 8860-8862,8868-8870
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8bca17f0b8996e0df371b5f98e0240d7851ec63f",
+  "prompts": {},
+  "sessions": {
+    "s_666180e3d05c4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc5e-1463-7290-aeb7-a65bd7d53e70",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

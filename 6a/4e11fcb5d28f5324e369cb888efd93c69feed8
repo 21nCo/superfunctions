@@ -1,0 +1,21 @@
+authfn/core/src/__tests__/rate-limit.test.ts
+  s_e5ac07859c1bc9::t_c88dfd788f08e4 410,418-420,422-428
+authfn/core/src/core/rate-limit.ts
+  s_e5ac07859c1bc9::t_125ce00944deb1 39-63,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a4e11fcb5d28f5324e369cb888efd93c69feed8",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

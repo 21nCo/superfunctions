@@ -1,0 +1,25 @@
+authfn/docs/package.json
+  s_e5ac07859c1bc9::t_825276a7f85afc 29
+authfn/native-handoff/package.json
+  s_e5ac07859c1bc9::t_954514fee8212b 3
+authfn/python/CHANGELOG.md
+  s_e5ac07859c1bc9::t_537b8703991566 15
+package-lock.json
+  s_e5ac07859c1bc9::t_f88a9123afa1ba 1524,3925
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1dbaf3516c081700e2513405f8e8afc2a1baf781",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

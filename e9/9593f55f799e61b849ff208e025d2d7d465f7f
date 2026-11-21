@@ -1,0 +1,23 @@
+datafn/server/__tests__/security-audit-relations.test.ts
+  s_df6686278ce1d2::t_50a22fac51b31b 292,294-301,303-314,379-397
+datafn/server/src/execution/mutation/relations.ts
+  s_df6686278ce1d2::t_ca2a2ebd59a3de 25,112-124,131-136,138-168,174-178,188-189,191-194,211,213-219,237-239,250-252,269-277,281,285-286,289,293-294,296-298,319-321,323-325
+datafn/server/src/execution/sync/pull.ts
+  s_df6686278ce1d2::t_64a883d3ea2913 239-245,256-264,282-283,418-422,428-432,441-451,471-481,977,1149,1182,1199,1255,1257-1259,1292-1298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e99593f55f799e61b849ff208e025d2d7d465f7f",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

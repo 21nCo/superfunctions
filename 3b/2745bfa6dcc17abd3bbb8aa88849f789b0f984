@@ -1,0 +1,33 @@
+apifn/cli/src/commands/check-args.ts
+  s_a941fa5a2a6cc9::t_d19596cfaaa7c1 1-115
+apifn/cli/__tests__/check-command.test.ts
+  s_e5ac07859c1bc9::t_965d843ca448bd 6,567-774
+apifn/cli/src/commands/check.ts
+  s_e5ac07859c1bc9::t_33dfd477418d2e 18,20-21,87,406-495,510,526-579,603,616,685,692-693
+apifn/cli/src/index.ts
+  s_e5ac07859c1bc9::t_035f967fab3cf1 11,311-322,324-333,335-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b2745bfa6dcc17abd3bbb8aa88849f789b0f984",
+  "prompts": {},
+  "sessions": {
+    "s_a941fa5a2a6cc9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc39-ce2f-7a43-bfce-0870dd87370b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

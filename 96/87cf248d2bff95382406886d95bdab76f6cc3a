@@ -1,0 +1,19 @@
+authfn/core/src/core/users.ts
+  s_666180e3d05c4d::t_902a6843fab3de 167-172,193-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9687cf248d2bff95382406886d95bdab76f6cc3a",
+  "prompts": {},
+  "sessions": {
+    "s_666180e3d05c4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc5e-1463-7290-aeb7-a65bd7d53e70",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
