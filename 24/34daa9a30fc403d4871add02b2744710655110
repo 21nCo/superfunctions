@@ -1,0 +1,33 @@
+authfn/core/src/__tests__/social-apple.test.ts
+  s_e5ac07859c1bc9::t_28fe2e39801852 1-2,8-28,30-46,381-526
+authfn/docs/content/docs/plugins/social-oauth/index.md
+  s_e5ac07859c1bc9::t_8c73ca589554ab 158-166
+authfn/docs/static/llms-full.txt
+  s_2bb09271643bcf::t_7a86fcac453098 7052-7060
+authfn/social-oauth/src/index.ts
+  s_2bb09271643bcf::t_25cac882cadfa7 1841-1854,1856-1868,1875-1881,1890-1896
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2434daa9a30fc403d4871add02b2744710655110",
+  "prompts": {},
+  "sessions": {
+    "s_2bb09271643bcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d02a377b-861a-4099-bac5-ba4c2e6c65b8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
