@@ -115,7 +115,7 @@ export class MemoryFn implements IMemoryFn {
     // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
     if (typeof this.storage.replaceSourceIfChanged !== 'function') throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
-    // One copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
+    // One detached JSON copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
     const metadata = metadataSnapshot(input.metadata);
     const metadataBytes = storableMetadataBytes(metadata);
     const tagsBytes = sourceTagsBytes(scope.containerTags);
@@ -165,8 +165,8 @@ export class MemoryFn implements IMemoryFn {
       for (const chunk of chunks) records.push({ content: chunk, type: chunkType, metadata: { ...metadata } });
     }
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
-    // Plain unit-length copies, each charged before the next is made: what is charged is exactly what storage receives.
-    const embeddings = unitEmbeddings(batch, records.length, this.storage.embeddingDimensions, embedding => {
+    // Plain copies of the embedder's values, each charged before the next is made: what is charged is exactly what storage receives.
+    const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, embedding => {
       bytes += sourceEmbeddingBytes(embedding);
       if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
     });
@@ -201,6 +201,8 @@ export class MemoryFn implements IMemoryFn {
     requireScope(input.tenantId, input.containerTags);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
     const embedding = await this.embedder.embed(input.q);
+    // A query no built-in adapter can score is an error, not an empty result; any other query is sent as embedded.
+    if (!Array.isArray(embedding) || embedding.length === 0 || !inCosineRange(embedding)) throw new Error('MEMORY_EMBEDDING_INVALID');
 
     // 2. Vector search
     const results = await this.storage.searchVectors({
@@ -222,14 +224,25 @@ export class MemoryFn implements IMemoryFn {
   }
 }
 
-/** A copy of caller metadata; metadata structuredClone cannot copy is MEMORY_METADATA_INVALID. */
+/**
+ * A detached plain copy of caller metadata, as JSON can hold it, so later
+ * changes to the caller's objects, accessors or shared memory cannot change
+ * what is measured or written. Metadata structuredClone cannot copy (such as a
+ * function) or JSON cannot express (a cycle, a BigInt) is MEMORY_METADATA_INVALID;
+ * metadata too large to serialize is MemorySourceLimitError.
+ */
 function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (metadata === undefined) return undefined;
+  let text: string | undefined;
   try {
-    return structuredClone(metadata);
-  } catch {
+    // Serialized at once from the clone, so no caller code runs between the copy and its JSON.
+    text = JSON.stringify(structuredClone(metadata));
+  } catch (error) {
+    if (error instanceof RangeError) throw new MemorySourceLimitError();
     throw new Error('MEMORY_METADATA_INVALID');
   }
+  if (text === undefined) throw new Error('MEMORY_METADATA_INVALID');
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `text`. */
@@ -239,43 +252,53 @@ export async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Smallest positive normal and largest finite float32: pgvector's components and sums are float32. */
+const FLOAT32_MIN_NORMAL = 2 ** -126;
+const FLOAT32_MAX = 3.4028234663852886e38;
+
 /**
- * Unit-length plain copies of an embedding batch: `count` non-empty vectors of
- * finite numbers, not all zero, with one shared length, equal to the storage's
- * fixed dimension when it has one. Both adapters rank by cosine similarity,
- * which ignores length, so scaling keeps every ranking, while each stored
- * component lies within [-1, 1] and the norm is 1: no vector overflows or
- * vanishes, either in the memory adapter's float64 arithmetic or in pgvector's
- * float32 values and accumulators. Anything else is rejected before the source
- * is touched (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so
- * the previous chunks stay live and searchable. `accept` sees each copy
- * before the next vector is read, and may throw to stop.
+ * Whether every built-in adapter can compute the cosine of `vector`: finite
+ * numbers whose sum of squares (float64) is at most FLOAT32_MAX and whose
+ * largest square is at least FLOAT32_MIN_NORMAL, so its norm neither
+ * overflows nor vanishes in the memory adapter's float64 or pgvector's float32.
  */
-function unitEmbeddings(value: unknown, count: number, dimensions: number | undefined, accept: (unit: number[]) => void): number[][] {
+function inCosineRange(vector: readonly unknown[]): boolean {
+  let squares = 0;
+  let largest = 0;
+  // Read by index, so a hole in a sparse array is seen as a missing number.
+  for (let at = 0; at < vector.length; at++) {
+    const number = vector[at];
+    if (typeof number !== 'number' || !Number.isFinite(number)) return false;
+    squares += number * number;
+    largest = Math.max(largest, number * number);
+  }
+  return squares <= FLOAT32_MAX && largest >= FLOAT32_MIN_NORMAL;
+}
+
+/**
+ * Plain copies of an embedding batch, with the embedder's values unchanged, so
+ * a query from the same embedder scores a chunk exactly as it scores an add()
+ * memory: `count` non-empty vectors with one shared length, equal to the
+ * storage's fixed dimension when it has one, each inCosineRange. Anything
+ * else is rejected before the source is touched (MEMORY_EMBEDDING_COUNT_MISMATCH
+ * or MEMORY_EMBEDDING_INVALID), so the previous chunks stay live and
+ * searchable. `accept` sees each copy before the next vector is read, and may
+ * throw to stop.
+ */
+function storableEmbeddings(value: unknown, count: number, dimensions: number | undefined, accept: (copy: number[]) => void): number[][] {
   if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
   let size = dimensions;
-  const units: number[][] = [];
-  // Read by index, so a hole in a sparse array is seen as a missing vector or number.
+  const copies: number[][] = [];
   for (let index = 0; index < count; index++) {
     const vector: unknown = value[index];
     if (!Array.isArray(vector) || vector.length === 0 || (size !== undefined && vector.length !== size)) throw new Error('MEMORY_EMBEDDING_INVALID');
     size = vector.length;
-    const copy: number[] = [];
-    let largest = 0;
-    for (let at = 0; at < size; at++) {
-      const number: unknown = vector[at];
-      if (typeof number !== 'number' || !Number.isFinite(number)) throw new Error('MEMORY_EMBEDDING_INVALID');
-      copy.push(number);
-      largest = Math.max(largest, Math.abs(number));
-    }
-    if (largest === 0) throw new Error('MEMORY_EMBEDDING_INVALID');
-    // Divided by the largest component first, so squaring neither overflows nor underflows.
-    let squares = 0;
-    for (let at = 0; at < size; at++) { copy[at] /= largest; squares += copy[at] * copy[at]; }
-    const norm = Math.sqrt(squares);
-    for (let at = 0; at < size; at++) copy[at] /= norm;
-    accept(copy);
-    units.push(copy);
+    // Copied before it is checked, so the values checked are the values stored.
+    const copy: unknown[] = [];
+    for (let at = 0; at < size; at++) copy.push(vector[at]);
+    if (!inCosineRange(copy)) throw new Error('MEMORY_EMBEDDING_INVALID');
+    accept(copy as number[]);
+    copies.push(copy as number[]);
   }
-  return units;
+  return copies;
 }

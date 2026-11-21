@@ -103,7 +103,7 @@ describe('OpenAIEmbedder request token budget', () => {
     expect(result).toMatchObject({ unchanged: false, chunks: 400 });
     expect(createEmbedding.mock.calls.length).toBeGreaterThan(1);
     expect(createEmbedding.mock.calls.flatMap(([request]) => request.input)).toEqual(result.memories.map(chunk => chunk.content));
-    // Each [1, n] is stored at unit length, so n is the ratio of its components.
+    // Each [1, n] is stored as embedded, so n is the ratio of its components.
     expect(result.memories.map(chunk => Math.round(chunk.embedding![1] / chunk.embedding![0]))).toEqual(Array.from({ length: 400 }, (_, index) => index + 1));
   });
 });

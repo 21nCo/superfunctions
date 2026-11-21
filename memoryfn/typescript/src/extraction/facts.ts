@@ -40,9 +40,10 @@ export class FactExtractor {
     `;
 
     const result = await this.llm.generateJSON<unknown>(prompt);
-    if (!result || typeof result !== 'object' || Array.isArray(result) ||
-        !('facts' in result) || !Array.isArray(result.facts)) throw new Error('MEMORY_EXTRACTION_INVALID');
-    const facts: unknown[] = result.facts;
+    if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('MEMORY_EXTRACTION_INVALID');
+    // Every field is read once, and the value checked is the value used, so an accessor cannot swap it.
+    const facts: unknown = (result as Record<string, unknown>).facts;
+    if (!Array.isArray(facts)) throw new Error('MEMORY_EXTRACTION_INVALID');
     const count = facts.length;
     if (limits && count > limits.maxFacts) throw limits.tooMany();
     // Validate the whole batch before the pipeline embeds or persists any fact.
@@ -62,19 +63,19 @@ const FACT_TYPES: readonly string[] = ['profile_static', 'profile_dynamic', 'con
 /** One validated, trimmed fact; anything else, including a missing tag in a sparse tags array, is MEMORY_EXTRACTION_INVALID. */
 function normalizeFact(fact: unknown): Fact {
   if (!fact || typeof fact !== 'object' || Array.isArray(fact)) throw new Error('MEMORY_EXTRACTION_INVALID');
-  const value = fact as Record<string, unknown>;
-  if (typeof value.content !== 'string' || !value.content.trim() ||
-      typeof value.type !== 'string' || !FACT_TYPES.includes(value.type) ||
-      typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1 ||
-      !Array.isArray(value.tags)) {
+  // Each field is read once, so the value checked is the value returned.
+  const { content, type, confidence, tags: given } = fact as Record<string, unknown>;
+  if (typeof content !== 'string' || !content.trim() ||
+      typeof type !== 'string' || !FACT_TYPES.includes(type) ||
+      typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 ||
+      !Array.isArray(given)) {
     throw new Error('MEMORY_EXTRACTION_INVALID');
   }
-  const given: unknown[] = value.tags;
   const tags: string[] = [];
-  for (let index = 0; index < given.length; index++) {
-    const tag = given[index];
+  for (let index = 0, count = given.length; index < count; index++) {
+    const tag: unknown = given[index];
     if (typeof tag !== 'string' || !tag.trim()) throw new Error('MEMORY_EXTRACTION_INVALID');
     tags.push(tag.trim());
   }
-  return { content: value.content.trim(), type: value.type as Fact['type'], confidence: value.confidence, tags };
+  return { content: content.trim(), type: type as Fact['type'], confidence, tags };
 }

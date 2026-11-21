@@ -72,6 +72,20 @@ describe('chunkMarkdown', () => {
     expect(first.some(chunk => chunk.includes('\r'))).toBe(false);
   });
 
+  it('reads CR line endings like LF', () => {
+    const doc = `# T\r\r${words(300)}\r\r## U\r${words(50)}\r\r\`\`\`\rcode\r\`\`\``;
+    expect(chunkMarkdown(doc, { targetChars: 200, overlapChars: 40 })).toEqual(chunkMarkdown(doc.replace(/\r/g, '\n'), { targetChars: 200, overlapChars: 40 }));
+  });
+
+  it.each([['CRLF', '\r\n'], ['CR', '\r']])('normalizes %s line endings as it reads, without copying the unread text', (_name, ending) => {
+    const text = `# Title${ending}${ending}${words(8)}${ending}`.repeat(400_000);
+    text.indexOf('\0'); // flattens the repeated string before measuring
+    const before = process.memoryUsage().heapUsed;
+    const chunks = markdownChunks(text);
+    expect(chunks.next().value).toBe(`# Title\n\n${words(8)}`);
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(text.length / 4);
+  });
+
   it('keeps a paragraph that fits a fresh chunk whole, shortening the overlap to make room', () => {
     const first = 'aaaa bbb';
     const second = `${'abcd '.repeat(10)}efghi`;

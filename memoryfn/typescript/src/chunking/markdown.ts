@@ -59,7 +59,7 @@ export function chunkMarkdown(markdown: string, options?: ChunkingOptions): stri
 export function markdownChunks(markdown: string, options?: ChunkingOptions): Generator<string, void, undefined> {
   if (typeof markdown !== 'string') throw new Error('MEMORY_CONTENT_REQUIRED');
   const resolved = resolveChunkingOptions(options);
-  return pack(blocks(markdown.replace(/\r\n?/g, '\n')), resolved.targetChars, resolved.overlapChars);
+  return pack(blocks(markdown), resolved.targetChars, resolved.overlapChars);
 }
 
 /** Tracks fenced code (CommonMark 4.5) across lines. */
@@ -88,26 +88,29 @@ class FenceState {
 
 /**
  * Paragraphs in document order, split at blank lines, headings and fenced code
- * blocks outside fenced code. Lines are read one at a time and a paragraph is
- * one slice of the text, so stopping the generator stops the work and the
- * allocation for the rest of the text.
+ * blocks outside fenced code. Lines end at LF, CRLF or CR, and are read one at
+ * a time; a paragraph is one slice of the text with its line endings made LF,
+ * so stopping the generator stops the work and the allocation for the rest of
+ * the text.
  */
 function* blocks(text: string): Generator<Block, void, undefined> {
   const fence = new FenceState();
+  const lineEnding = /\r\n?|\n/g;
   // The current paragraph is text[start, end); start < 0 when it is empty.
   let start = -1;
   let end = 0;
   function* flush(heading = false): Generator<Block, void, undefined> {
     // A paragraph never starts with a blank line, so trimming its end keeps indentation; trimEnd is linear.
-    const paragraph = start < 0 ? '' : text.slice(start, end).trimEnd();
+    const paragraph = start < 0 ? '' : text.slice(start, end).replace(/\r\n?/g, '\n').trimEnd();
     start = -1;
     if (paragraph) yield { text: paragraph, heading };
   }
   for (let lineStart = 0; lineStart <= text.length;) {
-    const newline = text.indexOf('\n', lineStart);
-    const lineEnd = newline < 0 ? text.length : newline;
+    lineEnding.lastIndex = lineStart;
+    const ending = lineEnding.exec(text);
+    const lineEnd = ending ? ending.index : text.length;
     const line = text.slice(lineStart, lineEnd);
-    const next = lineEnd + 1;
+    const next = ending ? lineEnding.lastIndex : text.length + 1;
     if (!fence.inside && !line.trim()) {
       yield* flush();
     } else if (!fence.inside && HEADING.test(line)) {
