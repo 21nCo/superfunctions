@@ -159,7 +159,20 @@ def create_authfn_route_meta(
     }
 
 
+def validate_authfn_plugins(config: AuthFnConfig) -> None:
+    """Runs each plugin's ``validate_config``, so a plugin that cannot work
+    with this configuration fails before any route is served."""
+    for plugin in config.plugins:
+        if plugin.validate_config is not None:
+            plugin.validate_config(config)
+
+
 def create_authfn_routes(config: AuthFnConfig) -> List[Route]:
+    validate_authfn_plugins(config)
+    return _build_authfn_routes(config)
+
+
+def _build_authfn_routes(config: AuthFnConfig) -> List[Route]:
     routes: List[Route] = [*_create_base_routes(config)]
     for plugin in config.plugins:
         if plugin.name == "password":
@@ -1724,7 +1737,9 @@ def create_authfn_openapi(config: AuthFnConfig, title: str = "AuthFn API", versi
     from superfunctions.http.openapi import OpenApiGenerationError, generate_openapi_document
 
     try:
-        return generate_openapi_document(title, version, create_authfn_routes(config))
+        # Describing the routes does not serve them, so the plugins' runtime
+        # requirements are not checked here.
+        return generate_openapi_document(title, version, _build_authfn_routes(config))
     except OpenApiGenerationError as error:
         raise InternalError(
             "AuthFn OpenAPI generation failed",

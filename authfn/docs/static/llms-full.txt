@@ -7699,6 +7699,7 @@ from authfn import (
     authfn_social_oauth_plugin,
     create_authfn,
 )
+from authfn.plugins.social_oauth import SocialOAuthPluginConfig, SocialProviderConfig
 
 # Replace `my_database_adapter` with your real adapter; see Adapters > Database.
 auth = create_authfn(AuthFnConfig(
@@ -7709,18 +7710,23 @@ auth = create_authfn(AuthFnConfig(
         authfn_email_otp_plugin({
             "delivery": my_delivery_provider,
         }),
-        authfn_social_oauth_plugin({
-            "providers": {
-                "google": {
-                    "client_id": "...",
-                    "client_secret": "...",
-                    "allowlisted_return_to": ["https://app.example.com/post-auth"],
-                },
+        authfn_social_oauth_plugin(SocialOAuthPluginConfig(
+            providers={
+                "google": SocialProviderConfig(
+                    client_id="...",
+                    client_secret="...",
+                    allowlisted_return_to=["https://app.example.com/post-auth"],
+                ),
             },
-        }),
+            # Secret key (at least 32 bytes) that encrypts stored provider
+            # tokens. Required: sign-in fails with AUTHFN_CONFIG_INVALID without it.
+            encryption_key_resolver=lambda key_ref: load_secret(key_ref),
+        )),
     ],
 ))
 ```
+
+Upgrading from a release that stored social OAuth tokens without a configured key? Those tokens were encrypted with a key anyone can compute. Re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()`. If your resolver only knows a new key reference, configure the plugin with it (`SocialOAuthPluginConfig(encryption_key_ref="oauth-2026", ...)`) and pass the same reference to the migration: `migrate_legacy_tokens(destination_key_ref="oauth-2026")` re-encrypts every legacy row under it, and new sign-ins store tokens under it too.
 
 ## 3. Mount on FastAPI
 
