@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { createCredentialStore, InvalidStoreOptionsError } from "../src/credentials.js";
 import { createProjectConfig } from "../src/config.js";
 import { InvalidAppNameError } from "../src/paths.js";
@@ -308,5 +308,123 @@ describe("createProjectConfig", () => {
 
     const inheritedFileName = withPrototype({ fileName: "../escape.json" }, { appName: "my-cli" });
     expect(createProjectConfig(inheritedFileName as never).path).toBe(join(tempRoot, "my-cli", "config.json"));
+  });
+});
+
+describe("store options shared by both factories", () => {
+  const factories = [
+    ["createCredentialStore", (options: unknown) => createCredentialStore(options as never).path],
+    ["createProjectConfig", (options: unknown) => createProjectConfig(options as never).path],
+  ] as const;
+  const appEnv = (): Record<string, string> => ({ XDG_CONFIG_HOME: tempRoot, APPDATA: tempRoot });
+
+  function rejectsBeforeAnyFilesystemCall(build: () => unknown): void {
+    const cwdMode = statSync(process.cwd()).mode;
+    let caught: unknown;
+    try {
+      build();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(InvalidStoreOptionsError);
+    expect(caught).toMatchObject({ code: "CLIFN_INVALID_STORE_OPTIONS" });
+    expect(statSync(process.cwd()).mode).toBe(cwdMode);
+  }
+
+  it.each(factories)("%s rejects a { path } that names no file, and keeps the string form as given", (_name, create) => {
+    for (const path of ["", ".", "..", "dir/", "a/..", `a${"\0"}b`]) {
+      rejectsBeforeAnyFilesystemCall(() => create({ path }));
+    }
+    expect(create("")).toBe("");
+  });
+
+  it("never changes the working directory's mode for { path: '' }", () => {
+    const spy = vi.spyOn(process, "cwd").mockReturnValue(tempRoot);
+    const before = statSync(tempRoot).mode;
+    try {
+      expect(() => createCredentialStore({ path: "" })).toThrow(InvalidStoreOptionsError);
+      expect(() => createProjectConfig({ path: "" })).toThrow(InvalidStoreOptionsError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(statSync(tempRoot).mode).toBe(before);
+  });
+
+  it.each(factories)("%s reads each own value before any accessor can delete it", (_name, create) => {
+    const selector = Object.create({ appName: "inherited-app" }) as Record<string, unknown>;
+    Object.defineProperty(selector, "env", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        delete selector.appName;
+        return appEnv();
+      },
+    });
+    selector.appName = "own-app";
+    expect(create(selector)).toContain("own-app");
+
+    let calls = 0;
+    const modifier = Object.create({ env: { XDG_CONFIG_HOME: "/inherited", APPDATA: "C:\\inherited" } }) as Record<string, unknown>;
+    Object.defineProperty(modifier, "appName", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        calls += 1;
+        delete modifier.env;
+        return "my-cli";
+      },
+    });
+    modifier.env = appEnv();
+    expect(create(modifier).startsWith(join(tempRoot, "my-cli"))).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it.each(factories)("%s rejects a NUL character in homedir or an environment value", (_name, create) => {
+    rejectsBeforeAnyFilesystemCall(() => create({ appName: "my-cli", env: { XDG_CONFIG_HOME: `/x${"\0"}y`, APPDATA: `C:\\x${"\0"}y` } }));
+    rejectsBeforeAnyFilesystemCall(() => create({ appName: "my-cli", env: {}, homedir: POSIX ? `/h${"\0"}` : `C:\\h${"\0"}` }));
+  });
+
+  it("rejects a NUL character in a config fileName or cwd", () => {
+    const nul = `a${"\0"}b.json`;
+    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ appName: "my-cli", env: appEnv(), fileName: nul }));
+    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd: tempRoot, fileName: nul }));
+    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd: join(tempRoot, `d${"\0"}`), fileName: "a.json" }));
+  });
+
+  it.each([
+    ["./C:x", posix],
+    ["a/../C:x", posix],
+    ["./C:x", win32],
+    ["a/../C:x", win32],
+    [".\\C:x", win32],
+    ["a\\..\\C:x", win32],
+    ["a/b:stream", win32],
+  ])("rejects the drive or stream name %j after normalization", (fileName, path) => {
+    const base = path === win32 ? "C:\\base" : "/base";
+    expect(() => joinStoreFile(base, fileName, path)).toThrow(InvalidStoreOptionsError);
+  });
+
+  it("keeps a colon inside a POSIX subdirectory file name", () => {
+    expect(joinStoreFile("/base", "a/b:c", posix)).toBe("/base/a/b:c");
+  });
+
+  it.each(["./C:x", "a/../C:x"])("rejects the config fileName %j in both config forms", (fileName) => {
+    expect(() => createProjectConfig({ appName: "my-cli", env: appEnv(), fileName })).toThrow(InvalidStoreOptionsError);
+    expect(() => createProjectConfig({ cwd: tempRoot, fileName })).toThrow(InvalidStoreOptionsError);
+  });
+
+  it.each(factories)("%s reports a BigInt or cyclic platform as invalid store options", (_name, create) => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    for (const platform of [1n, cyclic]) {
+      rejectsBeforeAnyFilesystemCall(() => create({ appName: "my-cli", env: appEnv(), platform }));
+    }
+  });
+
+  it.runIf(process.platform === "win32")("rejects Windows-only app names in both stores on Windows", () => {
+    for (const appName of ["tool.", "nul.txt", "con"]) {
+      expect(() => createCredentialStore({ appName, env: appEnv() })).toThrow(InvalidAppNameError);
+      expect(() => createProjectConfig({ appName, env: appEnv() })).toThrow(InvalidAppNameError);
+    }
   });
 });

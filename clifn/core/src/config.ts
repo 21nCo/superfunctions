@@ -6,6 +6,7 @@ import {
   InvalidStoreOptionsError,
   projectLocalFile,
   selectStoreForm,
+  storeFilePath,
   type StoreAppPathsOptions,
 } from "./store-options.js";
 
@@ -30,7 +31,19 @@ export class InvalidConfigError extends Error {
   }
 }
 
-const DEFAULT_CONFIG_PATH = join(process.cwd(), "conduct.config.json");
+const defaultConfigPath = (): string => join(process.cwd(), "conduct.config.json");
+
+/**
+ * The Conduct default, captured at import as before (D2). When the working directory cannot be read at import, loading
+ * the module still succeeds (so the other forms work) and the first call without an argument computes it instead.
+ */
+const DEFAULT_CONFIG_PATH = ((): string | undefined => {
+  try {
+    return defaultConfigPath();
+  } catch {
+    return undefined;
+  }
+})();
 
 function parseConfig<TConfig extends Record<string, unknown>>(path: string): TConfig {
   if (!existsSync(path)) {
@@ -80,7 +93,7 @@ interface ConfigTarget {
 
 function resolveConfigTarget(pathOrOptions: string | ProjectConfigOptions | undefined): ConfigTarget {
   if (pathOrOptions === undefined) {
-    return { path: DEFAULT_CONFIG_PATH };
+    return { path: DEFAULT_CONFIG_PATH ?? defaultConfigPath() };
   }
   if (typeof pathOrOptions !== "object" || pathOrOptions === null) {
     // A string, and any other non-object a JavaScript caller passes, is used as the path exactly as before 0.3.0.
@@ -95,7 +108,7 @@ function resolveConfigTarget(pathOrOptions: string | ProjectConfigOptions | unde
     { form: "local", selector: "fileName", allowed: ["cwd", "fileName"] },
   );
   if (form === "path") {
-    return { path: options.path as string };
+    return { path: storeFilePath(options.path as string) };
   }
   if (form === "local") {
     return { path: projectLocalFile(options) };

@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import ini from "ini";
-import { APP_FORM_KEYS, appConfigFile, InvalidStoreOptionsError, selectStoreForm, type StoreAppPathsOptions } from "./store-options.js";
+import {
+  APP_FORM_KEYS,
+  appConfigFile,
+  InvalidStoreOptionsError,
+  selectStoreForm,
+  storeFilePath,
+  type StoreAppPathsOptions,
+} from "./store-options.js";
 
 export { InvalidStoreOptionsError };
 
@@ -34,7 +41,19 @@ export class MissingProfileError extends Error {
   }
 }
 
-const DEFAULT_CREDENTIALS_PATH = join(homedir(), ".conduct", "credentials");
+const defaultCredentialsPath = (): string => join(homedir(), ".conduct", "credentials");
+
+/**
+ * The Conduct default, captured at import as before (D2). When the home directory cannot be read at import, loading
+ * the module still succeeds (so the other forms work) and the first call without an argument computes it instead.
+ */
+const DEFAULT_CREDENTIALS_PATH = ((): string | undefined => {
+  try {
+    return defaultCredentialsPath();
+  } catch {
+    return undefined;
+  }
+})();
 
 function readProfiles(path: string): Record<string, CredentialProfile> {
   if (!existsSync(path)) {
@@ -103,7 +122,7 @@ export type CredentialStoreOptions =
 
 function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions | undefined): string {
   if (pathOrOptions === undefined) {
-    return DEFAULT_CREDENTIALS_PATH;
+    return DEFAULT_CREDENTIALS_PATH ?? defaultCredentialsPath();
   }
   if (typeof pathOrOptions !== "object" || pathOrOptions === null) {
     // A string, and any other non-object a JavaScript caller passes, is used as the path exactly as before 0.3.0.
@@ -113,7 +132,7 @@ function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions |
     { form: "app", selector: "appName", allowed: APP_FORM_KEYS },
     { form: "path", selector: "path", allowed: ["path"] },
   ]);
-  return form === "path" ? (options.path as string) : appConfigFile(options, "credentials");
+  return form === "path" ? storeFilePath(options.path as string) : appConfigFile(options, "credentials");
 }
 
 /**

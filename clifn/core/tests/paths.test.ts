@@ -226,6 +226,44 @@ describe("app name grammar", () => {
   });
 });
 
+describe("app name grammar on Windows", () => {
+  const win: AppPathsOptions = { platform: "win32", homedir: WIN_HOME, env: { APPDATA: "C:\\R", LOCALAPPDATA: "C:\\L" } };
+  const windowsOnly = ["tool.", "tool..", "con", "prn", "aux", "nul", "nul.txt", "aux.tar.gz", "com0", "com1", "lpt9.log"];
+
+  it.each(windowsOnly)("rejects %j for every directory on win32", (name) => {
+    for (const kind of ["config", "state", "cache"] as const) {
+      let caught: unknown;
+      try {
+        appDirResolver(name, win)(kind);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(InvalidAppNameError);
+      expect(caught).toMatchObject({ code: "CLIFN_INVALID_APP_NAME", appName: name });
+    }
+    expect(() => resolveAppPaths(name, win)).toThrow(/on Windows/);
+  });
+
+  it.each(windowsOnly)("keeps %j valid on linux and darwin", (name) => {
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(resolveAppPaths(name, { platform, homedir: POSIX_HOME, env: {} }).config).toBe(`/home/ada/.config/${name}`);
+    }
+  });
+
+  it("gives tool and tool. no shared directory on any platform", () => {
+    expect(resolveAppPaths("tool", win).config).toBe("C:\\R\\tool");
+    expect(() => resolveAppPaths("tool.", win)).toThrow(InvalidAppNameError);
+  });
+
+  it.each(["console", "nul_x", "con-tool", "com10", "lpt", "my.nul", "tool.v2"])("accepts %j on win32", (name) => {
+    expect(resolveAppPaths(name, win)).toEqual({
+      config: `C:\\R\\${name}`,
+      state: `C:\\L\\${name}\\State`,
+      cache: `C:\\L\\${name}\\Cache`,
+    });
+  });
+});
+
 describe("ensureAppDir", () => {
   let tempRoot: string;
 

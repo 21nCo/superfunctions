@@ -17,9 +17,9 @@ export class InvalidAppNameError extends Error {
   readonly code = "CLIFN_INVALID_APP_NAME";
   readonly appName: unknown;
 
-  constructor(appName: unknown) {
+  constructor(appName: unknown, reason = `expected ${APP_NAME_PATTERN.source}`) {
     const shown = typeof appName === "string" ? JSON.stringify(appName) : `of type ${typeof appName}`;
-    super(`Invalid app name ${shown}: expected ${APP_NAME_PATTERN.source}`);
+    super(`Invalid app name ${shown}: ${reason}`);
     this.name = "InvalidAppNameError";
     this.appName = appName;
   }
@@ -36,9 +36,23 @@ export class InvalidHomeDirectoryError extends Error {
   }
 }
 
-function assertAppName(appName: unknown): asserts appName is string {
+/** Win32 device names, reserved as a path segment alone or followed by an extension (`nul`, `nul.txt`). */
+const WIN32_DEVICE_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/;
+
+/**
+ * The closed grammar on every platform. On Windows two more rules keep one name one directory: Win32 drops trailing
+ * dots from a path segment, so `tool.` would open `tool`, and device names open a device instead of a directory.
+ * The grammar already excludes upper case, spaces, colons and separators, the other ways Win32 can alias a segment.
+ */
+function assertAppName(appName: unknown, platform: NodeJS.Platform): asserts appName is string {
   if (typeof appName !== "string" || !APP_NAME_PATTERN.test(appName)) {
     throw new InvalidAppNameError(appName);
+  }
+  if (platform === "win32" && (appName.endsWith(".") || WIN32_DEVICE_NAME.test(appName))) {
+    throw new InvalidAppNameError(
+      appName,
+      "on Windows it cannot end with a dot or be a device name (con, prn, aux, nul, com0-9, lpt0-9), with or without an extension",
+    );
   }
 }
 
@@ -79,8 +93,8 @@ function absoluteEnv(
  * is unavailable or not absolute.
  */
 export function appDirResolver(appName: string, options: AppPathsOptions = {}): (kind: AppDirKind) => string {
-  assertAppName(appName);
   const platform = options.platform ?? process.platform;
+  assertAppName(appName, platform);
   const env = options.env ?? process.env;
   const isAbsolute = platform === "win32" ? isAbsoluteWin32 : posix.isAbsolute;
   let home: string | undefined;
