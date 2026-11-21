@@ -1,0 +1,77 @@
+cifn/README.md
+  s_b996deaa3d01f1::t_89379a6284433f 21,29-31,33-36,401
+cifn/deploy/Dockerfile.control-plane
+  s_b996deaa3d01f1::t_47e3901e033515 1-4
+cifn/deploy/Dockerfile.runner
+  s_b996deaa3d01f1::t_5b3f964bb8f3c8 1-4
+cifn/deploy/README.md
+  s_b996deaa3d01f1::t_2a575eb8d437b5 11-22,69,71-73,87,168,218,234
+cifn/deploy/docker-compose.yml
+  s_b996deaa3d01f1::t_21da2230077fb4 19-21
+cifn/deploy/env.example
+  s_b996deaa3d01f1::t_5288703520c482 44-45
+cifn/deploy/hostfn.example.config.json
+  s_b996deaa3d01f1::t_d3e1a06a514995 18
+cifn/typescript/control-plane/scripts/secfn-stub.mjs
+  s_b996deaa3d01f1::t_4f40f2f8c62205 1-18
+cifn/typescript/control-plane/scripts/verify-durable-startup.mjs
+  s_b996deaa3d01f1::t_2bfb29826f25e9 9,15-16,24,58,95
+cifn/typescript/control-plane/scripts/verify-notifications.mjs
+  s_b996deaa3d01f1::t_0a4cd4e14eb963 10,15-16,45,59,90
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_b996deaa3d01f1::t_ab514f5a164803 10,16-17,45,83,161
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_b996deaa3d01f1::t_5e6e98cc67557d 13,23-24,54,162,303
+cifn/typescript/control-plane/src/api/routes.ts
+  s_b996deaa3d01f1::t_f33575dacd4f8e 61-66,380
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_b996deaa3d01f1::t_611f92987cecdd 11-16,26,61-63
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_b996deaa3d01f1::t_d1219dff0da565 20-22,28,34,36,40
+cifn/typescript/control-plane/src/dispatch/types.ts
+  s_b996deaa3d01f1::t_2ba975f832eaf9 24,29
+cifn/typescript/control-plane/src/integrations/config.ts
+  s_b996deaa3d01f1::t_e83a114a34dce9 64-68
+cifn/typescript/control-plane/src/observability/lifecycle.test.ts
+  s_b996deaa3d01f1::t_e7c40bc1353446 63-84
+cifn/typescript/control-plane/src/pipeline/pipeline.test.ts
+  s_b996deaa3d01f1::t_cc93a892744063 72-79
+cifn/typescript/control-plane/src/pipeline/validator.ts
+  s_b996deaa3d01f1::t_f259f94ac96fc1 38-39,78-89
+cifn/typescript/control-plane/src/queue/queue.test.ts
+  s_b996deaa3d01f1::t_3026664f41f3e9 8,274-284,287,289-302
+cifn/typescript/control-plane/src/server.ts
+  s_b996deaa3d01f1::t_e411559b344951 72-74
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_cd77744eaccf00 306,308-309,377,398-433
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_b996deaa3d01f1::t_3432d0a6f7bf9e 25,376,381,389-403,405,457-461,464-468,470-482,484
+cifn/typescript/runner/scripts/verify-remote-hostfn.mjs
+  s_b996deaa3d01f1::t_f5573d7c903fdd 18,26-27,94-95,141,306
+cifn/typescript/runner/src/artifacts-cache.test.ts
+  s_b996deaa3d01f1::t_bdc6e62044dd17 467-504
+cifn/typescript/runner/src/claim-journal.ts
+  s_b996deaa3d01f1::t_d30020e1301306 34-36,38-39,42,77-79
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_b996deaa3d01f1::t_df5b3ac7f0a418 34-48,436
+cifn/typescript/runner/src/runner.test.ts
+  s_b996deaa3d01f1::t_5bf7b4debb9cae 531-546
+cifn/typescript/runner/src/runner.ts
+  s_b996deaa3d01f1::t_a58df18b0dd0f8 494-496,498-502
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1847095ee2ab992b6ced5d8f83537298aeb4c2f0",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
