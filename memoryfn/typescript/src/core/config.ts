@@ -1,5 +1,5 @@
 import type { StorageAdapter } from '../storage/adapter';
-import { AddMemoryInput, AddMemoryResult, SearchMemoryInput, SearchMemoryResult } from './types';
+import { AddMemoryInput, AddMemoryResult, ForgetSourceInput, ForgetSourceResult, SearchMemoryInput, SearchMemoryResult, UpsertDocumentInput, UpsertDocumentResult } from './types';
 
 export interface MemoryFnConfig {
   storage: {
@@ -79,6 +79,8 @@ export interface MemoryFnConfig {
 export interface IMemoryFn {
   add(input: AddMemoryInput): Promise<AddMemoryResult>;
   search(input: SearchMemoryInput): Promise<SearchMemoryResult>;
+  upsertDocument(input: UpsertDocumentInput): Promise<UpsertDocumentResult>;
+  forgetBySource(input: ForgetSourceInput): Promise<ForgetSourceResult>;
   // update, delete, getProfile, etc.
 }
 

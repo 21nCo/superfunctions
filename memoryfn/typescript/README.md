@@ -31,6 +31,10 @@ Rex must deny retrieval as soon as its authoritative DataFn record is forgotten,
 
 The HTTP router requires an `authorize(request)` callback returning trusted scope or null. Request bodies cannot choose a tenant. The MCP adapter requires a trusted scope at construction; instantiate it per authorized scope and revoke access at the host boundary.
 
+## Documents and sources
+
+`upsertDocument({ tenantId, containerTags, sourceKey, content, contentHash?, metadata?, type?, extract?, chunking? })` stores a document as embedded chunks of a source, identified by the tenant, the exact container tag set and `sourceKey`. It requires an embedder (`MEMORY_EMBEDDER_REQUIRED`). The content hash defaults to the hex SHA-256 of the content; when it equals the stored hash the call returns `unchanged: true` and embeds nothing. Otherwise the Markdown chunker splits the content at headings, then paragraphs, then hard splits (1,500-character target and 200-character overlap by default), and `replaceSource()` soft-deletes the previous chunks and inserts the new ones atomically. With `extract: true` the facts extracted from each chunk are stored instead, under the same source. `forgetBySource({ tenantId, containerTags, sourceKey })` soft-deletes every live chunk or fact of the source and returns how many it deleted. The HTTP router exposes them as `PUT /v1/documents` and `DELETE /v1/documents`. `add()` is unchanged. See the documents and sources page of the MemoryFn docs.
+
 ## Compatibility and limits
 
 - `kind: 'memory'` selects process-local storage. `kind: 'sqlite'` without an explicit adapter throws; it no longer silently creates a memory store.

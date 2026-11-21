@@ -1,3 +1,5 @@
+import type { ChunkingOptions } from '../chunking/markdown';
+
 export type MemoryType = 
   | "profile_static"
   | "profile_dynamic"
@@ -91,6 +93,46 @@ export interface AddMemoryResult {
     embeddings: number;
     total: number;
   };
+}
+
+/** Input of MemoryFn.upsertDocument. The source is (tenantId, exact containerTags set, sourceKey). */
+export interface UpsertDocumentInput {
+  tenantId: string;
+  containerTags: string[];
+  sourceKey: string;
+  content: string;
+  /** Compared with the stored hash to skip unchanged content. Defaults to the lowercase hex SHA-256 of content. */
+  contentHash?: string;
+  /** Copied onto every stored chunk or fact. */
+  metadata?: Record<string, any>;
+  /** Type of stored chunks; defaults to 'document'. Extracted facts keep their extracted type. */
+  type?: MemoryType;
+  /** Run LLM fact extraction on each chunk and store the facts instead of the chunks. Defaults to false. */
+  extract?: boolean;
+  chunking?: ChunkingOptions;
+}
+
+export interface UpsertDocumentResult {
+  sourceKey: string;
+  contentHash: string;
+  /** True when the stored hash already matched: nothing was embedded or written. */
+  unchanged: boolean;
+  /** Live records the source holds after the call: chunks, or facts with extract. */
+  chunks: number;
+  /** The records written by this call; empty when unchanged. */
+  memories: Memory[];
+}
+
+export interface ForgetSourceInput {
+  tenantId: string;
+  containerTags: string[];
+  sourceKey: string;
+}
+
+export interface ForgetSourceResult {
+  sourceKey: string;
+  /** Live records soft-deleted by this call; 0 when the source held none. */
+  deleted: number;
 }
 
 export interface SearchMemoryInput {

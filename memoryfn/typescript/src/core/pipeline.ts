@@ -1,6 +1,10 @@
 import { MemoryFnConfig, IMemoryFn, validateMemoryPolicies } from './config';
-import { AddMemoryInput, AddMemoryResult, SearchMemoryInput, SearchMemoryResult, Memory, MemoryRelationship } from './types';
-import { requireScope, type StorageAdapter, type MemoryScope, type MemoryDelete } from '../storage/adapter';
+import {
+  AddMemoryInput, AddMemoryResult, SearchMemoryInput, SearchMemoryResult, Memory, MemoryRelationship,
+  UpsertDocumentInput, UpsertDocumentResult, ForgetSourceInput, ForgetSourceResult,
+} from './types';
+import { requireScope, requireSourceScope, MAX_SOURCE_CHUNKS, MemorySourceLimitError, type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert } from '../storage/adapter';
+import { chunkMarkdown, resolveChunkingOptions } from '../chunking/markdown';
 import { Embedder, LLMProvider } from '../providers/types';
 import { FactExtractor } from '../extraction/facts';
 import { Deduplicator } from '../extraction/dedup';
@@ -77,6 +81,61 @@ export class MemoryFn implements IMemoryFn {
     return { memories: saved, relationships, summary: { created: saved.length, updated, deduplicated } };
   }
 
+  /**
+   * Stores `content` as embedded chunks of the source (tenantId, exact
+   * containerTags set, sourceKey), atomically replacing its previous chunks.
+   * When the stored hash equals the incoming one nothing is embedded or written.
+   * With `extract: true` the facts extracted from each chunk are stored in place
+   * of the chunks, under the same source; they are not deduplicated against or
+   * linked to other memories, so forgetBySource removes everything it wrote.
+   */
+  async upsertDocument(input: UpsertDocumentInput): Promise<UpsertDocumentResult> {
+    const { scope } = requireSourceScope(input);
+    const { content, contentHash: givenHash, metadata, type, extract, chunking } = input;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('MEMORY_CONTENT_REQUIRED');
+    if (givenHash !== undefined && (typeof givenHash !== 'string' || !givenHash.trim())) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+    if (extract !== undefined && typeof extract !== 'boolean') throw new Error('MEMORY_EXTRACT_INVALID');
+    const options = resolveChunkingOptions(chunking);
+    if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
+    if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
+    const contentHash = givenHash ?? await sha256Hex(content);
+
+    const state = await this.storage.getSourceState(scope);
+    if (state && state.contentHash === contentHash) {
+      return { sourceKey: scope.sourceKey, contentHash, unchanged: true, chunks: state.chunkCount, memories: [] };
+    }
+
+    const chunks = chunkMarkdown(content, options);
+    // Rejected before any LLM or embedding call; replaceSource would reject the write anyway.
+    if (chunks.length > MAX_SOURCE_CHUNKS) throw new MemorySourceLimitError();
+    const records: Array<Pick<MemoryInsert, 'content' | 'type' | 'metadata'>> = [];
+    if (extract) {
+      for (let index = 0; index < chunks.length; index++) {
+        // Model-generated tags are descriptive metadata, never authority or scope.
+        for (const fact of await this.extractor!.extract(chunks[index])) {
+          records.push({ content: fact.content, type: fact.type,
+            metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } });
+        }
+      }
+    } else {
+      for (const chunk of chunks) records.push({ content: chunk, type: type ?? 'document', metadata: { ...metadata } });
+    }
+    if (records.length > MAX_SOURCE_CHUNKS) throw new MemorySourceLimitError();
+    const embeddings = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
+    if (embeddings.length !== records.length) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
+    const memories = await this.storage.replaceSource({
+      ...scope, contentHash,
+      chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
+    });
+    return { sourceKey: scope.sourceKey, contentHash, unchanged: false, chunks: memories.length, memories };
+  }
+
+  /** Soft-deletes every live chunk and fact of the source (tenantId, exact containerTags set, sourceKey). */
+  async forgetBySource(input: ForgetSourceInput): Promise<ForgetSourceResult> {
+    const { scope } = requireSourceScope(input);
+    return { sourceKey: scope.sourceKey, deleted: await this.storage.deleteSource(scope) };
+  }
+
   async close(): Promise<void> { await this.storage.close?.(); }
 
   async update(input: MemoryScope & { id: string; expectedRevision: number; content: string; metadata?: Record<string, unknown> }): Promise<Memory> {
@@ -111,4 +170,11 @@ export class MemoryFn implements IMemoryFn {
       }
     };
   }
+}
+
+/** Lowercase hex SHA-256 of the UTF-8 bytes of `text`. */
+export async function sha256Hex(text: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle ?? (await import('node:crypto')).webcrypto.subtle;
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
