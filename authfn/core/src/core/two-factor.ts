@@ -537,7 +537,11 @@ async function verifyTwoFactorTotp(
         },
         namespace: namespace(config)
       });
-      if (affected === 0) {
+      // Only a finite count above 0 confirms the step was recorded. Some
+      // adapters report NaN for a write that matched nothing (Drizzle's
+      // SQLite proxy), so anything else is treated as not written and the
+      // code is checked again against the stored step.
+      if (!(Number.isFinite(affected) && affected > 0)) {
         throw new NotFoundError('two_factor_enrollments', [
           { field: 'id', operator: 'eq', value: currentEnrollment.id },
           {

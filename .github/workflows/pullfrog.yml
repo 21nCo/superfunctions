@@ -27,7 +27,9 @@ jobs:
         with:
           fetch-depth: 1
       - name: Run agent
-        uses: pullfrog/pullfrog@v0
+        # Pinned to a commit: this job holds an OIDC token and provider API keys,
+        # so a moved tag must not change the code it runs. v0.1.140.
+        uses: pullfrog/pullfrog@ef3a939a663d6eb5701ecbcbb824621076cf10e5 # v0.1.140
         with:
           prompt: ${{ inputs.prompt }}
         env:

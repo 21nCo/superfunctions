@@ -15,6 +15,7 @@ import {
   verifyTwoFactorCode
 } from '../core/two-factor.js';
 import { createUser } from '../core/users.js';
+import { AuthFnTwoFactorInvalidCodeError } from '../core/errors.js';
 
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -447,6 +448,33 @@ describe('authfn two factor plugin', () => {
     ).resolves.toEqual({
       usedRecoveryCode: false
     });
+  });
+
+  it('refuses a TOTP code whose step write the adapter reports as NaN rows', async () => {
+    const clock = createClock();
+    const twoFactorConfig = createTwoFactorPluginConfig(clock);
+    const base = memoryAdapter({ debug: false });
+    // Drizzle's SQLite proxy reports a write that matched nothing as NaN.
+    const database: Adapter = {
+      ...base,
+      async updateMany(params) {
+        if (params.model === 'two_factor_enrollments' && 'lastUsedCounter' in params.data) {
+          return Number.NaN;
+        }
+        return base.updateMany(params);
+      }
+    };
+    const config: AuthFnRuntimeConfig = {
+      database,
+      namespace: 'authfn',
+      plugins: [authFnPasswordPlugin(), authFnTwoFactorPlugin()],
+      pluginRuntime: { twoFactor: twoFactorConfig }
+    };
+    const user = await createUser(config, { primaryEmail: 'nan-count@example.com' });
+    const created = await createTwoFactorEnrollment(config, user, twoFactorConfig);
+    await expect(
+      confirmTwoFactorEnrollment(config, user.id, generateTotp(created.secret, clock.now()), twoFactorConfig)
+    ).rejects.toBeInstanceOf(AuthFnTwoFactorInvalidCodeError);
   });
 
   it('supports confirming and satisfying 2fa with deterministic recovery/session helpers', async () => {

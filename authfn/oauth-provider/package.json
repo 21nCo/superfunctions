@@ -31,7 +31,7 @@
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
-    "@superfunctions/db": "0.2.0",
+    "@superfunctions/db": "0.3.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^12.5.0",
