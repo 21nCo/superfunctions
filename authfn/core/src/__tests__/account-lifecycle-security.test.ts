@@ -260,6 +260,14 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
       authorization: `Bearer ${token}`
     }));
     expect(refused.status).toBe(400);
+    // The same with another account's live cookie session and its CSRF token.
+    const other = await ctx.handle(json('/sign-up/password', { email: 'other@example.com', password: 'other-test-password' }));
+    const otherVerify = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      cookie: cookieHeader(other),
+      'x-authfn-csrf': csrfToken(other),
+      authorization: `Bearer ${token}`
+    }));
+    expect(otherVerify.status).toBe(400);
     expect((await account(ctx, { authorization: `Bearer ${token}` })).status).toBe(200);
     const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
       authorization: `Bearer ${token}`
