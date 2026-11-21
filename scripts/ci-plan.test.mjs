@@ -604,14 +604,17 @@ test("a package whose source reads another package's files changes with it, depe
     // A quoted path may contain spaces.
     "spacefn/app/package.json": JSON.stringify({ name: "@spacefn/app", scripts: { build: "vite build" } }),
     "spacefn/app/src/index.ts": 'import icon from "../../../devfn/proxy/assets/app icon.svg";\n',
-    // A root task's dependsOn survives a package override that sets only inputs.
-    "turbo.json": JSON.stringify({ tasks: { build: { dependsOn: ["^build", "typecheck:declarations"] } } }),
+    // A template literal: a directory prefix, and a prefix that stops inside a name.
+    "tplfn/core/package.json": JSON.stringify({ name: "@tplfn/core", scripts: { test: "vitest run" } }),
+    "tplfn/core/tests/docs.test.ts": 'const url = new URL(`../../../filefn/core/docs/${page}`, import.meta.url);\nconst pin = `../../../devfn/${name}/package.json`;\nconst cli = `../../../other${fn}/cli`;\n',
+    // A root task's dependsOn survives a package override that sets only inputs, and the inherited inputs count.
+    "turbo.json": JSON.stringify({ tasks: { build: { dependsOn: ["^build", "typecheck:declarations"] }, "typecheck:declarations": { inputs: ["$TURBO_ROOT$/shared-types/**"] } } }),
     "inheritfn/wrapper/package.json": JSON.stringify({ name: "@inheritfn/wrapper", scripts: { build: "tsup" } }),
     "inheritfn/wrapper/turbo.json": JSON.stringify({ extends: ["//"], tasks: { build: { inputs: ["src/**"] }, "typecheck:declarations": { inputs: ["$TURBO_ROOT$/clifn/core/types/**"] } } }),
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
-    assert.equal(outputs.js_test_filters, `--filter=..../cssfn/workbench --filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_test_filters, `--filter=..../cssfn/workbench --filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper --filter=./tplfn/core ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.has_js_test, "true");
     assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/bundlefn\/app --filter=\.\.\.\.\/bundlefn\/wrapper/);
     assert.match(plan(({ put }) => put("devfn/proxy/schema/a.json", "{}\n")).js_build_filters, /--filter=\.\.\.\.\/genfn\/app --filter=\.\.\.\.\/genfn\/wrapper/);
@@ -621,6 +624,10 @@ test("a package whose source reads another package's files changes with it, depe
     assert.match(plan("otherfn/cli/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/cssfn\/workbench/);
     assert.match(plan(({ put }) => put("devfn/proxy/assets/app icon.svg", "<svg/>\n")).js_build_filters, /--filter=\.\.\.\.\/spacefn\/app/);
     assert.match(plan(({ put }) => put("clifn/core/types/a.d.ts", "export {};\n")).js_build_filters, /--filter=\.\.\.\.\/inheritfn\/wrapper/);
+    assert.equal(plan(({ put }) => put("shared-types/a.d.ts", "export {};\n")).full_js, "true");
+    assert.match(plan(({ put }) => put("filefn/core/docs/guide.md", "x\n")).js_build_filters, /--filter=\.\/tplfn\/core/);
+    assert.match(plan("otherfn/cli/src/index.ts").js_build_filters, /--filter=\.\/tplfn\/core/);
+    assert.match(plan("devfn/proxy/src/index.ts").js_build_filters, /--filter=\.\/tplfn\/core/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 

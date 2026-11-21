@@ -425,8 +425,9 @@ const SOURCE_REFERENCE_FILES = [
   "*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro",
   "*.css", "*.scss", "*.sass", "*.less", "*.pcss",
 ];
-// A "../" path in quotes (spaces allowed; a template literal stops at its first `${`), or in an unquoted CSS url(...).
-const QUOTED_PARENT_PATH = /(["'`])(\.\.\/(?:(?!\1)[^\n$])*)\1/g;
+// A "../" path in quotes (spaces allowed), or in an unquoted CSS url(...). A template literal's path ends at its first
+// `${`; its literal part is then a prefix (`../components-${framework}` names every components-* directory).
+const QUOTED_PARENT_PATH = /(["'`])(\.\.\/(?:(?!\1)[^\n$])*)(\1|\$\{)/g;
 const CSS_URL_PARENT_PATH = /url\(\s*(\.\.\/[^)\s"'`]+)\s*\)/g;
 
 // Test files and test configuration: a reference from one of these affects only the referencing package's tests. Any
@@ -470,12 +471,23 @@ function collectSourceReferences(packageDirs) {
       continue;
     }
     const specifiers = [
-      ...[...source.matchAll(QUOTED_PARENT_PATH)].map((match) => match[2]),
-      ...[...source.matchAll(CSS_URL_PARENT_PATH)].map((match) => match[1]),
+      ...[...source.matchAll(QUOTED_PARENT_PATH)].map((match) => [match[2], match[3] === "${"]),
+      ...[...source.matchAll(CSS_URL_PARENT_PATH)].map((match) => [match[1], false]),
     ];
-    for (const specifier of specifiers) {
+    for (const [specifier, interpolated] of specifiers) {
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier));
       if (target.startsWith("../")) {
+        continue;
+      }
+      if (interpolated) {
+        // Only the literal part is known: the package holding it and every package directory that starts with it
+        // (`../devfn/${name}` names every devfn package).
+        const holder = findNearestManifestDir(target.endsWith("/") ? `${target}-` : `${path.posix.dirname(target)}/-`, packageDirs);
+        for (const dir of [holder, ...[...packageDirs].filter((candidate) => candidate.startsWith(target))]) {
+          if (dir && dir !== owner) {
+            addReference(references.packages[kind], dir, owner);
+          }
+        }
         continue;
       }
       // A path naming a package directory itself (`../viewer`) belongs to that package, as does anything inside it.
@@ -574,6 +586,14 @@ function collectTurboRootInputs(packageDirs) {
   } catch {
     rootTasks = {};
   }
+  // A root task's input applies to every package, so a change under it is global (owner "*").
+  for (const task of Object.values(rootTasks)) {
+    for (const input of Array.isArray(task?.inputs) ? task.inputs : []) {
+      if (typeof input === "string" && input.startsWith("$TURBO_ROOT$/")) {
+        inputs.push(["*", input.slice("$TURBO_ROOT$/".length).split(/[*?{[!]/, 1)[0], "build"]);
+      }
+    }
+  }
   let files = [];
   try {
     files = git(["ls-files", "-z", "--format=|%(path)", "--", "*/turbo.json"])
@@ -602,7 +622,7 @@ function collectTurboRootInputs(packageDirs) {
       tasks[name] = { ...rootTasks[name], ...task };
     }
     const feedsBuild = tasksReachableFrom("build", tasks);
-    for (const [taskName, task] of Object.entries(config?.tasks || config?.pipeline || {})) {
+    for (const [taskName, task] of Object.entries(tasks)) {
       const name = taskName.replace(/^.*#/, "");
       const checkOnly = CHECK_TASK.test(name) && !feedsBuild.has(name);
       for (const input of Array.isArray(task?.inputs) ? task.inputs : []) {
@@ -729,7 +749,12 @@ const sourceReferences = fullPlan
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
     for (const [owner, prefix, kind] of turboRootInputs) {
-      if (changedPath.startsWith(prefix)) {
+      if (!changedPath.startsWith(prefix)) {
+        continue;
+      }
+      if (owner === "*") {
+        fullJs = true;
+      } else {
         (kind === "build" ? changedJsDirs : consumerJsDirs).add(owner);
       }
     }
