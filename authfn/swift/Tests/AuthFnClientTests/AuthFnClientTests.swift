@@ -65,4 +65,79 @@ final class AuthFnClientTests: XCTestCase {
         let cleared = try await store.loadCredential()
         XCTAssertNil(cleared)
     }
+
+    func testVerifyEmailSendsTheStoredSessionAsBearer() async throws {
+        let store = AuthFnInMemoryCredentialStore()
+        try await store.saveCredential(AuthFnSessionCredential(
+            session: AuthFnSession(id: "sess_1", actorId: "user_1", regionId: "us-east-1", primaryEmail: "ada@example.com", methods: ["password"]),
+            token: "test-session-token"
+        ))
+        let client = AuthFnClient(
+            configuration: AuthFnConfiguration(defaultRegionId: "us-east-1", baseURL: URL(string: "https://account.example.com/auth")!, urlSession: StubURLProtocol.session()),
+            credentialStore: store
+        )
+
+        _ = try await client.verifyOtp(email: "ada@example.com", code: "123456", purpose: "verify-email")
+        let verify = StubURLProtocol.log.all().first { $0.url?.path.hasSuffix("/otp/verify") == true }
+        XCTAssertEqual(verify?.value(forHTTPHeaderField: "authorization"), "Bearer test-session-token")
+
+        StubURLProtocol.log.clear()
+        _ = try await client.verifyOtp(email: "ada@example.com", code: "123456", purpose: "sign-in")
+        let signIn = StubURLProtocol.log.all().first { $0.url?.path.hasSuffix("/otp/verify") == true }
+        XCTAssertNil(signIn?.value(forHTTPHeaderField: "authorization"))
+    }
+}
+
+/// Requests seen by StubURLProtocol, safe to read from the test.
+final class StubRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+
+    func append(_ request: URLRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        requests.append(request)
+    }
+
+    func all() -> [URLRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        requests.removeAll()
+    }
+}
+
+/// Answers every request with a success envelope and records what was sent.
+final class StubURLProtocol: URLProtocol {
+    static let log = StubRequestLog()
+
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.log.append(request)
+        let body: String
+        if request.url?.path.hasSuffix("/regions/lookup") == true {
+            body = #"{"ok":true,"data":{"identifier":"ada@example.com","regionId":"us-east-1","authority":"https://account.example.com","continueLocally":true}}"#
+        } else {
+            body = #"{"ok":true,"data":{"session":{"id":"sess_2","actorId":"user_1","regionId":"us-east-1","primaryEmail":"ada@example.com","methods":["email-otp"]},"token":"test-new-session-token"}}"#
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["content-type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

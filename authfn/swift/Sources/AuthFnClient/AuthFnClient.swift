@@ -81,7 +81,11 @@ public final class AuthFnClient: Sendable {
     }
 
     public func verifyOtp(email: String, code: String, purpose: String = "sign-in") async throws -> AuthFnSessionCredential {
-        try await credentialFromRegionalRequest(identifier: email) { regionId in
+        // A verify-email code entered by the signed-in holder must say so:
+        // without the session, the server takes it as someone else proving
+        // the mailbox first and removes the account's earlier setup.
+        let holderToken = purpose == "verify-email" ? try await credentialStore.loadCredential()?.token : nil
+        return try await credentialFromRegionalRequest(identifier: email) { regionId in
             try await self.post(
                 path: "/otp/verify",
                 regionId: regionId,
@@ -90,7 +94,8 @@ public final class AuthFnClient: Sendable {
                     "purpose": purpose,
                     "code": code,
                     "sessionMode": "bearer",
-                ]
+                ],
+                bearerToken: holderToken
             )
         }
     }
