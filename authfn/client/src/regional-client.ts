@@ -48,7 +48,8 @@ export function createAuthFnRegionalClient(
       }
     }
 
-    const lookup = await clientFor(currentRegionId).lookupRegion({ identifier });
+    const queriedRegionId = currentRegionId;
+    const lookup = await clientFor(queriedRegionId).lookupRegion({ identifier });
     if (!lookup.ok) {
       const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
@@ -59,7 +60,7 @@ export function createAuthFnRegionalClient(
       return null;
     }
 
-    const regionId = concreteRegionId(lookup.data);
+    const regionId = concreteRegionId(lookup.data, queriedRegionId);
     if (!regionId) {
       // A server that names no region (gateway mode, or none configured)
       // leaves the identifier unresolved: the default region is used, and a
@@ -93,7 +94,7 @@ export function createAuthFnRegionalClient(
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
         const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
-        const retryRegionId = retry.ok ? concreteRegionId(retry.data) : undefined;
+        const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId) : undefined;
         if (retry.ok && retryRegionId) {
           await saveRegion(storage, cacheTtlMs, options, {
             identifier,
@@ -111,7 +112,7 @@ export function createAuthFnRegionalClient(
       return lookup;
     }
 
-    const regionId = concreteRegionId(lookup.data);
+    const regionId = concreteRegionId(lookup.data, lookupRegionId);
     if (!regionId) {
       // No region named ('unknown', or a gateway answer): nothing to cache,
       // and a route cached earlier is dropped.
@@ -156,7 +157,7 @@ export function createAuthFnRegionalClient(
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
-    const answeredRegionId = concreteRegionId(lookup.data);
+    const answeredRegionId = concreteRegionId(lookup.data, selectedRegionId);
     if (input.flow !== 'sign-up' && answeredRegionId) {
       currentRegionId = answeredRegionId;
     }
@@ -336,16 +337,20 @@ function writeStorageMap(value: Record<string, AuthFnCachedRegion>): void {
  * The region a lookup routes to, or undefined for none. Gateway answers carry
  * no region, and a server without a configured region answers 'unknown' for
  * its own region; an answer that sends the caller elsewhere (another region
- * or authority) is honoured whatever the region is called.
+ * or authority) is honoured whatever the region is called, and so is the
+ * region that was asked (`queriedRegionId`), even one configured as 'unknown'.
  */
 function concreteRegionId(lookup: {
   regionId?: string;
   continueLocally?: boolean;
   ownedElsewhere?: boolean;
-}): string | undefined {
+}, queriedRegionId?: string): string | undefined {
   const regionId = lookup.regionId;
   if (typeof regionId !== 'string' || regionId === '') {
     return undefined;
+  }
+  if (regionId === queriedRegionId) {
+    return regionId;
   }
   if (regionId === 'unknown' && lookup.continueLocally !== false && lookup.ownedElsewhere !== true) {
     return undefined;
