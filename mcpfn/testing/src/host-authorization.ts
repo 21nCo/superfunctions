@@ -467,7 +467,10 @@ async function validateOAuthRejection(
   const body = parseJson(text) as { error?: unknown } | null | undefined;
   const registered = redirectMatch !== undefined;
   const unvetted = context === "authorization" && registered && isUnvettedRedirectSource(fixture);
-  if (context === "authorization" && body?.error !== "invalid_client" && registered && !unvetted) {
+  // The server rejects an unknown or invalid client registration before it
+  // matches the redirect URI, so those errors never use the callback.
+  const clientRejected = body?.error === "invalid_client" || body?.error === "invalid_client_metadata";
+  if (context === "authorization" && !clientRejected && registered && !unvetted) {
     throw new Error("Registered authorization requests require an OAuth error callback");
   }
   if (response.status !== 400) throw new Error("OAuth error response has invalid HTTP status");

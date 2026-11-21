@@ -819,6 +819,49 @@ describe("unvetted-client authorization rejections", () => {
       }
     });
 
+    it.each(["response_types", "grant_types"] as const)(
+      "accepts the JSON rejection of a stored registration with malformed %s",
+      async (field) => {
+        const stored = new Map<string, McpFnNormalizedClientRegistration>();
+        const handler = createMcpAuthorizationCompatibilityHandler({
+          issuer,
+          clients: { resolve: async (clientId) => stored.get(clientId) ?? null },
+          allowedResources: [resource],
+          supportedScopes: ["mcp:read"],
+          authorize: async () => new Response("unexpected authorize", { status: 500 }),
+          tokenAuthority: {
+            exchangeAuthorizationCode: async () => {
+              throw new Error("unexpected token exchange");
+            },
+            refreshToken: async () => {
+              throw new Error("unexpected token refresh");
+            },
+          },
+        });
+        for (const requested of [
+          "https://client.example.com/callback",
+          "https://CLIENT.example.com:443/callback",
+        ]) {
+          const fixture = rejectionFixture(PRE_REGISTERED);
+          redirect("https://client.example.com/callback", requested)(fixture);
+          Object.assign(fixture.registration.metadata, { [field]: "code" });
+          fixture.expected.errorCode = "invalid_client_metadata";
+          const [result] = await runHostedAuthorizationRegression({
+            issuer,
+            async prepareRegistration(registration) {
+              stored.set(registration.clientId, registration as McpFnNormalizedClientRegistration);
+            },
+            request: (request) => handler(request),
+          }, [fixture]);
+          expect(result).toMatchObject({
+            status: "passed",
+            responseStatus: 400,
+            errorCode: "invalid_client_metadata",
+          });
+        }
+      },
+    );
+
     it("never lets another client's registration match an unknown client's redirect", async () => {
       for (const requested of [LOOPBACK, RUNTIME_PORT]) {
         const fixture = rejectionFixture(DYNAMIC);
