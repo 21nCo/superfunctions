@@ -18,8 +18,8 @@ import { contractKey } from "./consumer-contract.table.js";
  * declaration whose module specifier is `@clifn/core` or a subpath must be the exact specifier position a
  * statement match consumed, and the match must name exactly the symbols the declaration binds; any other
  * declaration is reported as unrecognized. A regular-expression match the parser does not see as a module
- * specifier (inside a string, template or regular expression literal) is not a module reference and is
- * dropped.
+ * specifier (inside a string, template or regular expression literal) is not a module reference: it is
+ * dropped and the scan resumes just after where it started, so it never consumes a real declaration.
  *
  * Non-goal: dynamic `import()` and `require()` are not scanned; no consumer uses them for
  * `@clifn/core` at the reference commit.
@@ -228,11 +228,22 @@ export function scanSource(source: string, file: string): ScannedImport[] {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindFor(file));
   const blanked = blankParsedComments(sourceFile);
 
+  const declarations = parsedDeclarations(sourceFile);
+  const declarationOffsets = new Set(declarations.map((declaration) => declaration.specifierOffset));
+
+  // A match whose specifier is not a parser declaration started inside a literal; it is dropped and the scan
+  // resumes one character after its start, so it cannot consume a real declaration later on the same line.
   const matches = new Map<number, StatementMatch>();
-  for (const match of blanked.matchAll(CLIFN_IMPORT_STATEMENT)) {
+  const pattern = new RegExp(CLIFN_IMPORT_STATEMENT.source, CLIFN_IMPORT_STATEMENT.flags);
+  for (let match = pattern.exec(blanked); match !== null; match = pattern.exec(blanked)) {
+    const specifierOffset = match.indices?.[5]?.[0] ?? -1;
+    if (!declarationOffsets.has(specifierOffset)) {
+      pattern.lastIndex = match.index + 1;
+      continue;
+    }
     const [, statement, typeKeyword, clause, , specifier] = match;
     const typePrefix = typeKeyword === undefined ? "" : "type ";
-    matches.set(match.indices?.[5]?.[0] ?? -1, {
+    matches.set(specifierOffset, {
       statement: statement as "import" | "export",
       keywordOffset: match.indices?.[1]?.[0] ?? match.index ?? 0,
       specifier,
@@ -242,7 +253,7 @@ export function scanSource(source: string, file: string): ScannedImport[] {
   }
 
   // Reconcile with the parser: each declaration must be one statement match with exactly its symbols.
-  return parsedDeclarations(sourceFile).map((declaration): ScannedImport => {
+  return declarations.map((declaration): ScannedImport => {
     const match = matches.get(declaration.specifierOffset);
     if (match === undefined || !sameSymbols(match.symbols, declaration.symbols)) {
       return {

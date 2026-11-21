@@ -10,6 +10,8 @@ const text = "it's"; const tick = `a ${"\""} b`; const re = /["`]/g; import { cr
   formatDiagnosticsJson, // a 'quote' and a "quote"
 } from "@clifn/core/diagnostics";
 import core = require("@clifn/core");
+const literal = `
+import { fake } from "@clifn/core/`; import { readStringEnv } from "@clifn/core";
 
-export const used = [quote, text, tick, re, readIntEnv, readNumberEnv, createPrompt, formatDiagnosticsJson, core];
+export const used = [quote, text, tick, re, readIntEnv, readNumberEnv, createPrompt, formatDiagnosticsJson, core, literal, readStringEnv];
 export type Used = OutputOptions;

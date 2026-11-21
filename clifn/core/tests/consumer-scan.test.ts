@@ -160,10 +160,11 @@ describe("@clifn/core consumer import scan", () => {
       startingWith('statement-boundary-forms.ts:8: "createPrompt" from "@clifn/core/prompt" is not in'),
       startingWith('statement-boundary-forms.ts:9: "formatDiagnosticsJson" from "@clifn/core/diagnostics" is not in'),
       startingWith('statement-boundary-forms.ts:12: `import core = require("@clifn/core");` names "@clifn/core" in a form'),
+      startingWith('statement-boundary-forms.ts:14: "readStringEnv" from "@clifn/core" is not in'),
     ]);
   });
 
-  it("parses listed symbols exactly and ignores commented-out and string-embedded imports", () => {
+  it("parses listed symbols exactly, including after a template that looks like an import, and ignores commented-out and string-embedded imports", () => {
     const imports = scanFixture("boundary-listed-forms.ts");
 
     expect(imports.map(({ line, specifier, symbols }) => ({ line, specifier, symbols }))).toEqual([
@@ -171,6 +172,8 @@ describe("@clifn/core consumer import scan", () => {
       { line: 4, specifier: "@clifn/core", symbols: [{ symbol: "loadConfig", typeOnly: false }] },
       { line: 5, specifier: "@clifn/core/exec", symbols: [{ symbol: "createExec", typeOnly: false }] },
       { line: 6, specifier: "@clifn/core/diagnostics", symbols: [{ symbol: "createDiagnostic", typeOnly: false }] },
+      { line: 13, specifier: "@clifn/core/runner", symbols: [{ symbol: "runAction", typeOnly: false }] },
+      { line: 15, specifier: "@clifn/core/diagnostics", symbols: [{ symbol: "redactValue", typeOnly: false }] },
     ]);
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([]);
   });
@@ -190,6 +193,6 @@ describe("@clifn/core consumer import scan", () => {
     expect(imports.map((scanned) => scanned.file)).toEqual(
       expect.arrayContaining(["fail-closed-forms.ts", "statement-boundary-forms.ts", "unlisted-imports.ts"]),
     );
-    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(17);
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(18);
   });
 });

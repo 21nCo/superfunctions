@@ -9,5 +9,9 @@ const tick = `a ${"\""} b`; const re = /["`]/g; import { createDiagnostic } from
 const embedded = `
 import { readNumberEnv } from "@clifn/core/env";
 `;
+const literal = `
+import { fake } from "@clifn/core/`; import { runAction } from "@clifn/core/runner";
+const again = `
+export { fake } from "@clifn/core/`; export { redactValue } from "@clifn/core/diagnostics";
 
-export const used = [loadConfig, quote, createExec, tick, re, createDiagnostic, embedded];
+export const used = [loadConfig, quote, createExec, tick, re, createDiagnostic, embedded, literal, runAction, again];
