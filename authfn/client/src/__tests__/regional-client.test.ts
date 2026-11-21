@@ -503,6 +503,34 @@ describe('@authfn/client regional client', () => {
     expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
   });
 
+  it('routes to a region named unknown when the app says it is one', async () => {
+    const urls: string[] = [];
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      unknownIsARegion: true,
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage: memoryRegionStorage(),
+      clientOptions: {
+        fetch: async (input) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          urls.push(url);
+          if (url.endsWith('/regions/lookup')) {
+            // An earlier server, two regions on one authority, no user id.
+            return Response.json({
+              ok: true,
+              data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://account.example.com', continueLocally: true },
+              requestId: 'req_lookup'
+            });
+          }
+          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+        }
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
+    expect(sent.ok).toBe(true);
+    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];

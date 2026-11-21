@@ -10893,6 +10893,7 @@ The regional client:
 - Pre-routes by calling `lookupRegion` before sensitive operations.
 - Lets you set the active region with `setCurrentRegionId(regionId)`.
 - Calls back via `onRegionChanged` whenever a lookup discovers a new region for an email.
+- Treats a lookup answer with no region, or `regionId: 'unknown'` for the region it asked, as unresolved: it uses `defaultRegionId` and caches nothing. If one of your regions is really named `unknown`, pass `unknownIsARegion: true`.
 
 See [Plugins → Multi-region](../plugins/multi-region).
 

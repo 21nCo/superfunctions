@@ -60,7 +60,7 @@ export function createAuthFnRegionalClient(
       return null;
     }
 
-    const regionId = concreteRegionId(lookup.data, queriedRegionId);
+    const regionId = concreteRegionId(lookup.data, queriedRegionId, options);
     if (!regionId) {
       // A server that names no region (gateway mode, or none configured)
       // leaves the identifier unresolved: the default region is used, and a
@@ -98,7 +98,7 @@ export function createAuthFnRegionalClient(
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
         const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
-        const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId) : undefined;
+        const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId, options) : undefined;
         if (retry.ok && retryRegionId) {
           await saveRegion(storage, cacheTtlMs, options, {
             identifier,
@@ -116,7 +116,7 @@ export function createAuthFnRegionalClient(
       return { lookup, answeredBy: lookupRegionId };
     }
 
-    const regionId = concreteRegionId(lookup.data, lookupRegionId);
+    const regionId = concreteRegionId(lookup.data, lookupRegionId, options);
     if (!regionId) {
       // No region named ('unknown', or a gateway answer): nothing to cache,
       // and a route cached earlier is dropped.
@@ -161,7 +161,7 @@ export function createAuthFnRegionalClient(
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
-    const answeredRegionId = concreteRegionId(lookup.data, answeredBy);
+    const answeredRegionId = concreteRegionId(lookup.data, answeredBy, options);
     if (input.flow !== 'sign-up' && answeredRegionId) {
       currentRegionId = answeredRegionId;
     }
@@ -349,12 +349,12 @@ function concreteRegionId(lookup: {
   continueLocally?: boolean;
   ownedElsewhere?: boolean;
   userId?: string;
-}, queriedRegionId?: string): string | undefined {
+}, queriedRegionId: string | undefined, options: Pick<AuthFnRegionalClientOptions, 'unknownIsARegion'>): string | undefined {
   const regionId = lookup.regionId;
   if (typeof regionId !== 'string' || regionId === '') {
     return undefined;
   }
-  if (regionId === queriedRegionId) {
+  if (regionId === queriedRegionId || options.unknownIsARegion === true) {
     return regionId;
   }
   // Earlier servers name the user only for a known account, whose region is
