@@ -358,6 +358,64 @@ describe('@authfn/client regional client', () => {
     expect(await storage.get('ada@example.com')).toBeNull();
   });
 
+  it('drops a cached route when a fresh lookup names no region', async () => {
+    const storage = memoryRegionStorage();
+    await storage.set('ada@example.com', {
+      identifier: 'ada@example.com',
+      regionId: 'eu-west-1',
+      authority: 'https://eu-west-1.account.example.com',
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + 60_000
+    });
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage,
+      clientOptions: {
+        fetch: async () => Response.json({
+          ok: true,
+          data: { identifier: 'ada@example.com', authority: 'https://account.example.com', continueLocally: true },
+          requestId: 'req_lookup'
+        })
+      }
+    });
+    await expect(client.resolveRegion({ identifier: 'ada@example.com', forceRefresh: true })).resolves.toBeNull();
+    expect(await storage.get('ada@example.com')).toBeNull();
+  });
+
+  it('follows a redirect to a region that is called unknown', async () => {
+    const urls: string[] = [];
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage: memoryRegionStorage(),
+      clientOptions: {
+        fetch: async (input) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          urls.push(url);
+          if (url.endsWith('/regions/lookup')) {
+            return Response.json({
+              ok: true,
+              data: {
+                identifier: 'ada@example.com',
+                regionId: 'unknown',
+                authority: 'https://unknown.account.example.com',
+                continueLocally: false,
+                ownedElsewhere: true,
+                redirectTo: 'https://unknown.account.example.com'
+              },
+              requestId: 'req_lookup'
+            });
+          }
+          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+        }
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
+    expect(sent.ok).toBe(true);
+    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];
