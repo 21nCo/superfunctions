@@ -38,8 +38,10 @@ export interface McpFnHostedAuthorizationCase {
     outcome: "allowed" | "rejected";
     /**
      * Expected OAuth error code. A dynamic or client-metadata-document client
-     * may be rejected with an HTML error page that has no machine-readable
-     * code; such a rejection is matched on outcome and phase only.
+     * may be rejected with an HTML error page; its code is the text of the
+     * page's first `<code>` element that is a valid RFC 6749 error code. When
+     * this is set, a rejection without a code fails; when it is unset, the
+     * rejection is matched on outcome and phase only.
      */
     errorCode?: string;
     phase?: "client-registration" | "authorization-request" | "token-exchange" | "token-refresh";
@@ -239,8 +241,8 @@ async function runHostedCase(
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture)) {
-      await validateUnvettedErrorPage(authorizationResponse, fixture);
-      return assessHostedCase(fixture, phase, responseStatus, undefined, undefined, true);
+      const pageErrorCode = await validateUnvettedErrorPage(authorizationResponse, fixture);
+      return assessHostedCase(fixture, phase, responseStatus, pageErrorCode, undefined, true);
     }
     if (!isRedirect(authorizationResponse.status)) {
       throw new Error(`Authorization request did not redirect (HTTP ${authorizationResponse.status})`);
@@ -383,13 +385,12 @@ function assessHostedCase(
   responseStatus?: number,
   errorCode?: string,
   error?: string,
-  rejectedWithoutCode = false,
+  rejected = false,
 ): McpFnHostedAuthorizationCaseResult {
-  const observedOutcome = errorCode || error || rejectedWithoutCode ? "rejected" : "allowed";
+  const observedOutcome = errorCode || error || rejected ? "rejected" : "allowed";
   const expected = fixture.expected;
   const passed = !error && observedOutcome === expected.outcome &&
-    (expected.errorCode === undefined || expected.errorCode === errorCode ||
-      (rejectedWithoutCode && errorCode === undefined)) &&
+    (expected.errorCode === undefined || expected.errorCode === errorCode) &&
     (expected.phase === undefined || expected.phase === phase);
   const expectedCode = expected.errorCode ? `:${expected.errorCode}` : "";
   const observedCode = errorCode ? `:${errorCode}` : "";
@@ -478,7 +479,7 @@ function isUnvettedErrorPage(response: Response, fixture: McpFnHostedAuthorizati
 async function validateUnvettedErrorPage(
   response: Response,
   fixture: McpFnHostedAuthorizationCase,
-): Promise<void> {
+): Promise<string | undefined> {
   if (response.status !== 400) {
     throw new Error("Authorization error page has invalid HTTP status");
   }
@@ -489,7 +490,38 @@ async function validateUnvettedErrorPage(
   if (mediaType !== "text/html") {
     throw new Error("Authorization error response must be an HTML page or a JSON error envelope");
   }
-  assertRedirectUriNotReflected(await response.clone().text(), fixture);
+  const body = await response.clone().text();
+  assertRedirectUriNotReflected(body, fixture);
+  return htmlErrorCode(body);
+}
+
+/** RFC 6749 section 5.2: error = 1*( %x20-21 / %x23-5B / %x5D-7E ). */
+const OAUTH_ERROR_CODE = /^[\x20-\x21\x23-\x5B\x5D-\x7E]+$/;
+
+const HTML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: "\"",
+  apos: "'",
+};
+
+/** Text of the first `<code>` element that is a valid OAuth error code. */
+function htmlErrorCode(html: string): string | undefined {
+  for (const match of html.matchAll(/<code\b[^>]*>([^<]*)<\/code\s*>/gi)) {
+    const text = match[1]!.replace(
+      /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi,
+      (_entity, decimal?: string, hex?: string, name?: string) => {
+        // Anything that cannot be part of an error code decodes to NUL, which
+        // the error-code charset rejects.
+        if (name) return HTML_ENTITIES[name.toLowerCase()] ?? "\0";
+        const point = decimal ? Number.parseInt(decimal, 10) : Number.parseInt(hex!, 16);
+        return point >= 0x20 && point <= 0x7e ? String.fromCharCode(point) : "\0";
+      },
+    ).trim();
+    if (OAUTH_ERROR_CODE.test(text)) return text;
+  }
+  return undefined;
 }
 
 function assertRedirectUriNotReflected(body: string, fixture: McpFnHostedAuthorizationCase): void {

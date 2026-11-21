@@ -504,6 +504,7 @@ describe("unvetted-client authorization rejections", () => {
   function runAgainstMcpFn(
     ids: string[],
     authorizationErrors?: AuthorizationErrorOptions,
+    adjust: (fixture: ReturnType<typeof rejectionFixture>) => void = () => {},
   ) {
     const registrations = new Map<string, McpFnNormalizedClientRegistration>();
     const handler = createMcpAuthorizationCompatibilityHandler({
@@ -528,7 +529,18 @@ describe("unvetted-client authorization rejections", () => {
         registrations.set(fixture.clientId, normalizeMcpClientRegistration(fixture));
       },
       request: (request) => handler(request),
-    }, ids.map(rejectionFixture));
+    }, ids.map((id) => {
+      const fixture = rejectionFixture(id);
+      adjust(fixture);
+      return fixture;
+    }));
+  }
+
+  function htmlPage(body: string) {
+    return () => new Response(body, {
+      status: 400,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
   }
 
   it("accepts McpFn's default HTML error page for dynamic and metadata-document clients", async () => {
@@ -541,7 +553,45 @@ describe("unvetted-client authorization rejections", () => {
       phase: "authorization-request",
       layer: "authorization-server",
       responseStatus: 400,
+      errorCode: "invalid_target",
     })));
+  });
+
+  it("fails an HTML error page whose code differs from the expected code", async () => {
+    const [result] = await runAgainstMcpFn([DYNAMIC], {
+      render: htmlPage("<p>Error: <code>invalid_request</code></p>"),
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      responseStatus: 400,
+      errorCode: "invalid_request",
+      error: "Expected rejected:invalid_target, received rejected:invalid_request",
+    });
+  });
+
+  it("requires a code in the HTML error page only when the fixture expects one", async () => {
+    const render = htmlPage("<p>Authorization request failed</p>");
+    const [expectingCode] = await runAgainstMcpFn([DYNAMIC], { render });
+    expect(expectingCode).toMatchObject({
+      status: "failed",
+      responseStatus: 400,
+      error: "Expected rejected:invalid_target, received rejected",
+    });
+    expect(expectingCode).not.toHaveProperty("errorCode");
+    const [withoutCode] = await runAgainstMcpFn([DYNAMIC], { render }, (fixture) => {
+      delete fixture.expected.errorCode;
+    });
+    expect(withoutCode).toMatchObject({ status: "passed", responseStatus: 400 });
+    expect(withoutCode).not.toHaveProperty("errorCode");
+  });
+
+  it("takes the first HTML code element that is a valid OAuth error code", async () => {
+    const [result] = await runAgainstMcpFn([DYNAMIC], {
+      render: htmlPage(
+        "<p><code>&quot;quoted&quot;</code> <code><b>bold</b></code> <CODE class=\"e\">invalid&#95;target</CODE> <code>invalid_request</code></p>",
+      ),
+    });
+    expect(result).toMatchObject({ status: "passed", errorCode: "invalid_target" });
   });
 
   it("accepts error redirects when the host opts unvetted sources back in", async () => {
