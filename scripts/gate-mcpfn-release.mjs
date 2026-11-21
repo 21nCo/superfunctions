@@ -89,15 +89,15 @@ function packageVersion(packagePath) {
 }
 
 function verifyMcpSdkSecurityPolicy() {
-  // Exact SDK pins per package. @mcpfn/core moved to 1.32.1 with the port of
-  // next at e42232591 (SFNS-137); the other packages stay on the patched 1.29.0.
+  // Exact SDK pins per package (MCP-13). Core and auth bundle the SDK into
+  // their dist, so every McpFn package moves to the same patched release.
   const expectedVersions = {
-    "mcpfn/core": "1.32.1",
-    "mcpfn/client": "1.29.0",
-    "mcpfn/auth": "1.29.0",
-    "mcpfn/testing": "1.29.0",
-    "mcpfn/inspector": "1.29.0",
-    "mcpfn/cli": "1.29.0",
+    "mcpfn/core": "1.32.2",
+    "mcpfn/client": "1.32.2",
+    "mcpfn/auth": "1.32.2",
+    "mcpfn/testing": "1.32.2",
+    "mcpfn/inspector": "1.32.2",
+    "mcpfn/cli": "1.32.2",
   };
   const expectedOverrides = {
     "fast-uri": "3.1.9",
@@ -140,6 +140,97 @@ function verifyMcpSdkSecurityPolicy() {
   if (!ok) {
     throw new Error(
       `McpFn dependency security policy failed: ${JSON.stringify({ mismatches, overrideMismatches })}`,
+    );
+  }
+}
+
+// Walks package-lock.json from every McpFn workspace (dependencies, dev and
+// peer dependencies, following workspace links) the way Node resolves
+// node_modules, and checks each reachable copy of the packages below (MCP-13).
+// @hono/node-server is checked against GHSA-rmxm-3fg6-px4f (>=1.19.10 <2.1.3).
+function verifyMcpfnLockfileResolution() {
+  const workspaces = [
+    "mcpfn/core",
+    "mcpfn/auth",
+    "mcpfn/client",
+    "mcpfn/cli",
+    "mcpfn/testing",
+    "mcpfn/inspector",
+    "mcpfn/datafn",
+  ];
+  const lock = JSON.parse(readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"));
+  const packages = lock.packages ?? {};
+  const compare = (left, right) => {
+    const a = left.split(/[.-]/).map(Number);
+    const b = right.split(/[.-]/).map(Number);
+    for (let index = 0; index < 3; index += 1) {
+      if (a[index] !== b[index]) return a[index] - b[index];
+    }
+    return 0;
+  };
+  const policies = {
+    "@modelcontextprotocol/sdk": (version) => version === "1.32.2",
+    "fast-uri": (version) => version === "3.1.9",
+    "@hono/node-server": (version) =>
+      compare(version, "1.19.10") < 0 || compare(version, "2.1.3") >= 0,
+  };
+  const resolve = (from, name) => {
+    let base = from;
+    for (;;) {
+      const candidate = base ? `${base}/node_modules/${name}` : `node_modules/${name}`;
+      if (packages[candidate]) return candidate;
+      if (!base) return undefined;
+      const nested = base.lastIndexOf("/node_modules/");
+      if (nested >= 0) base = base.slice(0, nested);
+      else if (base.startsWith("node_modules/")) base = "";
+      else base = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
+    }
+  };
+  const resolved = {};
+  const violations = [];
+  const visited = new Set();
+  const queue = workspaces.map((workspace) => ({ location: workspace, root: true }));
+  while (queue.length > 0) {
+    let { location, root } = queue.shift();
+    let entry = packages[location];
+    if (entry?.link) {
+      location = entry.resolved;
+      entry = packages[location];
+      root = true;
+    }
+    if (!entry || visited.has(location)) continue;
+    visited.add(location);
+    const names = new Set([
+      ...Object.keys(entry.dependencies ?? {}),
+      ...Object.keys(entry.optionalDependencies ?? {}),
+      ...Object.keys(entry.peerDependencies ?? {}),
+      ...(root ? Object.keys(entry.devDependencies ?? {}) : []),
+    ]);
+    for (const name of names) {
+      const target = resolve(location, name);
+      if (!target) continue;
+      const policy = policies[name];
+      if (policy) {
+        const version = packages[target].version;
+        (resolved[name] ??= {})[target] = version;
+        if (!policy(version)) violations.push({ name, from: location, target, version });
+      }
+      queue.push({ location: target, root: false });
+    }
+  }
+  const missing = Object.keys(policies).filter((name) => !resolved[name]);
+  const ok = violations.length === 0 && missing.length === 0;
+  results.push({
+    name: "dependencies:mcpfn-lockfile-resolution",
+    command: "internal package-lock.json resolution check for McpFn workspaces",
+    ok,
+    status: ok ? 0 : 1,
+    stdout: JSON.stringify({ resolved, violations, missing }),
+    stderr: "",
+  });
+  if (!ok) {
+    throw new Error(
+      `McpFn lockfile resolution failed: ${JSON.stringify({ violations, missing })}`,
     );
   }
 }
@@ -418,6 +509,7 @@ process.stdout.write(JSON.stringify({ ok: true, transports: ["stdio", "streamabl
 try {
   verifyLargeStepOutput();
   verifyMcpSdkSecurityPolicy();
+  verifyMcpfnLockfileResolution();
   for (const workspace of [
     "@superfunctions/auth",
     "@superfunctions/observability",
@@ -431,8 +523,9 @@ try {
   npmStep("oauth-core:build", ["run", "build", "--workspace", "@superfunctions/oauth-core"]);
 
   npmStep("core:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/core"]);
-  npmStep("core:test", ["run", "test", "--workspace", "@mcpfn/core"]);
+  // Build before testing core and auth: their bundled-SDK version tests read dist.
   npmStep("core:build", ["run", "build", "--workspace", "@mcpfn/core"]);
+  npmStep("core:test", ["run", "test", "--workspace", "@mcpfn/core"]);
   for (const entry of ["esm", "cjs"]) {
     run(`core:built-schema-${entry}`, process.execPath, [
       "--disallow-code-generation-from-strings",
@@ -446,8 +539,8 @@ try {
   npmStep("client:build", ["run", "build", "--workspace", "@mcpfn/client"]);
 
   npmStep("auth:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/auth"]);
-  npmStep("auth:test", ["run", "test", "--workspace", "@mcpfn/auth"]);
   npmStep("auth:build", ["run", "build", "--workspace", "@mcpfn/auth"]);
+  npmStep("auth:test", ["run", "test", "--workspace", "@mcpfn/auth"]);
 
   npmStep("testing:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/testing"]);
   npmStep("testing:test", ["run", "test", "--workspace", "@mcpfn/testing"]);
