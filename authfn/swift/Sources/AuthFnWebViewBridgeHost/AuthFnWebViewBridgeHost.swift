@@ -16,11 +16,13 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
 
     public init(trustedOrigins: [URL]) {
         var origins = Set<String>()
-        for url in trustedOrigins {
+        for (index, url) in trustedOrigins.enumerated() {
             if let origin = Self.parse(url.absoluteString) {
                 origins.insert(origin)
             } else {
-                print("[AuthFnWebViewBridgeHost] trusted origin ignored, not a usable web origin (scheme://host[:port], not file:): \(url.absoluteString)")
+                // The entry itself is not printed: a URL can carry a password
+                // or query parameters.
+                print("[AuthFnWebViewBridgeHost] trusted origin #\(index) ignored, not a usable web origin (scheme://host[:port], not file:)")
             }
         }
         self.trustedOrigins = origins
@@ -37,6 +39,22 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return trustedOrigins.contains(Self.key(scheme: scheme, host: host, port: portText))
     }
 
+    /// Whether a main-frame message may drive the bridge, from the frame's
+    /// security origin as WebKit reports it and the frame's URL.
+    ///
+    /// WebKit reports port 0 for no port (or the default one) and for an
+    /// explicit `:0`, which any scheme can carry (a page loaded from HTML with
+    /// such a base URL); the frame's own URL tells them apart. A frame whose
+    /// URL does not show its origin (an `about:blank` page that inherited it)
+    /// leaves that open, so it is refused.
+    public func allowsMessage(scheme: String, host: String, port: Int, frameURL: String) -> Bool {
+        if port == 0 && !Self.sameSchemeAndHost(frameURL, scheme: scheme, host: host) {
+            return false
+        }
+        let explicitPortZero = port == 0 && Self.hasExplicitPortZero(frameURL)
+        return allows(scheme: scheme, host: host, port: port, explicitPortZero: explicitPortZero)
+    }
+
     /// Schemes WebKit gives no host-specific origin: every `file:` page shares
     /// one origin, and `about:`, `data:`, `blob:` and similar pages have no
     /// host of their own. None of them can be trusted.
@@ -50,12 +68,21 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return isWeb && host.isEmpty
     }
 
-    /// Parses `scheme://host[:port]` without decoding the host, the way WebKit
-    /// keeps it: brackets of IPv6 literals and percent escapes stay as given.
+    /// Parses `scheme://host[:port]`. For http(s) and ws(s) the host is
+    /// normalized as WebKit does (percent escapes decoded, IPv4 and IPv6
+    /// literals in canonical form); for other schemes it is kept as given.
     static func parse(_ string: String) -> String? {
         guard let parts = splitOrigin(string) else { return nil }
         if isUntrustable(scheme: parts.scheme, host: parts.host) {
             return nil
+        }
+        if isSpecial(parts.scheme) {
+            // A host that decodes to non-ASCII (an internationalized domain not
+            // given in punycode) or to an empty one cannot be matched.
+            guard let decoded = parts.host.removingPercentEncoding,
+                  !decoded.isEmpty, decoded.allSatisfy(\.isASCII) else {
+                return nil
+            }
         }
         if let port = parts.port, !port.isEmpty {
             // A port that is not a number in range is refused rather than read
@@ -71,7 +98,8 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     /// origin, and so can say whether its port 0 is explicit.
     static func sameSchemeAndHost(_ string: String, scheme: String, host: String) -> Bool {
         guard let parts = splitOrigin(string) else { return false }
-        return parts.scheme == scheme.lowercased() && canonicalHost(parts.host) == canonicalHost(host)
+        let scheme = scheme.lowercased()
+        return parts.scheme == scheme && canonicalHost(parts.host, scheme: scheme) == canonicalHost(host, scheme: scheme)
     }
 
     /// Whether a URL names an explicit port 0 (`app://portal:0`).
@@ -82,7 +110,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
 
     static func key(scheme: String, host: String, port: String?) -> String {
         let scheme = scheme.lowercased()
-        let host = canonicalHost(host)
+        let host = canonicalHost(host, scheme: scheme)
         let defaultPort = scheme == "https" ? 443 : (scheme == "http" ? 80 : nil)
         guard let port, !port.isEmpty, let number = Int(port) else {
             return "\(scheme)://\(host)"
@@ -93,10 +121,23 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return "\(scheme)://\(host):\(number)"
     }
 
-    /// Lower-cases a host, and writes an IPv6 literal in its canonical form
-    /// (`[0:0:0:0:0:0:0:1]` becomes `[::1]`), as WebKit reports it.
-    static func canonicalHost(_ host: String) -> String {
-        let lowered = host.lowercased()
+    /// Schemes whose hosts WebKit parses as domains or IP addresses.
+    static func isSpecial(_ scheme: String) -> Bool {
+        ["http", "https", "ws", "wss"].contains(scheme)
+    }
+
+    /// A host as WebKit reports it: lower-cased; for http(s) and ws(s) also
+    /// percent-decoded, with an IPv4 address in dotted-decimal form
+    /// (`127.1` and `0x7f.0.0.1` become `127.0.0.1`); and an IPv6 literal in
+    /// its canonical form (`[0:0:0:0:0:0:0:1]` becomes `[::1]`).
+    static func canonicalHost(_ host: String, scheme: String) -> String {
+        var lowered = host.lowercased()
+        if isSpecial(scheme) {
+            lowered = (lowered.removingPercentEncoding ?? lowered).lowercased()
+            if let ipv4 = canonicalIPv4(lowered) {
+                return ipv4
+            }
+        }
         guard lowered.hasPrefix("["), lowered.hasSuffix("]") else { return lowered }
         let literal = String(lowered.dropFirst().dropLast())
         var address = in6_addr()
@@ -104,6 +145,23 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
         guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(buffer.count)) != nil else { return lowered }
         return "[\(String(cString: buffer))]"
+    }
+
+    /// The dotted-decimal form of a host WebKit reads as an IPv4 address (its
+    /// last label is a decimal, octal or hex number), or nil.
+    static func canonicalIPv4(_ host: String) -> String? {
+        let trimmed = host.hasSuffix(".") ? String(host.dropLast()) : host
+        guard let last = trimmed.split(separator: ".", omittingEmptySubsequences: false).last, !last.isEmpty else {
+            return nil
+        }
+        let isNumber = last.allSatisfy(\.isNumber) && last.allSatisfy(\.isASCII)
+            || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit))
+        guard isNumber else { return nil }
+        var address = in_addr()
+        guard inet_aton(trimmed, &address) == 1 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        guard inet_ntop(AF_INET, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
+        return String(cString: buffer)
     }
 
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
@@ -187,20 +245,9 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
             return
         }
         let origin = message.frameInfo.securityOrigin
-        // WebKit reports port 0 for no port and for an explicit `:0` (which a
-        // custom scheme can use); the frame's own URL tells them apart. A frame
-        // whose URL does not show its origin (an `about:blank` page that
-        // inherited it) leaves that open, so for custom schemes it is refused.
         let frameURL = message.frameInfo.request.url?.absoluteString ?? ""
-        let isWeb = ["http", "https"].contains(origin.protocol.lowercased())
-        if origin.port == 0 && !isWeb
-            && !AuthFnBridgeOriginPolicy.sameSchemeAndHost(frameURL, scheme: origin.protocol, host: origin.host) {
-            logBridgeError("message ignored, its origin's port is ambiguous", BridgeOriginError(origin: "\(origin.protocol)://\(origin.host)"))
-            return
-        }
-        let explicitPortZero = origin.port == 0 && AuthFnBridgeOriginPolicy.hasExplicitPortZero(frameURL)
-        guard originPolicy.allows(scheme: origin.protocol, host: origin.host, port: origin.port, explicitPortZero: explicitPortZero) else {
-            logBridgeError("message from an untrusted origin ignored", BridgeOriginError(origin: "\(origin.protocol)://\(origin.host):\(origin.port)"))
+        guard originPolicy.allowsMessage(scheme: origin.protocol, host: origin.host, port: origin.port, frameURL: frameURL) else {
+            logBridgeError("message from an untrusted or ambiguous origin ignored", BridgeOriginError(origin: "\(origin.protocol)://\(origin.host):\(origin.port)"))
             return
         }
 

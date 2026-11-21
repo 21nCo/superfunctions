@@ -66,6 +66,41 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertFalse(AuthFnBridgeOriginPolicy.sameSchemeAndHost("about:blank", scheme: "app", host: "portal"))
     }
 
+    func testOriginPolicyNormalizesWebHostsLikeWebKit() {
+        let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "https://%65xample.test")!,
+            URL(string: "http://127.1:8080")!,
+            URL(string: "http://0x7f.0.0.2")!,
+        ])
+        // WebKit reports these hosts decoded and in dotted-decimal form.
+        XCTAssertTrue(policy.allows(scheme: "https", host: "example.test", port: 0))
+        XCTAssertTrue(policy.allows(scheme: "http", host: "127.0.0.1", port: 8080))
+        XCTAssertTrue(policy.allows(scheme: "http", host: "127.0.0.2", port: 0))
+
+        // A non-ASCII host (not given in punycode) and an out-of-range port,
+        // even next to credentials, are refused.
+        let refused = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "https://user:test-password@example.test:65536/?q=1")!,
+            URL(string: "https://%C3%A9xample.test")!,
+        ])
+        XCTAssertTrue(refused.trustedOrigins.isEmpty)
+    }
+
+    func testOriginPolicyRefusesAnInheritedOriginWhosePortTheFrameCannotShow() {
+        let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "https://portal.example")!,
+            URL(string: "app://portal")!,
+        ])
+        XCTAssertTrue(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: "https://portal.example/home"))
+        XCTAssertTrue(policy.allowsMessage(scheme: "app", host: "portal", port: 0, frameURL: "app://portal/index.html"))
+        // An about:blank page that inherited `https://portal.example:0` (or a
+        // custom-scheme origin) reports port 0 without a URL that shows it.
+        XCTAssertFalse(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: "about:blank"))
+        XCTAssertFalse(policy.allowsMessage(scheme: "app", host: "portal", port: 0, frameURL: "about:blank"))
+        XCTAssertFalse(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: "https://portal.example:0/home"))
+        XCTAssertFalse(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: ""))
+    }
+
     func testOriginPolicyWithoutOriginsTrustsNothing() {
         let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [])
         XCTAssertFalse(policy.allows(scheme: "https", host: "app.example.com", port: 0))
