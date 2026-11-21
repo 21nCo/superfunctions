@@ -45,7 +45,7 @@ export class FactExtractor {
     const facts: unknown = read(() => (result as Record<string, unknown>).facts);
     if (!read(() => Array.isArray(facts))) throw invalid();
     const count = read(() => (facts as unknown[]).length);
-    if (!Number.isSafeInteger(count)) throw invalid();
+    if (!Number.isSafeInteger(count) || count < 0) throw invalid();
     if (limits && count > limits.maxFacts) throw limits.tooMany();
     // Validate the whole batch before the pipeline embeds or persists any fact.
     // Read by index, so a hole in a sparse array is rejected, never skipped.
@@ -87,7 +87,7 @@ function normalizeFact(fact: unknown): Fact {
   if (!read(() => Array.isArray(given))) throw invalid();
   const list = given as unknown[];
   const count = read(() => list.length);
-  if (!Number.isSafeInteger(count)) throw invalid();
+  if (!Number.isSafeInteger(count) || count < 0) throw invalid();
   const tags: string[] = [];
   for (let index = 0; index < count; index++) {
     const tag: unknown = read(() => list[index]);

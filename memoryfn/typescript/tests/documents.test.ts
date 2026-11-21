@@ -668,6 +668,9 @@ describe('upsertDocument extraction output', () => {
     ['a field read that throws', () => ({ facts: [{ content: 'A fact.', get type(): string { throw new Error('provider getter failed'); }, confidence: 1, tags: [] }] })],
     ['a facts read that throws', () => ({ get facts(): unknown { throw new Error('provider getter failed'); } })],
     ['a revoked fact proxy', () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return { facts: [proxy] }; }],
+    ['a facts array reporting a negative length', () => ({ facts: new Proxy([], { get: (target, key, receiver) => (key === 'length' ? -1 : Reflect.get(target, key, receiver)) }) })],
+    ['a tags array reporting a negative length', () => ({ facts: [{ content: 'A fact.', type: 'derived', confidence: 1,
+      tags: new Proxy([], { get: (target, key, receiver) => (key === 'length' ? -1 : Reflect.get(target, key, receiver)) }) }] })],
   ])('maps %s to MEMORY_EXTRACTION_INVALID before embedding, keeping the source', async (_name, build) => {
     const llm = fakeLLM();
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
