@@ -86,7 +86,9 @@ jobs:
           git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git worktree add --detach "${gates}" "${GITHUB_SHA}"
           manifests="${GITHUB_WORKSPACE}"
-          if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" && ! -f "${manifests}/superfunctions.owners.next.json" ]]; then manifests="${gates}"; fi
+          # Absent means nothing at the path at all: a directory or a dangling symlink there still makes the tag decide.
+          absent() { [[ ! -e "$1" && ! -L "$1" ]]; }
+          if [[ "${CHANNEL_ONLY}" == "true" ]] && absent "${manifests}/superfunctions.owners.json" && absent "${manifests}/superfunctions.owners.next.json"; then manifests="${gates}"; fi
           node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}" --root "${manifests}"
 
       - name: Require successful CI on the release commit

@@ -3,7 +3,7 @@
 // so the workflow YAML is parsed here for the subset these workflows use: a job's mappings and its step list.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -82,7 +82,9 @@ const ownerRun = kind =>
       ? [
           'manifests="${GITHUB_WORKSPACE}"',
           // Only a tag with neither manifest predates them; a tag with only the next manifest still decides.
-          'if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" && ! -f "${manifests}/superfunctions.owners.next.json" ]]; then manifests="${gates}"; fi',
+          '# Absent means nothing at the path at all: a directory or a dangling symlink there still makes the tag decide.',
+          'absent() { [[ ! -e "$1" && ! -L "$1" ]]; }',
+          'if [[ "${CHANNEL_ONLY}" == "true" ]] && absent "${manifests}/superfunctions.owners.json" && absent "${manifests}/superfunctions.owners.next.json"; then manifests="${gates}"; fi',
           'node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}" --root "${manifests}"',
         ]
       : ['node "${gates}/scripts/assert-release-owner.mjs" python "${RELEASE_TAG}" --root "${GITHUB_WORKSPACE}"']),
@@ -177,7 +179,8 @@ const ownersManifest = (kind, release, owner) => {
 /**
  * Runs a workflow's owner step in a tag checkout that holds only the tag commit, with the run's own commit (the
  * gates plus `runOwner`'s manifest) fetched by SHA, as when the dispatching branch has moved since dispatch.
- * `tagOwner` null means the tag predates the manifests; 'next-only' gives the tag only a next manifest that owns the release.
+ * `tagOwner` null means the tag predates the manifests; 'next-only' gives the tag only a next manifest that owns the release;
+ * 'next-dir' and 'next-symlink' put a directory or a dangling symlink at the next manifest's path and no public manifest.
  * `nextCi` is the `ci` section of every next manifest written.
  */
 function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'public', nextCi }) {
@@ -198,8 +201,17 @@ function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'p
   src('config', 'user.email', 'release-gate-test@example.invalid');
   const writeManifests = owner => {
     rmSync(path.join(source, 'superfunctions.owners.json'), { force: true });
-    rmSync(path.join(source, 'superfunctions.owners.next.json'), { force: true });
+    rmSync(path.join(source, 'superfunctions.owners.next.json'), { recursive: true, force: true });
     if (owner === null) return;
+    if (owner === 'next-dir') {
+      mkdirSync(path.join(source, 'superfunctions.owners.next.json'));
+      writeFileSync(path.join(source, 'superfunctions.owners.next.json', 'README.md'), 'not a manifest\n');
+      return;
+    }
+    if (owner === 'next-symlink') {
+      symlinkSync('missing-manifest.json', path.join(source, 'superfunctions.owners.next.json'));
+      return;
+    }
     if (owner !== 'next-only') writeFileSync(path.join(source, 'superfunctions.owners.json'), JSON.stringify(ownersManifest(kind, release, owner)));
     if (owner === 'next' || owner === 'next-only') {
       writeFileSync(path.join(source, 'superfunctions.owners.next.json'), JSON.stringify({ version: 1, [kind === 'npm' ? 'releases' : 'python']: { [release]: 'next' }, ...(nextCi ? { ci: nextCi } : {}) }));
@@ -301,4 +313,11 @@ test('publish-tag.yml: a channel-only dispatch of a tag made before the manifest
   assert.equal(nextOnly.status, 1);
   assert.match(nextOnly.stderr, /superfunctions\.owners\.json not found/);
   assert.doesNotMatch(nextOnly.stdout, /is owned by public/);
+  // Something other than a manifest at the next manifest's path (a directory or a dangling symlink) is not an absent
+  // manifest either: the tag still decides, and it cannot establish ownership.
+  for (const tagOwner of ['next-dir', 'next-symlink']) {
+    const odd = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner, runOwner: 'public' }).run({ channelOnly: 'true' });
+    assert.equal(odd.status, 1, tagOwner);
+    assert.doesNotMatch(odd.stdout, /is owned by public/, tagOwner);
+  }
 });
