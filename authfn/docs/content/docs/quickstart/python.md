@@ -53,7 +53,7 @@ auth = create_authfn(AuthFnConfig(
 ))
 ```
 
-Upgrading from a release that stored social OAuth tokens without a configured key? Those tokens were encrypted with a key anyone can compute. Re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()`.
+Upgrading from a release that stored social OAuth tokens without a configured key? Those tokens were encrypted with a key anyone can compute. Re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()`. If your resolver only knows a new key reference, pass it: `migrate_legacy_tokens(destination_key_ref="oauth-2026")` re-encrypts every legacy row under that reference.
 
 ## 3. Mount on FastAPI
 

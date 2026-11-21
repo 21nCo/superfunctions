@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
 from cryptography.fernet import Fernet, InvalidToken
+from superfunctions.db.errors import NotFoundError as AdapterNotFoundError
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
@@ -272,7 +273,10 @@ class DbEncryptedTokenVault:
 
     def assert_configured(self) -> None:
         """Raises ConfigError unless a valid key is configured for the default
-        key reference. Called before a sign-in has any side effect."""
+        key reference. Called when a sign-in starts and when its callback
+        arrives, before any side effect: it resolves the current key afresh,
+        which that request's write then reuses."""
+        self._ciphers.pop(self.default_key_ref, None)
         self._cipher(self.default_key_ref)
 
     async def migrate_legacy_tokens(self, destination_key_ref: Optional[str] = None) -> int:
@@ -291,7 +295,9 @@ class DbEncryptedTokenVault:
         )
         migrated = 0
         for row in rows:
-            stored_ref = row.get("key_ref") or self.default_key_ref
+            # Earlier releases derived the key from the stored reference as
+            # is, even an empty one.
+            stored_ref = str(row.get("key_ref") or "")
             ciphertext = str(row.get("encrypted_payload") or "")
             try:
                 # Rows the old key cannot open were written with a configured
@@ -301,7 +307,7 @@ class DbEncryptedTokenVault:
                 )
             except InvalidToken:
                 continue
-            target_ref = destination_key_ref or stored_ref
+            target_ref = destination_key_ref or stored_ref or self.default_key_ref
             written = await self._replace_if_unchanged(
                 row,
                 ciphertext,
@@ -333,7 +339,8 @@ class DbEncryptedTokenVault:
             await self.config.database.update(
                 model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
             )
-        except Exception:  # noqa: BLE001
+        except AdapterNotFoundError:
+            # The row changed or is gone; any other failure is raised.
             return False
         return True
 

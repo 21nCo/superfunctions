@@ -118,7 +118,9 @@ class MockDatabaseAdapter:
             if _matches(row, where):
                 row.update(data)
                 return row
-        raise AssertionError(f"row not found in {model}")
+        from superfunctions.db.errors import NotFoundError as AdapterNotFoundError
+
+        raise AdapterNotFoundError(f"row not found in {model}")
 
     async def delete_many(
         self,
@@ -902,3 +904,38 @@ async def test_writes_with_the_key_checked_up_front_even_if_the_resolver_fails_l
     record["keyRef"] = "oauth-default"
     await vault.put(record)
     assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"
+
+
+@pytest.mark.asyncio
+async def test_migrates_a_legacy_row_stored_with_an_empty_key_reference() -> None:
+    from cryptography.fernet import Fernet
+
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault, _legacy_fernet_key
+
+    db = MockDatabaseAdapter()
+    row = _legacy_row()
+    row["key_ref"] = ""
+    row["encrypted_payload"] = Fernet(_legacy_fernet_key("authfn", "")).encrypt(b"test-provider-token-payload").decode("utf-8")
+    await db.create(model="oauth_tokens", data=row, namespace="authfn")
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=_test_oauth_key
+    )
+    assert await vault.migrate_legacy_tokens() == 1
+    assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"
+
+
+@pytest.mark.asyncio
+async def test_each_sign_in_resolves_the_current_key() -> None:
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault
+
+    keys = {"current": b"test-oauth-first-key-not-a-real-secret-000"}
+    db = MockDatabaseAdapter()
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow,
+        key_resolver=lambda _ref: keys["current"],
+    )
+    vault.assert_configured()
+    first = vault._cipher("oauth-default")
+    keys["current"] = b"test-oauth-second-key-not-a-real-secret-00"
+    vault.assert_configured()
+    assert vault._cipher("oauth-default") is not first
