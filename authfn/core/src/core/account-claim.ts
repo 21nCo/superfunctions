@@ -25,23 +25,40 @@ export async function removePreVerificationAccess(
   } = {}
 ): Promise<void> {
   // Sessions go first, so the holder being locked out cannot use one to add
-  // a new credential after its table has been cleared. (A request already
-  // past authentication when this runs can still finish; see AUTH-32.)
+  // a credential after its table has been cleared. A sign-in method still
+  // present can mint a fresh session while the first pass runs, and that
+  // session can add a credential after its table was cleared; the second
+  // pass, after another session sweep, removes what it added. (A request
+  // already past authentication can still finish; see AUTH-32.)
+  for (let pass = 0; pass < 2; pass += 1) {
+    await revokeSessionsForUser(config, userId);
+    await removeAccessOnce(config, userId, now, options);
+  }
+  // Again at the end, for sessions issued while the second pass ran.
   await revokeSessionsForUser(config, userId);
+}
+
+async function removeAccessOnce(
+  config: AuthFnRuntimeConfig,
+  userId: string,
+  now: Date,
+  options: { keepPassword?: boolean }
+): Promise<void> {
+  // Ways to sign in first, then what a session can create.
   if (hasPlugin(config, 'password') && !options.keepPassword) {
     await deleteMany(config, 'password_credentials', 'userId', userId);
-  }
-  if (hasPlugin(config, 'twoFactor')) {
-    await removeTwoFactor(config, userId);
-  }
-  if (hasPlugin(config, 'apiKey')) {
-    await deleteMany(config, 'api_keys', 'userId', userId);
   }
   if (hasPlugin(config, 'socialOAuth')) {
     await deleteMany(config, 'oauth_accounts', 'userId', userId);
   }
   if (hasPlugin(config, 'nativeHandoff')) {
     await deleteMany(config, 'native_handoff_codes', 'userId', userId);
+  }
+  if (hasPlugin(config, 'twoFactor')) {
+    await removeTwoFactor(config, userId);
+  }
+  if (hasPlugin(config, 'apiKey')) {
+    await deleteMany(config, 'api_keys', 'userId', userId);
   }
   if (hasPlugin(config, 'oauthProvider')) {
     // Every code and token issued under a grant stops working once the grant
@@ -58,8 +75,6 @@ export async function removePreVerificationAccess(
     // Remembered consent would let a client get a new grant without asking.
     await deleteMany(config, 'oauth_provider_consents', 'userId', userId);
   }
-  // Again at the end, for sessions issued while the rest ran.
-  await revokeSessionsForUser(config, userId);
 }
 
 /**

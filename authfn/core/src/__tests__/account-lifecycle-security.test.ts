@@ -346,6 +346,44 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await remaining(ctx, userId)).apiKeys).toBe(1);
   });
 
+  it('removes a credential added by a session minted while the claim was running', async () => {
+    let injected = false;
+    const base = memoryAdapter({ debug: false });
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'deleteMany' && typeof value === 'function') {
+          return async (params: { model: string; where: Array<{ value: unknown }> }) => {
+            const count = await value.call(target, params);
+            if (!injected && params.model === 'api_keys') {
+              injected = true;
+              // As if a session minted during the claim added a key right
+              // after the keys were cleared.
+              const now = new Date();
+              await target.create({
+                model: 'api_keys',
+                data: {
+                  id: 'key_test_during_claim', userId: params.where[0]!.value, name: 'during-claim',
+                  secretHash: 'test-during-claim-key-hash', scopes: ['*'], metadata: {}, createdAt: now, updatedAt: now
+                },
+                namespace: 'authfn'
+              });
+            }
+            return count;
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    const ctx = createFullContext({ database });
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
+    const userId = (await signUp.json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+    expect((await signInByOtp(ctx, 'sign-in', OWNER)).status).toBe(200);
+    expect(injected).toBe(true);
+    expect(await remaining(ctx, userId)).toEqual(none);
+  });
+
   it('revokes the account\'s sessions before removing anything else when it is claimed', async () => {
     const writes: string[] = [];
     const base = memoryAdapter({ debug: false });
