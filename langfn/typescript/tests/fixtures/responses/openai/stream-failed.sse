@@ -1,0 +1,9 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fixture_openai_stream_failed","object":"response","created_at":1763683200,"status":"in_progress","model":"gpt-5.1-2025-11-13","output":[],"usage":null,"store":false,"error":null,"incomplete_details":null}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_fixture_openai_failed","output_index":0,"content_index":0,"delta":"Partial"}
+
+event: response.failed
+data: {"type":"response.failed","sequence_number":2,"response":{"id":"resp_fixture_openai_stream_failed","object":"response","created_at":1763683200,"status":"failed","model":"gpt-5.1-2025-11-13","output":[],"usage":null,"store":false,"error":{"code":"server_error","message":"The model failed to generate a response."},"incomplete_details":null}}
+

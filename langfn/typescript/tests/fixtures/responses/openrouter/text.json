@@ -1,0 +1,50 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "gen-fixture-openrouter_text",
+    "object": "response",
+    "created_at": 1763683200,
+    "status": "completed",
+    "model": "openai/gpt-5.1",
+    "output": [
+      {
+        "id": "rs_fixture_openrouter_text",
+        "type": "reasoning",
+        "summary": [],
+        "encrypted_content": "fixture-encrypted-reasoning-openrouter_text"
+      },
+      {
+        "id": "msg_fixture_openrouter_text",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "Paris is the capital of France."
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 24,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 18,
+      "output_tokens_details": {
+        "reasoning_tokens": 8
+      },
+      "total_tokens": 42,
+      "cost": 0.00042
+    },
+    "store": false,
+    "error": null,
+    "incomplete_details": null
+  }
+}
