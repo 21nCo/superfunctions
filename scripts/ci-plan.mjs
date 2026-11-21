@@ -424,11 +424,19 @@ function readDependencyNames(manifest) {
 const SOURCE_REFERENCE_FILES = ["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro"];
 const RELATIVE_PARENT_PATH = /["'`](\.\.\/[^"'`\n$]*)["'`]/g;
 
+// Test files and test configuration: a reference from one of these affects only the referencing package's tests.
+const TEST_FILE = /(?:^|\/)(?:__tests__|tests?|e2e|__fixtures__|fixtures)\/|\.(?:test|spec)\.[^/]+$|(?:^|\/)vitest(?:\.[^/]+)?\.config\.[^/]+$/;
+
 // Edges Turbo's package graph cannot see: package A's tracked code names a "../" path inside package B, so a change
-// to B can break A's tests without A depending on B. Returns `packages` (referenced package dir -> the package dirs
-// that reference it) and `files` (a referenced path outside every package -> the package dirs that reference it).
+// to B can break A without A depending on B. A reference from A's test files ("test") affects only A's tests; any
+// other reference ("build": source, build config, tsconfig) can change what A builds, so A's dependents are affected
+// too. Returns `packages[kind]` (referenced package dir -> the package dirs that reference it) and `files[kind]` (a
+// referenced file outside every package -> the package dirs that reference it).
 function collectSourceReferences(packageDirs) {
-  const references = { packages: new Map(), files: new Map() };
+  const references = {
+    packages: { test: new Map(), build: new Map() },
+    files: { test: new Map(), build: new Map() },
+  };
   let files = [];
   try {
     // Each path carries a "|" prefix, so trimming the output cannot shorten the first or last path.
@@ -445,6 +453,7 @@ function collectSourceReferences(packageDirs) {
     if (!owner) {
       continue;
     }
+    const kind = TEST_FILE.test(file.slice(owner.length + 1)) ? "test" : "build";
     let source;
     try {
       source = readFileSync(path.join(repoRoot, file), "utf8");
@@ -460,11 +469,11 @@ function collectSourceReferences(packageDirs) {
       const trimmed = target.replace(/\/+$/, "");
       const referenced = findNearestManifestDir(`${trimmed}/-`, packageDirs);
       if (referenced && referenced !== owner) {
-        addReference(references.packages, referenced, owner);
+        addReference(references.packages[kind], referenced, owner);
       } else if (!referenced && /^[^.][^/]*\.[^/]+$/.test(path.posix.basename(trimmed))) {
         // A file outside every package (a product's shared tsconfig, release-packages.json). Directories outside
         // packages are mostly product or repository roots used to resolve other paths, and would select far too much.
-        addReference(references.files, trimmed, owner);
+        addReference(references.files[kind], trimmed, owner);
       }
     }
   }
@@ -519,8 +528,9 @@ function collectJsDependents(seedDirs, manifests) {
 }
 
 // Package turbo.json files can name inputs in other packages ("$TURBO_ROOT$/extfn/cli/**/*.ts" in clifn/core, whose
-// contract test scans those CLIs). Returns [owner package dir, path prefix] pairs: a changed file under a prefix
-// selects the owner. The prefix is the glob's literal part, so it can only over-select.
+// contract test scans those CLIs). Returns [owner package dir, path prefix, kind] entries: a changed file under a prefix
+// selects the owner, with its dependents when the input feeds its build. The prefix is the glob's literal part, so it
+// can only over-select.
 function collectTurboRootInputs(packageDirs) {
   const inputs = [];
   let files = [];
@@ -544,14 +554,14 @@ function collectTurboRootInputs(packageDirs) {
     } catch {
       continue;
     }
-    for (const task of Object.values(config?.tasks || config?.pipeline || {})) {
+    for (const [taskName, task] of Object.entries(config?.tasks || config?.pipeline || {})) {
       for (const input of Array.isArray(task?.inputs) ? task.inputs : []) {
         if (typeof input !== "string" || !input.startsWith("$TURBO_ROOT$/")) {
           continue;
         }
         const glob = input.slice("$TURBO_ROOT$/".length);
         const literal = glob.split(/[*?{[!]/, 1)[0];
-        inputs.push([owner, literal]);
+        inputs.push([owner, literal, taskName === "build" ? "build" : "test"]);
       }
     }
   }
@@ -662,20 +672,24 @@ const runMcpfn = fullPlan || changedPaths.some((changedPath) => matchesAny(MCPFN
 let lockfile = null;
 
 const turboRootInputs = fullPlan ? [] : collectTurboRootInputs(jsDirs);
-const sourceReferences = fullPlan ? { packages: new Map(), files: new Map() } : collectSourceReferences(jsDirs);
+const sourceReferences = fullPlan
+  ? { packages: { test: new Map(), build: new Map() }, files: { test: new Map(), build: new Map() } }
+  : collectSourceReferences(jsDirs);
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
-    for (const [owner, prefix] of turboRootInputs) {
+    for (const [owner, prefix, kind] of turboRootInputs) {
       if (changedPath.startsWith(prefix)) {
-        consumerJsDirs.add(owner);
+        (kind === "build" ? changedJsDirs : consumerJsDirs).add(owner);
       }
     }
 
-    for (const [target, owners] of sourceReferences.files) {
-      if (changedPath === target || changedPath.startsWith(`${target}/`)) {
-        for (const owner of owners) {
-          consumerJsDirs.add(owner);
+    for (const kind of ["test", "build"]) {
+      for (const [target, owners] of sourceReferences.files[kind]) {
+        if (changedPath === target || changedPath.startsWith(`${target}/`)) {
+          for (const owner of owners) {
+            (kind === "build" ? changedJsDirs : consumerJsDirs).add(owner);
+          }
         }
       }
     }
@@ -755,15 +769,6 @@ if (fullPlan) {
   fullPython = true;
 }
 
-// McpFn-only changes skip the JavaScript, DevFn and Python jobs, so every package they affect must be McpFn's.
-const mcpfnOnly =
-  !fullPlan &&
-  runMcpfn &&
-  [...changedJsDirs, ...consumerJsDirs].every((dir) => dir.startsWith("mcpfn/")) &&
-  changedPaths.every((changedPath) =>
-    matchesAny(MCPFN_PATTERNS, changedPath) ||
-    matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
-
 const selectedJsPackages = fullJs
   ? jsPackages
   : [...changedJsDirs].map((dir) => jsByDir.get(dir)).filter(Boolean);
@@ -779,11 +784,28 @@ const selectedPythonPackages = fullPython
 // (a relative-path reference) or a changed file (a reference or a turbo.json root input) run with an exact `./<dir>`
 // filter: their own code did not change, so their dependents need nothing.
 const jsChangedDirs = new Set(selectedJsPackages.map((manifest) => manifest.dir));
-const jsAffectedDirs = fullJs ? new Set() : collectJsDependents(jsChangedDirs, jsPackages);
+// A package whose build reads a selected package's files changes with it, so it joins the changed packages, with its
+// dependents, until nothing new is added.
+let jsAffectedDirs = new Set();
+if (!fullJs) {
+  for (let grew = true; grew; ) {
+    jsAffectedDirs = collectJsDependents(jsChangedDirs, jsPackages);
+    grew = false;
+    for (const dir of jsAffectedDirs) {
+      for (const consumer of sourceReferences.packages.build.get(dir) || []) {
+        if (!jsAffectedDirs.has(consumer)) {
+          jsChangedDirs.add(consumer);
+          grew = true;
+        }
+      }
+    }
+  }
+}
 const jsConsumerDirs = new Set();
 if (!fullJs) {
-  for (const dir of [...consumerJsDirs, ...[...jsAffectedDirs].flatMap((affected) => [...(sourceReferences.packages.get(affected) || [])])]) {
-    if (!jsAffectedDirs.has(dir)) {
+  const testConsumers = [...jsAffectedDirs].flatMap((dir) => [...(sourceReferences.packages.test.get(dir) || [])]);
+  for (const dir of [...consumerJsDirs, ...testConsumers]) {
+    if (!jsAffectedDirs.has(dir) && jsByDir.has(dir)) {
       jsConsumerDirs.add(dir);
     }
   }
@@ -792,6 +814,18 @@ const jsSelection = fullJs
   ? new Set(jsPackages.map((manifest) => manifest.dir))
   : new Set([...jsAffectedDirs, ...jsConsumerDirs]);
 const jsSeedDirs = jsSelection;
+
+// McpFn-only changes skip the JavaScript, DevFn and Python jobs, so every package they affect (changed, dependent or
+// consumer) must be McpFn's.
+const mcpfnOnly =
+  !fullPlan &&
+  !fullJs &&
+  runMcpfn &&
+  [...jsSelection].every((dir) => dir.startsWith("mcpfn/")) &&
+  changedPaths.every((changedPath) =>
+    matchesAny(MCPFN_PATTERNS, changedPath) ||
+    matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
+
 const selectionHas = (task) => [...jsSelection].some((dir) => jsByDir.get(dir)?.scripts[task]);
 const jsSeedFilters = fullJs
   ? ""

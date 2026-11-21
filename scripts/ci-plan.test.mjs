@@ -560,7 +560,8 @@ test("a product-level tsconfig or a referenced file outside every package select
   });
   try {
     assert.equal(plan("filefn/tsconfig.json").js_build_filters, "--filter=..../filefn/core");
-    assert.equal(plan("shared/tsconfig.strict.json").js_build_filters, "--filter=./otherfn/cli");
+    // A tsconfig shapes what otherfn/cli builds, so its dependents run too.
+    assert.equal(plan("shared/tsconfig.strict.json").js_build_filters, "--filter=..../otherfn/cli");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
@@ -576,6 +577,33 @@ test("an McpFn-pattern change that also selects a package outside McpFn keeps th
     assert.equal(outputs.run_mcpfn, "true");
     assert.equal(outputs.mcpfn_only, "false");
     assert.match(outputs.js_test_filters, /--filter=\.\.\.\.\/datafn\/server/);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a package whose source reads another package's files changes with it, dependents included", () => {
+  const { root, plan } = devfnFixture({
+    // wrapfn/wrapper bundles a value from filefn/core's source; wrapfn/app depends on the wrapper by name.
+    "wrapfn/wrapper/package.json": JSON.stringify({ name: "@wrapfn/wrapper", scripts: { build: "tsup" } }),
+    "wrapfn/wrapper/src/index.ts": 'export { value } from "../../../filefn/core/src/index.ts";\n',
+    "wrapfn/app/package.json": JSON.stringify({ name: "@wrapfn/app", scripts: { test: "vitest run" }, dependencies: { "@wrapfn/wrapper": "*" } }),
+  });
+  try {
+    const outputs = plan("filefn/core/src/index.ts");
+    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.has_js_test, "true");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("an McpFn change whose dependents include a package outside McpFn keeps the JavaScript jobs", () => {
+  const { root, plan } = devfnFixture({
+    "mcpfn/core/package.json": JSON.stringify({ name: "@mcpfn/core", scripts: { test: "vitest run" } }),
+    "langfn/typescript/package.json": JSON.stringify({ name: "@langfn/typescript", scripts: { test: "vitest run" }, dependencies: { "@mcpfn/core": "*" } }),
+  });
+  try {
+    const outputs = plan(({ put }) => put("mcpfn/core/src/index.ts", "export {};\n"));
+    assert.equal(outputs.run_mcpfn, "true");
+    assert.equal(outputs.mcpfn_only, "false");
+    assert.match(outputs.js_test_filters, /--filter=\.\.\.\.\/langfn\/typescript/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
