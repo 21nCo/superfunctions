@@ -179,7 +179,7 @@ describe('@authfn/client password flows', () => {
       }
     });
 
-    expect((await client.signUpWithPassword({ email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' })).ok).toBe(true);
+    expect((await client.signUpWithPassword({ email: 'ada@example.com', password: 'test-email-verification-password' })).ok).toBe(true);
     expect((await client.sendOtp({ purpose: 'verify-email', email: 'ada@example.com' })).ok).toBe(true);
     // The holder guard reaches the server in the request body.
     let sentBody: Record<string, unknown> | undefined;
@@ -201,7 +201,7 @@ describe('@authfn/client password flows', () => {
 
     const session = await client.getSession();
     expect(session.ok && session.data.session?.primaryEmail).toBe('ada@example.com');
-    expect((await client.signInWithPassword({ email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' })).ok).toBe(true);
+    expect((await client.signInWithPassword({ email: 'ada@example.com', password: 'test-email-verification-password' })).ok).toBe(true);
   });
 
   it('uses an explicit cookie prefix when the session cookie is httpOnly and hidden from the accessor', async () => {
