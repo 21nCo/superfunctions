@@ -92,7 +92,7 @@ let bridge = AuthFnWebViewBridgeHost(
 bridge.install(on: webView.configuration.userContentController)
 ```
 
-Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. The initializer without `trustedOrigins` is deprecated and trusts no origin.
+Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. Hosts are compared as WebKit reports them: give internationalized domains in their ASCII (punycode) form, IPv6 literals in brackets (`http://[::1]:5173`), and serve bundled pages from a `WKURLSchemeHandler` with a host (`app://portal`) rather than `file:` URLs. The initializer without `trustedOrigins` has been removed (it is now a compile error).
 
 ## Web handoff (native → web)
 

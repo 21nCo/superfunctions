@@ -4,34 +4,89 @@ import WebKit
 
 /// The web origins whose pages may drive the bridge.
 ///
-/// An origin is a scheme, host and port, as in `https://app.example.com` or
-/// `https://localhost:8443`. A message is accepted only from a page whose
-/// security origin is exactly one of them; subdomains and other ports do not
-/// match.
+/// An origin is a scheme, host and port, as in `https://app.example.com`,
+/// `https://localhost:8443`, `http://[::1]:5173` or `app://portal` (a page
+/// served by a `WKURLSchemeHandler`). A message is accepted only from a page
+/// whose security origin is exactly one of them: subdomains, other ports and
+/// other schemes do not match. Hosts are compared as WebKit reports them, so
+/// give internationalized domains in their ASCII (punycode) form, and serve
+/// bundled pages from a scheme handler with a host rather than `file:` URLs.
 public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     public let trustedOrigins: Set<String>
 
     public init(trustedOrigins: [URL]) {
-        self.trustedOrigins = Set(trustedOrigins.compactMap { url in
-            guard let scheme = url.scheme, let host = url.host else { return nil }
-            return Self.origin(scheme: scheme, host: host, port: url.port ?? 0)
-        })
+        var origins = Set<String>()
+        for url in trustedOrigins {
+            if let origin = Self.parse(url.absoluteString) {
+                origins.insert(origin)
+            } else {
+                print("[AuthFnWebViewBridgeHost] trusted origin ignored, it has no scheme://host: \(url.absoluteString)")
+            }
+        }
+        self.trustedOrigins = origins
     }
 
-    /// Whether a page with this security origin may drive the bridge.
-    /// `port` is 0 for the scheme's default port, as `WKSecurityOrigin` reports it.
-    public func allows(scheme: String, host: String, port: Int) -> Bool {
-        trustedOrigins.contains(Self.origin(scheme: scheme, host: host, port: port))
+    /// Whether a page with this security origin may drive the bridge. WebKit
+    /// reports `port` 0 both for no port and for an explicit `:0`; pass
+    /// `explicitPortZero` to tell them apart.
+    public func allows(scheme: String, host: String, port: Int, explicitPortZero: Bool = false) -> Bool {
+        let portText: String? = port != 0 ? String(port) : (explicitPortZero ? "0" : nil)
+        return trustedOrigins.contains(Self.key(scheme: scheme, host: host, port: portText))
     }
 
-    static func origin(scheme: String, host: String, port: Int) -> String {
+    /// Parses `scheme://host[:port]` without decoding the host, the way WebKit
+    /// keeps it: brackets of IPv6 literals and percent escapes stay as given.
+    static func parse(_ string: String) -> String? {
+        guard let parts = splitOrigin(string) else { return nil }
+        let isWeb = parts.scheme == "http" || parts.scheme == "https"
+        if isWeb && parts.host.isEmpty {
+            return nil
+        }
+        return key(scheme: parts.scheme, host: parts.host, port: parts.port)
+    }
+
+    /// Whether a URL names an explicit port 0 (`app://portal:0`).
+    static func hasExplicitPortZero(_ string: String) -> Bool {
+        guard let port = splitOrigin(string)?.port else { return false }
+        return Int(port) == 0
+    }
+
+    static func key(scheme: String, host: String, port: String?) -> String {
         let scheme = scheme.lowercased()
         let host = host.lowercased()
         let defaultPort = scheme == "https" ? 443 : (scheme == "http" ? 80 : nil)
-        if port == 0 || port == defaultPort {
+        guard let port, !port.isEmpty, let number = Int(port) else {
             return "\(scheme)://\(host)"
         }
-        return "\(scheme)://\(host):\(port)"
+        if number == defaultPort {
+            return "\(scheme)://\(host)"
+        }
+        return "\(scheme)://\(host):\(number)"
+    }
+
+    private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
+        guard let separator = string.range(of: "://") else { return nil }
+        let scheme = String(string[..<separator.lowerBound]).lowercased()
+        guard !scheme.isEmpty else { return nil }
+        var authority = string[separator.upperBound...]
+        if let end = authority.firstIndex(where: { "/?#".contains($0) }) {
+            authority = authority[..<end]
+        }
+        if let at = authority.lastIndex(of: "@") {
+            authority = authority[authority.index(after: at)...]
+        }
+        if authority.hasPrefix("[") {
+            guard let close = authority.firstIndex(of: "]") else { return nil }
+            let host = String(authority[...close])
+            let rest = authority[authority.index(after: close)...]
+            if rest.isEmpty { return (scheme, host, nil) }
+            guard rest.hasPrefix(":") else { return nil }
+            return (scheme, host, String(rest.dropFirst()))
+        }
+        if let colon = authority.lastIndex(of: ":") {
+            return (scheme, String(authority[..<colon]), String(authority[authority.index(after: colon)...]))
+        }
+        return (scheme, String(authority), nil)
     }
 }
 
@@ -61,8 +116,8 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
         super.init()
     }
 
-    /// Trusts no origin, so every message is ignored; pass `trustedOrigins`.
-    @available(*, deprecated, message: "Pass trustedOrigins: without them the bridge ignores every message.")
+    /// Removed: the bridge needs the origins of the app's own pages.
+    @available(*, unavailable, message: "Pass trustedOrigins: the origins of the app's own web pages.")
     public convenience init(webView: WKWebView, client: AuthFnClient) {
         self.init(webView: webView, client: client, trustedOrigins: [])
     }
@@ -90,7 +145,11 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
             return
         }
         let origin = message.frameInfo.securityOrigin
-        guard originPolicy.allows(scheme: origin.protocol, host: origin.host, port: origin.port) else {
+        // WebKit reports port 0 for no port and for an explicit `:0`; the
+        // frame's own URL tells them apart.
+        let explicitPortZero = origin.port == 0
+            && AuthFnBridgeOriginPolicy.hasExplicitPortZero(message.frameInfo.request.url?.absoluteString ?? "")
+        guard originPolicy.allows(scheme: origin.protocol, host: origin.host, port: origin.port, explicitPortZero: explicitPortZero) else {
             logBridgeError("message from an untrusted origin ignored", BridgeOriginError(origin: "\(origin.protocol)://\(origin.host):\(origin.port)"))
             return
         }
