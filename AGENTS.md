@@ -1,5 +1,57 @@
 # Agent instructions
 
+## Repository model
+
+Two repositories share this tree (SFNS-121):
+
+- `21nCo/superfunctions`, base branch `dev`: the public repository. Every shared path and every public-owned function is developed here.
+- `21nCo/super-functions.next`, base branch `next`: private. It holds the `next`-owned functions, plus a copy of everything public that the sync keeps up to date.
+
+The ownership manifests below decide where a path or package lives, not whether it has been published. The target is that a function moves to the public repository when it is ready to publish. A function already published from `next` stays `next`-owned until it is promoted, and only `next` may publish it; for now the release gate (`scripts/assert-release-ci.mjs`) refuses every CI-gated `next` release until SFNS-160 proves `next`'s CI.
+
+**If this checkout is `21nCo/super-functions.next`, also read `NEXT.md`.** It holds the `next`-only instructions; this file states the model both repositories share. `git remote get-url origin` tells you which checkout you are in.
+
+### The invariant
+
+Every path has exactly one owner repository, and every npm package and Python project has exactly one publishing repository. Shared code flows one way only: from public `dev` to `next`, through the sync.
+
+- `superfunctions.owners.json` lists everything the public repository owns: top-level directories, root files, release slugs and Python projects. It exists in both repositories. On `dev`, a path or package it does not list is an error.
+- `superfunctions.owners.next.json` exists only on `next` and lists the `next`-owned entries. On `next`, a path it does not list is public-owned.
+- `package-lock.json` and `Package.resolved` are generated: each repository regenerates its own and they are never ported.
+- `node scripts/verify-owners.mjs` checks the manifests against the tree, and `node scripts/verify-public-boundary.mjs` fails when the public tree has a tracked top-level path or a release or workspace package that `superfunctions.owners.json` does not list, or a `*fn` import or dependency that is neither a public workspace package nor allowed in `scripts/public-boundary.allow.json`. CI runs both. The boundary check covers only those rules: it does not look for other `next`-only content in files under allowed directories, or in the history a promotion imports, so review those yourself (see `scripts/promote.md`).
+
+### Find a path's owner
+
+```sh
+node scripts/owners.mjs <path>...     # prints "<path>: public", "next" or "generated"
+```
+
+Paths are relative to the repository root. On `dev` an unlisted path is an error (exit status 1). `--repo public|next` selects which repository's rules apply; the default is `next` when `superfunctions.owners.next.json` is present and `public` otherwise. Only a `next` checkout has the `next` manifest, so on `dev` `--repo next` answers only for paths the public manifest lists and fails (exit status 1) for any other path, such as `NEXT.md`, instead of guessing: ask in a `next` checkout. Edit a path only in the repository that owns it. A change to a public-owned path made on `next` is overwritten or conflicts at the next sync.
+
+### Where shared fixes land
+
+A shared fix needed by a `next` function lands on `dev` first and reaches `next` through the sync. Do not make it on `next`, even when only a `next` function needs it today. Packages publish only from the repository that owns them: the publish workflows refuse a tag for another repository's package.
+
+### The sync
+
+The sync is a real merge of `dev` into `next`, never a squash or rebase, so the merge base keeps advancing. It runs on `next` from the branch `sync/dev` as one standing PR, triggered by every push to `dev`, nightly and by hand. It merges itself when `next`'s CI and the ownership guard pass and every public-owned path is identical to `dev`. Otherwise the PR stays open, labelled `sync-blocked`, with the failing check named in a comment. Do not hand-port public changes to `next`; wait for the sync, or fix what blocks it.
+
+Workflows in `.github/workflows` are public-owned and reach `next` through the sync. A job that must not run on `next` carries `if: github.repository == '21nCo/superfunctions'`, which `verify-owners` checks.
+
+### Promotion
+
+A `next` function moves to the public repository when it is ready to publish. `scripts/promote.mjs` imports its directory from `next` with history and makes it public-owned in the manifests and release lists. It moves code only: the operator moves the function's open Linear issues as the script lists. Follow `scripts/promote.md`. Never copy a `next` directory into `dev` by hand.
+
+### Linear issues
+
+Every Linear issue for either repository starts with a line naming the repository and base branch it changes:
+
+```text
+Repository: <repo>, base branch <branch>
+```
+
+For example `Repository: 21nCo/superfunctions, base branch dev` or `Repository: 21nCo/super-functions.next, base branch next`. Work in the checkout and branch it names. An issue that creates a new `next`-owned entry registers it in `superfunctions.owners.next.json` on `next`, because an unregistered path there is public-owned. A change to an existing public-owned path lands on `dev` first, never on `next`. If the issue would change a path the other repository owns in any other way, stop and say so instead of editing it.
+
 ## Codex hooks (Entire)
 
 - Entire's Codex hooks live in the global Codex config (`~/.codex/hooks.json`). Do not add or commit a repo-level `.codex/hooks.json`.

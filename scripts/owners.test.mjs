@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import {
   NEXT_MANIFEST,
@@ -14,6 +16,7 @@ import {
   ownerOfRelease,
   parseManifest,
   readManifest,
+  runOwnersCli,
 } from "./owners.mjs";
 
 const publicData = () => ({
@@ -219,4 +222,172 @@ test("the dev manifest makes catchfn and reviewfn public and assigns every relea
   assert.equal(ownerOfPath("reviewfn/core/package.json", { repo: "public" }), "public");
   assert.equal(ownerOfPath("package-lock.json", { repo: "public" }), "generated");
   assert.equal(ownerOfRelease("hostfn", { repo: "public" }), "public");
+});
+
+const cli = (argv) => {
+  const out = [];
+  const err = [];
+  const status = runOwnersCli(argv, { stdout: (line) => out.push(line), stderr: (line) => err.push(line) });
+  return { status, out, err: err.join("\n") };
+};
+
+test("the owners command prints each path's owner and fails on an unlisted path (SFNS-128)", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, PUBLIC_MANIFEST), JSON.stringify(publicData()));
+
+  assert.deepEqual(cli(["--root", dir, "datafn/core/src/", "package-lock.json"]), {
+    status: 0,
+    out: ["datafn/core/src: public", "package-lock.json: generated"],
+    err: "",
+  });
+  const unlisted = cli(["--root", dir, "datafn", "docsfn/x"]);
+  assert.equal(unlisted.status, 1);
+  assert.deepEqual(unlisted.out, ["datafn: public"]);
+  assert.match(unlisted.err, /unlisted-path/);
+  // Without the next manifest, --repo next cannot tell whether an unlisted path is next-owned: it must not say "public".
+  const noNextManifest = cli(["--root", dir, "--repo=next", "datafn/x", "NEXT.md", "package-lock.json"]);
+  assert.equal(noNextManifest.status, 1);
+  assert.deepEqual(noNextManifest.out, ["datafn/x: public", "package-lock.json: generated"]);
+  assert.match(noNextManifest.err, /next-manifest-needed.*"NEXT\.md".*superfunctions\.owners\.next\.json/);
+
+  writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
+  assert.deepEqual(cli(["--root", dir, "docsfn/x", "NEXT.md", "--", "--odd"]).out, ["docsfn/x: next", "NEXT.md: next", "--odd: public"]);
+  assert.deepEqual(cli(["--root", dir, "--repo", "public", "datafn"]), { status: 0, out: ["datafn: public"], err: "" });
+});
+
+test("the owners command rejects bad arguments and unreadable manifests", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(cli([]).status, 2);
+  assert.equal(cli(["--repo", "elsewhere", "datafn"]).status, 2);
+  assert.equal(cli(["--root"]).status, 2);
+  // A flag or `--` where a value belongs is a missing value, not a root named "--repo=public".
+  assert.equal(cli(["--root", "--repo=public", "AGENTS.md"]).status, 2);
+  assert.match(cli(["--root", "--repo=public", "AGENTS.md"]).err, /--root needs a value/);
+  assert.equal(cli(["--repo", "--", "AGENTS.md"]).status, 2);
+  assert.equal(cli(["--bogus", "datafn"]).status, 2);
+  const missing = cli(["--root", dir, "datafn"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.err, /manifest-not-found/);
+  assert.match(cli(["/etc/passwd"]).err, /invalid-path/);
+});
+
+const hasControl = (value) => [...value].some((char) => /[\p{Cc}\u2028\u2029]/u.test(char));
+
+test("the owners command resolves a path with a control character and prints it as one quoted record", (t) => {
+  const cases = [
+    ["catchfn/a\tb", '"catchfn/a\\tb": public'],
+    ["catchfn/a\nNEXT.md: next", '"catchfn/a\\nNEXT.md: next": public'],
+    ["catchfn/a\u2028NEXT.md", '"catchfn/a\\u2028NEXT.md": public'],
+  ];
+  for (const [target, record] of cases) {
+    const result = cli(["AGENTS.md", target]);
+    assert.deepEqual(result, { status: 0, out: ["AGENTS.md: public", record], err: "" }, JSON.stringify(target));
+    assert.ok(!result.out.some(hasControl), "each record stays on one line");
+  }
+  // A path that itself starts with a double quote is quoted too, so it cannot pass for a quoted path.
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, PUBLIC_MANIFEST), JSON.stringify(publicData()));
+  writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
+  assert.deepEqual(cli(["--root", dir, '"x/y"']), { status: 0, out: ['"\\"x/y\\"": public'], err: "" });
+  // NUL is never part of a path: one escaped invalid-path diagnostic, no record, status 1.
+  const nul = cli(["catchfn/a\u0000b"]);
+  assert.deepEqual({ status: nul.status, out: nul.out }, { status: 1, out: [] });
+  assert.equal(nul.err, 'error (invalid-path): path "catchfn/a\\u0000b" must not contain a NUL character');
+  const mixed = cli(["AGENTS.md", "catchfn/a\u0000b"]);
+  assert.deepEqual({ status: mixed.status, out: mixed.out }, { status: 1, out: ["AGENTS.md: public"] });
+  assertDiagnosticLines(mixed.err);
+  // Invalid paths are still rejected, with the control character escaped in the one diagnostic line.
+  const outside = cli(["AGENTS.md", "../a\nAGENTS.md: public"]);
+  assert.equal(outside.status, 1);
+  assert.deepEqual(outside.out, ["AGENTS.md: public"]);
+  assert.match(outside.err, /invalid-path/);
+  assert.ok(!hasControl(outside.err));
+});
+
+// Each stderr line is a diagnostic or the usage line: an argument's line break never starts a line of its own.
+const assertDiagnosticLines = (err) => {
+  for (const line of err.split("\n")) {
+    assert.ok(line.startsWith("error") || line.startsWith("usage: "), `unexpected stderr line ${JSON.stringify(line)}`);
+    assert.ok(!hasControl(line), `stderr line has a raw control character: ${JSON.stringify(line)}`);
+  }
+};
+
+test("the owners command escapes control characters in every diagnostic", () => {
+  const forgedRoot = cli(["--root", "/nope\nAGENTS.md: public", "AGENTS.md"]);
+  assert.equal(forgedRoot.status, 1);
+  assert.deepEqual(forgedRoot.out, []);
+  assert.match(forgedRoot.err, /manifest-not-found.*\/nope\\u000aAGENTS\.md: public/);
+  assertDiagnosticLines(forgedRoot.err);
+
+  for (const option of ["--bogus\nAGENTS.md: public", "--bogus AGENTS.md: public"]) {
+    const unknown = cli([option, "AGENTS.md"]);
+    assert.equal(unknown.status, 2);
+    assert.match(unknown.err, /unknown option "--bogus\\(n|u2028)AGENTS\.md: public"/);
+    assertDiagnosticLines(unknown.err);
+  }
+
+  const badRepo = cli(["--repo", "next AGENTS.md: public", "AGENTS.md"]);
+  assert.equal(badRepo.status, 2);
+  assert.match(badRepo.err, /--repo must be .* not "next\\u2028AGENTS\.md: public"/);
+  assertDiagnosticLines(badRepo.err);
+});
+
+test("node scripts/owners.mjs <path> runs as a command in this checkout", () => {
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [script, "AGENTS.md", "catchfn/typescript"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "AGENTS.md: public\ncatchfn/typescript: public\n");
+});
+
+test("node scripts/owners.mjs runs through a symlinked checkout path and reports an invalid path", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, "scripts");
+  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
+  const script = path.join(link, "owners.mjs");
+  assert.notEqual(script, realpathSync(script));
+  const result = spawnSync(process.execPath, [script, "AGENTS.md", "../outside"], { encoding: "utf8" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, "AGENTS.md: public\n");
+  assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
+});
+
+test("node --preserve-symlinks[-main] scripts/owners.mjs through a symlinked checkout path still runs the command", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, "scripts");
+  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
+  const script = path.join(link, "owners.mjs");
+  for (const args of [["--preserve-symlinks", script], ["--preserve-symlinks-main", script], ["--preserve-symlinks", "--preserve-symlinks-main", script]]) {
+    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], { encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "AGENTS.md: public\n");
+    assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
+  }
+});
+
+test("importing scripts/owners.mjs from an eval entry neither prints nor sets the exit status", () => {
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const source = `await import(${JSON.stringify(pathToFileURL(script).href)}); if (process.exitCode !== undefined) process.exit(9)`;
+  for (const flags of [["--input-type=module", "-e", source], ["--input-type=module", `--eval=${source}`], ["-p", `import(${JSON.stringify(pathToFileURL(script).href)}).then(() => "imported")`]]) {
+    const result = spawnSync(process.execPath, [...flags, "--", script, "AGENTS.md"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.doesNotMatch(result.stdout, /AGENTS\.md/);
+  }
+});
+
+test("importing scripts/owners.mjs from another module neither prints nor sets the exit status", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-import-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const entry = path.join(dir, "entry.mjs");
+  writeFileSync(entry, `await import(${JSON.stringify(pathToFileURL(script).href)});\nconsole.log("exitCode=" + process.exitCode);\n`);
+  const result = spawnSync(process.execPath, [entry, "AGENTS.md", "../outside"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.equal(result.stdout, "exitCode=undefined\n");
 });
