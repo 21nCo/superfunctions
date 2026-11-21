@@ -1,0 +1,21 @@
+authfn/core/package.json
+  s_e5ac07859c1bc9::t_880b341d87c5ce 68
+packages/cli/src/__tests__/authfn-schema-discovery.test.ts
+  s_e5ac07859c1bc9::t_1c8ce6c259d2f9 1,161-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f47522d46181875e32b1c8996e711c4186b0ac71",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

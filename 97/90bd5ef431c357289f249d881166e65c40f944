@@ -1,0 +1,21 @@
+authfn/docs/content/docs/plugins/two-factor.md
+  s_3a2959b943acd9::t_8f42f148106815 109
+authfn/docs/static/llms-full.txt
+  s_3a2959b943acd9::t_44e25665873b6d 7211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9790bd5ef431c357289f249d881166e65c40f944",
+  "prompts": {},
+  "sessions": {
+    "s_3a2959b943acd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "798a3701-0d9d-43e4-8821-de07b51ec18d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
