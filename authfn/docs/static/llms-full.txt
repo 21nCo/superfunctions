@@ -6288,14 +6288,20 @@ Your iOS code parses the URL, calls `exchangeNativeHandoff`, and lands a bearer 
 
 ## Bridging through `WKScriptMessageHandler`
 
-When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge calls `exchangeNativeHandoff` for you and surfaces a typed credential:
+When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge exchanges native handoff codes, starts web handoffs and signs out for the pages you trust:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: authFnClient)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: authFnClient,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
+
+Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. Hosts are compared as WebKit reports them. For `http(s)`, `ws(s)` and `ftp` origins, percent escapes are decoded, IPv4 and IPv6 literals are put in canonical form (`http://127.1` matches `127.0.0.1`) and default ports are dropped, as WebKit does; an entry whose host WebKit would refuse (`https://example.test%3A8443`, `http://256.1.1.1`) is ignored. For custom schemes the host is kept as given. Hosts may only use letters, digits, `-`, `.` and `_` (for `http(s)` once percent escapes are decoded): spellings with escapes, quotes or other characters, which Foundation and WebKit can serialize differently, are refused. Give internationalized domains in their ASCII (punycode) form, IPv6 literals in brackets (`http://[::1]:5173`), and serve bundled pages from a `WKURLSchemeHandler` with a host (`app://portal`) rather than `file:` URLs. WebKit reports the same port (0) for a default port and an explicit `:0`, so when it reports 0 the page's own URL must show the same scheme and host; a page whose URL does not (such as an `about:blank` popup that inherited its origin) is refused. A page that inherited a trusted origin with a non-default port (`https://portal.example:8443`) has that same origin and is accepted, like any page of that origin. Entries with userinfo (`user@`) or a backslash in the authority are refused, because Foundation and WebKit can read their host differently. Entries that are not usable origins are ignored with a warning that names only their position in the list, never the URL. The initializer without `trustedOrigins` has been removed (it is now a compile error).
 
 ## Web handoff (native → web)
 
@@ -11673,16 +11679,20 @@ let credential = try await client.exchangeNativeHandoff(
 )
 ```
 
-For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridge`:
+For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridgeHost` with the origins of your own web pages:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: client, accountBaseURL: configuration.baseURL)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: client,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
 
-The bridge listens for `postMessage` from the web side, exchanges the code, and updates `client.credentialStore`.
+The bridge listens for `postMessage` from the main frame of a trusted page, exchanges the code, and stores the credential. Messages from any other page are ignored; see [Native handoff](../plugins/native-handoff) for the origin rules.
 
 ## SwiftUI integration
 
