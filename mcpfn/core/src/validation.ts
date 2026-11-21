@@ -64,6 +64,11 @@ function createAjv(): Ajv {
     // newer default extends that dialect; keep both engines on the spec rule.
     ignoreKeywordsWithRef: true,
     logger: false,
+    // Registration compiles every tool schema eagerly. Ajv's optimisation
+    // pass over the generated code costs more than it saves for these small
+    // validators (a generated catalog registers thousands); validation
+    // results are unchanged.
+    code: { optimize: false },
   });
   // npm workspaces may install ajv-formats with its own compatible Ajv copy.
   // The runtime contract is stable; erase only that duplicate-package type identity.

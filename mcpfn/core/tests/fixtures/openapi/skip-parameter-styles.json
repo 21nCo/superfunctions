@@ -1,0 +1,131 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/styles/deepObject": {
+      "get": {
+        "operationId": "style_deepObject",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "query",
+            "required": false,
+            "style": "deepObject",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/styles/pipeDelimited": {
+      "get": {
+        "operationId": "style_pipeDelimited",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "query",
+            "required": false,
+            "style": "pipeDelimited",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/styles/spaceDelimited": {
+      "get": {
+        "operationId": "style_spaceDelimited",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "query",
+            "required": false,
+            "style": "spaceDelimited",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/styles/matrix/{value}": {
+      "get": {
+        "operationId": "style_matrix",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "path",
+            "required": true,
+            "style": "matrix",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/styles/label/{value}": {
+      "get": {
+        "operationId": "style_label",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "path",
+            "required": true,
+            "style": "label",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

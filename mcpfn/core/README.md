@@ -63,6 +63,141 @@ await server.serveStdio();
 
 Tool definitions are public contracts. Do not derive tool names, descriptions, or exposed fields from storage schemas without an explicit exposure manifest.
 
+## Tools from an OpenAPI document
+
+`fromOpenAPI()` from `@mcpfn/core/openapi` turns the operations of a parsed
+OpenAPI 3.0 or 3.1 document into tools on an `McpFnRegistry`. Parse YAML
+yourself; the function takes the document object. Calls go to the executor you
+pass; each handler forwards the arguments the registry validated, unchanged.
+
+```ts
+import { fromOpenAPI } from "@mcpfn/core/openapi";
+
+const { registry, tools, skipped } = fromOpenAPI(document, {
+  executor: { execute: ({ operation, args, signal }) => send(operation, args, signal) },
+  include: ["listPets", "tag:stores", "GET /health"],
+  exclude: ["tag:internal"],
+  prefix: "petstore.",
+});
+for (const { operation, code, reason } of skipped) {
+  console.warn(`${operation.method ?? "*"} ${operation.path}: ${code} (${reason})`);
+}
+```
+
+- **Exposure.** Only `GET` and `HEAD` are exposed by default. Any other method
+  needs its operationId in `include` or `allowMutations: true`; a `tag:` or
+  `METHOD /path` selector selects an operation but does not opt a mutation in.
+  `{ operationId: "<id>" }` selects an operationId exactly, for one that reads
+  as a tag or route selector (such as `{ operationId: "tag:pets" }`), and
+  opts it in like a plain operationId.
+  When `include` is given, nothing outside it is exposed, and `exclude` always
+  wins. Deprecated operations need `includeDeprecated: true`.
+- **Names.** The operationId, with `prefix` prepended, characters outside
+  `[A-Za-z0-9_.-]` replaced by `_`, and truncated to 128 characters. Without an
+  operationId the name is `<method>_<path segments>`, such as
+  `get_users_userId_posts`. Collisions, including with tools already on a
+  supplied registry, get `_2`, `_3`, ... in document order; an operation
+  skipped at registration does not take a name. A `name(operation)`
+  callback replaces this; an invalid or duplicate result throws an error naming
+  the operation before anything is registered.
+- **Inputs.** The input schema is `{ path, query, header, body }`, each group
+  present only when the operation has such inputs. The wrapper and the
+  `path`, `query` and `header` groups have `additionalProperties: false`;
+  `body` follows its own schema. Referenced component schemas are copied
+  under `definitions` (draft-07). `readOnly` properties (flagged on the
+  property, on a schema it references, on an `allOf` member, or on every
+  non-null alternative of an `anyOf`/`oneOf` such as
+  `anyOf: [{ $ref }, { type: "null" }]`) are left out of inputs where they are
+  declared: the property becomes `false` (or is dropped from an object closed
+  by `additionalProperties: false`) and leaves that object's `required`, so
+  the name is refused whatever `patternProperties` or `additionalProperties`
+  say. This is done only along a plain chain from the body: `properties`, one
+  `items` schema, a schema-valued `additionalProperties`, `allOf`, `$ref`, and
+  `anyOf`/`oneOf` members that accept different kinds of value (an object
+  and `null`, an object and an array). The operation is skipped
+  (`unsupported-access-flag`) when a flagged property sits under alternatives
+  that can accept the same kind of value, `not`, `if`/`then`/`else`, a
+  dependency, `patternProperties`, `contains`, tuple `items`,
+  `additionalItems` or `propertyNames`; when another schema for the object
+  requires the name or has `const`, `enum`, `minProperties` or a dependency;
+  when a conditional schema for the object lists the name or has
+  `maxProperties`, `patternProperties`, `propertyNames` or a closed
+  `additionalProperties`; or when a child value holding flagged properties
+  has more than one schema, sits under a condition, or is compared whole
+  (`const`, `enum`, `uniqueItems`, `contains`). Patterns in the document are
+  never evaluated. In OpenAPI 3.0 every `$ref` sibling is ignored, `readOnly`
+  and unsupported keywords included; in 3.1 they apply. The request
+  body is the first `application/json` media entry that is an object, else the
+  first such `*+json` one; a declared body without a JSON media type is
+  skipped (`non-json-body`), one whose JSON entries are not usable objects or
+  that declares no content is skipped (`invalid-request-body`), and a media
+  entry without `schema` accepts any JSON value. `Authorization`, `Cookie`,
+  `Host`, `Content-Length`, `Proxy-*`, `Accept` and `Content-Type` headers are
+  never inputs: credentials and transport headers belong to the executor.
+- **Parameters.** A path, query or header parameter must accept either single
+  primitive values or arrays of primitives, judged through `$ref`, `allOf`,
+  `anyOf` and `oneOf`; `null` may accompany either. A parameter that can be an
+  object (including a schema without `type`, `enum` or `const`, such as `{}`),
+  an array of objects or arrays, or both an array and a single value is skipped.
+- **Outputs.** The selected response schema is the first `application/json`
+  entry with a `schema`, scanning 2xx responses in order. It is always
+  converted, for `HEAD` too, so the skip rules apply to it whatever its
+  shape or method; a schema that is discarded, or whose `writeOnly`
+  properties are left out, is first compiled by mcpFn's validator as
+  written. A `HEAD` tool never declares an output schema, since its response
+  has no body. Otherwise the schema becomes the output schema when it
+  accepts objects and nothing else (also through a 3.1 `$ref` with sibling
+  keywords, an `allOf`, or a `not` of bare types such as
+  `not: { type: "null" }`), with `writeOnly` properties left out by the same
+  rule as `readOnly` ones in inputs; when that rule cannot be applied, the
+  operation is skipped (`unsupported-access-flag`), so no tool returns
+  structured content its schema did not check.
+- **Paths.** `x-*` entries of the Paths Object are extensions and are ignored.
+- **Annotations and description.** `GET`/`HEAD` are `readOnlyHint`, `DELETE`
+  is `destructiveHint`, `PUT`/`DELETE` are `idempotentHint`, and every tool is
+  `openWorldHint`. The description is the trimmed summary and description,
+  joined by a blank line and capped at 2,000 characters.
+- **Supported forms.** Local `#/components/{schemas,parameters,requestBodies,responses}/<name>`
+  references (recursive schemas included when the recursion descends into a
+  property or item); path- and operation-level parameters
+  in `path`, `query` and `header` with their default styles over primitives and
+  arrays of primitives; `application/json` and `*+json` bodies; OpenAPI 3.0
+  `nullable`, which adds `null` to an explicit `type` only (an `enum` keeps
+  excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
+  external or URL references, `cookie` parameters, non-default styles,
+  object-valued or mixed parameters, bodies without a JSON media type, a
+  `$ref` cycle that returns to the same value without descending into a
+  property or item, and the 2019-09/2020-12 keywords `prefixItems`,
+  `$dynamicRef`, `unevaluatedProperties`, `unevaluatedItems`,
+  `dependentSchemas`, `minContains` and `maxContains` (`dependentRequired` is
+  translated to draft-07 `dependencies`). A 3.1 `jsonSchemaDialect` or
+  `$schema` other than a published OAS 3.1 base dialect id
+  (`.../dialect/base`, `.../dialect/2024-10-25` or `.../dialect/2024-11-10`)
+  or JSON Schema 2020-12,
+  or any `$schema` in a 3.0 document, skips the schemas it governs
+  (`unsupported-dialect`), boolean schemas included; a schema root that names
+  a supported `$schema` itself is read in it, and a JSON body without
+  `schema` declares none, so it accepts any JSON value in any dialect. A 3.1
+  `dependencies` keyword is ignored, since 2020-12 defines none. A schema that would expand to more
+  than 100,000 nodes, or that repeats objects the document shares between
+  positions into more than four times the values they hold, is skipped
+  (`schema-too-large`), and so is every schema converted after one call's
+  conversions have produced 1,000,000 nodes plus 64 per value of the
+  document (each tool's own copy of its schemas does not count; a copy made
+  to check a schema does). A schema compiled only to be checked (a `HEAD` or
+  non-object response, or one with properties to leave out) is compiled once
+  per distinct schema. A schema
+  or reference chain nested too deeply to walk is skipped the same way. A
+  Swagger 2.0 document throws.
+- **Catalog.** `tools` holds copies of the registered schemas, so changing
+  them changes neither what the registry lists nor what it validates. In a
+  registry `fromOpenAPI` creates, tools with identical schemas register one
+  deeply frozen object, compiled once; a supplied registry gets a fresh
+  object per tool.
+  `operation` is deeply frozen and typed read-only.
+- **Servers.** `operation.servers` is the first non-empty `servers` list of
+  the operation, path item and document, else `[{ url: "/" }]`.
+
 ## Server context and errors
 
 Build trusted context once at the server boundary:

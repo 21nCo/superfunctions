@@ -1,0 +1,95 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/pets/{petId}": {
+      "put": {
+        "operationId": "replacePet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PetId"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/PetBody"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PetResponse"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Owner": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "PetId": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+$"
+      }
+    },
+    "parameters": {
+      "PetId": {
+        "$ref": "#/components/parameters/PetIdTarget"
+      },
+      "PetIdTarget": {
+        "name": "petId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PetId"
+        }
+      }
+    },
+    "requestBodies": {
+      "PetBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Pet"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "PetResponse": {
+        "description": "OK",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Pet"
+            }
+          }
+        }
+      }
+    }
+  }
+}

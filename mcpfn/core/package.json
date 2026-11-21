@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/core",
-  "version": "0.0.6",
+  "version": "0.1.0",
   "description": "Protocol-correct MCP runtime, tool registry, manifests, and compatibility diffing",
   "type": "module",
   "main": "dist/index.cjs",
@@ -10,6 +10,10 @@
     ".": {
       "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
       "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    },
+    "./openapi": {
+      "import": { "types": "./dist/openapi.d.ts", "default": "./dist/openapi.js" },
+      "require": { "types": "./dist/openapi.d.cts", "default": "./dist/openapi.cjs" }
     }
   },
   "files": ["dist", "README.md"],

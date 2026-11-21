@@ -1,0 +1,119 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/required-no-content": {
+      "post": {
+        "operationId": "requiredBodyWithoutContent",
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/optional-no-content": {
+      "post": {
+        "operationId": "optionalBodyWithoutContent",
+        "requestBody": {},
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/empty-content": {
+      "post": {
+        "operationId": "emptyContent",
+        "requestBody": {
+          "required": true,
+          "content": {}
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/content-not-object": {
+      "post": {
+        "operationId": "contentNotAnObject",
+        "requestBody": {
+          "required": true,
+          "content": "application/json"
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/null-media": {
+      "post": {
+        "operationId": "nullJsonMedia",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": null
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/null-media-fallback": {
+      "post": {
+        "operationId": "nullJsonMediaBesidePlusJson",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": null,
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/media-without-schema": {
+      "post": {
+        "operationId": "jsonMediaWithoutSchema",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {}
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}
