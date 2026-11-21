@@ -1291,7 +1291,6 @@ describe("unvetted-client authorization rejections", () => {
         // fails it unless that response is a pre-client-resolution denial.
         for (const [reported, status] of [
           [{ clientResolutions: 0, preClientResolutionDenial: false }, "failed"],
-          [{ clientResolutions: 1, preClientResolutionDenial: true }, "failed"],
           [{ clientResolutions: 0, preClientResolutionDenial: true }, "passed"],
           [{ clientResolutions: 1, preClientResolutionDenial: false }, "passed"],
           [undefined, "passed"],
@@ -1491,7 +1490,7 @@ describe("unvetted-client authorization rejections", () => {
 
       it("rejects a non-client code from a response whose evidence shows a client resolution", async () => {
         for (const code of ["invalid_target", "invalid_request"]) {
-          for (const reported of [evidence(1, false), evidence(1, true), undefined]) {
+          for (const reported of [evidence(1, false), undefined]) {
             const target = {
               issuer,
               tokenEndpointAuthMethods: ["none"],
@@ -1576,7 +1575,7 @@ describe("unvetted-client authorization rejections", () => {
 
       it("never accepts a post-match response whose evidence shows no resolution or a denial", async () => {
         for (const [fixture, respond] of postMatchResponders()) {
-          for (const reported of [evidence(0, false), evidence(0, true), evidence(1, true), evidence(1, false), undefined]) {
+          for (const reported of [evidence(0, false), evidence(0, true), evidence(1, false), undefined]) {
             const [result] = await runHostedAuthorizationRegression({
               issuer,
               prepareRegistration: async () => {},
@@ -1589,11 +1588,15 @@ describe("unvetted-client authorization rejections", () => {
               : { status: "failed", error: NO_RESOLUTION });
           }
         }
-        // Malformed evidence fails every response rather than counting as a resolution.
+        // Malformed or contradictory evidence fails every response, whatever
+        // the registration's eligibility or the response format.
         const [ineligibleClient] = notEligible(RUNTIME_PORT);
+        const mismatched = rejectionFixture(DYNAMIC);
+        redirect(LOOPBACK, "https://other.example.com/cb")(mismatched);
+        mismatched.expected.errorCode = "invalid_request";
         const malformedEvidence = [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]
           .map((clientResolutions) => evidence(clientResolutions, false))
-          .concat([{ clientResolutions: 1, preClientResolutionDenial: "no" } as never]);
+          .concat([evidence(1, true), { clientResolutions: 1, preClientResolutionDenial: "no" } as never]);
         for (const reported of malformedEvidence) {
           const [fixture, respond] = postMatchResponders()[0]!;
           for (const [target, cases] of [
@@ -1604,6 +1607,11 @@ describe("unvetted-client authorization rejections", () => {
               prepareRegistration: async () => {},
               request: async () => Response.json({ error: "invalid_client" }, { status: 400 }),
             }, [ineligibleClient]],
+            [{
+              issuer,
+              prepareRegistration: async () => {},
+              request: async () => Response.json({ error: "invalid_request" }, { status: 400 }),
+            }, [mismatched]],
           ] as const) {
             const [result] = await runHostedAuthorizationRegression(
               { ...target, authorizationEvidence: () => reported },

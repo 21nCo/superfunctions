@@ -672,7 +672,10 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
   }
 }
 
-/** Evidence must count resolutions as a nonnegative safe integer. */
+/**
+ * Evidence must count resolutions as a nonnegative safe integer, and a
+ * pre-client-resolution denial cannot have resolved a client.
+ */
 function validEvidence(
   evidence: McpFnHostedAuthorizationEvidence | undefined,
 ): McpFnHostedAuthorizationEvidence | undefined {
@@ -681,10 +684,12 @@ function validEvidence(
   if (
     !Number.isSafeInteger(clientResolutions) ||
     clientResolutions < 0 ||
-    typeof preClientResolutionDenial !== "boolean"
+    typeof preClientResolutionDenial !== "boolean" ||
+    (preClientResolutionDenial && clientResolutions > 0)
   ) {
     throw new Error(
-      "Authorization evidence must report clientResolutions as a nonnegative integer and preClientResolutionDenial as a boolean",
+      "Authorization evidence must report clientResolutions as a nonnegative integer and " +
+        "preClientResolutionDenial as a boolean, with no client resolution for a denial",
     );
   }
   return evidence;
