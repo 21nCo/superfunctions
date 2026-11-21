@@ -250,6 +250,97 @@ describe("stream mapping", () => {
     expect(unframed.seen).toEqual([]);
   });
 
+  it("treats the default SSE event names as absent and requires a non-empty JSON type", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const json = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+    const terminal = { type: "response.completed", response: completed([call]) };
+    // "event: message" and an empty event field are the WHATWG default type: the JSON type decides.
+    for (const prefix of ["event: message\n", "event:\n", "event: \n"]) {
+      const outcome = await mapRaw(`${prefix}${json({ type: "response.output_text.delta", delta: "Hi" })}${prefix}${json(terminal)}`);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["content", "tool_call", "message", "end"]);
+    }
+    // A JSON type that is present but not a non-empty string is malformed, whatever the event name.
+    for (const type of [false, 7, "", null, { name: "response.completed" }]) {
+      for (const event of ["response.completed", undefined]) {
+        const outcome = await mapRaw(frame({ ...terminal, type }, event));
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toContain("event type must be a non-empty string");
+        expect(outcome.seen).toEqual([]);
+      }
+    }
+  });
+
+  it("judges a reported provider error before the discriminator conflict and the response shape", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const rateLimit = { code: "rate_limit_exceeded", message: "slow down" };
+    const cases: Array<[string, new (...args: never[]) => Error]> = [
+      // The flat error shape under a conflicting terminal name, in either position.
+      [frame({ type: "error", ...rateLimit }, "response.completed"), RateLimitError],
+      [frame({ type: "response.completed", ...rateLimit, response: completed([call]) }, "error"), RateLimitError],
+      [frame({ type: "error", code: "invalid_api_key", message: "bad key" }, "response.incomplete"), ProviderAuthError],
+      [frame({ type: "error", code: "context_length_exceeded", message: "too long" }, "response.completed"), ContextLengthError],
+      // A terminal frame with an error but a missing or malformed response.
+      [frame({ type: "response.completed", error: rateLimit }), RateLimitError],
+      [frame({ type: "response.incomplete", error: rateLimit, response: "gone" }), RateLimitError],
+      [frame({ type: "response.completed", error: rateLimit }, "response.incomplete"), RateLimitError],
+    ];
+    for (const [text, expected] of cases) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(expected);
+      expect(outcome.seen).toEqual([]);
+    }
+    // A conflict with no error still fails as a conflict, and a missing response without an error.
+    for (const [text, error] of [
+      [frame({ type: "error" }, "response.completed"), "event response.completed conflicts with its type error"],
+      [frame({ type: "response.completed", response: completed([call]) }, "error"), "event error conflicts with its type response.completed"],
+      [frame({ type: "response.completed" }), "response.completed event requires a response"],
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(outcome.error).not.toBeInstanceOf(RateLimitError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+  });
+
+  it("requires every supplied response id to be a non-empty string and the same across the stream", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const lifecycle = (type: string, id: unknown) => frame({ type, response: { id, status: "in_progress", output: [] } });
+    const terminal = (id: unknown) => frame({ type: "response.completed", response: { ...completed([call]), id } });
+    for (const [text, error] of [
+      [lifecycle("response.created", "resp_current") + terminal(7), "response id must be a non-empty string"],
+      [lifecycle("response.created", "resp_current") + terminal(""), "response id must be a non-empty string"],
+      [terminal(7), "response id must be a non-empty string"],
+      [lifecycle("response.created", 7) + terminal("resp_current"), "response id must be a non-empty string"],
+      [lifecycle("response.in_progress", "") + terminal("resp_current"), "response id must be a non-empty string"],
+      [lifecycle("response.created", "resp_current") + lifecycle("response.in_progress", "resp_other") + terminal("resp_current"), "changed its response id"],
+      [lifecycle("response.created", "resp_current") + terminal("resp_other"), "is for response resp_other, not resp_current"],
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Matching ids, and omitted or null ids on either side, keep working.
+    for (const text of [
+      lifecycle("response.created", "resp_current") + lifecycle("response.in_progress", "resp_current") + terminal("resp_current"),
+      lifecycle("response.created", "resp_current") + terminal(undefined),
+      lifecycle("response.created", null) + terminal("resp_current"),
+      terminal(null),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+    // The JSON path applies the same rule.
+    for (const id of [7, "", {}]) {
+      expect(() => parseResponsesResponse(completed([call], { id }), "fixture")).toThrow("response id must be a non-empty string");
+    }
+    expect(parseResponsesResponse(completed([call], { id: null }), "fixture").responseId).toBeUndefined();
+    expect(parseResponsesResponse(completed([call]), "fixture").responseId).toBe("resp_fixture_mapping");
+  });
+
   it("rejects a terminal output that disagrees with what the stream already finished", async () => {
     const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
     const done = (item: unknown = call, index = 0) => frame({ type: "response.output_item.done", output_index: index, item });
@@ -724,12 +815,20 @@ describe("request mapping", () => {
       [text({ annotations: ["cite"] }), "annotations must be objects"],
       [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "Hi." }] }, "must not contain input_text parts"],
       [{ type: "message", role: "assistant", content: [{ type: "input_image", image_url: "https://example.test/a.png" }] }, "input_image"],
+      // An empty discriminator names no type, and reasoning content parts are reasoning_text.
+      [{ type: "", id: "item_fixture" }, "output item is malformed"],
+      [{ type: "message", role: "assistant", content: [{ type: "", text: "Hi." }] }, "content part is malformed"],
+      [{ ...reasoning([]), content: [{ type: "summary_text", text: "think" }] }, "reasoning content part has unexpected type summary_text"],
     ];
     const reasoningProfile = defineCapabilityProfile({ ...customProfile, reasoning: true });
     for (const [item, error] of malformed) {
       expect(() => parseResponsesResponse(completed([item]), "fixture")).toThrow(error);
       const message = { role: "assistant", content: "", responsesOutput: [item] } as unknown as ResponsesMessage;
       expect(() => payload([{ role: "user", content: "go" }, message], reasoningProfile)).toThrow(ValidationError);
+    }
+    // A reasoning content part of type reasoning_text, or with no type, passes.
+    for (const part of [{ type: "reasoning_text", text: "think" }, { text: "think" }]) {
+      expect(parseResponsesResponse(completed([{ ...reasoning([]), content: [part] }, text({})]), "fixture").reasoning[0].content).toEqual(["think"]);
     }
     // A replayed output that repeats an item id fails before sending, as it does on parse.
     const repeated = text({}, { id: "msg_fixture" });
@@ -967,6 +1066,25 @@ describe("ResponsesChatModel configuration", () => {
       expect(() => new ResponsesChatModel({ ...base, path })).toThrow("must not contain whitespace");
     }
     expect(new ResponsesChatModel({ ...base, path: "/v2/responses.json" }).provider).toBe("custom-gateway-responses:https://gateway.example.test/v2/responses.json");
+    // Control characters, which URL parsing would strip after validation, are rejected.
+    for (const path of ["/..\u0001/responses", "/\u0001", "/responses\u007f", "/\u0000responses"]) {
+      expect(() => new ResponsesChatModel({ ...base, path })).toThrow("control characters");
+    }
+    // The default identity names the URL fetch resolves.
+    expect(new ResponsesChatModel({ ...base, baseUrl: "https://gateway.example.test/v1", path: "/r\u00e9ponses" }).provider)
+      .toBe("custom-gateway-responses:https://gateway.example.test/v1/r%C3%A9ponses");
+    // The credential becomes a header value; one fetch would reject fails at construction, without echoing it.
+    for (const apiKey of ["test-api-key\r\nx-injected: 1", "test-api-key\0", "test-api-key-\u2603"]) {
+      const error = (() => {
+        try {
+          return new ResponsesChatModel({ ...base, apiKey });
+        } catch (caught) {
+          return caught;
+        }
+      })();
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(String((error as Error).message)).not.toContain("test-api-key");
+    }
     expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": "a\r\nb" } })).toThrow(ValidationError);
     // fetch rejects header values outside Latin-1 on send, so they fail at construction instead.
     for (const value of ["a\0b", "caf\u2603", "\u{1F600}"]) {
@@ -1297,5 +1415,21 @@ describe("ResponsesChatModel configuration", () => {
       fetchImpl: okFetch([]),
     });
     await expect(model.chat({ messages: [{ role: "user", content: "x" }] })).rejects.toBeInstanceOf(NotConfiguredError);
+  });
+
+  it("rejects a resolved key that is not a valid header value before sending, without echoing it", async () => {
+    const seen: Headers[] = [];
+    const model = new ResponsesChatModel({
+      model: "m",
+      baseUrl: "https://gateway.example.test",
+      profile: customProfile,
+      apiKeyRef: "FIXTURE_KEY",
+      secretProvider: () => "test-api-key\r\nx-injected: 1",
+      fetchImpl: okFetch(seen),
+    });
+    const error = await model.chat({ messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect(String((error as Error).message)).not.toContain("test-api-key");
+    expect(seen).toHaveLength(0);
   });
 });

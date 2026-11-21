@@ -92,14 +92,20 @@ export class ResponsesChatModel extends ChatModel {
     this.model = config.model;
     this.baseUrl = validateBaseUrl(config.baseUrl);
     this.path = validatePath(config.path ?? "/responses");
+    const endpoint = endpointHref(this.baseUrl, this.path);
     if (config.provider !== undefined && (typeof config.provider !== "string" || !config.provider.trim())) {
       throw new ValidationError("ResponsesChatModel provider must be a non-empty string");
     }
-    this.provider = config.provider ?? `${this.profile.id}-responses:${this.baseUrl}${this.path}`;
+    this.provider = config.provider ?? `${this.profile.id}-responses:${endpoint}`;
     this.headers = validateHeaders(config.headers);
     const hasAuthHeader = Object.keys(this.headers).some((name) => name.toLowerCase() === "authorization");
     if (hasAuthHeader && (config.apiKey !== undefined || config.apiKeyRef !== undefined)) {
       throw new ValidationError("Configure either apiKey/apiKeyRef or an Authorization header, not both");
+    }
+    // The credential becomes a header value; a value fetch would reject fails here, typed and
+    // without echoing it.
+    if (config.apiKey !== undefined && !isHeaderValue(config.apiKey)) {
+      throw new ValidationError("ResponsesChatModel apiKey must be a single-line Latin-1 string");
     }
     this.rawApiKey = config.apiKey;
     this.apiKeyRef = config.apiKeyRef;
@@ -211,6 +217,9 @@ export class ResponsesChatModel extends ChatModel {
     if (this.rawApiKey !== undefined || this.apiKeyRef !== undefined) {
       const apiKey = this.rawApiKey || resolveSecret(this.apiKeyRef, this.secretProvider) || "";
       if (!apiKey) throw new NotConfiguredError(`${this.provider} API key is required`, { provider: this.provider });
+      if (!isHeaderValue(apiKey)) {
+        throw new ValidationError(`${this.provider} API key must be a single-line Latin-1 string`, { provider: this.provider });
+      }
       headers.authorization = `Bearer ${apiKey}`;
     }
     const client = getTransportClient({
@@ -259,10 +268,29 @@ function validatePath(path: unknown): string {
   if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
     throw new ValidationError("ResponsesChatModel path must start with a single /");
   }
-  if (/[\s?#\\]/.test(path) || path.split("/").some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment))) {
-    throw new ValidationError("ResponsesChatModel path must not contain whitespace, ?, #, a backslash or dot segments");
+  if (/[\s?#\\\u0000-\u001f\u007f]/.test(path) || path.split("/").some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment))) {
+    throw new ValidationError("ResponsesChatModel path must not contain whitespace, control characters, ?, #, a backslash or dot segments");
   }
   return path;
+}
+
+/**
+ * The URL a request goes to, as fetch resolves it. It must stay on the base origin and under the
+ * base path; the default cache identity names this canonical href.
+ */
+function endpointHref(baseUrl: string, path: string): string {
+  const base = new URL(baseUrl);
+  let url: URL;
+  try {
+    url = new URL(`${baseUrl}${path}`);
+  } catch {
+    throw new ValidationError("ResponsesChatModel path does not form a valid URL with the baseUrl");
+  }
+  const prefix = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+  if (url.origin !== base.origin || !url.pathname.startsWith(prefix) || url.search || url.hash) {
+    throw new ValidationError("ResponsesChatModel path must stay under the baseUrl");
+  }
+  return url.href;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

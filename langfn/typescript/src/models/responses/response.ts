@@ -74,12 +74,12 @@ export interface OutputItemIdentity {
 /**
  * The one identity validator for Responses output items, wherever they arrive: a JSON
  * response, a terminal stream event, a finished stream item or a caller replay. An item is an
- * object with a string type; its id and call_id, when present (not absent or null), are
+ * object with a non-empty string type; its id and call_id, when present (not absent or null), are
  * non-empty strings.
  */
 export function outputItemIdentity(item: unknown, provider: string): OutputItemIdentity {
   const fail = (message: string) => new ProviderError(message, { provider });
-  if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
+  if (!isRecord(item) || typeof item.type !== "string" || !item.type) throw fail("Responses output item is malformed");
   const identity: OutputItemIdentity = { type: item.type };
   for (const [field, key] of [["id", "id"], ["call_id", "callId"]] as const) {
     const value = item[field];
@@ -141,7 +141,7 @@ export function parseOutputItems(
         }
         if (!Array.isArray(item.content)) throw fail("Responses output message content must be an array");
         for (const part of item.content) {
-          if (!isRecord(part) || typeof part.type !== "string") throw fail("Responses output content part is malformed");
+          if (!isRecord(part) || typeof part.type !== "string" || !part.type) throw fail("Responses output content part is malformed");
           if (INPUT_ONLY_PART_TYPES.has(part.type)) throw fail(`Responses output message must not contain ${part.type} parts`);
           if (part.type === "output_text") {
             if (typeof part.text !== "string") throw fail("Responses output_text part requires text");
@@ -266,8 +266,9 @@ function parseReasoning(item: JsonRecord, provider: string): ResponsesReasoningS
     if (!Array.isArray(value)) throw fail(`Responses reasoning ${field} must be an array`);
     return value.map((part) => {
       if (!isRecord(part) || typeof part.text !== "string") throw fail(`Responses reasoning ${field} part requires text`);
-      if (field === "summary" && part.type !== undefined && part.type !== "summary_text") {
-        throw fail(`Responses reasoning summary part has unexpected type ${String(part.type)}`);
+      const expected = field === "summary" ? "summary_text" : "reasoning_text";
+      if (part.type !== undefined && part.type !== expected) {
+        throw fail(`Responses reasoning ${field} part has unexpected type ${String(part.type)}`);
       }
       return part.text;
     });
@@ -314,6 +315,14 @@ export function assertNoReportedError(data: JsonRecord, provider: string): void 
   throw new ProviderError(`${provider} Responses request failed${detail}`, { provider, metadata: { status: 200, body: data } });
 }
 
+/** A response id, when supplied (not absent or null), is a non-empty string. */
+export function responseId(data: JsonRecord, provider: string): string | undefined {
+  const id = data.id;
+  if (id === undefined || id === null) return undefined;
+  if (typeof id !== "string" || !id) throw new ProviderError("Responses response id must be a non-empty string", { provider });
+  return id;
+}
+
 export interface ParseResponsesOptions {
   /**
    * Function call ids already in the history sent with the request. A tool agent runs every
@@ -336,6 +345,7 @@ export function parseResponsesResponse(
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
     throw new ProviderError(`Responses returned unexpected status ${String(status)}`, { provider, metadata: { status } });
   }
+  const id = responseId(data, provider);
 
   const parsed = parseOutputItems(data.output, provider, { incomplete: status === "incomplete" });
   for (const call of parsed.toolCalls) {
@@ -376,7 +386,7 @@ export function parseResponsesResponse(
     ...(usage ? { usage } : {}),
     finishReason,
     reasoning: parsed.reasoning,
-    ...(typeof data.id === "string" ? { responseId: data.id } : {}),
+    ...(id !== undefined ? { responseId: id } : {}),
     raw: data,
   };
 }

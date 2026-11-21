@@ -6,6 +6,7 @@ import {
   outputItemIdentities,
   parseFunctionCall,
   parseResponsesResponse,
+  responseId,
   responsesError,
   type ParseResponsesOptions,
 } from "./response.js";
@@ -200,6 +201,20 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * Raise the provider error a frame reports, if any: a nested error on the event or on its
+ * response, or, for a frame named `error`, the flat `{ type: "error", code, message }` shape.
+ * Rate-limit, auth and context-length errors keep their typed classes.
+ */
+function assertNoFrameError(payload: JsonRecord, flat: boolean, provider: string): void {
+  assertNoReportedError(payload, provider);
+  if (isRecord(payload.response)) assertNoReportedError(payload.response, provider);
+  const populated = (value: unknown) => value !== undefined && value !== null && value !== "";
+  if (flat && (populated(payload.code) || populated(payload.message))) {
+    throw responsesError(provider, { body: payload, error: payload });
+  }
+}
+
+/**
  * Map Responses API stream events to LangFn stream events: text deltas to `content` and
  * reasoning summary and reasoning text deltas to `reasoning` as they arrive; then, from the
  * terminal response, `tool_call` for each finished function call, `token_usage`, the
@@ -207,11 +222,14 @@ function isRecord(value: unknown): value is JsonRecord {
  * call is only executable once the response completes: an incomplete response (for example
  * `max_output_tokens`) yields no tool calls and ends with `length`. A stream that ends without
  * a terminal event, reports a failure, or whose terminal outcome is ambiguous (an event name
- * that conflicts with the JSON type, any populated error on the event or its response beside a
- * success status, two finished items on one output index) throws a typed error before any tool
- * call or end. So does a terminal response that disagrees with what the stream already
- * reported as finished (see {@link reconcileFinishedItems}), a different response id, or a
- * returned call reusing a call_id of the sent history (`options.sentCallIds`). Once the
+ * that conflicts with the JSON type, a JSON type that is not a non-empty string, any populated
+ * error on the event or its response beside a success status, two finished items on one output
+ * index) throws a typed error before any tool call or end. So does a terminal response that
+ * disagrees with what the stream already reported as finished (see
+ * {@link reconcileFinishedItems}), a malformed or different response id, or a returned call
+ * reusing a call_id of the sent history (`options.sentCallIds`). A reported error decides the
+ * typed class before any other check. An empty SSE event name or `message` is the default event
+ * type and defers to the JSON type. Once the
  * terminal response is validated, the events are released (the body is no longer read) before
  * its `tool_call`, `token_usage`, `message` and `end` events are yielded.
  */
@@ -236,17 +254,22 @@ export async function* mapResponsesStream(
       throw new ProviderError("Responses stream event is not valid JSON", { provider, cause: error });
     }
     if (!isRecord(payload)) throw fail("Responses stream event must be a JSON object");
-    // The discriminator may appear in the SSE event name, the JSON type or both; when both
-    // name a terminal event they must agree, or the outcome is ambiguous.
-    const jsonType = typeof payload.type === "string" ? payload.type : undefined;
-    if (jsonType !== undefined && frame.event !== undefined && frame.event !== jsonType
-      && (TERMINAL_EVENTS.has(jsonType) || TERMINAL_EVENTS.has(frame.event))) {
-      // A reported error is the outcome either way, so it decides the typed failure first.
-      assertNoReportedError(payload, provider);
-      if (isRecord(payload.response)) assertNoReportedError(payload.response, provider);
-      throw fail(`Responses stream event ${frame.event} conflicts with its type ${jsonType}`);
+    // The discriminator may appear in the SSE event name, the JSON type or both. An empty event
+    // name or "message" is the WHATWG default event type, which names nothing, so the JSON type
+    // decides. A JSON type must be a non-empty string. When both name a terminal event they must
+    // agree, or the outcome is ambiguous.
+    const eventName = frame.event === "" || frame.event === "message" ? undefined : frame.event;
+    if (payload.type !== undefined && (typeof payload.type !== "string" || !payload.type)) {
+      throw fail("Responses stream event type must be a non-empty string");
     }
-    const type = jsonType ?? frame.event;
+    const jsonType = payload.type as string | undefined;
+    if (jsonType !== undefined && eventName !== undefined && eventName !== jsonType
+      && (TERMINAL_EVENTS.has(jsonType) || TERMINAL_EVENTS.has(eventName))) {
+      // A reported error is the outcome either way, so it decides the typed failure first.
+      assertNoFrameError(payload, jsonType === "error" || eventName === "error", provider);
+      throw fail(`Responses stream event ${eventName} conflicts with its type ${jsonType}`);
+    }
+    const type = jsonType ?? eventName;
 
     switch (type) {
       case "response.output_text.delta": {
@@ -263,8 +286,8 @@ export async function* mapResponsesStream(
       }
       case "response.created":
       case "response.in_progress": {
-        const id = isRecord(payload.response) ? payload.response.id : undefined;
-        if (typeof id === "string") {
+        const id = isRecord(payload.response) ? responseId(payload.response, provider) : undefined;
+        if (id !== undefined) {
           if (startedId !== undefined && startedId !== id) throw fail(`Responses stream changed its response id from ${startedId} to ${id}`);
           startedId = id;
         }
@@ -306,6 +329,8 @@ export async function* mapResponsesStream(
       }
       case "response.completed":
       case "response.incomplete": {
+        // A reported error on the event is the outcome, whatever else the frame holds or lacks.
+        assertNoReportedError(payload, provider);
         const response = payload.response;
         if (!isRecord(response)) throw fail(`Responses ${type} event requires a response`);
         // Some compatible servers omit the output (or send it empty) in the terminal event;
@@ -320,7 +345,6 @@ export async function* mapResponsesStream(
         // response.incomplete event never yields executable calls.
         // A reported error, on the event or on its response, is the outcome, whatever the
         // stream finished before it or the status claims.
-        assertNoReportedError(payload, provider);
         assertNoReportedError(response, provider);
         const eventStatus = type === "response.incomplete" ? "incomplete" : "completed";
         const explicitStatus = response.status;
@@ -328,8 +352,10 @@ export async function* mapResponsesStream(
           throw fail(`Responses ${type} event conflicts with its response status ${String(explicitStatus)}`);
         }
         const status = explicitStatus === undefined || explicitStatus === null ? eventStatus : explicitStatus;
-        if (startedId !== undefined && typeof response.id === "string" && response.id !== startedId) {
-          throw fail(`Responses ${type} event is for response ${response.id}, not ${startedId}`);
+        // A supplied response id is a non-empty string, and the lifecycle and terminal ids agree.
+        const terminalId = responseId(response, provider);
+        if (startedId !== undefined && terminalId !== undefined && terminalId !== startedId) {
+          throw fail(`Responses ${type} event is for response ${terminalId}, not ${startedId}`);
         }
         if (status !== "failed") {
           reconcileFinishedItems({ done, argumentsDone, output, omitted, completed: status === "completed", fail, provider });
