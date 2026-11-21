@@ -373,20 +373,19 @@ function createSocialRoutes(
         // by the owner of its mailbox since), the code no longer stands, even
         // if the same provider has been linked again: the exact link row it
         // was minted for must still exist.
+        // A code without that link id (minted before AUTH-32) is refused; it
+        // lives for minutes, and the user signs in again.
         const mintedFor = readOptionalString(metadata.oauthAccountId);
-        const link = await ctx.config.database.findOne({
-          model: 'oauth_accounts',
-          where: mintedFor
-            ? [
+        const link = mintedFor
+          ? await ctx.config.database.findOne({
+              model: 'oauth_accounts',
+              where: [
                 { field: 'id', operator: 'eq', value: mintedFor },
                 { field: 'userId', operator: 'eq', value: user.id }
-              ]
-            : [
-                { field: 'userId', operator: 'eq', value: user.id },
-                { field: 'provider', operator: 'eq', value: pending.providerId }
               ],
-          namespace: ctx.config.namespace ?? 'authfn'
-        });
+              namespace: ctx.config.namespace ?? 'authfn'
+            })
+          : null;
         if (!link) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff account link no longer exists', { userId });
         }

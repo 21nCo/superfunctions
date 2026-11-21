@@ -225,6 +225,32 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
   });
 
+  it('neither verifies nor claims a disabled account, so its holder keeps their credentials', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const cookies = cookieHeader(signUp);
+    const userId = (await signUp.clone().json()).data.session.actorId as string;
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const code = ctx.codeFor('verify-email', OWNER);
+    await ctx.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: userId }],
+      data: { metadata: { disabled: true } },
+      namespace: 'authfn'
+    });
+    for (const headers of [{ cookie: cookies, 'x-authfn-csrf': csrfToken(signUp) }, {}]) {
+      const refused = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, headers));
+      expect(refused.status).toBe(401);
+      expect((await refused.json()).error.code).toBe('AUTHFN_SESSION_REVOKED');
+    }
+    const credentials = await ctx.config.database.findMany({
+      model: 'password_credentials',
+      where: [{ field: 'userId', operator: 'eq', value: userId }],
+      namespace: 'authfn'
+    });
+    expect(credentials).toHaveLength(1);
+  });
+
   it('treats a password reset on an unverified account as its claim, keeping the new password', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));

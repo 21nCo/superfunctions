@@ -721,6 +721,38 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_CALLBACK_INVALID');
   });
 
+  it('refuses a handoff code minted without the id of its link', async () => {
+    const config = createConfig({ requireHandoffChallenge: true });
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const handoffChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge });
+    const completed = await callback(auth, (await started.json()).data.stateId as string);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+    // As stored by a version before the link id was recorded.
+    const stateId = `social-handoff:${createHash('sha256').update(code).digest('hex')}`;
+    const stored = await config.database.findOne<{ subject_payload: string }>({
+      model: 'oauth_states',
+      where: [{ field: 'state_id', operator: 'eq', value: stateId }],
+      namespace: 'authfn'
+    });
+    const subject = JSON.parse(stored!.subject_payload) as { metadata: Record<string, unknown> };
+    expect(subject.metadata.oauthAccountId).toEqual(expect.any(String));
+    const { oauthAccountId: _linkId, ...legacyMetadata } = subject.metadata;
+    await config.database.updateMany({
+      model: 'oauth_states',
+      where: [{ field: 'state_id', operator: 'eq', value: stateId }],
+      data: { subject_payload: JSON.stringify({ ...subject, metadata: legacyMetadata }) },
+      namespace: 'authfn'
+    });
+    const exchanged = await auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier })
+    }));
+    expect(exchanged.status).toBe(400);
+  });
+
   it('returns a one-time code instead of a session token and exchanges it only with the verifier', async () => {
     const auth = createTestServer(createConfig({ requireHandoffChallenge: true }));
     const verifier = 'test-verifier-'.padEnd(64, 'v');
