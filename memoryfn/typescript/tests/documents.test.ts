@@ -987,10 +987,15 @@ describe('add() candidates and source rows', () => {
       expect(await storage.getSourceState(scope)).toMatchObject({ contentHash: await sha256Hex(docV2) });
     });
 
-    it('still commits a base replaceSource in a transaction of an adapter that never declared it', async () => {
+    it('still commits a base replaceSource of an adapter that never declared it, and a clear, which adds no rows', async () => {
       const undeclared = new Capped(false);
       await undeclared.transaction(tx => seedEighty(tx));
       expect(await undeclared.getSourceState(scope)).toEqual({ contentHash: 'seeded', chunkCount: 80 });
+      await memory.upsertDocument({ ...scope, content: docV1 });
+      let restore = () => {};
+      await storage.transaction(async tx => { await tx.replaceSource({ ...scope, contentHash: 'cleared', chunks: [] }); restore = withdraw(storage); });
+      restore();
+      expect(await storage.getSourceState(scope)).toBeNull();
     });
   });
 

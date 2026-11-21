@@ -27,7 +27,7 @@ export class PostgresAdapter implements StorageAdapter {
   private db: PostgresJsDatabase<any>;
   /** A transaction's adapter reads its parent's declaration live, since the parent serves add() after the commit. */
   private parent: PostgresAdapter | undefined;
-  /** Set when source rows were written while excludesSources was declared; such a commit rechecks it. */
+  /** Set when a source write that began under the declaration added rows; the enclosing commit rechecks it. */
   private declaredSourceWrite = false;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
@@ -277,7 +277,7 @@ export class PostgresAdapter implements StorageAdapter {
    * so the relationship delete inside the write's CTE would leave cached
    * relationship reads stale.
    */
-  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
+  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>, beforeCommit?: (result: T) => void): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
       const [setting] = await tx.execute<{ isolation: string }>(sql`SELECT current_setting('transaction_isolation') AS isolation`);
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
@@ -287,6 +287,7 @@ export class PostgresAdapter implements StorageAdapter {
         .orderBy(memories.id).for('update').$withCache(false);
       const result = await operation(tx);
       await tx.delete(memoryRelationships).where(sql`false`);
+      beforeCommit?.(result);
       return result;
     };
     return is(this.db, PgTransaction)
@@ -350,8 +351,21 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
+    const declared = this.excludesSources === true;
     const replacement = this.replacement(input);
-    return this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement));
+    const added = declared && replacement.values.length > 0;
+    const written = await this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement), () => this.keepDeclared(added));
+    if (added) this.declaredSourceWrite = true;
+    return written;
+  }
+
+  /**
+   * Rows a write added under the declaration are published only while it
+   * holds: checked after the locks and the write, before the write's own
+   * transaction or savepoint ends, so a withdrawal meanwhile rolls them back.
+   */
+  private keepDeclared(added: boolean): void {
+    if (added && this.excludesSources !== true) throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
   }
 
   /**
@@ -362,12 +376,16 @@ export class PostgresAdapter implements StorageAdapter {
    * exactly one chunk set stays live.
    */
   async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
+    const declared = this.excludesSources === true;
     const replacement = this.replacement(input);
-    return this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
+    const added = declared && replacement.values.length > 0;
+    const result = await this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
       const state = await this.sourceState(tx, replacement.scope);
       if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
       return { unchanged: false, memories: await this.writeSource(tx, replacement) };
-    });
+    }, written => this.keepDeclared(added && !written.unchanged));
+    if (added && !result.unchanged) this.declaredSourceWrite = true;
+    return result;
   }
 
   /** Validates a replacement and builds its rows before any statement. */
@@ -381,7 +399,6 @@ export class PostgresAdapter implements StorageAdapter {
 
   /** The replacement's one write statement; the caller holds withSourceLock. */
   private async writeSource(tx: PostgresJsDatabase<any>, { scope, contentHash, now, values }: ReturnType<PostgresAdapter['replacement']>): Promise<Memory[]> {
-    if (this.excludesSources === true) this.declaredSourceWrite = true;
     if (!values.length) { await this.clearSource(tx, scope, now); return []; }
     const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
     const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();

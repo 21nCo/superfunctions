@@ -161,4 +161,41 @@ describe('PostgresAdapter source statements', () => {
     await adapter.transaction(outer => outer.transaction!(write));
     expect(commits.count).toBe(1);
   });
+
+  it('rolls back a source write whose declaration is withdrawn while it waits for the source locks, and only that write', async () => {
+    let onQuery = (_query: string) => {};
+    const { adapter, statements, commits } = recorder(query => onQuery(query));
+    const builtIn = PostgresAdapter.prototype.searchVectors;
+    const withdraw = () => { adapter.searchVectors = params => builtIn.call(adapter, params); };
+    const restore = () => { delete (adapter as Partial<PostgresAdapter>).searchVectors; };
+    const replacement = { ...scope, contentHash: 'hash-1', chunks: [chunk] };
+    const inserted = () => statements.some(({ query }) => /insert into "memories"/.test(query));
+    // A direct write: the check runs inside the write's own transaction, after the INSERT, so it rolls back.
+    onQuery = query => { if (/pg_advisory_xact_lock/.test(query)) withdraw(); };
+    await expect(adapter.replaceSourceIfChanged(replacement)).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    restore();
+    expect([inserted(), commits.count]).toEqual([true, 0]);
+    // In a caller's transaction the write's savepoint rolls back; caught, it leaves the rest of the transaction free to commit.
+    await adapter.transaction(async tx => {
+      await expect(tx.replaceSource(replacement)).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+      onQuery = () => {};
+    });
+    restore();
+    expect(commits.count).toBe(1);
+    // So does a write that failed, and a clear, which adds no rows to hide.
+    onQuery = query => { if (/insert into "memories"/.test(query)) throw new Error('INSERT_FAILED'); };
+    await adapter.transaction(async tx => {
+      await expect(tx.replaceSource(replacement)).rejects.toMatchObject({ cause: { message: 'INSERT_FAILED' } });
+      onQuery = () => {};
+      await tx.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [] });
+      withdraw();
+    });
+    restore();
+    expect(commits.count).toBe(2);
+    // An adapter that never held the declaration still writes through the base replaceSource.
+    withdraw();
+    await adapter.replaceSource(replacement);
+    restore();
+    expect(commits.count).toBe(3);
+  });
 });

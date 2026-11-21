@@ -89,7 +89,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
   private mutationVersion = 0;
   /** A transaction's staged adapter reads its parent's declaration live, since the parent serves add() after the commit. */
   private parent: MemoryStorageAdapter | undefined;
-  /** Set when source rows were written while excludesSources was declared; such a commit rechecks it. */
+  /** Set when a source write under the declaration added rows; the enclosing commit rechecks it. */
   private declaredSourceWrite = false;
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
@@ -310,7 +310,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
     this.requireNewIds(saved);
     if (!live.length && !saved.length) return [];
     this.mutationVersion++;
-    if (this.excludesSources === true) this.declaredSourceWrite = true;
+    // Writes run to completion without an await, so the declaration at the write is the one at the call; a clear adds nothing to hide.
+    if (saved.length && this.excludesSources === true) this.declaredSourceWrite = true;
     this.tombstone(live, now);
     for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
     return saved.map(cloneMemory);

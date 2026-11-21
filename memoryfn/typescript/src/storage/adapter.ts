@@ -73,9 +73,10 @@ export interface StorageAdapter {
    * with replaceSourceIfChanged, and otherwise fails with
    * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
    * writes never hide an ordinary candidate from add(). upsertDocument checks
-   * it again immediately before its write, and a built-in transaction that
-   * wrote source rows while it held checks it again before committing, failing
-   * with MEMORY_DOCUMENTS_UNSUPPORTED (and rolling back) once it is withdrawn.
+   * it again immediately before its write, and the built-in adapters check it
+   * again before rows a source write added under it commit (inside the write's
+   * own transaction and at an enclosing transaction's commit), failing with
+   * MEMORY_DOCUMENTS_UNSUPPORTED and rolling back once it is withdrawn.
    * The built-in adapters declare it only while their searchVectors is the
    * built-in one, and an adapter they open for a transaction also requires its
    * parent's declaration, read live; a subclass that overrides searchVectors
