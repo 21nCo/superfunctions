@@ -199,6 +199,22 @@ describe("oauth-storage state and vault", () => {
     expect(decrypted?.tokenSet.refreshToken).toBe("rt_plaintext");
   });
 
+  it("refuses a payload whose authentication tag was cut short", async () => {
+    const cipher = new AesGcmTokenCipher(
+      createKeyResolver({
+        "kms-key-1": Buffer.from("55".repeat(32), "hex")
+      })
+    );
+    const sealed = await cipher.encrypt("test-token-payload", "kms-key-1");
+    const [version, iv, tag, payload] = sealed.split(":");
+    await expect(cipher.decrypt(sealed, "kms-key-1")).resolves.toBe("test-token-payload");
+    // A 4-byte prefix of the real tag: GCM accepts it unless the length is fixed.
+    const shortTag = Buffer.from(tag!, "base64url").subarray(0, 4).toString("base64url");
+    await expect(cipher.decrypt([version, iv, shortTag, payload].join(":"), "kms-key-1")).rejects.toMatchObject({
+      code: "INTERNAL_ERROR"
+    });
+  });
+
   it("fails safely when key material is unavailable during decrypt", async () => {
     const backingStore = new MemoryTokenVault();
     const writeCipher = new AesGcmTokenCipher(

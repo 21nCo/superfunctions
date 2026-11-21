@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -366,3 +366,94 @@ async def test_before_send_hook_cannot_replace_purpose_with_non_string() -> None
         await without_hook.send_challenge(42, "ada@example.com")  # type: ignore[arg-type]
 
     assert db.storage["otp_challenges"] == []
+
+
+@pytest.mark.asyncio
+async def test_skips_a_newer_challenge_the_typescript_kernel_never_admitted() -> None:
+    db = MockDatabaseAdapter()
+    delivery = DeliveryRecorder()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+    await db.create(
+        model="users",
+        data={"id": "user_1", "primaryEmail": "ada@example.com", "createdAt": clock.now(), "updatedAt": clock.now()},
+        namespace="authfn",
+    )
+    service = EmailOtpService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        EmailOtpPluginConfig(delivery=delivery, code_generator=lambda: "731942", now=clock.now),
+    )
+    await service.send_challenge("verify-email", "ada@example.com")
+    clock.advance(timedelta(seconds=1))
+    # A send the TypeScript kernel refused: created expiring as it was created.
+    await db.create(
+        model="otp_challenges",
+        data={
+            "id": "otp_test_refused",
+            "purpose": "verify-email",
+            "email": "ada@example.com",
+            "codeHash": "test-refused-code-hash",
+            "attemptCount": 0,
+            "expiresAt": clock.now(),
+            "consumedAt": None,
+            "createdAt": clock.now(),
+            "updatedAt": clock.now(),
+        },
+        namespace="authfn",
+    )
+    verified = await service.verify_challenge("verify-email", "ada@example.com", "731942")
+    assert verified["verified"] is True
+
+
+class _FallBackZone(tzinfo):
+    """A zone whose repeated hour depends on ``fold``, like a daylight-saving
+    fall-back: UTC-4 before it (fold 0), UTC-5 after (fold 1). Self-contained,
+    so the test needs no timezone database."""
+
+    def utcoffset(self, dt: Optional[datetime]) -> timedelta:
+        return timedelta(hours=-5) if dt is not None and dt.fold else timedelta(hours=-4)
+
+    def dst(self, dt: Optional[datetime]) -> timedelta:
+        return timedelta(0) if dt is not None and dt.fold else timedelta(hours=1)
+
+    def tzname(self, dt: Optional[datetime]) -> str:
+        return "TEST-STD" if dt is not None and dt.fold else "TEST-DST"
+
+
+def test_compares_challenge_times_as_instants_across_a_daylight_saving_fall_back() -> None:
+    from authfn.plugins.email_otp import _is_admitted
+
+    zone = _FallBackZone()
+    created = datetime(2026, 11, 1, 1, 55, tzinfo=zone, fold=0)  # 05:55 UTC
+    expires = datetime(2026, 11, 1, 1, 5, tzinfo=zone, fold=1)  # 06:05 UTC, ten minutes later
+    assert _is_admitted({"createdAt": created, "expiresAt": expires}) is True
+    assert _is_admitted({"createdAt": created, "expiresAt": created}) is False
+    assert _is_admitted({"createdAt": created}) is False
+
+
+@pytest.mark.asyncio
+async def test_breaks_created_at_ties_by_id_like_the_typescript_kernel() -> None:
+    db = MockDatabaseAdapter()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+    service = EmailOtpService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        EmailOtpPluginConfig(delivery=DeliveryRecorder(), code_generator=lambda: "731942", now=clock.now),
+    )
+    # Inserted in ascending id order, so only the id tie-break picks the second.
+    for row_id in ("otp_test_a", "otp_test_b"):
+        await db.create(
+            model="otp_challenges",
+            data={
+                "id": row_id,
+                "purpose": "sign-in",
+                "email": "ada@example.com",
+                "codeHash": "test-code-hash",
+                "attemptCount": 0,
+                "expiresAt": clock.now() + timedelta(minutes=10),
+                "consumedAt": None,
+                "createdAt": clock.now(),
+                "updatedAt": clock.now(),
+            },
+            namespace="authfn",
+        )
+    latest = await service._find_latest_challenge("sign-in", "ada@example.com")
+    assert latest is not None and latest["id"] == "otp_test_b"
