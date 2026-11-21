@@ -61,6 +61,32 @@ function account(ctx: ReturnType<typeof createContext>, headers: Record<string, 
   return ctx.handle(new Request(`${BASE}/account`, { headers }));
 }
 
+/** The holder's account is intact and their code still verifies their email. */
+async function expectHolderCanStillVerify(ctx: ReturnType<typeof createContext>, signUp: Response, code: string) {
+  const cookies = cookieHeader(signUp);
+  expect((await account(ctx, { cookie: cookies })).status).toBe(200);
+  const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+    cookie: cookies,
+    'x-authfn-csrf': csrfToken(signUp)
+  }));
+  expect(verified.status).toBe(200);
+  expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+}
+
+/** Signs OWNER up with cookie and bearer sessions, and a switch for metadata.disabled. */
+async function signUpWithDisableSwitch(ctx: ReturnType<typeof createContext>) {
+  const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'original-test-password', sessionMode: 'hybrid' }));
+  const body = await signUp.clone().json();
+  const userId = body.data.session.actorId as string;
+  const setDisabled = (disabled: boolean) => ctx.config.database.update({
+    model: 'users',
+    where: [{ field: 'id', operator: 'eq', value: userId }],
+    data: { metadata: { disabled } },
+    namespace: 'authfn'
+  });
+  return { signUp, cookies: cookieHeader(signUp), token: body.data.token as string, setDisabled };
+}
+
 async function signInByOtp(ctx: ReturnType<typeof createContext>, purpose: 'sign-in' | 'sign-up', email: string) {
   await ctx.handle(json('/otp/send', { purpose, email }));
   return ctx.handle(json('/otp/verify', { purpose, email, code: ctx.codeFor(purpose, email) }));
@@ -216,13 +242,7 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect(refused.status).toBe(403);
     expect((await refused.json()).error.code).toBe('AUTHFN_CSRF_INVALID');
     // Nothing was wiped, and the code still works with the token.
-    expect((await account(ctx, { cookie: cookies })).status).toBe(200);
-    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
-      cookie: cookies,
-      'x-authfn-csrf': csrfToken(signUp)
-    }));
-    expect(verified.status).toBe(200);
-    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+    await expectHolderCanStillVerify(ctx, signUp, code);
   });
 
   it('refuses, without using the code, a verify-email whose session cookie is duplicated', async () => {
@@ -238,13 +258,7 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
       'x-authfn-csrf': csrfToken(signUp)
     }));
     expect(refused.status).toBe(400);
-    expect((await account(ctx, { cookie: cookies })).status).toBe(200);
-    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
-      cookie: cookies,
-      'x-authfn-csrf': csrfToken(signUp)
-    }));
-    expect(verified.status).toBe(200);
-    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+    await expectHolderCanStillVerify(ctx, signUp, code);
   });
 
   it('refuses, without using the code, a verify-email with a stale session cookie next to the holder\'s bearer token', async () => {
@@ -502,17 +516,7 @@ describe('AF-06: sessions end on password reset and while the user is disabled',
 
   it('refuses cookie and bearer sessions while metadata.disabled is set, and accepts them again once cleared', async () => {
     const ctx = createContext();
-    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'original-test-password', sessionMode: 'hybrid' }));
-    const body = await signUp.clone().json();
-    const cookies = cookieHeader(signUp);
-    const token = body.data.token as string;
-    const userId = body.data.session.actorId as string;
-    const setDisabled = (disabled: boolean) => ctx.config.database.update({
-      model: 'users',
-      where: [{ field: 'id', operator: 'eq', value: userId }],
-      data: { metadata: { disabled } },
-      namespace: 'authfn'
-    });
+    const { signUp, cookies, token, setDisabled } = await signUpWithDisableSwitch(ctx);
 
     await setDisabled(true);
     expect((await account(ctx, { cookie: cookies })).status).toBe(401);
@@ -530,17 +534,7 @@ describe('AF-06: a disabled user can still sign out', () => {
     const ctx = createContext({
       observability: { events: { emit: async (event: { type: string; outcome?: string }) => { events.push(event); } } } as never
     });
-    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'original-test-password', sessionMode: 'hybrid' }));
-    const body = await signUp.clone().json();
-    const cookies = cookieHeader(signUp);
-    const token = body.data.token as string;
-    const userId = body.data.session.actorId as string;
-    const setDisabled = (disabled: boolean) => ctx.config.database.update({
-      model: 'users',
-      where: [{ field: 'id', operator: 'eq', value: userId }],
-      data: { metadata: { disabled } },
-      namespace: 'authfn'
-    });
+    const { signUp, cookies, token, setDisabled } = await signUpWithDisableSwitch(ctx);
 
     await setDisabled(true);
     const signOut = await ctx.handle(json('/sign-out', {}, { cookie: cookies, 'x-authfn-csrf': csrfToken(signUp) }));
