@@ -382,6 +382,35 @@ describe('@authfn/client regional client', () => {
     expect(sentTo(urls)).toContain('https://eu-west-1.account.example.com/');
   });
 
+  it('caches nothing until the mismatch retry settles, and falls back to the mismatch destination when it fails', async () => {
+    const seenDuringRetry: unknown[] = [];
+    const holder: { storage?: AuthFnRegionStorage } = {};
+    const { client, urls, storage } = lookupClient((url) => {
+      if (!url.endsWith('/regions/lookup')) {
+        return undefined;
+      }
+      if (url.startsWith('https://us-east-1.')) {
+        return Response.json({
+          ok: false,
+          error: {
+            code: 'AUTHFN_REGION_MISMATCH',
+            message: 'Request must continue on a different region authority',
+            retryable: false,
+            details: { regionId: 'eu-west-1', authority: 'https://eu-west-1.account.example.com' }
+          },
+          requestId: 'req_mismatch'
+        }, { status: 409 });
+      }
+      seenDuringRetry.push(holder.storage!.get('ada@example.com'));
+      // The retry's headers arrive but its body cannot be read.
+      return new Response('{"ok": tr', { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    holder.storage = storage;
+    expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
+    expect(await Promise.all(seenDuringRetry)).toEqual([null]);
+    expect(sentTo(urls)).toContain('https://eu-west-1.account.example.com/');
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];

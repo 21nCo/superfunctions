@@ -72,8 +72,17 @@ export function createAuthFnRegionalClient(
     if (!lookup.ok) {
       const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
-        await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
-        const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
+        // Only the route the retry settles on is cached, so an overlapping
+        // request cannot pick up the mismatch destination in between. A retry
+        // that fails to complete (even after its headers arrived) leaves the
+        // mismatch destination as the route.
+        let retry: Awaited<ReturnType<AuthFnClient['lookupRegion']>>;
+        try {
+          retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
+        } catch {
+          await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+          return { lookup, answeredBy: lookupRegionId, route: mismatch };
+        }
         const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId, options) : undefined;
         if (retry.ok && retryRegionId) {
           const route = {
@@ -94,6 +103,7 @@ export function createAuthFnRegionalClient(
           return { lookup: retry, answeredBy: mismatch.regionId, route: null };
         }
         // The retry failed: the mismatch destination stands.
+        await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
         return { lookup: retry, answeredBy: mismatch.regionId, route: mismatch };
       }
       await storage.delete(identifier);
