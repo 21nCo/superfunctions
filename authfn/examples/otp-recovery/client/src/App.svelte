@@ -93,7 +93,10 @@
       const response = await auth.verifyOtp({
         purpose: 'verify-email',
         email: signUpEmail,
-        code: verifyEmailCode
+        code: verifyEmailCode,
+        // The signed-in user verifies their own address: an expired session
+        // is refused instead of counting as someone else claiming it.
+        requireAccountHolder: true
       });
       if (!response.ok) {
         authError = response;

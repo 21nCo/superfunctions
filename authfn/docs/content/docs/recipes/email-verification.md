@@ -18,10 +18,15 @@ Confirm that a newly signed-up user controls the email address they gave you. Un
 ```ts
 // 1. After sign-up:
 await client.sendOtp({ email, purpose: 'verify-email' });
-// 2. User receives email, enters code in your UI:
-await client.verifyOtp({ email, code, purpose: 'verify-email' });
+// 2. User receives email, enters code in your UI. requireAccountHolder makes
+//    this the signed-in user's own verification: if their session expired,
+//    the request is refused (AUTHFN_UNAUTHENTICATED) with the code left
+//    unused; ask them to sign in again and resubmit.
+await client.verifyOtp({ email, code, purpose: 'verify-email', requireAccountHolder: true });
 // 3. authfn marks emailVerifiedAt = now.
 ```
+
+Without `requireAccountHolder`, a code entered without the account's own session counts as someone proving the mailbox first, and removes everything set up on the account before (see [Password → Unverified accounts](../plugins/password#unverified-accounts)).
 
 The kernel sets `authfn_users.emailVerifiedAt` on a successful `verify-email` OTP. Read it from `getAccountDetails()`:
 
