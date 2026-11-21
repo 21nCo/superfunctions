@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Two-factor recovery codes are claimed before they are spent, and spent only while unused (conditional writes). The two-factor plugin needs a database adapter with `update_many`; `AuthFn` and `create_authfn_routes` check this at startup through plugin `validate_config`, which now runs (AUTH-32 AF-07).
 - Recovery codes hashed by the TypeScript kernel with the enrollment id are accepted (AUTH-32 AF-07).
-- Region lookups no longer name the user. An account in the answering region gets the same answer as an unknown identifier; an account owned by another region or authority carries `ownedElsewhere: true`. Region-mismatch errors no longer include `userId`, and `lookup` no longer raises `RegionNotFoundError` for an unknown identifier (AUTH-32 AF-10).
+- `POST /regions/lookup` no longer returns `userId`. An account in the answering region gets the same answer as an unknown identifier, and an account owned by another region or authority carries `ownedElsewhere: true`. Region-mismatch errors no longer include `userId`. The service method `MultiRegionService.lookup()` still returns `userId` (the stored one, or `None`) for server-side use, so do not forward its result to callers as is. It no longer raises `RegionNotFoundError` for an unknown identifier (AUTH-32 AF-10).
 - OTP verification skips challenges the TypeScript kernel never admitted, comparing times as UTC instants, and picks the latest challenge by `createdAt` then `id` (AUTH-32 AF-02).
 
 ### Changed
