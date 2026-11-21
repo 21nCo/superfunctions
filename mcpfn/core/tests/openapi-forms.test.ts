@@ -2092,6 +2092,45 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expectArguments(tool(over.tools, "m").inputSchema, { valid: [{ body: "x" }], invalid: [{ body: 1 }] });
   });
 
+  it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
+    const fallback = { "application/example+json": { schema: { type: "string" } } };
+    const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      ({ patch: { operationId, requestBody: { content }, responses: ok, ...extra } });
+    const contentTypes = (result: Result) => result.tools.map((entry) => [entry.name, entry.operation.requestBody?.contentType]);
+    // A preferred body many operations share is checked once, not charged to the document budget per operation
+    // (250 operations of 4,000 nodes fit the budget once, not twice).
+    const shared = { type: "object", $defs: Object.fromEntries(Array.from({ length: 4000 }, (_, index) => [`d${index}`, {}])) };
+    const paths = Object.fromEntries(
+      Array.from({ length: 250 }, (_, index) => [`/s${index}`, patch(`s${index}`, { "application/json": { schema: shared }, ...fallback })]),
+    );
+    const many = fromOpenAPI({ openapi: "3.1.0", paths }, options());
+    expect(many.skipped).toEqual([]);
+    expect(new Set(contentTypes(many).map(([, type]) => type))).toEqual(new Set(["application/json"]));
+    // A preferred body that fits alone but not beside the parameters, or nests too deeply to walk, gives way to the next entry.
+    const aliases: Record<string, unknown> = { Leaf: { type: "object" } };
+    for (let index = 0; index < 20_000; index += 1) {
+      aliases[`Alias${index}`] = { $ref: `#/components/schemas/${index === 0 ? "Leaf" : `Alias${index - 1}`}` };
+    }
+    aliases.Holder = { type: "object", properties: { deep: { $ref: "#/components/schemas/Alias19999" } } };
+    const large = { type: "object", $defs: Object.fromEntries(Array.from({ length: 80_000 }, (_, index) => [`d${index}`, {}])) };
+    const parameters = [{ name: "q", in: "query", schema: { type: "string", enum: Array.from({ length: 25_000 }, (_, index) => `v${index}`) } }];
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        components: { schemas: aliases },
+        paths: {
+          "/combined": patch("combined", { "application/json": { schema: large }, ...fallback }, { parameters }),
+          "/deep": patch("deep", { "application/json": { schema: { $ref: "#/components/schemas/Holder" } }, ...fallback }),
+          "/deepOnly": patch("deepOnly", { "application/json": { schema: { $ref: "#/components/schemas/Holder" } }, "application/x+json": { schema: 7 } }),
+        },
+      },
+      options(),
+    );
+    expect(contentTypes(result)).toEqual([["combined", "application/example+json"], ["deep", "application/example+json"]]);
+    expectArguments(tool(result.tools, "combined").inputSchema, { valid: [{ query: { q: "v1" }, body: "x" }], invalid: [{ body: 1 }, { query: { q: "w" } }] });
+    expect(result.skipped.map(({ code, reason }) => [code, reason])).toEqual([["schema-too-large", "a schema or reference chain nests too deeply"]]);
+  }, 60_000);
+
   it("decides alternatives per kind of value, so overlapping arrays leave the sole object member unconditional", () => {
     for (const flag of ["readOnly", "writeOnly"] as const) {
       const Leaf = { type: "object", properties: { id: { type: "string", [flag]: true }, v: { type: "string" } } };

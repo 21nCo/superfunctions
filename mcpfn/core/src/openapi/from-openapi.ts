@@ -244,6 +244,8 @@ class OperationConverter {
   private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
   private readonly checkedAsWritten = new WeakMap<object, string | null>();
+  /** Why each request body schema chosen among several entries fails to compile (null when it compiles). */
+  private readonly bodyVerdicts = new WeakMap<object, string | null>();
   private readonly verdicts = new Map<string, string | null>();
 
   constructor(
@@ -267,10 +269,7 @@ class OperationConverter {
    * their own node budget, which conversion and copying both charge.
    */
   candidate(path: string, pathItem: JsonObject, method: OpenApiMethod, raw: JsonObject): Candidate {
-    const { inputs, inputSchema } = this.schemas.budgeted(() => {
-      const resolved = this.inputs(path, pathItem, raw);
-      return { inputs: resolved, inputSchema: this.inputSchema(resolved) };
-    });
+    const { inputs, inputSchema } = this.input(path, pathItem, raw);
     const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
     const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
     return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
@@ -322,8 +321,38 @@ class OperationConverter {
     };
   }
 
+  /**
+   * The tool input with the first request body entry it can be built with:
+   * each entry is tried with the whole input (conversion, projection, a
+   * compile check and the assembled copy) within its own node budget. When
+   * none works, the first entry's failure is reported.
+   */
+  private input(path: string, pathItem: JsonObject, raw: JsonObject): { inputs: OperationInputs; inputSchema: McpFnObjectSchema } {
+    let bodies: ResolvedBody[] = [];
+    const attempt = (index: number) =>
+      this.schemas.budgeted(() => {
+        // Parameters first, so their skip reasons come before the body's.
+        const parameters = this.parameters(path, pathItem, raw);
+        if (index === 0) bodies = this.requestBodies(raw);
+        const inputs = { parameters, body: bodies[index] };
+        // A sole entry is checked when the tool is registered.
+        return { inputs, inputSchema: this.inputSchema(inputs, bodies.length > 1) };
+      });
+    let failure: OpenApiSkip | undefined;
+    for (let index = 0; ; index += 1) {
+      try {
+        return attempt(index);
+      } catch (error) {
+        // No body or a sole entry, or the failure came before an entry was chosen.
+        if (bodies.length <= 1) throw error;
+        failure ??= candidateFailure(error);
+        if (index + 1 >= bodies.length) throw failure;
+      }
+    }
+  }
+
   /** Parameters and the request body as one tool input schema (D11). */
-  inputSchema({ parameters, body }: OperationInputs): McpFnObjectSchema {
+  inputSchema({ parameters, body }: OperationInputs, checkBody = false): McpFnObjectSchema {
     const refs = new Set<string>();
     const groups: Array<[string, McpFnJsonSchema | boolean]> = [];
     const required: string[] = [];
@@ -355,12 +384,12 @@ class OperationConverter {
     }
     if (body) {
       // A media type object without `schema` declares no schema: it accepts any JSON value.
-      // An entry chosen among several was converted while it was checked.
-      for (const name of body.converted?.refs ?? []) refs.add(name);
-      const converted = body.converted?.schema ??
-        (body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", refs));
+      const bodyRefs = new Set<string>();
+      const converted = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
+      for (const name of bodyRefs) refs.add(name);
       groups.push(["body", converted]);
       this.assertProjectable(body.schema, "input", "request body");
+      if (checkBody) this.assertBodyCompiles(body.schema, converted, bodyRefs);
       if (body.info.required) required.push("body");
     }
     const definitions = this.schemas.definitions(refs, "input");
@@ -540,13 +569,14 @@ class OperationConverter {
     }
   }
 
-  /**
-   * Parameters and request body of one operation at one path. Resolved per
-   * occurrence: a parsed document may share one operation object between
-   * path items, and the path-level parameters and template differ.
-   */
-  inputs(path: string, pathItem: JsonObject, raw: JsonObject): OperationInputs {
-    return { parameters: this.parameters(path, pathItem, raw), body: this.requestBody(raw) };
+  /** A request body schema compiles as the registry compiles it, checked once per source schema object. */
+  private assertBodyCompiles(schema: unknown, converted: McpFnJsonSchema | boolean, refs: ReadonlySet<string>): void {
+    let verdict = isObject(schema) ? this.bodyVerdicts.get(schema) : undefined;
+    if (verdict === undefined) {
+      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input");
+      if (isObject(schema)) this.bodyVerdicts.set(schema, verdict);
+    }
+    throwIfInvalid(verdict, "request body");
   }
 
   private parameters(path: string, pathItem: JsonObject, raw: JsonObject): ResolvedParameter[] {
@@ -669,15 +699,16 @@ class OperationConverter {
   }
 
   /**
-   * The JSON media entry of a declared request body: the first usable
-   * `application/json` entry, otherwise the first usable `*+json` one. An
-   * entry is usable when it is an object whose schema, if any, converts,
-   * can be projected and compiles; when every entry fails, the operation is
-   * skipped with the first failure. A declared body without such an entry is
+   * The JSON media entries of a declared request body, in the order they are
+   * tried: object-valued `application/json` entries, then `*+json` ones
+   * (none without a request body). A declared body without such an entry is
    * skipped, whether or not it is required, since the tool could never send it.
+   * Parameters and the request body are resolved per occurrence: a parsed
+   * document may share one operation object between path items, and the
+   * path-level parameters and template differ.
    */
-  private requestBody(raw: JsonObject): ResolvedBody | undefined {
-    if (raw.requestBody === undefined) return undefined;
+  private requestBodies(raw: JsonObject): ResolvedBody[] {
+    if (raw.requestBody === undefined) return [];
     const body = this.resolve(raw.requestBody, "requestBodies");
     if (!isObject(body.content) || Object.keys(body.content).length === 0) {
       throw new OpenApiSkip("invalid-request-body", "request body declares no content");
@@ -697,35 +728,10 @@ class OperationConverter {
       }
       throw new OpenApiSkip("non-json-body", `request body has no JSON media type (${keys.join(", ")})`);
     }
-    const resolved = (contentType: string): ResolvedBody => ({
+    return candidates.map((contentType) => ({
       info: { required: body.required === true, contentType },
       schema: (content[contentType] as JsonObject).schema,
-    });
-    // A sole entry is checked when the input schema is built and registered.
-    if (candidates.length === 1) return resolved(candidates[0]!);
-    let failure: OpenApiSkip | undefined;
-    for (const contentType of candidates) {
-      const candidate = resolved(contentType);
-      try {
-        // Each entry converts within its own node budget, so a rejected one leaves the next its full share.
-        const converted = this.schemas.budgeted(() => this.usableBody(candidate.schema));
-        return converted ? { ...candidate, converted } : candidate;
-      } catch (error) {
-        if (!(error instanceof OpenApiSkip)) throw error;
-        failure ??= error;
-      }
-    }
-    throw failure!;
-  }
-
-  /** A request body schema converted for the input schema, once it can be projected and compiles. */
-  private usableBody(schema: unknown): ResolvedBody["converted"] {
-    if (schema === undefined) return undefined;
-    const refs = new Set<string>();
-    const converted = this.schemas.convertRoot(schema, "input", refs);
-    this.assertProjectable(schema, "input", "request body");
-    throwIfInvalid(this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input"), "request body");
-    return { schema: converted, refs };
+    }));
   }
 }
 
@@ -740,8 +746,6 @@ interface ResolvedParameter {
 interface ResolvedBody {
   info: OpenApiOperationRequestBody;
   schema: unknown;
-  /** The input form of `schema` and the component schemas it references, when converted while choosing the entry. */
-  converted?: { schema: McpFnJsonSchema | boolean; refs: ReadonlySet<string> };
 }
 
 interface OperationInputs {
@@ -776,6 +780,16 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
     : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, treeCopy(item, budget, values, ancestors)]));
   ancestors.delete(value);
   return copy as T;
+}
+
+/** A stack overflow means schemas or references nest too deeply to walk. */
+const TOO_DEEP = "a schema or reference chain nests too deeply";
+
+/** Why building a tool from one alternative failed, as a skip; anything else is rethrown. */
+function candidateFailure(error: unknown): OpenApiSkip {
+  if (error instanceof OpenApiSkip) return error;
+  if (error instanceof RangeError) return new OpenApiSkip("schema-too-large", TOO_DEEP);
+  throw error;
 }
 
 function throwIfInvalid(failure: string | null, subject: string): void {
@@ -972,12 +986,8 @@ function convertOperation<TContext>(
   try {
     return { candidate: converter.candidate(path, pathItem, method, value) };
   } catch (error) {
-    // A stack overflow means schemas or references nest too deeply to walk.
-    if (error instanceof RangeError) {
-      return { skip: { operation: ref, code: "schema-too-large", reason: "a schema or reference chain nests too deeply" } };
-    }
-    if (!(error instanceof OpenApiSkip)) throw error;
-    return { skip: { operation: ref, code: error.code, reason: error.message } };
+    const skip = candidateFailure(error);
+    return { skip: { operation: ref, code: skip.code, reason: skip.message } };
   }
 }
 
