@@ -295,7 +295,9 @@ export async function signInWithPassword(
   const user = await findUserByPrimaryEmail(config, email);
   // The credential table is read for an unknown email too (an id no user
   // has), so the number of lookups does not tell which emails have accounts.
-  const credential = await getPasswordCredentialByUserId(config, user?.id ?? NO_SUCH_USER_ID);
+  const looked = await getPasswordCredentialByUserId(config, user?.id ?? NO_SUCH_USER_ID);
+  // For an unknown email the read is only for timing: its result is ignored.
+  const credential = user ? looked : null;
   // Every answer costs one hash at the current cost, so response time does
   // not tell which emails have accounts: an unknown email or an account
   // without a password is checked against a dummy hash, and a hash stored at
@@ -633,11 +635,11 @@ async function upgradePasswordHash(
       data: { passwordHash: upgradedHash, updatedAt: new Date() },
       namespace: namespace(config)
     });
-    // A count the adapter could not report is treated as written: the old
-    // hash still works either way.
-    return written !== 0;
+    // Only a confirmed write counts; an unreported count or a failed write
+    // makes the caller confirm the password against what is stored now.
+    return Number.isFinite(written) && written > 0;
   } catch {
-    return true;
+    return false;
   }
 }
 

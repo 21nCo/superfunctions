@@ -631,6 +631,47 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     await expect(reset('test-password-corrected')).resolves.toEqual({ passwordUpdated: true });
   });
 
+  it('does no password work for a reset whose code is wrong', async () => {
+    const config = createConfig();
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    let checks = 0;
+    const options = {
+      delivery: { send: async () => ({ sent: true }) },
+      codeGenerator: () => '731942',
+      passwordPolicy: { compromisedPasswordChecker: async () => { checks += 1; return false; } }
+    };
+    await sendOtpChallenge(config, {}, options, { purpose: 'reset-password', email: 'ada@example.com' });
+    await expect(completeResetPassword(config, options, {
+      purpose: 'reset-password', email: 'ada@example.com', code: '000000', newPassword: 'test-password-new-one'
+    })).rejects.toMatchObject({ code: 'AUTHFN_OTP_INVALID' });
+    expect(checks).toBe(0);
+  });
+
+  it('refuses a sign-in whose upgrade write went unconfirmed while a reset replaced the password', async () => {
+    const base = memoryAdapter({ debug: false });
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'updateMany' && typeof value === 'function') {
+          return async (params: { model: string; where: unknown[] }) => {
+            if (params.model === 'password_credentials') {
+              // A reset lands first; the adapter then cannot report a count.
+              await value.call(target, { ...params, where: (params.where as unknown[]).slice(0, 1), data: { passwordHash: legacyHash('test-password-new'), updatedAt: new Date() } });
+              return Number.NaN;
+            }
+            return value.call(target, params);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  });
+
   it('answers a region lookup for a local account like one for an unknown identifier', async () => {
     const config = createConfig();
     const record = {

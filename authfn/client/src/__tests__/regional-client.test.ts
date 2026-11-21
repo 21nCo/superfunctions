@@ -245,6 +245,29 @@ describe('@authfn/client regional client', () => {
     expect(urls.some((url) => url.endsWith('/otp/send'))).toBe(true);
   });
 
+  it('lets a new sign-up through when a server without a configured region answers unknown', async () => {
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage: memoryRegionStorage(),
+      clientOptions: {
+        fetch: async (input) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          if (url.endsWith('/regions/lookup')) {
+            return Response.json({
+              ok: true,
+              data: { identifier: 'new@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true },
+              requestId: 'req_lookup'
+            });
+          }
+          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+        }
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' });
+    expect(sent.ok).toBe(true);
+  });
+
   it('blocks sign-up for an account owned by another region served from the same authority', async () => {
     const client = createAuthFnRegionalClient({
       defaultRegionId: 'us-east-1',

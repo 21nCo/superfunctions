@@ -449,16 +449,28 @@ export async function completeResetPassword(
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
-  // The new password is checked against the policy and hashed before the code
-  // is used, so a refused password, or hashing that is busy, leaves the code
-  // for another try.
-  const preparedHash = await preparePasswordHash(input.newPassword, {
-    ...runtimeOptions.passwordPolicy,
-    request: input.request,
-    environment: runtime,
-    email,
-    purpose: 'reset-password'
-  });
+  // When the code matches the current challenge (a read-only check), the new
+  // password is checked against the policy and hashed before the code is
+  // used, so a refused password, or hashing that is busy, leaves the code for
+  // another try. A code that does not match skips that work and goes straight
+  // to the counted verification below, which refuses it.
+  const latest = await findLatestChallenge(config, input.purpose, email);
+  const codeMatches = Boolean(
+    latest
+      && !latest.consumedAt
+      && new Date(latest.expiresAt).getTime() > resolveNow(runtimeOptions).getTime()
+      && typeof input.code === 'string'
+      && safeCompareHex(latest.codeHash, hashSecret(input.code))
+  );
+  const preparedHash = codeMatches
+    ? await preparePasswordHash(input.newPassword, {
+        ...runtimeOptions.passwordPolicy,
+        request: input.request,
+        environment: runtime,
+        email,
+        purpose: 'reset-password'
+      })
+    : undefined;
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,

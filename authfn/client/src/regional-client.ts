@@ -134,8 +134,14 @@ export function createAuthFnRegionalClient(
     // when both regions share an authority); a local one is reported by
     // sign-up itself.
     const existingAccount = lookup.data.continueLocally === false
-      // Only a concrete owning region counts (gateway lookups name none).
-      || (typeof lookup.data.regionId === 'string' && lookup.data.regionId !== '' && lookup.data.regionId !== selectedRegionId);
+      // Only a concrete owning region counts: gateway lookups name none, and a
+      // server without a configured region answers 'unknown'.
+      || (
+        typeof lookup.data.regionId === 'string'
+        && lookup.data.regionId !== ''
+        && lookup.data.regionId !== 'unknown'
+        && lookup.data.regionId !== selectedRegionId
+      );
     if (input.flow === 'sign-up' && existingAccount) {
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
