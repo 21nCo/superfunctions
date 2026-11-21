@@ -79,11 +79,6 @@ export function idempotencyRecordId(
   return `v2:${digest}`;
 }
 
-/** The scope a store is bound to, if any (see `scopeIdempotencyStore`). */
-export function idempotencyScopeKey(store: IdempotencyStore): string | undefined {
-  return (store as ScopedStore)[SCOPED];
-}
-
 /**
  * Bind `store` to `scope`, refusing to re-bind a store that is already bound
  * to a different scope. Returns `next` marked with the scope.
