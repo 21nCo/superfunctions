@@ -502,6 +502,35 @@ describe("apifn check: --base <git-ref>", () => {
     }
   );
 
+  /** Moves the tracked spec directory and leaves a symlink at its old name, as `git mv` plus `ln -s` would. */
+  async function symlinkedSpecDir(service: string): Promise<void> {
+    await rename(path.join(service, ".apifn"), path.join(service, "contracts"));
+    await symlink("contracts", path.join(service, ".apifn"));
+  }
+
+  it("a spec under a symlinked directory is diffed against the path as given, not a new contract", async () => {
+    const { service } = await trackedBaseSpec();
+    await symlinkedSpecDir(service);
+
+    const { code, report } = await runJson(["check", "--base", "HEAD"], service);
+    expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+    expect(report.breaking.map((change) => change.path)).toContain("paths./users.get");
+    expect(code).toBe(1);
+  });
+
+  it("a stale spec under a symlinked directory is repaired with --write and still fails the breaking change", async () => {
+    const { root, service } = await trackedBaseSpec();
+    await symlinkedSpecDir(service);
+    await writeFile(path.join(service, SPEC), await readFile(path.join(root, "base", SPEC), "utf8"));
+
+    const { code, report } = await runJson(["check", "--base", "HEAD", "--write"], service);
+    expect(report.drift).toBe(true);
+    expect(report.written).toBe(true);
+    expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+    expect(report.breaking.map((change) => change.path)).toContain("paths./users.get");
+    expect(code).toBe(1);
+  });
+
   it("a --spec symlink that resolves outside the repository exits 2", async () => {
     const { service } = await trackedBaseSpec();
     const outside = path.join(await tempDir("apifn-check-outside-"), "openapi.yml");

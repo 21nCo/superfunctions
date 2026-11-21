@@ -229,6 +229,33 @@ function canonicalSpellings(target: string): string[] {
   return spellings;
 }
 
+/**
+ * The spec path as given (resolved, no symlink followed) relative to the logical repository root:
+ * the deepest existing ancestor whose native realpath is the repository's. This is the path the
+ * caller names even when an in-repository directory on the way is a symlink, and a symlinked
+ * prefix above the repository (such as /var -> /private/var) still maps. Null when no ancestor is
+ * the repository root, so a literal spelling that leaves the repository adds no candidate.
+ */
+function literalRepoPath(target: string, root: string): string | null {
+  const resolved = path.resolve(target);
+  let dir = path.dirname(resolved);
+  for (;;) {
+    let real: string | null = null;
+    try {
+      real = realpathSync.native(dir);
+    } catch {
+      real = null;
+    }
+    if (real === root) {
+      const relative = path.relative(dir, resolved).split(path.sep).join("/");
+      return relative === "" || relative.startsWith("../") ? null : relative;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 /** NFC plus case folding: the key under which a case-insensitive filesystem treats names as one. */
 function foldPath(value: string): string {
   return value.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
@@ -255,7 +282,8 @@ function parseTreeListing(listing: string): TreeEntry[] {
 /**
  * Reads the spec as committed at `ref`. Git resolves the ref once to a commit; every later call
  * uses that commit. Every path the spec may have been tracked under is a candidate: the path as
- * given and the file a write to it lands on (symlinks followed, dangling ones included), each in
+ * given relative to the repository root (an in-repository symlinked directory not followed), the
+ * path as given and the file a write to it lands on (symlinks followed, dangling ones included), each in
  * its canonical directory spelling, and, when the repository ignores case, any tracked path equal
  * to a candidate under NFC and case folding. Returns null (a new contract) only when git lists no
  * entry for any candidate in that commit. Several distinct matching blobs, a match that is not a
@@ -291,11 +319,13 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
       `Spec ${specPath} (${destinationSpellings[0]}) is outside the git repository at ${root}`
     );
   }
+  const literal = literalRepoPath(specPath, root);
   const candidates = [
     ...new Set(
-      [...destinationSpellings, ...canonicalSpellings(specPath)]
-        .map(inRepo)
-        .filter((relative): relative is string => relative !== null)
+      [
+        ...[...destinationSpellings, ...canonicalSpellings(specPath)].map(inRepo),
+        literal,
+      ].filter((relative): relative is string => relative !== null)
     ),
   ];
 
