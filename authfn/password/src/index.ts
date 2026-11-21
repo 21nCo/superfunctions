@@ -197,14 +197,12 @@ function createPasswordRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
-          email?: string;
-          password?: string;
-          sessionMode?: AuthFnSessionResponseMode;
-        };
+        // Only the three fields are kept, so a large request body is not held
+        // while the password hashes run.
+        const { email, password, sessionMode } = await readSignInBody(request);
         const result = await signInWithPassword(ctx.config, {
-          email: body.email ?? '',
-          password: body.password ?? ''
+          email,
+          password
         }, {
           requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
           hashCost: config.passwordHashCost
@@ -238,7 +236,7 @@ function createPasswordRoutes(
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
-        const response = buildSessionResponse(issued, body.sessionMode);
+        const response = buildSessionResponse(issued, sessionMode);
 
         return jsonSuccess(request, response.data, {
           setCookies: response.setCookies
@@ -246,4 +244,21 @@ function createPasswordRoutes(
       }
     }
   ];
+}
+
+async function readSignInBody(request: Request): Promise<{
+  email: string;
+  password: string;
+  sessionMode?: AuthFnSessionResponseMode;
+}> {
+  const body = await request.json() as {
+    email?: string;
+    password?: string;
+    sessionMode?: AuthFnSessionResponseMode;
+  };
+  return {
+    email: body.email ?? '',
+    password: body.password ?? '',
+    sessionMode: typeof body.sessionMode === 'string' ? body.sessionMode : undefined
+  };
 }

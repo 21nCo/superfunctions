@@ -83,6 +83,10 @@ describe('sign-in scrypt job order (AF-10)', () => {
         expect(started).toEqual([]);
       }
     }
+    started.length = 0;
+    await expect(signInWithPassword(config, { email: `${'a'.repeat(400)}@example.com`, password: 'test-password-wrong' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+    expect(started).toEqual([]);
   });
 
   it('refuses a sign-in whose two jobs do not both fit, without queuing either', async () => {
