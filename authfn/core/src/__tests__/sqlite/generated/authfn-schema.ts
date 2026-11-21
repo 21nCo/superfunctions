@@ -100,6 +100,7 @@ export const otp_challenges = sqliteTable(
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (table) => ({
+    idx_authfn_otp_challenges_email_created_at: index('idx_authfn_otp_challenges_email_created_at').on(table.email, table.createdAt, table.id),
     idx_authfn_otp_challenges_email_purpose_created_at: index('idx_authfn_otp_challenges_email_purpose_created_at').on(table.email, table.purpose, table.createdAt),
     idx_authfn_otp_challenges_expires_at: index('idx_authfn_otp_challenges_expires_at').on(table.expiresAt)
   })

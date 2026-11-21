@@ -2,6 +2,396 @@ import AuthFnClient
 import Foundation
 import WebKit
 
+/// The web origins whose pages may drive the bridge.
+///
+/// An origin is a scheme, host and port, as in `https://app.example.com`,
+/// `https://localhost:8443`, `http://[::1]:5173` or `app://portal` (a page
+/// served by a `WKURLSchemeHandler`). A message is accepted only from a page
+/// whose security origin is exactly one of them: subdomains, other ports and
+/// other schemes do not match. Hosts are compared as WebKit reports them, so
+/// give internationalized domains in their ASCII (punycode) form, and serve
+/// bundled pages from a scheme handler with a host rather than `file:` URLs.
+public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
+    public let trustedOrigins: Set<String>
+
+    public init(trustedOrigins: [URL]) {
+        var origins = Set<String>()
+        for (index, url) in trustedOrigins.enumerated() {
+            if let origin = Self.parse(url.absoluteString) {
+                origins.insert(origin)
+            } else {
+                // The entry itself is not printed: a URL can carry a password
+                // or query parameters.
+                print("[AuthFnWebViewBridgeHost] trusted origin #\(index) ignored, not a usable web origin (scheme://host[:port], not file:)")
+            }
+        }
+        self.trustedOrigins = origins
+    }
+
+    /// Whether a page with this security origin may drive the bridge. WebKit
+    /// reports `port` 0 both for no port and for an explicit `:0`; pass
+    /// `explicitPortZero` to tell them apart.
+    public func allows(scheme: String, host: String, port: Int, explicitPortZero: Bool = false) -> Bool {
+        if Self.isUntrustable(scheme: scheme.lowercased(), host: host) {
+            return false
+        }
+        let portText: String? = port != 0 ? String(port) : (explicitPortZero ? "0" : nil)
+        return trustedOrigins.contains(Self.key(scheme: scheme, host: host, port: portText))
+    }
+
+    /// Whether a main-frame message may drive the bridge, from the frame's
+    /// security origin as WebKit reports it and the frame's URL.
+    ///
+    /// WebKit reports port 0 for no port (or the default one) and for an
+    /// explicit `:0`, which any scheme can carry (a page loaded from HTML with
+    /// such a base URL); the frame's own URL tells them apart. A frame whose
+    /// URL does not show its origin (an `about:blank` page that inherited it)
+    /// leaves that open, so it is refused.
+    public func allowsMessage(scheme: String, host: String, port: Int, frameURL: String) -> Bool {
+        if port == 0 && !Self.sameSchemeAndHost(frameURL, scheme: scheme, host: host) {
+            return false
+        }
+        let explicitPortZero = port == 0 && Self.hasExplicitPortZero(frameURL)
+        return allows(scheme: scheme, host: host, port: port, explicitPortZero: explicitPortZero)
+    }
+
+    /// Schemes WebKit gives no host-specific origin: every `file:` page shares
+    /// one origin, and `about:`, `data:`, `blob:` and similar pages have no
+    /// host of their own. None of them can be trusted.
+    static let hostlessSchemes: Set<String> = ["file", "about", "data", "blob", "javascript"]
+
+    static func isUntrustable(scheme: String, host: String) -> Bool {
+        if hostlessSchemes.contains(scheme) {
+            return true
+        }
+        let isWeb = isSpecial(scheme)
+        return isWeb && host.isEmpty
+    }
+
+    /// Parses `scheme://host[:port]`. For http(s) and ws(s) the host is
+    /// normalized as WebKit does (percent escapes decoded, IPv4 and IPv6
+    /// literals in canonical form); for other schemes it is kept as given.
+    static func parse(_ string: String) -> String? {
+        // An origin has no userinfo. An entry with '@' or a backslash in its
+        // authority is refused: Foundation and WebKit can split such a URL at
+        // different places and so read different hosts.
+        if let authority = authoritySection(string),
+           authority.contains("@") || authority.contains("\\") {
+            return nil
+        }
+        guard let parts = splitOrigin(string) else {
+            // A custom-scheme URL without an authority (`app:/index.html`)
+            // stands for the scheme's hostless origin, as with `app:///`.
+            // Only `scheme:/...` counts, so an entry typed without its
+            // scheme (`localhost:8080`) is still refused with the warning.
+            if let scheme = hostlessURLScheme(string), !isSpecial(scheme), !hostlessSchemes.contains(scheme),
+               string.dropFirst(scheme.count + 1).hasPrefix("/") {
+                return key(scheme: scheme, host: "", port: nil)
+            }
+            return nil
+        }
+        if isUntrustable(scheme: parts.scheme, host: parts.host) {
+            return nil
+        }
+        if isSpecial(parts.scheme) && parts.host.hasPrefix("[") {
+            // Only hex digits, ':' and '.' (an embedded IPv4 tail) belong in
+            // an IPv6 literal; WebKit refuses anything else, such as `%00`.
+            guard canonicalIPv6(parts.host.lowercased()) != nil else {
+                return nil
+            }
+        }
+        if isSpecial(parts.scheme) && !parts.host.hasPrefix("[") {
+            // WebKit refuses these hosts: one that decodes to non-ASCII (an
+            // internationalized domain not given in punycode), to nothing, or
+            // to a forbidden character (`example.test%3A8443` would otherwise
+            // read as another origin's host and port), and one that ends in a
+            // number but is not a valid IPv4 address.
+            // Only plain host characters are accepted (letters, digits, '-',
+            // '.', '_' once decoded): anything else is a spelling Foundation
+            // and WebKit can serialize or parse differently.
+            guard let decoded = parts.host.removingPercentEncoding,
+                  !decoded.isEmpty, decoded.allSatisfy(isPlainHostCharacter) else {
+                return nil
+            }
+            if endsInNumber(decoded.lowercased()) && canonicalIPv4(decoded.lowercased()) == nil {
+                return nil
+            }
+        }
+        if !isSpecial(parts.scheme) && !parts.host.allSatisfy(isPlainHostCharacter) {
+            // A custom-scheme host is kept as given (WebKit does not decode
+            // it), so it may only use plain host characters: no escapes,
+            // quotes or other characters whose spelling Foundation changes.
+            return nil
+        }
+        if let port = parts.port, !port.isEmpty {
+            // A port that is not a number in range is refused rather than read
+            // as no port (which would trust the default one).
+            guard port.allSatisfy(isASCIIDigit), let number = Int(port), (0...65535).contains(number) else {
+                return nil
+            }
+        }
+        return key(scheme: parts.scheme, host: parts.host, port: parts.port)
+    }
+
+    /// Whether a frame's URL shows the same scheme and host as its reported
+    /// origin, and so can say whether its port 0 is explicit.
+    static func sameSchemeAndHost(_ string: String, scheme: String, host: String) -> Bool {
+        let scheme = scheme.lowercased()
+        guard let parts = splitOrigin(string) else {
+            // A custom-scheme URL without an authority (`app:/index.html`)
+            // has the scheme's hostless origin, as WebKit gives it.
+            return host.isEmpty && !isSpecial(scheme) && !hostlessSchemes.contains(scheme)
+                && hostlessURLScheme(string) == scheme
+        }
+        return parts.scheme == scheme && canonicalHost(parts.host, scheme: scheme) == canonicalHost(host, scheme: scheme)
+    }
+
+    /// Whether a URL names an explicit port 0 (`app://portal:0`).
+    static func hasExplicitPortZero(_ string: String) -> Bool {
+        guard let port = splitOrigin(string)?.port else { return false }
+        return Int(port) == 0
+    }
+
+    static func key(scheme: String, host: String, port: String?) -> String {
+        let scheme = scheme.lowercased()
+        let host = canonicalHost(host, scheme: scheme)
+        let defaultPort: Int? = switch scheme {
+        case "https", "wss": 443
+        case "ftp": 21
+        case "http", "ws": 80
+        default: nil
+        }
+        guard let port, !port.isEmpty, let number = Int(port) else {
+            return "\(scheme)://\(host)"
+        }
+        if number == defaultPort {
+            return "\(scheme)://\(host)"
+        }
+        return "\(scheme)://\(host):\(number)"
+    }
+
+    /// Schemes whose hosts WebKit parses as domains or IP addresses.
+    static func isSpecial(_ scheme: String) -> Bool {
+        ["http", "https", "ws", "wss", "ftp"].contains(scheme)
+    }
+
+    /// A host as WebKit reports it: lower-cased; for http(s) and ws(s) also
+    /// percent-decoded, with an IPv4 address in dotted-decimal form
+    /// (`127.1` and `0x7f.0.0.1` become `127.0.0.1`); and an IPv6 literal in
+    /// its canonical form (`[0:0:0:0:0:0:0:1]` becomes `[::1]`).
+    static func canonicalHost(_ host: String, scheme: String) -> String {
+        var lowered = host.lowercased()
+        if lowered.hasPrefix("[") {
+            // IPv6 literals are never percent-decoded.
+            return canonicalIPv6(lowered) ?? lowered
+        }
+        if isSpecial(scheme) {
+            lowered = (lowered.removingPercentEncoding ?? lowered).lowercased()
+            if let ipv4 = canonicalIPv4(lowered) {
+                return ipv4
+            }
+        }
+        return lowered
+    }
+
+    /// The canonical form of a bracketed IPv6 literal (`[0:0:0:0:0:0:0:1]`
+    /// becomes `[::1]`), or nil when it is not one. Only hex digits, ':' and
+    /// '.' are accepted, so nothing is cut short at a NUL or read past an
+    /// escape.
+    static func canonicalIPv6(_ host: String) -> String? {
+        guard host.hasPrefix("["), host.hasSuffix("]"), host.count > 2 else { return nil }
+        let literal = String(host.dropFirst().dropLast())
+        guard literal.unicodeScalars.allSatisfy({ isHexDigitScalar($0) || $0 == ":" || $0 == "." }),
+              ipv6ComponentsAreWebKitValid(literal) else {
+            return nil
+        }
+        var address = in6_addr()
+        guard inet_pton(AF_INET6, literal, &address) == 1 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
+        return "[\(String(cString: buffer))]"
+    }
+
+    /// The limits WebKit applies that Darwin's inet_pton does not: at most
+    /// four hex digits per component, and an embedded IPv4 tail (last
+    /// component only) of four decimal octets up to 255 without leading
+    /// zeros.
+    private static func ipv6ComponentsAreWebKitValid(_ literal: String) -> Bool {
+        let components = literal.split(separator: ":", omittingEmptySubsequences: false)
+        for (index, component) in components.enumerated() {
+            if component.contains(".") {
+                guard index == components.count - 1 else { return false }
+                let octets = component.split(separator: ".", omittingEmptySubsequences: false)
+                guard octets.count == 4 else { return false }
+                for octet in octets {
+                    guard !octet.isEmpty, octet.count <= 3, octet.allSatisfy(isASCIIDigit),
+                          octet == "0" || !octet.hasPrefix("0"),
+                          let value = Int(octet), value <= 255 else {
+                        return false
+                    }
+                }
+            } else if component.count > 4 {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Letters, digits, '-', '.' and '_' (ASCII only).
+    static func isPlainHostCharacter(_ character: Character) -> Bool {
+        character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "." || character == "_")
+    }
+
+    static func isASCIIDigit(_ character: Character) -> Bool {
+        ("0"..."9").contains(character)
+    }
+
+    private static func isHexDigitScalar(_ scalar: Unicode.Scalar) -> Bool {
+        ("0"..."9").contains(scalar) || ("a"..."f").contains(scalar) || ("A"..."F").contains(scalar)
+    }
+
+
+    /// The labels of a host, without one trailing empty label (`a.b.`).
+    private static func ipv4Parts(_ host: String) -> [Substring] {
+        var parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count > 1, parts.last?.isEmpty == true {
+            parts.removeLast()
+        }
+        return parts
+    }
+
+    /// Whether WebKit parses this host as an IPv4 address: its last label is
+    /// a decimal number, or `0x` followed by hex digits (possibly none).
+    static func endsInNumber(_ host: String) -> Bool {
+        guard let last = ipv4Parts(host).last, !last.isEmpty else { return false }
+        if last.allSatisfy({ $0.isASCII && $0.isNumber }) {
+            return true
+        }
+        return (last.hasPrefix("0x") || last.hasPrefix("0X")) && last.dropFirst(2).allSatisfy({ $0.isASCII && $0.isHexDigit })
+    }
+
+    /// The dotted-decimal form of a host WebKit reads as an IPv4 address, or
+    /// nil. Parsed the way WebKit (and the WHATWG URL standard) does: one to
+    /// four parts, each decimal, octal (leading 0) or hex (`0x`, where a bare
+    /// `0x` is 0), the last one filling the remaining bytes.
+    static func canonicalIPv4(_ host: String) -> String? {
+        guard endsInNumber(host) else { return nil }
+        let parts = ipv4Parts(host)
+        guard (1...4).contains(parts.count) else { return nil }
+        var numbers: [UInt64] = []
+        for part in parts {
+            guard let number = parseIPv4Number(part) else { return nil }
+            numbers.append(number)
+        }
+        for number in numbers.dropLast() where number > 255 {
+            return nil
+        }
+        let last = numbers[numbers.count - 1]
+        guard last < (UInt64(1) << (8 * UInt64(5 - numbers.count))) else { return nil }
+        var address = last
+        for (index, number) in numbers.dropLast().enumerated() {
+            address += number << (8 * UInt64(3 - index))
+        }
+        return (0..<4).map { String((address >> (8 * UInt64(3 - $0))) & 0xFF) }.joined(separator: ".")
+    }
+
+    private static func parseIPv4Number(_ part: Substring) -> UInt64? {
+        guard !part.isEmpty else { return nil }
+        var digits = part
+        var radix = 10
+        if digits.count >= 2, digits.hasPrefix("0x") || digits.hasPrefix("0X") {
+            digits = digits.dropFirst(2)
+            radix = 16
+        } else if digits.count >= 2, digits.hasPrefix("0") {
+            digits = digits.dropFirst()
+            radix = 8
+        }
+        // Only digits of the radix: Swift's own parser would also take a
+        // leading '+'.
+        let valid: (Character) -> Bool = switch radix {
+        case 16: { $0.isASCII && $0.isHexDigit }
+        case 8: { ("0"..."7").contains($0) }
+        default: { ("0"..."9").contains($0) }
+        }
+        guard digits.allSatisfy(valid) else { return nil }
+        // Leading zeros do not count towards the size; anything still longer
+        // than 11 digits is above 2^32, which no IPv4 part can be.
+        let significant = digits.drop(while: { $0 == "0" })
+        if significant.isEmpty {
+            return 0
+        }
+        guard significant.count <= 11 else { return nil }
+        return UInt64(significant, radix: radix)
+    }
+
+    /// The scheme of a URL with no authority (`app:/index.html`,
+    /// `app:index.html`), or nil when it has one or no valid scheme.
+    private static func hostlessURLScheme(_ string: String) -> String? {
+        guard let colon = string.firstIndex(of: ":") else { return nil }
+        let scheme = string[..<colon].lowercased()
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }),
+              !string[colon...].hasPrefix("://") else {
+            return nil
+        }
+        return scheme
+    }
+
+    /// The text between `scheme://` and the first `/`, `?` or `#`, or nil when
+    /// the URL has no authority. The scheme is the text before the first ':',
+    /// so a `://` later in the path or query is not taken for one.
+    private static func authoritySection(_ string: String) -> Substring? {
+        guard let colon = string.firstIndex(of: ":") else { return nil }
+        let afterColon = string[string.index(after: colon)...]
+        guard afterColon.hasPrefix("//") else { return nil }
+        let rest = afterColon.dropFirst(2)
+        return rest[..<(rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex)]
+    }
+
+    private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
+        guard let colon = string.firstIndex(of: ":"), var authority = authoritySection(string) else { return nil }
+        let scheme = String(string[..<colon]).lowercased()
+        // A scheme is a letter then letters, digits, '+', '-' or '.', so a
+        // nested URL (`blob:https://...`) is not read as an origin.
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }) else {
+            return nil
+        }
+        if let end = authority.firstIndex(where: { "/?#".contains($0) }) {
+            authority = authority[..<end]
+        }
+        var hadUserinfo = false
+        if let at = authority.lastIndex(of: "@") {
+            authority = authority[authority.index(after: at)...]
+            hadUserinfo = true
+        }
+        if authority.hasPrefix("[") {
+            guard let close = authority.firstIndex(of: "]") else { return nil }
+            let host = String(authority[...close])
+            let rest = authority[authority.index(after: close)...]
+            if rest.isEmpty { return (scheme, host, nil) }
+            guard rest.hasPrefix(":") else { return nil }
+            return (scheme, host, String(rest.dropFirst()))
+        }
+        let host: Substring
+        let port: String?
+        if let colon = authority.lastIndex(of: ":") {
+            host = authority[..<colon]
+            port = String(authority[authority.index(after: colon)...])
+        } else {
+            host = authority
+            port = nil
+        }
+        // An entirely empty authority is allowed (custom schemes), but WebKit
+        // refuses userinfo or a port delimiter with no host (`app://user@/`,
+        // `app://:/`), which must not stand for the hostless origin.
+        if host.isEmpty && (hadUserinfo || port != nil) {
+            return nil
+        }
+        return (scheme, String(host), port)
+    }
+}
+
 @MainActor
 public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     public enum MessageName: String {
@@ -14,12 +404,24 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     private weak var userContentController: WKUserContentController?
     private let client: AuthFnClient
     private let handoffCoordinator: AuthFnHandoffCoordinator
+    private let originPolicy: AuthFnBridgeOriginPolicy
 
-    public init(webView: WKWebView, client: AuthFnClient) {
+    /// - Parameter trustedOrigins: the origins of the app's own web pages.
+    ///   Messages from any other page loaded in the web view (a link the user
+    ///   followed, a redirect, an embedded page) are ignored, so it cannot make
+    ///   the app exchange a handoff code, start a web handoff or sign out.
+    public init(webView: WKWebView, client: AuthFnClient, trustedOrigins: [URL]) {
         self.webView = webView
         self.client = client
         self.handoffCoordinator = AuthFnHandoffCoordinator(client: client)
+        self.originPolicy = AuthFnBridgeOriginPolicy(trustedOrigins: trustedOrigins)
         super.init()
+    }
+
+    /// Removed: the bridge needs the origins of the app's own pages.
+    @available(*, unavailable, message: "Pass trustedOrigins: the origins of the app's own web pages.")
+    public convenience init(webView: WKWebView, client: AuthFnClient) {
+        self.init(webView: webView, client: client, trustedOrigins: [])
     }
 
     public func install(on userContentController: WKUserContentController) {
@@ -42,6 +444,12 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
             return
         }
         guard message.frameInfo.isMainFrame else {
+            return
+        }
+        let origin = message.frameInfo.securityOrigin
+        let frameURL = message.frameInfo.request.url?.absoluteString ?? ""
+        guard originPolicy.allowsMessage(scheme: origin.protocol, host: origin.host, port: origin.port, frameURL: frameURL) else {
+            logBridgeError("message from an untrusted or ambiguous origin ignored", BridgeOriginError(origin: "\(origin.protocol)://\(origin.host):\(origin.port)"))
             return
         }
 
@@ -136,6 +544,11 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     private func logBridgeError(_ message: String, _ error: Error) {
         print("[AuthFnWebViewBridgeHost] \(message): \(error)")
     }
+}
+
+private struct BridgeOriginError: Error, CustomStringConvertible {
+    let origin: String
+    var description: String { "untrusted origin \(origin)" }
 }
 
 private extension WKHTTPCookieStore {

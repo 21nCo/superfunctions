@@ -3125,6 +3125,7 @@ This page also documents the logical replay protections the kernel already enfor
 A handful of routes have built-in protections that aren't traditional rate limits but serve a similar purpose:
 
 - **OTP attempt counter.** Each OTP challenge tracks `attemptCount`. After a small number of failed verifications (per the plugin's config), the challenge is invalidated.
+- **Per-email OTP budget** (TypeScript kernel). Wrong codes and new challenges are also counted per email across all challenges and purposes (by default 10 wrong codes and 20 challenges per hour). Requesting a new code does not reset the count. This is stored with the challenges, so it applies whether or not the HTTP rate limiter is enabled. Because the budget belongs to the email, anyone who knows an address can use it up and block that address's OTP sign-in and password reset until the window passes; enable the HTTP rate limiter as well, so a single client cannot do this cheaply. The Python port does not enforce this budget yet, only the per-challenge counter, and it has no `rateLimit` setting: a Python deployment must throttle OTP sends and verifications itself (at the edge, or in middleware in front of the AuthFn routes). On a database shared with the TypeScript kernel, compatibility is one-way: Python accepts codes the TypeScript kernel sent (it falls back to SHA-256 for hashes not in its own PBKDF2 format) and skips challenges the TypeScript kernel refused, but TypeScript does not accept Python's codes. So the Python OTP routes can check TypeScript-issued codes without the per-email budget: throttle them, or do not serve OTP verification from Python on a shared database.
 - **OAuth state replay.** OAuth states are one-shot. Replaying the same state returns `AUTHFN_OAUTH_STATE_REPLAYED` and the request is rejected without further processing.
 - **Native handoff codes.** One-time, short TTL.
 - **Two-factor attempts.** When `rateLimit` is enabled, `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable` use the `two-factor` policy: 30 requests per IP and 5 per challenge ID (for `/2fa/challenge`) or per session cookie (for `/2fa/confirm` and `/2fa/disable`, which only accept cookie sessions); challenge ids are trimmed and lower-cased before counting in a 5-minute window by default. Other body fields do not change the counter.
@@ -5758,6 +5759,9 @@ authApp.createServer({
 | `now` | `pluginRuntime.emailOtp` | `() => new Date()` | Clock injection (for tests). |
 | `challengeTtlSeconds` | `pluginRuntime.emailOtp` | `600` | OTP lifetime. |
 | `maxAttempts` | `pluginRuntime.emailOtp` | `5` | Verification attempts per challenge before invalidation. |
+| `maxFailedAttemptsPerEmail` | `pluginRuntime.emailOtp` | `10` | Wrong codes accepted for one email across all of its challenges and purposes within the window. Further verifications for that email return `AUTHFN_RATE_LIMITED`, even with the right code, until older challenges leave the window. |
+| `maxChallengesPerEmail` | `pluginRuntime.emailOtp` | `20` | Challenges that can be sent to one email, across purposes, within the window. Further sends return `AUTHFN_RATE_LIMITED`. |
+| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. A challenge that outlives the window keeps counting until it expires. Both OTP plugins count the same challenges, so when `pluginRuntime.password.otp` also sets these limits, the strictest value of each applies to every route; a limit set for one plugin and left unset for the other applies as set, and the default applies only when neither sets it. Values set outside `pluginRuntime` can only tighten these limits (a lower count or a longer window applies, a looser one is ignored): the deprecated `authFnPasswordPlugin({ otp })` options on every OTP route, and the options of a direct `sendOtpChallenge`/`verifyOtpChallenge` call on that call only. Each limit, and `challengeTtlSeconds`, must be a whole number from 1 to 31536000; a bad value stops the server from starting with `AUTHFN_CONFIG_INVALID`. |
 
 ### Delivery provider
 
@@ -5799,7 +5803,7 @@ For `purpose: 'sign-in' | 'sign-up'`, a successful verify also issues a session 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. |
+| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. The index `idx_authfn_otp_challenges_email_created_at` (`email, createdAt, id`) serves the per-email budget; generate a migration to add it to an existing database. |
 
 The plaintext code is never stored. Verification compares `codeHash` against the supplied code.
 
@@ -5838,8 +5842,9 @@ sequenceDiagram
 | `AUTHFN_VALIDATION_ERROR` | Missing email/purpose. |
 | `AUTHFN_DELIVERY_FAILED` | `delivery.send` threw or returned `sent: false`. |
 | `AUTHFN_OTP_INVALID` | Code doesn't match. |
-| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`. |
+| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`, or (rarely) the challenge is older than the newest challenges the per-email count reads, after a flood of new ones. Either way, request a new code. |
 | `AUTHFN_OTP_REPLAYED` | Already consumed. |
+| `AUTHFN_RATE_LIMITED` | The email has used its per-email budget of wrong codes or challenges. `details.limit` is `failed-attempts` or `challenges`. `details.resetAt` is when enough counted challenges will have left the window (or expired) for a new request to pass; that is not always the oldest one. A refusal caused only by concurrent requests reports a retry about a second later. |
 | `AUTHFN_CONFLICT` | Sign-up but the email already exists (when `otpSignUpExistingUser` is `false`). |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: email is in another region. |
 
@@ -6283,14 +6288,20 @@ Your iOS code parses the URL, calls `exchangeNativeHandoff`, and lands a bearer 
 
 ## Bridging through `WKScriptMessageHandler`
 
-When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge calls `exchangeNativeHandoff` for you and surfaces a typed credential:
+When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge exchanges native handoff codes, starts web handoffs and signs out for the pages you trust:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: authFnClient)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: authFnClient,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
+
+Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. Hosts are compared as WebKit reports them. For `http(s)`, `ws(s)` and `ftp` origins, percent escapes are decoded, IPv4 and IPv6 literals are put in canonical form (`http://127.1` matches `127.0.0.1`) and default ports are dropped, as WebKit does; an entry whose host WebKit would refuse (`https://example.test%3A8443`, `http://256.1.1.1`) is ignored. For custom schemes the host is kept as given. Hosts may only use letters, digits, `-`, `.` and `_` (for `http(s)` once percent escapes are decoded): spellings with escapes, quotes or other characters, which Foundation and WebKit can serialize differently, are refused. Give internationalized domains in their ASCII (punycode) form, IPv6 literals in brackets (`http://[::1]:5173`), and serve bundled pages from a `WKURLSchemeHandler` with a host (`app://portal`) rather than `file:` URLs. WebKit reports the same port (0) for a default port and an explicit `:0`, so when it reports 0 the page's own URL must show the same scheme and host; a page whose URL does not (such as an `about:blank` popup that inherited its origin) is refused. A page that inherited a trusted origin with a non-default port (`https://portal.example:8443`) has that same origin and is accepted, like any page of that origin. Entries with userinfo (`user@`) or a backslash in the authority are refused, because Foundation and WebKit can read their host differently. Entries that are not usable origins are ignored with a warning that names only their position in the list, never the URL. The initializer without `trustedOrigins` has been removed (it is now a compile error).
 
 ## Web handoff (native → web)
 
@@ -6383,6 +6394,7 @@ authApp.createServer({
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
+| `pluginRuntime.password.otp.maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` | runtime | `10`, `20`, `3600` | Per-email limits for reset codes, with the same meaning as in [Email OTP](./email-otp). The count covers every challenge for the email, so reset codes and sign-in codes add up, and the strictest value set for either plugin applies. |
 
 ## Routes
 
@@ -6649,6 +6661,10 @@ Apple sends the user's name on the very first authorization only — subsequent 
 ## Email relay
 
 Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privaterelay.appleid.com`). authfn treats relay emails like any other email — they just won't match a "real" inbox. Display names should not assume a particular email format.
+
+## Signature checks in every environment
+
+An identity token that reaches the kernel through the client (a web `form_post` `id_token`, or the native complete route) is always checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set. A token the kernel gets itself from Apple's token endpoint, in exchange for a `code`, arrives over TLS from Apple and is read without a signature check.
 
 ## Errors specific to Apple
 
@@ -7065,7 +7081,16 @@ By default, OAuth identities for an existing email are *not* automatically linke
 
 ## Allowlists
 
-Both `allowlistedRedirectUris` and `allowlistedReturnTo` are *exact-match* allowlists with no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+Both `allowlistedRedirectUris` and `allowlistedReturnTo` have no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+
+`allowlistedRedirectUris` is exact-match. An `allowlistedReturnTo` entry matches a `returnTo` that is the same string, or, when the entry is a bare origin with no path, query or fragment:
+
+- `https://app.example.com` (or `http:`) matches any target with the same origin.
+- A custom scheme such as `myapp://oauthsignin` matches targets with the same scheme, host and port (`myapp://oauthsignin/done` matches; `otherapp://oauthsignin` and `myapp://other` don't). Custom-scheme URLs have no web origin, so they are never compared by origin.
+- An entry without a host, such as `myapp:callback`, matches only itself.
+- A relative path such as `/post-auth` matches only itself, and only when it is a plain path (one leading `/`, no `//`, backslash or control characters). The browser resolves it against the origin that serves the authfn callback, so use it only when the app and authfn share that origin. It counts as a web target: session tokens are never put in its fragment when `allowWebSessionTokenHandoff` is `false`.
+
+`javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:` and `filesystem:` targets are refused even if listed.
 
 ## Errors
 
@@ -7680,6 +7705,7 @@ from authfn import (
     authfn_social_oauth_plugin,
     create_authfn,
 )
+from authfn.plugins.social_oauth import SocialOAuthPluginConfig, SocialProviderConfig
 
 # Replace `my_database_adapter` with your real adapter; see Adapters > Database.
 auth = create_authfn(AuthFnConfig(
@@ -7690,18 +7716,23 @@ auth = create_authfn(AuthFnConfig(
         authfn_email_otp_plugin({
             "delivery": my_delivery_provider,
         }),
-        authfn_social_oauth_plugin({
-            "providers": {
-                "google": {
-                    "client_id": "...",
-                    "client_secret": "...",
-                    "allowlisted_return_to": ["https://app.example.com/post-auth"],
-                },
+        authfn_social_oauth_plugin(SocialOAuthPluginConfig(
+            providers={
+                "google": SocialProviderConfig(
+                    client_id="...",
+                    client_secret="...",
+                    allowlisted_return_to=["https://app.example.com/post-auth"],
+                ),
             },
-        }),
+            # Secret key (at least 32 bytes) that encrypts stored provider
+            # tokens. Required: sign-in fails with AUTHFN_CONFIG_INVALID without it.
+            encryption_key_resolver=lambda key_ref: load_secret(key_ref),
+        )),
     ],
 ))
 ```
+
+Upgrading from a release that stored social OAuth tokens without a configured key? Those tokens were encrypted with a key anyone can compute. Re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()`. If your resolver only knows a new key reference, configure the plugin with it (`SocialOAuthPluginConfig(encryption_key_ref="oauth-2026", ...)`) and pass the same reference to the migration: `migrate_legacy_tokens(destination_key_ref="oauth-2026")` re-encrypts every legacy row under it, and new sign-ins store tokens under it too.
 
 ## 3. Mount on FastAPI
 
@@ -10006,7 +10037,7 @@ Runtime dependencies keyed by plugin name. Schema and policy options stay on the
 
 | Plugin | Typical `pluginRuntime` keys |
 | --- | --- |
-| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts` |
+| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts`, `maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` |
 | `password` | `otp` (password-reset delivery and challenge settings) |
 | `socialOAuth` | `providers` (required), `fetcher`, `tokenHttpClient`, `now` |
 | `twoFactor` | `issuer`, `encryptionKeyRef`, `encryptionKeyResolver`, TOTP window/digits/period |
@@ -10547,6 +10578,8 @@ A signed session.
 | `consumedAt` | timestamp | Set when verified. |
 | `attempts` | integer | Soft per-challenge attempt counter. |
 | `createdAt` / `updatedAt` | timestamp |  |
+
+Indexes: `(email, purpose, createdAt)` for the latest challenge of a purpose, `(expiresAt)`, and `(email, createdAt, id)` for the per-email budget across purposes.
 
 ## Social-OAuth plugin
 
@@ -11646,16 +11679,20 @@ let credential = try await client.exchangeNativeHandoff(
 )
 ```
 
-For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridge`:
+For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridgeHost` with the origins of your own web pages:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: client, accountBaseURL: configuration.baseURL)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: client,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
 
-The bridge listens for `postMessage` from the web side, exchanges the code, and updates `client.credentialStore`.
+The bridge listens for `postMessage` from the main frame of a trusted page, exchanges the code, and stores the credential. Messages from any other page are ignored; see [Native handoff](../plugins/native-handoff) for the origin rules.
 
 ## SwiftUI integration
 
