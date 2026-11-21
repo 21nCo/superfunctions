@@ -373,7 +373,7 @@ export async function satisfyTwoFactorChallenge(
     try {
       await updateRowIfMatches(config, 'two_factor_challenges', challenge.id, [], {
         consumedAt: null,
-        updatedAt: now
+        updatedAt: resolveNow(pluginConfig)
       });
     } catch {
       // The challenge stays used; the user signs in again.
@@ -417,7 +417,7 @@ export async function satisfyTwoFactorChallenge(
     // If the write throws or its outcome is unknown, it may have applied, so
     // the challenge stays used: no second code can be spent on it, and the
     // user signs in again. It is given back only after a confirmed no-op.
-    const spent = await spendRecoveryCode(config, submitted.recoveryCode.id, now);
+    const spent = await spendRecoveryCode(config, submitted.recoveryCode.id, resolveNow(pluginConfig));
     if (spent === 'not-applied') {
       await reopenChallenge();
     }
@@ -710,14 +710,14 @@ async function reserveSecondFactorAttempt(
     if (reserved === 'unknown') {
       // The attempt may have been counted. Another round could count it
       // again, so this request stops here without checking its code.
-      throw twoFactorLockedError(new Date(now.getTime() + 1000));
+      throw twoFactorLockedError(new Date(now.getTime() + 1000), 'attempt-not-recorded');
     }
     if (reserved === 'applied') {
       return next;
     }
   }
   // Lost every round to concurrent requests: treat as over the limit.
-  throw twoFactorLockedError(new Date(now.getTime() + 1000));
+  throw twoFactorLockedError(new Date(now.getTime() + 1000), 'attempt-not-recorded');
 }
 
 function readAttemptCount(value: unknown): number {
@@ -737,14 +737,27 @@ function assertNotLocked(enrollment: AuthFnTwoFactorEnrollmentRecord, pluginConf
   }
 }
 
-function twoFactorLockedError(lockedUntil: Date): AuthFnRateLimitedError {
-  return new AuthFnRateLimitedError('Too many incorrect two-factor codes; try again later', {
-    scope: 'two-factor',
-    // Tells this lock (recovery codes still work) from the HTTP rate
-    // limiter's refusal of a two-factor route (nothing works until it ends).
-    reason: 'enrollment-locked',
-    resetAt: lockedUntil.toISOString()
-  });
+/**
+ * `enrollment-locked`: the stored lock (recovery codes still work).
+ * `attempt-not-recorded`: this check could not be counted (concurrent
+ * requests, or a write the adapter could not confirm); retry shortly.
+ * Either tells it from the HTTP rate limiter's refusal of a two-factor
+ * route, which has no reason.
+ */
+function twoFactorLockedError(
+  lockedUntil: Date,
+  reason: 'enrollment-locked' | 'attempt-not-recorded' = 'enrollment-locked'
+): AuthFnRateLimitedError {
+  return new AuthFnRateLimitedError(
+    reason === 'enrollment-locked'
+      ? 'Too many incorrect two-factor codes; try again later'
+      : 'The two-factor check could not be recorded; try again shortly',
+    {
+      scope: 'two-factor',
+      reason,
+      resetAt: lockedUntil.toISOString()
+    }
+  );
 }
 
 interface TwoFactorAttemptLimits {

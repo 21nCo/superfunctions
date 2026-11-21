@@ -901,6 +901,33 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
       .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED', details: { scope: 'two-factor', reason: 'enrollment-locked' } });
   });
 
+  it('spends a recovery code no earlier than the challenge was claimed', async () => {
+    const setup = await enrolledUser();
+    const challengeId = await setup.challenge();
+    const slow: Adapter = {
+      ...setup.config.database,
+      async findOne(params) {
+        const row = await setup.config.database.findOne(params);
+        if (params.model === 'two_factor_enrollments') {
+          setup.clock.advanceSeconds(5);
+        }
+        return row;
+      }
+    } as Adapter;
+    await satisfyTwoFactorChallenge({ ...setup.config, database: slow }, challengeId, setup.recoveryCodes[0], setup.pluginConfig);
+    const challenge = await setup.config.database.findOne<{ consumedAt: Date }>({
+      model: 'two_factor_challenges',
+      where: [{ field: 'id', operator: 'eq', value: challengeId }],
+      namespace: 'authfn'
+    });
+    const spent = (await setup.config.database.findMany<{ usedAt: Date | null }>({
+      model: 'two_factor_recovery_codes',
+      where: [{ field: 'enrollmentId', operator: 'eq', value: setup.enrollmentId }],
+      namespace: 'authfn'
+    })).find((row) => row.usedAt !== null);
+    expect(new Date(spent!.usedAt!).getTime()).toBeGreaterThanOrEqual(new Date(challenge!.consumedAt).getTime());
+  });
+
   it('returns the time the challenge was claimed', async () => {
     const setup = await enrolledUser();
     const challengeId = await setup.challenge();
@@ -1187,7 +1214,7 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     const before = await readCount();
     setup.clock.advanceSeconds(30);
     await expect(verifyTwoFactorCode({ ...setup.config, database: unreported }, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
-      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED', details: { reason: 'attempt-not-recorded' } });
     expect(await readCount()).toBe(before + 1);
   });
 

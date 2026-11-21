@@ -133,7 +133,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
-| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. Without it, the HTTP rate limiter refused the route. |
+| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. With `details.reason: 'attempt-not-recorded'`, this check could not be counted (concurrent requests, or a write the database could not confirm): retry shortly. Without a reason, the HTTP rate limiter refused the route. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 
