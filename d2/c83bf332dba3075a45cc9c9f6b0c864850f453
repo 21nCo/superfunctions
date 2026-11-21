@@ -1,0 +1,29 @@
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_08796ba2ee9553 5764,6391
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_68f7ccf5b4fe71 57
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_840260693ae595 50
+authfn/core/src/__tests__/otp.test.ts
+  s_e5ac07859c1bc9::t_304a5e44cdc2bf 1259-1276
+  s_e5ac07859c1bc9::t_4d38e5d3068ba3 1233,1238-1258,1277-1284
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_61b7a64e6e65f1 572-574,795-797
+  s_e5ac07859c1bc9::t_7e7c4cd24877a0 30,116,125-127,135,297,300-305,531-541,548-549,552-571,575-593,595-598,646,665,697-698,713,718,724,730-736,738-739,743-744,746-752,754-760,762-767,774-779,781-782,785,789,791,793-794,800
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2c83bf332dba3075a45cc9c9f6b0c864850f453",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}

@@ -1,0 +1,27 @@
+datafn/server/__tests__/security-audit-relations.test.ts
+  s_df6686278ce1d2::t_483e09a373c51d 47-66,69-70,257-363
+datafn/server/src/execution/mutation/execute.ts
+  s_df6686278ce1d2::t_247ed894f305d0 20,1332-1357
+datafn/server/src/execution/mutation/relations.ts
+  s_df6686278ce1d2::t_dc4ac9deb52405 112-139,141-153,155,158,162-285,287-290,292-294,1321-1324,1566-1569,2108-2111
+datafn/server/src/execution/sync/pull.ts
+  s_df6686278ce1d2::t_a8003c90d1df06 9,205-277,435,463,951,1012-1016,1018-1025,1265-1277
+datafn/server/src/execution/sync/push.ts
+  s_df6686278ce1d2::t_9a8740e408bf21 30,1169-1176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76e7478894d49c5a6bf9386a48fa4f96de5c8b04",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

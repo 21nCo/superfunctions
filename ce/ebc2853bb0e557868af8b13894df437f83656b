@@ -1,0 +1,69 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_bea213b582e915::t_e2ae91ab0931d4 3,34
+authfn/adapters/lookup-dynamodb/package.json
+  s_bea213b582e915::t_58346c4f04a8ec 3,36
+authfn/admin/package.json
+  s_bea213b582e915::t_f667488b4fd415 3,43,46-47
+authfn/api-keys/package.json
+  s_bea213b582e915::t_4c2d391df70d5f 3,29
+authfn/client/package.json
+  s_bea213b582e915::t_082c1b3929bbdf 3,33,37-42
+authfn/core/package.json
+  s_e5ac07859c1bc9::t_817c7cff0b35ae 3
+authfn/docs/package.json
+  s_bea213b582e915::t_2e46d0e3dbaa55 26-32,44
+authfn/email-otp/package.json
+  s_bea213b582e915::t_347d64c433cf38 3,29
+authfn/multi-region/package.json
+  s_bea213b582e915::t_e15281f269f850 3,29
+authfn/native-handoff/package.json
+  s_bea213b582e915::t_86f8c4cfdb3bff 3,29
+authfn/oauth-provider/package.json
+  s_bea213b582e915::t_8ad3f1017880cb 3,30
+authfn/password/package.json
+  s_bea213b582e915::t_6cb4fc31a94aa6 3,29
+authfn/python/CHANGELOG.md
+  s_e5ac07859c1bc9::t_1fd914891f4aa8 10-21
+authfn/python/authfn/__init__.py
+  s_e5ac07859c1bc9::t_27763a400ed0e3 3
+authfn/python/pyproject.toml
+  s_e5ac07859c1bc9::t_a4de5812eb51ba 7
+authfn/schema-plugin/package.json
+  s_bea213b582e915::t_01666827bae9e2 3,29
+authfn/social-oauth/package.json
+  s_e5ac07859c1bc9::t_68f5074fa4a50b 3,33
+authfn/svelte/package.json
+  s_bea213b582e915::t_114f6de7175a4f 3,32,36
+authfn/two-factor/package.json
+  s_bea213b582e915::t_e91f3d57615227 3,29
+billfn/docs/package.json
+  s_e5ac07859c1bc9::t_363cbaeac77625 30,42
+filefn/docs/package.json
+  s_e5ac07859c1bc9::t_b2b978d5621bda 40-41,50
+package-lock.json
+  s_e5ac07859c1bc9::t_403a82c5b46535 1271,1275,1295,1301,1321,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1521-1527,1539,1846,1849,3892,3896,3925,3929,3958,3962,4001,4004,4033,4036,4056,4065,4125,4128,4135,4151,4154,4323,4335,11984-11985,12002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ceebc2853bb0e557868af8b13894df437f83656b",
+  "prompts": {},
+  "sessions": {
+    "s_bea213b582e915": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe6e-e383-7280-ac6b-1bd546006129",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

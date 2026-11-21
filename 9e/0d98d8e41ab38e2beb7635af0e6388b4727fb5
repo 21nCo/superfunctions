@@ -1,0 +1,23 @@
+authfn/core/src/__tests__/otp.test.ts
+  s_e5ac07859c1bc9::t_8015555a875ae9 20,1283,1285-1301
+  s_e5ac07859c1bc9::t_e2bba9f74c325f 1284
+  s_e5ac07859c1bc9::t_f295f828fcbd0e 1302-1303
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_d77588782f0cc9 366-367,827,842-849,995,997,1012
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9e0d98d8e41ab38e2beb7635af0e6388b4727fb5",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
