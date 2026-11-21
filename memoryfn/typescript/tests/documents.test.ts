@@ -387,8 +387,6 @@ describe('upsertDocument embedding validation', () => {
 
   it.each([
     ['1e200 components', [1e200, 1e200]],
-    ['components whose squares vanish in float64', [1e-200, 1e-200]],
-    ['a zero vector', [0, 0]],
     ['NaN', [Number.NaN, 1]],
     ['a hole', [1, , 2]],
   ])('rejects a query vector with %s instead of returning nothing', async (_name, query) => {
@@ -406,6 +404,14 @@ describe('upsertDocument embedding validation', () => {
     const sent = search.mock.calls[0][0].embedding;
     expect(sent).toEqual([1e15, 2e-15, 3]);
     expect(JSON.stringify(sent)).toBe('[1000000000000000,2e-15,3]');
+  });
+
+  it.each([['a zero vector', 0], ['components whose squares vanish in float64', 1e-200]])('passes a query vector with %s to storage, which scores it 0', async (_name, component) => {
+    const query = Array.from({ length: 26 }, () => component);
+    const first = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embed.mockResolvedValueOnce(query);
+    const found = await memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags, threshold: 0 });
+    expect(found.results.map(entry => entry.id).sort()).toEqual(first.memories.map(entry => entry.id).sort());
   });
 
   it('still finds an add() memory whose vector the memory adapter can score, even outside float32 range', async () => {
@@ -488,6 +494,8 @@ describe('upsertDocument document text', () => {
     ['shared memory', { view: new Int32Array(new SharedArrayBuffer(8)) }],
     ['NaN', { score: Number.NaN }],
     ['undefined in an array', { list: [1, undefined] }],
+    ['a getter that throws', { get broken() { throw new TypeError('getter failed'); } }],
+    ['a getter that throws a RangeError', { nested: { get broken() { throw new RangeError('getter failed'); } } }],
   ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockClear();
@@ -508,12 +516,12 @@ describe('upsertDocument document text', () => {
 
   it('stores a plain copy of JSON metadata, reading each property once and leaving out undefined properties', async () => {
     let reads = 0;
-    const metadata = { nested: { get note() { reads++; return reads === 1 ? 'first' : 'later'; }, skipped: undefined }, list: [1, 'two', null, true] };
+    const metadata = { nested: { get note() { reads++; return reads === 1 ? 'first' : 'later'; }, skipped: undefined }, list: [1, 'two', null, true],
+      parsed: JSON.parse('{"deep":{"__proto__":{"label":"keep"}}}') as Record<string, unknown> };
     const result = await memory.upsertDocument({ ...scope, content: docV1, metadata });
     expect(reads).toBe(1);
     const stored = await storage.getMemory({ ...scope, id: result.memories[0].id });
-    expect(stored!.metadata).toEqual({ nested: { note: 'first' }, list: [1, 'two', null, true] });
-    expect(Object.keys(stored!.metadata!.nested as object)).toEqual(['note']);
+    expect(JSON.stringify(stored!.metadata)).toBe('{"nested":{"note":"first"},"list":[1,"two",null,true],"parsed":{"deep":{"__proto__":{"label":"keep"}}}}');
   });
 
   it('keeps oversized serializable metadata on the source-limit path, before any provider call', async () => {

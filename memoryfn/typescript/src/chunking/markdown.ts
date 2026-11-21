@@ -135,11 +135,17 @@ function* blocks(text: string): Generator<Block, void, undefined> {
 /** `text` with CRLF and CR line endings made LF. */
 function lf(text: string): string { return text.includes('\r') ? text.replace(/\r\n?/g, '\n') : text; }
 
-/** Length of lf(text), counted without building it. */
-function lfLength(text: string): number {
+/**
+ * Whether lf(text) has at most `size` characters, decided without building it
+ * and reading at most 2 * size characters: each CRLF saves one character, so
+ * a text longer than 2 * size never fits.
+ */
+function lfFits(text: string, size: number): boolean {
+  if (text.length <= size) return true;
+  if (text.length > 2 * size) return false;
   let length = text.length;
-  for (let at = text.indexOf('\r\n'); at >= 0; at = text.indexOf('\r\n', at + 2)) length--;
-  return length;
+  for (let at = text.indexOf('\r\n'); at >= 0 && length > size; at = text.indexOf('\r\n', at + 2)) length--;
+  return length <= size;
 }
 
 /**
@@ -210,7 +216,7 @@ function* pack(source: Iterable<Block>, targetChars: number, overlapChars: numbe
       previous = '';
     }
     // A paragraph that fits in an empty chunk stays whole; a longer one is split leaving room for the overlap.
-    const atoms = lfLength(block.text) <= targetChars ? [{ text: lf(block.text), continues: false }] : hardSplit(block.text, targetChars - overlapChars);
+    const atoms = lfFits(block.text, targetChars) ? [{ text: lf(block.text), continues: false }] : hardSplit(block.text, targetChars - overlapChars);
     for (const atom of atoms) {
       if (!atom.text.trim()) continue;
       const separator = atom.continues ? '' : PARAGRAPH_SEPARATOR;

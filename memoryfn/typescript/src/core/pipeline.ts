@@ -200,10 +200,10 @@ export class MemoryFn implements IMemoryFn {
   async search(input: SearchMemoryInput): Promise<SearchMemoryResult> {
     requireScope(input.tenantId, input.containerTags);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
-    // A plain copy of the query's values is what storage ranks and filters by. A query whose norm overflows or
-    // vanishes in float64 cannot be scored by any adapter, so it is an error, not an empty result.
+    // A plain copy of the query's values is what storage ranks and filters by. A query whose norm overflows
+    // float64 cannot be scored by any adapter, so it is an error, not an empty result.
     const query = plainVector(await this.embedder.embed(input.q), undefined, () => {});
-    if (!query || !Number.isFinite(query.squares) || query.squares === 0) throw new Error('MEMORY_EMBEDDING_INVALID');
+    if (!query || !Number.isFinite(query.squares)) throw new Error('MEMORY_EMBEDDING_INVALID');
     const embedding = query.values;
 
     // 2. Vector search
@@ -232,12 +232,15 @@ export class MemoryFn implements IMemoryFn {
  * later changes to the caller's objects cannot change what is measured or
  * written. An object property that is undefined is left out, as JSON does.
  * Anything else (such as a Map, Date, typed array, BigInt, function or cycle)
- * is MEMORY_METADATA_INVALID, never silently converted; metadata whose copy
- * would pass MAX_SOURCE_REPLACE_BYTES is MemorySourceLimitError.
+ * is MEMORY_METADATA_INVALID, never silently converted, as is metadata whose
+ * reading throws; metadata whose copy would pass MAX_SOURCE_REPLACE_BYTES, or
+ * nest deeper than the stack allows, is MemorySourceLimitError.
  */
 function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (metadata === undefined) return undefined;
   const invalid = () => new Error('MEMORY_METADATA_INVALID');
+  /** Runs caller code (getters, proxies); whatever it throws is invalid metadata. */
+  const read = <T>(get: () => T): T => { try { return get(); } catch { throw invalid(); } };
   const open = new Set<object>();
   let size = 0;
   const copy = (value: unknown): unknown => {
@@ -247,24 +250,27 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
     if (typeof value === 'number') { if (!Number.isFinite(value)) throw invalid(); return value; }
     if (typeof value !== 'object' || open.has(value)) throw invalid();
-    const isArray = Array.isArray(value);
-    const prototype = Object.getPrototypeOf(value);
+    const isArray = read(() => Array.isArray(value));
+    const prototype = read(() => Object.getPrototypeOf(value));
     if (!isArray && prototype !== Object.prototype && prototype !== null) throw invalid();
     open.add(value);
     let result: unknown;
     if (isArray) {
       const items: unknown[] = [];
-      for (let index = 0, count = value.length; index < count; index++) {
-        const item: unknown = value[index];
+      const array = value as unknown[];
+      for (let index = 0, count = read(() => array.length); index < count; index++) {
+        const item: unknown = read(() => array[index]);
         if (item === undefined) throw invalid();
         items.push(copy(item));
       }
       result = items;
     } else {
       const entries: Record<string, unknown> = {};
-      for (const key of Object.keys(value)) {
-        const item: unknown = (value as Record<string, unknown>)[key];
-        if (item !== undefined) entries[key] = copy(item);
+      const object = value as Record<string, unknown>;
+      for (const key of read(() => Object.keys(object))) {
+        const item: unknown = read(() => object[key]);
+        // Defined, not assigned, so a "__proto__" key stays an own data property.
+        if (item !== undefined) Object.defineProperty(entries, key, { value: copy(item), enumerable: true, writable: true, configurable: true });
       }
       result = entries;
     }
