@@ -2104,7 +2104,7 @@ function formatReturnTarget(returnTo: string, url: URL): string {
  * browsers may also turn into a host change.
  */
 function isSameOriginPath(value: string): boolean {
-  if (!value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
     return false;
   }
   // Dot segments (`/.//host`, `/%2e//host`) collapse when the target is
@@ -2128,6 +2128,10 @@ function isSameOriginPath(value: string): boolean {
  * Script and local-data schemes are refused whatever the allowlist says.
  */
 function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
+  // The body is caller JSON, so the declared type is not guaranteed.
+  if (typeof returnTo !== 'string') {
+    return false;
+  }
   let target: URL;
   try {
     target = new URL(returnTo);

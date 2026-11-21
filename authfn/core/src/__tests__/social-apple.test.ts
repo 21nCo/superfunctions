@@ -589,6 +589,11 @@ describe('authfn apple social oauth', () => {
       expect(response.status).toBeGreaterThanOrEqual(400);
     });
 
+    it.each([42, ['/post-auth'], { path: '/post-auth' }])('refuses a non-string returnTo (%j) with a 400', async (returnTo) => {
+      const response = await start(returnTo as unknown as string, ['/post-auth']);
+      expect(response.status).toBe(400);
+    });
+
     it('refuses a script scheme even when it is allowlisted exactly', async () => {
       const response = await start('javascript:alert(1)', ['javascript:alert(1)']);
       expect(response.status).toBe(400);
