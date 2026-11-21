@@ -1,0 +1,21 @@
+memoryfn/typescript/src/chunking/markdown.ts
+  s_aad3da13d40b6e::t_01df417bcc1e6d 221-222,225,228,231
+memoryfn/typescript/tests/chunking.test.ts
+  s_aad3da13d40b6e::t_aaf122892db82f 200-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcd98d842388171715ca589c961c1ddede5e6c2a",
+  "prompts": {},
+  "sessions": {
+    "s_aad3da13d40b6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e953412-56c2-471f-9f9c-49876f7b1782",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
