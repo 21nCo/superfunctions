@@ -36,12 +36,31 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   account: { ipLimit: 120, windowSeconds: 60 },
 };
 
-// Shared through globalThis, so separate copies of AuthFn loaded in one
-// JavaScript realm warn once between them. Each realm (a worker thread, a
-// Node vm context) has its own globals and warns on its own.
-const issuedRateLimitWarnings: Set<string> = ((globalThis as Record<symbol, unknown>)[
-  Symbol.for('authfn.rateLimitWarnings')
-] ??= new Set<string>()) as Set<string>;
+const RATE_LIMIT_WARNINGS_KEY = Symbol.for('authfn.rateLimitWarnings');
+const moduleRateLimitWarnings = new Set<string>();
+
+/**
+ * The warnings already issued, shared through globalThis so separate copies
+ * of AuthFn loaded in one JavaScript realm warn once between them. Each
+ * realm (a worker thread, a Node vm context) has its own globals and warns on
+ * its own. Created on first use, when a server is set up, so importing AuthFn
+ * has no side effects; if globalThis cannot be extended, this copy keeps its
+ * own set.
+ */
+function issuedRateLimitWarnings(): Set<string> {
+  const shared = globalThis as Record<symbol, unknown>;
+  try {
+    const existing = shared[RATE_LIMIT_WARNINGS_KEY];
+    if (existing instanceof Set) {
+      return existing as Set<string>;
+    }
+    const created = new Set<string>();
+    shared[RATE_LIMIT_WARNINGS_KEY] = created;
+    return shared[RATE_LIMIT_WARNINGS_KEY] === created ? created : moduleRateLimitWarnings;
+  } catch {
+    return moduleRateLimitWarnings;
+  }
+}
 
 /**
  * Warns, once per JavaScript realm, when the HTTP rate limiter is off (the default),
@@ -51,7 +70,7 @@ const issuedRateLimitWarnings: Set<string> = ((globalThis as Record<symbol, unkn
 export function warnAboutRateLimitConfig(
   config: Pick<AuthFnRuntimeConfig, 'rateLimit'>,
   warn: (message: string) => void = (message) => console.warn(message),
-  issuedBefore: Set<string> = issuedRateLimitWarnings
+  issuedBefore: Set<string> = issuedRateLimitWarnings()
 ): string[] {
   const messages: string[] = [];
   if (!config.rateLimit?.enabled) {

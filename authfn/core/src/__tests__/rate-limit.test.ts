@@ -407,7 +407,7 @@ describe('rate limit startup warnings (AF-12)', () => {
     expect(warned).toHaveLength(1);
   });
 
-  it('warns once when servers are created with rate limiting off', async () => {
+  it('warns once across servers and module copies, and only once a server is set up', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const key = Symbol.for('authfn.rateLimitWarnings');
     const saved = (globalThis as Record<symbol, unknown>)[key];
@@ -415,10 +415,17 @@ describe('rate limit startup warnings (AF-12)', () => {
       // A fresh module copy and an empty shared set, so earlier servers in this run do not count.
       delete (globalThis as Record<symbol, unknown>)[key];
       vi.resetModules();
-      const fresh = await import('../core/rate-limit.js');
+      const first = await import('../core/rate-limit.js');
+      // Importing creates no shared state; setting up a server does.
+      expect((globalThis as Record<symbol, unknown>)[key]).toBeUndefined();
       const config = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] } as AuthFnRuntimeConfig;
-      fresh.createAuthFnRateLimitMiddleware(config);
-      fresh.createAuthFnRateLimitMiddleware(config);
+      first.createAuthFnRateLimitMiddleware(config);
+      first.createAuthFnRateLimitMiddleware(config);
+      // A second copy of the module (as two bundles of AuthFn would load) shares the set.
+      vi.resetModules();
+      const second = await import('../core/rate-limit.js');
+      expect(second).not.toBe(first);
+      second.createAuthFnRateLimitMiddleware(config);
       expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([expect.stringMatching(/rate limiting is OFF/)]);
     } finally {
       (globalThis as Record<symbol, unknown>)[key] = saved;
