@@ -278,6 +278,7 @@ async function runHostedCase(
         "authorization",
         decision,
       );
+      assertIneligibleClientRejection(decision, authorizationError);
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture, decision)) {
@@ -286,6 +287,7 @@ async function runHostedCase(
         fixture,
         decision,
       );
+      assertIneligibleClientRejection(decision, pageErrorCode);
       return assessHostedCase(fixture, phase, responseStatus, pageErrorCode, undefined, true);
     }
     if (!isRedirect(authorizationResponse.status)) {
@@ -589,6 +591,31 @@ function assertCallbackEligible(decision: RedirectDecision | undefined): void {
 }
 
 /**
+ * The server rejects an incompatible registration before it matches the
+ * redirect URI or validates the rest of the request: a stored one as
+ * `invalid_client`, a fetched Client ID Metadata Document as
+ * `invalid_client_metadata`, or `invalid_scope` for an unsupported registered
+ * scope. A matching URI must not let such a registration's rejection carry a
+ * post-match error code.
+ */
+const INELIGIBLE_CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set([
+  ...CLIENT_REJECTION_CODES,
+  "invalid_scope",
+]);
+
+function assertIneligibleClientRejection(
+  decision: RedirectDecision,
+  errorCode: string | undefined,
+): void {
+  if (decision.uriMatch && decision.eligibility === "ineligible" &&
+      errorCode !== undefined && !INELIGIBLE_CLIENT_REJECTION_CODES.has(errorCode)) {
+    throw new Error(
+      `An ineligible client registration must be rejected as a client error, not ${errorCode}`,
+    );
+  }
+}
+
+/**
  * Mirrors the authorization server's client compatibility check: the
  * registration must allow response type `code` and grant type
  * `authorization_code`; its token endpoint authentication method and its
@@ -708,7 +735,8 @@ function assertRedirectUriNotReflected(
     fixture.authorization.redirectUri,
     ...(redirectMatch ? [redirectMatch.requested, redirectMatch.registered] : []),
   ]);
-  const forms = [...redirectUris].flatMap((redirectUri) => [
+  // A blank requested URI has no destination to reflect.
+  const forms = [...redirectUris].filter((redirectUri) => redirectUri.trim()).flatMap((redirectUri) => [
     redirectUri,
     JSON.stringify(redirectUri).slice(1, -1),
     redirectUri.replaceAll("/", "\\/"),

@@ -919,17 +919,23 @@ describe("unvetted-client authorization rejections", () => {
           }
           const fixture = rejectionFixture(DYNAMIC);
           ineligible(fixture);
-          for (const [body, expected] of [
-            ["<p><code>invalid_client</code></p>", { status: "passed", responseStatus: 400 }],
-            [`<a href="${requested}">Back</a>`, {
+          const postMatch = {
+            status: "failed",
+            error: "An ineligible client registration must be rejected as a client error, not invalid_target",
+          };
+          for (const [render, expected] of [
+            [htmlPage("<p><code>invalid_client</code></p>"), { status: "passed", responseStatus: 400 }],
+            [htmlPage(`<a href="${requested}">Back</a>`), {
               status: "failed",
               error: "Authorization error response must not reflect the client redirect URI",
             }],
+            [htmlPage("<p><code>invalid_target</code></p>"), postMatch],
+            [() => Response.json({ error: "invalid_target" }, { status: 400 }), postMatch],
           ] as const) {
             const [page] = await runHostedAuthorizationRegression({
               issuer,
               prepareRegistration: async () => {},
-              request: htmlPage(body),
+              request: async () => render(),
             }, [fixture]);
             expect(page).toMatchObject(expected);
           }
@@ -1055,6 +1061,20 @@ describe("unvetted-client authorization rejections", () => {
           responseStatus: 400,
           errorCode: "invalid_client_metadata",
         });
+        // A fetched document with an unsupported registered scope is rejected
+        // as invalid_scope before the redirect URI is matched.
+        Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: "none", scope: "mcp:admin" });
+        fixture.expected.errorCode = "invalid_scope";
+        const [unsupportedScope] = await runHostedAuthorizationRegression({
+          issuer,
+          tokenEndpointAuthMethods: ["none"],
+          supportedScopes: ["mcp:read"],
+          prepareRegistration: async () => {},
+          request: (request) => handler(request),
+        }, [fixture]);
+        expect(unsupportedScope).toMatchObject({ status: "passed", errorCode: "invalid_scope" });
+        withoutMethod(fixture);
+        delete fixture.registration.metadata.scope;
         fixture.expected.errorCode = "invalid_target";
         // Only one default is supported: a callback is indeterminate.
         for (const declared of [["none"], ["client_secret_basic"]]) {
@@ -1173,6 +1193,16 @@ describe("unvetted-client authorization rejections", () => {
           error: "Rejected redirect URI must not receive a callback",
         });
       });
+    });
+
+    it.each(["", " "])("accepts a JSON rejection of the blank redirect URI %j", async (blank) => {
+      const results = await runAgainstMcpFn([DYNAMIC, METADATA_DOCUMENT], undefined, (fixture) => {
+        fixture.authorization.redirectUri = blank;
+        fixture.expected.errorCode = "invalid_request";
+      });
+      for (const result of results) {
+        expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_request" });
+      }
     });
 
     it("never accepts an invalid_client_metadata error callback", async () => {
