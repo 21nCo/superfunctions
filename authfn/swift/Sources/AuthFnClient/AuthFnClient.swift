@@ -82,11 +82,15 @@ public final class AuthFnClient: Sendable {
 
     public func verifyOtp(email: String, code: String, purpose: String = "sign-in") async throws -> AuthFnSessionCredential {
         if purpose == "verify-email" {
-            // Verifying an email issues no session; the stored one stays.
-            _ = try await verifyEmail(email: email, code: code)
-            guard let stored = try await credentialStore.loadCredential() else {
+            // Verifying an email issues no session, so this returns the stored
+            // one, which must be this account's: checked before the code is
+            // sent, so nothing happens on the server otherwise. To verify
+            // without a session (which claims the account), use verifyEmail.
+            guard let stored = try await credentialStore.loadCredential(),
+                  stored.session.primaryEmail.map(normalize) == normalize(email) else {
                 throw AuthFnError.unauthenticated
             }
+            _ = try await verifyEmail(email: email, code: code, bearerToken: stored.token)
             return stored
         }
         return try await credentialFromRegionalRequest(identifier: email) { regionId in
@@ -111,7 +115,10 @@ public final class AuthFnClient: Sendable {
     /// removes everything set up on the account before. Cookies are left out,
     /// so a stale or unrelated session cookie cannot get in the way.
     public func verifyEmail(email: String, code: String) async throws -> Bool {
-        let holderToken = try await credentialStore.loadCredential()?.token
+        try await verifyEmail(email: email, code: code, bearerToken: try await credentialStore.loadCredential()?.token)
+    }
+
+    private func verifyEmail(email: String, code: String, bearerToken holderToken: String?) async throws -> Bool {
         let regionId = try await regionIdFor(identifier: email)
         let result: AuthFnEmailVerification = try await post(
             path: "/otp/verify",

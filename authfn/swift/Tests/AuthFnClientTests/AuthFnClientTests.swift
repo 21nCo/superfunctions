@@ -91,6 +91,24 @@ final class AuthFnClientTests: XCTestCase {
             "Bearer test-session-token"
         )
 
+        // Without a stored session for this email, verifyOtp sends nothing.
+        StubURLProtocol.log.clear()
+        let signedOut = AuthFnClient(
+            configuration: AuthFnConfiguration(defaultRegionId: "us-east-1", baseURL: URL(string: "https://account.example.com/auth")!, urlSession: StubURLProtocol.session()),
+            credentialStore: AuthFnInMemoryCredentialStore()
+        )
+        do {
+            _ = try await signedOut.verifyOtp(email: "ada@example.com", code: "123456", purpose: "verify-email")
+            XCTFail("expected unauthenticated")
+        } catch AuthFnError.unauthenticated {
+        }
+        do {
+            _ = try await client.verifyOtp(email: "bea@example.com", code: "123456", purpose: "verify-email")
+            XCTFail("expected unauthenticated for another account's email")
+        } catch AuthFnError.unauthenticated {
+        }
+        XCTAssertTrue(StubURLProtocol.log.all().filter { $0.url?.path.hasSuffix("/otp/verify") == true }.isEmpty)
+
         StubURLProtocol.log.clear()
         _ = try await client.verifyOtp(email: "ada@example.com", code: "123456", purpose: "sign-in")
         let signIn = StubURLProtocol.log.all().first { $0.url?.path.hasSuffix("/otp/verify") == true }
