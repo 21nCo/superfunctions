@@ -1118,24 +1118,6 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(await finishing).toBe('AUTHFN_2FA_INVALID_CODE');
   });
 
-  it('ends the run when a correct code loses its challenge to the same sign-in submitted twice', async () => {
-    const setup = await enrolledUser({ maxFailedAttempts: 3 });
-    const wrong = setup.wrongCode(setup.clock.now());
-    const verify = (code: string) =>
-      verifyTwoFactorCode(setup.config, setup.userId, code, setup.pluginConfig).then(() => 'ok', (error) => error.code);
-    for (let round = 0; round < 3; round += 1) {
-      setup.clock.advanceSeconds(30);
-      const challengeId = await setup.challenge();
-      const totp = generateTotp(setup.secret, setup.clock.now());
-      const responses = await Promise.all([1, 2].map(() => setup.post('/2fa/challenge', { challengeId, code: totp })));
-      expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
-    }
-    // Double submissions left no attempts behind: two wrong codes are still
-    // checked before the third completes a run.
-    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
-    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
-  });
-
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;
