@@ -1,0 +1,29 @@
+datafn/docs/content/docs/documentation/server/setup.mdx
+  s_ec6b5de5161f9d::t_bcfd2c6fccadf5 152-154
+datafn/docs/content/docs/documentation/security/production-checklist.mdx
+  s_df6686278ce1d2::t_5c956e617680ac 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99e0c4e365014ea5f8fd77db340bdbcfd45e9d22",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ec6b5de5161f9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cce85e13-8b4b-47a2-8ca8-579369e4ed7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
