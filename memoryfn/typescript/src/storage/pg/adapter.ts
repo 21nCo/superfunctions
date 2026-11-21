@@ -25,18 +25,24 @@ const UUID = /^(?:\{(?:[0-9a-f]{4}-?){7}[0-9a-f]{4}\}|(?:[0-9a-f]{4}-?){7}[0-9a-
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
   private db: PostgresJsDatabase<any>;
-  /** A transaction's adapter reports its parent's declaration, since the parent serves add() after the commit. */
-  private parentExcludesSources: boolean | undefined;
+  /** A transaction's adapter reads its parent's declaration live, since the parent serves add() after the commit. */
+  private parent: PostgresAdapter | undefined;
+  /** Set when source rows were written while excludesSources was declared; such a commit rechecks it. */
+  private declaredSourceWrite = false;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
     this.db = db;
   }
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
-    return this.db.transaction(tx => {
+    return this.db.transaction(async tx => {
       const scoped = new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>);
-      scoped.parentExcludesSources = this.excludesSources === true;
-      return operation(scoped);
+      scoped.parent = this;
+      const result = await operation(scoped);
+      // Thrown inside the callback, so source rows staged under a withdrawn declaration roll back.
+      if (scoped.declaredSourceWrite && this.excludesSources !== true) throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
+      if (scoped.declaredSourceWrite) this.declaredSourceWrite = true;
+      return result;
     });
   }
 
@@ -119,9 +125,13 @@ export class PostgresAdapter implements StorageAdapter {
     }));
   }
 
-  /** Declared only while searchVectors is the built-in one: an override or a replacement must declare excludesSources itself. */
+  /**
+   * Declared only while searchVectors is the built-in one: an override or a
+   * replacement must declare excludesSources itself. A transaction's adapter
+   * also requires its parent's declaration, read live.
+   */
   get excludesSources(): boolean {
-    return this.parentExcludesSources ?? this.searchVectors === builtInPostgresSearch;
+    return this.searchVectors === builtInPostgresSearch && (this.parent === undefined || this.parent.excludesSources === true);
   }
 
   async searchVectors(params: {
@@ -371,6 +381,7 @@ export class PostgresAdapter implements StorageAdapter {
 
   /** The replacement's one write statement; the caller holds withSourceLock. */
   private async writeSource(tx: PostgresJsDatabase<any>, { scope, contentHash, now, values }: ReturnType<PostgresAdapter['replacement']>): Promise<Memory[]> {
+    if (this.excludesSources === true) this.declaredSourceWrite = true;
     if (!values.length) { await this.clearSource(tx, scope, now); return []; }
     const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
     const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();

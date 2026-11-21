@@ -72,12 +72,17 @@ export interface StorageAdapter {
    * rows before ranking and truncating to topK. upsertDocument requires it,
    * with replaceSourceIfChanged, and otherwise fails with
    * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
-   * writes never hide an ordinary candidate from add(). The built-in adapters
-   * declare it only while their searchVectors is the built-in one, and an
-   * adapter they open for a transaction declares what its parent declares; a
-   * subclass that overrides searchVectors must declare it itself, by
-   * overriding their excludesSources getter. Only true
-   * declares it.
+   * writes never hide an ordinary candidate from add(). upsertDocument checks
+   * it again immediately before its write, and a built-in transaction that
+   * wrote source rows while it held checks it again before committing, failing
+   * with MEMORY_DOCUMENTS_UNSUPPORTED (and rolling back) once it is withdrawn.
+   * The built-in adapters declare it only while their searchVectors is the
+   * built-in one, and an adapter they open for a transaction also requires its
+   * parent's declaration, read live; a subclass that overrides searchVectors
+   * must declare it itself, by overriding their excludesSources getter. Only
+   * true declares it. The guarantee covers exact search, the shipped default:
+   * an approximate pgvector index filters source rows after its candidate scan,
+   * like the tenant and scope filters, and can return fewer candidates.
    */
   readonly excludesSources?: boolean;
   close?(): Promise<void>;

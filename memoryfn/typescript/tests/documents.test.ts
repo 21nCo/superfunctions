@@ -939,6 +939,61 @@ describe('add() candidates and source rows', () => {
     expect(await adapter.transaction(async tx => tx.excludesSources)).toBe(true);
   });
 
+  describe('a declaration withdrawn after upsertDocument starts', () => {
+    /** Replaces the instance's search with a delegating wrapper, as vi.spyOn or instrumentation would; returns a restore. */
+    const withdraw = (adapter: MemoryStorageAdapter) => {
+      const builtIn = adapter.searchVectors;
+      adapter.searchVectors = params => builtIn.call(adapter, params);
+      return () => { delete (adapter as Partial<MemoryStorageAdapter>).searchVectors; };
+    };
+    const live = async (adapter: StorageAdapter) => (await liveSourceRows(adapter)).map(row => row.content).sort();
+
+    it('rejects before the write when the embedder withdraws it, keeping the previous source', async () => {
+      await memory.upsertDocument({ ...scope, content: docV1 });
+      const before = await live(storage);
+      embedder.embedBatch.mockImplementationOnce(async (texts: string[]) => { withdraw(storage); return texts.map(() => new Array(26).fill(1)); });
+      const write = vi.spyOn(storage, 'replaceSourceIfChanged');
+      await expect(memory.upsertDocument({ ...scope, content: docV2 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+      expect(write).not.toHaveBeenCalled();
+      expect(await live(storage)).toEqual(before);
+    });
+
+    it('reads the root declaration live through nested transactions', async () => {
+      const root = new MemoryStorageAdapter();
+      const seen = await root.transaction(outer => outer.transaction!(async inner => {
+        const declared = [outer.excludesSources, inner.excludesSources];
+        const restore = withdraw(root);
+        const withdrawn = [outer.excludesSources, inner.excludesSources];
+        restore();
+        return [declared, withdrawn, [outer.excludesSources, inner.excludesSources]];
+      }));
+      expect(seen).toEqual([[true, true], [false, false], [true, true]]);
+    });
+
+    it('rejects a transaction commit that staged a source replacement, at any nesting level, and keeps the previous source', async () => {
+      await memory.upsertDocument({ ...scope, content: docV1 });
+      const before = await live(storage);
+      const upsert = (tx: StorageAdapter) => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).upsertDocument({ ...scope, content: docV2 });
+      let restore = () => {};
+      await expect(storage.transaction(async tx => { await upsert(tx); restore = withdraw(storage); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+      restore();
+      expect(await live(storage)).toEqual(before);
+      // The inner commit passes; the outer one, which now holds the staged rows, rechecks after the withdrawal.
+      await expect(storage.transaction(async outer => { await outer.transaction!(upsert); restore = withdraw(storage); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+      restore();
+      expect(await live(storage)).toEqual(before);
+      // Declared throughout, the same transaction commits.
+      await storage.transaction(outer => outer.transaction!(upsert));
+      expect(await storage.getSourceState(scope)).toMatchObject({ contentHash: await sha256Hex(docV2) });
+    });
+
+    it('still commits a base replaceSource in a transaction of an adapter that never declared it', async () => {
+      const undeclared = new Capped(false);
+      await undeclared.transaction(tx => seedEighty(tx));
+      expect(await undeclared.getSourceState(scope)).toEqual({ contentHash: 'seeded', chunkCount: 80 });
+    });
+  });
+
   it('finds the ordinary duplicate and conflict behind 80 source rows written through replaceSource on a declared capped adapter', async () => {
     storage = new Capped(true);
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, angled(0.99));

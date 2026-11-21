@@ -114,9 +114,7 @@ export class MemoryFn implements IMemoryFn {
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
     // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
     // Source rows are written only where searchVectors is declared to leave them out, so they never hide an add() candidate.
-    if (typeof this.storage.replaceSourceIfChanged !== 'function' || this.storage.excludesSources !== true) {
-      throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
-    }
+    this.requireDocumentStorage();
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
     // One plain JSON-data copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
     const metadata = metadataSnapshot(input.metadata);
@@ -189,6 +187,8 @@ export class MemoryFn implements IMemoryFn {
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     // Plain copies of the embedder's values, each charged before the next is made: what is charged is exactly what storage receives.
     const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, chargeBytes);
+    // Checked again after every await and before the write, so a declaration withdrawn meanwhile writes nothing.
+    this.requireDocumentStorage();
     const written = await this.storage.replaceSourceIfChanged!({
       ...scope, contentHash,
       chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
@@ -197,6 +197,12 @@ export class MemoryFn implements IMemoryFn {
       return { sourceKey: scope.sourceKey, contentHash, unchanged: true, chunks: written.state.chunkCount, memories: [] };
     }
     return { sourceKey: scope.sourceKey, contentHash, unchanged: false, chunks: written.memories.length, memories: written.memories };
+  }
+
+  private requireDocumentStorage(): void {
+    if (typeof this.storage.replaceSourceIfChanged !== 'function' || this.storage.excludesSources !== true) {
+      throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
+    }
   }
 
   /** Soft-deletes every live chunk and fact of the source (tenantId, exact containerTags set, sourceKey). */

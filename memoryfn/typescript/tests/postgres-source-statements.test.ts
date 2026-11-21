@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type postgres from 'postgres';
 import { PostgresAdapter } from '../src/storage/pg/adapter';
-import { MemorySourceLimitError } from '../src/storage/adapter';
+import { MemorySourceLimitError, type StorageAdapter } from '../src/storage/adapter';
 import * as pgEntry from '../src/storage/pg/index';
 import * as schema from '../src/storage/pg/schema';
 
 /** A postgres-js stand-in that records each statement and answers it without a database. */
 function recorder(onQuery: (query: string) => void = () => {}, values: (query: string) => unknown[][] = () => []) {
   const statements: Array<{ query: string; params: unknown[] }> = [];
+  /** Top-level transactions whose callback resolved, so postgres-js would commit them; a rejected one rolls back. */
+  const commits = { count: 0 };
   const client: Record<string, unknown> = {
     options: { parsers: {}, serializers: {} },
     unsafe(query: string, params: unknown[] = []) {
@@ -17,11 +19,11 @@ function recorder(onQuery: (query: string) => void = () => {}, values: (query: s
       const rows = /transaction_isolation/.test(query) ? [{ isolation: 'read committed' }] : [];
       return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve(values(query)) });
     },
-    begin: (operation: (tx: unknown) => unknown) => operation(client),
+    begin: async (operation: (tx: unknown) => unknown) => { const result = await operation(client); commits.count++; return result; },
     savepoint: (operation: (tx: unknown) => unknown) => operation(client),
   };
   const adapter = new PostgresAdapter(drizzle(client as unknown as postgres.Sql, { schema }));
-  return { adapter, statements };
+  return { adapter, statements, commits };
 }
 
 const TAG = 'probe-tag-0001';
@@ -132,5 +134,31 @@ describe('PostgresAdapter source statements', () => {
     const included = recorder();
     await included.adapter.searchVectors(search);
     expect(included.statements[0].query).not.toMatch(/"source_key" is null/);
+  });
+
+  it('reads the parent declaration live and rolls back a source write staged before it is withdrawn', async () => {
+    const { adapter, statements, commits } = recorder();
+    const builtIn = PostgresAdapter.prototype.searchVectors;
+    const withdraw = () => { adapter.searchVectors = params => builtIn.call(adapter, params); };
+    const restore = () => { delete (adapter as Partial<PostgresAdapter>).searchVectors; };
+    expect(await adapter.transaction(outer => outer.transaction!(async inner => {
+      withdraw();
+      const withdrawn = [outer.excludesSources, inner.excludesSources];
+      restore();
+      return [...withdrawn, outer.excludesSources, inner.excludesSources];
+    }))).toEqual([false, false, true, true]);
+    commits.count = 0; statements.length = 0;
+    const write = (tx: StorageAdapter) => tx.replaceSourceIfChanged!({ ...scope, contentHash: 'hash-1', chunks: [chunk] });
+    // The check throws inside the transaction callback, so postgres-js rolls the written rows back.
+    await expect(adapter.transaction(async tx => { await write(tx); withdraw(); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    restore();
+    expect(statements.some(({ query }) => /insert into "memories"/.test(query))).toBe(true);
+    expect(commits.count).toBe(0);
+    // A nested transaction's write is rechecked again when the outer one ends.
+    await expect(adapter.transaction(async outer => { await outer.transaction!(write); withdraw(); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    restore();
+    expect(commits.count).toBe(0);
+    await adapter.transaction(outer => outer.transaction!(write));
+    expect(commits.count).toBe(1);
   });
 });
