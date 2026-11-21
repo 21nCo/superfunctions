@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -144,6 +145,34 @@ class AwsSesConfig(BaseModel):
     secret_access_key: str = Field(alias="secretAccessKey")
     region: str
     configuration_set_name: Optional[str] = Field(None, alias="configurationSetName")
+    connect_timeout: float = Field(
+        5.0, alias="connectTimeout", gt=0, le=120, strict=True, allow_inf_nan=False
+    )
+    read_timeout: float = Field(
+        10.0, alias="readTimeout", gt=0, le=120, strict=True, allow_inf_nan=False
+    )
+    endpoint_url: Optional[str] = Field(None, alias="endpointUrl", strict=True)
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def validate_endpoint_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            parsed = urlsplit(value)
+            _ = parsed.port
+        except ValueError as error:
+            raise ValueError("Invalid SES endpoint URL") from error
+        if (
+            len(value) > 4096
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+        ):
+            raise ValueError("Invalid SES endpoint URL")
+        return value
 
     model_config = {"populate_by_name": True}
 
