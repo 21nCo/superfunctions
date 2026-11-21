@@ -1,0 +1,70 @@
+name: Notify next sync
+
+# SFNS-126: every push to dev sends one repository_dispatch event `sync-dev`, with payload { sha }, to
+# 21nCo/super-functions.next, whose sync workflow (SFN-104) merges dev into next. The token comes from the
+# 21n-repo-sync GitHub App, whose secrets SYNC_APP_ID and SYNC_APP_PRIVATE_KEY live in the `next-sync` environment,
+# restricted to dev. Without them the job succeeds and logs a skip notice. The job prints nothing from next.
+# scripts/notify-next-sync-workflow.test.mjs checks this file.
+
+on:
+  push:
+    branches:
+      - dev
+
+# The default GITHUB_TOKEN gets no permissions; the dispatch uses the app's installation token.
+permissions: {}
+
+jobs:
+  notify:
+    name: Notify next of the dev push
+    if: github.repository == '21nCo/superfunctions' && (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: next-sync
+    steps:
+      # Secrets cannot appear in a job's if:, so this step reports whether both are set.
+      - name: Check sync app secrets
+        id: sync-app
+        env:
+          SYNC_APP_ID: ${{ secrets.SYNC_APP_ID }}
+          SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SYNC_APP_ID" ] || [ -z "$SYNC_APP_PRIVATE_KEY" ]; then
+            echo "::notice title=next sync skipped::SYNC_APP_ID or SYNC_APP_PRIVATE_KEY is not set in the next-sync environment, so no sync-dev event was sent for $GITHUB_SHA."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The secret holds the App ID (the input name the issue fixes), so app-id is used rather than client-id.
+      - name: Mint 21n-repo-sync installation token
+        id: token
+        if: steps.sync-app.outputs.configured == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ secrets.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+          owner: 21nCo
+          repositories: super-functions.next
+          permission-contents: write
+
+      # repository_dispatch answers 204 with no body; the response is discarded so nothing from next is printed.
+      - name: Send sync-dev to 21nCo/super-functions.next
+        if: steps.sync-app.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          payload=$(jq -cn --arg sha "$SHA" '{event_type: "sync-dev", client_payload: {sha: $sha}}')
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$payload" \
+            https://api.github.com/repos/21nCo/super-functions.next/dispatches)
+          if [ "$status" != "204" ]; then
+            echo "::error title=next sync not sent::repository_dispatch to 21nCo/super-functions.next answered HTTP $status for $SHA."
+            exit 1
+          fi
+          echo "Sent sync-dev for $SHA to 21nCo/super-functions.next."
