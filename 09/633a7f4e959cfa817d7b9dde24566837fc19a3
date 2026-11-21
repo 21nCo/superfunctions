@@ -1,0 +1,25 @@
+langfn/typescript/src/models/profiles/openrouter.ts
+  s_b15184ae60b291::t_ac346fe11971f2 36-38
+langfn/typescript/src/models/responses/model.ts
+  s_b15184ae60b291::t_d5e77af8549248 57-61,160-164,167,174,309
+langfn/typescript/src/models/responses/stream.ts
+  s_b15184ae60b291::t_ec2bc9cbb60069 214-216,228,230,244-246,338,340,343,348,350-352,365-368
+langfn/typescript/tests/responses-mapping.test.ts
+  s_b15184ae60b291::t_142490c9df8865 17,203-212,971-977,1151-1202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09633a7f4e959cfa817d7b9dde24566837fc19a3",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
