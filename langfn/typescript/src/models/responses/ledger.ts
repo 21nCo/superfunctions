@@ -36,13 +36,19 @@ interface Entry extends ItemFacts, TextRecord {
   /** Arrival order of the first event naming the item. */
   seq: number;
   announced?: JsonRecord;
-  /** The item as a running response's output last showed it with status completed. */
-  completedSnapshot?: JsonRecord;
+  /**
+   * The item's settled form before output_item.done: every announcement or running snapshot of it
+   * that states a terminal item status (completed, incomplete, failed), agreed into one.
+   */
+  settled?: JsonRecord;
   finished?: JsonRecord;
   terminal?: JsonRecord;
   args: Chunk[];
   argsDone?: string;
 }
+
+/** Item statuses that end an item: a form stating one is a finished form of the item. */
+const TERMINAL_ITEM_STATUSES = new Set(["completed", "incomplete", "failed"]);
 
 /** Item types whose call_id and name identify a call. */
 const CALL_TYPES = new Set(["function_call", "custom_tool_call"]);
@@ -156,20 +162,30 @@ export class OutputLedger {
     const entry = hasLocator(facts) ? this.locate(facts, "output_item.added") : this.create(facts);
     if (entry.announced) throw this.fail(`Responses output_item.added announces ${this.describe(entry)} twice`);
     entry.announced = item;
+    this.settle(entry, item, "output_item.added");
   }
 
   /**
    * An item of a running response's output (created, queued, in_progress or any other running
    * envelope), at its array position, which is its output_index. It merges into its entry like
    * an announcement, but a running response may show one item many times, so a repeat is allowed
-   * and must agree. An item the snapshot shows as completed is validated as a complete item, and
-   * every later form of the item (a repeat, the finished and the final item) must agree with it.
+   * and must agree. An item it shows with a terminal status is settled ({@link settle}).
    */
   snapshot(item: JsonRecord, index: number, what: string): void {
-    const entry = this.locate(itemFacts(item, this.provider, index), what);
-    if (item.status !== "completed") return;
-    parseOutputItems([this.withIdentity(entry, item)], this.provider, { incomplete: false });
-    entry.completedSnapshot = entry.completedSnapshot ? this.agree(entry, entry.completedSnapshot, item, what) : item;
+    this.settle(this.locate(itemFacts(item, this.provider, index), what), item, what);
+  }
+
+  /**
+   * An announcement or running snapshot that states a terminal item status is a finished form of
+   * the item, equal in standing to output_item.done: a completed one is validated as a complete
+   * item, and it and every other form of the item (a repeat, the finished and the final item)
+   * agree on every field both state, status included, so an incomplete form is never overturned
+   * by a later completed one.
+   */
+  private settle(entry: Entry, item: JsonRecord, what: string): void {
+    if (typeof item.status !== "string" || !TERMINAL_ITEM_STATUSES.has(item.status)) return;
+    if (item.status === "completed") parseOutputItems([this.withIdentity(entry, item)], this.provider, { incomplete: false });
+    entry.settled = entry.settled ? this.agree(entry, entry.settled, item, what) : item;
   }
 
   /** output_item.done */
@@ -274,8 +290,8 @@ export class OutputLedger {
         return entry;
       });
     }
-    // The finished form of each item: output_item.done, or a running snapshot that showed it
-    // completed, which stands equal to it (both, when stated, must agree).
+    // The finished form of each item: output_item.done, or an announcement or running snapshot
+    // that stated a terminal status, which stands equal to it (both, when stated, must agree).
     const forms = new Map<Entry, JsonRecord>();
     for (const entry of this.entries) {
       const form = this.earlierForm(entry);
@@ -332,7 +348,9 @@ export class OutputLedger {
       const call = item?.type === "function_call" ? item : undefined;
       // Streamed argument deltas are only judged on a completed turn; a truncated call never runs.
       const streamedArgs = completed && entry.args.length ? joined(entry.args) : undefined;
-      if (entry.argsDone !== undefined || streamedArgs !== undefined) {
+      // An incomplete turn may stop before a call whose arguments streamed is in the output; that
+      // call is neither run nor replayed, as with argument deltas alone.
+      if ((entry.argsDone !== undefined || streamedArgs !== undefined) && (call || completed)) {
         if (!call) throw this.fail(`Responses function_call arguments name an unknown ${this.describe(entry)}`);
         if (entry.argsDone !== undefined && call.arguments !== entry.argsDone) {
           throw this.fail(`Responses function_call_arguments.done arguments differ from ${this.describe(entry)}`);
@@ -361,12 +379,12 @@ export class OutputLedger {
 
   /**
    * The most complete form of an item the stream stated before its final one: the finished item,
-   * filled from (and agreeing with) a completed running snapshot of it.
+   * filled from (and agreeing with) its settled form.
    */
   private earlierForm(entry: Entry): JsonRecord | undefined {
-    const { completedSnapshot, finished } = entry;
-    if (completedSnapshot && finished) return this.agree(entry, completedSnapshot, finished, "output_item.done");
-    return finished ?? completedSnapshot;
+    const { settled, finished } = entry;
+    if (settled && finished) return this.agree(entry, settled, finished, "output_item.done");
+    return finished ?? settled;
   }
 
   /**
@@ -441,12 +459,10 @@ export class OutputLedger {
       if (entry[key] !== undefined) throw this.fail(`Responses ${what} names two different items as ${this.describe(entry)}`);
       (entry as unknown as Record<string, unknown>)[key] = other[key];
     }
-    // A running response may show one item completed many times, so two completed snapshots
-    // of the merged item must agree, and the merged entry keeps both forms' fields.
-    if (other.completedSnapshot) {
-      entry.completedSnapshot = entry.completedSnapshot
-        ? this.agree(entry, other.completedSnapshot, entry.completedSnapshot, what)
-        : other.completedSnapshot;
+    // A running response may show one item settled many times, so two settled forms of the
+    // merged item must agree, and the merged entry keeps both forms' fields.
+    if (other.settled) {
+      entry.settled = entry.settled ? this.agree(entry, other.settled, entry.settled, what) : other.settled;
     }
     entry.text.push(...other.text);
     entry.args.push(...other.args);
@@ -576,14 +592,24 @@ export class OutputLedger {
    * Text snapshots that name no item (output_text.done or content_part.done without an item_id
    * or output_index) describe the answer, as unlocated deltas do: a snapshot of content_index i
    * is the answer's i-th output_text part (output then content order), and one that names no
-   * part is the whole answer text. A message rebuilt from them agrees by construction.
+   * part is the whole answer text, and deltas that name a content_index (but no item) are a
+   * prefix of the answer's part they name. A message rebuilt from them agrees by construction.
    */
   private assertUnlocatedText(output: JsonRecord[], type: string): void {
     const record = this.unlocated;
-    if (record.snapshots.size === 0 && record.whole === undefined) return;
+    const byPart = new Map<number, Chunk[]>();
+    for (const chunk of record.text) {
+      if (chunk.contentIndex !== undefined) byPart.set(chunk.contentIndex, [...(byPart.get(chunk.contentIndex) ?? []), chunk]);
+    }
+    if (record.snapshots.size === 0 && record.whole === undefined && byPart.size === 0) return;
     if (output.some((item) => this.synthesized.has(item))) return;
     const parts = answerParts(output);
-    const fail = () => this.fail(`Responses ${type} event answer text differs from a text done event that names no item`);
+    const fail = () => this.fail(`Responses ${type} event answer text differs from a text event that names no item`);
+    // Deltas that name a part (but no item) are a prefix of the answer's part they name.
+    for (const [contentIndex, chunks] of byPart) {
+      const text = parts[contentIndex];
+      if (text === undefined || !text.startsWith(joined(chunks))) throw fail();
+    }
     for (const [contentIndex, snapshot] of record.snapshots) if (parts[contentIndex] !== snapshot) throw fail();
     if (record.whole !== undefined && parts.join("") !== record.whole) throw fail();
   }

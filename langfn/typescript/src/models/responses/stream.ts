@@ -154,7 +154,8 @@ function impliedItemType(type: string): string | undefined {
  * part typed as an output item is an item at the wrong level, a ProviderError.
  */
 function partItemType(part: unknown, what: string, fail: (message: string) => ProviderError): string | undefined {
-  if (!isRecord(part) || typeof part.type !== "string") return undefined;
+  // A content part event exists to state its part; one without a typed part is malformed.
+  if (!isRecord(part) || typeof part.type !== "string" || !part.type) throw fail(`Responses ${what} requires a typed part`);
   if (ITEM_TYPES.has(part.type)) throw fail(`Responses ${what} part has the item type ${part.type}`);
   if (part.type.startsWith("input_")) throw fail(`Responses ${what} part has the input part type ${part.type}`);
   return Object.hasOwn(PART_ITEM_TYPES, part.type) ? PART_ITEM_TYPES[part.type] : undefined;
@@ -327,10 +328,11 @@ export async function* mapResponsesStream(
         // A finished text part states its whole text, like output_text.done; other parts state
         // only their item.
         const part = payload.part;
+        const implied = partItemType(part, what, fail);
         if (isRecord(part) && part.type === "output_text") {
           if (typeof part.text !== "string") throw fail("Responses content_part.done output_text part requires text");
           ledger.textDone(item, index, contentIndex, part.text, what);
-        } else ledger.note(partItemType(part, what, fail), item, index, what);
+        } else ledger.note(implied, item, index, what);
         break;
       }
       case "response.function_call_arguments.delta":
@@ -422,7 +424,8 @@ export async function* mapResponsesStream(
         const what = type.slice("response.".length) || "stream event";
         // A reasoning summary part is a reasoning part: one typed as an output item, an input
         // part or a message part is a part at the wrong place.
-        if (type.startsWith("response.reasoning_summary_part.") && partItemType(payload.part, what, fail) === "message") {
+        if (type.startsWith("response.reasoning_summary_part.") && payload.part !== undefined && payload.part !== null
+          && partItemType(payload.part, what, fail) === "message") {
           throw fail(`Responses ${what} part is a message part`);
         }
         const implied = type === "response.content_part.added" ? partItemType(payload.part, what, fail) : impliedItemType(type);

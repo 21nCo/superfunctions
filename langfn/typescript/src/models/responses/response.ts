@@ -145,7 +145,8 @@ export function outputItemIdentity(item: unknown, provider: string): OutputItemI
  */
 export function outputItemIdentities(items: unknown[], provider: string, what = "output"): OutputItemIdentity[] {
   const fail = (message: string) => new ProviderError(message, { provider });
-  const identities = items.map((item) => outputItemIdentity(item, provider));
+  // Array.from visits the holes of a sparse array (as undefined), which map and every skip.
+  const identities = Array.from(items, (item) => outputItemIdentity(item, provider));
   const ids = new Set<string>();
   const callIds = new Set<string>();
   for (const identity of identities) {
@@ -199,7 +200,7 @@ export function parseOutputItems(
             if (part.annotations !== undefined && part.annotations !== null && !Array.isArray(part.annotations)) {
               throw fail("Responses output_text annotations must be an array");
             }
-            if (Array.isArray(part.annotations) && !part.annotations.every(isRecord)) {
+            if (Array.isArray(part.annotations) && !Array.from(part.annotations).every(isRecord)) {
               throw fail("Responses output_text annotations must be objects");
             }
             text.push(part.text);
@@ -334,7 +335,7 @@ function parseReasoning(item: JsonRecord, provider: string): ResponsesReasoningS
   const texts = (value: unknown, field: string): string[] => {
     if (value === undefined || value === null) return [];
     if (!Array.isArray(value)) throw fail(`Responses reasoning ${field} must be an array`);
-    return value.map((part) => {
+    return Array.from(value as unknown[], (part) => {
       if (!isRecord(part) || typeof part.text !== "string") throw fail(`Responses reasoning ${field} part requires text`);
       const expected = field === "summary" ? "summary_text" : "reasoning_text";
       if (part.type !== undefined && part.type !== expected) {
@@ -534,7 +535,7 @@ export function responsesError(
  * A caller cancellation: the caller's signal is aborted (or the error is its reason). An
  * AbortError the caller did not cause (an upstream or transport abort) is a transport failure.
  */
-function isCallerAbort(error: unknown, signal?: AbortSignal): boolean {
+export function isCallerAbort(error: unknown, signal?: AbortSignal): boolean {
   return !!signal && (signal.aborted || (signal.reason !== undefined && error === signal.reason));
 }
 

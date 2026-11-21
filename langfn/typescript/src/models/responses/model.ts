@@ -1,4 +1,4 @@
-import { ContextLengthError, NotConfiguredError, ProviderError, ValidationError } from "../../core/errors.js";
+import { ContextLengthError, LangFnError, NotConfiguredError, ProviderError, ValidationError } from "../../core/errors.js";
 import type { CompletionRequest, CompletionResponse, StreamEvent } from "../../core/types.js";
 import { type SecretProvider, resolveSecret } from "../../tools/policy.js";
 import { ChatModel } from "../base.js";
@@ -6,7 +6,7 @@ import { defineCapabilityProfile, requireCapability, type CapabilityProfile } fr
 import { type BodyErrorState, throwIfBodyFailed } from "../stream-lines.js";
 import { getTransportClient } from "../transport.js";
 import { buildResponsesPayload } from "./request.js";
-import { parseResponsesResponse, raiseForResponsesStatus, readResponsesBody } from "./response.js";
+import { isCallerAbort, parseResponsesResponse, raiseForResponsesStatus, readResponsesBody } from "./response.js";
 import { mapResponsesStream, readServerSentEvents } from "./stream.js";
 import type { ResponsesChatRequest, ResponsesChatResponse, ResponsesReasoningConfig } from "./types.js";
 
@@ -183,19 +183,28 @@ export class ResponsesChatModel extends ChatModel {
       throwIfBodyFailed(bodyError);
       throwIfAborted(signal);
     };
+    // A body failure that is neither LangFn's own nor the caller's cancellation (an upstream or
+    // transport abort, say) is a ProviderError with that cause, as a JSON body read makes it.
+    const classify = (error: unknown): unknown => (error instanceof LangFnError || isCallerAbort(error, signal)
+      ? error
+      : new ProviderError("Responses stream body could not be read", { provider: this.provider, cause: error }));
     const events = readServerSentEvents(response.body, this.maxStreamLineBytes, { bodyError });
     try {
-      for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sent })) {
+      try {
+        for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sent })) {
+          check();
+          yield event;
+          if (event.type === "end") return;
+          check();
+        }
+      } catch (error) {
         check();
-        yield event;
-        if (event.type === "end") return;
-        check();
+        throw error;
       }
-    } catch (error) {
       check();
-      throw error;
+    } catch (error) {
+      throw classify(error);
     }
-    check();
   }
 
   private payload(request: ResponsesChatRequest, stream: boolean): Record<string, unknown> {
