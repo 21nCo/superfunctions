@@ -94,6 +94,10 @@ jobs:
           node --test scripts/owners.test.mjs scripts/verify-owners.test.mjs
           node scripts/verify-owners.mjs --repo "$OWNERS_REPO"
 
+      # The dev-push notifier (SFNS-126): trigger, repository guard, environment, token permissions and payload.
+      - name: Verify next sync notifier workflow
+        run: node --test scripts/notify-next-sync-workflow.test.mjs
+
       - name: Build CI plan
         id: plan
         run: node scripts/ci-plan.mjs
