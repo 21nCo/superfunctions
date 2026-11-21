@@ -323,13 +323,18 @@ export async function signInWithPassword(
   // runtime: a current-cost hash is checked next to a dummy legacy check; a
   // legacy hash is checked next to deriving its current-cost upgrade; no
   // stored hash means two dummy checks.
-  const submitted = typeof input.password === 'string' ? input.password : '';
+  // A password that is not a string, or is too long, is checked as '' (the
+  // same work) and then refused, even against a stored hash of ''.
+  const notString = typeof input.password !== 'string';
+  const submitted = notString ? '' : input.password;
   const tooLong = Buffer.byteLength(submitted, 'utf8') > MAX_SUBMITTED_PASSWORD_BYTES;
   const password = tooLong ? '' : submitted;
   const storedHash = credential?.passwordHash;
   const legacy = storedHash !== undefined && isLegacyHash(storedHash);
-  // The current-cost job is always queued first, so the order of the two
-  // jobs in the scrypt queue is the same for every account.
+  // Both jobs are admitted together or the request is refused before either
+  // is queued. The current-cost job is always queued first, so the order of
+  // the two jobs in the scrypt queue is the same for every account.
+  assertScryptCapacity(2);
   let valid: boolean;
   let upgradedHash: string | undefined;
   if (legacy) {
@@ -348,7 +353,7 @@ export async function signInWithPassword(
       verifyPassword(password, DUMMY_LEGACY_HASH)
     ]);
   }
-  if (!user || !credential || !valid || tooLong) {
+  if (!user || !credential || !valid || tooLong || notString) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
@@ -590,13 +595,30 @@ function parseStoredHash(storedHash: string): { salt: string; expected: Buffer; 
 let runningScryptJobs = 0;
 const waitingScryptJobs: Array<() => void> = [];
 
+/**
+ * Refuses a request whose `jobs` scrypt jobs would not all fit (running or
+ * queued) right now. Called just before starting them, in the same tick, so
+ * none of them is then refused after another was queued.
+ */
+function assertScryptCapacity(jobs: number): void {
+  const free = Math.max(0, MAX_CONCURRENT_SCRYPT_JOBS - runningScryptJobs);
+  const toQueue = Math.max(0, jobs - free);
+  if (waitingScryptJobs.length + toQueue > MAX_QUEUED_SCRYPT_JOBS) {
+    throw scryptBusyError();
+  }
+}
+
+function scryptBusyError(): AuthFnRateLimitedError {
+  return new AuthFnRateLimitedError('Too many password checks at once; try again shortly', {
+    scope: 'password-hashing',
+    resetAt: new Date(Date.now() + 1000).toISOString()
+  });
+}
+
 async function scryptAsync(password: string, salt: string, keyLength: number, options: ScryptOptions): Promise<Buffer> {
   if (runningScryptJobs >= MAX_CONCURRENT_SCRYPT_JOBS) {
     if (waitingScryptJobs.length >= MAX_QUEUED_SCRYPT_JOBS) {
-      throw new AuthFnRateLimitedError('Too many password checks at once; try again shortly', {
-        scope: 'password-hashing',
-        resetAt: new Date(Date.now() + 1000).toISOString()
-      });
+      throw scryptBusyError();
     }
     // The slot is handed over by the job that finishes (see below), so the
     // count is not raised again here.

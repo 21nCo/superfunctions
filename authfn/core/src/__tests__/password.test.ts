@@ -670,6 +670,17 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     }
   });
 
+  it('refuses a password that is not a string, even against a stored hash of an empty password', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    // An imported credential whose password is ''.
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('') });
+    for (const password of [123, ['x'], { length: 1 }, true]) {
+      await expect(signInWithPassword(config, { email: 'ada@example.com', password: password as unknown as string }))
+        .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+    }
+  });
+
   it('returns the upgraded credential after a sign-in rewrites an old-cost hash', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });

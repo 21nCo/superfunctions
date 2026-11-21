@@ -325,6 +325,39 @@ describe('@authfn/client regional client', () => {
     expect(sent.ok).toBe(true);
   });
 
+  it('does not cache or switch to a region the server calls unknown', async () => {
+    const storage = memoryRegionStorage();
+    const resolved: string[] = [];
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => {
+        resolved.push(regionId);
+        if (regionId === 'unknown') {
+          throw new Error('no base URL for region unknown');
+        }
+        return `https://${regionId}.account.example.com/auth`;
+      },
+      storage,
+      clientOptions: {
+        fetch: async (input) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          if (url.endsWith('/regions/lookup')) {
+            return Response.json({
+              ok: true,
+              data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true },
+              requestId: 'req_lookup'
+            });
+          }
+          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+        }
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
+    expect(sent.ok).toBe(true);
+    expect(resolved).not.toContain('unknown');
+    expect(await storage.get('ada@example.com')).toBeNull();
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];

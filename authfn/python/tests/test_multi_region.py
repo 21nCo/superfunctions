@@ -948,3 +948,30 @@ async def test_move_keeps_placement_fenced_when_activation_cas_fails() -> None:
     assert placement is not None
     assert (placement.state, placement.epoch) == ("moving", 12)
     assert source_resumes == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_keeps_the_redirect_for_an_account_of_this_region_on_another_authority() -> None:
+    service = MultiRegionService(
+        AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn", runtime=RuntimeResolver()),
+        create_plugin_config(),
+    )
+
+    async def located(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        return {
+            "userId": "user_1",
+            "regionId": "eu-west-1",
+            "authority": "https://eu-alt.account.example.com",
+            "domain": ".example.com",
+        }
+
+    service._lookup_record = located  # type: ignore[method-assign]
+    lookup = await service.lookup(
+        identifier="ada@example.com",
+        request=Request("https://eu.account.example.com/auth/regions/lookup"),
+    )
+    # Sign-in here would refuse the other authority, so the answer sends the
+    # caller there instead of continuing locally.
+    assert lookup["continueLocally"] is False
+    assert lookup["redirectTo"] == "https://eu-alt.account.example.com"
+    assert lookup["ownedElsewhere"] is True

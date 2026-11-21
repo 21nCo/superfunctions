@@ -205,9 +205,12 @@ class MultiRegionService:
         located = await self._lookup_record(normalized, request, runtime)
         current = _normalize_authority(runtime.base_url)
         current_region = runtime.region_id or self.plugin_config.default_region_id
-        if located is None or located["regionId"] == current_region:
-            # An unknown identifier and an account in this region get the same
-            # answer, as in the TypeScript kernel: the route needs no sign-in.
+        target = _normalize_authority(located["authority"]) if located else current
+        if located is None or (located["regionId"] == current_region and target == current):
+            # An unknown identifier and an account this server serves get the
+            # same answer, as in the TypeScript kernel: the route needs no
+            # sign-in. An account of this region on another authority keeps
+            # its redirect, because sign-in here compares authorities too.
             return {
                 "identifier": normalized,
                 # Internal only (for the lookup event): the route drops it.
@@ -218,7 +221,6 @@ class MultiRegionService:
                 "continueLocally": True,
                 "redirectTo": None,
             }
-        target = _normalize_authority(located["authority"])
         continue_locally = current == target
         return {
             "identifier": normalized,
@@ -228,7 +230,7 @@ class MultiRegionService:
             "authority": target,
             "domain": located.get("domain"),
             "continueLocally": continue_locally,
-            # Owned by another region than this one (see the TypeScript type).
+            # Owned by another region or authority than this server.
             "ownedElsewhere": True,
             "redirectTo": None if continue_locally else target,
         }

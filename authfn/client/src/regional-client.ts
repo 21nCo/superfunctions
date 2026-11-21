@@ -59,9 +59,15 @@ export function createAuthFnRegionalClient(
       return null;
     }
 
+    const regionId = concreteRegionId(lookup.data.regionId);
+    if (!regionId) {
+      // A server that names no region (gateway mode, or none configured)
+      // leaves the identifier unresolved: the default region is used.
+      return null;
+    }
     const region = {
       identifier,
-      regionId: lookup.data.regionId,
+      regionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       cachedAt: Date.now(),
@@ -85,10 +91,11 @@ export function createAuthFnRegionalClient(
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
         const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
-        if (retry.ok) {
+        const retryRegionId = retry.ok ? concreteRegionId(retry.data.regionId) : undefined;
+        if (retry.ok && retryRegionId) {
           await saveRegion(storage, cacheTtlMs, options, {
             identifier,
-            regionId: retry.data.regionId,
+            regionId: retryRegionId,
             authority: retry.data.authority,
             domain: retry.data.domain,
             cachedAt: Date.now(),
@@ -102,9 +109,14 @@ export function createAuthFnRegionalClient(
       return lookup;
     }
 
+    const regionId = concreteRegionId(lookup.data.regionId);
+    if (!regionId) {
+      // No region named ('unknown', or a gateway answer): nothing to cache.
+      return lookup;
+    }
     await saveRegion(storage, cacheTtlMs, options, {
       identifier,
-      regionId: lookup.data.regionId,
+      regionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       cachedAt: Date.now(),
@@ -140,15 +152,16 @@ export function createAuthFnRegionalClient(
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
-    if (input.flow !== 'sign-up') {
-      currentRegionId = lookup.data.regionId;
+    const answeredRegionId = concreteRegionId(lookup.data.regionId);
+    if (input.flow !== 'sign-up' && answeredRegionId) {
+      currentRegionId = answeredRegionId;
     }
 
     return successEmailPreparation({
       identifier,
       flow: input.flow,
       selectedRegionId,
-      regionId: lookup.data.regionId,
+      regionId: answeredRegionId ?? selectedRegionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       userId: lookup.data.userId,
@@ -313,6 +326,14 @@ function writeStorageMap(value: Record<string, AuthFnCachedRegion>): void {
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
+}
+
+/**
+ * A region id a lookup names, or undefined for none: gateway answers carry no
+ * region, and a server without a configured region answers 'unknown'.
+ */
+function concreteRegionId(regionId: string | undefined): string | undefined {
+  return typeof regionId === 'string' && regionId !== '' && regionId !== 'unknown' ? regionId : undefined;
 }
 
 async function saveRegion(
