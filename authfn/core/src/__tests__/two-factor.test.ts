@@ -888,6 +888,42 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[0] })).status).toBe(400);
   });
 
+  it('answers a locked enrollment without calling the key resolver, and marks the lock', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 1, lockoutSeconds: 600 });
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, setup.wrongCode(setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    Object.assign(setup.pluginConfig, {
+      encryptionKeyResolver: () => {
+        throw new Error('test key service unavailable');
+      }
+    });
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED', details: { scope: 'two-factor', reason: 'enrollment-locked' } });
+  });
+
+  it('returns the time the challenge was claimed', async () => {
+    const setup = await enrolledUser();
+    const challengeId = await setup.challenge();
+    // Time passes between reading the challenge and claiming it.
+    const slow: Adapter = {
+      ...setup.config.database,
+      async findOne(params) {
+        const row = await setup.config.database.findOne(params);
+        if (params.model === 'two_factor_enrollments') {
+          setup.clock.advanceSeconds(5);
+        }
+        return row;
+      }
+    } as Adapter;
+    const satisfied = await satisfyTwoFactorChallenge({ ...setup.config, database: slow }, challengeId, setup.recoveryCodes[0], setup.pluginConfig);
+    const stored = await setup.config.database.findOne<{ consumedAt: Date }>({
+      model: 'two_factor_challenges',
+      where: [{ field: 'id', operator: 'eq', value: challengeId }],
+      namespace: 'authfn'
+    });
+    expect(new Date(satisfied.challenge.consumedAt!).getTime()).toBe(new Date(stored!.consumedAt).getTime());
+  });
+
   it('dates a lock from when it is written, not from when the request started', async () => {
     const setup = await enrolledUser({ maxFailedAttempts: 1, lockoutSeconds: 60 });
     // The request is slow between loading the enrollment and reserving its

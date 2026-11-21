@@ -42,7 +42,7 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `window` | `1` | Skew tolerance — codes from the previous, current, and next window are accepted. |
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
-| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. Changing the limit applies from the next run. Whole number from 1 to 1000. |
+| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. A changed limit applies from the next check, and checks already counted in the current run stay counted (a run already past a lowered limit locks on its next check). Whole number from 1 to 1000. |
 | `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 60 to 31536000 (one year): a lock is dated just before it is written, so it must outlast a slow write. Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
@@ -133,7 +133,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
-| `AUTHFN_RATE_LIMITED` | The enrollment is locked after too many wrong codes. `details.resetAt` is when the lock ends. |
+| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. Without it, the HTTP rate limiter refused the route. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 

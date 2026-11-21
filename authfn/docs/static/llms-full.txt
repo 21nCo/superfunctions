@@ -7144,7 +7144,7 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `window` | `1` | Skew tolerance — codes from the previous, current, and next window are accepted. |
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
-| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. Changing the limit applies from the next run. Whole number from 1 to 1000. |
+| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. A changed limit applies from the next check, and checks already counted in the current run stay counted (a run already past a lowered limit locks on its next check). Whole number from 1 to 1000. |
 | `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 60 to 31536000 (one year): a lock is dated just before it is written, so it must outlast a slow write. Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
@@ -7235,7 +7235,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
-| `AUTHFN_RATE_LIMITED` | The enrollment is locked after too many wrong codes. `details.resetAt` is when the lock ends. |
+| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. Without it, the HTTP rate limiter refused the route. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 
@@ -10223,7 +10223,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OAUTH_CALLBACK_INVALID` | 400 | no | OAuth callback parameters are wrong (missing code, error from provider, …). |
 | `AUTHFN_OAUTH_PROVIDER_UNSUPPORTED` | 400 | no | The configured plugin doesn't recognize the provider id. |
 | `AUTHFN_REDIRECT_URI_DISALLOWED` | 400 | no | `returnTo` (or `state.returnTo`) wasn't on the allowlist. |
-| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor lock (`details.scope: 'two-factor'`). `details.resetAt` is when to try again. |
+| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor enrollment lock (`details.reason: 'enrollment-locked'`). `details.resetAt` is when to try again. |
 | `AUTHFN_REGION_MISMATCH` | 409 | yes | Request landed on the wrong region. `details.redirectTo`. |
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | Identifier isn't registered to any region (anti-enumeration friendly: usually 200 with a fake answer is preferred — see plugin config). |
 | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | 503 | yes | Canonical identity placement could not be read or atomically updated. Gateway mode fails closed. |
@@ -10268,7 +10268,7 @@ The exhaustive type lives in `authfn/core/src/core/errors.ts`. The full error cl
 | `AUTHFN_INVALID_CREDENTIALS` | Generic "Invalid email or password" — never "user not found". |
 | `AUTHFN_2FA_REQUIRED` | Render the 2FA code input. |
 | `AUTHFN_OTP_INVALID` / `OTP_EXPIRED` / `OTP_REPLAYED` | "That code didn't work. Send a new one." |
-| `AUTHFN_RATE_LIMITED` | Disable the submit button until `details.resetAt`; show a countdown. For a two-factor lock (`details.scope: 'two-factor'`), keep recovery-code entry available: recovery codes still work during the lock. |
+| `AUTHFN_RATE_LIMITED` | Disable the submit button until `details.resetAt`; show a countdown. For the two-factor enrollment lock (`details.reason: 'enrollment-locked'`), keep recovery-code entry available: recovery codes still work during it. When the HTTP rate limiter refuses a two-factor route (`details.scope: 'two-factor'` with a `dimension`), recovery codes are refused too until `resetAt`. |
 | `AUTHFN_REGION_MISMATCH` | The regional client follows `details.redirectTo` automatically — usually invisible. |
 | `AUTHFN_VALIDATION_ERROR` | Render per-field errors from `details.fields`. |
 | `AUTHFN_INTERNAL_ERROR` | Generic apology; log the request id from the response. |

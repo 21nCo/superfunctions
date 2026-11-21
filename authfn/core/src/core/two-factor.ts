@@ -224,6 +224,7 @@ export async function confirmTwoFactorEnrollment(
 
   // The secret is read before the attempt is counted, so a key that cannot
   // be resolved does not use up the owner's attempts.
+  assertNotLocked(enrollment, pluginConfig);
   const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
   const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
   await verifyTwoFactorTotp(config, enrollment, code, pluginConfig, secret);
@@ -346,8 +347,9 @@ export async function satisfyTwoFactorChallenge(
   // challenge still being open.
   // It is also conditional on the challenge not having expired by the time
   // of the claim (not just when it was read).
+  let claimedAt = now;
   const claimChallenge = () => {
-    const claimedAt = resolveNow(pluginConfig);
+    claimedAt = resolveNow(pluginConfig);
     return updateRowIfMatches(
       config,
       'two_factor_challenges',
@@ -381,6 +383,7 @@ export async function satisfyTwoFactorChallenge(
   let usedRecoveryCode = false;
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
+    assertNotLocked(enrollment, pluginConfig);
     const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
     const step = await assertTotpMatches(config, enrollment, code, pluginConfig, secret);
@@ -423,7 +426,7 @@ export async function satisfyTwoFactorChallenge(
     }
     usedRecoveryCode = true;
   }
-  const consumed: AuthFnTwoFactorChallengeRecord = { ...challenge, consumedAt: now, updatedAt: now };
+  const consumed: AuthFnTwoFactorChallengeRecord = { ...challenge, consumedAt: claimedAt, updatedAt: claimedAt };
 
   return {
     challenge: consumed,
@@ -593,6 +596,7 @@ async function checkSecondFactor(
 ): Promise<{ usedRecoveryCode: boolean }> {
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
+    assertNotLocked(enrollment, pluginConfig);
     const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
     await verifyTwoFactorTotp(config, enrollment, code, pluginConfig, secret);
@@ -616,18 +620,21 @@ function invalidSecondFactorCode(userId: string): AuthFnTwoFactorInvalidCodeErro
  * limiter. Call it before the code is compared, and `succeeded()` once the
  * code has been accepted and its use recorded.
  *
- * `failedAttemptCount` only ever goes up: every check adds one before the
- * code is compared, and every `maxFailedAttempts`-th check also locks the
- * enrollment for `lockoutSeconds`. Because the value never repeats, a request
- * that read it before other requests moved it on cannot write its attempt
- * (no ABA), so concurrent requests cannot check more codes than the limit.
+ * `failedAttemptCount` only ever goes up. Checks are counted in runs of
+ * ATTEMPT_RUN_SPAN: a run's position is the count past the last multiple of
+ * it. Every check adds one before the code is compared; the check whose
+ * position reaches `maxFailedAttempts` is still made, locks the enrollment
+ * for `lockoutSeconds` and moves the count to the next multiple. Because the
+ * value never repeats, a request that read it before other requests moved
+ * it on cannot write its attempt (no ABA), so concurrent requests cannot
+ * check more codes than the limit.
  *
  * - While the enrollment is locked, no code is checked: `AUTHFN_RATE_LIMITED`
  *   with the time the lock ends.
- * - `succeeded()` moves the count to the end of the current run of
- *   `maxFailedAttempts` and lifts a lock this check set, so the next wrong
- *   code starts a new run. It does so only if no other check was counted
- *   after this one; otherwise those checks, and any lock they set, stand.
+ * - `succeeded()` moves the count to the next multiple of ATTEMPT_RUN_SPAN
+ *   and lifts a lock this check set, so the next wrong code starts a new
+ *   run. It does so only if no other check was counted after this one;
+ *   otherwise those checks, and any lock they set, stand.
  */
 async function reserveTotpCheck(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
@@ -718,9 +725,24 @@ function readAttemptCount(value: unknown): number {
   return Number.isSafeInteger(count) && count >= 0 ? count : 0;
 }
 
+/**
+ * Refuses a check while the enrollment (as read) is locked, before the key
+ * resolver is called, so a locked request is answered without it. The
+ * reservation checks the lock again against the current row.
+ */
+function assertNotLocked(enrollment: AuthFnTwoFactorEnrollmentRecord, pluginConfig: TwoFactorPluginRuntimeConfig): void {
+  const lockedUntil = enrollment.lockedUntil ? new Date(enrollment.lockedUntil) : null;
+  if (lockedUntil && lockedUntil.getTime() > resolveNow(pluginConfig).getTime()) {
+    throw twoFactorLockedError(lockedUntil);
+  }
+}
+
 function twoFactorLockedError(lockedUntil: Date): AuthFnRateLimitedError {
   return new AuthFnRateLimitedError('Too many incorrect two-factor codes; try again later', {
     scope: 'two-factor',
+    // Tells this lock (recovery codes still work) from the HTTP rate
+    // limiter's refusal of a two-factor route (nothing works until it ends).
+    reason: 'enrollment-locked',
     resetAt: lockedUntil.toISOString()
   });
 }
