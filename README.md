@@ -73,12 +73,16 @@ on Depot, so `superfunctions.owners.next.json` must name the check run with
 `"ci": {"checkRun": "<name>", "app": "depot"}`; without it, or with another app,
 `next` refuses every tag. Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
-republishes nothing and skips only the CI check. Both checks run from the
-workflow run's own commit, so a Python or `channel_only` dispatch also works for
-tags made before the checks existed (an npm publish runs on the tag itself, so a
-tag without the checks stops before install), but the tag's own manifests decide
-ownership; only a `channel_only` dispatch of a tag that has no manifests uses the
-run commit's.
+republishes nothing and skips only the CI check.
+
+The checks are steps of the publish workflows, and GitHub runs the workflow file
+of the ref a run starts from. A tag push, or a dispatch with `--ref <tag>`, of a
+tag on a commit made before these checks existed therefore runs that commit's
+ungated workflow; closing that route needs a repository rule such as a tag
+ruleset, which is deferred to SFNS-158. A Python dispatch or an npm
+`channel_only` dispatch started from a newer ref runs the checks from that ref,
+even for an older tag; the tag's own manifests still decide ownership, and only a
+`channel_only` dispatch of a tag that has no manifests uses the run commit's.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

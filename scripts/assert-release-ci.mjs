@@ -150,6 +150,8 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
   const field = ci.kind === 'workflow' ? 'workflow_runs' : 'check_runs';
   // The largest total_count any page advertised: a later page that drops it does not shrink the results owed.
   let advertised = null;
+  // Whether the previous page promised another (a Link rel="next" or an unmet total): an empty answer then is truncation.
+  let owed = false;
   const incomplete = (url, why) =>
     new ReleaseCiError('api-error', `Refusing to publish: GitHub's results for ${url} ${why}, so the gate cannot read them all. Dispatch the workflow again.`, { url });
   for (let page = 1; page <= MAX_PAGES; page += 1) {
@@ -168,6 +170,7 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
     const body = await response.json();
     const items = body?.[field];
     if (!Array.isArray(items)) throw new ReleaseCiError('api-error', `Refusing to publish: GitHub's response for ${url} has no ${field} list`, { url });
+    if (items.length === 0 && owed) throw incomplete(url, `end early (${runs.length} of ${advertised ?? 'more'})`);
     for (const item of items) {
       // Offset paging shifts when a run is added mid-read: a repeated id means a result may have been skipped.
       if (item?.id !== undefined && ids.has(item.id)) throw incomplete(url, `repeat result ${item.id} (they changed while paging)`);
@@ -178,8 +181,8 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
     // More results remain while the Link header offers a next page or an advertised total exceeds what was read;
     // without either signal, a full page may still have a successor.
     const linked = /\brel="next"/.test(response.headers?.get?.('link') ?? '');
-    const more = linked || (advertised !== null ? runs.length < advertised : items.length === PER_PAGE);
-    if (!more) return runs;
+    owed = linked || (advertised !== null ? runs.length < advertised : items.length === PER_PAGE);
+    if (!owed) return runs;
     if (items.length === 0) throw incomplete(url, `end early (${runs.length} of ${advertised ?? 'more'})`);
   }
   // A failure on a page that was never read must not be missed: refuse rather than decide on part of the results.

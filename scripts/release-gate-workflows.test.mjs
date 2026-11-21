@@ -153,6 +153,8 @@ test('publish-tag.yml: channel reconciliation is bound to the commit the build j
   const guard = steps.find(step => step.name === 'Require immutable release tag');
   assert.equal(guard.run, 'node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ needs.build.outputs.release_commit }}"');
   const names = steps.map(step => step.name ?? step.uses);
+  // Before anything is installed for reconciliation, and before the registry is touched.
+  assert.ok(names.indexOf('Require immutable release tag') < names.indexOf('Setup OIDC dist-tag client'));
   assert.ok(names.indexOf('Require immutable release tag') < names.indexOf('Keep prereleases off latest'));
 });
 

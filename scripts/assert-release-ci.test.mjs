@@ -220,6 +220,11 @@ test('a short page is not the last page while total_count or the Link header say
   // A later page that drops total_count and the Link header does not cancel the results page 1 advertised.
   const dropped = recordedFetch({ [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 2, workflow_runs: [workflowRun()] } : { workflow_runs: [] }) });
   await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: dropped.fetchImpl }), 'api-error', 'end early (1 of 2)');
+  // An empty answer to a page the Link header promised is truncation, even without counts.
+  const linkOnly = recordedFetch({
+    [CHECKS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), check_runs: [checkRun({ name: 'Depot CI' })] } : { check_runs: [] }),
+  });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: depot, fetchImpl: linkOnly.fetchImpl }), 'api-error', 'end early (1 of more)');
   // A run added mid-read shifts offset paging: page 2 repeats a page-1 result, and an unseen run may be skipped.
   const shifted = recordedFetch({
     [RUNS_PATH]: url =>
