@@ -107,6 +107,20 @@ class MockDatabaseAdapter:
         self.storage.setdefault(model, []).append(dict(data))
         return self.storage[model][-1]
 
+    async def update_many(
+        self,
+        model: str,
+        where: List[Dict[str, Any]],
+        data: Dict[str, Any],
+        namespace: str,
+    ) -> int:
+        count = 0
+        for row in self.storage.get(model, []):
+            if _matches(row, where):
+                row.update(data)
+                count += 1
+        return count
+
     async def update(
         self,
         model: str,
@@ -939,3 +953,39 @@ async def test_each_sign_in_resolves_the_current_key() -> None:
     keys["current"] = b"test-oauth-second-key-not-a-real-secret-00"
     vault.assert_configured()
     assert vault._cipher("oauth-default") is not first
+
+
+@pytest.mark.asyncio
+async def test_migration_needs_atomic_writes_and_each_callback_keeps_its_own_key() -> None:
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault
+    from authfn.types import ConfigError
+
+    class NoUpdateMany(MockDatabaseAdapter):
+        update_many = None  # type: ignore[assignment]
+
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=NoUpdateMany(), namespace="authfn"), default_key_ref="oauth-default",
+        now=datetime.utcnow, key_resolver=_test_oauth_key,
+    )
+    with pytest.raises(ConfigError):
+        await vault.migrate_legacy_tokens()
+
+    calls = {"count": 0}
+
+    def flaky(key_ref: str) -> bytes:
+        calls["count"] += 1
+        if calls["count"] > 1:
+            raise RuntimeError("test key service unavailable")
+        return _test_oauth_key(key_ref)
+
+    db = MockDatabaseAdapter()
+    shared = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=flaky
+    )
+    callback_vault = shared.for_request()
+    # Another call on the shared service fails to resolve the key meanwhile...
+    with pytest.raises(RuntimeError):
+        shared.assert_configured()
+    # ...but this callback still writes with the key it checked.
+    await callback_vault.put(_token_record())
+    assert len(db.storage["oauth_tokens"]) == 1

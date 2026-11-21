@@ -13,7 +13,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
 from cryptography.fernet import Fernet, InvalidToken
-from superfunctions.db.errors import NotFoundError as AdapterNotFoundError
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
@@ -279,6 +278,18 @@ class DbEncryptedTokenVault:
         self._ciphers.pop(self.default_key_ref, None)
         self._cipher(self.default_key_ref)
 
+    def for_request(self) -> "DbEncryptedTokenVault":
+        """A vault for one request, holding the current key for the default
+        reference, checked now (ConfigError if missing or bad)."""
+        vault = DbEncryptedTokenVault(
+            self.config,
+            default_key_ref=self.default_key_ref,
+            now=self.now,
+            key_resolver=self.key_resolver,
+        )
+        vault.assert_configured()
+        return vault
+
     async def migrate_legacy_tokens(self, destination_key_ref: Optional[str] = None) -> int:
         """Re-encrypts, with the configured key, every row still encrypted
         with the key earlier releases derived from the namespace alone (which
@@ -288,6 +299,10 @@ class DbEncryptedTokenVault:
         The old key is used only here, and only for rows the configured key
         cannot open. Someone who could write to the table could also plant a
         row under the old key, so run it promptly after the upgrade."""
+        if not callable(getattr(self.config.database, "update_many", None)):
+            # Each write must be atomic and conditional on the row being
+            # unchanged; without update_many that cannot be guaranteed.
+            raise ConfigError("migrate_legacy_tokens needs a database adapter with update_many")
         rows = await self.config.database.find_many(
             model="oauth_tokens",
             where=[],
@@ -329,20 +344,10 @@ class DbEncryptedTokenVault:
             {"field": "token_id", "operator": "eq", "value": row["token_id"]},
             {"field": "encrypted_payload", "operator": "eq", "value": ciphertext},
         ]
-        update_many = getattr(self.config.database, "update_many", None)
-        if callable(update_many):
-            count = await update_many(
-                model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
-            )
-            return isinstance(count, int) and not isinstance(count, bool) and count >= 1
-        try:
-            await self.config.database.update(
-                model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
-            )
-        except AdapterNotFoundError:
-            # The row changed or is gone; any other failure is raised.
-            return False
-        return True
+        count = await self.config.database.update_many(
+            model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
+        )
+        return isinstance(count, int) and not isinstance(count, bool) and count >= 1
 
     def _cipher(self, key_ref: str) -> Fernet:
         """The cipher for a key reference, from the configured secret key."""
@@ -620,9 +625,11 @@ class SocialOAuthService:
         state: str,
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        # A missing or bad token key fails here, before the provider redirect
-        # or any user is created, not after the callback has written rows.
-        self.token_vault.assert_configured()
+        # A missing or bad token key fails here, before the provider exchange
+        # or any user is created, not after the callback has written rows. This
+        # callback gets its own vault holding the key it checked, so its write
+        # uses that key whatever other calls on this service do meanwhile.
+        vault = self.token_vault.for_request()
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         settings = self._resolve_provider_settings(provider_id, runtime)
@@ -632,6 +639,7 @@ class SocialOAuthService:
             request=request,
             runtime=runtime,
             settings=settings,
+            token_vault=vault,
         )
 
         try:
@@ -735,6 +743,7 @@ class SocialOAuthService:
         request: Optional[Any],
         runtime: Optional[AuthFnRuntimeResolution],
         settings: SocialProviderConfig,
+        token_vault: Optional["DbEncryptedTokenVault"] = None,
     ) -> OAuthFlowService:
         resolved_runtime = runtime or resolve_runtime(self.config, request)
 
@@ -833,7 +842,7 @@ class SocialOAuthService:
                         )
                     },
                     "stateStore": self.state_store,
-                    "tokenVault": self.token_vault,
+                    "tokenVault": token_vault or self.token_vault,
                     "tokenHttpClient": FetchOAuthTokenHttpClient(self.plugin_config.fetcher),
                     "identityHooks": OAuthFlowIdentityHooks.model_validate(
                         {

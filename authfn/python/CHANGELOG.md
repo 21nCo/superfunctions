@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
-- Social OAuth provider tokens are encrypted with a secret key from the new `encryption_key_resolver` (at least 32 bytes). Earlier releases derived the key from the namespace and key reference alone, so anyone who could read the `oauth_tokens` table could decrypt the tokens. Storing a token without a configured key now fails with `AUTHFN_CONFIG_INVALID`. Sign-in checks the key before redirecting to the provider, so a missing key fails before anything is written. Existing rows written with the old derived key are re-encrypted with the configured key by running `token_vault.migrate_legacy_tokens()` once after upgrading; nothing else reads the old key (AUTH-32 AF-14).
+- Social OAuth provider tokens are encrypted with a secret key from the new `encryption_key_resolver` (at least 32 bytes). Earlier releases derived the key from the namespace and key reference alone, so anyone who could read the `oauth_tokens` table could decrypt the tokens. Storing a token without a configured key now fails with `AUTHFN_CONFIG_INVALID`. Sign-in checks the key before redirecting to the provider, so a missing key fails before anything is written. Existing rows written with the old derived key are re-encrypted with the configured key by running `token_vault.migrate_legacy_tokens()` once after upgrading (it needs an adapter with `update_many`); nothing else reads the old key (AUTH-32 AF-14).
 
 ## [0.2.0] - 2026-11-18
 
