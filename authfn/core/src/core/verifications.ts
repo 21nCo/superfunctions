@@ -316,6 +316,7 @@ export async function verifyOtpChallenge(
   let linkedExistingUser = false;
   let user: AuthFnUserRecord | null;
   let pendingSignUp: OtpSignUpUserInput | undefined;
+  let consuming = false;
   // The code matched, so this attempt was not a wrong guess. When the request
   // ends before consuming the challenge (missing user, conflict, hook
   // rejection), the reserved attempt is handed back only if no other request
@@ -361,8 +362,14 @@ export async function verifyOtpChallenge(
       }
     }
 
+    consuming = true;
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
+    if (consuming && !(error instanceof AuthFnOtpReplayedError)) {
+      // The consume write's outcome is unknown (it threw, or could not be
+      // confirmed), so it may still commit: the attempt stays counted.
+      throw error;
+    }
     const released = await releaseOtpAttempt(config, reserved, now);
     // Only after a confirmed no-op: an unknown outcome may already have
     // released the attempt, and a second decrement could erase a wrong code.
