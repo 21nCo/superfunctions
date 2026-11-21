@@ -218,6 +218,51 @@ describe('@authfn/client regional client', () => {
     ]);
   });
 
+  it('lets a new sign-up through when a gateway lookup names no region', async () => {
+    const urls: string[] = [];
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage: memoryRegionStorage(),
+      clientOptions: {
+        fetch: async (input) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          urls.push(url);
+          if (url.endsWith('/regions/lookup')) {
+            // Gateway mode: no regionId, always continue locally.
+            return Response.json({
+              ok: true,
+              data: { identifier: 'new@example.com', authority: 'https://account.example.com', continueLocally: true },
+              requestId: 'req_lookup'
+            });
+          }
+          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+        }
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' });
+    expect(sent.ok).toBe(true);
+    expect(urls.some((url) => url.endsWith('/otp/send'))).toBe(true);
+  });
+
+  it('blocks sign-up for an account owned by another region served from the same authority', async () => {
+    const client = createAuthFnRegionalClient({
+      defaultRegionId: 'us-east-1',
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      storage: memoryRegionStorage(),
+      clientOptions: {
+        fetch: async () => Response.json({
+          ok: true,
+          data: { identifier: 'ada@example.com', regionId: 'eu-west-1', authority: 'https://account.example.com', continueLocally: true },
+          requestId: 'req_lookup'
+        })
+      }
+    });
+    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'ada@example.com' });
+    expect(sent.ok).toBe(false);
+    expect(sent.ok ? undefined : sent.error.code).toBe('AUTHFN_ACCOUNT_ALREADY_EXISTS');
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];

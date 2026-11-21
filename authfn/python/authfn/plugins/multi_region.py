@@ -210,6 +210,8 @@ class MultiRegionService:
             # answer, as in the TypeScript kernel: the route needs no sign-in.
             return {
                 "identifier": normalized,
+                # Internal only (for the lookup event): the route drops it.
+                "userId": located.get("userId") if located else None,
                 "regionId": current_region or "unknown",
                 "authority": current,
                 "domain": None,

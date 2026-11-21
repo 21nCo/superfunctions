@@ -261,7 +261,7 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     )
     assert missing["continueLocally"] is True
     assert missing["authority"] == "https://us.account.example.com"
-    assert "userId" not in missing
+    assert missing.get("userId") is None
 
 
 @pytest.mark.asyncio

@@ -69,7 +69,9 @@ const ISSUED_PARAMETER_SETS = new Set(['32768:8:3', '16384:8:1']);
  * wrong (after the same work), so a request cannot hand scrypt a huge input.
  * Far above what any earlier release could have stored in practice.
  */
-const MAX_SUBMITTED_PASSWORD_LENGTH = 64 * 1024;
+const MAX_SUBMITTED_PASSWORD_BYTES = 64 * 1024;
+/** Looked up for an unknown email; no user id has this form. */
+const NO_SUCH_USER_ID = 'authfn-no-such-user';
 /**
  * scrypt jobs run at once in this process, and jobs allowed to wait for one.
  * Sign-in costs two jobs even for an unknown email, so without a bound a
@@ -291,7 +293,9 @@ export async function signInWithPassword(
   assertPasswordInput(email, input.password);
 
   const user = await findUserByPrimaryEmail(config, email);
-  const credential = user ? await getPasswordCredentialByUserId(config, user.id) : null;
+  // The credential table is read for an unknown email too (an id no user
+  // has), so the number of lookups does not tell which emails have accounts.
+  const credential = await getPasswordCredentialByUserId(config, user?.id ?? NO_SUCH_USER_ID);
   // Every answer costs one hash at the current cost, so response time does
   // not tell which emails have accounts: an unknown email or an account
   // without a password is checked against a dummy hash, and a hash stored at
@@ -305,7 +309,7 @@ export async function signInWithPassword(
   // legacy hash is checked next to deriving its current-cost upgrade; no
   // stored hash means two dummy checks.
   const submitted = typeof input.password === 'string' ? input.password : '';
-  const tooLong = submitted.length > MAX_SUBMITTED_PASSWORD_LENGTH;
+  const tooLong = Buffer.byteLength(submitted, 'utf8') > MAX_SUBMITTED_PASSWORD_BYTES;
   const password = tooLong ? '' : submitted;
   const storedHash = credential?.passwordHash;
   const legacy = storedHash !== undefined && isLegacyHash(storedHash);
@@ -319,28 +323,7 @@ export async function signInWithPassword(
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
-  // The credential may have changed while the hash ran: a reset (the checked
-  // password is no longer the account's) or another sign-in's upgrade (it
-  // still is). The submitted password must match what is stored now, read
-  // again after every check, a few times at most.
-  let checkedHash = credential.passwordHash;
-  let latest: AuthFnPasswordCredentialRecord | null = null;
-  for (let round = 0; round < 3 && !latest; round += 1) {
-    const current = await getPasswordCredentialByUserId(config, user.id);
-    if (!current) {
-      throw new AuthFnInvalidCredentialsError('Invalid email or password');
-    }
-    if (current.passwordHash === checkedHash) {
-      latest = current;
-    } else if (await verifyPassword(password, current.passwordHash)) {
-      checkedHash = current.passwordHash;
-    } else {
-      throw new AuthFnInvalidCredentialsError('Invalid email or password');
-    }
-  }
-  if (!latest) {
-    throw new AuthFnInvalidCredentialsError('Invalid email or password');
-  }
+  let latest = await confirmCurrentCredential(config, user.id, password, credential.passwordHash);
 
   // Checked only once the password is known to be the account's current
   // one, so the answer reveals nothing to someone who does not know it.
@@ -351,10 +334,44 @@ export async function signInWithPassword(
   }
 
   if (upgradedHash && latest.passwordHash === credential.passwordHash) {
-    await upgradePasswordHash(config, credential, upgradedHash, password);
+    const upgraded = await upgradePasswordHash(config, credential, upgradedHash);
+    if (!upgraded) {
+      // Another write got there first (another sign-in's upgrade, or a
+      // reset): confirm the password against whatever is stored now.
+      latest = await confirmCurrentCredential(config, user.id, password, credential.passwordHash);
+    }
   }
 
   return { user, credential: latest };
+}
+
+/**
+ * Returns the stored credential once the password is known to match it. The
+ * credential may change while a hash runs: a reset (the checked password is
+ * no longer the account's) or another sign-in's upgrade (it still is). So it
+ * is read again after every check, a few times at most.
+ */
+async function confirmCurrentCredential(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  userId: string,
+  password: string,
+  checkedHash: string
+): Promise<AuthFnPasswordCredentialRecord> {
+  let checked = checkedHash;
+  for (let round = 0; round < 3; round += 1) {
+    const current = await getPasswordCredentialByUserId(config, userId);
+    if (!current) {
+      break;
+    }
+    if (current.passwordHash === checked) {
+      return current;
+    }
+    if (!(await verifyPassword(password, current.passwordHash))) {
+      break;
+    }
+    checked = current.passwordHash;
+  }
+  throw new AuthFnInvalidCredentialsError('Invalid email or password');
 }
 
 export async function createPasswordCredential(
@@ -406,7 +423,12 @@ export async function getPasswordCredentialByUserId(
 
 export async function updatePasswordCredential(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  input: { userId: string; password: string },
+  input: {
+    userId: string;
+    password: string;
+    /** From preparePasswordHash: already checked against the policy. */
+    preparedHash?: string;
+  },
   options: PasswordPolicyOptions = {}
 ): Promise<AuthFnPasswordCredentialRecord> {
   const userIdLength = Array.from(input.userId).length;
@@ -428,11 +450,7 @@ export async function updatePasswordCredential(
           AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
         )
       : assertAuthFnDatabaseKeyLength(input.userId, 'userId');
-  await assertValidPassword(input.password, {
-    ...options,
-    purpose: options.purpose ?? 'update-password'
-  });
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = input.preparedHash ?? await preparePasswordHash(input.password, options);
 
   if (!existing) {
     return createPasswordCredential(config, {
@@ -451,6 +469,18 @@ export async function updatePasswordCredential(
     },
     namespace: namespace(config)
   });
+}
+
+/**
+ * Checks a new password against the policy and hashes it, so a caller can do
+ * both before anything irreversible (a reset uses its code only afterwards).
+ */
+export async function preparePasswordHash(password: string, options: PasswordPolicyOptions = {}): Promise<string> {
+  await assertValidPassword(password, {
+    ...options,
+    purpose: options.purpose ?? 'update-password'
+  });
+  return hashPassword(password);
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -533,16 +563,25 @@ async function scryptAsync(password: string, salt: string, keyLength: number, op
         resetAt: new Date(Date.now() + 1000).toISOString()
       });
     }
+    // The slot is handed over by the job that finishes (see below), so the
+    // count is not raised again here.
     await new Promise<void>((resolve) => {
       waitingScryptJobs.push(resolve);
     });
+  } else {
+    runningScryptJobs += 1;
   }
-  runningScryptJobs += 1;
   try {
     return await runScrypt(password, salt, keyLength, options);
   } finally {
-    runningScryptJobs -= 1;
-    waitingScryptJobs.shift()?.();
+    const next = waitingScryptJobs.shift();
+    if (next) {
+      // Hand this slot straight to the next waiter, so a new caller cannot
+      // take it in between and exceed the cap.
+      next();
+    } else {
+      runningScryptJobs -= 1;
+    }
   }
 }
 
@@ -575,20 +614,17 @@ function isLegacyHash(storedHash: string): boolean {
 /**
  * Replaces a hash stored at the older cost with one at the current cost,
  * after its password was used to sign in. The write only applies while the
- * stored hash is unchanged, so it cannot undo a concurrent reset; if that
- * happened, the sign-in is refused, because the password it checked is no
- * longer the account's. A write that fails otherwise leaves the old hash,
- * which still works.
+ * stored hash is unchanged, so it cannot undo a concurrent reset. Returns
+ * false when another write got there first; the caller then confirms the
+ * password against what is stored now.
  */
 async function upgradePasswordHash(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   credential: AuthFnPasswordCredentialRecord,
-  upgradedHash: string,
-  password: string
-): Promise<void> {
-  let written: number;
+  upgradedHash: string
+): Promise<boolean> {
   try {
-    written = await config.database.updateMany({
+    const written = await config.database.updateMany({
       model: 'password_credentials',
       where: [
         { field: 'id', operator: 'eq', value: credential.id },
@@ -597,30 +633,14 @@ async function upgradePasswordHash(
       data: { passwordHash: upgradedHash, updatedAt: new Date() },
       namespace: namespace(config)
     });
+    // A count the adapter could not report is treated as written: the old
+    // hash still works either way.
+    return written !== 0;
   } catch {
-    return;
-  }
-  if (written === 0) {
-    const current = await config.database.findOne<AuthFnPasswordCredentialRecord>({
-      model: 'password_credentials',
-      where: [{ field: 'id', operator: 'eq', value: credential.id }],
-      namespace: namespace(config)
-    });
-    // Another sign-in upgraded it first (the password still matches), or a
-    // reset replaced it (it does not).
-    if (!current || (current.passwordHash !== credential.passwordHash && !(await verifyPassword(password, current.passwordHash)))) {
-      throw new AuthFnInvalidCredentialsError('Invalid email or password');
-    }
+    return true;
   }
 }
 
-/**
- * Checks the length of a new password; exported so a reset can check it
- * before its code is used.
- */
-export function assertNewPasswordLength(password: string): void {
-  assertPasswordLength(password);
-}
 
 function assertPasswordInput(email: string, password: string): void {
   if (!email) {

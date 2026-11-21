@@ -280,6 +280,8 @@ export async function buildLookupResult(
     // of another region served from the same authority keeps its region.)
     return {
       identifier,
+      // For the lookup event only: the route drops it from its answer.
+      userId: lookup.userId,
       regionId: input.environment.regionId ?? pluginConfig.defaultRegionId ?? 'unknown',
       authority: currentAuthority,
       domain: undefined,

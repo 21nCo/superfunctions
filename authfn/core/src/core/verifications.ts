@@ -25,7 +25,7 @@ import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { hashSecret } from './sessions.js';
 import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
-import { assertNewPasswordLength, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { preparePasswordHash, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -448,10 +448,17 @@ export async function completeResetPassword(
   input: CompleteResetPasswordInput
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
-  // Checked before the code is used, so a password of the wrong length can be
-  // corrected and sent again with the same code.
-  assertNewPasswordLength(input.newPassword);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
+  // The new password is checked against the policy and hashed before the code
+  // is used, so a refused password, or hashing that is busy, leaves the code
+  // for another try.
+  const preparedHash = await preparePasswordHash(input.newPassword, {
+    ...runtimeOptions.passwordPolicy,
+    request: input.request,
+    environment: runtime,
+    email,
+    purpose: 'reset-password'
+  });
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
@@ -468,7 +475,8 @@ export async function completeResetPassword(
 
   await updatePasswordCredential(config, {
     userId: user.id,
-    password: input.newPassword
+    password: input.newPassword,
+    preparedHash
   }, {
     ...runtimeOptions.passwordPolicy,
     request: input.request,

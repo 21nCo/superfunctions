@@ -552,10 +552,11 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
       .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
   });
 
-  it('refuses a submitted password longer than 64 KiB without hashing it', async () => {
+  it('refuses a submitted password longer than 64 KiB of UTF-8 without hashing it', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });
-    const huge = 'x'.repeat(64 * 1024 + 1);
+    // 25,000 characters, but 75,000 bytes of UTF-8.
+    const huge = '€'.repeat(25_000);
     await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash(huge) });
     await expect(signInWithPassword(config, { email: 'ada@example.com', password: huge }))
       .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
@@ -619,6 +620,14 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     });
     await expect(reset('x'.repeat(1025))).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
     await expect(reset('short')).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
+    // A password the policy refuses also leaves the code for another try.
+    const policyOptions = { ...options, passwordPolicy: { compromisedPasswordChecker: async ({ password }: { password: string }) => password === 'test-password-breached' } };
+    await expect(completeResetPassword(config, policyOptions, {
+      purpose: 'reset-password',
+      email: 'ada@example.com',
+      code: '731942',
+      newPassword: 'test-password-breached'
+    })).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
     await expect(reset('test-password-corrected')).resolves.toEqual({ passwordUpdated: true });
   });
 
@@ -642,8 +651,8 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     const pluginConfig = { lookupStore } as never;
     const known = await buildLookupResult(config, pluginConfig, { identifier: 'ada@example.com', environment });
     const unknown = await buildLookupResult(config, pluginConfig, { identifier: 'nobody@example.com', environment });
-    expect({ ...known, identifier: undefined }).toEqual({ ...unknown, identifier: undefined });
-    expect(known).not.toHaveProperty('userId');
+    // The user id is kept for the lookup event only; the route drops it.
+    expect({ ...known, identifier: undefined, userId: undefined }).toEqual({ ...unknown, identifier: undefined, userId: undefined });
   });
 
   it('says an email is unverified only to someone who knows the password, and names no user', async () => {
