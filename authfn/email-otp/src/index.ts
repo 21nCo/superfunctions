@@ -59,6 +59,12 @@ function createOtpSchema(): AuthFnSchemaDefinition['schemas'] {
         {
           name: 'idx_authfn_otp_challenges_expires_at',
           fields: ['expiresAt']
+        },
+        {
+          // The per-email budget reads an email's newest challenges across
+          // purposes.
+          name: 'idx_authfn_otp_challenges_email_created_at',
+          fields: ['email', 'createdAt', 'id']
         }
       ]
     }

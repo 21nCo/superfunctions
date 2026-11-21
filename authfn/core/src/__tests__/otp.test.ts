@@ -15,7 +15,7 @@ import type {
 } from '../index.js';
 import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
-import { getLatestOtpChallenge, sendOtpChallenge, verifyOtpChallenge } from '../core/verifications.js';
+import { getLatestOtpChallenge, resolveOtpEmailBudget, sendOtpChallenge, verifyOtpChallenge } from '../core/verifications.js';
 import { getSchema } from '../schema.js';
 import { AuthFnOtpReplayedError } from '../core/errors.js';
 
@@ -1441,6 +1441,73 @@ describe('authfn otp plugin', () => {
         }
       }
       expect(refused).toBe(refusedAt);
+    });
+
+    it('lets a limit set for one plugin stand when the other plugin leaves it unset', async () => {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, {
+        maxFailedAttemptsPerEmail: 30,
+        maxChallengesPerEmail: 40,
+        emailAttemptWindowSeconds: 600
+      });
+      // password.otp only supplies delivery.
+      const budget = resolveOtpEmailBudget(config, {});
+      expect(budget).toMatchObject({ maxFailedAttempts: 30, maxChallenges: 40, windowMs: 600_000 });
+      // With neither set, the defaults apply.
+      expect(resolveOtpEmailBudget(createConfig(), {})).toMatchObject({ maxFailedAttempts: 10, maxChallenges: 20, windowMs: 3_600_000 });
+    });
+
+    it('scans far enough back for reset codes whose lifetime is set in the deprecated factory options', () => {
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 4 * 60 * 60 } })];
+      expect(resolveOtpEmailBudget(config, {}).longestTtlMs).toBe(4 * 60 * 60 * 1000);
+    });
+
+    it('retires a new challenge whose admission could not be confirmed even when reading it back fails', async () => {
+      const base = memoryAdapter({ debug: false });
+      let failAdmission = false;
+      let failReadBack = false;
+      const database = new Proxy(base, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if (property === 'update' && typeof value === 'function') {
+            return async (params: { model: string; data: Record<string, unknown> }) => {
+              const row = await value.call(target, params);
+              if (failAdmission && params.model === 'otp_challenges' && !('consumedAt' in params.data) && 'expiresAt' in params.data) {
+                failAdmission = false;
+                failReadBack = true;
+                throw new Error('test admission write timed out');
+              }
+              return row;
+            };
+          }
+          if (property === 'findOne' && typeof value === 'function') {
+            return async (params: { model: string }) => {
+              if (failReadBack && params.model === 'otp_challenges') {
+                failReadBack = false;
+                throw new Error('test read back failed');
+              }
+              return value.call(target, params);
+            };
+          }
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+      }) as AuthFnDatabase;
+      const config = createConfig({ database }) as LimitConfig;
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      const delivered = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      config.__clock.advance(1000);
+      failAdmission = true;
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(false);
+      // The code the user received is still the one checked.
+      expect((await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com'))?.id).toBe(delivered?.id);
     });
 
     it('lets a direct caller tighten the per-email limits but not loosen them', async () => {

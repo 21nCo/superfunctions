@@ -39,7 +39,9 @@ export function authFnPasswordPlugin(
     otpEmailLimits: {
       maxFailedAttemptsPerEmail: config.otp?.maxFailedAttemptsPerEmail,
       maxChallengesPerEmail: config.otp?.maxChallengesPerEmail,
-      emailAttemptWindowSeconds: config.otp?.emailAttemptWindowSeconds
+      emailAttemptWindowSeconds: config.otp?.emailAttemptWindowSeconds,
+      // Reset codes may live this long, so every route's scan must reach them.
+      challengeTtlSeconds: config.otp?.challengeTtlSeconds
     },
     schema: () => config.schema ?? createPasswordSchema(),
     validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime),
@@ -52,6 +54,7 @@ export interface PasswordOtpEmailLimits {
   maxFailedAttemptsPerEmail?: number;
   maxChallengesPerEmail?: number;
   emailAttemptWindowSeconds?: number;
+  challengeTtlSeconds?: number;
 }
 
 function createPasswordSchema(): AuthFnSchemaDefinition['schemas'] {

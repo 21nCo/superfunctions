@@ -565,7 +565,7 @@ function isAdmittedChallenge(row: AuthFnOtpChallengeRecord): boolean {
   return new Date(row.expiresAt).getTime() > new Date(row.createdAt).getTime();
 }
 
-interface OtpEmailBudget {
+export interface OtpEmailBudget {
   maxFailedAttempts: number;
   maxChallenges: number;
   windowMs: number;
@@ -594,7 +594,8 @@ const OTP_EMAIL_SCAN_FLOOR = 100;
  * publishes `otpEmailLimits` contributes on every route, and the `options`
  * of this call, which apply to this call only.
  */
-function resolveOtpEmailBudget(
+/** @internal Exported for tests. */
+export function resolveOtpEmailBudget(
   config: OtpBudgetConfig,
   options: OtpRuntimeOptions
 ): OtpEmailBudget {
@@ -617,12 +618,20 @@ function resolveOtpEmailBudget(
   // lowered and the window lengthened, never the reverse. The deprecated
   // authFnPasswordPlugin({ otp }) limits apply on every route; limits passed
   // to a direct sendOtpChallenge/verifyOtpChallenge call apply to that call.
-  const tighteners = [...readDeprecatedPasswordOtpLimits(config), options];
+  const published = readDeprecatedPasswordOtpLimits(config);
+  const tighteners = [...published, options];
   const fromCaller = (field: OtpEmailBudgetField): number[] => tighteners
     .filter((source) => source[field] !== undefined)
     .map((source) => readPositiveInteger(source[field], 0, field));
-  const configured = (field: OtpEmailBudgetField, fallback: number): number[] =>
-    sources.map((source) => readPositiveInteger(source[field], fallback, field));
+  // Only values a plugin actually sets compete; the default applies when
+  // neither sets the field. (A plugin config that only supplies `delivery`
+  // must not pull the other plugin's explicit value back to the default.)
+  const configured = (field: OtpEmailBudgetField, fallback: number): number[] => {
+    const explicit = sources
+      .filter((source) => source[field] !== undefined)
+      .map((source) => readPositiveInteger(source[field], fallback, field));
+    return explicit.length > 0 ? explicit : [fallback];
+  };
   const strictest = (field: 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail', fallback: number) =>
     Math.min(...configured(field, fallback), ...fromCaller(field));
   const windowMs = Math.max(
@@ -636,7 +645,11 @@ function resolveOtpEmailBudget(
   );
   // The calling route's lifetime counts too: it may come from the deprecated
   // factory options.
-  const longestTtlMs = Math.max(resolveTtlMs(options), ...sources.map((source) => resolveTtlMs(source)));
+  const longestTtlMs = Math.max(
+    resolveTtlMs(options),
+    ...sources.map((source) => resolveTtlMs(source)),
+    ...published.filter((source) => source.challengeTtlSeconds !== undefined).map((source) => resolveTtlMs(source))
+  );
   const windowsPerLifetime = Math.ceil(longestTtlMs / windowMs) + 1;
 
   return {
@@ -856,11 +869,16 @@ async function admitOtpChallenge(
   if (!admitted) {
     // The write may have applied without an acknowledgement; the stored row
     // says whether it was admitted.
-    const stored = await config.database.findOne<AuthFnOtpChallengeRecord>({
-      model: 'otp_challenges',
-      where: [{ field: 'id', operator: 'eq', value: challenge.id }],
-      namespace: namespace(config)
-    });
+    let stored: AuthFnOtpChallengeRecord | null = null;
+    try {
+      stored = await config.database.findOne<AuthFnOtpChallengeRecord>({
+        model: 'otp_challenges',
+        where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+        namespace: namespace(config)
+      });
+    } catch {
+      // Unknown: retire it like an unconfirmed admission.
+    }
     if (!stored || !isAdmittedChallenge(stored) || stored.consumedAt) {
       // Retire the row before giving up, so an admission write still in
       // flight cannot make it the challenge codes are checked against: the
