@@ -82,7 +82,14 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
                 return nil
             }
         }
-        guard let parts = splitOrigin(string) else { return nil }
+        guard let parts = splitOrigin(string) else {
+            // A custom-scheme URL without an authority (`app:/index.html`)
+            // stands for the scheme's hostless origin, as with `app:///`.
+            if let scheme = hostlessURLScheme(string), !isSpecial(scheme), !hostlessSchemes.contains(scheme) {
+                return key(scheme: scheme, host: "", port: nil)
+            }
+            return nil
+        }
         if isUntrustable(scheme: parts.scheme, host: parts.host) {
             return nil
         }

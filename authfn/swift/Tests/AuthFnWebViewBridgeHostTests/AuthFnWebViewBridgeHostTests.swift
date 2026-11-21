@@ -172,6 +172,12 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertTrue(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "app:///index.html"))
         XCTAssertFalse(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "about:blank"))
         XCTAssertFalse(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "other:/index.html"))
+        // The same page configured in its single-slash form.
+        let singleSlash = AuthFnBridgeOriginPolicy(trustedOrigins: [URL(string: "app:/index.html")!])
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("app:/index.html"), "app://")
+        XCTAssertTrue(singleSlash.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "app:/index.html"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("about:blank"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https:/portal.example"))
     }
 
     func testOriginPolicyWithoutOriginsTrustsNothing() {
