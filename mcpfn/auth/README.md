@@ -98,10 +98,11 @@ Unknown clients and unregistered `redirect_uri` values always get a JSON error
 from the authorization server, never a redirect. Once the `redirect_uri`
 matches, later validation errors (for example a missing `code_challenge` or
 `state`, an unsupported `response_type`, or a disallowed `resource`) are
-redirected to that URI with `error`, `error_description`, and `state` only for
-clients whose `source` is listed in `authorizationErrors.redirectSources`. The
-default is `["pre-registered", "enterprise"]`, the clients whose redirect URIs
-the operator provisioned.
+redirected to that URI with `error`, `error_description`, and the request's
+`state` when it supplied one, only for clients whose `source` is listed in
+`authorizationErrors.redirectSources`. The default is
+`["pre-registered", "enterprise"]`, the clients whose redirect URIs the operator
+provisioned.
 
 Dynamically registered and Client ID Metadata Document clients choose their
 own redirect URIs without authentication, so redirecting their errors would

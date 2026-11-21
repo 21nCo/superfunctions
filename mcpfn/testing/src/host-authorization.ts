@@ -36,6 +36,11 @@ export interface McpFnHostedAuthorizationCase {
   token?: McpFnHostedTokenRequestFixture;
   expected: {
     outcome: "allowed" | "rejected";
+    /**
+     * Expected OAuth error code. A dynamic or client-metadata-document client
+     * may be rejected with an HTML error page that has no machine-readable
+     * code; such a rejection is matched on outcome and phase only.
+     */
     errorCode?: string;
     phase?: "client-registration" | "authorization-request" | "token-exchange" | "token-refresh";
   };
@@ -233,6 +238,10 @@ async function runHostedCase(
       await validateOAuthRejection(authorizationResponse, fixture, target.issuer, "authorization");
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
+    if (isUnvettedErrorPage(authorizationResponse, fixture)) {
+      await validateUnvettedErrorPage(authorizationResponse, fixture);
+      return assessHostedCase(fixture, phase, responseStatus, undefined, undefined, true);
+    }
     if (!isRedirect(authorizationResponse.status)) {
       throw new Error(`Authorization request did not redirect (HTTP ${authorizationResponse.status})`);
     }
@@ -374,11 +383,13 @@ function assessHostedCase(
   responseStatus?: number,
   errorCode?: string,
   error?: string,
+  rejectedWithoutCode = false,
 ): McpFnHostedAuthorizationCaseResult {
-  const observedOutcome = errorCode || error ? "rejected" : "allowed";
+  const observedOutcome = errorCode || error || rejectedWithoutCode ? "rejected" : "allowed";
   const expected = fixture.expected;
   const passed = !error && observedOutcome === expected.outcome &&
-    (expected.errorCode === undefined || expected.errorCode === errorCode) &&
+    (expected.errorCode === undefined || expected.errorCode === errorCode ||
+      (rejectedWithoutCode && errorCode === undefined)) &&
     (expected.phase === undefined || expected.phase === phase);
   const expectedCode = expected.errorCode ? `:${expected.errorCode}` : "";
   const observedCode = errorCode ? `:${errorCode}` : "";
@@ -426,16 +437,79 @@ async function validateOAuthRejection(
     validateAuthorizationErrorRedirect(response, fixture, issuer);
     return;
   }
-  const body = await response.clone().json().catch(() => undefined);
-  const registered = (fixture.registration.metadata.redirect_uris as string[])
-    ?.includes(fixture.authorization.redirectUri);
-  if (context === "authorization" && body?.error !== "invalid_client" && registered) {
+  const text = await response.clone().text().catch(() => "");
+  const body = parseJson(text) as { error?: unknown } | null | undefined;
+  const registered = hasRegisteredRedirect(fixture);
+  const unvetted = context === "authorization" && registered && isUnvettedRedirectSource(fixture);
+  if (context === "authorization" && body?.error !== "invalid_client" && registered && !unvetted) {
     throw new Error("Registered authorization requests require an OAuth error callback");
   }
   if (response.status !== 400) throw new Error("OAuth error response has invalid HTTP status");
   if (response.headers.has("location") || !isJsonResponse(response) ||
       !body || typeof body.error !== "string" || !body.error) {
     throw new Error("OAuth error response must be a JSON error envelope");
+  }
+  if (unvetted) assertRedirectUriNotReflected(text, fixture);
+}
+
+/**
+ * Redirect URIs of dynamic and client-metadata-document clients are chosen by
+ * unauthenticated parties, so an authorization server may answer their
+ * authorization-request errors without redirecting (RFC 9700 section 4.11.2).
+ */
+const PROVISIONED_REDIRECT_SOURCES: ReadonlySet<McpFnClientRegistrationSource> = new Set<
+  McpFnClientRegistrationSource
+>(["pre-registered", "enterprise"]);
+
+function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolean {
+  return !PROVISIONED_REDIRECT_SOURCES.has(fixture.registration.source);
+}
+
+function hasRegisteredRedirect(fixture: McpFnHostedAuthorizationCase): boolean {
+  return (fixture.registration.metadata.redirect_uris as string[] | undefined)
+    ?.includes(fixture.authorization.redirectUri) ?? false;
+}
+
+function isUnvettedErrorPage(response: Response, fixture: McpFnHostedAuthorizationCase): boolean {
+  return response.status >= 400 && response.status < 500 &&
+    hasRegisteredRedirect(fixture) && isUnvettedRedirectSource(fixture);
+}
+
+async function validateUnvettedErrorPage(
+  response: Response,
+  fixture: McpFnHostedAuthorizationCase,
+): Promise<void> {
+  if (response.status !== 400) {
+    throw new Error("Authorization error page has invalid HTTP status");
+  }
+  if (response.headers.has("location")) {
+    throw new Error("Authorization error page must not redirect");
+  }
+  const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== "text/html") {
+    throw new Error("Authorization error response must be an HTML page or a JSON error envelope");
+  }
+  assertRedirectUriNotReflected(await response.clone().text(), fixture);
+}
+
+function assertRedirectUriNotReflected(body: string, fixture: McpFnHostedAuthorizationCase): void {
+  const redirectUri = fixture.authorization.redirectUri;
+  const forms = [
+    redirectUri,
+    JSON.stringify(redirectUri).slice(1, -1),
+    redirectUri.replaceAll("/", "\\/"),
+    redirectUri.replaceAll("&", "&amp;"),
+  ];
+  if (forms.some((form) => body.includes(form))) {
+    throw new Error("Authorization error response must not reflect the client redirect URI");
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 

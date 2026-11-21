@@ -476,3 +476,145 @@ it.each([null, undefined, false, 0, ""])( "records falsy adapter rejections with
   expect(results).toHaveLength(fixtures.length);
   expect(results.every(result => result.status === "failed")).toBe(true);
 });
+
+describe("unvetted-client authorization rejections", () => {
+  const issuer = "https://login.example.com";
+  const resource = "https://mcp.example.com/mcp";
+  type AuthorizationErrorOptions = Parameters<
+    typeof createMcpAuthorizationCompatibilityHandler
+  >[0]["authorizationErrors"];
+
+  function rejectionFixture(id: string) {
+    const fixture = createHostedAuthorizationFixtures({ issuer, resource })
+      .find((item) => item.id === id)!;
+    delete fixture.token;
+    fixture.authorization.resource = "https://other.example.com/mcp";
+    fixture.expected = {
+      outcome: "rejected",
+      errorCode: "invalid_target",
+      phase: "authorization-request",
+    };
+    return fixture;
+  }
+
+  const DYNAMIC = "dynamic-registration-code-pkce";
+  const METADATA_DOCUMENT = "claude-client-metadata-extensible-grants";
+  const PRE_REGISTERED = "chatgpt-pre-registered-code-pkce";
+
+  function runAgainstMcpFn(
+    ids: string[],
+    authorizationErrors?: AuthorizationErrorOptions,
+  ) {
+    const registrations = new Map<string, McpFnNormalizedClientRegistration>();
+    const handler = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async (clientId) => registrations.get(clientId) ?? null },
+      allowedResources: [resource],
+      supportedScopes: ["mcp:read"],
+      authorizationErrors,
+      authorize: async () => new Response("unexpected authorize", { status: 500 }),
+      tokenAuthority: {
+        exchangeAuthorizationCode: async () => {
+          throw new Error("unexpected token exchange");
+        },
+        refreshToken: async () => {
+          throw new Error("unexpected token refresh");
+        },
+      },
+    });
+    return runHostedAuthorizationRegression({
+      issuer,
+      async prepareRegistration(fixture) {
+        registrations.set(fixture.clientId, normalizeMcpClientRegistration(fixture));
+      },
+      request: (request) => handler(request),
+    }, ids.map(rejectionFixture));
+  }
+
+  it("accepts McpFn's default HTML error page for dynamic and metadata-document clients", async () => {
+    const results = await runAgainstMcpFn([DYNAMIC, METADATA_DOCUMENT]);
+    expect(results).toEqual([DYNAMIC, METADATA_DOCUMENT].map((id) => ({
+      formatVersion: 1,
+      id,
+      host: expect.any(String),
+      status: "passed",
+      phase: "authorization-request",
+      layer: "authorization-server",
+      responseStatus: 400,
+    })));
+  });
+
+  it("accepts error redirects when the host opts unvetted sources back in", async () => {
+    const results = await runAgainstMcpFn([DYNAMIC, METADATA_DOCUMENT, PRE_REGISTERED], {
+      redirectSources: ["pre-registered", "enterprise", "dynamic", "client-metadata-document"],
+    });
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: "passed",
+        responseStatus: 302,
+        errorCode: "invalid_target",
+      });
+    }
+  });
+
+  it("keeps the error callback requirement for pre-registered clients", async () => {
+    const [redirected] = await runAgainstMcpFn([PRE_REGISTERED]);
+    expect(redirected).toMatchObject({
+      status: "passed",
+      responseStatus: 302,
+      errorCode: "invalid_target",
+    });
+    const [rendered] = await runAgainstMcpFn([PRE_REGISTERED], { redirectSources: [] });
+    expect(rendered).toMatchObject({ status: "failed", responseStatus: 400 });
+  });
+
+  it("takes the error code from a JSON envelope rendered for an unvetted client", async () => {
+    const results = await runAgainstMcpFn([DYNAMIC, METADATA_DOCUMENT], {
+      render: ({ error }) => Response.json(
+        { error: error.code, error_description: error.message },
+        { status: 400 },
+      ),
+    });
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: "passed",
+        responseStatus: 400,
+        errorCode: "invalid_target",
+      });
+    }
+    const [wrongCode] = await runAgainstMcpFn([DYNAMIC], {
+      render: () => Response.json({ error: "invalid_request" }, { status: 400 }),
+    });
+    expect(wrongCode).toMatchObject({ status: "failed", errorCode: "invalid_request" });
+  });
+
+  it.each([
+    ["reflected redirect URI", (redirectUri: string) =>
+      new Response(`<a href="${redirectUri}">Back</a>`, {
+        status: 400,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })],
+    ["reflected redirect URI in JSON", (redirectUri: string) =>
+      Response.json({ error: "invalid_target", redirect_uri: redirectUri }, { status: 400 })],
+    ["non-400 status", () =>
+      new Response("<p>denied</p>", {
+        status: 403,
+        headers: { "content-type": "text/html" },
+      })],
+    ["location header", (redirectUri: string) =>
+      new Response("<p>denied</p>", {
+        status: 400,
+        headers: { "content-type": "text/html", location: redirectUri },
+      })],
+    ["plain-text body", () =>
+      new Response("denied", {
+        status: 400,
+        headers: { "content-type": "text/plain" },
+      })],
+  ] as const)("rejects an unvetted-client error response with %s", async (_name, render) => {
+    const [result] = await runAgainstMcpFn([DYNAMIC], {
+      render: ({ request }) => render(new URL(request.url).searchParams.get("redirect_uri")!),
+    });
+    expect(result?.status).toBe("failed");
+  });
+});
