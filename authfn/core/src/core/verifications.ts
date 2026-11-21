@@ -606,7 +606,8 @@ export function resolveOtpEmailBudget(
     sources.push(emailOtp);
   }
   if (password.otp && typeof password.otp === 'object') {
-    sources.push(password.otp);
+    // Read as the password route reads it: through an object spread.
+    sources.push({ ...password.otp });
   }
   if (sources.length === 0) {
     // Neither plugin has runtime config: every route uses the defaults, so

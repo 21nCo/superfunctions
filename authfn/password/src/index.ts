@@ -31,8 +31,12 @@ export type {
 } from 'authfn/plugin-types';
 
 export function authFnPasswordPlugin(
-  config: PasswordPluginConfig = {}
+  options: PasswordPluginConfig = {}
 ): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> & { readonly otpEmailLimits: PasswordOtpEmailLimits } {
+  // One snapshot of the factory options for the routes, the startup check and
+  // the published limits, so later changes to the caller's object cannot
+  // make them disagree.
+  const config: PasswordPluginConfig = { ...options, otp: options.otp ? { ...options.otp } : undefined };
   return {
     name: 'password',
     // Read by core so every OTP route applies these deprecated limits.

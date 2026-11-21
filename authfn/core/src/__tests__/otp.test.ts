@@ -1483,6 +1483,23 @@ describe('authfn otp plugin', () => {
       });
       expect(resolveOtpEmailBudget(hidden, {}).longestTtlMs).toBe(12 * 60 * 60 * 1000);
 
+      // A runtime value the route never reads does not stop startup either.
+      const unread = createConfig() as LimitConfig;
+      unread.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 12 * 60 * 60 } })];
+      Object.defineProperty((unread.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, 'challengeTtlSeconds', {
+        value: Number.NaN,
+        enumerable: false
+      });
+      expect(() => createTestServer(unread)).not.toThrow();
+
+      // Factory options changed after the plugin is created are not picked up
+      // by any part of it.
+      const factoryOtp = { challengeTtlSeconds: 600 };
+      const later = createConfig() as LimitConfig;
+      later.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: factoryOtp })];
+      factoryOtp.challengeTtlSeconds = 12 * 60 * 60;
+      expect(resolveOtpEmailBudget(later, {}).longestTtlMs).toBe(600 * 1000);
+
       const invalid = createConfig() as LimitConfig;
       Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
       expect(() => createTestServer(invalid)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
