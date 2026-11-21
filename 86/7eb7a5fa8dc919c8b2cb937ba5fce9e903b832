@@ -1,0 +1,23 @@
+apifn/cli/README.md
+  s_837ceaf9f99813::t_1e969d47df7fde 126
+apifn/cli/__tests__/check-command.test.ts
+  s_837ceaf9f99813::t_2a5200a36f99a9 770-821
+apifn/cli/src/commands/check.ts
+  s_837ceaf9f99813::t_ec392bbf91fd65 18,708-742,974-976,998,1015-1023,1058-1065,1067-1074
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "867eb7a5fa8dc919c8b2cb937ba5fce9e903b832",
+  "prompts": {},
+  "sessions": {
+    "s_837ceaf9f99813": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c70bc86d-d755-4e58-a479-4f9e1fb82cd0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
