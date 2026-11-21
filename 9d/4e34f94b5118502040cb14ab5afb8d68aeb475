@@ -1,0 +1,41 @@
+langfn/typescript/tests/fixtures/responses/openrouter/failed-authentication.json
+  s_b731d9e005b41a::t_1b9ae0d5717af0 1-17
+langfn/typescript/tests/fixtures/responses/openrouter/failed-context-length.json
+  s_b731d9e005b41a::t_388fafc19fb665 1-17
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-authentication.sse
+  s_b731d9e005b41a::t_2ba62ef0d8ddc2 1-4
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-context-length.sse
+  s_b731d9e005b41a::t_b8654ad95cad4e 1-4
+langfn/typescript/tests/responses-conformance.test.ts
+  s_b731d9e005b41a::t_d3e0118abd72d0 456-515
+langfn/typescript/src/models/openai.ts
+  s_b731d9e005b41a::t_29710e4453fc19 223-231,238
+langfn/typescript/src/models/responses/ledger.ts
+  s_b731d9e005b41a::t_fc912b3508a18f 164-171,189,221,452,456-472,475-478,503-507,535,544-546,565-567
+langfn/typescript/src/models/responses/request.ts
+  s_b731d9e005b41a::t_e92e502521f995 53,130-133
+langfn/typescript/src/models/responses/response.ts
+  s_b731d9e005b41a::t_41a9629703dcb6 10,367,504-514,517-518,526,532,540,543-546,593-595
+langfn/typescript/src/models/stream-lines.ts
+  s_b731d9e005b41a::t_c97c7846a8da3e 101,106-120
+langfn/typescript/tests/responses-mapping.test.ts
+  s_b731d9e005b41a::t_849481405ee29e 32,1468-1544,2280-2317,2882-2913
+langfn/typescript/turbo.json
+  s_b731d9e005b41a::t_9d380eefc21a2b 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d4e34f94b5118502040cb14ab5afb8d68aeb475",
+  "prompts": {},
+  "sessions": {
+    "s_b731d9e005b41a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f58510-17b5-46b8-a268-6b49b5f9edb4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

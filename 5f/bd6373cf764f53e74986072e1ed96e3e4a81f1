@@ -1,0 +1,39 @@
+clifn/core/src/app-dirs.ts
+  s_c7ec784961d5e7::t_f7e6e2e75fa1fa 20,22,39-47,51-56,97
+clifn/core/src/config.ts
+  s_c7ec784961d5e7::t_e80c4d705ac4e8 9,34-46,96,111
+clifn/core/src/credentials.ts
+  s_c7ec784961d5e7::t_127882233b9d5b 6-13,44-56,125,135
+clifn/core/src/store-options.ts
+  s_c7ec784961d5e7::t_08cc341e4f2d10 18-41,44-45,53-56,84-88,90,92-94,149,160,173
+clifn/core/tests/app-stores.test.ts
+  s_c7ec784961d5e7::t_0a67113d169475 3,313-430
+clifn/core/tests/import-lookups.test.ts
+  s_c7ec784961d5e7::t_ed39b4a666b10f 1-64
+clifn/core/tests/paths.test.ts
+  s_c7ec784961d5e7::t_9533d135c718c8 229-266
+clifn/core/CHANGELOG.md
+  s_c7ec784961d5e7::t_d35a1ea7379a89 7
+clifn/core/README.md
+  s_c7ec784961d5e7::t_7235ab89de995a 220,275
+clifn/docs/content/docs/reference/core-readme.md
+  s_c7ec784961d5e7::t_041c2bc750dcd9 223,278
+clifn/docs/static/llms-full.txt
+  s_c7ec784961d5e7::t_1914b083e79ab8 531,586
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fbd6373cf764f53e74986072e1ed96e3e4a81f1",
+  "prompts": {},
+  "sessions": {
+    "s_c7ec784961d5e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "725aba51-cd3f-454e-b48e-f55aeead54ac",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
