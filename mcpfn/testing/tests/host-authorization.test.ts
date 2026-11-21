@@ -919,18 +919,21 @@ describe("unvetted-client authorization rejections", () => {
           }
           const fixture = rejectionFixture(DYNAMIC);
           ineligible(fixture);
-          const postMatch = {
+          const notClientError = (code: string) => ({
             status: "failed",
-            error: "An ineligible client registration must be rejected as a client error, not invalid_target",
+            error: `An ineligible client registration must be rejected as a client error, not ${code}`,
+          });
+          const errorPage = {
+            status: "failed",
+            error: "Authorization request did not redirect (HTTP 400)",
           };
+          const json = (error: string) => () => Response.json({ error }, { status: 400 });
           for (const [render, expected] of [
-            [htmlPage("<p><code>invalid_client</code></p>"), { status: "passed", responseStatus: 400 }],
-            [htmlPage(`<a href="${requested}">Back</a>`), {
-              status: "failed",
-              error: "Authorization error response must not reflect the client redirect URI",
-            }],
-            [htmlPage("<p><code>invalid_target</code></p>"), postMatch],
-            [() => Response.json({ error: "invalid_target" }, { status: 400 }), postMatch],
+            [json("invalid_client"), { status: "passed", responseStatus: 400, errorCode: "invalid_client" }],
+            [json("invalid_target"), notClientError("invalid_target")],
+            [json("invalid_scope"), notClientError("invalid_scope")],
+            [htmlPage("<p><code>invalid_client</code></p>"), errorPage],
+            [htmlPage("<!-- <code>invalid_client</code> --><p><code>invalid_target</code></p>"), errorPage],
           ] as const) {
             const [page] = await runHostedAuthorizationRegression({
               issuer,
@@ -1160,6 +1163,38 @@ describe("unvetted-client authorization rejections", () => {
         }
       });
 
+      it("accepts invalid_scope only for a metadata document rejected on its scope alone", async () => {
+        const scoped = (id: string, metadata: object = {}) => {
+          const fixture = rejectionFixture(id);
+          redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+          Object.assign(fixture.registration.metadata, { scope: "mcp:admin", ...metadata });
+          delete fixture.expected.errorCode;
+          return fixture;
+        };
+        const rejectWith = (error: string) => ({
+          issuer,
+          supportedScopes: ["mcp:read"],
+          prepareRegistration: async () => {},
+          request: async () => Response.json({ error }, { status: 400 }),
+        });
+        const [document] = await runHostedAuthorizationRegression(
+          rejectWith("invalid_scope"),
+          [scoped(METADATA_DOCUMENT)],
+        );
+        expect(document).toMatchObject({ status: "passed", errorCode: "invalid_scope" });
+        for (const fixture of [
+          scoped(DYNAMIC),
+          scoped(PRE_REGISTERED),
+          scoped(METADATA_DOCUMENT, { grant_types: ["refresh_token"] }),
+        ]) {
+          const [result] = await runHostedAuthorizationRegression(rejectWith("invalid_scope"), [fixture]);
+          expect(result).toMatchObject({
+            status: "failed",
+            error: "An ineligible client registration must be rejected as a client error, not invalid_scope",
+          });
+        }
+      });
+
       it("checks registered scopes only when the target declares supported scopes", async () => {
         const [real] = await runAgainstMcpFn([DYNAMIC], undefined, (fixture) => {
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
@@ -1195,9 +1230,9 @@ describe("unvetted-client authorization rejections", () => {
       });
     });
 
-    it.each(["", " "])("accepts a JSON rejection of the blank redirect URI %j", async (blank) => {
+    it.each(["", " ", "request"])("accepts a JSON rejection of the blank or malformed redirect URI %j", async (malformed) => {
       const results = await runAgainstMcpFn([DYNAMIC, METADATA_DOCUMENT], undefined, (fixture) => {
-        fixture.authorization.redirectUri = blank;
+        fixture.authorization.redirectUri = malformed;
         fixture.expected.errorCode = "invalid_request";
       });
       for (const result of results) {

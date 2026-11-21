@@ -287,7 +287,6 @@ async function runHostedCase(
         fixture,
         decision,
       );
-      assertIneligibleClientRejection(decision, pageErrorCode);
       return assessHostedCase(fixture, phase, responseStatus, pageErrorCode, undefined, true);
     }
     if (!isRedirect(authorizationResponse.status)) {
@@ -542,6 +541,8 @@ type RegistrationEligibility = "eligible" | "ineligible" | "indeterminate";
 interface RedirectDecision {
   uriMatch?: McpFnRedirectMatch;
   eligibility: RegistrationEligibility;
+  /** The server may reject the ineligible registration as `invalid_scope`. */
+  scopeRejection?: boolean;
 }
 
 function redirectDecision(
@@ -566,7 +567,7 @@ function redirectDecision(
   } catch {
     // A mismatch is not a registered redirect.
   }
-  return { uriMatch, eligibility: registrationEligibility(client, registration, target) };
+  return { uriMatch, ...registrationEligibility(client, registration, target) };
 }
 
 function isCallbackEligible(decision: RedirectDecision | undefined): boolean {
@@ -592,23 +593,18 @@ function assertCallbackEligible(decision: RedirectDecision | undefined): void {
 
 /**
  * The server rejects an incompatible registration before it matches the
- * redirect URI or validates the rest of the request: a stored one as
- * `invalid_client`, a fetched Client ID Metadata Document as
- * `invalid_client_metadata`, or `invalid_scope` for an unsupported registered
- * scope. A matching URI must not let such a registration's rejection carry a
- * post-match error code.
+ * redirect URI or validates the rest of the request (see
+ * `registrationEligibility`), so a matching URI must not let its rejection
+ * carry a post-match error code.
  */
-const INELIGIBLE_CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set([
-  ...CLIENT_REJECTION_CODES,
-  "invalid_scope",
-]);
-
 function assertIneligibleClientRejection(
   decision: RedirectDecision,
   errorCode: string | undefined,
 ): void {
+  const clientError = errorCode !== undefined && (CLIENT_REJECTION_CODES.has(errorCode) ||
+    (decision.scopeRejection === true && errorCode === "invalid_scope"));
   if (decision.uriMatch && decision.eligibility === "ineligible" &&
-      errorCode !== undefined && !INELIGIBLE_CLIENT_REJECTION_CODES.has(errorCode)) {
+      errorCode !== undefined && !clientError) {
     throw new Error(
       `An ineligible client registration must be rejected as a client error, not ${errorCode}`,
     );
@@ -616,28 +612,35 @@ function assertIneligibleClientRejection(
 }
 
 /**
- * Mirrors the authorization server's client compatibility check: the
- * registration must allow response type `code` and grant type
- * `authorization_code`; its token endpoint authentication method and its
- * `scope` must be supported by the target when the adapter declares
- * `tokenEndpointAuthMethods` or `supportedScopes`.
+ * Mirrors the authorization server's client compatibility check, in its
+ * order: the token endpoint authentication method must be supported when the
+ * adapter declares `tokenEndpointAuthMethods`; the registration must allow
+ * response type `code` and grant type `authorization_code`; its `scope` must
+ * be supported when the adapter declares `supportedScopes`. The server rejects
+ * a stored registration as `invalid_client` and a fetched Client ID Metadata
+ * Document as `invalid_client_metadata`, or as `invalid_scope` when only its
+ * scope is unsupported.
  */
 function registrationEligibility(
   client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
   target: Pick<McpFnHostedAuthorizationTargetAdapter, "tokenEndpointAuthMethods" | "supportedScopes">,
-): RegistrationEligibility {
-  if (!client.responseTypes.includes("code")) return "ineligible";
-  if (!client.grantTypes.includes("authorization_code")) return "ineligible";
+): Pick<RedirectDecision, "eligibility" | "scopeRejection"> {
+  const method = authMethodEligibility(client, registration, target.tokenEndpointAuthMethods);
+  if (method === "ineligible") return { eligibility: "ineligible" };
+  if (!client.responseTypes.includes("code")) return { eligibility: "ineligible" };
+  if (!client.grantTypes.includes("authorization_code")) return { eligibility: "ineligible" };
   const scope: unknown = client.metadata.scope;
-  if (scope !== undefined) {
-    if (typeof scope !== "string") return "ineligible";
-    const supported = target.supportedScopes;
-    if (supported && !scope.split(/\s+/).filter(Boolean).every((entry) => supported.includes(entry))) {
-      return "ineligible";
-    }
+  if (scope === undefined) return { eligibility: method };
+  if (typeof scope !== "string") return { eligibility: "ineligible" };
+  const supported = target.supportedScopes;
+  if (supported && !scope.split(/\s+/).filter(Boolean).every((entry) => supported.includes(entry))) {
+    return {
+      eligibility: "ineligible",
+      scopeRejection: client.source === "client-metadata-document",
+    };
   }
-  return authMethodEligibility(client, registration, target.tokenEndpointAuthMethods);
+  return { eligibility: method };
 }
 
 /** Server defaults for a Client ID Metadata Document without a method. */
@@ -671,8 +674,11 @@ function isUnvettedErrorPage(
   fixture: McpFnHostedAuthorizationCase,
   decision: RedirectDecision,
 ): boolean {
+  // The server rejects an ineligible registration with a JSON client error,
+  // never with the error page for a request that matched its redirect URI.
   return response.status >= 400 && response.status < 500 &&
-    decision.uriMatch !== undefined && isUnvettedRedirectSource(fixture);
+    decision.uriMatch !== undefined && decision.eligibility !== "ineligible" &&
+    isUnvettedRedirectSource(fixture);
 }
 
 async function validateUnvettedErrorPage(
@@ -735,8 +741,9 @@ function assertRedirectUriNotReflected(
     fixture.authorization.redirectUri,
     ...(redirectMatch ? [redirectMatch.requested, redirectMatch.registered] : []),
   ]);
-  // A blank requested URI has no destination to reflect.
-  const forms = [...redirectUris].filter((redirectUri) => redirectUri.trim()).flatMap((redirectUri) => [
+  // Only a value that parses as a URL is a destination; a blank or malformed
+  // requested URI could otherwise match any body.
+  const forms = [...redirectUris].filter(isUrl).flatMap((redirectUri) => [
     redirectUri,
     JSON.stringify(redirectUri).slice(1, -1),
     redirectUri.replaceAll("/", "\\/"),
@@ -744,6 +751,15 @@ function assertRedirectUriNotReflected(
   ]);
   if (forms.some((form) => body.includes(form))) {
     throw new Error("Authorization error response must not reflect the client redirect URI");
+  }
+}
+
+function isUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
   }
 }
 
