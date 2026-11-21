@@ -300,7 +300,7 @@ export async function verifyOtpChallenge(
   try {
     await assertOtpGuessBudget(config, runtimeOptions, email, now, reserved);
   } catch (error) {
-    await releaseOtpAttempt(config, reserved, now);
+    await handBackOtpAttempt(config, reserved.challengeId, now);
     throw error;
   }
 
@@ -547,6 +547,8 @@ interface OtpEmailBudget {
   windowMs: number;
   /** Rows read per count; see readOtpEmailUsage. */
   scanLimit: number;
+  /** The longest challenge lifetime configured for either OTP plugin. */
+  longestTtlMs: number;
 }
 
 /**
@@ -559,14 +561,19 @@ const OTP_EMAIL_SCAN_FLOOR = 100;
 
 /**
  * Both OTP plugins (email OTP and password reset) count the same challenge
- * rows, so the email-wide policy is the strictest of the limits configured
- * for either of them and for the calling route.
+ * rows, so every route uses one email-wide policy: the strictest of the
+ * limits set in `pluginRuntime.emailOtp` and `pluginRuntime.password.otp`.
+ * They are read from the runtime config only (not from a route's own merged
+ * options, which for password reset include the deprecated factory `otp`),
+ * so both routes always see the same policy. The calling route's options are
+ * used only when neither plugin has runtime config, as when the core
+ * functions are called directly.
  */
 function resolveOtpEmailBudget(
   config: Pick<AuthFnRuntimeConfig, 'pluginRuntime'>,
   options: OtpRuntimeOptions
 ): OtpEmailBudget {
-  const sources: OtpRuntimeOptions[] = [options];
+  const sources: OtpRuntimeOptions[] = [];
   const emailOtp = readPluginRuntimeConfig<OtpRuntimeOptions>(config as AuthFnRuntimeConfig, 'emailOtp');
   const password = readPluginRuntimeConfig<{ otp?: OtpRuntimeOptions }>(config as AuthFnRuntimeConfig, 'password');
   if (config.pluginRuntime?.emailOtp) {
@@ -574,6 +581,9 @@ function resolveOtpEmailBudget(
   }
   if (password.otp && typeof password.otp === 'object') {
     sources.push(password.otp);
+  }
+  if (sources.length === 0) {
+    sources.push(options);
   }
 
   const strictest = (field: 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail', fallback: number) =>
@@ -588,14 +598,17 @@ function resolveOtpEmailBudget(
     DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL,
     'maxChallengesPerEmail'
   )));
-  const longestTtlMs = Math.max(...sources.map((source) => resolveTtlMs(source)));
+  // The calling route's lifetime counts too: it may come from the deprecated
+  // factory options.
+  const longestTtlMs = Math.max(resolveTtlMs(options), ...sources.map((source) => resolveTtlMs(source)));
   const windowsPerLifetime = Math.ceil(longestTtlMs / windowMs) + 1;
 
   return {
     maxFailedAttempts: strictest('maxFailedAttemptsPerEmail', DEFAULT_OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL),
     maxChallenges: strictest('maxChallengesPerEmail', DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL),
     windowMs,
-    scanLimit: Math.max(OTP_EMAIL_SCAN_FLOOR, maxChallenges * windowsPerLifetime) + 1
+    scanLimit: Math.max(OTP_EMAIL_SCAN_FLOOR, maxChallenges * windowsPerLifetime) + 1,
+    longestTtlMs
   };
 }
 
@@ -610,6 +623,7 @@ function readPositiveInteger(value: number | undefined, fallback: number, field:
 }
 
 interface CountedOtpChallenge {
+  id: string;
   /** When this challenge stops counting: the later of its window end and its expiry. */
   countedUntilMs: number;
   attemptCount: number;
@@ -655,15 +669,19 @@ async function readOtpEmailUsage(
     );
     if (countedUntilMs > nowMs) {
       counted.push({
+        id: row.id,
         countedUntilMs,
         attemptCount: Number(row.attemptCount) || 0,
         consumed: Boolean(row.consumedAt)
       });
     }
   }
+  // A full scan may have left out older rows. Any of them can still count
+  // only while the oldest row read is within the window plus the longest
+  // lifetime, since older rows were created no later than it.
   const last = rows[rows.length - 1];
   const incomplete = rows.length >= budget.scanLimit && last !== undefined
-    && Math.max(new Date(last.createdAt).getTime() + budget.windowMs, new Date(last.expiresAt).getTime()) > nowMs;
+    && new Date(last.createdAt).getTime() + Math.max(budget.windowMs, budget.longestTtlMs) > nowMs;
   return { counted, incomplete };
 }
 
@@ -794,7 +812,13 @@ async function assertOtpGuessBudget(
   if (capResetAt(usage.counted, failedAttempts, cap) || usage.incomplete) {
     // The caller hands this request's reservation back, so a new request
     // passes once the count without it is under the cap.
-    const resetAt = capResetAt(usage.counted, failedAttempts, cap) ?? new Date(now.getTime() + 1000);
+    const settled = reservation
+      ? usage.counted.map((row) => row.id === reservation.challengeId
+        ? { ...row, attemptCount: Math.max(0, row.attemptCount - 1) }
+        : row)
+      : usage.counted;
+    const resetAt = capResetAt(settled, failedAttempts, budget.maxFailedAttempts)
+      ?? new Date(now.getTime() + 1000);
     throw otpEmailLimitError(
       'failed-attempts',
       usage.incomplete ? laterOf(resetAt, latestDeparture(usage.counted, now)) : resetAt
@@ -887,6 +911,47 @@ async function reserveOtpAttempt(
   }
 
   throw otpAttemptLimitError(challenge.id, current.attemptCount + 1);
+}
+
+/**
+ * Hands back one attempt that was reserved but never compared. Unlike
+ * releaseOtpAttempt, it does not need this request's reservation to be the
+ * latest: it lowers the stored count by one from whatever it is, so
+ * concurrent hand-backs succeed in any order. The count stays at least the
+ * number of codes actually compared. It gives up (leaving the attempt
+ * counted) on a consumed challenge or after a few lost rounds.
+ */
+async function handBackOtpAttempt(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  challengeId: string,
+  updatedAt: Date
+): Promise<void> {
+  try {
+    for (let round = 0; round < OTP_ATTEMPT_RESERVATION_ROUNDS; round += 1) {
+      const current = await config.database.findOne<AuthFnOtpChallengeRecord>({
+        model: 'otp_challenges',
+        where: [{ field: 'id', operator: 'eq', value: challengeId }],
+        namespace: namespace(config)
+      });
+      if (!current || current.consumedAt || current.attemptCount < 1) {
+        return;
+      }
+      const applied = await updateOtpChallengeIfMatches(
+        config,
+        challengeId,
+        [
+          { field: 'attemptCount', operator: 'eq', value: current.attemptCount },
+          { field: 'consumedAt', operator: 'eq', value: null }
+        ],
+        { attemptCount: current.attemptCount - 1, updatedAt }
+      );
+      if (applied) {
+        return;
+      }
+    }
+  } catch {
+    // Keeping the attempt counted is the safe outcome.
+  }
 }
 
 /**
