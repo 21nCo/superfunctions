@@ -84,7 +84,7 @@ class CheckUsageError extends Error {}
 const DRIFT_PROBLEMS: Record<DriftState, string> = {
   none: "matches the router",
   missing: "does not exist",
-  unparseable: "cannot be read as YAML or JSON",
+  unparseable: "cannot be read as YAML or JSON with a faithful JSON form",
   stale: "differs from the spec generated from the router",
 };
 
@@ -216,10 +216,18 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
 
+  // The spec's canonical location: an existing spec is resolved in full (a leaf symlink followed,
+  // the on-disk case and Unicode form of every component), so an alias of the tracked file is
+  // looked up under the name git stores. A missing spec keeps its leaf below the nearest existing
+  // directory, resolved the same way.
+  // The repository is the one holding the spec path as given.
   let dir = path.dirname(specPath);
   while (!existsSync(dir) && path.dirname(dir) !== dir) {
     dir = path.dirname(dir);
   }
+  const canonical = existsSync(specPath)
+    ? realpathSync.native(specPath)
+    : path.join(realpathSync.native(dir), path.relative(dir, specPath));
 
   const toplevelResult = await runGit(["rev-parse", "--show-toplevel"], dir);
   if (toplevelResult.code !== 0) {
@@ -227,13 +235,10 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
       `--base needs a git work tree; ${dir} is not inside one: ${toplevelResult.stderr.trim()}`
     );
   }
-  const root = realpathSync(toplevelResult.stdout.trim());
-  const relative = path
-    .relative(root, path.join(realpathSync(dir), path.relative(dir, specPath)))
-    .split(path.sep)
-    .join("/");
+  const root = realpathSync.native(toplevelResult.stdout.trim());
+  const relative = path.relative(root, canonical).split(path.sep).join("/");
   if (relative === "" || relative.startsWith("../") || relative === ".." || path.isAbsolute(relative)) {
-    throw new CheckUsageError(`Spec ${specPath} is outside the git repository at ${root}`);
+    throw new CheckUsageError(`Spec ${specPath} (${canonical}) is outside the git repository at ${root}`);
   }
 
   const resolved = await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root);
@@ -471,7 +476,83 @@ function parseSpecText(raw: string): unknown {
       `the YAML aliases expand to ${nodes} nodes (limit ${MAX_EXPANDED_SPEC_NODES})`
     );
   }
-  return doc.toJS({ maxAliasCount: -1 });
+  return toFaithfulJson(doc.toJS({ maxAliasCount: -1, mapAsMap: true }));
+}
+
+/**
+ * Converts a parsed document to plain JSON values, failing when it has no faithful JSON form:
+ * a non-finite number (YAML `.nan`, `.inf`, or an overflowing literal), a value that is not a
+ * string, finite number, boolean, null, array or mapping (a Set, Date, BigInt, binary...), a
+ * mapping key that is not a string or finite number, or two keys of one mapping that become the
+ * same string (`1` and `"1"`). JSON.stringify would silently turn each of these into another
+ * document, so comparing or diffing them would hide a difference. Aliased (shared) nodes are
+ * converted once; the caller has already rejected alias cycles.
+ */
+export function toFaithfulJson(value: unknown): unknown {
+  const converted = new Map<object, unknown>();
+  const convert = (node: unknown, at: string): unknown => {
+    if (node === null || typeof node === "string" || typeof node === "boolean") {
+      return node;
+    }
+    if (typeof node === "number") {
+      if (!Number.isFinite(node)) {
+        throw new Error(`${at} is ${node}, which JSON cannot represent`);
+      }
+      return node;
+    }
+    if (typeof node !== "object") {
+      throw new Error(`${at} is a ${typeof node}, which JSON cannot represent`);
+    }
+    const done = converted.get(node);
+    if (done !== undefined) {
+      return done;
+    }
+    let result: unknown;
+    if (Array.isArray(node)) {
+      result = node.map((item, index) => convert(item, `${at}[${index}]`));
+    } else if (node instanceof Map) {
+      const record: Record<string, unknown> = {};
+      for (const [rawKey, item] of node) {
+        let key: string;
+        if (typeof rawKey === "string") {
+          key = rawKey;
+        } else if (typeof rawKey === "number" && Number.isFinite(rawKey)) {
+          key = String(rawKey);
+        } else {
+          throw new Error(`${at} has a ${rawKey === null ? "null" : typeof rawKey} key, which JSON cannot represent`);
+        }
+        if (Object.prototype.hasOwnProperty.call(record, key)) {
+          throw new Error(`${at} has two keys that are both "${key}" in JSON`);
+        }
+        // defineProperty keeps a "__proto__" key as data.
+        Object.defineProperty(record, key, {
+          value: convert(item, `${at}.${key}`),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      result = record;
+    } else if (Object.getPrototypeOf(node) === Object.prototype || Object.getPrototypeOf(node) === null) {
+      // JSON.parse output: plain objects whose keys are already unique strings.
+      const record: Record<string, unknown> = {};
+      for (const key of Object.keys(node)) {
+        Object.defineProperty(record, key, {
+          value: convert((node as Record<string, unknown>)[key], `${at}.${key}`),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      result = record;
+    } else {
+      const kind = (node as { constructor?: { name?: string } }).constructor?.name ?? "object";
+      throw new Error(`${at} is a ${kind}, which JSON cannot represent`);
+    }
+    converted.set(node, result);
+    return result;
+  };
+  return convert(value, "$");
 }
 
 /** A base spec, as `parseOpenAPI` reads a string (JSON first, then YAML) but with parseSpecText. */
@@ -482,6 +563,7 @@ function parseBaseSpec(raw: string): OpenAPIDocument {
   }
   let parsed: unknown;
   try {
+    // JSON.parse turns an overflowing number literal into Infinity, so check it too.
     parsed = JSON.parse(trimmed);
   } catch {
     try {
@@ -489,6 +571,12 @@ function parseBaseSpec(raw: string): OpenAPIDocument {
     } catch (error) {
       throw new Error(`Invalid OpenAPI input: failed to parse JSON or YAML (${errorMessage(error)})`);
     }
+    return parseOpenAPI(parsed as Record<string, unknown>);
+  }
+  try {
+    parsed = toFaithfulJson(parsed);
+  } catch (error) {
+    throw new Error(`Invalid OpenAPI input: ${errorMessage(error)}`);
   }
   return parseOpenAPI(parsed as Record<string, unknown>);
 }

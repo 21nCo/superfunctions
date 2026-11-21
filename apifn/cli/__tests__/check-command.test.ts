@@ -3,6 +3,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { access, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
@@ -18,6 +20,16 @@ import type { CheckReport } from "../src/commands/check.js";
 import { tempDir } from "./temp-dirs.js";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
+
+/** True when the temp directory's filesystem ignores case (macOS and Windows defaults). */
+const CASE_INSENSITIVE_FS = (() => {
+  const dir = mkdtempSync(path.join(tmpdir(), "apifn-check-case-"));
+  try {
+    return existsSync(dir.toUpperCase()) && existsSync(dir.toLowerCase());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
 const SPEC = path.join(".apifn", "openapi.yml");
 
 interface RunResult {
@@ -423,6 +435,142 @@ describe("apifn check: --base <git-ref>", () => {
     const result = await run(["check", "--base", "HEAD"], dir);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("git work tree");
+  });
+
+  /** Commits the base contract's spec at breaking/.apifn/openapi.yml, then regenerates the head. */
+  async function trackedBaseSpec(): Promise<{ root: string; service: string }> {
+    const { root, service } = await repo();
+    await mkdir(path.join(service, ".apifn"), { recursive: true });
+    await commitSpec(path.join(root, "base"));
+    await writeFile(path.join(service, SPEC), await readFile(path.join(root, "base", SPEC), "utf8"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract");
+    await commitSpec(service);
+    return { root, service };
+  }
+
+  it("a --spec symlink to the tracked spec is diffed against it, not a new contract", async () => {
+    const { service } = await trackedBaseSpec();
+    await symlink(SPEC, path.join(service, "contract.yml"));
+
+    const { code, report } = await runJson(["check", "--spec", "contract.yml", "--base", "HEAD"], service);
+    expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+    expect(report.breaking.length).toBeGreaterThan(0);
+    expect(code).toBe(1);
+  });
+
+  it.skipIf(!CASE_INSENSITIVE_FS)(
+    "a case alias of the tracked spec is diffed against it (case-insensitive filesystem)",
+    async () => {
+      const { service } = await trackedBaseSpec();
+      const { code, report } = await runJson(
+        ["check", "--spec", path.join(".APIFN", "OpenAPI.yml"), "--base", "HEAD"],
+        service
+      );
+      expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+      expect(report.breaking.length).toBeGreaterThan(0);
+      expect(code).toBe(1);
+    }
+  );
+
+  it("a --spec symlink that resolves outside the repository exits 2", async () => {
+    const { service } = await trackedBaseSpec();
+    const outside = path.join(await tempDir("apifn-check-outside-"), "openapi.yml");
+    await writeFile(outside, await readFile(path.join(service, SPEC), "utf8"));
+    await symlink(outside, path.join(service, "contract.yml"));
+
+    const result = await run(["check", "--spec", "contract.yml", "--base", "HEAD"], service);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("outside the git repository");
+    expect(result.stdout).toBe("");
+  });
+});
+
+describe("apifn check: documents without a faithful JSON form", () => {
+  /** A router whose generated spec holds a null (a schema default). */
+  async function nullDefaultService(): Promise<string> {
+    const dir = await tempDir("apifn-check-null-");
+    await writeFile(
+      path.join(dir, "router.ts"),
+      `export default {
+  getRoutes() {
+    return [
+      {
+        method: "GET",
+        path: "/notes",
+        handler: async () => Response.json({}),
+        meta: {
+          operationId: "getNotes",
+          responses: {
+            200: {
+              description: "ok",
+              schema: { type: "object", properties: { note: { type: ["string", "null"], default: null } } },
+            },
+          },
+        },
+      },
+    ];
+  },
+};
+`
+    );
+    await writeFile(
+      path.join(dir, "apifn.config.ts"),
+      `export default { router: "./router.ts", openapi: { info: { title: "Nulls", version: "1.0.0" } } };\n`
+    );
+    await commitSpec(dir);
+    return dir;
+  }
+
+  async function variants(dir: string): Promise<Array<[string, string]>> {
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    expect(generated).toContain("default: null");
+    // .nan, .inf and -.inf parse to numbers JSON.stringify writes as null.
+    const nan = generated.replace("default: null", "default: .nan");
+    // 200 and "200" are distinct YAML keys that become one JSON key; the second would hide the first.
+    const collision = generated.replace(
+      /^( +)"200":\n/m,
+      (line, indent: string) => `${indent}200:\n${indent}  description: hidden\n${line}`
+    );
+    expect(collision).not.toBe(generated);
+    return [
+      [".nan in place of null", nan],
+      ["keys 200 and \"200\" in one mapping", collision],
+    ];
+  }
+
+  it("a committed spec is drift (unparseable, exit 1), never a clean comparison", async () => {
+    const dir = await nullDefaultService();
+    expect((await runJson(["check"], dir)).report.drift).toBe(false);
+    for (const [label, text] of await variants(dir)) {
+      await writeFile(path.join(dir, SPEC), text);
+      const { code, report } = await runJson(["check"], dir);
+      expect({ label, code, drift: report.drift, driftState: report.driftState }).toEqual({
+        label,
+        code: 1,
+        drift: true,
+        driftState: "unparseable",
+      });
+    }
+  });
+
+  it("a base spec is a load error (exit 2)", async () => {
+    const dir = await nullDefaultService();
+    for (const [label, text] of await variants(dir)) {
+      await writeFile(path.join(dir, "base.yml"), text);
+      const result = await run(["check", "--base-spec", "base.yml"], dir);
+      expect({ label, code: result.code, stdout: result.stdout }).toEqual({ label, code: 2, stdout: "" });
+      expect(result.stderr).toContain("JSON");
+    }
+  });
+
+  it("a JSON base spec with an overflowing number is a load error (exit 2)", async () => {
+    const dir = await nullDefaultService();
+    const doc = parseYaml(await readFile(path.join(dir, SPEC), "utf8")) as Record<string, unknown>;
+    await writeFile(path.join(dir, "base.json"), JSON.stringify({ ...doc, "x-big": 0 }).replace('"x-big":0', '"x-big":1e999'));
+    const result = await run(["check", "--base-spec", "base.json"], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("Infinity");
   });
 });
 

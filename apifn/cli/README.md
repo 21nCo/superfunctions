@@ -120,7 +120,7 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`); no spec at the ref means a new contract, so the diff is skipped and reported, not failed; any other git error exits `2`
+- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`, the spec path resolved through symlinks to its on-disk name inside the repository); no spec at the ref means a new contract, so the diff is skipped and reported, not failed; any other git error exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
 - `--allow-breaking` — report breaking changes without failing
 - `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes
@@ -134,7 +134,8 @@ value option is a usage error.
 
 Committed and base specs may use any number of YAML aliases; a document whose aliases expand
 past 5,000,000 nodes or form a cycle is rejected (an unparseable committed spec, or a base load
-error).
+error). So is a document with no faithful JSON form: a `.nan` or `.inf` value, a mapping key that
+is not a string or number, or two keys that become the same JSON key (`200` and `"200"`).
 
 Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
 canonical JSON (key order and formatting do not count).
