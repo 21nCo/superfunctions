@@ -72,6 +72,16 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     /// normalized as WebKit does (percent escapes decoded, IPv4 and IPv6
     /// literals in canonical form); for other schemes it is kept as given.
     static func parse(_ string: String) -> String? {
+        // An origin has no userinfo. An entry with '@' or a backslash (raw or
+        // escaped) in its authority is refused: Foundation and WebKit can
+        // split such a URL at different places and so read different hosts.
+        if let separator = string.range(of: "://") {
+            let rest = string[separator.upperBound...]
+            let authority = rest[..<(rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex)]
+            if authority.contains("@") || authority.contains("\\") || authority.lowercased().contains("%5c") {
+                return nil
+            }
+        }
         guard let parts = splitOrigin(string) else { return nil }
         if isUntrustable(scheme: parts.scheme, host: parts.host) {
             return nil

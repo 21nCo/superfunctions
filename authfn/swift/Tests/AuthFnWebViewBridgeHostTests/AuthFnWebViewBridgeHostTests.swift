@@ -131,6 +131,11 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[0:0:0:0:0:0:0:00001]"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.000.0.1]"))
         XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.0.0.1]"), "http://[::ffff:127.0.0.1]")
+        // No userinfo, and no backslash Foundation and WebKit could split
+        // differently.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://expected.example%5C@other.example/"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://expected.example\\@other.example/"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://user@portal.example"))
         // Userinfo or a port delimiter with no host is not the hostless origin.
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://user@/index"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://:/index"))
