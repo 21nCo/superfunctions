@@ -354,8 +354,8 @@ describe("sync push capability injection", () => {
     expect(conflict.body.error.code).toBe("CONFLICT");
 
     const stored = await db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: "datafn" },
-      { field: "client_id", op: "eq", value: "client:1" },
+      { field: "namespace", op: "eq", value: "ns:1" },
+      { field: "client_id", op: "eq", value: JSON.stringify(["user:alice", "client:1"]) },
       { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
     ]);
     if (!stored) {
@@ -366,8 +366,8 @@ describe("sync push capability injection", () => {
     await db.internal.update(
       "__datafn_idempotency",
       [
-        { field: "namespace", op: "eq", value: "datafn" },
-        { field: "client_id", op: "eq", value: "client:1" },
+        { field: "namespace", op: "eq", value: "ns:1" },
+        { field: "client_id", op: "eq", value: JSON.stringify(["user:alice", "client:1"]) },
         { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
       ],
       {
@@ -391,8 +391,8 @@ describe("sync push capability injection", () => {
     expect(retried.body.result.applied).toContain("cached-insert-conflict");
 
     const storedAfter = await db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: "datafn" },
-      { field: "client_id", op: "eq", value: "client:1" },
+      { field: "namespace", op: "eq", value: "ns:1" },
+      { field: "client_id", op: "eq", value: JSON.stringify(["user:alice", "client:1"]) },
       { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
     ]);
     const storedAfterResult = JSON.parse(storedAfter.result as string);
@@ -581,8 +581,8 @@ describe("sync push capability injection", () => {
       expect(first.body.error.code).toBe("NOT_FOUND");
 
       const stored = await captureDb.internal.findOne("__datafn_idempotency", [
-        { field: "namespace", op: "eq", value: "datafn" },
-        { field: "client_id", op: "eq", value: "client:not-found-retry" },
+        { field: "namespace", op: "eq", value: "ns:not-found-retry" },
+        { field: "client_id", op: "eq", value: JSON.stringify(["user:alice", "client:not-found-retry"]) },
         { field: "mutation_id", op: "eq", value: "merge-after-not-found" },
       ]);
       if (!stored) {
@@ -593,8 +593,8 @@ describe("sync push capability injection", () => {
       await captureDb.internal.update(
         "__datafn_idempotency",
         [
-          { field: "namespace", op: "eq", value: "datafn" },
-          { field: "client_id", op: "eq", value: "client:not-found-retry" },
+          { field: "namespace", op: "eq", value: "ns:not-found-retry" },
+          { field: "client_id", op: "eq", value: JSON.stringify(["user:alice", "client:not-found-retry"]) },
           { field: "mutation_id", op: "eq", value: "merge-after-not-found" },
         ],
         {
@@ -1466,8 +1466,8 @@ describe("sync push capability injection", () => {
       );
 
       const stored = await shareDb.internal.findOne("__datafn_idempotency", [
-        { field: "namespace", op: "eq", value: "datafn" },
-        { field: "client_id", op: "eq", value: "client:auth-change" },
+        { field: "namespace", op: "eq", value: "user:owner" },
+        { field: "client_id", op: "eq", value: JSON.stringify(["other", "client:auth-change"]) },
         { field: "mutation_id", op: "eq", value: "delete-after-auth-change" },
       ]);
       if (!stored) {
@@ -1478,8 +1478,8 @@ describe("sync push capability injection", () => {
       await shareDb.internal.update(
         "__datafn_idempotency",
         [
-          { field: "namespace", op: "eq", value: "datafn" },
-          { field: "client_id", op: "eq", value: "client:auth-change" },
+          { field: "namespace", op: "eq", value: "user:owner" },
+          { field: "client_id", op: "eq", value: JSON.stringify(["other", "client:auth-change"]) },
           { field: "mutation_id", op: "eq", value: "delete-after-auth-change" },
         ],
         {

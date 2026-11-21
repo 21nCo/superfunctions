@@ -2041,9 +2041,9 @@ describe("share SPV2 mutation semantics", () => {
         record: { title: "Push outbox" },
       });
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-outbox:push-outbox-share",
-        namespace: "datafn",
-        client_id: "push-outbox",
+        id: JSON.stringify([namespace, JSON.stringify(["user:owner", "push-outbox"]), "push-outbox-share"]),
+        namespace,
+        client_id: JSON.stringify(["user:owner", "push-outbox"]),
         mutation_id: "push-outbox-share",
         result: JSON.stringify({
           ok: false,
@@ -2126,9 +2126,9 @@ describe("share SPV2 mutation semantics", () => {
         record: { title: "Atomic push outbox" },
       });
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-atomic-outbox:push-atomic-outbox-share",
-        namespace: "datafn",
-        client_id: "push-atomic-outbox",
+        id: JSON.stringify([namespace, JSON.stringify(["user:owner", "push-atomic-outbox"]), "push-atomic-outbox-share"]),
+        namespace,
+        client_id: JSON.stringify(["user:owner", "push-atomic-outbox"]),
         mutation_id: "push-atomic-outbox-share",
         result: JSON.stringify({
           ok: false,
@@ -2222,9 +2222,9 @@ describe("share SPV2 mutation semantics", () => {
       });
 
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-unshare-prequeue:push-unshare-prequeue-unshare",
-        namespace: "datafn",
-        client_id: "push-unshare-prequeue",
+        id: JSON.stringify([namespace, JSON.stringify(["user:owner", "push-unshare-prequeue"]), "push-unshare-prequeue-unshare"]),
+        namespace,
+        client_id: JSON.stringify(["user:owner", "push-unshare-prequeue"]),
         mutation_id: "push-unshare-prequeue-unshare",
         result: JSON.stringify({
           ok: false,

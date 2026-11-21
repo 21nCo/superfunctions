@@ -118,7 +118,7 @@ Those tables still store a `namespace` column. Use the [namespace storage contra
 The `namespaceProvider` on the server configuration maps incoming requests to a namespace string. It has two functions:
 
 - **`getNamespace(ctx)`** -- Required. Returns the namespace string for the current request. Must return a non-empty string.
-- **`getActorId(ctx)`** -- Optional. Returns an identifier for audit attribution (who performed the action). Errors are non-fatal.
+- **`getActorId(ctx)`** -- Optional. Returns the caller's identifier, used for audit attribution and for access to private shareable records. Return `undefined` for an anonymous caller; if it throws, the request fails.
 
 ```typescript
 import { createDatafnServer } from "@datafn/server";
@@ -145,7 +145,7 @@ The server resolves the namespace using this priority:
 
 Actor ID is resolved separately from namespace:
 
-1. **`namespaceProvider.getActorId(ctx)`** -- If configured. Errors are logged but don't fail the request.
+1. **`namespaceProvider.getActorId(ctx)`** -- If configured. An error fails the request, so a broken identity lookup never runs a request as anonymous. An `actorId` in a request body is ignored.
 2. **`undefined`** -- No actor attribution.
 
 ### Example: Common Namespace Patterns

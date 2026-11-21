@@ -35,6 +35,76 @@ export interface IdempotencyStore {
 
   /** Return an equivalent store bound to a transaction-scoped adapter. */
   withDb?(db: import("@superfunctions/db").Adapter): IdempotencyStore;
+
+  /**
+   * Return a view of this store whose records belong to one namespace and
+   * actor. Stores that do not implement this are wrapped by
+   * `scopeIdempotencyStore`, which qualifies the client id instead.
+   */
+  scoped?(scope: IdempotencyScope): IdempotencyStore;
+}
+
+/** The tenant and caller an idempotency record belongs to. */
+export interface IdempotencyScope {
+  namespace: string;
+  actorId?: string;
+}
+
+const SCOPED = Symbol.for("datafn.idempotency.scoped");
+
+type ScopedStore = IdempotencyStore & { [SCOPED]?: string };
+
+function scopeKey(scope: IdempotencyScope): string {
+  return JSON.stringify([scope.namespace, scope.actorId ?? null]);
+}
+
+/**
+ * Qualify a client id with the actor that sent it. Exported for stores that
+ * keep the namespace in a column of its own.
+ */
+export function actorQualifiedClientId(
+  clientId: string,
+  actorId: string | undefined,
+): string {
+  return actorId === undefined ? clientId : JSON.stringify([actorId, clientId]);
+}
+
+/**
+ * DFN-01: bind an idempotency store to the request's namespace and actor, so a
+ * (clientId, mutationId) pair used by one tenant or user never matches a
+ * record written for another. Scoping an already-scoped store for the same
+ * scope returns it unchanged; a different scope is an error.
+ */
+export function scopeIdempotencyStore(
+  store: IdempotencyStore,
+  scope: IdempotencyScope,
+): IdempotencyStore {
+  const key = scopeKey(scope);
+  const existing = (store as ScopedStore)[SCOPED];
+  if (existing !== undefined) {
+    if (existing === key) return store;
+    throw new Error("Idempotency store is already bound to another scope");
+  }
+  const scoped: ScopedStore = store.scoped
+    ? store.scoped(scope)
+    : wrapScoped(store, scope);
+  scoped[SCOPED] = key;
+  return scoped;
+}
+
+function wrapScoped(store: IdempotencyStore, scope: IdempotencyScope): IdempotencyStore {
+  const qualify = (clientId: string) =>
+    JSON.stringify([scope.namespace, scope.actorId ?? null, clientId]);
+  const view: IdempotencyStore = {
+    get: (clientId, mutationId) => store.get(qualify(clientId), mutationId),
+    set: (clientId, mutationId, result) =>
+      store.set(qualify(clientId), mutationId, result),
+  };
+  if (store.ensureReady) view.ensureReady = () => store.ensureReady!();
+  if (store.withDb) {
+    view.withDb = (db) => scopeIdempotencyStore(store.withDb!(db), scope);
+  }
+  return view;
 }
 
 export function isRetryableMutationResult(

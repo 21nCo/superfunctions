@@ -572,7 +572,7 @@ export function validateMutationAuthz(
   // SEC-009: Validate relation mutations for relate/modifyRelation/unrelate
   const op = mutation.operation as string;
   if (op === "relate" || op === "modifyRelation" || op === "unrelate") {
-    const relationAuthzResult = validateRelationAuthz(mutation, resource, writeFields);
+    const relationAuthzResult = validateRelationAuthz(mutation, resource, writeFields, schema);
     if (!relationAuthzResult.ok) {
       return relationAuthzResult;
     }
@@ -582,33 +582,78 @@ export function validateMutationAuthz(
 }
 
 /**
- * Validate relation operation against write fields policy (SEC-009)
- * The "field" for relation authz is the FK field or relation name.
+ * Validate relation operation against write fields policy (SEC-009).
+ *
+ * DFN-06: relation operations name their relations as the keys of
+ * `mutation.relations`; every key must be writable. A relation counts as
+ * writable when `write.fields` lists the relation name or, for relations that
+ * store a foreign key on this resource, that FK field. The legacy singular
+ * `mutation.relation` is checked too. A relation operation without any
+ * relation name is denied.
  */
 export function validateRelationAuthz(
   mutation: Record<string, unknown>,
   resource: { fields: readonly { name: string }[]; name?: string },
   writeFields: readonly string[],
+  schema?: DatafnSchema,
 ): { ok: true } | AuthzError {
-  // The relation field name can be: mutation.relation (relation name) or mutation.fkField
-  const relation = mutation.relation as string | undefined;
-
-  if (!relation) {
-    // No relation name to check — cannot validate, allow by default
-    return { ok: true };
+  const names: string[] = [];
+  const relations = mutation.relations;
+  if (relations && typeof relations === "object" && !Array.isArray(relations)) {
+    names.push(...Object.keys(relations as Record<string, unknown>));
+  }
+  if (typeof mutation.relation === "string") {
+    names.push(mutation.relation);
   }
 
-  // Check if the relation name is in the write fields policy
-  if (!writeFields.includes(relation)) {
+  if (names.length === 0) {
     return {
       ok: false,
       code: "FORBIDDEN",
       message: "Authorization denied",
-      path: `relation`,
+      path: "relations",
+    };
+  }
+
+  for (const name of names) {
+    if (writeFields.includes(name)) continue;
+    const fkField = schema && resource.name
+      ? findOwnForeignKeyField(schema, resource.name, name)
+      : undefined;
+    if (fkField && writeFields.includes(fkField)) continue;
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: `relations.${name}`,
     };
   }
 
   return { ok: true };
+}
+
+/** The FK field this resource holds for `relationName`, if any. */
+function findOwnForeignKeyField(
+  schema: DatafnSchema,
+  resourceName: string,
+  relationName: string,
+): string | undefined {
+  for (const rel of schema.relations ?? []) {
+    const r = rel as { from?: string | string[]; to?: string | string[]; relation?: string; inverse?: string; type?: string; fkField?: string; foreignKey?: string };
+    const fk = r.fkField ?? r.foreignKey;
+    if (!fk) continue;
+    const from = Array.isArray(r.from) ? r.from : [r.from];
+    const to = Array.isArray(r.to) ? r.to : [r.to];
+    // many-one: the source row holds the FK under the forward relation name.
+    if (r.type === "many-one" && r.relation === relationName && from.includes(resourceName)) {
+      return fk;
+    }
+    // one-many: the target row holds the FK; its inverse relation is many-one.
+    if (r.type === "one-many" && r.inverse === relationName && to.includes(resourceName)) {
+      return fk;
+    }
+  }
+  return undefined;
 }
 
 export type ShareAccessLevel = "viewer" | "editor" | "owner";

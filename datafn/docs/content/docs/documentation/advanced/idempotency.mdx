@@ -64,7 +64,7 @@ const store = new DbIdempotencyStore(adapter, "my-namespace");
 **Characteristics:**
 
 - Stores results in the `__datafn_idempotency` internal table.
-- Keyed by `namespace:clientId:mutationId`.
+- Keyed by the request's namespace and actor plus `clientId` and `mutationId`. The server binds the store to each request, so the same `clientId` and `mutationId` from another tenant or another user is a new mutation, never a duplicate.
 - Results are JSON-serialized.
 - Survives server restarts.
 - Supports pruning by age.
@@ -74,8 +74,11 @@ const store = new DbIdempotencyStore(adapter, "my-namespace");
 The database store supports pruning old entries:
 
 ```typescript
-// Delete entries older than 7 days
+// Delete this namespace's entries older than 7 days
 const deletedCount = await store.pruneIdempotency(7);
+
+// Delete entries older than 7 days in every namespace (what `retention.idempotencyDays` does)
+const deletedAll = await store.pruneIdempotencyAllNamespaces(7);
 ```
 
 ## Mutation Result Type

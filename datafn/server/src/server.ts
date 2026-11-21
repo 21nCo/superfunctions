@@ -619,7 +619,7 @@ export async function createDatafnServer<TContext = any>(
         ? new DbIdempotencyStore(db, "datafn", logger)
         : undefined;
       if (config.retention.idempotencyDays && idempotencyStoreForPrune) {
-        const deleted = await idempotencyStoreForPrune.pruneIdempotency(config.retention.idempotencyDays);
+        const deleted = await idempotencyStoreForPrune.pruneIdempotencyAllNamespaces(config.retention.idempotencyDays);
         logger.info("Pruned idempotency entries", { deleted, operation: "startup-prune" });
         await emitDataFnEvent({
           domain: "datafn",
@@ -759,7 +759,7 @@ export async function createDatafnServer<TContext = any>(
         }
         const idStore = new DbIdempotencyStore(dbForInterval, "datafn", logger);
         if (retentionForInterval.idempotencyDays) {
-          const deleted = await idStore.pruneIdempotency(retentionForInterval.idempotencyDays);
+          const deleted = await idStore.pruneIdempotencyAllNamespaces(retentionForInterval.idempotencyDays);
           logger.info("Periodic prune: removed idempotency entries", { deleted, operation: "periodic-prune" });
           await emitDataFnEvent({
             domain: "datafn",
@@ -807,14 +807,19 @@ export async function createDatafnServer<TContext = any>(
     return "datafn";
   };
 
-  // Helper to extract actor ID (for audit attribution)
+  // Helper to extract actor ID (audit attribution and access decisions).
+  // DFN-04/DFN-20: a failing identity lookup fails the request. Continuing
+  // without an actor would treat an authenticated caller as anonymous on some
+  // paths and skip owner checks on others.
   const extractActorId = async (ctx: TContext): Promise<string | undefined> => {
     if (config.namespaceProvider?.getActorId) {
       try {
         return await config.namespaceProvider.getActorId(ctx);
       } catch (error) {
-        logger.warn("Failed to extract actorId, proceeding without audit attribution", { error: String(error), operation: "extract-actor-id" });
-        return undefined;
+        logger.warn("Failed to extract actorId; rejecting the request", { error: String(error), operation: "extract-actor-id" });
+        const err = new Error("Actor could not be resolved");
+        (err as any).code = "ACTOR_UNRESOLVED";
+        throw err;
       }
     }
     return undefined;

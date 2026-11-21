@@ -5,7 +5,9 @@
 
 import type { Adapter } from "@superfunctions/db";
 import {
+  actorQualifiedClientId,
   isRetryableMutationResult,
+  type IdempotencyScope,
   type IdempotencyStore,
   type MutationResult,
 } from "./idempotency.js";
@@ -24,6 +26,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
     private namespace: string = "datafn",
     logger?: DatafnLogger,
     ensured = false,
+    private actorId?: string,
   ) {
     this.logger = logger;
     this.ensured = ensured;
@@ -33,7 +36,19 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // The outer store performs initialization before transactional mutation
     // execution. Preserve that state so rebinding does not issue DDL inside a
     // transaction (which implicitly commits on MySQL).
-    return new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured);
+    return new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured, this.actorId);
+  }
+
+  /**
+   * DFN-01: records are keyed by the request namespace and the actor, so the
+   * same (clientId, mutationId) from another tenant or user is a new mutation.
+   */
+  scoped(scope: IdempotencyScope): IdempotencyStore {
+    return new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.ensured, scope.actorId);
+  }
+
+  private clientKey(clientId: string): string {
+    return actorQualifiedClientId(clientId, this.actorId);
   }
 
   async ensureReady(): Promise<void> {
@@ -52,7 +67,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
 
     const record = await this.db.internal.findOne("__datafn_idempotency", [
       { field: "namespace", op: "eq", value: this.namespace },
-      { field: "client_id", op: "eq", value: clientId },
+      { field: "client_id", op: "eq", value: this.clientKey(clientId) },
       { field: "mutation_id", op: "eq", value: mutationId },
     ]);
 
@@ -87,6 +102,18 @@ export class DbIdempotencyStore implements IdempotencyStore {
     ]);
   }
 
+  /**
+   * Delete idempotency records older than retentionDays in every namespace.
+   * Used by the server's retention pruner, since records are kept per tenant.
+   */
+  async pruneIdempotencyAllNamespaces(retentionDays: number): Promise<number> {
+    await this.ensureReady();
+    const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+    return await this.db.internal.delete("__datafn_idempotency", [
+      { field: "created_at", op: "lt", value: cutoff },
+    ]);
+  }
+
   async set(
     clientId: string,
     mutationId: string,
@@ -97,7 +124,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
 
       const where = [
         { field: "namespace", op: "eq" as const, value: this.namespace },
-        { field: "client_id", op: "eq" as const, value: clientId },
+        { field: "client_id", op: "eq" as const, value: this.clientKey(clientId) },
         { field: "mutation_id", op: "eq" as const, value: mutationId },
       ];
       const existing = await this.db.internal.findOne(
@@ -120,9 +147,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
       }
 
       await this.db.internal.create("__datafn_idempotency", {
-        id: `${this.namespace}:${clientId}:${mutationId}`,
+        id: JSON.stringify([this.namespace, this.clientKey(clientId), mutationId]),
         namespace: this.namespace,
-        client_id: clientId,
+        client_id: this.clientKey(clientId),
         mutation_id: mutationId,
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),

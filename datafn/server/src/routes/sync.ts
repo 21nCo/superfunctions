@@ -86,7 +86,9 @@ export function createCloneHandler(
         const result = await executeClone(
         {
           ...(beforeHookResult.payload as any),
-          ...(actorId !== undefined ? { actorId } : {}),
+          // DFN-04: the actor is always the server-derived one; a client
+          // `actorId` in the body is overwritten, even when there is none.
+          actorId,
         },
         validatedSchema,
         db,
@@ -198,7 +200,9 @@ export function createPullHandler(
         const result = await executePull(
         {
           ...(beforeHookResult.payload as any),
-          ...(actorId !== undefined ? { actorId } : {}),
+          // DFN-04: the actor is always the server-derived one; a client
+          // `actorId` in the body is overwritten, even when there is none.
+          actorId,
         },
         validatedSchema,
         db,
@@ -567,7 +571,9 @@ export function createReconcileHandler(
         const result = await executeReconcile(
         {
           ...(beforeHookResult.payload as any),
-          ...(actorId !== undefined ? { actorId } : {}),
+          // DFN-04: the actor is always the server-derived one; a client
+          // `actorId` in the body is overwritten, even when there is none.
+          actorId,
         },
         validatedSchema,
         db,
