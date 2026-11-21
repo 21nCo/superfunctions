@@ -9,6 +9,8 @@ Don't ship DataFn to production without ticking every item below. They're indepe
 
 ## Server configuration
 
+The server and schema items below apply to `@datafn/server` (TypeScript). The Python server SDK does not enforce most of them; see [Python server SDK](#python-server-sdk).
+
 - [ ] `authorize` requires a verified authenticated session for protected actions. Selector extraction does not authenticate callers.
 
 - [ ] Resource gating in `authorize` uses `extractStructuralResourceSelectors` rather than reading `payload.resource` or recursively searching JSON.
