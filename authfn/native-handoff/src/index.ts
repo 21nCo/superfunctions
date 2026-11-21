@@ -30,7 +30,7 @@ import {
 } from 'authfn/core/errors';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
 import { resolveEnvironment } from 'authfn/core/environment';
-import { findUserById } from 'authfn/core/users';
+import { findUserById, isAuthFnUserDisabled } from 'authfn/core/users';
 import { issueSessionCookies } from 'authfn/core/cookies';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { jsonSuccess } from 'authfn/http/envelopes';
@@ -446,6 +446,12 @@ async function consumeHandoffCode(
   if (!user) {
     await emitHandoffFailure(ctx, request, target, 'missing-user', record);
     throw new AuthFnUnauthenticatedError('Handoff user no longer exists');
+  }
+  if (isAuthFnUserDisabled(user)) {
+    // Checked before the code is consumed: the session it would issue is
+    // refused anyway while the user is disabled.
+    await emitHandoffFailure(ctx, request, target, 'disabled-user', record);
+    throw new AuthFnSessionRevokedError('Handoff user is disabled');
   }
 
   const consumedAt = new Date();

@@ -31,7 +31,7 @@ import { emitAuthEvent, eventRequestId } from './observability.js';
 import { getMultiRegionPluginConfig } from './regions.js';
 import { readStoredScopeGrant } from './scopes.js';
 import { getCookieSessionState, hashSecret } from './sessions.js';
-import { findUserById } from './users.js';
+import { findUserById, isAuthFnUserDisabled } from './users.js';
 
 const INTERNAL_HEADER_PREFIX = 'x-authfn-routing-';
 const CONTEXT_KIND = 'placement-context';
@@ -527,6 +527,9 @@ async function resolveBearerSession(
   if (record.expiresAt.getTime() <= now().getTime()) throw new AuthFnSessionExpiredError();
   const user = await findUserById(config, record.userId);
   if (!user) throw new AuthFnUnauthenticatedError();
+  // Same rule as cookie and bearer authentication: a disabled user's
+  // sessions are refused while the flag is set.
+  if (isAuthFnUserDisabled(user)) throw new AuthFnSessionRevokedError();
   return principalFromSession(record, user, record.methods);
 }
 

@@ -68,7 +68,7 @@ This is the policy you almost certainly want for OTP-first apps where users may 
 Allow a logged-in user to add a password credential through the password sign-up endpoint, when they don't already have one.
 
 - `false` (default): password sign-up always tries to create a new user.
-- `true`: when authenticated and no password credential exists, treat the request as "add password to my account".
+- `true`: when authenticated and no password credential exists, treat the request as "add password to my account". A session cookie counts only with a valid `x-authfn-csrf` header.
 - Object form: require the user's email to be verified before allowing the upgrade.
 
 This is how you wire "set a password" inside an OTP-only or OAuth-only sign-up flow.
