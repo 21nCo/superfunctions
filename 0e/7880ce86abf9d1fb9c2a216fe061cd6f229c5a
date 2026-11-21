@@ -1,0 +1,29 @@
+apifn/core/README.md
+  s_b15184ae60b291::t_064f19d9794719 222
+apifn/core/__tests__/root-entry-graph.test.ts
+  s_b15184ae60b291::t_7dec392318d005 78-89
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_b15184ae60b291::t_3e1003cd429bcc 62-65,68
+apifn/core/package.json
+  s_b15184ae60b291::t_9b4367f6297abd 32
+apifn/core/scripts/fix-testfn-cjs-types.mjs
+  s_b15184ae60b291::t_cb870b59524cd5 1-30
+apifn/core/scripts/verify-packed-consumer.mjs
+  s_b15184ae60b291::t_338799e9d486b6 9-10,24-25,37-39,44-48,117-119,134,137,142,145-146,194-197,224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e7880ce86abf9d1fb9c2a216fe061cd6f229c5a",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

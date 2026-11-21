@@ -1,0 +1,23 @@
+authfn/core/src/__tests__/social-apple.test.ts
+  s_e5ac07859c1bc9::t_a507ddf8ed10b4 524
+authfn/core/src/__tests__/social-google.test.ts
+  s_e5ac07859c1bc9::t_898a1e954b76c1 1,400-429
+authfn/social-oauth/src/index.ts
+  s_e5ac07859c1bc9::t_21d8185d782295 593-594,2103-2105,2107-2108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "763e0368a8d0961ad25e9741a12607fef140fcf8",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
