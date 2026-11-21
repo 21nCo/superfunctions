@@ -17,6 +17,14 @@ export interface AuthFnBundledPluginConfig {
 export interface PasswordPluginConfig extends AuthFnBundledPluginConfig {
   compromisedPasswordChecker?: AuthFnPasswordCompromiseChecker;
   requireEmailVerifiedForSignIn?: boolean;
+  /**
+   * The scrypt cost new password hashes are written at. `'current'` (the
+   * default) is N=32768, r=8, p=3. During a rolling deploy from an earlier
+   * AuthFn version, set `'legacy'` (N=16384, r=8, p=1) until every server
+   * runs this version: earlier versions cannot verify current-cost hashes,
+   * and sign-in does not upgrade older hashes while it is set.
+   */
+  passwordHashCost?: 'current' | 'legacy';
   /** @deprecated Configure password OTP delivery through pluginRuntime.password.otp. */
   otp?: Partial<EmailOtpPluginRuntimeConfig>;
 }

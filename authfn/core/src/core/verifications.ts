@@ -246,7 +246,15 @@ export async function verifyOtpChallenge(
   config: AuthFnRuntimeConfig,
   hooks: Partial<AuthFnHooks>,
   runtimeOptions: OtpRuntimeOptions,
-  input: VerifyOtpInput
+  input: VerifyOtpInput,
+  internal: {
+    /**
+     * Runs once the code matched (its attempt reserved) and right before the
+     * challenge is consumed. If it throws, the attempt is handed back and the
+     * code stays usable.
+     */
+    beforeConsume?: () => Promise<void>;
+  } = {}
 ): Promise<VerifyOtpResult> {
   const email = normalizeEmail(input.email);
   const challenge = await findLatestChallenge(config, input.purpose, email);
@@ -338,6 +346,7 @@ export async function verifyOtpChallenge(
       }
     }
 
+    await internal.beforeConsume?.();
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
     await releaseOtpAttempt(config, reserved, now);
@@ -449,33 +458,26 @@ export async function completeResetPassword(
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
-  // When the code matches the current challenge (a read-only check), the new
-  // password is checked against the policy and hashed before the code is
-  // used, so a refused password, or hashing that is busy, leaves the code for
-  // another try. A code that does not match skips that work and goes straight
-  // to the counted verification below, which refuses it.
-  const latest = await findLatestChallenge(config, input.purpose, email);
-  const codeMatches = Boolean(
-    latest
-      && !latest.consumedAt
-      && new Date(latest.expiresAt).getTime() > resolveNow(runtimeOptions).getTime()
-      && typeof input.code === 'string'
-      && safeCompareHex(latest.codeHash, hashSecret(input.code))
-  );
-  const preparedHash = codeMatches
-    ? await preparePasswordHash(input.newPassword, {
-        ...runtimeOptions.passwordPolicy,
-        request: input.request,
-        environment: runtime,
-        email,
-        purpose: 'reset-password'
-      })
-    : undefined;
+  // The new password is checked against the policy and hashed only once the
+  // code matched, with its attempt already counted, so a guess costs an
+  // attempt whatever the password. A refused password, or hashing that is
+  // busy, hands the attempt back and leaves the code for another try.
+  let preparedHash: string | undefined;
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
     email,
     code: input.code
+  }, {
+    beforeConsume: async () => {
+      preparedHash = await preparePasswordHash(input.newPassword, {
+        ...runtimeOptions.passwordPolicy,
+        request: input.request,
+        environment: runtime,
+        email,
+        purpose: 'reset-password'
+      });
+    }
   });
 
   const user = challenge.user ?? await findUserByPrimaryEmail(config, email);

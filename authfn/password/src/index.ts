@@ -102,7 +102,8 @@ function createPasswordRoutes(
           environment: runtime,
           authenticatedSession,
           policy: {
-            compromisedPasswordChecker: config.compromisedPasswordChecker
+            compromisedPasswordChecker: config.compromisedPasswordChecker,
+            hashCost: config.passwordHashCost
           }
         });
         if (result.linkedExistingUser) {
@@ -175,7 +176,8 @@ function createPasswordRoutes(
         const result = await completeResetPassword(ctx.config, {
           ...otpConfig,
           passwordPolicy: {
-            compromisedPasswordChecker: config.compromisedPasswordChecker
+            compromisedPasswordChecker: config.compromisedPasswordChecker,
+            hashCost: config.passwordHashCost
           }
         }, {
           purpose: 'reset-password',
@@ -204,7 +206,8 @@ function createPasswordRoutes(
           email: body.email ?? '',
           password: body.password ?? ''
         }, {
-          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn
+          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
+          hashCost: config.passwordHashCost
         });
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
         if (twoFactorConfig) {

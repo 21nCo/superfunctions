@@ -228,6 +228,8 @@ class MultiRegionService:
             "authority": target,
             "domain": located.get("domain"),
             "continueLocally": continue_locally,
+            # Owned by another region than this one (see the TypeScript type).
+            "ownedElsewhere": True,
             "redirectTo": None if continue_locally else target,
         }
 

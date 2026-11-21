@@ -647,6 +647,65 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     expect(checks).toBe(0);
   });
 
+  it('answers a reset with no attempts left the same way, whatever the code and new password', async () => {
+    const config = createConfig();
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    const options = {
+      delivery: { send: async () => ({ sent: true }) },
+      codeGenerator: () => '731942',
+      maxAttempts: 2
+    };
+    await sendOtpChallenge(config, {}, options, { purpose: 'reset-password', email: 'ada@example.com' });
+    const reset = (code: string, newPassword: string) => completeResetPassword(config, options, {
+      purpose: 'reset-password', email: 'ada@example.com', code, newPassword
+    });
+    // A refused password with the right code hands its attempt back.
+    await expect(reset('731942', 'short')).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
+    await expect(reset('000000', 'test-password-new-one')).rejects.toMatchObject({ code: 'AUTHFN_OTP_INVALID' });
+    await expect(reset('000001', 'test-password-new-one')).rejects.toMatchObject({ code: 'AUTHFN_OTP_INVALID' });
+    // No attempts left: the right code with a password the policy refuses
+    // gets the same answer as a wrong code, so it does not confirm the code.
+    for (const [code, newPassword] of [['731942', 'short'], ['731942', 'test-password-new-one'], ['000002', 'short']]) {
+      await expect(reset(code, newPassword)).rejects.toMatchObject({ code: 'AUTHFN_OTP_INVALID' });
+    }
+  });
+
+  it('returns the upgraded credential after a sign-in rewrites an old-cost hash', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    const result = await signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' });
+    const stored = await getPasswordCredentialByUserId(config, user.id);
+    expect(result.credential.passwordHash).toBe(stored!.passwordHash);
+    expect(result.credential.passwordHash.split('$').slice(0, 4)).toEqual(['scrypt', '32768', '8', '3']);
+    expect(new Date(result.credential.updatedAt).getTime()).toBe(new Date(stored!.updatedAt).getTime());
+  });
+
+  it('writes old-cost hashes and skips upgrades with passwordHashCost legacy (rolling deploys)', async () => {
+    const config: AuthFnRuntimeConfig = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      plugins: [authFnPasswordPlugin({ passwordHashCost: 'legacy' })]
+    };
+    const auth = createTestServer(config);
+    const signedUp = await post(auth, '/sign-up/password', { email: 'bea@example.com', password: 'test-password-strong' });
+    expect(signedUp.status).toBeLessThan(300);
+    const user = (await config.database.findOne<{ id: string }>({
+      model: 'users', where: [{ field: 'primaryEmail', operator: 'eq', value: 'bea@example.com' }], namespace: 'authfn'
+    }))!;
+    const written = await getPasswordCredentialByUserId(config, user.id);
+    expect(written!.passwordHash.split('$').slice(0, 4)).toEqual(['scrypt', '16384', '8', '1']);
+    // An earlier version verifies it: N = 2^14 fits Node's default memory cap.
+    const [, , , , salt, digest] = written!.passwordHash.split('$');
+    expect(scryptSync('test-password-strong', salt, 64, { N: 16384, r: 8, p: 1 }).toString('base64url')).toBe(digest);
+
+    await updatePasswordCredential(config, { userId: user.id, password: 'test-password-legacy' }, { hashCost: 'legacy' });
+    const before = await getPasswordCredentialByUserId(config, user.id);
+    const signedIn = await post(auth, '/sign-in/password', { email: 'bea@example.com', password: 'test-password-legacy' });
+    expect(signedIn.status).toBe(200);
+    expect((await getPasswordCredentialByUserId(config, user.id))!.passwordHash).toBe(before!.passwordHash);
+  });
+
   it('refuses a sign-in whose upgrade write went unconfirmed while a reset replaced the password', async () => {
     const base = memoryAdapter({ debug: false });
     const database = new Proxy(base, {
@@ -694,6 +753,30 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     const unknown = await buildLookupResult(config, pluginConfig, { identifier: 'nobody@example.com', environment });
     // The user id is kept for the lookup event only; the route drops it.
     expect({ ...known, identifier: undefined, userId: undefined }).toEqual({ ...unknown, identifier: undefined, userId: undefined });
+  });
+
+  it('flags an account owned by another region, and only that one', async () => {
+    const config = createConfig();
+    const records: Record<string, unknown> = {
+      'ada@example.com': { identifier: 'ada@example.com', userId: 'user_test_local', regionId: 'us-east-1', authority: 'https://us.account.example.com' },
+      'eve@example.com': { identifier: 'eve@example.com', userId: 'user_test_remote', regionId: 'eu-west-1', authority: 'https://us.account.example.com' }
+    };
+    const lookupStore = {
+      get: async (key: string) => {
+        const match = Object.keys(records).find((identifier) => key.endsWith(identifier));
+        return match ? JSON.stringify({ ...(records[match] as object), createdAt: '2026-11-21T00:00:00.000Z', updatedAt: '2026-11-21T00:00:00.000Z' }) : null;
+      },
+      setIfAbsent: async () => ({ inserted: false }),
+      delete: async () => {}
+    };
+    const environment = { issuer: 'https://us.account.example.com', baseUrl: 'https://us.account.example.com', regionId: 'us-east-1' };
+    const pluginConfig = { lookupStore } as never;
+    const lookup = (identifier: string) => buildLookupResult(config, pluginConfig, { identifier, environment });
+    // Same authority, other region: still reported, so the client can refuse
+    // a duplicate sign-up.
+    expect(await lookup('eve@example.com')).toMatchObject({ regionId: 'eu-west-1', continueLocally: true, ownedElsewhere: true });
+    expect((await lookup('ada@example.com')).ownedElsewhere).toBeUndefined();
+    expect((await lookup('nobody@example.com')).ownedElsewhere).toBeUndefined();
   });
 
   it('says an email is unverified only to someone who knows the password, and names no user', async () => {

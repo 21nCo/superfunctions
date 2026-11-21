@@ -129,19 +129,13 @@ export function createAuthFnRegionalClient(
       return lookup;
     }
 
-    // The lookup names no user and answers a local account like an unknown
-    // one, so only an account owned by another region is known here (even
-    // when both regions share an authority); a local one is reported by
-    // sign-up itself.
+    // Current servers answer a local account like an unknown one and flag an
+    // account owned by another region (`ownedElsewhere`, even when both
+    // regions share an authority); a local account is reported by sign-up
+    // itself. Earlier servers name the user instead.
     const existingAccount = lookup.data.continueLocally === false
-      // Only a concrete owning region counts: gateway lookups name none, and a
-      // server without a configured region answers 'unknown'.
-      || (
-        typeof lookup.data.regionId === 'string'
-        && lookup.data.regionId !== ''
-        && lookup.data.regionId !== 'unknown'
-        && lookup.data.regionId !== selectedRegionId
-      );
+      || lookup.data.ownedElsewhere === true
+      || (typeof lookup.data.userId === 'string' && lookup.data.userId !== '');
     if (input.flow === 'sign-up' && existingAccount) {
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }

@@ -462,6 +462,7 @@ describe('authfn integration browser flows', () => {
         authority: 'https://eu.account.example.com',
         domain: '.example.com',
         continueLocally: false,
+        ownedElsewhere: true,
         redirectTo: 'https://eu.account.example.com'
       },
       requestId: expect.any(String)

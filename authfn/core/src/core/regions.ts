@@ -297,6 +297,7 @@ export async function buildLookupResult(
     authority: targetAuthority,
     domain: lookup.domain,
     continueLocally,
+    ownedElsewhere: true,
     redirectTo: continueLocally ? undefined : targetAuthority
   };
 }

@@ -81,6 +81,9 @@ const NO_SUCH_USER_ID = 'authfn-no-such-user';
 const MAX_CONCURRENT_SCRYPT_JOBS = 16;
 const MAX_QUEUED_SCRYPT_JOBS = 1024;
 const LEGACY_PARAMETER_SET = '16384:8:1';
+const LEGACY_HASH_N = 16384;
+const LEGACY_HASH_R = 8;
+const LEGACY_HASH_P = 1;
 
 export interface PasswordSignUpInput {
   email: string;
@@ -111,7 +114,17 @@ export interface PasswordPolicyOptions {
   purpose?: 'sign-up' | 'reset-password' | 'update-password';
   request?: Request;
   environment?: AuthFnEnvironment;
+  /**
+   * The scrypt cost new hashes are written at. `'current'` (the default) is
+   * N=32768, r=8, p=3. `'legacy'` writes N=16384, r=8, p=1, which earlier
+   * AuthFn versions can verify, and stops sign-in from upgrading older
+   * hashes; use it only while servers on an earlier version share the
+   * database (a rolling deploy).
+   */
+  hashCost?: PasswordHashCost;
 }
+
+export type PasswordHashCost = 'current' | 'legacy';
 
 export interface HaveIBeenPwnedPasswordCheckerOptions {
   fetcher?: typeof fetch;
@@ -162,7 +175,7 @@ export async function signUpWithPassword(
     });
   }
 
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = await hashPassword(input.password, context.policy?.hashCost);
 
   return runUserCredentialTransaction(async () => {
     const user = await createUser(config, {
@@ -274,7 +287,7 @@ async function linkPasswordCredentialForExistingUser(
 
   const credential = await createPasswordCredential(config, {
     userId: context.existingUser.id,
-    passwordHash: await hashPassword(password)
+    passwordHash: await hashPassword(password, context.policy?.hashCost)
   });
 
   return {
@@ -315,12 +328,26 @@ export async function signInWithPassword(
   const password = tooLong ? '' : submitted;
   const storedHash = credential?.passwordHash;
   const legacy = storedHash !== undefined && isLegacyHash(storedHash);
-  const [valid, upgradedHash] = await Promise.all([
-    verifyPassword(password, storedHash ?? DUMMY_CURRENT_HASH),
-    legacy
-      ? derivePasswordHash(password)
-      : verifyPassword(password, DUMMY_LEGACY_HASH).then(() => undefined)
-  ]);
+  // The current-cost job is always queued first, so the order of the two
+  // jobs in the scrypt queue is the same for every account.
+  let valid: boolean;
+  let upgradedHash: string | undefined;
+  if (legacy) {
+    [upgradedHash, valid] = await Promise.all([
+      derivePasswordHash(password),
+      verifyPassword(password, storedHash)
+    ]);
+    if (options.hashCost === 'legacy') {
+      // Servers on an earlier version still share the database: derived
+      // only so the timing matches, never written.
+      upgradedHash = undefined;
+    }
+  } else {
+    [valid] = await Promise.all([
+      verifyPassword(password, storedHash ?? DUMMY_CURRENT_HASH),
+      verifyPassword(password, DUMMY_LEGACY_HASH)
+    ]);
+  }
   if (!user || !credential || !valid || tooLong) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
@@ -336,8 +363,11 @@ export async function signInWithPassword(
   }
 
   if (upgradedHash && latest.passwordHash === credential.passwordHash) {
-    const upgraded = await upgradePasswordHash(config, credential, upgradedHash);
-    if (!upgraded) {
+    const upgradedAt = await upgradePasswordHash(config, credential, upgradedHash);
+    if (upgradedAt) {
+      // The caller gets what is stored now, not the hash it replaced.
+      latest = { ...latest, passwordHash: upgradedHash, updatedAt: upgradedAt };
+    } else {
       // Another write got there first (another sign-in's upgrade, or a
       // reset): confirm the password against whatever is stored now.
       latest = await confirmCurrentCredential(config, user.id, password, credential.passwordHash);
@@ -482,28 +512,31 @@ export async function preparePasswordHash(password: string, options: PasswordPol
     ...options,
     purpose: options.purpose ?? 'update-password'
   });
-  return hashPassword(password);
+  return hashPassword(password, options.hashCost);
 }
 
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string, cost: PasswordHashCost = 'current'): Promise<string> {
   assertPasswordLength(password);
-  return derivePasswordHash(password);
+  return derivePasswordHash(password, cost);
 }
 
-async function derivePasswordHash(password: string): Promise<string> {
+async function derivePasswordHash(password: string, cost: PasswordHashCost = 'current'): Promise<string> {
+  const [N, r, p] = cost === 'legacy'
+    ? [LEGACY_HASH_N, LEGACY_HASH_R, LEGACY_HASH_P]
+    : [PASSWORD_HASH_N, PASSWORD_HASH_R, PASSWORD_HASH_P];
   const salt = randomBytes(16).toString('base64url');
   const derived = await scryptAsync(password, salt, PASSWORD_HASH_KEY_LENGTH, {
-    N: PASSWORD_HASH_N,
-    r: PASSWORD_HASH_R,
-    p: PASSWORD_HASH_P,
+    N,
+    r,
+    p,
     maxmem: PASSWORD_HASH_MAXMEM
   });
 
   return [
     PASSWORD_HASH_ALGO,
-    String(PASSWORD_HASH_N),
-    String(PASSWORD_HASH_R),
-    String(PASSWORD_HASH_P),
+    String(N),
+    String(r),
+    String(p),
     salt,
     derived.toString('base64url')
   ].join('$');
@@ -624,7 +657,8 @@ async function upgradePasswordHash(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   credential: AuthFnPasswordCredentialRecord,
   upgradedHash: string
-): Promise<boolean> {
+): Promise<Date | null> {
+  const updatedAt = new Date();
   try {
     const written = await config.database.updateMany({
       model: 'password_credentials',
@@ -632,14 +666,14 @@ async function upgradePasswordHash(
         { field: 'id', operator: 'eq', value: credential.id },
         { field: 'passwordHash', operator: 'eq', value: credential.passwordHash, connector: 'AND' }
       ],
-      data: { passwordHash: upgradedHash, updatedAt: new Date() },
+      data: { passwordHash: upgradedHash, updatedAt },
       namespace: namespace(config)
     });
     // Only a confirmed write counts; an unreported count or a failed write
     // makes the caller confirm the password against what is stored now.
-    return Number.isFinite(written) && written > 0;
+    return Number.isFinite(written) && written > 0 ? updatedAt : null;
   } catch {
-    return false;
+    return null;
   }
 }
 

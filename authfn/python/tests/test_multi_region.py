@@ -240,6 +240,7 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
         "authority": "https://eu.account.example.com",
         "domain": ".example.com",
         "continueLocally": False,
+        "ownedElsewhere": True,
         "redirectTo": "https://eu.account.example.com",
     }
 
@@ -262,6 +263,7 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     assert missing["continueLocally"] is True
     assert missing["authority"] == "https://us.account.example.com"
     assert missing.get("userId") is None
+    assert "ownedElsewhere" not in missing
 
 
 @pytest.mark.asyncio

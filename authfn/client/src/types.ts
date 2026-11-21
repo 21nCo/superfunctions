@@ -137,6 +137,12 @@ export interface AuthFnRegionLookupResult {
   authority: string;
   domain?: string;
   continueLocally: boolean;
+  /**
+   * True when the identifier belongs to an account owned by another region
+   * than the one answering. An account in the answering region gets the same
+   * answer as an unknown identifier, so this is never set for one.
+   */
+  ownedElsewhere?: boolean;
   redirectTo?: string;
 }
 
