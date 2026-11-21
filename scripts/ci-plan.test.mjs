@@ -10,6 +10,8 @@ test("CI changes cannot silently disable Python coverage", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ci-plan-contract-"));
   const env = {
     ...process.env,
+    // Fixture plans must not write to the run summary of the CI step running these tests.
+    GITHUB_STEP_SUMMARY: "",
     GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
     GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
   };
@@ -55,6 +57,8 @@ test("a change to a product's shared test support runs that product's package te
   const root = mkdtempSync(path.join(tmpdir(), "ci-plan-test-support-"));
   const env = {
     ...process.env,
+    // Fixture plans must not write to the run summary of the CI step running these tests.
+    GITHUB_STEP_SUMMARY: "",
     GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
     GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
   };
@@ -91,6 +95,8 @@ function devfnFixture(extraFiles = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "ci-plan-devfn-"));
   const env = {
     ...process.env,
+    // Fixture plans must not write to the run summary of the CI step running these tests.
+    GITHUB_STEP_SUMMARY: "",
     GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
     GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
   };
@@ -233,6 +239,8 @@ function pullRequestFixture(prefix) {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   const env = {
     ...process.env,
+    // Fixture plans must not write to the run summary of the CI step running these tests.
+    GITHUB_STEP_SUMMARY: "",
     GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
     GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
   };
@@ -408,7 +416,8 @@ test("a one-package change with its lockfile version bump selects only that pack
     assert.equal(outputs.full_js, "false");
     assert.equal(outputs.run_js, "true");
     assert.equal(outputs.js_build_filters, "--filter=..../filefn/core");
-    assert.equal(outputs.js_typecheck_filters, "");
+    // No fixture package defines typecheck, so the step is skipped even though it has a filter.
+    assert.equal(outputs.has_js_typecheck, "false");
     assert.equal(outputs.js_test_filters, `--filter=..../filefn/core ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.run_devfn, "false");
     assert.equal(outputs.run_python, "false");
@@ -441,6 +450,34 @@ test("a package installed under one workspace's node_modules selects only that w
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
+test("a package under a workspace's node_modules also selects the workspaces nested inside it", () => {
+  const { root, plan } = devfnFixture({
+    "package-lock.json": `${JSON.stringify(fixtureLockfile(), null, 2)}\n`,
+    "otherfn/cli/example/package.json": JSON.stringify({ name: "@otherfn/cli-example", scripts: { build: "vite build" } }),
+  });
+  try {
+    const outputs = plan(editLockfile((packages) => { packages["otherfn/cli/node_modules/vite"] = { version: "6.0.0" }; }));
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.js_build_filters, "--filter=..../otherfn/cli --filter=..../otherfn/cli/example");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a changed package without a task still runs that task in its dependents", () => {
+  const { root, plan } = devfnFixture({
+    "basefn/core/package.json": JSON.stringify({ name: "@basefn/core" }),
+    "basefn/app/package.json": JSON.stringify({ name: "@basefn/app", dependencies: { "@basefn/core": "*" }, scripts: { typecheck: "tsc", test: "vitest run", lint: "eslint ." } }),
+  });
+  try {
+    const outputs = plan(({ put, read }) => put("basefn/core/index.js", "export {};\n"));
+    assert.equal(outputs.js_typecheck_filters, "--filter=..../basefn/core");
+    assert.equal(outputs.has_js_typecheck, "true");
+    assert.equal(outputs.has_js_lint, "true");
+    assert.equal(outputs.has_js_test, "true");
+    assert.equal(outputs.has_js_build, "false");
+    assert.equal(outputs.js_test_filters, `--filter=..../basefn/core ${EXCLUDE_DEVFN}`);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
 test("a new workspace's lockfile entries select only that workspace", () => {
   const { root, plan } = lockfileFixture();
   try {
@@ -467,6 +504,12 @@ test("lockfile changes outside workspace entries and root config force a full Ja
       ["root entry", editLockfile((packages) => { packages[""].devDependencies = { turbo: "2.0.0" }; })],
       ["top-level field", editLockfile((packages, lockfile) => { lockfile.lockfileVersion = 4; })],
       ["link to a missing directory", editLockfile((packages) => { packages["node_modules/@ghost/pkg"] = { resolved: "ghost/pkg", link: true }; })],
+      ["workspace link removed (a rename)", editLockfile((packages) => {
+        delete packages["node_modules/@filefn/core"];
+        packages["node_modules/@filefn/renamed"] = { resolved: "filefn/core", link: true };
+      })],
+      ["workspace link retargeted", editLockfile((packages) => { packages["node_modules/@filefn/core"].resolved = "clifn/core"; })],
+      ["key one character past a workspace", editLockfile((packages) => { packages["filefn/cores"] = { version: "1.0.0" }; })],
       ["unparseable lockfile", ({ put }) => put("package-lock.json", "{ not json\n")],
       ["root package.json", "package.json"],
     ]) {

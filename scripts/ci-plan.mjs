@@ -331,22 +331,29 @@ function classifyLockfileChange(before, after, workspaceDirs) {
       continue;
     }
 
-    // A package installed under a workspace's own node_modules resolves only for code inside that workspace (its
-    // dependents reach it through the workspace, and the dependents filter selects them).
-    const nestedIn = key.startsWith("node_modules/") ? "" : key.slice(0, key.indexOf("/node_modules/"));
+    // A package installed under a workspace's node_modules resolves for code inside that directory, which includes
+    // any workspace nested in it; dependents reach it through those workspaces, and the dependents filter selects them.
+    const nestedAt = key.indexOf("/node_modules/");
+    const nestedIn = nestedAt > 0 && !key.startsWith("node_modules/") ? key.slice(0, nestedAt) : "";
     if (nestedIn && workspaceDirs.has(nestedIn)) {
-      dirs.add(nestedIn);
+      for (const dir of workspaceDirs) {
+        if (dir === nestedIn || dir.startsWith(`${nestedIn}/`)) {
+          dirs.add(dir);
+        }
+      }
       continue;
     }
 
-    if (HOISTED_ENTRY.test(key)) {
-      const sides = [previous, next].filter((entry) => entry !== undefined);
-      if (sides.every((entry) => entry?.link === true && workspaceDirs.has(entry.resolved))) {
-        for (const entry of sides) {
-          dirs.add(entry.resolved);
-        }
-        continue;
-      }
+    // A new workspace's link selects it. A link that is removed or that changes target (a workspace renamed or moved)
+    // can leave consumers of the old name that HEAD's dependency graph no longer shows, so it is global.
+    if (
+      HOISTED_ENTRY.test(key) &&
+      previous === undefined &&
+      next?.link === true &&
+      workspaceDirs.has(next.resolved)
+    ) {
+      dirs.add(next.resolved);
+      continue;
     }
 
     return global(`${key} changed`);
@@ -615,31 +622,27 @@ const selectedPythonPackages = fullPython
       .map((packageName) => pythonByName.get(packageName))
       .filter(Boolean);
 
-const jsBuildPackages = new Set(
-  selectedJsPackages.filter((manifest) => manifest.scripts.build).map((manifest) => manifest.dir)
-);
-const jsTestPackages = new Set(
-  selectedJsPackages.filter((manifest) => manifest.scripts.test).map((manifest) => manifest.dir)
-);
-const jsLintPackages = new Set(
-  selectedJsPackages.filter((manifest) => manifest.scripts.lint).map((manifest) => manifest.dir)
-);
-const jsTypecheckPackages = new Set(
-  selectedJsPackages.filter((manifest) => manifest.scripts.typecheck).map((manifest) => manifest.dir)
-);
-
-// The JavaScript test filters select each test package and its dependents; DevFn tests take the DevFn part of that
-// selection (on a full run, every DevFn package) and the JavaScript test step excludes every DevFn package.
-const jsTestSelection = fullJs
+// Every changed package seeds the Turbo filters, whatever scripts it has: `..../<dir>` runs a task in the seed and in
+// each dependent that defines it, so a seed without a task still selects its dependents' runs of that task.
+const jsSeedDirs = new Set(selectedJsPackages.map((manifest) => manifest.dir));
+const jsSelection = fullJs
   ? new Set(jsPackages.map((manifest) => manifest.dir))
-  : collectJsDependents(jsTestPackages, jsPackages);
-const testableDirs = [...jsTestSelection].filter((dir) => jsByDir.get(dir)?.scripts.test);
+  : collectJsDependents(jsSeedDirs, jsPackages);
+const selectionHas = (task) => [...jsSelection].some((dir) => jsByDir.get(dir)?.scripts[task]);
+const jsSeedFilters = fullJs ? "" : buildTurboFilters(jsSeedDirs);
+const hasJsBuild = selectionHas("build");
+const hasJsLint = selectionHas("lint");
+const hasJsTypecheck = selectionHas("typecheck");
+
+// The JavaScript test filters select each changed package and its dependents; DevFn tests take the DevFn part of that
+// selection (on a full run, every DevFn package) and the JavaScript test step excludes every DevFn package.
+const testableDirs = [...jsSelection].filter((dir) => jsByDir.get(dir)?.scripts.test);
 const devfnTestPackages = new Set(testableDirs.filter(isDevfnDir));
 const devfnExcludeFilters = buildExcludeTurboFilters(
   new Set(jsPackages.map((manifest) => manifest.dir).filter(isDevfnDir))
 );
 const hasJsTest = testableDirs.some((dir) => !isDevfnDir(dir));
-const jsTestFilters = [fullJs ? "" : buildTurboFilters(jsTestPackages), devfnExcludeFilters]
+const jsTestFilters = [jsSeedFilters, devfnExcludeFilters]
   .filter(Boolean)
   .join(" ");
 
@@ -674,14 +677,14 @@ writeOutput("base_ref", baseRef);
 writeOutput("changed_files_count", String(changedPaths.length));
 writeOutput("run_js", String(runJs));
 writeOutput("full_js", String(fullJs));
-writeOutput("has_js_build", String(fullJs || jsBuildPackages.size > 0));
+writeOutput("has_js_build", String(hasJsBuild));
 writeOutput("has_js_test", String(hasJsTest));
-writeOutput("has_js_lint", String(fullJs || jsLintPackages.size > 0));
-writeOutput("has_js_typecheck", String(fullJs || jsTypecheckPackages.size > 0));
-writeOutput("js_build_filters", fullJs ? "" : buildTurboFilters(jsBuildPackages));
+writeOutput("has_js_lint", String(hasJsLint));
+writeOutput("has_js_typecheck", String(hasJsTypecheck));
+writeOutput("js_build_filters", jsSeedFilters);
 writeOutput("js_test_filters", hasJsTest ? jsTestFilters : "");
-writeOutput("js_lint_filters", fullJs ? "" : buildTurboFilters(jsLintPackages));
-writeOutput("js_typecheck_filters", fullJs ? "" : buildTurboFilters(jsTypecheckPackages));
+writeOutput("js_lint_filters", jsSeedFilters);
+writeOutput("js_typecheck_filters", jsSeedFilters);
 writeOutput("run_devfn", String(devfnTestPackages.size > 0));
 writeOutput("devfn_test_filters", buildExactTurboFilters(devfnTestPackages));
 writeOutput("run_python", String(fullPython || pythonMatrix.length > 0));
