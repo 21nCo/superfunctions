@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - unreleased (AUTH-32 security fixes)
+
+### Security
+- Two-factor recovery codes are claimed before they are spent, and spent only while unused (conditional writes). The two-factor plugin needs a database adapter with `update_many`; `AuthFn` and `create_authfn_routes` check this at startup through plugin `validate_config`, which now runs (AUTH-32 AF-07).
+- Recovery codes hashed by the TypeScript kernel with the enrollment id are accepted (AUTH-32 AF-07).
+- Region lookups no longer name the user. An account in the answering region gets the same answer as an unknown identifier; an account owned by another region or authority carries `ownedElsewhere: true`. Region-mismatch errors no longer include `userId`, and `lookup` no longer raises `RegionNotFoundError` for an unknown identifier (AUTH-32 AF-10).
+- OTP verification skips challenges the TypeScript kernel never admitted, comparing times as UTC instants, and picks the latest challenge by `createdAt` then `id` (AUTH-32 AF-02).
+
+### Changed
+- AuthFn schema version 3: `two_factor_enrollments` gains `failed_attempt_count` and `locked_until`, and `otp_challenges` gains the index `idx_authfn_otp_challenges_email_created_at`. Generate and apply a migration before deploying.
+- The Python kernel does not enforce the TypeScript per-email OTP budget or the two-factor failed-attempt limit yet; put the HTTP rate limiter in front of those routes.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added
