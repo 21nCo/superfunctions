@@ -75,6 +75,18 @@ describe("root entry import graph", () => {
     expect(importsTestfn(walk(entry).external)).toEqual(["@testfn/core"]);
   });
 
+  // @testfn/core is ESM-only, so the CommonJS declarations must import its types with
+  // resolution-mode "import" or a node16 CommonJS consumer fails with TS1479.
+  it("dist/testfn.d.cts imports @testfn/core types with resolution-mode import", () => {
+    const lines = readFileSync(path.join(distDir, "testfn.d.cts"), "utf8")
+      .split("\n")
+      .filter((line) => line.includes("@testfn/core"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).toMatch(/^import type \{[^}]+\} from '@testfn\/core' with \{ 'resolution-mode': 'import' \};$/);
+    }
+  });
+
   it("the root entry no longer exports ApifnTestAdapter", async () => {
     const root = await import(pathToFileURL(path.join(distDir, "index.js")).href);
     expect(root).not.toHaveProperty("ApifnTestAdapter");

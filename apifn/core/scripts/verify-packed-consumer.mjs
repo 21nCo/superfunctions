@@ -6,7 +6,8 @@
 //   @superfunctions/http 0.3.1 router;
 // - importing @apifn/core/testfn without testFn fails with an error naming @testfn/core;
 // - after the consumer installs @testfn/core, @apifn/core/testfn loads from ESM and CJS, and
-//   TypeScript (module node16) type-checks an ESM (.mts) and a CommonJS (.cts) consumer of it.
+//   TypeScript (module node16, skipLibCheck false) type-checks an ESM (.mts) and a CommonJS (.cts)
+//   consumer of it, so every declaration file either condition selects must compile.
 // Run after build (the package's test script runs it after vitest).
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -20,7 +21,8 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const repoRoot = path.resolve(packageDir, "../..");
 const manifest = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
 const testfnVersion = manifest.devDependencies?.["@testfn/core"];
-const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-core-consumer-")));
+// @testfn/core's own declarations reference Node globals (Buffer), so the typed consumer needs @types/node.
+const typesNodeVersion = manifest.devDependencies?.["@types/node"];
 const keep = process.argv.includes("--keep");
 const tscBin = path.join(
   path.dirname(createRequire(path.join(packageDir, "package.json")).resolve("typescript/package.json")),
@@ -32,15 +34,18 @@ function run(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 }
 
-// Under `npm run`, npm_execpath is npm's own CLI script, which node runs on every platform.
-// Otherwise launch npm through a shell on Windows, where it is npm.cmd.
+// npm runs through node and its own CLI script, never through a shell: under `npm run`,
+// npm_execpath names that script; on Windows (where `npm` is npm.cmd) the script ships next to
+// node.exe. Elsewhere `npm` is an executable on PATH.
 function npm(args, cwd) {
   const npmCli = process.env.npm_execpath;
   if (npmCli && /npm-cli\.c?js$/.test(npmCli)) return run(process.execPath, [npmCli, ...args], cwd);
   if (process.platform !== "win32") return run("npm", args, cwd);
-  console.log(`$ npm ${args.join(" ")}  (cwd: ${cwd}, via shell)`);
-  const quoted = args.map((arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg));
-  return execFileSync(`npm ${quoted.join(" ")}`, { cwd, encoding: "utf8", shell: true, stdio: ["ignore", "pipe", "inherit"] });
+  const bundledCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (!existsSync(bundledCli)) {
+    throw new Error(`cannot find npm's CLI script: run this through \`npm run verify:packed\` or install npm at ${bundledCli}`);
+  }
+  return run(process.execPath, [bundledCli, ...args], cwd);
 }
 
 const node = (args, cwd) => run(process.execPath, args, cwd);
@@ -109,7 +114,9 @@ const { BaseAdapter } = require("@testfn/core");
 ${testfnBody}`;
 
 // TypeScript consumers: with module node16 a .cts file resolves the "require" condition and must
-// get CommonJS declarations (dist/testfn.d.cts); ESM declarations there fail with TS1479.
+// get CommonJS declarations (dist/testfn.d.cts); ESM declarations there fail with TS1479, and so does
+// a d.cts that imports the ESM-only @testfn/core without resolution-mode "import". skipLibCheck is
+// off so those declaration files are checked.
 const typedConsumer = `
 import { ApifnTestAdapter } from "@apifn/core/testfn";
 const adapter: ApifnTestAdapter = new ApifnTestAdapter();
@@ -124,16 +131,19 @@ const typedTsconfig = {
     moduleResolution: "node16",
     target: "ES2022",
     lib: ["ES2022"],
-    types: [],
+    types: ["node"],
     strict: true,
     noEmit: true,
-    skipLibCheck: true,
+    skipLibCheck: false,
   },
   files: ["typed-esm.mts", "typed-cjs.cts"],
 };
 
+let workdir;
 try {
   if (!testfnVersion) throw new Error("apifn/core/package.json has no @testfn/core devDependency");
+  if (!typesNodeVersion) throw new Error("apifn/core/package.json has no @types/node devDependency");
+  workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-core-consumer-")));
   const packed = JSON.parse(npm(["pack", "--workspace", "@apifn/core", "--pack-destination", workdir, "--json"], repoRoot));
   const tarball = path.join(workdir, packed[0].filename);
   const files = packed[0].files.map((file) => file.path);
@@ -181,7 +191,10 @@ try {
   assertNamesTestfn(runExpectingFailure("missing.mjs", consumer), "ESM", "testfn.js");
   assertNamesTestfn(runExpectingFailure("missing.cjs", consumer), "CJS", "testfn.cjs");
 
-  npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", `@testfn/core@${testfnVersion}`], consumer);
+  npm(
+    ["install", "--no-audit", "--no-fund", "--ignore-scripts", `@testfn/core@${testfnVersion}`, `@types/node@${typesNodeVersion}`],
+    consumer,
+  );
   console.log(`ESM @apifn/core/testfn with @testfn/core ${testfnVersion}: ${node(["testfn.mjs"], consumer).trim()}`);
   console.log(`CJS @apifn/core/testfn with @testfn/core ${testfnVersion}: ${node(["testfn.cjs"], consumer).trim()}`);
 
@@ -208,5 +221,5 @@ try {
 
   console.log(`PACKED_CONSUMER_OK ${packed[0].filename} in ${consumer}`);
 } finally {
-  if (!keep) rmSync(workdir, { recursive: true, force: true });
+  if (workdir && !keep) rmSync(workdir, { recursive: true, force: true });
 }

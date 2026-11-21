@@ -29,7 +29,7 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/fix-testfn-cjs-types.mjs",
     "dev": "tsup --watch",
     "test": "vitest run && node scripts/verify-packed-consumer.mjs",
     "lint": "tsc --noEmit",

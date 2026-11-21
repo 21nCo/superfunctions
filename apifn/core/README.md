@@ -219,7 +219,7 @@ const logger = createCliLogger({ /* CliLoggerOptions */ });
 
 ### testfn
 
-Adapter that plugs ApiFn collection runs into testfn. It lives in the `@apifn/core/testfn` subpath so that the root entry never loads testFn; install `@testfn/core` (`>=0.0.2 <0.1.0`) yourself to use it. Importing the subpath without it fails with a module-not-found error naming `@testfn/core`.
+Adapter that plugs ApiFn collection runs into testfn. It lives in the `@apifn/core/testfn` subpath so that the root entry never loads testFn; install `@testfn/core` (`>=0.0.2 <0.1.0`) yourself to use it. Importing the subpath without it fails with a module-not-found error naming `@testfn/core`. `@testfn/core` is ESM-only: the CommonJS build of `@apifn/core/testfn` `require()`s it, so CommonJS use needs a Node.js version with `require(esm)` (20.19+ or 22.12+), and its CommonJS type declarations import `@testfn/core` with `resolution-mode` `import`, which needs TypeScript 5.3+.
 
 ```bash
 npm install @testfn/core
