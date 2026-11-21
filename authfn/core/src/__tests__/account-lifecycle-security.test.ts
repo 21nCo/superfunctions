@@ -247,6 +247,27 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
   });
 
+  it('refuses, without using the code, a verify-email with a stale session cookie next to the holder\'s bearer token', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password', sessionMode: 'hybrid' }));
+    const body = await signUp.clone().json();
+    const token = body.data.token as string;
+    const sessionName = cookieHeader(signUp).split('; ').find((cookie) => /session=/.test(cookie))!.split('=')[0]!;
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const code = ctx.codeFor('verify-email', OWNER);
+    const refused = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      cookie: `${sessionName}=test-stale-session-token`,
+      authorization: `Bearer ${token}`
+    }));
+    expect(refused.status).toBe(400);
+    expect((await account(ctx, { authorization: `Bearer ${token}` })).status).toBe(200);
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      authorization: `Bearer ${token}`
+    }));
+    expect(verified.status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+  });
+
   it('neither verifies nor claims a disabled account, so its holder keeps their credentials', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));

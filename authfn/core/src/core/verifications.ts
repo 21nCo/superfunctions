@@ -526,6 +526,19 @@ async function isAccountHolderRequest(
     assertValidCsrf(request, cookieState);
     return true;
   }
+  if (
+    !cookieState.session
+    && countCookiesNamed(request, cookieState.cookiePolicy.sessionCookieName) > 0
+    && request.headers.get('authorization')
+  ) {
+    // A session cookie that is not signed in hides the bearer token next to
+    // it, so a holder signed in by bearer would look anonymous and their
+    // verification would wipe their account. They can retry without the
+    // stale cookie.
+    throw new AuthFnValidationError('Request carries a session cookie that is not signed in and a bearer token', {
+      cookie: cookieState.cookiePolicy.sessionCookieName
+    });
+  }
   const session = await authenticateAccountRequest(config, request);
   return session?.actorId === userId;
 }
