@@ -583,7 +583,8 @@ describe('authfn apple social oauth: email comes only from the verified identity
 
     const first = await (await nativeComplete(
       auth,
-      { sub: 'apple-user-native-03', email: 'native.user@example.com', email_verified: 'true' }
+      { sub: 'apple-user-native-03', email: 'native.user@example.com', email_verified: 'true', is_private_email: 'true' },
+      { name: { firstName: 'Native', lastName: 'User' } }
     )).json();
     expect(first.data.isNewUser).toBe(true);
     expect((await findUser(config, first.data.userId))?.emailVerifiedAt).toBeTruthy();
@@ -593,6 +594,17 @@ describe('authfn apple social oauth: email comes only from the verified identity
     expect(again.status).toBe(200);
     expect(againBody.data.userId).toBe(first.data.userId);
     expect(againBody.data.isNewUser).toBe(false);
+
+    // The stored email and profile survive a token that carries no email.
+    const linked = await findAppleAccount(config, 'apple-user-native-03');
+    expect(linked?.email).toBe('native.user@example.com');
+    expect(linked?.profile).toMatchObject({
+      email: 'native.user@example.com',
+      emailVerified: true,
+      isPrivateEmail: true,
+      name: 'Native User'
+    });
+    expect((await findUser(config, first.data.userId))?.primaryEmail).toBe('native.user@example.com');
   });
 
   it('links by verified email when the verified token email matches an existing account', async () => {

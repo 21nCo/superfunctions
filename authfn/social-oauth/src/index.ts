@@ -631,13 +631,20 @@ function createSocialRoutes(
           providerSettings,
           profile
         );
+        const storedAccount = profile.email === undefined && resolved.existingAccountId
+          ? await findOAuthAccountByProviderAccountId(ctx.config, 'apple', profile.providerAccountId)
+          : null;
         const account = await upsertOAuthAccount(ctx.config, {
           userId: resolved.user.id,
           provider: 'apple',
           providerAccountId: profile.providerAccountId,
           connectionId: resolved.connectionId,
-          email: profile.email,
-          profile: profile.profile
+          // A token without an email says nothing about the email, so an
+          // already linked account keeps the email and profile it has.
+          email: storedAccount ? storedAccount.email ?? undefined : profile.email,
+          profile: storedAccount
+            ? { ...(readRecord(storedAccount.profile) ?? {}), ...profile.profile }
+            : profile.profile
         });
         const user = resolved.user;
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
@@ -1360,7 +1367,7 @@ async function resolveAppleNativeProfile(
     profile: cleanObject({
       sub: subject,
       email,
-      emailVerified,
+      emailVerified: email === undefined ? undefined : emailVerified,
       name,
       firstName,
       lastName,

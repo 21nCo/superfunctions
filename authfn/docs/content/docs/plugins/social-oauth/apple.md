@@ -105,11 +105,17 @@ Apple sends the user's name on the very first authorization only — subsequent 
 
 ## Email and verification
 
-authfn takes the email, and whether it is verified, only from the identity token after checking its signature, audience and nonce. The `user` value Apple posts on the first authorization (and the `user` object the native complete route accepts) is not signed, so authfn reads only the name from it and ignores any `email` in it.
+authfn takes the email, and whether it is verified, only from Apple's identity token, never from the `user` value. That value, which Apple posts on the first authorization (and the `user` object the native complete route accepts), is not signed, so authfn reads only the name from it and ignores any `email` in it. Where the token comes from decides how it is checked:
 
-- The email counts as verified only when the token's `email_verified` claim is `true`. An unverified email is never used to link to an existing account through `accountLinking.oauthByVerifiedEmail`, and a new account gets no `emailVerifiedAt`.
-- The web callback (`/social/callback/apple`) rejects a token without an `email` claim.
-- The native route (`/social/native/apple/complete`) resolves a token without an `email` claim by the Apple subject alone: an Apple ID already linked to an account signs in as before, and a new one creates an account with no email. It never links by email.
+- **Code exchange** (`/social/callback/apple` with a `code`): the token is the one Apple's token endpoint returns to the server over TLS for that code.
+- **Web `form_post` identity token** (`/social/callback/apple` with an `id_token`) and the **native route** (`/social/native/apple/complete`): the token arrives through the client, so authfn checks its signature against Apple's keys, its issuer and audience, and that its nonce matches the sign-in it started.
+
+The email counts as verified only when the token's `email_verified` claim is `true`; a missing claim counts as unverified. A new account gets `emailVerifiedAt` only for a verified email. Whether an unverified email may link to an existing account is set by `accountLinking.oauthByVerifiedEmail.requireProviderEmailVerified` (default `true`, which refuses the link).
+
+When the token has no `email` claim:
+
+- the web callback rejects the sign-in;
+- the native route resolves the sign-in by the Apple subject alone. An Apple ID already linked to an account signs in as before and keeps the email and profile stored for it; a new one creates an account with no email. It never links by email.
 
 ## Email relay
 
