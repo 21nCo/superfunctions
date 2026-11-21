@@ -807,6 +807,16 @@ async function admitOtpChallenge(
       namespace: namespace(config)
     });
     if (!stored || !isAdmittedChallenge(stored) || stored.consumedAt) {
+      // Retire the row before giving up, so an admission write still in
+      // flight cannot make it the challenge codes are checked against: the
+      // admission is guarded on consumedAt being null, and a retired row is
+      // never admitted (it expires as it was created).
+      await updateOtpChallengeOutcome(
+        config,
+        challenge.id,
+        [{ field: 'consumedAt', operator: 'eq', value: null }],
+        { consumedAt: now, expiresAt: challenge.createdAt, updatedAt: now }
+      ).catch(() => 'unknown' as const);
       throw new AuthFnOtpInvalidError('OTP challenge could not be created', {
         challengeId: challenge.id
       });
