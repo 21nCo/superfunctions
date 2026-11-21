@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import {
   NEXT_MANIFEST,
@@ -273,6 +273,18 @@ test("the owners command rejects bad arguments and unreadable manifests", (t) =>
   assert.match(cli(["/etc/passwd"]).err, /invalid-path/);
 });
 
+const hasControl = (value) => [...value].some((char) => /[\p{Cc}\u2028\u2029]/u.test(char));
+
+test("the owners command prints one record per path argument and rejects control characters", () => {
+  for (const target of ["catchfn/a\nNEXT.md", "catchfn/a\rNEXT.md", "catchfn/a\u2028NEXT.md", "catchfn/\u0000a"]) {
+    const result = cli(["AGENTS.md", target]);
+    assert.equal(result.status, 1, JSON.stringify(target));
+    assert.deepEqual(result.out, ["AGENTS.md: public"]);
+    assert.match(result.err, /invalid-path.*control character/);
+    assert.ok(!hasControl(result.err), "the error message escapes the control character");
+  }
+});
+
 test("node scripts/owners.mjs <path> runs as a command in this checkout", () => {
   const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [script, "AGENTS.md", "catchfn/typescript"], { encoding: "utf8" });
@@ -291,4 +303,29 @@ test("node scripts/owners.mjs runs through a symlinked checkout path and reports
   assert.equal(result.status, 1, result.stderr);
   assert.equal(result.stdout, "AGENTS.md: public\n");
   assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
+});
+
+test("node --preserve-symlinks-main scripts/owners.mjs through a symlinked checkout path still runs the command", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, "scripts");
+  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
+  const script = path.join(link, "owners.mjs");
+  for (const args of [["--preserve-symlinks-main", script], ["--preserve-symlinks", "--preserve-symlinks-main", script]]) {
+    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], { encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "AGENTS.md: public\n");
+    assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
+  }
+});
+
+test("importing scripts/owners.mjs from an eval entry neither prints nor sets the exit status", () => {
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const source = `await import(${JSON.stringify(pathToFileURL(script).href)})`;
+  for (const flags of [["--input-type=module", "-e", source], ["--input-type=module", `--eval=${source}`], ["-p", `import(${JSON.stringify(pathToFileURL(script).href)}).then(() => "imported")`]]) {
+    const result = spawnSync(process.execPath, [...flags, "--", script, "AGENTS.md"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.doesNotMatch(result.stdout, /AGENTS\.md/);
+  }
 });

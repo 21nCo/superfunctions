@@ -10,7 +10,10 @@ import { fileURLToPath } from "node:url";
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
 export const REPOS = Object.freeze(["public", "next"]);
-export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MODULE_FILE = fileURLToPath(import.meta.url);
+/** The real path of this file: under `--preserve-symlinks-main` (or `--preserve-symlinks`) the module URL keeps a symlink. */
+const REAL_MODULE_FILE = realPathOr(MODULE_FILE);
+export const REPO_ROOT = path.resolve(path.dirname(REAL_MODULE_FILE), "..");
 /** CI a public release tag's commit must pass when the public manifest has no `ci` section (SFNS-124): .github/workflows/ci.yml. */
 export const DEFAULT_RELEASE_CI = Object.freeze({ kind: "workflow", name: "ci.yml", app: null });
 
@@ -386,6 +389,11 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
   let status = 0;
   for (const target of targets) {
     try {
+      // One record per path: a line break or other control character would let one argument print a second,
+      // forged `<path>: <owner>` line.
+      if (hasControlCharacter(target)) {
+        throw new OwnersError("invalid-path", `path ${quoteForLine(target)} contains a control character or line break`, { path: target });
+      }
       if (guessesNext && !isPublicListed(owners, target)) {
         stderr(
           `error (next-manifest-needed): ${JSON.stringify(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
@@ -404,6 +412,25 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
   return status;
 }
 
+/** C0/C1 control characters (including line breaks) and the Unicode line and paragraph separators. */
+function hasControlCharacter(value) {
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) return true;
+  }
+  return false;
+}
+
+/** JSON-quotes `value` and also escapes what JSON.stringify leaves raw (DEL, C1 controls, U+2028, U+2029). */
+function quoteForLine(value) {
+  let quoted = "";
+  for (const char of JSON.stringify(value)) {
+    const code = char.codePointAt(0);
+    quoted += hasControlCharacter(char) ? `\\u${code.toString(16).padStart(4, "0")}` : char;
+  }
+  return quoted;
+}
+
 /** Whether the public manifest lists `target` (as a top-level path or a root file); invalid paths throw. */
 function isPublicListed(owners, target) {
   try {
@@ -415,12 +442,26 @@ function isPublicListed(owners, target) {
   }
 }
 
-// realpath: Node runs the main module from its real path, so a symlinked checkout (or macOS's /var -> /private/var)
-// must still match and run the command rather than exit 0 with no output.
+/** Options that make Node evaluate a string (`-e`, `-p`, `-pe`, `--eval=...`), so `process.argv[1]` is not the entry. */
+const EVAL_OPTION = /^(?:-[A-Za-z]*[ep][A-Za-z]*|--(?:eval|print)(?:=.*)?)$/s;
+
+function realPathOr(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+// Run the command only when this file is the entry module: never as a side effect of an import. Newer Node sets
+// import.meta.main; otherwise compare real paths on both sides, so a symlinked checkout, macOS's /var ->
+// /private/var and --preserve-symlinks-main all still run the command instead of exiting 0 with no output.
 function isMainModule() {
+  if (typeof import.meta.main === "boolean") return import.meta.main;
+  if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return false;
   if (!process.argv[1]) return false;
   try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+    return realpathSync(process.argv[1]) === REAL_MODULE_FILE;
   } catch {
     return false;
   }
