@@ -14,6 +14,8 @@ export interface FactLimits {
   tooMany: () => Error;
   /** Called with a fact's validated content, type and confidence, before its first tag is read; it may throw to stop. */
   beforeTags?: (fact: Omit<Fact, 'tags'>) => void;
+  /** Called with the validated tag count before any tag is read; it may throw to stop. */
+  tagCount?: (count: number) => void;
   /** Called with each validated, trimmed tag before the next one is read; it may throw to stop. */
   onTag?: (tag: string, index: number) => void;
   /** Called with each fact as soon as it is validated, before the next one is read; it may throw to stop. */
@@ -95,6 +97,7 @@ function normalizeFact(fact: unknown, limits?: FactLimits): Fact {
   const list = given as unknown[];
   const count = read(() => list.length);
   if (!Number.isSafeInteger(count) || count < 0) throw invalid();
+  limits?.tagCount?.(count);
   const tags: string[] = [];
   for (let index = 0; index < count; index++) {
     const tag: unknown = read(() => list[index]);

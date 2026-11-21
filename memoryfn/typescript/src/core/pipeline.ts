@@ -168,6 +168,9 @@ export class MemoryFn implements IMemoryFn {
             // The tag array's brackets here; each tag and its separator as it is read.
             charge(fact.type, fact.content, keptBytes + ownEntriesBytes + 2 + String(fact.confidence).length + String(index).length);
           },
+          // A non-blank tag is at least 3 JSON bytes, plus a comma after the first, so a tag array that
+          // cannot fit is refused from its length alone, before any tag is read.
+          tagCount: count => { if (count && bytes + 4 * count - 1 > MAX_SOURCE_REPLACE_BYTES) throw overLimit(); },
           onTag: (tag, at) => {
             storable(tag);
             chargeBytes(tag.length + (at ? 1 : 0) + 2);

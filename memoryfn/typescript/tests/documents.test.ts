@@ -775,6 +775,22 @@ describe('upsertDocument extracted fact budget', () => {
     expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
   });
 
+  it('refuses a tag array whose shortest encoding cannot fit, before reading any tag', async () => {
+    const first = await new MemoryFn({ storage: { kind: 'memory' } }, storage, unit, fakeLLM()).upsertDocument({ ...scope, content: docV1, extract: true });
+    unit.embedBatch.mockClear();
+    let reads = 0;
+    // 70 million one-character tags need at least 4 * 70e6 - 1 bytes, above 256 MiB.
+    const tags = new Proxy([] as unknown[], { get: (target, key, receiver) => {
+      if (key === 'length') return 70_000_000;
+      return typeof key === 'string' && /^\d+$/.test(key) ? (reads++, 'x') : Reflect.get(target, key, receiver);
+    } });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, unit, oneFact(tags));
+    await expect(memory.upsertDocument({ ...scope, content: '# One', extract: true })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(reads).toBe(0);
+    expect(unit.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
+  }, 120_000);
+
   it('stops many facts with large caller metadata at the budget without serializing a fact record', async () => {
     const facts = Array.from({ length: 400 }, () => ({ content: 'A fact.', type: 'derived', confidence: 1, tags: ['doc'] }));
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, unit, { generate: vi.fn(), generateJSON: vi.fn(async () => ({ facts })) } as unknown as LLMProvider);
