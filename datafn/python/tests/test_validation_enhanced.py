@@ -51,6 +51,43 @@ class TestValidateSchema:
         assert result["ok"] is False
         assert result["error"]["code"] == "SCHEMA_INVALID"
 
+    def test_id_prefix_collision_after_trailing_colon_normalization(self):
+        schema = {
+            "resources": [
+                {"name": "projects", "version": 1, "idPrefix": "project:", "fields": []},
+                {"name": "projectAliases", "version": 1, "idPrefix": "project", "fields": []},
+            ],
+            "relations": [],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert "conflicts" in result["error"]["message"]
+        assert result["error"]["details"]["path"] == "$.resources[1].idPrefix"
+
+    def test_implicit_id_prefix_participates_in_collision_checks(self):
+        schema = {
+            "resources": [
+                {"name": "documents", "version": 1, "fields": []},
+                {"name": "documentAliases", "version": 1, "idPrefix": "documents:", "fields": []},
+            ],
+            "relations": [],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert "documents" in result["error"]["message"]
+
+    @pytest.mark.parametrize("id_prefix", ["", ":"])
+    def test_empty_id_prefixes_are_rejected(self, id_prefix):
+        result = validate_schema({
+            "resources": [
+                {"name": "documents", "version": 1, "idPrefix": id_prefix, "fields": []},
+            ],
+            "relations": [],
+        })
+        assert result["ok"] is False
+        assert "empty" in result["error"]["message"]
+        assert result["error"]["details"]["path"] == "$.resources[0].idPrefix"
+
     def test_missing_resources(self):
         result = validate_schema({})
         assert result["ok"] is False
@@ -94,6 +131,25 @@ class TestValidateSchema:
         assert result["ok"] is False
         assert "nonexistent" in result["error"]["message"]
 
+    @pytest.mark.parametrize("fk_alias", ["fkField", "foreignKey"])
+    def test_relation_fk_alias_must_be_a_string(self, fk_alias):
+        schema = {
+            "resources": [
+                {"name": "tasks", "fields": []},
+                {"name": "projects", "fields": []},
+            ],
+            "relations": [{
+                "from": "tasks",
+                "to": "projects",
+                "type": "many-one",
+                "relation": "project",
+                fk_alias: 123,
+            }],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert result["error"]["details"]["path"] == f"$.relations[0].{fk_alias}"
+
     def test_server_raises_on_invalid_schema(self):
         from tests.mock_db import MockAdapter
         with pytest.raises(DatafnError) as exc_info:
@@ -131,6 +187,34 @@ class TestFKInjection:
         }
         index = SchemaIndex(schema)
         assert "proj_id" in index.writable_fields_by_resource["tasks"]
+
+    def test_legacy_foreign_key_alias_is_injected_and_writable(self):
+        schema = {
+            "resources": [
+                {"name": "tasks", "fields": []},
+                {"name": "projects", "fields": []},
+            ],
+            "relations": [
+                {
+                    "from": "tasks",
+                    "to": "projects",
+                    "type": "many-one",
+                    "relation": "project",
+                    "fkField": "",
+                    "foreignKey": "legacyProjectId",
+                },
+            ],
+        }
+        index = SchemaIndex(schema)
+
+        assert "legacyProjectId" in index.fields_by_resource["tasks"]
+        assert "legacyProjectId" in index.writable_fields_by_resource["tasks"]
+        assert validate_record_keys(
+            index,
+            "tasks",
+            {"legacyProjectId": "project-1"},
+            "record",
+        ) is None
 
     def test_fk_schema_has_correct_type(self):
         schema = {

@@ -164,7 +164,7 @@ describe("@datafn/client query", () => {
     expect(result).toEqual({ data: [{ id: "task:1" }], nextCursor: null });
   });
 
-  it("treats offset zero as the first page and overlays pending local rows", async () => {
+  it("preserves a limited first page so its remote cursor cannot skip rows", async () => {
     vi.spyOn(DefaultHttpTransport.prototype, "query").mockResolvedValue({
       ok: true,
       result: {
@@ -192,7 +192,7 @@ describe("@datafn/client query", () => {
       limit: 2,
     });
 
-    expect(result.data.map((record) => record.id)).toEqual(["task:0", "task:1"]);
+    expect(result.data.map((record) => record.id)).toEqual(["task:1", "task:2"]);
   });
 });
 
