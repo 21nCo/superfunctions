@@ -5,6 +5,26 @@ description: What authfn does and doesn't enforce, and how to add the limits you
 
 # Rate limiting
 
+**Rate limiting is off by default.** Until you enable it, AuthFn does not throttle sign-in, OTP, password-reset or 2FA requests per client, and it logs this once when the server starts:
+
+```text
+[authfn] WARNING: rate limiting is OFF. ...
+```
+
+Enable it with a `resolveClientIp` that reads the client's IP from your platform or a proxy you trust. Without `resolveClientIp`, every request is counted as the one IP `unknown`: the per-IP limits then apply to all your traffic together, so a handful of clients can lock everyone out. AuthFn warns about that too.
+
+Pick the source that matches where AuthFn runs:
+
+```ts
+// Cloudflare Workers: the platform sets cf-connecting-ip and drops any copy sent by the client.
+resolveClientIp: (request) => request.headers.get('cf-connecting-ip') ?? undefined,
+
+// Behind one reverse proxy you control that appends the client IP to x-forwarded-for:
+resolveClientIp: (request) => request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim(),
+```
+
+Never read a header a client can set directly (such as the first `x-forwarded-for` entry, or `x-real-ip` without a proxy that overwrites it): a client could then choose its own key and escape the limits.
+
 authfn can enforce per-route limits through `createServer({ rateLimit })`. You should still put a limiter at the edge of your platform — a CDN, a WAF, a gateway — where it can deny traffic before any application code runs.
 
 ```ts

@@ -4,7 +4,7 @@ import { createMemoryAtomicKVStore } from '../../../../packages/db/src/adapters/
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import type { AuthFnRuntimeConfig } from '../index.js';
 import type { AuthFnRateLimitConfig, AuthFnRateLimitMode } from '../types.js';
-import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
+import { createAuthFnRateLimitMiddleware, warnAboutRateLimitConfig } from '../core/rate-limit.js';
 
 const middlewareByConfig = new WeakMap<AuthFnRuntimeConfig, ReturnType<typeof createAuthFnRateLimitMiddleware>>();
 
@@ -379,4 +379,43 @@ describe('authfn rate limiting', () => {
       'x-test-client-ip': '198.51.0.0'
     })).rejects.toMatchObject({ name: 'AuthFnRateLimitedError' });
   }, 30_000);
+});
+
+describe('rate limit startup warnings (AF-12)', () => {
+  it('warns when rate limiting is off, which is the default', () => {
+    const warned: string[] = [];
+    warnAboutRateLimitConfig({}, (message) => warned.push(message), new Set());
+    warnAboutRateLimitConfig({ rateLimit: { enabled: false } }, (message) => warned.push(message), new Set());
+    expect(warned).toHaveLength(2);
+    expect(warned[0]).toMatch(/rate limiting is OFF/);
+    expect(warned[0]).toMatch(/resolveClientIp/);
+  });
+
+  it("warns that every client counts as 'unknown' when it is on without resolveClientIp", () => {
+    const warned: string[] = [];
+    warnAboutRateLimitConfig({ rateLimit: { enabled: true } }, (message) => warned.push(message), new Set());
+    expect(warned).toEqual([expect.stringMatching(/'unknown'/)]);
+  });
+
+  it('is quiet when it is on with resolveClientIp, and warns only once per process', () => {
+    const warned: string[] = [];
+    const seen = new Set<string>();
+    warnAboutRateLimitConfig({ rateLimit: { enabled: true, resolveClientIp: () => '203.0.113.1' } }, (message) => warned.push(message), seen);
+    expect(warned).toEqual([]);
+    warnAboutRateLimitConfig({}, (message) => warned.push(message), seen);
+    warnAboutRateLimitConfig({}, (message) => warned.push(message), seen);
+    expect(warned).toHaveLength(1);
+  });
+
+  it('warns when a server is created with rate limiting off', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createAuthFnRateLimitMiddleware({ database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] } as AuthFnRuntimeConfig);
+      // Once per process: an earlier server in this run may already have warned.
+      const calls = warn.mock.calls.map((call) => String(call[0]));
+      expect(calls.every((message) => message.startsWith('[authfn] WARNING'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

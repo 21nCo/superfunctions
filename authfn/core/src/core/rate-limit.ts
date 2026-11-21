@@ -36,7 +36,42 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   account: { ipLimit: 120, windowSeconds: 60 },
 };
 
+const issuedRateLimitWarnings = new Set<string>();
+
+/**
+ * Warns, once per process, when the HTTP rate limiter is off (the default),
+ * or on without `resolveClientIp`, in which case every client is counted as
+ * the one IP 'unknown'. Returns the warnings issued now (for tests).
+ */
+export function warnAboutRateLimitConfig(
+  config: Pick<AuthFnRuntimeConfig, 'rateLimit'>,
+  warn: (message: string) => void = (message) => console.warn(message),
+  issuedBefore: Set<string> = issuedRateLimitWarnings
+): string[] {
+  const messages: string[] = [];
+  if (!config.rateLimit?.enabled) {
+    messages.push(
+      '[authfn] WARNING: rate limiting is OFF. Sign-in, OTP, password reset and 2FA routes are not throttled '
+        + 'per client. Enable it with createServer({ rateLimit: { enabled: true, resolveClientIp } }) or put '
+        + 'a limiter in front of AuthFn. See the AuthFn docs, Core concepts > Rate limiting.'
+    );
+  } else if (!config.rateLimit.resolveClientIp) {
+    messages.push(
+      "[authfn] WARNING: rate limiting is on without resolveClientIp, so every client is counted as the one IP "
+        + "'unknown' and the per-IP limits apply to all traffic together. Pass resolveClientIp, reading the client "
+        + 'IP from your platform or a trusted proxy.'
+    );
+  }
+  const issued = messages.filter((message) => !issuedBefore.has(message));
+  for (const message of issued) {
+    issuedBefore.add(message);
+    warn(message);
+  }
+  return issued;
+}
+
 export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Middleware | undefined {
+  warnAboutRateLimitConfig(config);
   const rateLimit = config.rateLimit;
   if (!rateLimit?.enabled) {
     return undefined;
