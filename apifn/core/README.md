@@ -8,7 +8,7 @@ Core JavaScript/TypeScript library for ApiFn — route introspection, schema con
 npm install @apifn/core @superfunctions/http
 ```
 
-`@superfunctions/http` (`>=0.2.0 <0.4.0`) is a required peer. `@sinclair/typebox` and `@testfn/core` are optional peers: install them only to convert TypeBox schemas or to use the testFn adapter from `@apifn/core/testfn`.
+`@superfunctions/http` (`>=0.2.0 <0.4.0`) is a required peer. `@sinclair/typebox` and `@testfn/core` are optional peers: install them only to convert TypeBox schemas or to use the testFn adapter from `@apifn/core/testfn`, which also needs `@apifn/collections`.
 
 ## Features
 
@@ -219,10 +219,10 @@ const logger = createCliLogger({ /* CliLoggerOptions */ });
 
 ### testfn
 
-Adapter that plugs ApiFn collection runs into testfn. It lives in the `@apifn/core/testfn` subpath so that the root entry never loads testFn; install `@testfn/core` (`>=0.0.2 <0.1.0`) yourself to use it. Importing the subpath without it fails with a module-not-found error naming `@testfn/core`. `@testfn/core` is ESM-only: the CommonJS build of `@apifn/core/testfn` `require()`s it, so CommonJS use needs a Node.js version with `require(esm)` (20.19+ or 22.12+), and its CommonJS type declarations import `@testfn/core` with `resolution-mode` `import`, which needs TypeScript 5.3+.
+Adapter that plugs ApiFn collection runs into testfn. It lives in the `@apifn/core/testfn` subpath so that the root entry never loads testFn; install `@testfn/core` (`>=0.0.2 <0.1.0`) and `@apifn/collections` at the release that matches your `@apifn/core` yourself to use it. Importing the subpath without `@testfn/core` fails with a module-not-found error naming `@testfn/core`; the adapter loads `@apifn/collections` when `discover()` or `run()` is called, and those calls fail with an error naming `@apifn/collections` if it is missing. Installing `@apifn/core` alone installs neither package. `@testfn/core` is ESM-only: the CommonJS build of `@apifn/core/testfn` `require()`s it, so CommonJS use needs a Node.js version with `require(esm)` (20.19+ or 22.12+), and its CommonJS type declarations import `@testfn/core` with `resolution-mode` `import`, which needs TypeScript 5.3+.
 
 ```bash
-npm install @testfn/core
+npm install @testfn/core @apifn/collections
 ```
 
 ```typescript
@@ -253,7 +253,7 @@ export { logfnReporter, createCliLogger }
 // diff, validation, snippets, mock, and integration types
 ```
 
-The `@apifn/core/testfn` subpath exports `ApifnTestAdapter` and needs the optional `@testfn/core` peer.
+The `@apifn/core/testfn` subpath exports `ApifnTestAdapter` and needs the optional `@testfn/core` peer and `@apifn/collections`.
 
 The `@apifn/core/types` subpath exports the shared model types declared by the core package, including HTTP/OpenAPI, schema, diff, validation, snippet, mock, and integration data shapes. Types declared alongside runtime modules, such as `FromRouterOptions`, `SchemaType`, and `DiffReportJson`, are exported from the package root.
 

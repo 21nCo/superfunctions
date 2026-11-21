@@ -3,7 +3,7 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "dependsOn": ["^build", "build"]
+      "dependsOn": ["^build", "build", "@apifn/collections#build"]
     }
   }
 }

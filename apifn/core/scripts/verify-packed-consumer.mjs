@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Packs @apifn/core, installs the tarball into a clean project outside the
 // monorepo with @superfunctions/http 0.3.1 and without @testfn/core, and checks:
-// - npm does not install the optional @testfn/core peer;
+// - npm installs neither the optional @testfn/core peer nor @apifn/collections;
 // - the root entry loads from ESM and CJS and builds an OpenAPI document from a
 //   @superfunctions/http 0.3.1 router;
 // - importing @apifn/core/testfn without testFn fails with an error naming @testfn/core;
 // - after the consumer installs @testfn/core, @apifn/core/testfn loads from ESM and CJS, and
 //   TypeScript (module node16, skipLibCheck false) type-checks an ESM (.mts) and a CommonJS (.cts)
-//   consumer of it, so every declaration file either condition selects must compile.
-// Run after build (the package's test script runs it after vitest).
+//   consumer of it, so every declaration file either condition selects must compile;
+// - the adapter's discover() fails with an error naming @apifn/collections until the consumer
+//   installs it; then, with the packed workspace @apifn/collections next to the core tarball,
+//   discover() and run() work in ESM and CJS against a flat collection served on localhost.
+// Run after building @apifn/core and @apifn/collections (the package's test script runs it after vitest).
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -24,6 +27,7 @@ const testfnVersion = manifest.devDependencies?.["@testfn/core"];
 // @testfn/core's own declarations reference Node globals (Buffer), so the typed consumer needs @types/node.
 const typesNodeVersion = manifest.devDependencies?.["@types/node"];
 const keep = process.argv.includes("--keep");
+const collectionsManifest = JSON.parse(readFileSync(path.join(repoRoot, "apifn/collections/package.json"), "utf8"));
 const tscBin = path.join(
   path.dirname(createRequire(path.join(packageDir, "package.json")).resolve("typescript/package.json")),
   "bin/tsc",
@@ -113,6 +117,66 @@ const { ApifnTestAdapter } = require("@apifn/core/testfn");
 const { BaseAdapter } = require("@testfn/core");
 ${testfnBody}`;
 
+// The adapter loads @apifn/collections only inside discover() and run(); without it, discover() must
+// reject with an error naming the package.
+const collectionsMissing = `
+import { ApifnTestAdapter } from "@apifn/core/testfn";
+try {
+  await new ApifnTestAdapter().discover(["collection"]);
+} catch (error) {
+  if (!String(error).includes("@apifn/collections")) throw error;
+  console.log(String(error).split("\\n")[0]);
+  process.exit(0);
+}
+throw new Error("discover() succeeded without @apifn/collections");
+`;
+
+// A flat collection (opencollection.yml next to its requests): /ping answers 200 and /missing 404, so
+// run() must report Ping passed and Missing failed. The collection directory itself is the pattern,
+// because recursive discovery under native ESM is a known gap (API-12).
+const collectionFiles = {
+  "opencollection.yml": "name: Consumer API\n",
+  "environments/local.yml": "variables:\n  baseUrl: http://127.0.0.1:9\n",
+  "ping.yml": "info:\n  name: Ping\n  type: http\nhttp:\n  method: GET\n  url: '{{baseUrl}}/ping'\n",
+  "missing.yml": "info:\n  name: Missing\n  type: http\nhttp:\n  method: GET\n  url: '{{baseUrl}}/missing'\n",
+};
+
+const adapterRunBody = `
+const server = createServer((request, response) => {
+  response.statusCode = request.url === "/ping" ? 200 : 404;
+  response.end("{}");
+});
+server.listen(0, "127.0.0.1", async () => {
+  try {
+    const adapter = new ApifnTestAdapter();
+    const tests = await adapter.discover([resolve("collection").replaceAll("\\\\", "/")]);
+    const names = tests.map((test) => test.name).sort().join();
+    if (names !== "Missing,Ping") throw new Error("discover() found " + JSON.stringify(tests));
+    const results = await adapter.run(tests, { env: { baseUrl: "http://127.0.0.1:" + server.address().port } });
+    const byName = Object.fromEntries(tests.map((test) => [test.name, results.find((result) => result.id === test.id)?.status]));
+    if (byName.Ping !== "passed" || byName.Missing !== "failed") throw new Error("run() returned " + JSON.stringify(results));
+    console.log(JSON.stringify(byName));
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  } finally {
+    server.close();
+  }
+});
+`;
+
+const adapterRunEsm = `
+import { createServer } from "node:http";
+import { resolve } from "node:path";
+import { ApifnTestAdapter } from "@apifn/core/testfn";
+${adapterRunBody}`;
+
+const adapterRunCjs = `
+const { createServer } = require("node:http");
+const { resolve } = require("node:path");
+const { ApifnTestAdapter } = require("@apifn/core/testfn");
+${adapterRunBody}`;
+
 // TypeScript consumers: with module node16 a .cts file resolves the "require" condition and must
 // get CommonJS declarations (dist/testfn.d.cts); ESM declarations there fail with TS1479, and so does
 // a d.cts that imports the ESM-only @testfn/core without resolution-mode "import". skipLibCheck is
@@ -143,6 +207,9 @@ let workdir;
 try {
   if (!testfnVersion) throw new Error("apifn/core/package.json has no @testfn/core devDependency");
   if (!typesNodeVersion) throw new Error("apifn/core/package.json has no @types/node devDependency");
+  if (collectionsManifest.dependencies?.["@apifn/core"] !== manifest.version) {
+    throw new Error(`@apifn/collections pins @apifn/core ${collectionsManifest.dependencies?.["@apifn/core"]}, not ${manifest.version}`);
+  }
   workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-core-consumer-")));
   const packed = JSON.parse(npm(["pack", "--workspace", "@apifn/core", "--pack-destination", workdir, "--json"], repoRoot));
   const tarball = path.join(workdir, packed[0].filename);
@@ -173,6 +240,9 @@ try {
   }
   if (existsSync(path.join(consumer, "node_modules/@testfn/core"))) {
     throw new Error("installing @apifn/core installed @testfn/core");
+  }
+  if (existsSync(path.join(consumer, "node_modules/@apifn/collections"))) {
+    throw new Error("installing @apifn/core installed @apifn/collections");
   }
   const http = JSON.parse(readFileSync(path.join(consumer, "node_modules/@superfunctions/http/package.json"), "utf8"));
   if (http.version !== HTTP_VERSION) throw new Error(`expected @superfunctions/http ${HTTP_VERSION}, got ${http.version}`);
@@ -218,6 +288,26 @@ try {
     }
   }
   console.log("TypeScript node16 .mts and .cts consumers of @apifn/core/testfn type-check (dist/testfn.d.ts, dist/testfn.d.cts)");
+
+  for (const [file, content] of Object.entries(collectionFiles)) {
+    mkdirSync(path.dirname(path.join(consumer, "collection", file)), { recursive: true });
+    writeFileSync(path.join(consumer, "collection", file), content);
+  }
+  writeFileSync(path.join(consumer, "collections-missing.mjs"), collectionsMissing);
+  console.log(`discover() without @apifn/collections: ${node(["collections-missing.mjs"], consumer).trim()}`);
+
+  // The registry @apifn/collections pins an older core, so install the workspace one built from this tree.
+  const collectionsPacked = JSON.parse(
+    npm(["pack", "--workspace", "@apifn/collections", "--pack-destination", workdir, "--json"], repoRoot),
+  );
+  npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", path.join(workdir, collectionsPacked[0].filename)], consumer);
+  if (existsSync(path.join(consumer, "node_modules/@apifn/collections/node_modules/@apifn/core"))) {
+    throw new Error("@apifn/collections installed its own @apifn/core instead of the packed one");
+  }
+  writeFileSync(path.join(consumer, "adapter-run.mjs"), adapterRunEsm);
+  writeFileSync(path.join(consumer, "adapter-run.cjs"), adapterRunCjs);
+  console.log(`ESM adapter discover()/run() with ${collectionsPacked[0].filename}: ${node(["adapter-run.mjs"], consumer).trim()}`);
+  console.log(`CJS adapter discover()/run() with ${collectionsPacked[0].filename}: ${node(["adapter-run.cjs"], consumer).trim()}`);
 
   console.log(`PACKED_CONSUMER_OK ${packed[0].filename} in ${consumer}`);
 } finally {
