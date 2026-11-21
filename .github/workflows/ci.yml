@@ -11,6 +11,7 @@ on:
       - dev
       - next
       - main
+      - ci-verify/base
   workflow_dispatch:
   # Nightly full run of dev (the default branch).
   schedule:
