@@ -424,7 +424,7 @@ function hasControlCharacter(value) {
   return false;
 }
 
-/** Replaces each character hasControlCharacter matches with its `\\uXXXX` escape, so `value` stays on one line. */
+/** Replaces each character hasControlCharacter matches with its `\uXXXX` escape, so `value` stays on one line. */
 function escapeControlCharacters(value) {
   let escaped = "";
   for (const char of value) {
