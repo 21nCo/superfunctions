@@ -48,7 +48,8 @@ import {
   deleteOAuthAccountByConnectionId,
   findOAuthAccountByProviderAccountId,
   requireOAuthAccountForUser,
-  upsertOAuthAccount
+  upsertOAuthAccount,
+  type AuthFnOAuthAccountRecord
 } from 'authfn/core/oauth-accounts';
 import {
   AuthFnConflictError,
@@ -140,6 +141,7 @@ interface ResolvedSocialIdentity {
   profile: AuthFnSocialProfile;
   connectionId: string;
   existingAccountId?: string;
+  existingAccount?: AuthFnOAuthAccountRecord;
   linkedExistingUser?: boolean;
 }
 
@@ -631,12 +633,11 @@ function createSocialRoutes(
           providerSettings,
           profile
         );
-        // A token without an email says nothing about the email, so an
-        // already linked account is used as stored rather than rewritten:
-        // writing it back could erase the email it holds.
-        const storedAccount = profile.email === undefined && resolved.existingAccountId
-          ? await findOAuthAccountByProviderAccountId(ctx.config, 'apple', profile.providerAccountId)
-          : null;
+        // A token without an email says nothing about the email, so the
+        // already linked account found while resolving the identity is used
+        // as stored rather than rewritten: writing it back could erase the
+        // email it holds.
+        const storedAccount = profile.email === undefined ? resolved.existingAccount : undefined;
         const account = storedAccount ?? await upsertOAuthAccount(ctx.config, {
           userId: resolved.user.id,
           provider: 'apple',
@@ -971,7 +972,8 @@ async function resolveLocalIdentityFromProfile(
       user: linkedUser,
       profile,
       connectionId: existingAccount.connectionId,
-      existingAccountId: existingAccount.id
+      existingAccountId: existingAccount.id,
+      existingAccount
     };
   }
   assertAuthFnDatabaseKeyLength(profile.providerAccountId, 'providerAccountId');
