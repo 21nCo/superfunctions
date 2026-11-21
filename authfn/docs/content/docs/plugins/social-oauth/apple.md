@@ -64,13 +64,18 @@ sequenceDiagram
   Browser->>Apple: present sign-in
   User->>Apple: authenticate
   Apple-->>Browser: form_post to /social/callback/apple
-  Browser->>Kernel: POST /social/callback/apple { code, id_token, state }
-  Kernel->>Apple: token exchange
-  Apple-->>Kernel: identity token
+  Browser->>Kernel: POST /social/callback/apple { state, code and/or id_token, [user] }
+  alt no id_token posted
+    Kernel->>Apple: token exchange for the code
+    Apple-->>Kernel: identity token
+  else id_token posted
+    Kernel->>Apple: fetch signing keys (cached JWKS)
+    Note over Kernel: verify signature, issuer, audience, nonce
+  end
   Kernel-->>Browser: 302 to returnTo + cookies
 ```
 
-The kernel verifies the Apple identity token against `https://appleid.apple.com/auth/keys` (cached JWKS). The token's `sub` becomes `providerAccountId`.
+With the default `response_type=code`, Apple posts a `code` and the kernel exchanges it at Apple's token endpoint for the identity token. If the post carries an `id_token` (with or without a `code`), the kernel uses that token and does not exchange any code, and verifies it against `https://appleid.apple.com/auth/keys` (cached JWKS). Either way the token's `sub` becomes `providerAccountId`. See [Email and verification](#email-and-verification) for where the email comes from.
 
 ## Native iOS / macOS flow
 
@@ -90,10 +95,12 @@ sequenceDiagram
   Apple-->>System: identityToken, authorizationCode
   System-->>App: appleIDCredential
   App->>Kernel: POST /social/native/apple/complete { stateId, identityToken, authorizationCode }
-  Kernel->>Apple: token exchange (using clientSecretResolver)
-  Apple-->>Kernel: token set
+  Kernel->>Apple: fetch signing keys (cached JWKS)
+  Note over Kernel: verify signature, issuer, audience (clientId or nativeClientIds), nonce
   Kernel-->>App: 200 OK + bearer credential
 ```
+
+The kernel verifies the `identityToken` itself; it does not exchange the `authorizationCode`.
 
 `nativeClientIds` should include the bundle ids that your app may sign in from. Multiple bundle ids are supported (development vs production).
 
@@ -102,6 +109,20 @@ The `AuthFnSwift` SDK encapsulates this flow — see [SDKs → Swift](../sdk/swi
 ## First-time-only name
 
 Apple sends the user's name on the very first authorization only — subsequent flows return only the `sub` and email. The kernel persists the name on `authfn_users.metadata` if you provide one in the initial request body (`profile.name`). The native iOS API will give you a `fullName` you should pass through.
+
+## Email and verification
+
+authfn takes the email, and whether it is verified, only from Apple's identity token, never from the `user` value. That value, which Apple posts on the first authorization (and the `user` object the native complete route accepts), is not signed, so authfn reads only the name from it and ignores any `email` in it. Where the token comes from decides how it is checked:
+
+- **Code exchange** (`/social/callback/apple` with a `code`): the token is the one Apple's token endpoint returns to the server over TLS for that code.
+- **Web `form_post` identity token** (`/social/callback/apple` with an `id_token`) and the **native route** (`/social/native/apple/complete`): the token arrives through the client, so authfn checks its signature against Apple's keys, its issuer and audience, and that its nonce matches the sign-in it started.
+
+The email counts as verified only when the token's `email_verified` claim is `true`; a missing claim counts as unverified. A new account gets `emailVerifiedAt` only for a verified email. Whether an unverified email may link to an existing account is set by `accountLinking.oauthByVerifiedEmail.requireProviderEmailVerified` (default `true`, which refuses the link).
+
+When the token has no `email` claim:
+
+- the web callback rejects the sign-in;
+- the native route resolves the sign-in by the Apple subject alone. An Apple ID already linked to an account signs in as before and keeps the email and profile stored for it; a new one creates an account with no email. It never links by email.
 
 ## Email relay
 
