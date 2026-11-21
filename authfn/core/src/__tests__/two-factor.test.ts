@@ -751,6 +751,7 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     ['maxFailedAttempts', 2.5],
     ['maxFailedAttempts', 1001],
     ['lockoutSeconds', 0],
+    ['lockoutSeconds', 59],
     ['lockoutSeconds', 1e12]
   ])('refuses %s = %s when the server is set up', (field, value) => {
     const config = createConfig();
@@ -924,21 +925,65 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect((await setup.post('/2fa/challenge', { challengeId: await setup.challenge(), code: totp })).status).toBe(200);
   });
 
-  it('dates a lock again when its write was slow', async () => {
-    const setup = await enrolledUser({ maxFailedAttempts: 1, lockoutSeconds: 60 });
+  it('does not let a TOTP code replayed by a stale request end the run of attempts', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 3 });
+    const wrong = setup.wrongCode(setup.clock.now());
+    const verify = (code: string) =>
+      verifyTwoFactorCode(setup.config, setup.userId, code, setup.pluginConfig).then(() => 'ok', (error) => error.code);
+    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+
+    // A sign-in with the current code waits at its attempt reservation while
+    // the same code is used elsewhere.
     const paused = pausingAdapter(setup.config.database);
     const config = { ...setup.config, database: paused.adapter };
+    const totp = generateTotp(setup.secret, setup.clock.now());
+    const challengeId = await setup.challenge();
     const reached = paused.pauseNext((params) =>
-      params.model === 'two_factor_enrollments' && params.data.lockedUntil instanceof Date);
-    const locking = verifyTwoFactorCode(config, setup.userId, setup.wrongCode(setup.clock.now()), setup.pluginConfig)
+      params.model === 'two_factor_enrollments' && 'failedAttemptCount' in params.data);
+    const stale = satisfyTwoFactorChallenge(config, challengeId, totp, setup.pluginConfig)
       .then(() => 'ok', (error) => error.code);
     await reached;
-    // The write waits two minutes, longer than the lock itself.
-    setup.clock.advanceSeconds(120);
+    expect(await verify(totp)).toBe('ok');
     paused.release();
-    expect(await locking).toBe('AUTHFN_2FA_INVALID_CODE');
-    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
-      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+    expect(await stale).toBe('AUTHFN_2FA_INVALID_CODE');
+
+    // The replay counted as an attempt and did not start a new run: two more
+    // wrong codes complete the run and lock the enrollment.
+    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    setup.clock.advanceSeconds(30);
+    expect(await verify(generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
+  });
+
+  it('gives the challenge back when spending a recovery code fails', async () => {
+    const setup = await enrolledUser();
+    let failSpend = true;
+    const failing: Adapter = {
+      ...setup.config.database,
+      async update(params) {
+        if (failSpend && params.model === 'two_factor_recovery_codes') {
+          failSpend = false;
+          throw new Error('test recovery code write failed');
+        }
+        return setup.config.database.update(params);
+      },
+      async updateMany(params) {
+        if (failSpend && params.model === 'two_factor_recovery_codes') {
+          failSpend = false;
+          throw new Error('test recovery code write failed');
+        }
+        return setup.config.database.updateMany(params);
+      }
+    } as Adapter;
+    const challengeId = await setup.challenge();
+    await expect(satisfyTwoFactorChallenge({ ...setup.config, database: failing }, challengeId, setup.recoveryCodes[0], setup.pluginConfig))
+      .rejects.toThrow('test recovery code write failed');
+    setup.clock.advanceSeconds(30);
+    expect((await setup.post('/2fa/challenge', {
+      challengeId,
+      code: generateTotp(setup.secret, setup.clock.now())
+    })).status).toBe(200);
   });
 
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {

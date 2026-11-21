@@ -7145,7 +7145,7 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
 | `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code ends the run. Whole number from 1 to 1000. |
-| `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 1 to 31536000 (one year). Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
+| `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 60 to 31536000 (one year): a lock is dated just before it is written, so it must outlast a slow write. Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
 
@@ -7206,9 +7206,9 @@ Recovery codes are outside this limit and keep working while TOTP is locked: at 
 
 A recovery code submitted to finish a sign-in challenge is spent only after that request has claimed the challenge, so two requests racing on one challenge spend at most one code. If the code turns out to have been spent elsewhere meanwhile, the challenge is given back.
 
-During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port verifies both hash formats and spends a code only while it is unused.
+During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port verifies both hash formats, finishes a challenge only once, and spends a code only while it is unused; it needs a database adapter with `update_many`.
 
-A TOTP code is recorded as used only after its request has claimed the sign-in challenge, so a request that loses the challenge to another one leaves its code usable. A schema override (`authFnTwoFactorPlugin({ schema })`) written for an earlier version gets the two new columns added with their default names.
+A TOTP code is recorded as used only after its request has claimed the sign-in challenge, so a request that loses the challenge to another one leaves its code usable, and only a code that finished the challenge ends the run of attempts. A schema override (`authFnTwoFactorPlugin({ schema })`) written for an earlier version gets the two new columns added with their default names.
 
 ## Disabling 2FA
 

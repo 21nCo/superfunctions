@@ -28,7 +28,7 @@ from authfn.plugins.two_factor import (
     TwoFactorService,
     authfn_two_factor_plugin,
 )
-from authfn.types import ValidationError
+from authfn.types import ConfigError, ValidationError
 
 TEST_2FA_KEY = b"authfn-python-two-factor-test-key"
 
@@ -415,3 +415,74 @@ async def test_spends_a_recovery_code_only_while_it_is_unused() -> None:
 
     db.find_many = stale_find_many  # type: ignore[method-assign]
     assert await service._consume_recovery_code(enrollment_id, recovery) is False
+
+
+@pytest.mark.asyncio
+async def test_finishes_a_challenge_once_and_keeps_the_losing_recovery_code() -> None:
+    db = MockDatabaseAdapter()
+    now = datetime(2026, 3, 22, 0, 0, 0)
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: now,
+            recovery_code_count=2,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], now))
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    stale_challenge = dict(challenge)
+
+    first = await service.complete_sign_in_challenge(
+        challenge_id=challenge["id"],
+        code=enrolled["recoveryCodes"][0],
+        primary_email="ada@example.com",
+    )
+    assert first["usedRecoveryCode"] is True
+
+    # A second request that read the challenge before the first finished it.
+    original_find_one = db.find_one
+
+    async def stale_find_one(**kwargs: Any) -> Optional[Dict[str, Any]]:
+        if kwargs.get("model") == "two_factor_challenges":
+            return stale_challenge
+        return await original_find_one(**kwargs)
+
+    db.find_one = stale_find_one  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][1],
+            primary_email="ada@example.com",
+        )
+    unused = [row for row in db.storage["two_factor_recovery_codes"] if row.get("usedAt") is None]
+    assert len(unused) == 1
+
+
+@pytest.mark.asyncio
+async def test_refuses_an_adapter_without_conditional_writes() -> None:
+    class NoUpdateMany(MockDatabaseAdapter):
+        update_many = None  # type: ignore[assignment]
+
+    db = NoUpdateMany()
+    now = datetime(2026, 3, 22, 0, 0, 0)
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: now,
+            recovery_code_count=1,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], now))
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    with pytest.raises(ConfigError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )

@@ -45,6 +45,11 @@ const DEFAULT_LOCKOUT_SECONDS = 15 * 60;
 const MAX_FAILED_ATTEMPTS_LIMIT = 1000;
 /** One year: longer locks would also push dates past what JavaScript can represent. */
 const MAX_LOCKOUT_SECONDS = 365 * 24 * 60 * 60;
+/**
+ * A lock is dated from the clock read just before its write, so it must
+ * comfortably outlast a slow write; shorter locks could land already over.
+ */
+const MIN_LOCKOUT_SECONDS = 60;
 /** Compare-and-set rounds for one attempt reservation before giving up. */
 const ATTEMPT_RESERVATION_ROUNDS = 16;
 /** Random bytes per recovery code: 80 bits, shown as four groups of five. */
@@ -209,9 +214,9 @@ export async function confirmTwoFactorEnrollment(
     return enrollment;
   }
 
-  await withAttemptReservation(config, enrollment.id, pluginConfig, () =>
-    verifyTwoFactorTotp(config, enrollment, code, pluginConfig)
-  );
+  const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
+  await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+  await attempt.succeeded();
   const now = resolveNow(pluginConfig);
   return config.database.update<AuthFnTwoFactorEnrollmentRecord>({
     model: 'two_factor_enrollments',
@@ -357,9 +362,8 @@ export async function satisfyTwoFactorChallenge(
   let usedRecoveryCode = false;
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
-    await withAttemptReservation(config, enrollment.id, pluginConfig, () =>
-      assertTotpMatches(config, enrollment, code, pluginConfig)
-    );
+    const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
+    await assertTotpMatches(config, enrollment, code, pluginConfig);
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
@@ -369,6 +373,8 @@ export async function satisfyTwoFactorChallenge(
       await reopenChallenge();
       throw error;
     }
+    // Only a code that finished the challenge ends the run of attempts.
+    await attempt.succeeded();
   } else {
     if (!submitted.recoveryCode) {
       throw invalidSecondFactorCode(enrollment.userId);
@@ -376,7 +382,14 @@ export async function satisfyTwoFactorChallenge(
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
-    if (!(await spendRecoveryCode(config, submitted.recoveryCode.id, now))) {
+    let spent: boolean;
+    try {
+      spent = await spendRecoveryCode(config, submitted.recoveryCode.id, now);
+    } catch (error) {
+      await reopenChallenge();
+      throw error;
+    }
+    if (!spent) {
       await reopenChallenge();
       throw invalidSecondFactorCode(enrollment.userId);
     }
@@ -552,9 +565,9 @@ async function checkSecondFactor(
 ): Promise<{ usedRecoveryCode: boolean }> {
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
-    await withAttemptReservation(config, enrollment.id, pluginConfig, () =>
-      verifyTwoFactorTotp(config, enrollment, code, pluginConfig)
-    );
+    const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
+    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+    await attempt.succeeded();
     return { usedRecoveryCode: false };
   }
 
@@ -569,9 +582,10 @@ function invalidSecondFactorCode(userId: string): AuthFnTwoFactorInvalidCodeErro
 }
 
 /**
- * Runs one TOTP check against the enrollment's limit on wrong codes, which
+ * Counts one TOTP check against the enrollment's limit on wrong codes, which
  * holds across challenges and routes and does not depend on the HTTP rate
- * limiter.
+ * limiter. Call it before the code is compared, and `succeeded()` once the
+ * code has been accepted and its use recorded.
  *
  * `failedAttemptCount` only ever goes up: every check adds one before the
  * code is compared, and every `maxFailedAttempts`-th check also locks the
@@ -581,38 +595,38 @@ function invalidSecondFactorCode(userId: string): AuthFnTwoFactorInvalidCodeErro
  *
  * - While the enrollment is locked, no code is checked: `AUTHFN_RATE_LIMITED`
  *   with the time the lock ends.
- * - A correct code moves the count to the end of the current run of
- *   `maxFailedAttempts` and lifts a lock its own check set, so the next wrong
- *   code starts a new run. It does so only if no other check was reserved
- *   after it; otherwise those checks, and any lock they set, stand.
+ * - `succeeded()` moves the count to the end of the current run of
+ *   `maxFailedAttempts` and lifts a lock this check set, so the next wrong
+ *   code starts a new run. It does so only if no other check was counted
+ *   after this one; otherwise those checks, and any lock they set, stand.
  */
-async function withAttemptReservation<T>(
+async function reserveTotpCheck(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   enrollmentId: string,
-  pluginConfig: TwoFactorPluginRuntimeConfig,
-  check: () => Promise<T>
-): Promise<T> {
+  pluginConfig: TwoFactorPluginRuntimeConfig
+): Promise<{ succeeded: () => Promise<void> }> {
   const limits = resolveTwoFactorAttemptLimits(pluginConfig);
   const reserved = await reserveSecondFactorAttempt(config, enrollmentId, pluginConfig, limits);
-  const result = await check();
-  try {
-    const now = resolveNow(pluginConfig);
-    await updateRowIfMatches(
-      config,
-      'two_factor_enrollments',
-      enrollmentId,
-      [{ field: 'failedAttemptCount', operator: 'eq', value: reserved }],
-      {
-        failedAttemptCount: Math.ceil(reserved / limits.maxFailedAttempts) * limits.maxFailedAttempts,
-        lockedUntil: null,
-        updatedAt: now
+  return {
+    succeeded: async () => {
+      try {
+        await updateRowIfMatches(
+          config,
+          'two_factor_enrollments',
+          enrollmentId,
+          [{ field: 'failedAttemptCount', operator: 'eq', value: reserved }],
+          {
+            failedAttemptCount: Math.ceil(reserved / limits.maxFailedAttempts) * limits.maxFailedAttempts,
+            lockedUntil: null,
+            updatedAt: resolveNow(pluginConfig)
+          }
+        );
+      } catch {
+        // The code was right; a count that could not be moved on only makes
+        // a later lock come sooner.
       }
-    );
-  } catch {
-    // The code was right; a count that could not be moved on only makes a
-    // later lock come sooner.
-  }
-  return result;
+    }
+  };
 }
 
 /** Reserves one TOTP check and returns the count this request wrote. */
@@ -643,8 +657,7 @@ async function reserveSecondFactorAttempt(
     const next = readAttemptCount(current.failedAttemptCount) + 1;
     // The check that completes a run is still made; the lock applies to the
     // ones after it.
-    const locks = next % limits.maxFailedAttempts === 0;
-    const data: Record<string, unknown> = locks
+    const data: Record<string, unknown> = next % limits.maxFailedAttempts === 0
       ? { failedAttemptCount: next, lockedUntil: new Date(now.getTime() + limits.lockoutMs), updatedAt: now }
       : { failedAttemptCount: next, updatedAt: now };
     const reserved = await updateRowIfMatches(
@@ -655,45 +668,11 @@ async function reserveSecondFactorAttempt(
       data
     );
     if (reserved) {
-      if (locks) {
-        await redateSlowLock(config, enrollmentId, pluginConfig, limits, next, now);
-      }
       return next;
     }
   }
   // Lost every round to concurrent requests: treat as over the limit.
   throw twoFactorLockedError(new Date(now.getTime() + 1000));
-}
-
-/**
- * A lock is dated from the clock read just before its write. If the write
- * itself took a while (waiting for a connection or a row lock), the lock is
- * dated again from when the write returned, so a short `lockoutSeconds` is
- * not already over when it lands. Only while no later attempt was counted.
- */
-async function redateSlowLock(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  enrollmentId: string,
-  pluginConfig: TwoFactorPluginRuntimeConfig,
-  limits: TwoFactorAttemptLimits,
-  reserved: number,
-  writtenAt: Date
-): Promise<void> {
-  const after = resolveNow(pluginConfig);
-  if (after.getTime() <= writtenAt.getTime()) {
-    return;
-  }
-  try {
-    await updateRowIfMatches(
-      config,
-      'two_factor_enrollments',
-      enrollmentId,
-      [{ field: 'failedAttemptCount', operator: 'eq', value: reserved }],
-      { lockedUntil: new Date(after.getTime() + limits.lockoutMs), updatedAt: after }
-    );
-  } catch {
-    // The first lock stands.
-  }
 }
 
 function readAttemptCount(value: unknown): number {
@@ -723,24 +702,26 @@ export function resolveTwoFactorAttemptLimits(pluginConfig: TwoFactorPluginRunti
     maxFailedAttempts: readBoundedInteger(
       pluginConfig.maxFailedAttempts,
       DEFAULT_MAX_FAILED_ATTEMPTS,
+      1,
       MAX_FAILED_ATTEMPTS_LIMIT,
       'maxFailedAttempts'
     ),
     lockoutMs: readBoundedInteger(
       pluginConfig.lockoutSeconds,
       DEFAULT_LOCKOUT_SECONDS,
+      MIN_LOCKOUT_SECONDS,
       MAX_LOCKOUT_SECONDS,
       'lockoutSeconds'
     ) * 1000
   };
 }
 
-function readBoundedInteger(value: number | undefined, fallback: number, max: number, field: string): number {
+function readBoundedInteger(value: number | undefined, fallback: number, min: number, max: number, field: string): number {
   if (value === undefined) {
     return fallback;
   }
-  if (!Number.isSafeInteger(value) || value < 1 || value > max) {
-    throw new AuthFnConfigError(`Two-factor ${field} must be a whole number from 1 to ${max}`, { field });
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new AuthFnConfigError(`Two-factor ${field} must be a whole number from ${min} to ${max}`, { field });
   }
   return value;
 }

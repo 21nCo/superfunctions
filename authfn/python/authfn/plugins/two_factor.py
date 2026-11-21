@@ -20,6 +20,7 @@ from ..limits import (
 )
 from ..types import (
     AuthFnConfig,
+    ConfigError,
     AuthFnPlugin,
     AuthFnSession,
     NotFoundError,
@@ -322,18 +323,33 @@ class TwoFactorService:
             raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")
 
         enrollment = await self._require_enrollment(challenge["userId"])
-        used_recovery = await self._consume_recovery_code(enrollment["id"], code)
-        if not used_recovery:
+        recovery_row = await self._find_unused_recovery_code(enrollment["id"], code)
+        if recovery_row is None:
             secret = self._cipher().decrypt(enrollment["secretEncrypted"].encode("utf-8")).decode("utf-8")
             if not self._verify_totp(secret, code):
                 raise TwoFactorInvalidCodeError("Two-factor authentication code is invalid")
 
-        await self.config.database.update(
-            model="two_factor_challenges",
-            where=[{"field": "id", "operator": "eq", "value": challenge_id}],
-            data={"consumedAt": now, "updatedAt": now},
-            namespace=self.config.namespace,
+        # Only one request finishes a challenge, and a recovery code is spent
+        # only once this request holds it; if the spend fails, the challenge is
+        # given back.
+        claimed = await self._update_if_matches(
+            "two_factor_challenges",
+            challenge_id,
+            [{"field": "consumedAt", "operator": "eq", "value": None}],
+            {"consumedAt": now, "updatedAt": now},
         )
+        if not claimed:
+            raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")
+        if recovery_row is not None:
+            try:
+                spent = await self._spend_recovery_code(recovery_row["id"])
+            except Exception:
+                await self._reopen_challenge(challenge_id)
+                raise
+            if not spent:
+                await self._reopen_challenge(challenge_id)
+                raise TwoFactorInvalidCodeError("Two-factor authentication code is invalid")
+        used_recovery = recovery_row is not None
         session = AuthFnSession.model_validate(
             {
                 "id": _create_id("sess"),
@@ -399,6 +415,10 @@ class TwoFactorService:
         return enrollment
 
     async def _consume_recovery_code(self, enrollment_id: str, code: str) -> bool:
+        row = await self._find_unused_recovery_code(enrollment_id, code)
+        return row is not None and await self._spend_recovery_code(row["id"])
+
+    async def _find_unused_recovery_code(self, enrollment_id: str, code: str) -> Optional[Dict[str, Any]]:
         rows = await self.config.database.find_many(
             model="two_factor_recovery_codes",
             where=[{"field": "enrollmentId", "operator": "eq", "value": enrollment_id}],
@@ -407,36 +427,47 @@ class TwoFactorService:
         )
         for row in rows:
             if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code, enrollment_id):
-                return await self._spend_recovery_code(row["id"])
-        return False
+                return row
+        return None
 
     async def _spend_recovery_code(self, row_id: str) -> bool:
         """Marks a recovery code used only while it is still unused, so two
         requests (in this kernel or the TypeScript one) cannot both spend it."""
-        where = [
-            {"field": "id", "operator": "eq", "value": row_id},
-            {"field": "usedAt", "operator": "eq", "value": None},
-        ]
-        data = {"usedAt": self.plugin_config.now()}
-        update_many = getattr(self.config.database, "update_many", None)
-        if callable(update_many):
-            count = await update_many(
-                model="two_factor_recovery_codes",
-                where=where,
-                data=data,
-                namespace=self.config.namespace,
-            )
-            return isinstance(count, int) and count == 1
+        return await self._update_if_matches(
+            "two_factor_recovery_codes",
+            row_id,
+            [{"field": "usedAt", "operator": "eq", "value": None}],
+            {"usedAt": self.plugin_config.now()},
+        )
+
+    async def _reopen_challenge(self, challenge_id: str) -> None:
+        now = self.plugin_config.now()
         try:
-            await self.config.database.update(
-                model="two_factor_recovery_codes",
-                where=where,
-                data=data,
-                namespace=self.config.namespace,
-            )
-        except NotFoundError:
-            return False
-        return True
+            await self._update_if_matches("two_factor_challenges", challenge_id, [], {"consumedAt": None, "updatedAt": now})
+        except Exception:
+            # The challenge stays used; the user signs in again.
+            pass
+
+    async def _update_if_matches(
+        self,
+        model: str,
+        row_id: str,
+        guards: List[Dict[str, Any]],
+        data: Dict[str, Any],
+    ) -> bool:
+        """Updates one row by id while ``guards`` still match, and reports
+        whether it was written: only an affected-row count of 1 counts, so the
+        adapter must provide ``update_many``."""
+        update_many = getattr(self.config.database, "update_many", None)
+        if not callable(update_many):
+            raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
+        count = await update_many(
+            model=model,
+            where=[{"field": "id", "operator": "eq", "value": row_id}, *guards],
+            data=data,
+            namespace=self.config.namespace,
+        )
+        return isinstance(count, int) and not isinstance(count, bool) and count == 1
 
     def _verify_totp(self, secret: str, code: str) -> bool:
         now = self.plugin_config.now()
