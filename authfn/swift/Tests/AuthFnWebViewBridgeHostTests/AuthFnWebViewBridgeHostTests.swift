@@ -127,6 +127,12 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         ])
         XCTAssertTrue(padded.allows(scheme: "http", host: "127.0.0.1", port: 0))
         XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("http://[::1]:8080"), "http://[::1]:8080")
+        // IPv6 limits WebKit applies and Darwin does not.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[0:0:0:0:0:0:0:00001]"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.000.0.1]"))
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.0.0.1]"), "http://[::ffff:127.0.0.1]")
+        // A nested URL is not read as the origin inside it.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("blob:https://portal.example/0000-test"))
     }
 
     func testOriginPolicyRefusesAnInheritedOriginWhosePortTheFrameCannotShow() {

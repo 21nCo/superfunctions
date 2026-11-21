@@ -170,7 +170,8 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     static func canonicalIPv6(_ host: String) -> String? {
         guard host.hasPrefix("["), host.hasSuffix("]"), host.count > 2 else { return nil }
         let literal = String(host.dropFirst().dropLast())
-        guard literal.unicodeScalars.allSatisfy({ isHexDigitScalar($0) || $0 == ":" || $0 == "." }) else {
+        guard literal.unicodeScalars.allSatisfy({ isHexDigitScalar($0) || $0 == ":" || $0 == "." }),
+              ipv6ComponentsAreWebKitValid(literal) else {
             return nil
         }
         var address = in6_addr()
@@ -178,6 +179,31 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
         guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
         return "[\(String(cString: buffer))]"
+    }
+
+    /// The limits WebKit applies that Darwin's inet_pton does not: at most
+    /// four hex digits per component, and an embedded IPv4 tail (last
+    /// component only) of four decimal octets up to 255 without leading
+    /// zeros.
+    private static func ipv6ComponentsAreWebKitValid(_ literal: String) -> Bool {
+        let components = literal.split(separator: ":", omittingEmptySubsequences: false)
+        for (index, component) in components.enumerated() {
+            if component.contains(".") {
+                guard index == components.count - 1 else { return false }
+                let octets = component.split(separator: ".", omittingEmptySubsequences: false)
+                guard octets.count == 4 else { return false }
+                for octet in octets {
+                    guard !octet.isEmpty, octet.count <= 3, octet.allSatisfy(isASCIIDigit),
+                          octet == "0" || !octet.hasPrefix("0"),
+                          let value = Int(octet), value <= 255 else {
+                        return false
+                    }
+                }
+            } else if component.count > 4 {
+                return false
+            }
+        }
+        return true
     }
 
     static func isASCIIDigit(_ character: Character) -> Bool {
@@ -267,7 +293,12 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
         guard let separator = string.range(of: "://") else { return nil }
         let scheme = String(string[..<separator.lowerBound]).lowercased()
-        guard !scheme.isEmpty else { return nil }
+        // A scheme is a letter then letters, digits, '+', '-' or '.', so a
+        // nested URL (`blob:https://...`) is not read as an origin.
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }) else {
+            return nil
+        }
         var authority = string[separator.upperBound...]
         if let end = authority.firstIndex(where: { "/?#".contains($0) }) {
             authority = authority[..<end]
