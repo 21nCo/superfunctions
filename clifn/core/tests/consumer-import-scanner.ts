@@ -135,6 +135,27 @@ interface ParsedFile {
   readonly literals: Array<readonly [number, number]>;
 }
 
+/**
+ * A qualifier-less inline module type names one export only through a string-literal index,
+ * `(typeof import("..."))["A"]`, through any parentheses; every other use names the whole module.
+ */
+function indexedMember(node: ts.ImportTypeNode, sourceFile: ts.SourceFile): Partial<CollectedReference> {
+  let object: ts.Node = node;
+  while (ts.isParenthesizedTypeNode(object.parent)) {
+    object = object.parent;
+  }
+  const access = object.parent;
+  if (
+    ts.isIndexedAccessTypeNode(access) &&
+    access.objectType === object &&
+    ts.isLiteralTypeNode(access.indexType) &&
+    ts.isStringLiteral(access.indexType.literal)
+  ) {
+    return { symbols: [{ symbol: access.indexType.literal.text, typeOnly: true }] };
+  }
+  return { unrecognized: normalized(node.getText(sourceFile)) };
+}
+
 function lineOf(sourceFile: ts.SourceFile, offset: number): number {
   return sourceFile.getLineAndCharacterOfPosition(offset).line + 1;
 }
@@ -184,9 +205,9 @@ function collect(sourceFile: ts.SourceFile, file: string): ParsedFile {
       reference(
         node,
         node.argument.literal,
-        node.qualifier === undefined
-          ? { unrecognized: normalized(node.getText(sourceFile)) }
-          : { symbols: [{ symbol: leftmostName(node.qualifier), typeOnly: true }] },
+        node.qualifier !== undefined
+          ? { symbols: [{ symbol: leftmostName(node.qualifier), typeOnly: true }] }
+          : indexedMember(node, sourceFile),
       );
     }
     for (const doc of (node as { jsDoc?: readonly ts.Node[] }).jsDoc ?? []) {
@@ -301,6 +322,11 @@ export function scanSource(source: string, file: string): ScannedImport[] {
   return [...scanned, ...unmatched].sort((left, right) => left.line - right.line);
 }
 
+/** Alphabetical, with a code-unit tie-break so distinct paths that collate equally (`é`, `e\u0301`) keep one order. */
+export function compareSourcePaths(left: string, right: string): number {
+  return left.localeCompare(right, "en") || (left < right ? -1 : Number(left > right));
+}
+
 function listSourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -314,7 +340,7 @@ function listSourceFiles(directory: string): string[] {
       files.push(entryPath);
     }
   }
-  return files.sort((left, right) => left.localeCompare(right, "en"));
+  return files.sort(compareSourcePaths);
 }
 
 /** Scans every source file under `directory`, reporting files relative to `relativeTo`. */

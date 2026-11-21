@@ -133,6 +133,8 @@ describe("@clifn/core consumer contract types", () => {
     expectTypeOf<ExecOptions["streamOutput"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<ExecOptions["stdout"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
     expectTypeOf<ExecOptions["stderr"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
+    // extfn's browser launch passes timeoutMs: 10_000; any numeric timeout must stay accepted.
+    expectTypeOf<ExecOptions["timeoutMs"]>().toEqualTypeOf<number | undefined>();
     expectTypeOf(exec.command).returns.resolves.toEqualTypeOf<ExecResult>();
     expectTypeOf<ExecResult["exitCode"]>().toEqualTypeOf<number | null>();
     expectTypeOf<ExecResult["stdout"]>().toEqualTypeOf<string>();
@@ -168,16 +170,18 @@ describe("@clifn/core consumer contract types", () => {
     createDiagnostic({ code: "EXTFN_BUILD", severity: "error", message: "failed", path: "src", details: { target: "chrome" } });
     expectTypeOf(readStringEnv("EXTFN_PACKAGE_OUT_DIR", { defaultValue: "artifacts", env: {} })).toEqualTypeOf<string>();
     expectTypeOf(createScaffold).returns.toEqualTypeOf<ScaffoldService>();
-    // devfn's init writes its config file and fails when it already exists.
+    // devfn's init writes its config file (a user-chosen root .ts name) and fails when it already exists.
     const scaffold = {} as ScaffoldService;
+    const configName: string = "devfn.config.ts";
     expectTypeOf(
-      scaffold.apply([{ kind: "write-file", path: "devfn.config.ts", content: "export default {};", ifExists: "error" }], {
+      scaffold.apply([{ kind: "write-file", path: configName, content: "export default {};", ifExists: "error" }], {
         cwd: "/repo",
       }),
     ).resolves.toExtend<{ written: string[]; skipped: string[] }>();
     expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["ifExists"]>().toEqualTypeOf<
       "error" | "skip" | "overwrite" | undefined
     >();
+    expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["path"]>().toEqualTypeOf<string>();
   });
 
   it("adds no required member to the exported service interfaces (D2)", () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CONSUMER_CONTRACT_KEYS, CONSUMER_PACKAGE_DIRS } from "./consumer-contract.table.js";
-import { findContractViolations, scanDirectory, scanSource, type ScannedImport } from "./consumer-import-scanner.js";
+import { compareSourcePaths, findContractViolations, scanDirectory, scanSource, type ScannedImport } from "./consumer-import-scanner.js";
 
 // Non-goal: dynamic `import()` and `require()` of @clifn/core are not scanned; no consumer uses them at the
 // reference commit.
@@ -212,6 +212,24 @@ describe("@clifn/core consumer import scan", () => {
       startingWith('inline-types.ts:4: `import("@clifn/core/output")` names "@clifn/core/output" in a form the consumer scan does not parse'),
     ]);
 
+    const indexed = scanSource(
+      [
+        'type Fn = (typeof import("@clifn/core/output"))["createOutput"];',
+        'type Store = typeof import("@clifn/core")["createCredentialStore"];',
+        '/** @type {(typeof import("@clifn/core/output"))["createOutput"]} */',
+        "let fn;",
+      ].join("\n"),
+      "indexed.ts",
+    );
+    expect(indexed.map(({ line, specifier, symbols }) => ({ line, specifier, symbols: symbols.map((s) => s.symbol) }))).toEqual([
+      { line: 1, specifier: "@clifn/core/output", symbols: ["createOutput"] },
+      { line: 2, specifier: "@clifn/core", symbols: ["createCredentialStore"] },
+      { line: 3, specifier: "@clifn/core/output", symbols: ["createOutput"] },
+    ]);
+    expect(findContractViolations(indexed, CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('indexed.ts:2: "createCredentialStore" from "@clifn/core" is not in'),
+    ]);
+
     const jsDoc = scanSource('/** @type {import("@clifn/core/output").OutputOptions} */\nlet options;\n', "doc.js");
     expect(findContractViolations(jsDoc, CONSUMER_CONTRACT_KEYS)).toEqual([
       startingWith('doc.js:1: "OutputOptions" from "@clifn/core/output" is not in'),
@@ -315,5 +333,14 @@ describe("@clifn/core consumer import scan", () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("breaks collation ties so diagnostics do not depend on directory enumeration order", () => {
+    const composed = "\u00e9.ts";
+    const decomposed = "e\u0301.ts";
+    expect(composed.localeCompare(decomposed, "en")).toBe(0);
+    const expected = [decomposed, composed];
+    expect([composed, decomposed].sort(compareSourcePaths)).toEqual(expected);
+    expect([decomposed, composed].sort(compareSourcePaths)).toEqual(expected);
   });
 });
