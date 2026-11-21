@@ -8,6 +8,7 @@ import {
   resolveAppPaths,
   type AppPathsOptions,
 } from "../src/paths.js";
+import { appDirResolver } from "../src/app-dirs.js";
 import * as core from "../src/index.js";
 
 const POSIX_HOME = "/home/ada";
@@ -128,6 +129,56 @@ describe("resolveAppPaths", () => {
     ["win32", { APPDATA: "D:\\Roam", LOCALAPPDATA: "D:\\Loc" }],
   ] as const)("does not need the home directory on %s when every variable is absolute", (platform, env) => {
     expect(() => resolveAppPaths("my-cli", { platform, homedir: "relative-home", env })).not.toThrow();
+  });
+
+  it.each([
+    ["an extended-length UNC prefix whose share would be the app name", "\\\\?\\UNC\\srv"],
+    ["an extended-length drive path", "\\\\?\\D:\\Roam"],
+    ["a device namespace path", "\\\\.\\pipe"],
+    ["a device drive path", "\\\\.\\D:\\Roam"],
+    ["a dot-dot server", "\\\\..\\share"],
+    ["a dot server", "\\\\.\\share"],
+    ["a dot-dot share", "\\\\srv\\.."],
+    ["an empty server", "\\\\\\share"],
+    ["forward slashes without a share", "//srv"],
+    ["a drive-relative path", "D:Roam"],
+  ])("win32: an environment value that is %s falls back", (_label, value) => {
+    expect(resolveAppPaths("my-cli", { platform: "win32", homedir: WIN_HOME, env: { APPDATA: value, LOCALAPPDATA: value } })).toEqual(
+      winDefaults,
+    );
+  });
+
+  it.each([
+    ["\\\\srv\\share", "\\\\srv\\share\\my-cli"],
+    ["//srv/share/roam", "\\\\srv\\share\\roam\\my-cli"],
+    ["D:/Roam", "D:\\Roam\\my-cli"],
+  ])("win32: %j is a usable APPDATA root", (value, config) => {
+    expect(resolveAppPaths("my-cli", { platform: "win32", homedir: WIN_HOME, env: { APPDATA: value } }).config).toBe(config);
+  });
+
+  it.each([
+    "\\\\?\\C:\\Users\\ada",
+    "\\\\?\\UNC\\srv\\share",
+    "\\\\.\\pipe\\ada",
+    "\\\\..\\share\\ada",
+    "\\\\srv",
+    "C:Users\\ada",
+  ])("win32: rejects the home directory %j by the same rule", (homedir) => {
+    expect(() => resolveAppPaths("my-cli", { platform: "win32", homedir, env: {} })).toThrow(InvalidHomeDirectoryError);
+  });
+
+  it("win32: accepts a UNC home directory with a server and share", () => {
+    expect(resolveAppPaths("my-cli", { platform: "win32", homedir: "\\\\srv\\share\\ada", env: {} }).config).toBe(
+      "\\\\srv\\share\\ada\\AppData\\Roaming\\my-cli",
+    );
+  });
+
+  it.each([
+    ["linux", { XDG_CONFIG_HOME: "/xdg/config" }, "/xdg/config/my-cli"],
+    ["win32", { APPDATA: "D:\\Roam" }, "D:\\Roam\\my-cli"],
+  ] as const)("resolving only the config directory on %s does not need the home directory", (platform, env, config) => {
+    expect(appDirResolver("my-cli", { platform, homedir: "relative-home", env })("config")).toBe(config);
+    expect(() => resolveAppPaths("my-cli", { platform, homedir: "relative-home", env })).toThrow(InvalidHomeDirectoryError);
   });
 
   it("still rejects a non-absolute home directory when one default needs it", () => {

@@ -217,7 +217,7 @@ Consumer ownership stays explicit:
 
 - `createProjectConfig(path?)` -> JSON project config store.
 - `createProjectConfig({ appName, fileName? })` -> `<config>/<fileName>` (default `config.json`); `{ cwd?, fileName }` -> a project-local file; `{ path }` equals the string form. Without an argument the Conduct default `conduct.config.json` stays.
-- `{ appName }` stores resolve for the current platform (`env` and `homedir` may be passed through, a different `platform` throws); `fileName` must stay inside its directory; malformed options throw `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`).
+- `{ appName }` stores resolve only the config directory for the current platform (`env` and `homedir` may be passed through, a different `platform` throws); `fileName` must stay inside its directory. Options are read as own keys: a selector set to `undefined` or a non-string, a key from another form, or an unknown key throws `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`) instead of falling back to another form or the Conduct default.
 - `InvalidConfigError` -> typed error for invalid JSON/object shapes.
 
 ### `@clifn/core/client`
@@ -271,7 +271,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - deterministic file and directory scaffolding contract with explicit overwrite policy
 - `@clifn/core/paths`
   - `resolveAppPaths(appName, { platform?, env?, homedir? })` -> `{ config, state, cache }`: `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_CACHE_HOME` (else `~/.config`, `~/.local/state`, `~/.cache`) followed by `/<app>` on Linux, macOS and other POSIX platforms; `%APPDATA%\<app>` and `%LOCALAPPDATA%\<app>\State` / `\Cache` on Windows (else `<home>\AppData\Roaming` / `Local`)
-  - environment values count only when they are absolute paths (a UNC path needs a server and a share); relative or empty values use the defaults, and only a default reads the home directory
+  - environment values count only when they are absolute paths (a UNC path needs a real server and share; device and extended-length `\\.\` / `\\?\` paths are not used, and the home directory follows the same rule); relative or empty values use the defaults, and only a default reads the home directory
   - app names match `^[a-z0-9][a-z0-9._-]{0,63}$`, else `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`)
   - `ensureAppDir(dir)` creates a missing directory with mode `0o700` on POSIX and resolves to `dir`; concurrent calls on one path both resolve
   - symlinks or directories that another program plants under these paths are not defended against yet

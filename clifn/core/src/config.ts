@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  APP_FORM_KEYS,
   appConfigFile,
   InvalidStoreOptionsError,
-  joinStoreFile,
-  pathModuleFor,
+  projectLocalFile,
+  selectStoreForm,
   type StoreAppPathsOptions,
 } from "./store-options.js";
 
@@ -62,7 +63,8 @@ function parseConfig<TConfig extends Record<string, unknown>>(path: string): TCo
  * - `{ cwd?, fileName }`: a project-local file, `fileName` resolved against `cwd` (default `process.cwd()` at call time).
  * - `{ path }`: the same as passing the path string.
  *
- * `fileName` is relative and stays inside its directory (subdirectories allowed, no `..` escape).
+ * `fileName` is relative and stays inside its directory (subdirectories allowed, no `..` escape). Keys are read as own
+ * properties; a selector set to `undefined`, a key of another form or an unknown key throws `InvalidStoreOptionsError`.
  */
 export type ProjectConfigOptions =
   | ({ appName: string; fileName?: string; path?: never; cwd?: never } & StoreAppPathsOptions)
@@ -82,35 +84,22 @@ function resolveConfigTarget(pathOrOptions: string | ProjectConfigOptions | unde
     // A string, and any other non-object a JavaScript caller passes, is used as the path exactly as before 0.3.0.
     return { path: pathOrOptions as string };
   }
-  const options = pathOrOptions as Record<string, unknown>;
-  const has = (key: string) => options[key] !== undefined;
-  if (has("appName") && has("path")) {
-    throw new InvalidStoreOptionsError("pass exactly one of appName or path");
+  const { form, options } = selectStoreForm(
+    pathOrOptions,
+    [
+      { form: "app", selector: "appName", allowed: [...APP_FORM_KEYS, "fileName"] },
+      { form: "path", selector: "path", allowed: ["path"] },
+    ],
+    { form: "local", selector: "fileName", allowed: ["cwd", "fileName"] },
+  );
+  if (form === "path") {
+    return { path: options.path as string };
   }
-  if (has("cwd") && (has("appName") || has("path"))) {
-    throw new InvalidStoreOptionsError("cwd only combines with fileName");
+  if (form === "local") {
+    return { path: projectLocalFile(options) };
   }
-  if (has("appName")) {
-    const fileName = has("fileName") ? options.fileName : "config.json";
-    return { path: appConfigFile(options.appName as string, fileName, options), dirMode: 0o700 };
-  }
-  if (has("path")) {
-    if (has("fileName")) {
-      throw new InvalidStoreOptionsError("fileName cannot be combined with path");
-    }
-    if (typeof options.path !== "string") {
-      throw new InvalidStoreOptionsError("path must be a string");
-    }
-    return { path: options.path };
-  }
-  if (!has("fileName")) {
-    throw new InvalidStoreOptionsError("pass appName, path, or fileName (with an optional cwd)");
-  }
-  if (has("cwd") && (typeof options.cwd !== "string" || options.cwd.length === 0)) {
-    throw new InvalidStoreOptionsError("cwd must be a non-empty string");
-  }
-  const base = resolve(typeof options.cwd === "string" ? options.cwd : process.cwd());
-  return { path: joinStoreFile(base, options.fileName, pathModuleFor(undefined)) };
+  const fileName = Object.keys(options).includes("fileName") ? options.fileName : "config.json";
+  return { path: appConfigFile(options, fileName), dirMode: 0o700 };
 }
 
 /**

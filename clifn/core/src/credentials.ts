@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import ini from "ini";
-import { appConfigFile, exclusiveKey, InvalidStoreOptionsError, type StoreAppPathsOptions } from "./store-options.js";
+import { APP_FORM_KEYS, appConfigFile, InvalidStoreOptionsError, selectStoreForm, type StoreAppPathsOptions } from "./store-options.js";
 
 export { InvalidStoreOptionsError };
 
@@ -93,7 +93,8 @@ function mutateProfiles(path: string, change: (profiles: Record<string, Credenti
 
 /**
  * `{ appName }` stores credentials at `<config>/credentials` from `resolveAppPaths(appName)` on the current platform,
- * passing `env` and `homedir` through. `{ path }` is the same as passing the path string.
+ * passing `env` and `homedir` through. `{ path }` is the same as passing the path string. Keys are read as own
+ * properties; a selector set to `undefined`, a key of another form or an unknown key throws `InvalidStoreOptionsError`.
  */
 export type CredentialStoreOptions =
   | ({ appName: string; path?: never } & StoreAppPathsOptions)
@@ -107,14 +108,11 @@ function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions |
     // A string, and any other non-object a JavaScript caller passes, is used as the path exactly as before 0.3.0.
     return pathOrOptions as string;
   }
-  const options = pathOrOptions as Record<string, unknown>;
-  if (exclusiveKey(options, ["appName", "path"]) === "path") {
-    if (typeof options.path !== "string") {
-      throw new InvalidStoreOptionsError("path must be a string");
-    }
-    return options.path;
-  }
-  return appConfigFile(options.appName as string, "credentials", options);
+  const { form, options } = selectStoreForm(pathOrOptions, [
+    { form: "app", selector: "appName", allowed: APP_FORM_KEYS },
+    { form: "path", selector: "path", allowed: ["path"] },
+  ]);
+  return form === "path" ? (options.path as string) : appConfigFile(options, "credentials");
 }
 
 /**

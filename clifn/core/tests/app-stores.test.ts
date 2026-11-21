@@ -86,10 +86,40 @@ describe("createCredentialStore", () => {
   it.each([
     ["both appName and path", { appName: "my-cli", path: "/tmp/x" }],
     ["neither appName nor path", {}],
-    ["appName and path undefined", { appName: undefined }],
+    ["appName set to undefined", { appName: undefined }],
+    ["appName set to undefined beside a path", { appName: undefined, path: "/tmp/x" }],
+    ["path set to undefined", { path: undefined }],
+    ["a non-string appName", { appName: 42 }],
     ["a non-string path", { path: 42 }],
+    ["homedir with path", { path: "/tmp/x", homedir: "/home/ada" }],
+    ["homedir and platform with path", { path: "/tmp/x", homedir: "C:\\Users\\ada", platform: "win32" }],
+    ["env with path", { path: "/tmp/x", env: {} }],
+    ["fileName with appName", { appName: "my-cli", fileName: "other" }],
+    ["cwd with appName", { appName: "my-cli", cwd: "/tmp" }],
+    ["an unknown key", { appName: "my-cli", homeDir: "/home/ada" }],
+    ["a non-string homedir", { appName: "my-cli", homedir: 42 }],
+    ["a non-object env", { appName: "my-cli", env: "XDG_CONFIG_HOME=/xdg" }],
+    ["only inherited selectors", Object.create({ appName: "my-cli", path: "/tmp/x" }) as object],
   ])("rejects options with %s instead of falling back to the Conduct default", (_label, options) => {
     expect(() => createCredentialStore(options as never)).toThrow(InvalidStoreOptionsError);
+  });
+
+  it("ignores an inherited selector beside an own one", () => {
+    const options = Object.assign(Object.create({ path: "/tmp/inherited" }) as object, { path: "/tmp/own" });
+    expect(createCredentialStore(options as never).path).toBe("/tmp/own");
+  });
+
+  it.runIf(POSIX)("treats env and homedir set to undefined as absent in the appName form", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", tempRoot);
+    expect(createCredentialStore({ appName: "my-cli", env: undefined, homedir: undefined }).path).toBe(
+      join(tempRoot, "my-cli", "credentials"),
+    );
+  });
+
+  it.runIf(POSIX)("resolves only the config directory, so a home directory it does not need is never validated", () => {
+    const options = { appName: "my-cli", homedir: "relative-home", env: { XDG_CONFIG_HOME: "/xdg" } };
+    expect(createCredentialStore(options).path).toBe("/xdg/my-cli/credentials");
+    expect(createProjectConfig(options).path).toBe("/xdg/my-cli/config.json");
   });
 });
 
@@ -172,6 +202,18 @@ describe("createProjectConfig", () => {
     ["an empty object", {}],
     ["an empty cwd", { cwd: "", fileName: "a.json" }],
     ["a non-string path", { path: 42 }],
+    ["appName set to undefined beside the Conduct file name", { appName: undefined, fileName: "conduct.config.json" }],
+    ["path set to undefined beside a fileName", { path: undefined, fileName: "a.json" }],
+    ["fileName set to undefined beside appName", { appName: "my-cli", fileName: undefined }],
+    ["fileName set to undefined", { fileName: undefined }],
+    ["cwd set to undefined", { cwd: undefined, fileName: "a.json" }],
+    ["a non-string appName", { appName: 42 }],
+    ["a non-string fileName", { fileName: 42 }],
+    ["env with a project-local file", { fileName: "a.json", env: {} }],
+    ["homedir with a project-local file", { fileName: "a.json", homedir: "/home/ada" }],
+    ["platform with path", { path: "/tmp/x", platform: process.platform }],
+    ["an unknown key", { appName: "my-cli", filename: "a.json" }],
+    ["only inherited selectors", Object.create({ appName: "my-cli", fileName: "a.json" }) as object],
   ])("rejects options with %s", (_label, options) => {
     expect(() => createProjectConfig(options as never)).toThrow(InvalidStoreOptionsError);
   });
