@@ -593,6 +593,17 @@ describe('AF-08: the sign-up profile is caller data', () => {
     }
     // A profile within the limit is still serialized and kept.
     expect(readSignUpProfile({ name: 'New User' })).toEqual({ name: 'New User' });
+    // Exactly at the limit, with nested containers, is accepted; one byte
+    // over is refused.
+    for (const atLimit of [
+      { label: 'x'.repeat(4084) },
+      { a: { b: { c: 'x'.repeat(4072) } } },
+      { list: ['x'.repeat(4079), 'y'] }
+    ]) {
+      expect(JSON.stringify(atLimit).length).toBeLessThanOrEqual(4096);
+      expect(() => readSignUpProfile(atLimit)).not.toThrow();
+    }
+    expect(() => readSignUpProfile({ label: 'x'.repeat(4085) })).toThrow(/too large/);
   });
 
   it.each([

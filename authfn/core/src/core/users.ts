@@ -183,10 +183,11 @@ export function readSignUpProfile(profile: unknown): Record<string, unknown> {
 
 /**
  * Whether the JSON text of `value` is certainly longer than `budget` bytes.
- * It adds up a lower bound (each string's length plus its quotes, at least
- * one byte for every other value or separator) and stops as soon as the sum
- * passes the budget, so it never walks much more than `budget` nodes or
- * characters.
+ * It adds up a lower bound (each string's length plus its quotes, a key's
+ * length plus quotes and colon, one byte between entries, at least one byte
+ * for every other value) and stops as soon as the sum passes the budget.
+ * Containers are walked entry by entry without copying them, so it never
+ * does much more than `budget` steps, however wide or long the value is.
  */
 function jsonSizeExceeds(value: unknown, budget: number): boolean {
   let used = 0;
@@ -195,21 +196,28 @@ function jsonSizeExceeds(value: unknown, budget: number): boolean {
     const current = stack.pop();
     if (typeof current === 'string') {
       used += current.length + 2;
-    } else if (current !== null && typeof current === 'object') {
+    } else if (Array.isArray(current)) {
       used += 2;
-      const entries = Array.isArray(current) ? current : Object.entries(current as Record<string, unknown>);
-      for (const entry of entries) {
+      for (let index = 0; index < current.length; index += 1) {
+        used += index > 0 ? 1 : 0;
         if (used > budget) {
           return true;
         }
-        used += 1;
-        if (Array.isArray(current)) {
-          stack.push(entry);
-        } else {
-          const [key, child] = entry as [string, unknown];
-          used += key.length + 3;
-          stack.push(child);
+        stack.push(current[index]);
+      }
+    } else if (current !== null && typeof current === 'object') {
+      used += 2;
+      let first = true;
+      for (const key in current as Record<string, unknown>) {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          continue;
         }
+        used += (first ? 0 : 1) + key.length + 3;
+        first = false;
+        if (used > budget) {
+          return true;
+        }
+        stack.push((current as Record<string, unknown>)[key]);
       }
     } else {
       used += 1;

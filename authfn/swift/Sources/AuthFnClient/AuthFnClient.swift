@@ -124,8 +124,10 @@ public final class AuthFnClient: Sendable {
     /// purpose: the server then removes the account's earlier setup if the
     /// address was not verified yet. Cookies are never sent.
     public func verifyEmail(email: String, code: String, claimAccount: Bool = false) async throws -> Bool {
-        let stored = try await credentialStore.loadCredential()
-        guard let plan = Self.emailVerificationPlan(storedToken: stored?.token, claimAccount: claimAccount) else {
+        // An explicit claim does not read the credential store, so a store
+        // that cannot be read does not stand in its way.
+        let storedToken = claimAccount ? nil : try await credentialStore.loadCredential()?.token
+        guard let plan = Self.emailVerificationPlan(storedToken: storedToken, claimAccount: claimAccount) else {
             throw AuthFnError.unauthenticated
         }
         return try await verifyEmail(email: email, code: code, bearerToken: plan.bearerToken, requireAccountHolder: plan.requireAccountHolder)
