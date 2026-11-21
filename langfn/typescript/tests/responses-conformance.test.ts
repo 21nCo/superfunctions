@@ -453,3 +453,63 @@ describe.each(profiles)("ResponsesChatModel conformance: $name profile", (target
     expect(server.requests).toHaveLength(0);
   });
 });
+
+describe("ResponsesChatModel conformance: OpenRouter canonical error_type", () => {
+  const target = profiles[1];
+  const model = (fetchImpl: typeof fetch) =>
+    new ResponsesChatModel({
+      model: target.model,
+      baseUrl: target.baseUrl,
+      profile: target.profile(),
+      apiKey: TEST_API_KEY,
+      headers: target.headers,
+      fetchImpl,
+    });
+
+  it.each([
+    ["failed-authentication.json", ProviderAuthError, "authentication"],
+    ["failed-context-length.json", ContextLengthError, "context_length_exceeded"],
+  ] as const)("classifies the JSON %s by its top-level error_type", async (fixture, ErrorType, errorType) => {
+    const server = replay(target.name, [fixture]);
+    const error = await model(server.fetchImpl)
+      .chat({ messages: [{ role: "user", content: "hi" }] })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ErrorType);
+    expect(error).toMatchObject({ metadata: expect.objectContaining({ providerErrorType: errorType }) });
+  });
+
+  it.each([
+    ["stream-failed-authentication.sse", ProviderAuthError, "authentication"],
+    ["stream-failed-context-length.sse", ContextLengthError, "context_length_exceeded"],
+  ] as const)("classifies the response.failed event in %s by its top-level error_type", async (fixture, ErrorType, errorType) => {
+    const server = replay(target.name, [fixture]);
+    const seen: StreamEvent[] = [];
+    const error = await (async () => {
+      for await (const event of model(server.fetchImpl).streamChat({ messages: [{ role: "user", content: "hi" }] })) {
+        seen.push(event);
+      }
+    })().catch((caught: unknown) => caught);
+
+    expect(seen).toEqual([]);
+    expect(error).toBeInstanceOf(ErrorType);
+    expect(error).toMatchObject({ metadata: expect.objectContaining({ providerErrorType: errorType }) });
+  });
+
+  it("keeps an authoritative HTTP 429 and 401 ahead of the error_type", async () => {
+    const failed = (status: number, errorType: string) => async () =>
+      new Response(
+        JSON.stringify({ status: "failed", error: { code: "server_error", message: "upstream" }, error_type: errorType }),
+        { status, headers: { "content-type": "application/json" } },
+      );
+    const rateLimited = await model(failed(429, "authentication"))
+      .chat({ messages: [{ role: "user", content: "hi" }] })
+      .catch((caught: unknown) => caught);
+    const unauthorized = await model(failed(401, "rate_limit_exceeded"))
+      .chat({ messages: [{ role: "user", content: "hi" }] })
+      .catch((caught: unknown) => caught);
+
+    expect(rateLimited).toBeInstanceOf(RateLimitError);
+    expect(unauthorized).toBeInstanceOf(ProviderAuthError);
+  });
+});

@@ -7,6 +7,7 @@ import {
 } from "../../core/errors.js";
 import type { ToolCall } from "../../core/types.js";
 import { providerUsage } from "../../core/usage.js";
+import { compareCodeUnits } from "../openai.js";
 import type {
   ResponsesChatResponse,
   ResponsesFinishReason,
@@ -363,7 +364,7 @@ function stable(value: unknown): unknown {
   if (!isRecord(value)) return value;
   return Object.fromEntries(
     Object.keys(value)
-      .sort((left, right) => left.localeCompare(right))
+      .sort(compareCodeUnits)
       .map((key) => [key, stable(value[key])]),
   );
 }
@@ -501,8 +502,20 @@ export function parseResponsesResponse(
 const CONTEXT_PATTERN = /maximum context length|context[ _]length|context window/i;
 
 /**
+ * OpenRouter's canonical `error_type`, which it states at the top level of a failed response
+ * (the JSON body, or the response of a `response.failed` event) because its native `error.code`
+ * collapses many classes (authentication, for one, to `server_error`).
+ */
+function canonicalErrorType(body: unknown): string | undefined {
+  if (!isRecord(body)) return undefined;
+  if (typeof body.error_type === "string") return body.error_type;
+  return isRecord(body.response) && typeof body.response.error_type === "string" ? body.response.error_type : undefined;
+}
+
+/**
  * Classify a provider error. Handles OpenAI (`{ error: { code: "rate_limit_exceeded" } }`),
- * OpenRouter (`{ error: { code: 429, message } }`) and stream `error` events.
+ * OpenRouter (`{ error: { code: 429, message } }`, and a failed response's canonical
+ * `error_type`) and stream `error` events.
  */
 export function responsesError(
   provider: string,
@@ -510,11 +523,13 @@ export function responsesError(
 ): LangFnError {
   const error = isRecord(details.error) ? details.error : isRecord(details.body) && isRecord(details.body.error) ? details.body.error : undefined;
   const code = error?.code ?? error?.type;
+  const errorType = canonicalErrorType(details.body);
   const message = typeof error?.message === "string" ? error.message : "";
   const metadata: JsonRecord = { body: details.body };
   const cause = details.cause !== undefined ? { cause: details.cause } : {};
   if (details.status !== undefined) metadata.status = details.status;
   if (code !== undefined) metadata.providerCode = code;
+  if (errorType !== undefined) metadata.providerErrorType = errorType;
 
   // An HTTP status that names the class wins; nested codes decide only when the status does
   // not (absent, a 200 stream or body error, or another status).
@@ -522,9 +537,13 @@ export function responsesError(
   const rateLimitError = () => new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata, ...cause });
   if (details.status === 401) return authError();
   if (details.status === 429) return rateLimitError();
+  // A native code that names the class decides; else OpenRouter's canonical error_type does.
   if (code === "invalid_api_key" || code === 401) return authError();
   if (code === "rate_limit_exceeded" || code === 429) return rateLimitError();
-  if (code === "context_length_exceeded" || ((details.status === undefined || details.status === 200 || details.status === 400 || details.status === 413 || code === 400) && CONTEXT_PATTERN.test(message))) {
+  if (code === "context_length_exceeded") return new ContextLengthError(undefined, { provider, metadata, ...cause });
+  if (errorType === "authentication") return authError();
+  if (errorType === "rate_limit_exceeded") return rateLimitError();
+  if (errorType === "context_length_exceeded" || ((details.status === undefined || details.status === 200 || details.status === 400 || details.status === 413 || code === 400) && CONTEXT_PATTERN.test(message))) {
     return new ContextLengthError(undefined, { provider, metadata, ...cause });
   }
   const label = details.status !== undefined && details.status !== 200 ? ` (${details.status})` : "";
@@ -556,7 +575,6 @@ export async function readResponsesBody(provider: string, response: Response, si
 /** Throw the classified error for a non-2xx HTTP response. */
 export async function raiseForResponsesStatus(provider: string, response: Response, signal?: AbortSignal): Promise<void> {
   if (response.ok) return;
-  const retryAfter = parseRetryAfter(response.headers);
   let text = "";
   let readError: unknown;
   try {
@@ -572,6 +590,9 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
     // The status still classifies the failure; the transport error is kept as its cause.
     readError = error;
   }
+  // Retry-After is read once the body is: an HTTP-date then yields the delay still left, which
+  // the caller's retry wait starts from.
+  const retryAfter = parseRetryAfter(response.headers);
   let body: unknown = text;
   try {
     body = text ? JSON.parse(text) : {};

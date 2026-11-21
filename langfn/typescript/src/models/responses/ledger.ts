@@ -161,7 +161,14 @@ export interface ResolvedOutput {
  * output, tool calls and undelivered text all derive from the same entries.
  */
 export class OutputLedger {
-  private readonly entries: Entry[] = [];
+  /** Every entry, in creation order; a Set, so an entry merged into another leaves in O(1). */
+  private readonly entries = new Set<Entry>();
+  /** The entry each stated output_index, id and call_id names, kept in step with {@link state}. */
+  private readonly byIndex = new Map<number, Entry>();
+  private readonly byId = new Map<string, Entry>();
+  private readonly byCallId = new Map<string, Entry>();
+  /** Announced entries that state no locator, by type, oldest first, for {@link finish}. */
+  private readonly anonymous = new Map<string | undefined, { queue: Entry[]; head: number }>();
   /** Text deltas and snapshots that name no item: they cover the whole answer. */
   private readonly unlocated: TextRecord = { text: [], snapshots: new Map() };
   /** Entries whose final item was rebuilt from their streamed text. */
@@ -179,6 +186,7 @@ export class OutputLedger {
     const entry = hasLocator(facts) ? this.locate(facts, "output_item.added") : this.create(facts);
     if (entry.announced) throw this.fail(`Responses output_item.added announces ${this.describe(entry)} twice`);
     entry.announced = item;
+    if (!hasLocator(entry)) this.enqueueAnonymous(entry);
     this.settle(entry, item, "output_item.added");
   }
 
@@ -210,8 +218,7 @@ export class OutputLedger {
     const facts = itemFacts(item, this.provider, index);
     // An item that matches no entry may finish the oldest announcement that stated no index or
     // identity, when the types agree, so such an announcement still resolves one to one.
-    const pending = this.named(facts).length ? undefined : this.entries.find((candidate) =>
-      candidate.announced && !candidate.finished && !hasLocator(candidate) && candidate.type === facts.type);
+    const pending = this.named(facts).length ? undefined : this.dequeueAnonymous(facts.type);
     let entry: Entry;
     if (pending) {
       this.state(pending, facts, "output_item.done");
@@ -442,18 +449,33 @@ export class OutputLedger {
   private create(facts: ItemFacts, seq = this.seq++): Entry {
     const entry: Entry = { seq, text: [], snapshots: new Map(), args: [] };
     this.state(entry, facts, "");
-    this.entries.push(entry);
+    this.entries.add(entry);
     return entry;
   }
 
-  /** The entries an event's index, id and call_id name, oldest first. */
+  private enqueueAnonymous(entry: Entry): void {
+    const pending = this.anonymous.get(entry.type);
+    if (pending) pending.queue.push(entry);
+    else this.anonymous.set(entry.type, { queue: [entry], head: 0 });
+  }
+
+  /** The oldest announced, unfinished entry of a type that still states no locator. */
+  private dequeueAnonymous(type: string | undefined): Entry | undefined {
+    const pending = this.anonymous.get(type);
+    while (pending && pending.head < pending.queue.length) {
+      const candidate = pending.queue[pending.head++];
+      if (this.entries.has(candidate) && !candidate.finished && !hasLocator(candidate)) return candidate;
+    }
+    return undefined;
+  }
+
+  /** The entries an event's index, id and call_id name, oldest first, looked up in O(1). */
   private named(facts: ItemFacts): Entry[] {
     const named = new Set<Entry>();
-    for (const key of ["index", "id", "callId"] as const) {
-      if (facts[key] === undefined) continue;
-      const entry = this.entries.find((candidate) => candidate[key] === facts[key]);
-      if (entry) named.add(entry);
-    }
+    const byIndex = facts.index === undefined ? undefined : this.byIndex.get(facts.index);
+    const byId = facts.id === undefined ? undefined : this.byId.get(facts.id);
+    const byCallId = facts.callId === undefined ? undefined : this.byCallId.get(facts.callId);
+    for (const entry of [byIndex, byId, byCallId]) if (entry) named.add(entry);
     return [...named].sort((left, right) => left.seq - right.seq);
   }
 
@@ -478,6 +500,11 @@ export class OutputLedger {
       }
       (entry as unknown as Record<string, unknown>)[key] = value;
     }
+    // Index every locator the entry now states; one event never leaves a locator on two entries,
+    // since locate merges every entry an event names before stating its facts.
+    if (entry.index !== undefined) this.byIndex.set(entry.index, entry);
+    if (entry.id !== undefined) this.byId.set(entry.id, entry);
+    if (entry.callId !== undefined) this.byCallId.set(entry.callId, entry);
   }
 
   /** Merge two entries that one event shows to be the same item. */
@@ -505,7 +532,7 @@ export class OutputLedger {
       if (entry.whole !== undefined && entry.whole !== other.whole) throw this.fail(`Responses ${what} states different text for one text part`);
       entry.whole = other.whole;
     }
-    this.entries.splice(this.entries.indexOf(other), 1);
+    this.entries.delete(other);
   }
 
   /**
@@ -514,7 +541,9 @@ export class OutputLedger {
    * item holds as an assistant message of that text, so message content and the replayed turn
    * keep what the caller already received. Items are ordered by their stated output_index, or
    * by arrival when none states one; a mix is ambiguous and a ProviderError. Text that names no
-   * item, when no item holds text, becomes a message after them.
+   * item, when no item holds text, becomes a message after them. On an incomplete turn an
+   * interrupted item ({@link interrupted}) is not a finished item: its form is never rebuilt, so it
+   * is neither run nor replayed, and only text streamed to it is kept, as a message of that text.
    */
   private rebuild(completed: boolean, final: Map<Entry, JsonRecord>, forms: Map<Entry, JsonRecord>, type: string): JsonRecord[] {
     const status = completed ? "completed" : "incomplete";
@@ -533,7 +562,9 @@ export class OutputLedger {
     // A message built from streamed text is consistent with it by construction (parts).
     this.synthesized.clear();
     for (const entry of this.entries) {
-      const form = forms.get(entry);
+      // On an incomplete turn an interrupted item's form is not a finished one: it is neither run
+      // nor replayed, and only the text the caller already received from it is kept.
+      const form = !completed && this.interrupted(entry) ? undefined : forms.get(entry);
       if (form) items.push({ entry, item: this.withIdentity(entry, form) });
       else if (holdsText(entry)) {
         const item = message(entry);

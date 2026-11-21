@@ -98,14 +98,23 @@ export async function* readStreamLines(
       yield buffer;
     }
   } finally {
-    // Cancel without waiting: a cancel that never settles must not withhold the error, the
-    // completion or the early return that ended the read, and its rejection must not replace them.
-    try {
-      reader.cancel().catch(() => undefined);
-    } catch {
-      // A reader that cannot be cancelled is still released.
-    }
+    cancelWithoutWaiting(reader);
     released = true;
     reader.releaseLock();
   }
+}
+
+/**
+ * Cancel without waiting: a cancel that never settles must not withhold the error, the
+ * completion or the early return that ended the read, and its rejection must not replace them.
+ * A reader whose cancel throws is still released by the caller.
+ */
+function cancelWithoutWaiting(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  let cancelling: Promise<void>;
+  try {
+    cancelling = reader.cancel();
+  } catch {
+    return;
+  }
+  cancelling.catch(() => undefined);
 }

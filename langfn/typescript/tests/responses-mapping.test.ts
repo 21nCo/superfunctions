@@ -29,7 +29,7 @@ import {
   ResponsesChatModel,
   type ResponsesMessage,
 } from "../src/models/responses/index.js";
-import { outputItemIdentities, parseOutputItems } from "../src/models/responses/response.js";
+import { outputItemIdentities, parseOutputItems, raiseForResponsesStatus } from "../src/models/responses/response.js";
 
 const customProfile = defineCapabilityProfile({
   id: "custom-gateway",
@@ -1465,6 +1465,83 @@ describe("stream mapping", () => {
     expect(String(finished.error)).toContain("terminal output does not have the finished function_call item call_fixture");
   });
 
+  it("never replays an interrupted item an incomplete turn leaves out of its output", async () => {
+    const hi = { ...said("Hi"), id: "msg_hi" };
+    const rsCut = { type: "reasoning", id: "rs_cut", status: "incomplete", summary: [{ type: "summary_text", text: "half" }] };
+    const prefix = frame({ type: "response.output_item.added", output_index: 0, item: rsCut })
+      + frame({ type: "response.output_item.added", output_index: 1, item: { ...hi, status: "in_progress", content: [] } })
+      + frame({ type: "response.output_text.delta", item_id: "msg_hi", output_index: 1, content_index: 0, delta: "Hi" })
+      + frame({ type: "response.output_item.done", output_index: 1, item: hi });
+    const truncated = { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } };
+    const incomplete = (output?: unknown[]) => frame({ type: "response.incomplete", response: { ...truncated, ...(output ? { output } : {}) } });
+    const replayed = (seen: StreamEvent[]) => {
+      const message = (seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+      expect(message.content).toBe("Hi");
+      return message;
+    };
+
+    // Omitted output: the rebuilt output holds only the finished message.
+    const omitted = await mapRaw(prefix + incomplete());
+    expect(omitted.error).toBeUndefined();
+    expect(omitted.seen.map((event) => event.type)).toEqual(["content", "message", "end"]);
+    expect(omitted.seen.at(-1)).toMatchObject({ finish_reason: "length" });
+    const message = replayed(omitted.seen);
+    expect(message.responsesOutput?.map((item) => (item as { id?: string }).id)).toEqual(["msg_hi"]);
+    // The next stateless request carries no interrupted item.
+    const next = payload([{ role: "user", content: "q" }, message, { role: "user", content: "more" }]);
+    expect(JSON.stringify(next.input)).not.toContain("rs_cut");
+    // Supplied output that has it: it agrees and is replayed as supplied.
+    const supplied = await mapRaw(prefix + incomplete([rsCut, hi]));
+    expect(supplied.error).toBeUndefined();
+    expect(replayed(supplied.seen).responsesOutput?.map((item) => (item as { id?: string }).id)).toEqual(["rs_cut", "msg_hi"]);
+    // Supplied output that leaves it out at a shifted position fails closed before message or end.
+    const shifted = await mapRaw(prefix + incomplete([hi]));
+    expect(shifted.error).toBeInstanceOf(ProviderError);
+    expect(shifted.seen.map((event) => event.type)).toEqual(["content"]);
+  });
+
+  it("processes many located items in time linear in their number, from the first frame", async () => {
+    const message = (index: number) => ({ ...said("x"), id: `msg_${index}` });
+    const call = (index: number) => ({ type: "function_call", id: `fc_${index}`, call_id: `call_${index}`, name: "lookup", arguments: "{\"a\":1}", status: "completed" });
+    const frames = (count: number, kind: "message" | "call", supplied: boolean, deltas = 1) => {
+      const list: Array<{ data: string }> = [];
+      const items: unknown[] = [];
+      const push = (value: unknown) => list.push({ data: JSON.stringify(value) });
+      for (let index = 0; index < count; index += 1) {
+        const item = kind === "message" ? message(index) : call(index);
+        items.push(item);
+        push({ type: "response.output_item.added", output_index: index, item: { ...item, status: "in_progress", ...(kind === "message" ? { content: [] } : { arguments: "" }) } });
+        for (let delta = 0; delta < deltas; delta += 1) {
+          if (kind === "message") push({ type: "response.output_text.delta", item_id: item.id, output_index: index, content_index: 0, delta: delta === deltas - 1 ? "x" : "" });
+          else push({ type: "response.function_call_arguments.delta", item_id: item.id, output_index: index, delta: delta === 0 ? "{\"a\":1}" : "" });
+        }
+        push({ type: "response.output_item.done", output_index: index, item });
+      }
+      push({ type: "response.completed", response: completed(supplied ? items : []) });
+      return list;
+    };
+    const run = async (list: Array<{ data: string }>) => {
+      const started = performance.now();
+      let events = 0;
+      for await (const _event of mapResponsesStream((async function* () { yield* list; })(), "fixture")) events += 1;
+      return { ms: performance.now() - started, events };
+    };
+    for (const kind of ["message", "call"] as const) {
+      for (const supplied of [true, false]) {
+        await run(frames(500, kind, supplied));
+        const small = await run(frames(2_000, kind, supplied));
+        const large = await run(frames(16_000, kind, supplied));
+        expect(large.events, `${kind} ${supplied}`).toBe(16_002);
+        // 8x the items: a scan per event took 40x the time and over 2 s at 8,000 items.
+        expect(large.ms, `${kind} ${supplied}`).toBeLessThan(Math.max(2_000, small.ms * 24));
+      }
+    }
+    // Many items, each with many deltas.
+    const many = await run(frames(500, "message", true, 200));
+    expect(many.events).toBe(502);
+    expect(many.ms).toBeLessThan(5_000);
+  }, 60_000);
+
   it("reconciles a long stream of text deltas in time linear in their number", async () => {
     const count = 100_000;
     const text = "x".repeat(count);
@@ -2200,6 +2277,44 @@ describe("request mapping", () => {
       }),
     ).toThrow(ContextLengthError);
   });
+  it("compares replayed tool call arguments by exact key, whatever their insertion order", () => {
+    const composed = "é";
+    const decomposed = "é";
+    // The same keys and values, in either insertion order.
+    const args = (reversed: boolean, value = 2) => ({
+      nested: reversed ? { [decomposed]: value, [composed]: 1 } : { [composed]: 1, [decomposed]: value },
+    });
+    const assistant = (calls: Record<string, unknown>) => ({
+      role: "assistant" as const,
+      content: "",
+      toolCalls: [{ id: "call_keys", name: "lookup", arguments: calls }],
+      responsesOutput: [{ type: "function_call", id: "fc_keys", call_id: "call_keys", name: "lookup", arguments: JSON.stringify(args(false)), status: "completed" }],
+    });
+    const history = (calls: Record<string, unknown>) => [
+      { role: "user" as const, content: "q" },
+      assistant(calls),
+      { role: "tool" as const, tool_call_id: "call_keys", content: "ok" },
+    ];
+    expect(() => payload(history(args(true)))).not.toThrow();
+    expect(() => payload(history(args(true, 3)))).toThrow(ValidationError);
+    // The legacy tool_calls alias is compared by the same rule.
+    const alias = (calls: Record<string, unknown>) => ({
+      role: "assistant" as const,
+      content: "",
+      toolCalls: [{ id: "call_keys", name: "lookup", arguments: args(false) }],
+      tool_calls: [{ id: "call_keys", type: "function", function: { name: "lookup", arguments: JSON.stringify(calls) } }],
+    });
+    const aliased = (calls: Record<string, unknown>) => [{ role: "user" as const, content: "q" }, alias(calls), { role: "tool" as const, tool_call_id: "call_keys", content: "ok" }];
+    expect(() => payload(aliased(args(true)))).not.toThrow();
+    expect(() => payload(aliased(args(true, 3)))).toThrow("invalid assistant tool calls");
+  });
+
+  it("rejects a named message instead of dropping its name", () => {
+    for (const role of ["system", "user", "assistant"] as const) {
+      expect(() => payload([{ role, content: "hi", name: "speaker" }]), role).toThrow(ValidationError);
+    }
+    expect(() => payload([{ role: "user", content: "hi" }])).not.toThrow();
+  });
 });
 
 describe("ResponsesChatModel configuration", () => {
@@ -2763,5 +2878,37 @@ describe("ResponsesChatModel configuration", () => {
     expect(error).toBeInstanceOf(ValidationError);
     expect(String((error as Error).message)).not.toContain("test-api-key");
     expect(seen).toHaveLength(0);
+  });
+  it("rejects a named message on chat and streamChat before sending", async () => {
+    const seen: Headers[] = [];
+    const model = gateway(okFetch(seen));
+    const named = { messages: [{ role: "user" as const, content: "x", name: "speaker" }] };
+    await expect(model.chat(named)).rejects.toBeInstanceOf(ValidationError);
+    await expect(collect(model.streamChat(named))).rejects.toBeInstanceOf(ValidationError);
+    expect(seen).toHaveLength(0);
+    await expect(model.chat({ messages: [{ role: "user", content: "x" }] })).resolves.toMatchObject({ message: { content: "ok" } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("converts an HTTP-date Retry-After after the error body is read", async () => {
+    let now = Date.parse("2026-11-21T00:00:00Z");
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const slowBody = () => new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // Reading the body takes 20 s of the 30 s the provider asked for.
+        now += 20_000;
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ error: { code: "rate_limit_exceeded" } })));
+        controller.close();
+      },
+    }, { highWaterMark: 0 });
+    const limited = (retryAfter: string) =>
+      raiseForResponsesStatus("fixture", new Response(slowBody(), { status: 429, headers: { "retry-after": retryAfter } }))
+        .catch((caught: unknown) => caught);
+
+    const dated = await limited(new Date(now + 30_000).toUTCString());
+    expect(dated).toBeInstanceOf(RateLimitError);
+    expect(dated).toMatchObject({ retryAfter: 10 });
+    expect(await limited(new Date(now + 10_000).toUTCString())).toMatchObject({ retryAfter: 0 });
+    expect(await limited("7")).toMatchObject({ retryAfter: 7 });
   });
 });

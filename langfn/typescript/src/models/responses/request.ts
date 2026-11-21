@@ -50,7 +50,7 @@ export function buildResponsesPayload(
     assertDense(request.tools, (index) => `Tool ${index} requires a name`);
     if (request.tools.length) {
       requireCapability(profile, "tools", "the request declares tools");
-      payload.tools = request.tools.map(toResponsesTool);
+      payload.tools = request.tools.map((tool, index) => toResponsesTool(tool, index));
     }
   }
   if (request.tool_choice !== undefined) {
@@ -126,6 +126,10 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
     }
     if (message.role !== "tool" && message.tool_call_id !== undefined && message.tool_call_id !== null) {
       throw new ValidationError(`Message ${index}: tool_call_id is only accepted on tool messages`);
+    }
+    // Responses input messages carry no speaker name, so a stated one is rejected, never dropped.
+    if (message.name !== undefined && message.name !== null) {
+      throw new ValidationError(`Message ${index}: name is not supported by the Responses API`);
     }
     switch (message.role) {
       case "system":

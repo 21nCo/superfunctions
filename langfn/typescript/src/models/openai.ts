@@ -220,13 +220,22 @@ export function parseMessageToolCalls(
   return canonical?.length ? canonical : compatibility?.length ? compatibility : undefined;
 }
 
+/**
+ * Order object keys by UTF-16 code units, which never ties two distinct keys (localeCompare may
+ * tie canonically equivalent ones, such as "\u00e9" and "e\u0301", leaving them in insertion order).
+ */
+export function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 function stableToolCalls(calls: ToolCall[]): string {
   const sortKeys = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sortKeys);
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
-        .sort((left, right) => left.localeCompare(right))
+        .sort(compareCodeUnits)
         .map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]),
     );
   };
