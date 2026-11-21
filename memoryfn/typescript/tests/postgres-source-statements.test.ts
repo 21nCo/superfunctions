@@ -113,6 +113,8 @@ describe('PostgresAdapter source statements', () => {
   it('leaves source rows out of a vector search only when excludeSources is set', async () => {
     const search = { tenantId: 'tenant-a', containerTags: ['docs'], embedding: [1, 0], topK: 1, threshold: 0.95 };
     const excluded = recorder();
+    // It declares that capability, which upsertDocument requires.
+    expect(excluded.adapter.excludesSources).toBe(true);
     await excluded.adapter.searchVectors({ ...search, excludeSources: true });
     expect(excluded.statements).toHaveLength(1);
     expect(excluded.statements[0].query).toMatch(/"source_key" is null/);

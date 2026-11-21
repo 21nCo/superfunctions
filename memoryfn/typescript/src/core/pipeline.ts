@@ -113,7 +113,10 @@ export class MemoryFn implements IMemoryFn {
     const options = resolveChunkingOptions(chunking);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
     // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
-    if (typeof this.storage.replaceSourceIfChanged !== 'function') throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
+    // Source rows are written only where searchVectors is declared to leave them out, so they never hide an add() candidate.
+    if (typeof this.storage.replaceSourceIfChanged !== 'function' || this.storage.excludesSources !== true) {
+      throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
+    }
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
     // One plain JSON-data copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
     const metadata = metadataSnapshot(input.metadata);
@@ -133,10 +136,12 @@ export class MemoryFn implements IMemoryFn {
     // or copied, and before embedding; the embeddings are added before the write.
     const overLimit = () => new MemorySourceLimitError();
     let bytes = 0;
-    const charge = (recordType: string, text: string, recordMetadataBytes: number) => {
-      bytes += sourceChunkBytesBeforeEmbedding(recordType, text, recordMetadataBytes) + tagsBytes;
+    const chargeBytes = (count: number) => {
+      bytes += count;
       if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
     };
+    const charge = (recordType: string, text: string, recordMetadataBytes: number) =>
+      chargeBytes(sourceChunkBytesBeforeEmbedding(recordType, text, recordMetadataBytes) + tagsBytes);
     const chunkType = type ?? 'document';
     const chunks: string[] = [];
     for (const chunk of markdownChunks(content, options)) {
@@ -146,18 +151,32 @@ export class MemoryFn implements IMemoryFn {
     }
     const records: Array<Pick<MemoryInsert, 'content' | 'type' | 'metadata'>> = [];
     if (extract) {
+      // A fact record's metadata is the caller's, with extractedTags, confidence and sourceChunk set over any
+      // caller keys of those names. Its JSON bytes are counted from the caller keys it keeps plus its own values,
+      // as each is read, so no fact record is ever serialized to measure it and an oversized one stops early.
+      const kept = keptMetadata(metadata);
+      const keptBytes = sourceMetadataBytes(kept.metadata);
+      const ownEntriesBytes = FACT_METADATA_KEY_BYTES + (kept.count ? 3 : 2);
+      const storable = (text: string) => { if (!isStorableText(text)) throw new Error('MEMORY_EXTRACTION_INVALID'); };
       for (let index = 0; index < chunks.length; index++) {
         await this.extractor!.extract(chunks[index], {
           maxFacts: MAX_SOURCE_CHUNKS - records.length,
           tooMany: overLimit,
+          // Stored as text and JSON on every adapter, so a NUL or lone surrogate fails here, before embedding.
+          beforeTags: fact => {
+            storable(fact.content);
+            // The tag array's brackets here; each tag and its separator as it is read.
+            charge(fact.type, fact.content, keptBytes + ownEntriesBytes + 2 + String(fact.confidence).length + String(index).length);
+          },
+          onTag: (tag, at) => {
+            storable(tag);
+            chargeBytes(tag.length + (at ? 1 : 0) + 2);
+            chargeBytes(jsonStringBytes(tag) - tag.length - 2);
+          },
           accept: fact => {
-            // Stored as text and JSON on every adapter, so a NUL or lone surrogate fails here, before embedding.
-            if (!isStorableText(fact.content) || !fact.tags.every(isStorableText)) throw new Error('MEMORY_EXTRACTION_INVALID');
             // Model-generated tags are descriptive metadata, never authority or scope.
-            const record = { content: fact.content, type: fact.type,
-              metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } };
-            charge(record.type, record.content, sourceMetadataBytes(record.metadata));
-            records.push(record);
+            records.push({ content: fact.content, type: fact.type,
+              metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } });
           },
         });
       }
@@ -166,10 +185,7 @@ export class MemoryFn implements IMemoryFn {
     }
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     // Plain copies of the embedder's values, each charged before the next is made: what is charged is exactly what storage receives.
-    const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, jsonBytes => {
-      bytes += jsonBytes;
-      if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
-    });
+    const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, chargeBytes);
     const written = await this.storage.replaceSourceIfChanged!({
       ...scope, contentHash,
       chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
@@ -220,6 +236,23 @@ export class MemoryFn implements IMemoryFn {
       }
     };
   }
+}
+
+/** UTF-8 bytes of the keys a fact record adds to its metadata, with their quotes and colons. */
+const FACT_METADATA_KEY_BYTES = '"extractedTags":"confidence":"sourceChunk":'.length;
+const FACT_METADATA_KEYS = new Set(['extractedTags', 'confidence', 'sourceChunk']);
+
+/** The caller metadata entries a fact record keeps (those it does not set itself), and how many there are. */
+function keptMetadata(metadata: Record<string, unknown> | undefined): { metadata: Record<string, unknown>; count: number } {
+  const kept: Record<string, unknown> = {};
+  let count = 0;
+  for (const key of Object.keys(metadata ?? {})) {
+    if (FACT_METADATA_KEYS.has(key)) continue;
+    // Defined, not assigned, so a "__proto__" key stays an own data property.
+    Object.defineProperty(kept, key, { value: metadata![key], enumerable: true, writable: true, configurable: true });
+    count++;
+  }
+  return { metadata: kept, count };
 }
 
 /**
@@ -312,7 +345,8 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
 const NATIVE_OBJECT_SOURCE = Function.prototype.toString.call(Object);
 
 /**
- * Whether `value`'s prototype is null or some realm's Object.prototype: a
+ * Whether `value`'s prototype is null, this realm's Object.prototype, or
+ * another realm's Object.prototype: a
  * prototype without a parent whose own constructor is that realm's built-in
  * Object function (native source text, not a function merely named Object)
  * and points back to it. A class instance, a class extending null and an
@@ -321,7 +355,8 @@ const NATIVE_OBJECT_SOURCE = Function.prototype.toString.call(Object);
  */
 function isPlainRecord(value: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(value);
-  if (prototype === null) return true;
+  // This realm's Object.prototype by identity, so a host that removes or replaces its constructor changes nothing.
+  if (prototype === null || prototype === Object.prototype) return true;
   if (typeof prototype !== 'object' || Object.getPrototypeOf(prototype) !== null) return false;
   const constructor: unknown = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
   return typeof constructor === 'function' && Function.prototype.toString.call(constructor) === NATIVE_OBJECT_SOURCE &&
@@ -352,6 +387,11 @@ export async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Runs embedder-controlled code (getters, proxies); whatever it throws is MEMORY_EMBEDDING_INVALID. */
+function embedderRead<T>(get: () => T): T {
+  try { return get(); } catch { throw new Error('MEMORY_EMBEDDING_INVALID'); }
+}
+
 /** Smallest positive normal and largest finite float32: pgvector's components and sums are float32. */
 const FLOAT32_MIN_NORMAL = 2 ** -126;
 const FLOAT32_MAX = 3.4028234663852886e38;
@@ -363,18 +403,21 @@ const FLOAT32_MAX = 3.4028234663852886e38;
  * before the next is read, and `charge` is given the JSON bytes of each
  * copied number and its separator, and of the opening bracket, and may throw
  * to stop: an oversized or malformed vector costs no more than its prefix.
+ * Its length is read once and must be a positive safe integer before any
+ * number is read; a read that throws is MEMORY_EMBEDDING_INVALID.
  */
 function plainVector(value: unknown, size: number | undefined, charge: (jsonBytes: number) => void): { values: number[]; squares: number; largest: number } | null {
-  if (!Array.isArray(value)) return null;
-  // Read once: the length checked is the length copied.
-  const count = value.length;
-  if (count === 0 || (size !== undefined && count !== size)) return null;
+  if (!embedderRead(() => Array.isArray(value))) return null;
+  const array = value as unknown[];
+  // Read once: the length checked is the length copied, and it must be a whole count before any number is read.
+  const count: unknown = embedderRead(() => array.length);
+  if (!Number.isSafeInteger(count) || (count as number) <= 0 || (size !== undefined && count !== size)) return null;
   const values: number[] = [];
   let squares = 0;
   let largest = 0;
   charge(1);
-  for (let at = 0; at < count; at++) {
-    const number: unknown = value[at];
+  for (let at = 0; at < (count as number); at++) {
+    const number: unknown = embedderRead(() => array[at]);
     if (typeof number !== 'number' || !Number.isFinite(number)) return null;
     // JSON writes a finite number as String() does (-0 as 0), followed by a comma or the closing bracket.
     charge(String(number).length + 1);
@@ -399,11 +442,12 @@ function plainVector(value: unknown, size: number | undefined, charge: (jsonByte
  * each number as it is copied (see plainVector), and may throw to stop.
  */
 function storableEmbeddings(value: unknown, count: number, dimensions: number | undefined, charge: (jsonBytes: number) => void): number[][] {
-  if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
+  if (!embedderRead(() => Array.isArray(value)) || embedderRead(() => (value as unknown[]).length) !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
+  const batch = value as unknown[];
   let size = dimensions;
   const copies: number[][] = [];
   for (let index = 0; index < count; index++) {
-    const vector = plainVector(value[index], size, charge);
+    const vector = plainVector(embedderRead(() => batch[index]), size, charge);
     if (!vector) throw new Error('MEMORY_EMBEDDING_INVALID');
     size = vector.values.length;
     // Recursive float32 summation of n terms errs by at most about n units in the last place (2^-24 each).

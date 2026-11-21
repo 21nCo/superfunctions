@@ -20,5 +20,5 @@ declare const full: MemoryFn;
 export const documents: Required<Pick<IMemoryFn, 'upsertDocument' | 'forgetBySource'>> = full;
 
 // The PR base's StorageAdapter shape, without the document capability.
-declare const baseAdapter: Omit<StorageAdapter, 'replaceSourceIfChanged'>;
+declare const baseAdapter: Omit<StorageAdapter, 'replaceSourceIfChanged' | 'excludesSources'>;
 export const ordinary = new MemoryFn({ storage: { kind: 'memory' } }, baseAdapter);

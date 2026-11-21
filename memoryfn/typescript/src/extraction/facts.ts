@@ -12,6 +12,10 @@ export interface FactLimits {
   /** Most facts the response may hold, checked before any fact is read; more throws `tooMany()`. */
   maxFacts: number;
   tooMany: () => Error;
+  /** Called with a fact's validated content, type and confidence, before its first tag is read; it may throw to stop. */
+  beforeTags?: (fact: Omit<Fact, 'tags'>) => void;
+  /** Called with each validated, trimmed tag before the next one is read; it may throw to stop. */
+  onTag?: (tag: string, index: number) => void;
   /** Called with each fact as soon as it is validated, before the next one is read; it may throw to stop. */
   accept?: (fact: Fact) => void;
 }
@@ -51,7 +55,7 @@ export class FactExtractor {
     // Read by index, so a hole in a sparse array is rejected, never skipped.
     const normalized: Fact[] = [];
     for (let index = 0; index < count; index++) {
-      const fact = normalizeFact(read(() => (facts as unknown[])[index]));
+      const fact = normalizeFact(read(() => (facts as unknown[])[index]), limits);
       limits?.accept?.(fact);
       normalized.push(fact);
     }
@@ -73,8 +77,9 @@ function read<T>(get: () => T): T {
  * sparse tags array, is MEMORY_EXTRACTION_INVALID. Each field is read once,
  * in order, and checked before the next is read, so the value checked is the
  * value returned and a later field's accessor never runs after a failure.
+ * The limits' hooks see each value as it is kept, so they can stop the read.
  */
-function normalizeFact(fact: unknown): Fact {
+function normalizeFact(fact: unknown, limits?: FactLimits): Fact {
   if (!fact || typeof fact !== 'object' || read(() => Array.isArray(fact))) throw invalid();
   const record = fact as Record<string, unknown>;
   const content: unknown = read(() => record.content);
@@ -83,6 +88,8 @@ function normalizeFact(fact: unknown): Fact {
   if (typeof type !== 'string' || !FACT_TYPES.includes(type)) throw invalid();
   const confidence: unknown = read(() => record.confidence);
   if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw invalid();
+  const trimmed = content.trim();
+  limits?.beforeTags?.({ content: trimmed, type: type as Fact['type'], confidence });
   const given: unknown = read(() => record.tags);
   if (!read(() => Array.isArray(given))) throw invalid();
   const list = given as unknown[];
@@ -92,7 +99,9 @@ function normalizeFact(fact: unknown): Fact {
   for (let index = 0; index < count; index++) {
     const tag: unknown = read(() => list[index]);
     if (typeof tag !== 'string' || !tag.trim()) throw invalid();
-    tags.push(tag.trim());
+    const kept = tag.trim();
+    limits?.onTag?.(kept, index);
+    tags.push(kept);
   }
-  return { content: content.trim(), type: type as Fact['type'], confidence, tags };
+  return { content: trimmed, type: type as Fact['type'], confidence, tags };
 }

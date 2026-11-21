@@ -67,6 +67,16 @@ export class MemorySourceLimitError extends Error {
 export interface StorageAdapter {
   /** Fixed vector dimension, shared across bundled entrypoints. */
   readonly embeddingDimensions?: number;
+  /**
+   * Declares that searchVectors honours excludeSources: it leaves out source
+   * rows before ranking and truncating to topK. upsertDocument requires it,
+   * with replaceSourceIfChanged, and otherwise fails with
+   * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
+   * writes never hide an ordinary candidate from add(). The built-in adapters
+   * declare it for their own searchVectors; a subclass that overrides
+   * searchVectors does not inherit the declaration and must make its own.
+   */
+  readonly excludesSources?: true;
   close?(): Promise<void>;
   /** Commit all callback writes together, or leave storage unchanged on failure. */
   transaction?<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T>;
@@ -82,11 +92,11 @@ export interface StorageAdapter {
     /**
      * Leave out chunks and facts of sources (rows with a sourceKey) before
      * ranking and truncating to topK. add() sets it for deduplication and
-     * conflict resolution, in one call per path. An adapter that stores source
-     * rows (through replaceSource or replaceSourceIfChanged) MUST honour it.
-     * add() drops any source row an
-     * adapter returns anyway, without querying again, so ignoring the flag can
-     * only make add() miss a candidate, never change a source row or throw.
+     * conflict resolution, in one call per path. An adapter that honours it
+     * says so with excludesSources. One that does not may return source rows
+     * (written, for example, through replaceSource); add() drops them without
+     * querying again, so they can only make add() miss a candidate, never
+     * change a source row or make a larger request.
      */
     excludeSources?: boolean;
   }): Promise<Memory[]>;
@@ -107,10 +117,9 @@ export interface StorageAdapter {
    * it writes nothing and returns that state. Of concurrent calls with one hash,
    * at most one writes; the others report unchanged. Input is validated, and
    * rejected, exactly as by replaceSource. Optional, so an adapter written
-   * before it still serves the memory operations; without it upsertDocument
-   * fails with MEMORY_DOCUMENTS_UNSUPPORTED before any provider call. An
-   * adapter that implements it, or stores source rows through replaceSource,
-   * MUST honour searchVectors' excludeSources.
+   * before it still serves the memory operations. upsertDocument requires it
+   * and the excludesSources declaration, and otherwise fails with
+   * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call.
    */
   replaceSourceIfChanged?(input: SourceReplace): Promise<SourceReplaceResult>;
   /** Soft-deletes every live chunk of the source and returns how many it deleted. */

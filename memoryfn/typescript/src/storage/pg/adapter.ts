@@ -113,6 +113,11 @@ export class PostgresAdapter implements StorageAdapter {
     }));
   }
 
+  /** Declared for this class's searchVectors only: a subclass that overrides it must declare excludesSources itself. */
+  get excludesSources(): true | undefined {
+    return this.searchVectors === PostgresAdapter.prototype.searchVectors ? true : undefined;
+  }
+
   async searchVectors(params: {
     tenantId: string;
     embedding: number[];

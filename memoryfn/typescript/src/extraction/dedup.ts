@@ -5,10 +5,10 @@ import { StorageAdapter } from '../storage/adapter';
  * Up to `limit` memories that belong to no source, in the adapter's rank
  * order, from one searchVectors call with `topK: limit` and excludeSources.
  * Source chunks and facts live and die with their source, so add() never
- * merges into, supersedes or links them. An adapter that writes source rows
- * (it implements replaceSourceIfChanged) must honour excludeSources; for one
- * that ignores it, source rows are dropped here, never re-queried, so it can
- * only cost a missed candidate, never a source change or a larger request.
+ * merges into, supersedes or links them. An adapter that declares
+ * excludesSources (which upsertDocument requires) honours excludeSources; for
+ * one that does not, source rows are dropped here, never re-queried, so they
+ * can only cost a missed candidate, never a source change or a larger request.
  */
 export async function searchOrdinaryCandidates(
   storage: StorageAdapter,

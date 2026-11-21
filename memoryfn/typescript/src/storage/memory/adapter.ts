@@ -177,6 +177,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return saved.map(cloneRelationship);
   }
 
+  /** Declared for this class's searchVectors only: a subclass that overrides it must declare excludesSources itself. */
+  get excludesSources(): true | undefined {
+    return this.searchVectors === MemoryStorageAdapter.prototype.searchVectors ? true : undefined;
+  }
+
   async searchVectors(params: {
     tenantId: string;
     embedding: number[];

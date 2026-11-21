@@ -214,6 +214,18 @@ describe('document routes', () => {
     expect(embedder.embedBatch).not.toHaveBeenCalled();
   });
 
+  it('answers 501 when the storage has not declared that its search leaves out source rows, before any provider call', async () => {
+    class Undeclared extends MemoryStorageAdapter {
+      override async searchVectors(params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) { return super.searchVectors(params); }
+    }
+    const embedder = { embed: vi.fn(), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
+    const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, new Undeclared(), embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
+    const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x' }));
+    expect(response.status).toBe(501);
+    expect(await response.json()).toEqual({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+  });
+
   it('leaves other pipeline failures to the router error handler', async () => {
     const memory = new MemoryFn({ storage: { kind: 'memory' } }, new MemoryStorageAdapter());
     const router = createMemoryRouter(memory, { authorize: vi.fn().mockResolvedValue(trusted) });
