@@ -132,16 +132,13 @@ function resolveDefaultPermissions(
   const readDefault = typeof defaults === "string" ? defaults : defaults.read;
   const writeDefault = typeof defaults === "string" ? defaults : defaults.write;
   const readFields = defaultPermissionModeEnabled(readDefault) ? fields : undefined;
-  // `relationWrites: "all"` grants relation writes on its own, whether or not
-  // scalar field writes are enabled by default.
-  const relationFields = relationWriteModeEnabled(defaults)
-    ? relationWriteFields(schema, resource.name)
-    : [];
   const writeFields = defaultPermissionModeEnabled(writeDefault)
-    ? fields.concat(relationFields)
-    : relationFields.length > 0
-      ? relationFields
-      : undefined;
+    ? fields.concat(
+        relationWriteModeEnabled(defaults)
+          ? relationWriteFields(schema, resource.name)
+          : [],
+      )
+    : undefined;
 
   if (!readFields && !writeFields) {
     return undefined;
@@ -576,7 +573,22 @@ export function validateMutationAuthz(
   // SEC-009: Validate relation mutations for relate/modifyRelation/unrelate
   const op = mutation.operation as string;
   if (op === "relate" || op === "modifyRelation" || op === "unrelate") {
-    const relationAuthzResult = validateRelationAuthz(mutation, resource, writeFields, schema);
+    // `defaultPermissions.relationWrites: "all"` grants relation writes on
+    // resources that use the defaults, even when scalar write defaults are
+    // off. It applies to relation operations only.
+    const relationGrants =
+      !resource.permissions &&
+      resource.defaultPermissions !== false &&
+      schema.defaultPermissions &&
+      relationWriteModeEnabled(schema.defaultPermissions)
+        ? relationWriteFields(schema, resource.name)
+        : [];
+    const relationAuthzResult = validateRelationAuthz(
+      mutation,
+      resource,
+      relationGrants.length > 0 ? [...writeFields, ...relationGrants] : writeFields,
+      schema,
+    );
     if (!relationAuthzResult.ok) {
       return relationAuthzResult;
     }
@@ -649,7 +661,8 @@ function findOwnForeignKeyField(
   const match = findRelationMatch(schema, resourceName, relationName);
   if (!match) return undefined;
   const { relation, direction } = match;
-  if (relation.type === "htree") {
+  // htree: only the inverse (parent) direction writes this record's own FK.
+  if (relation.type === "htree" && direction === "inverse") {
     return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
   }
   if (relation.type === "many-one" && direction === "forward") {

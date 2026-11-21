@@ -9,6 +9,7 @@ import { createDatafnServer } from "../src/server.js";
 import { DbIdempotencyStore } from "../src/execution/idempotency-db.js";
 import {
   MemoryIdempotencyStore,
+  idempotencyRecordId,
   scopeIdempotencyStore,
   type MutationResult,
 } from "../src/execution/idempotency.js";
@@ -325,6 +326,41 @@ describe("DFN-01 follow-ups", () => {
     await server.close();
   });
 
+  it("DbIdempotencyStore.scoped() called directly is guarded too", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const direct = new DbIdempotencyStore(db, "datafn").scoped!({ namespace: "tenant:a" });
+    expect(() => scopeIdempotencyStore(direct, { namespace: "tenant:b" })).toThrow();
+    expect(() => direct.scoped!({ namespace: "tenant:b" })).toThrow();
+    expect(() => scopeIdempotencyStore(direct.withDb!(db), { namespace: "tenant:b" })).toThrow();
+  });
+
+  it("0.2.x records are never matched, even when their columns equal a new key", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const base = new DbIdempotencyStore(db, "datafn");
+    await base.ensureReady();
+    const stale: MutationResult = { ok: true, mutationId: "m", affectedIds: ["other-tenant"], errors: [], deduped: false };
+    // A legacy row whose raw client_id happens to equal the new encoding.
+    await db.internal.create("__datafn_idempotency", {
+      id: `datafn:${JSON.stringify([null, "c"])}:m`,
+      namespace: "datafn",
+      client_id: JSON.stringify([null, "c"]),
+      mutation_id: "m",
+      result: JSON.stringify(stale),
+      created_at: new Date().toISOString(),
+    });
+    const scoped = scopeIdempotencyStore(base, { namespace: "datafn" });
+    expect(await scoped.get("c", "m")).toBeNull();
+    const fresh: MutationResult = { ok: true, mutationId: "m", affectedIds: ["mine"], errors: [], deduped: false };
+    await scoped.set("c", "m", fresh);
+    expect(await scoped.get("c", "m")).toEqual(fresh);
+    const row = await db.internal.findOne("__datafn_idempotency", [
+      { field: "id", op: "eq", value: idempotencyRecordId("datafn", undefined, "c", "m") },
+    ]);
+    expect(row).toBeTruthy();
+  });
+
   it("a scoped store keeps its scope guard after withDb()", async () => {
     const db = memoryAdapter();
     await db.initialize?.();
@@ -427,6 +463,36 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     const res = await call({ resource: "tasks", version: 1, operation: "relate", id: "t1", relations: { goal: "g1" } });
     expect(res.status).toBe(200);
     expect(res.body.result.ok).toBe(true);
+    await server.close();
+  });
+
+  it("relationWrites 'all' alone does not open a resource that has no other default", async () => {
+    const onlyRelations = {
+      ...fkSchema,
+      defaultPermissions: { relationWrites: "all" },
+      resources: fkSchema.resources.map(({ permissions: _p, ...r }: any) => r),
+    };
+    const { db, server, call } = await fkHarness(onlyRelations);
+    await db.create({ model: "tasks", data: { __ns: "tenant:a", id: "t1", title: "T" } } as any);
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resource: "tasks", version: 1 }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const del = await call({ resource: "tasks", version: 1, operation: "delete", id: "t1" });
+    expect(del.status).toBe(403);
+    await server.close();
+  });
+
+  it("an htree children relation is not writable through the FK field name", async () => {
+    const { db, server, call } = await fkHarness(fkSchema);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f2", name: "child" } } as any);
+    const res = await call({ resource: "folders", version: 1, operation: "relate", id: "f1", relations: { children: ["f2"] } });
+    expect(res.status).toBe(403);
     await server.close();
   });
 

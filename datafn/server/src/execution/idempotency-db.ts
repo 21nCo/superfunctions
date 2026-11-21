@@ -7,6 +7,8 @@ import type { Adapter } from "@superfunctions/db";
 import {
   actorQualifiedClientId,
   carryIdempotencyScope,
+  idempotencyRecordId,
+  markIdempotencyScope,
   isRetryableMutationResult,
   type IdempotencyScope,
   type IdempotencyStore,
@@ -48,11 +50,17 @@ export class DbIdempotencyStore implements IdempotencyStore {
    * same (clientId, mutationId) from another tenant or user is a new mutation.
    */
   scoped(scope: IdempotencyScope): IdempotencyStore {
-    return new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.ensured, scope.actorId);
+    return markIdempotencyScope(this, scope, () =>
+      new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.ensured, scope.actorId),
+    );
   }
 
   private clientKey(clientId: string): string {
     return actorQualifiedClientId(clientId, this.actorId);
+  }
+
+  private recordId(clientId: string, mutationId: string): string {
+    return idempotencyRecordId(this.namespace, this.actorId, clientId, mutationId);
   }
 
   async ensureReady(): Promise<void> {
@@ -69,10 +77,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // EXE-007: DB errors propagate; only swallow JSON parse errors (SyntaxError)
     await this.ensureReady();
 
+    // Looked up by the versioned primary key, so 0.2.x records never match.
     const record = await this.db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: this.namespace },
-      { field: "client_id", op: "eq", value: this.clientKey(clientId) },
-      { field: "mutation_id", op: "eq", value: mutationId },
+      { field: "id", op: "eq", value: this.recordId(clientId, mutationId) },
     ]);
 
     if (!record) {
@@ -127,9 +134,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
       await this.ensureReady();
 
       const where = [
-        { field: "namespace", op: "eq" as const, value: this.namespace },
-        { field: "client_id", op: "eq" as const, value: this.clientKey(clientId) },
-        { field: "mutation_id", op: "eq" as const, value: mutationId },
+        { field: "id", op: "eq" as const, value: this.recordId(clientId, mutationId) },
       ];
       const existing = await this.db.internal.findOne(
         "__datafn_idempotency",
@@ -151,7 +156,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
       }
 
       await this.db.internal.create("__datafn_idempotency", {
-        id: JSON.stringify([this.namespace, this.clientKey(clientId), mutationId]),
+        id: this.recordId(clientId, mutationId),
         namespace: this.namespace,
         client_id: this.clientKey(clientId),
         mutation_id: mutationId,

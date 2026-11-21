@@ -71,6 +71,45 @@ export function actorQualifiedClientId(
 }
 
 /**
+ * Primary key of a scoped idempotency record. Versioned so records written
+ * by 0.2.x (keyed "namespace:clientId:mutationId" under the fixed "datafn"
+ * namespace) are never read back: they carry no tenant or actor.
+ */
+export function idempotencyRecordId(
+  namespace: string,
+  actorId: string | undefined,
+  clientId: string,
+  mutationId: string,
+): string {
+  return JSON.stringify(["datafn-idempotency/2", namespace, actorId ?? null, clientId, mutationId]);
+}
+
+/** The scope a store is bound to, if any (see `scopeIdempotencyStore`). */
+export function idempotencyScopeKey(store: IdempotencyStore): string | undefined {
+  return (store as ScopedStore)[SCOPED];
+}
+
+/**
+ * Bind `store` to `scope`, refusing to re-bind a store that is already bound
+ * to a different scope. Returns `next` marked with the scope.
+ */
+export function markIdempotencyScope<T extends IdempotencyStore>(
+  store: IdempotencyStore,
+  scope: IdempotencyScope,
+  next: () => T,
+): T | IdempotencyStore {
+  const key = scopeKey(scope);
+  const existing = (store as ScopedStore)[SCOPED];
+  if (existing !== undefined) {
+    if (existing === key) return store;
+    throw new Error("Idempotency store is already bound to another scope");
+  }
+  const scoped = next() as T & ScopedStore;
+  scoped[SCOPED] = key;
+  return scoped;
+}
+
+/**
  * Carry the scope guard from a scoped store to a store derived from it (for
  * example by `withDb`), so the derived store cannot be re-scoped elsewhere.
  */
@@ -93,17 +132,9 @@ export function scopeIdempotencyStore(
   store: IdempotencyStore,
   scope: IdempotencyScope,
 ): IdempotencyStore {
-  const key = scopeKey(scope);
-  const existing = (store as ScopedStore)[SCOPED];
-  if (existing !== undefined) {
-    if (existing === key) return store;
-    throw new Error("Idempotency store is already bound to another scope");
-  }
-  const scoped: ScopedStore = store.scoped
-    ? store.scoped(scope)
-    : wrapScoped(store, scope);
-  scoped[SCOPED] = key;
-  return scoped;
+  return markIdempotencyScope(store, scope, () =>
+    store.scoped ? store.scoped(scope) : wrapScoped(store, scope),
+  );
 }
 
 function wrapScoped(store: IdempotencyStore, scope: IdempotencyScope): IdempotencyStore {
