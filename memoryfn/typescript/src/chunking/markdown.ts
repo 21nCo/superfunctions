@@ -217,9 +217,12 @@ function* pack(source: Iterable<Block>, targetChars: number, overlapChars: numbe
     }
     // A paragraph that fits in an empty chunk stays whole; a longer one is split leaving room for the overlap.
     const atoms = lfFits(block.text, targetChars) ? [{ text: lf(block.text), continues: false }] : hardSplit(block.text, targetChars - overlapChars);
+    // The first atom emitted from a block follows the paragraph separator, even when a blank atom before it was skipped.
+    let started = false;
     for (const atom of atoms) {
       if (!atom.text.trim()) continue;
-      const separator = atom.continues ? '' : PARAGRAPH_SEPARATOR;
+      const separator = atom.continues && started ? '' : PARAGRAPH_SEPARATOR;
+      started = true;
       if (current && current.length + separator.length + atom.text.length > targetChars) {
         yield current;
         previous = current;

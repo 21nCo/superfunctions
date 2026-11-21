@@ -66,6 +66,25 @@ describe.each(cases)('$name scope rules', ({ method, path, body, call }) => {
 });
 
 describe('document routes', () => {
+  it.each([['PUT', 'upsertDocument'], ['DELETE', 'forgetBySource']] as const)('%s answers malformed JSON with 400, keeping 401, 413 and 500', async (method, call) => {
+    const raw = (body: string) => new Request('https://test/v1/documents', { method, headers: { 'content-type': 'application/json' }, body });
+    const memory = mockMemory();
+    const authorize = vi.fn().mockResolvedValue(trusted);
+    const router = createMemoryRouter(memory, { authorize, maxBodyBytes: 256 });
+    const malformed = await router.handle(raw('{"sourceKey": "k",'));
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: 'INVALID_INPUT' });
+    expect((await router.handle(raw(`{"sourceKey": "${'x'.repeat(300)}`))).status).toBe(413);
+    expect(memory[call]).not.toHaveBeenCalled();
+    memory[call].mockRejectedValueOnce(new Error('storage unavailable'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = await router.handle(json(method, '/v1/documents', { sourceKey: 'k', ...(method === 'PUT' ? { content: 'x' } : {}) }));
+    errors.mockRestore();
+    expect(failed.status).toBe(500);
+    authorize.mockResolvedValue(null);
+    expect((await router.handle(raw('{'))).status).toBe(401);
+  });
+
   it('validates PUT fields', async () => {
     const memory = mockMemory();
     const router = createMemoryRouter(memory, { authorize: vi.fn().mockResolvedValue(trusted) });

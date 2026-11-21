@@ -40,17 +40,18 @@ export class FactExtractor {
     `;
 
     const result = await this.llm.generateJSON<unknown>(prompt);
-    if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('MEMORY_EXTRACTION_INVALID');
+    if (!result || typeof result !== 'object' || read(() => Array.isArray(result))) throw invalid();
     // Every field is read once, and the value checked is the value used, so an accessor cannot swap it.
-    const facts: unknown = (result as Record<string, unknown>).facts;
-    if (!Array.isArray(facts)) throw new Error('MEMORY_EXTRACTION_INVALID');
-    const count = facts.length;
+    const facts: unknown = read(() => (result as Record<string, unknown>).facts);
+    if (!read(() => Array.isArray(facts))) throw invalid();
+    const count = read(() => (facts as unknown[]).length);
+    if (!Number.isSafeInteger(count)) throw invalid();
     if (limits && count > limits.maxFacts) throw limits.tooMany();
     // Validate the whole batch before the pipeline embeds or persists any fact.
     // Read by index, so a hole in a sparse array is rejected, never skipped.
     const normalized: Fact[] = [];
     for (let index = 0; index < count; index++) {
-      const fact = normalizeFact(facts[index]);
+      const fact = normalizeFact(read(() => (facts as unknown[])[index]));
       limits?.accept?.(fact);
       normalized.push(fact);
     }
@@ -60,21 +61,37 @@ export class FactExtractor {
 
 const FACT_TYPES: readonly string[] = ['profile_static', 'profile_dynamic', 'conversational', 'derived'];
 
-/** One validated, trimmed fact; anything else, including a missing tag in a sparse tags array, is MEMORY_EXTRACTION_INVALID. */
+function invalid(): Error { return new Error('MEMORY_EXTRACTION_INVALID'); }
+
+/** Runs provider-controlled code (getters, proxies); whatever it throws is MEMORY_EXTRACTION_INVALID. */
+function read<T>(get: () => T): T {
+  try { return get(); } catch { throw invalid(); }
+}
+
+/**
+ * One validated, trimmed fact; anything else, including a missing tag in a
+ * sparse tags array, is MEMORY_EXTRACTION_INVALID. Each field is read once,
+ * in order, and checked before the next is read, so the value checked is the
+ * value returned and a later field's accessor never runs after a failure.
+ */
 function normalizeFact(fact: unknown): Fact {
-  if (!fact || typeof fact !== 'object' || Array.isArray(fact)) throw new Error('MEMORY_EXTRACTION_INVALID');
-  // Each field is read once, so the value checked is the value returned.
-  const { content, type, confidence, tags: given } = fact as Record<string, unknown>;
-  if (typeof content !== 'string' || !content.trim() ||
-      typeof type !== 'string' || !FACT_TYPES.includes(type) ||
-      typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 ||
-      !Array.isArray(given)) {
-    throw new Error('MEMORY_EXTRACTION_INVALID');
-  }
+  if (!fact || typeof fact !== 'object' || read(() => Array.isArray(fact))) throw invalid();
+  const record = fact as Record<string, unknown>;
+  const content: unknown = read(() => record.content);
+  if (typeof content !== 'string' || !content.trim()) throw invalid();
+  const type: unknown = read(() => record.type);
+  if (typeof type !== 'string' || !FACT_TYPES.includes(type)) throw invalid();
+  const confidence: unknown = read(() => record.confidence);
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw invalid();
+  const given: unknown = read(() => record.tags);
+  if (!read(() => Array.isArray(given))) throw invalid();
+  const list = given as unknown[];
+  const count = read(() => list.length);
+  if (!Number.isSafeInteger(count)) throw invalid();
   const tags: string[] = [];
-  for (let index = 0, count = given.length; index < count; index++) {
-    const tag: unknown = given[index];
-    if (typeof tag !== 'string' || !tag.trim()) throw new Error('MEMORY_EXTRACTION_INVALID');
+  for (let index = 0; index < count; index++) {
+    const tag: unknown = read(() => list[index]);
+    if (typeof tag !== 'string' || !tag.trim()) throw invalid();
     tags.push(tag.trim());
   }
   return { content: content.trim(), type: type as Fact['type'], confidence, tags };

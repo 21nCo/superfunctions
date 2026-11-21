@@ -200,11 +200,7 @@ export class MemoryFn implements IMemoryFn {
   async search(input: SearchMemoryInput): Promise<SearchMemoryResult> {
     requireScope(input.tenantId, input.containerTags);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
-    // A plain copy of the query's values is what storage ranks and filters by. A query whose norm overflows
-    // float64 cannot be scored by any adapter, so it is an error, not an empty result.
-    const query = plainVector(await this.embedder.embed(input.q), undefined, () => {});
-    if (!query || !Number.isFinite(query.squares)) throw new Error('MEMORY_EMBEDDING_INVALID');
-    const embedding = query.values;
+    const embedding = await this.embedder.embed(input.q);
 
     // 2. Vector search
     const results = await this.storage.searchVectors({
@@ -227,14 +223,17 @@ export class MemoryFn implements IMemoryFn {
 }
 
 /**
- * A plain copy of caller metadata as JSON data: plain objects, dense arrays,
- * strings, finite numbers, booleans and null, each property read once, so
- * later changes to the caller's objects cannot change what is measured or
- * written. An object property that is undefined is left out, as JSON does.
- * Anything else (such as a Map, Date, typed array, BigInt, function or cycle)
- * is MEMORY_METADATA_INVALID, never silently converted, as is metadata whose
- * reading throws; metadata whose copy would pass MAX_SOURCE_REPLACE_BYTES, or
- * nest deeper than the stack allows, is MemorySourceLimitError.
+ * A plain copy of caller metadata as JSON data: plain objects (from any realm),
+ * dense arrays, strings, finite numbers, booleans and null, each property read
+ * once, so later changes to the caller's objects cannot change what is
+ * measured or written. An object property that is undefined is left out, as
+ * JSON does. Anything else (such as a Map, Date, class instance, typed array,
+ * BigInt, function or cycle) is MEMORY_METADATA_INVALID, never silently
+ * converted, as is metadata whose inspection or reading throws. The copy's
+ * JSON bytes (keys, values, escaping and punctuation) are counted as it is
+ * made, so metadata whose JSON would pass MAX_SOURCE_REPLACE_BYTES, through
+ * repeated references or large keys included, is MemorySourceLimitError before
+ * it is serialized, as is nesting deeper than the stack allows.
  */
 function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (metadata === undefined) return undefined;
@@ -243,22 +242,40 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
   const read = <T>(get: () => T): T => { try { return get(); } catch { throw invalid(); } };
   const open = new Set<object>();
   let size = 0;
-  const copy = (value: unknown): unknown => {
-    // A lower bound on its JSON bytes, so shared references cannot expand without limit.
-    size += typeof value === 'string' ? value.length + 2 : 1;
+  const charge = (bytes: number) => {
+    size += bytes;
     if (size > MAX_SOURCE_REPLACE_BYTES) throw new MemorySourceLimitError();
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-    if (typeof value === 'number') { if (!Number.isFinite(value)) throw invalid(); return value; }
+  };
+  const chargeString = (text: string) => {
+    // A string's JSON is never shorter than its length plus the quotes, so a huge one stops before it is scanned.
+    charge(text.length + 2);
+    charge(jsonStringBytes(text) - text.length - 2);
+  };
+  const copy = (value: unknown): unknown => {
+    if (value === null) { charge(4); return value; }
+    if (typeof value === 'string') { chargeString(value); return value; }
+    if (typeof value === 'boolean') { charge(value ? 4 : 5); return value; }
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw invalid();
+      // JSON writes a finite number as String() does (-0 as 0).
+      charge(String(value).length);
+      return value;
+    }
     if (typeof value !== 'object' || open.has(value)) throw invalid();
     const isArray = read(() => Array.isArray(value));
-    const prototype = read(() => Object.getPrototypeOf(value));
-    if (!isArray && prototype !== Object.prototype && prototype !== null) throw invalid();
+    // A plain object's prototype is null or some realm's Object.prototype, whose own prototype is null.
+    const prototype = isArray ? null : read(() => Object.getPrototypeOf(value));
+    if (prototype !== null && read(() => Object.getPrototypeOf(prototype)) !== null) throw invalid();
     open.add(value);
     let result: unknown;
     if (isArray) {
       const items: unknown[] = [];
       const array = value as unknown[];
-      for (let index = 0, count = read(() => array.length); index < count; index++) {
+      const count = read(() => array.length);
+      if (!Number.isSafeInteger(count) || count < 0) throw invalid();
+      // Brackets and separators, before any item is read.
+      charge(2 + Math.max(0, count - 1));
+      for (let index = 0; index < count; index++) {
         const item: unknown = read(() => array[index]);
         if (item === undefined) throw invalid();
         items.push(copy(item));
@@ -267,17 +284,23 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
     } else {
       const entries: Record<string, unknown> = {};
       const object = value as Record<string, unknown>;
+      let written = 0;
+      charge(2);
       for (const key of read(() => Object.keys(object))) {
         const item: unknown = read(() => object[key]);
+        if (item === undefined) continue;
+        // The separator, the quoted key and its colon, before the value is copied.
+        charge(written++ ? 2 : 1);
+        chargeString(key);
         // Defined, not assigned, so a "__proto__" key stays an own data property.
-        if (item !== undefined) Object.defineProperty(entries, key, { value: copy(item), enumerable: true, writable: true, configurable: true });
+        Object.defineProperty(entries, key, { value: copy(item), enumerable: true, writable: true, configurable: true });
       }
       result = entries;
     }
     open.delete(value);
     return result;
   };
-  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) throw invalid();
+  if (metadata === null || typeof metadata !== 'object' || read(() => Array.isArray(metadata))) throw invalid();
   try {
     return copy(metadata) as Record<string, unknown>;
   } catch (error) {
@@ -285,6 +308,23 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
     if (error instanceof RangeError) throw new MemorySourceLimitError();
     throw error;
   }
+}
+
+/** UTF-8 bytes of JSON.stringify(text), counted without serializing it. */
+function jsonStringBytes(text: string): number {
+  let bytes = 2;
+  for (let index = 0; index < text.length; index++) {
+    const unit = text.charCodeAt(index);
+    if (unit === 0x22 || unit === 0x5C) bytes += 2;
+    else if (unit < 0x20) bytes += unit === 8 || unit === 9 || unit === 10 || unit === 12 || unit === 13 ? 2 : 6;
+    else if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xD800 && unit <= 0xDBFF && (text.charCodeAt(index + 1) & 0xFC00) === 0xDC00) { bytes += 4; index++; }
+    // A lone surrogate is written as a \uXXXX escape.
+    else if (unit >= 0xD800 && unit <= 0xDFFF) bytes += 6;
+    else bytes += 3;
+  }
+  return bytes;
 }
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `text`. */
@@ -307,12 +347,15 @@ const FLOAT32_MAX = 3.4028234663852886e38;
  * to stop: an oversized or malformed vector costs no more than its prefix.
  */
 function plainVector(value: unknown, size: number | undefined, charge: (jsonBytes: number) => void): { values: number[]; squares: number; largest: number } | null {
-  if (!Array.isArray(value) || value.length === 0 || (size !== undefined && value.length !== size)) return null;
+  if (!Array.isArray(value)) return null;
+  // Read once: the length checked is the length copied.
+  const count = value.length;
+  if (count === 0 || (size !== undefined && count !== size)) return null;
   const values: number[] = [];
   let squares = 0;
   let largest = 0;
   charge(1);
-  for (let at = 0, count = value.length; at < count; at++) {
+  for (let at = 0; at < count; at++) {
     const number: unknown = value[at];
     if (typeof number !== 'number' || !Number.isFinite(number)) return null;
     // JSON writes a finite number as String() does (-0 as 0), followed by a comma or the closing bracket.

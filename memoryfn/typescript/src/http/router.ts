@@ -48,7 +48,15 @@ export function createMemoryRouter(memory: IMemoryFn, options: {
     const scope = await options.authorize(request);
     if (!scope) return { response: Response.json({ error: 'UNAUTHORIZED' }, { status: 401 }) };
     requireScope(scope.tenantId, scope.containerTags);
-    const input = schema.safeParse(await json());
+    let body: unknown;
+    try {
+      body = await json();
+    } catch (error) {
+      // Malformed JSON is the caller's input error; an oversized body still reaches the router's 413.
+      if (error instanceof SyntaxError) return { response: Response.json({ error: 'INVALID_INPUT' }, { status: 400 }) };
+      throw error;
+    }
+    const input = schema.safeParse(body);
     if (!input.success) return { response: Response.json({ error: 'INVALID_INPUT' }, { status: 400 }) };
     return { scope, data: input.data };
   };

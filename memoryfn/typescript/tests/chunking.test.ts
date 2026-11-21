@@ -171,3 +171,23 @@ describe('chunkMarkdown', () => {
     expect(resolveChunkingOptions({ targetChars: 100, overlapChars: 50 })).toEqual({ targetChars: 100, overlapChars: 50 });
   });
 });
+
+describe('hard split paragraph separator', () => {
+  it('keeps the separator before the first emitted atom when a blank atom before it is skipped', () => {
+    const doc = `intro\n\n${' '.repeat(64)}code`;
+    expect(chunkMarkdown(doc, { targetChars: 64, overlapChars: 0 })).toEqual(['intro\n\ncode']);
+  });
+
+  it('still joins later atoms of one paragraph without a separator, overlaps, and stays within the target', () => {
+    const doc = `intro\n\n${' '.repeat(64)}${words(30)}`;
+    for (const overlapChars of [0, 16]) {
+      const chunks = chunkMarkdown(doc, { targetChars: 64, overlapChars });
+      // Without overlap the second paragraph's first words do not fit beside intro; with it they follow its separator.
+      expect(chunks[0]).toMatch(overlapChars ? /^intro\n\n {16}word0 / : /^intro$/);
+      for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(64);
+      expect(chunks.join(' ')).not.toMatch(/intro\S|word\d+word/);
+      expect(chunks.filter(chunk => !chunk.trim())).toEqual([]);
+      expect(chunks.join(' ')).toContain('word29');
+    }
+  });
+});

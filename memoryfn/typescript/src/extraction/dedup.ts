@@ -2,29 +2,21 @@ import { Memory } from '../core/types';
 import { StorageAdapter } from '../storage/adapter';
 
 /**
- * The best `limit` memories that belong to no source, in the adapter's rank
- * order. Source chunks and facts live and die with their source, so add()
- * never merges into, supersedes or links them. An adapter that honours
- * excludeSources answers in one call with `topK: limit`. For one that returns
- * source rows anyway, the query is repeated with a doubled topK until `limit`
- * ordinary rows are found or the candidates run out (a short page, a page of
- * only ordinary rows, or a page no longer than the one before, from an adapter
- * that does not page), so source rows never take an ordinary candidate's place.
+ * Up to `limit` memories that belong to no source, in the adapter's rank
+ * order, from one searchVectors call with `topK: limit` and excludeSources.
+ * Source chunks and facts live and die with their source, so add() never
+ * merges into, supersedes or links them. An adapter that writes source rows
+ * (it implements replaceSourceIfChanged) must honour excludeSources; for one
+ * that ignores it, source rows are dropped here, never re-queried, so it can
+ * only cost a missed candidate, never a source change or a larger request.
  */
 export async function searchOrdinaryCandidates(
   storage: StorageAdapter,
   params: Omit<Parameters<StorageAdapter['searchVectors']>[0], 'topK' | 'excludeSources'>,
   limit: number,
 ): Promise<Memory[]> {
-  let previous = 0;
-  for (let topK = limit; ; topK *= 2) {
-    const rows = await storage.searchVectors({ ...params, topK, excludeSources: true });
-    const ordinary = rows.filter(memory => memory.sourceKey == null);
-    if (ordinary.length >= limit || ordinary.length === rows.length || rows.length < topK || rows.length <= previous) {
-      return ordinary.slice(0, limit);
-    }
-    previous = rows.length;
-  }
+  const rows = await storage.searchVectors({ ...params, topK: limit, excludeSources: true });
+  return rows.filter(memory => memory.sourceKey == null).slice(0, limit);
 }
 
 export class Deduplicator {

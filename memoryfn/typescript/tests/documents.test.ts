@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchOrdinaryCandidates } from '../src/extraction/dedup';
 import { MemoryFn, MemoryStorageAdapter, sha256Hex, type Embedder, type LLMProvider, type Memory, type StorageAdapter } from '../src';
@@ -386,24 +387,37 @@ describe('upsertDocument embedding validation', () => {
   });
 
   it.each([
-    ['1e200 components', [1e200, 1e200]],
-    ['NaN', [Number.NaN, 1]],
-    ['a hole', [1, , 2]],
-  ])('rejects a query vector with %s instead of returning nothing', async (_name, query) => {
-    const search = vi.spyOn(storage, 'searchVectors');
-    embedder.embed.mockResolvedValueOnce(query);
-    await expect(memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags })).rejects.toThrow('MEMORY_EMBEDDING_INVALID');
-    expect(search).not.toHaveBeenCalled();
-  });
-
-  it('sends storage a plain copy of the query values it checked', async () => {
-    const query = Object.assign([1e15, 2e-15, 3], { toJSON: () => [0, 0, 0] });
+    ['1e200 components', [1e200, 0]],
+    ['a toJSON method', Object.assign([1e15, 2e-15, 3], { toJSON: () => [0, 0, 0] })],
+  ])('passes a query vector with %s to storage as the embedder returned it, in one call', async (_name, query) => {
     const search = vi.spyOn(storage, 'searchVectors');
     embedder.embed.mockResolvedValueOnce(query);
     await memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags });
-    const sent = search.mock.calls[0][0].embedding;
-    expect(sent).toEqual([1e15, 2e-15, 3]);
-    expect(JSON.stringify(sent)).toBe('[1000000000000000,2e-15,3]');
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(search.mock.calls[0][0].embedding).toBe(query);
+  });
+
+  it('reads each vector length once, so the dimension checked is the dimension stored', async () => {
+    let lengthReads = 0;
+    const shifting = new Proxy([1, 2, 3], { get: (target, key, receiver) => (key === 'length' ? (++lengthReads === 1 ? 2 : 3) : Reflect.get(target, key, receiver)) });
+    const fixed = Object.assign(new MemoryStorageAdapter(), { embeddingDimensions: 2 });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, fixed, embedder);
+    embedder.embedBatch.mockResolvedValueOnce([shifting]);
+    const result = await memory.upsertDocument({ ...scope, content: '# One' });
+    expect(lengthReads).toBe(1);
+    expect((await fixed.getMemory({ ...scope, id: result.memories[0].id }))!.embedding).toEqual([1, 2]);
+  });
+
+  it('scores a [1, 1] document chunk exactly as an add() memory with the same vector', async () => {
+    const same = { embed: vi.fn(async () => [1, 1]), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1, 1])) };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, same);
+    const added = await memory.add({ tenantId: scope.tenantId, containerTags: scope.containerTags, content: 'memory' });
+    const chunk = await memory.upsertDocument({ ...scope, content: '# One' });
+    const at = async (threshold: number) =>
+      (await memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags, threshold })).results.map(entry => entry.id).sort();
+    // The memory adapter's float64 cosine of [1, 1] with itself is 0.9999999999999998 for both, as on the PR base for add().
+    expect(await at(1)).toEqual([]);
+    expect(await at(0.9999)).toEqual([added.memories[0].id, chunk.memories[0].id].sort());
   });
 
   it.each([['a zero vector', 0], ['components whose squares vanish in float64', 1e-200]])('passes a query vector with %s to storage, which scores it 0', async (_name, component) => {
@@ -496,6 +510,10 @@ describe('upsertDocument document text', () => {
     ['undefined in an array', { list: [1, undefined] }],
     ['a getter that throws', { get broken() { throw new TypeError('getter failed'); } }],
     ['a getter that throws a RangeError', { nested: { get broken() { throw new RangeError('getter failed'); } } }],
+    ['a revoked root proxy', (() => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; })()],
+    ['a revoked nested proxy', (() => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return { nested: proxy }; })()],
+    ['a Date from another realm', runInNewContext('({ at: new Date(0) })') as Record<string, unknown>],
+    ['a class instance', { item: new (class Item { name = 'x'; })() }],
   ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockClear();
@@ -522,6 +540,40 @@ describe('upsertDocument document text', () => {
     expect(reads).toBe(1);
     const stored = await storage.getMemory({ ...scope, id: result.memories[0].id });
     expect(JSON.stringify(stored!.metadata)).toBe('{"nested":{"note":"first"},"list":[1,"two",null,true],"parsed":{"deep":{"__proto__":{"label":"keep"}}}}');
+  });
+
+  it('accepts and detaches plain records from another realm, nested ones included', async () => {
+    const metadata = runInNewContext('({ nested: { list: [1, { label: "x" }] }, bare: Object.create(null) })') as Record<string, unknown>;
+    expect(Object.getPrototypeOf(metadata)).not.toBe(Object.prototype);
+    const result = await memory.upsertDocument({ ...scope, content: docV1, metadata });
+    const stored = (await storage.getMemory({ ...scope, id: result.memories[0].id }))!.metadata as Record<string, any>;
+    expect(JSON.stringify(stored)).toBe('{"nested":{"list":[1,{"label":"x"}]},"bare":{}}');
+    expect(Object.getPrototypeOf(stored.nested)).toBe(Object.prototype);
+    (metadata.nested as Record<string, any>).list[1].label = 'changed';
+    expect(stored.nested.list[1].label).toBe('x');
+  });
+
+  const bigKey = 'k'.repeat(65_536);
+  const quoteKey = '"'.repeat(60_000);
+  const shared = { [bigKey]: 1 };
+  it.each([
+    // 5,000 x 64 KiB keys is over 312 MiB of JSON, though the values alone are a few KB.
+    ['a large key repeated across entries', () => ({ list: Array.from({ length: 5_000 }, () => ({ [bigKey]: 1 })) })],
+    ['one object referenced repeatedly', () => ({ list: Array.from({ length: 5_000 }, () => shared) })],
+    // 60,000 quotes escape to 120,002 bytes each: about 300 MB of JSON from 150 M characters.
+    ['keys that JSON escaping doubles', () => ({ list: Array.from({ length: 2_500 }, () => ({ [quoteKey]: true })) })],
+  ])('rejects metadata whose JSON passes the budget through %s before serializing it or any provider call', async (_name, build) => {
+    const first = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embedBatch.mockClear();
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      await expect(memory.upsertDocument({ ...scope, content: docV2, metadata: build() })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+      expect(stringify.mock.calls.some(([value]) => value !== null && typeof value === 'object' && 'list' in value)).toBe(false);
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
   });
 
   it('keeps oversized serializable metadata on the source-limit path, before any provider call', async () => {
@@ -575,11 +627,11 @@ describe('upsertDocument extraction output', () => {
   });
 
   it.each([
-    ['facts that stop being an array', (reads: number) => ({ facts: reads === 1 ? [fact] : { length: 0 } }), 'facts'],
-    ['facts that become an array', (reads: number) => ({ facts: reads === 1 ? { length: 0 } : [fact] }), 'facts'],
-    ['tags that change', (reads: number) => ({ facts: [{ ...fact, tags: reads === 1 ? ['doc'] : [1] }] }), 'tags'],
-    ['content that changes', (reads: number) => ({ facts: [{ ...fact, content: reads === 1 ? 'A fact.' : '' }] }), 'content'],
-  ])('reads %s through an accessor once and uses the value it checked', async (_name, value, field) => {
+    ['facts that stop being an array', (reads: number) => ({ facts: reads === 1 ? [fact] : { length: 0 } }), 'facts', 'stored'],
+    ['facts that become an array', (reads: number) => ({ facts: reads === 1 ? { length: 0 } : [fact] }), 'facts', 'rejected'],
+    ['tags that change', (reads: number) => ({ facts: [{ ...fact, tags: reads === 1 ? ['doc'] : [1] }] }), 'tags', 'stored'],
+    ['content that changes', (reads: number) => ({ facts: [{ ...fact, content: reads === 1 ? 'A fact.' : '' }] }), 'content', 'stored'],
+  ])('reads %s through an accessor once and uses the value it checked', async (_name, value, field, outcome) => {
     let reads = 0;
     /** The response with `field` behind a getter whose value depends on how often it was read. */
     const response = () => {
@@ -590,17 +642,44 @@ describe('upsertDocument extraction output', () => {
     };
     const llm: LLMProvider = { generate: vi.fn(), generateJSON: vi.fn(async () => { reads = 0; return response(); }) as LLMProvider['generateJSON'] };
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
-    const first = await memory.upsertDocument({ ...scope, content: '# One', extract: true }).catch((error: Error) => error);
-    expect(reads).toBe(1);
-    if (first instanceof Error) {
+    const first = memory.upsertDocument({ ...scope, content: '# One', extract: true });
+    if (outcome === 'rejected') {
       // The first read was not a fact list, so nothing was embedded or written.
-      expect(first.message).toBe('MEMORY_EXTRACTION_INVALID');
+      await expect(first).rejects.toThrow('MEMORY_EXTRACTION_INVALID');
       expect(embedder.embedBatch).not.toHaveBeenCalled();
       expect(await storage.getSourceState(scope)).toBeNull();
     } else {
-      expect(first).toMatchObject({ unchanged: false, chunks: 1 });
-      expect(first.memories[0]).toMatchObject({ content: 'A fact.', metadata: { extractedTags: ['doc'] } });
+      const stored = await first;
+      expect(stored).toMatchObject({ unchanged: false, chunks: 1 });
+      expect(stored.memories[0]).toMatchObject({ content: 'A fact.', metadata: { extractedTags: ['doc'] } });
     }
+    expect(reads).toBe(1);
+  });
+
+  it.each([
+    ['a field read that throws', () => ({ facts: [{ content: 'A fact.', get type(): string { throw new Error('provider getter failed'); }, confidence: 1, tags: [] }] })],
+    ['a facts read that throws', () => ({ get facts(): unknown { throw new Error('provider getter failed'); } })],
+    ['a revoked fact proxy', () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return { facts: [proxy] }; }],
+  ])('maps %s to MEMORY_EXTRACTION_INVALID before embedding, keeping the source', async (_name, build) => {
+    const llm = fakeLLM();
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    const first = await memory.upsertDocument({ ...scope, content: docV1, extract: true });
+    embedder.embedBatch.mockClear();
+    vi.mocked(llm.generateJSON).mockResolvedValueOnce(build());
+    await expect(memory.upsertDocument({ ...scope, content: docV2, extract: true })).rejects.toThrow('MEMORY_EXTRACTION_INVALID');
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
+  });
+
+  it('checks fields in order, so invalid content fails before a later field is read', async () => {
+    let typeReads = 0;
+    const llm: LLMProvider = { generate: vi.fn(), generateJSON: vi.fn(async () => ({
+      facts: [{ content: '', get type() { typeReads++; throw new Error('provider getter failed'); }, confidence: 1, tags: [] }],
+    })) as LLMProvider['generateJSON'] };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    await expect(memory.upsertDocument({ ...scope, content: '# One', extract: true })).rejects.toThrow('MEMORY_EXTRACTION_INVALID');
+    expect(typeReads).toBe(0);
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
   });
 
   it('accepts an empty facts array as a source without facts', async () => {
@@ -644,9 +723,13 @@ describe('upsertDocument vector budget', () => {
   });
 });
 
-describe('add() candidates on an adapter that ignores excludeSources', () => {
-  class IgnoresExcludeSources extends MemoryStorageAdapter {
+describe('add() candidates and source rows', () => {
+  /** A memory adapter that rejects topK above 100, honouring excludeSources or ignoring it. */
+  class Capped extends MemoryStorageAdapter {
+    constructor(private readonly honours: boolean) { super(); }
     override async searchVectors(params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) {
+      if (params.topK > 100) throw new Error('TOPK_LIMIT');
+      if (this.honours) return super.searchVectors(params);
       const { excludeSources: _ignored, ...rest } = params;
       return super.searchVectors(rest);
     }
@@ -663,76 +746,70 @@ describe('add() candidates on an adapter that ignores excludeSources', () => {
       ? { facts: [{ content: 'new fact', type: 'derived', confidence: 1, tags: [] }] }
       : { type: 'updates', reasoning: 'newer' })) as LLMProvider['generateJSON'],
   });
+  // 80 source chunks rank above every ordinary memory.
+  const eighty = Array.from({ length: 80 }, (_, index) => `# H${index}`).join('\n');
 
-  it('deduplicates against an ordinary memory ranked behind a source chunk', async () => {
-    storage = new IgnoresExcludeSources();
+  it('deduplicates in one topK 1 call behind 80 source rows on a capped adapter that honours excludeSources', async () => {
+    storage = new Capped(true);
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, angled(0.99));
     await memory.add({ ...memoryScope, content: 'ordinary fact' });
-    await memory.upsertDocument({ ...scope, content: docV1 });
-    const again = await memory.add({ ...memoryScope, content: 'same fact' });
-    expect(again.summary).toEqual({ created: 0, updated: 0, deduplicated: 1 });
+    await memory.upsertDocument({ ...scope, content: eighty });
+    const search = vi.spyOn(storage, 'searchVectors');
+    expect((await memory.add({ ...memoryScope, content: 'same fact' })).summary).toEqual({ created: 0, updated: 0, deduplicated: 1 });
+    expect(search.mock.calls.map(([params]) => [params.topK, params.excludeSources])).toEqual([[1, true]]);
   });
 
-  it('resolves against an ordinary memory ranked behind three source chunks', async () => {
-    storage = new IgnoresExcludeSources();
+  it('resolves against the ordinary candidate in one topK 3 call behind 80 source rows on a capped adapter that honours excludeSources', async () => {
+    storage = new Capped(true);
     const embedderAt = angled(0.9);
     const ordinary = await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).add({ ...memoryScope, content: 'ordinary older fact' });
-    await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).upsertDocument({ ...scope, content: docV1 });
+    await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).upsertDocument({ ...scope, content: eighty });
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt, resolvingLLM());
+    const search = vi.spyOn(storage, 'searchVectors');
     const added = await memory.add({ ...memoryScope, content: 'note' });
+    expect(search.mock.calls.map(([params]) => [params.topK, params.excludeSources])).toEqual([[1, true], [3, true]]);
     expect(added.summary).toEqual({ created: 1, updated: 1, deduplicated: 0 });
     expect(added.relationships.map(link => [link.toId, link.type])).toEqual([[ordinary.memories[0].id, 'updates']]);
-    expect(await storage.getSourceState(scope)).toMatchObject({ chunkCount: 3 });
   });
 
-  it('makes one call per candidate search when the adapter honours excludeSources', async () => {
+  it('makes only the base calls on a capped adapter that ignores excludeSources, and never touches a source row', async () => {
+    storage = new Capped(false);
+    const embedderAt = angled(0.9);
+    const source = await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).upsertDocument({ ...scope, content: eighty });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt, resolvingLLM());
+    const search = vi.spyOn(storage, 'searchVectors');
+    const update = vi.spyOn(storage, 'updateMemory');
+    const added = await memory.add({ ...memoryScope, content: 'note' });
+    expect(search.mock.calls.map(([params]) => params.topK)).toEqual([1, 3]);
+    expect(added.summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
+    expect(added.relationships).toEqual([]);
+    expect(update).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: source.contentHash, chunkCount: 80 });
+    const live = await memory.search({ q: 'any', ...memoryScope, limit: 100 });
+    expect(live.results.filter(entry => entry.sourceKey).map(entry => entry.id).sort()).toEqual(source.memories.map(entry => entry.id).sort());
+    // Without a resolver, deduplication makes its one call and stores the new memory beside the source.
+    storage = new Capped(false);
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, angled(0.99));
+    await memory.upsertDocument({ ...scope, content: eighty });
+    const dedup = vi.spyOn(storage, 'searchVectors');
+    expect((await memory.add({ ...memoryScope, content: 'same fact' })).summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
+    expect(dedup.mock.calls.map(([params]) => params.topK)).toEqual([1]);
+    expect(await storage.getSourceState(scope)).toMatchObject({ chunkCount: 80 });
+  });
+
+  it('makes one call per candidate search on the built-in memory adapter, which never returns source rows', async () => {
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, resolvingLLM());
     await memory.upsertDocument({ ...scope, content: docV1 });
     const search = vi.spyOn(storage, 'searchVectors');
     await memory.add({ ...memoryScope, content: 'note' });
     expect(search.mock.calls.map(([params]) => [params.topK, params.excludeSources])).toEqual([[1, true], [3, true]]);
+    for (const result of search.mock.results) expect((await result.value).filter((row: Memory) => row.sourceKey)).toEqual([]);
   });
 
-  it.each([70, 200])('finds ordinary candidates behind %i higher-ranked source rows within a logarithmic number of calls', async rows => {
-    const content = Array.from({ length: rows }, (_, index) => `# H${index}`).join('\n');
-    // Deduplication: an ordinary memory at 0.99 behind the source rows at 1.
-    storage = new IgnoresExcludeSources();
-    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, angled(0.99));
-    await memory.add({ ...memoryScope, content: 'ordinary fact' });
-    await memory.upsertDocument({ ...scope, content });
-    let search = vi.spyOn(storage, 'searchVectors');
-    expect((await memory.add({ ...memoryScope, content: 'same fact' })).summary).toEqual({ created: 0, updated: 0, deduplicated: 1 });
-    expect(search.mock.calls.length).toBeLessThanOrEqual(Math.ceil(Math.log2(rows)) + 2);
-    // Conflict resolution: an ordinary memory at 0.9 reaches the resolver and is superseded.
-    storage = new IgnoresExcludeSources();
-    const embedderAt = angled(0.9);
-    const ordinary = await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).add({ ...memoryScope, content: 'ordinary older fact' });
-    await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt).upsertDocument({ ...scope, content });
-    expect(await searchOrdinaryCandidates(storage, { ...memoryScope, embedding: [1, 0], threshold: 0.75 }, 3))
-      .toEqual([expect.objectContaining({ id: ordinary.memories[0].id })]);
-    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedderAt, resolvingLLM());
-    search = vi.spyOn(storage, 'searchVectors');
-    const added = await memory.add({ ...memoryScope, content: 'note' });
-    expect(added.relationships.map(link => [link.toId, link.type])).toEqual([[ordinary.memories[0].id, 'updates']]);
-    const resolverCalls = search.mock.calls.filter(([params]) => params.threshold === 0.75);
-    expect(resolverCalls.length).toBeLessThanOrEqual(Math.ceil(Math.log2(rows / 3)) + 2);
-  });
-
-  it('stops when every candidate belongs to a source and the adapter runs out of rows', async () => {
-    storage = new IgnoresExcludeSources();
-    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, angled(0.99), resolvingLLM());
-    await memory.upsertDocument({ ...scope, content: Array.from({ length: 200 }, (_, index) => `# H${index}`).join('\n') });
-    const search = vi.spyOn(storage, 'searchVectors');
-    expect((await memory.add({ ...memoryScope, content: 'note' })).summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
-    expect(search.mock.calls.map(([params]) => params.topK)).toEqual([1, 2, 4, 8, 16, 32, 64, 128, 256, 3, 6, 12, 24, 48, 96, 192, 384]);
-  });
-
-  it('stops when an adapter that does not page returns the same rows for a larger topK', async () => {
-    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, resolvingLLM());
+  it('drops source rows an adapter returns anyway, without querying again', async () => {
     const page = [0, 1, 2].map(index => ({ id: `source-${index}`, sourceKey: 'guide.md' }) as Memory);
     const search = vi.spyOn(storage, 'searchVectors').mockImplementation(async () => page);
-    const added = await memory.add({ ...memoryScope, content: 'note' });
-    expect(added.summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
-    expect(search.mock.calls.map(([params]) => params.topK)).toEqual([1, 2, 3, 6]);
+    expect(await searchOrdinaryCandidates(storage, { ...memoryScope, embedding: [1, 0], threshold: 0.75 }, 3)).toEqual([]);
+    expect(search.mock.calls.map(([params]) => params.topK)).toEqual([3]);
   });
 });
