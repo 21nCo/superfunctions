@@ -647,6 +647,14 @@ function createSocialRoutes(
 
         if (completion.callbackMode === 'redirect') {
           assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
+          // The afterOAuthCallback hook may have changed the target, so the
+          // handoff policy is checked again against where the session goes.
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo,
+            callbackMode: completion.callbackMode,
+            handoffMode: completion.handoffMode,
+            handoffChallenge
+          });
           return redirectWithCookies(
             request,
             completion.handoffMode === 'session-token'
@@ -2087,9 +2095,14 @@ function formatReturnTarget(returnTo: string, url: URL): string {
  * browsers may also turn into a host change.
  */
 function isSameOriginPath(value: string): boolean {
-  return value.startsWith('/')
-    && !value.startsWith('//')
-    && !/[\\\u0000-\u001f\u007f]/.test(value);
+  if (!value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
+    return false;
+  }
+  // The path must already be in the form a URL parser gives back: dot
+  // segments (`/.//host`, `/%2e//host`) would otherwise be collapsed when the
+  // target is edited and could leave a `//host` redirect.
+  const resolved = new URL(value, RELATIVE_RETURN_TARGET_BASE);
+  return `${resolved.pathname}${resolved.search}${resolved.hash}` === value;
 }
 
 /**

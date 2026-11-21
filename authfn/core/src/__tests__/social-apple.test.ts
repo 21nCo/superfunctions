@@ -524,6 +524,10 @@ describe('authfn apple social oauth', () => {
       expect((await start('/elsewhere', ['/post-auth'])).status).toBe(400);
       expect((await start('//evil.example/post-auth', ['//evil.example/post-auth'])).status).toBe(400);
       expect((await start('/\\evil.example', ['/\\evil.example'])).status).toBe(400);
+      // Dot segments would collapse to a `//host` redirect once the target is edited.
+      for (const dotted of ['/.//evil.example/cb', '/%2e//evil.example/cb', '/a/..//evil.example/cb']) {
+        expect((await start(dotted, [dotted])).status).toBe(400);
+      }
     });
 
     it('keeps an allowlisted relative target relative when the callback redirects with an error', async () => {

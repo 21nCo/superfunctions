@@ -370,6 +370,32 @@ describe('authfn google social oauth', () => {
     expect(callback.headers.get('location')).toBe('https://app.example.com/alternate-post-auth');
   });
 
+  it('checks the handoff policy again when afterOAuthCallback moves a session-token flow to a web target', async () => {
+    const base = createConfig({
+      hooks: {
+        afterOAuthCallback: async (_ctx, payload) => {
+          payload.redirectTo = 'https://app.example.com/post-auth';
+        }
+      }
+    });
+    base.plugins = [authFnSocialOAuthPlugin({ allowWebSessionTokenHandoff: false })];
+    (base.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
+      .providers.google.allowlistedReturnTo.push('exampleapp://oauthsignin');
+    const auth = createTestServer(base);
+    const start = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'google', returnTo: 'exampleapp://oauthsignin', handoffMode: 'session-token' })
+    }));
+    expect(start.status).toBe(200);
+    const startBody = await start.json();
+    const callback = await auth.router.handle(new Request(
+      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(startBody.data.stateId)}`
+    ));
+    const location = callback.headers.get('location') ?? '';
+    expect(location).not.toContain('token=');
+  });
+
   it('links verified Google OAuth to an existing verified same-email user through account linking policy', async () => {
     const events: AuthFnEvent[] = [];
     const config = createConfig({
