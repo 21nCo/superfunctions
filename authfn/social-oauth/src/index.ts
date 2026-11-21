@@ -1830,12 +1830,12 @@ function appendOAuthErrorToReturnTarget(
   requestId: string,
   error: AuthFnError
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('auth_error', 'oauth_callback_failed');
   url.searchParams.set('auth_error_code', error.code);
   url.searchParams.set('auth_provider', providerId);
   url.searchParams.set('auth_request_id', requestId);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function isDebugErrorLoggingEnabled(): boolean {
@@ -2004,7 +2004,7 @@ function appendSessionHandoffToReturnTarget(
   returnTo: string,
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', issued.sessionToken);
   fragment.set('sessionId', issued.session.id);
@@ -2015,7 +2015,7 @@ function appendSessionHandoffToReturnTarget(
     fragment.set('expiresAt', issued.session.expiresAt.toISOString());
   }
   url.hash = fragment.toString();
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function appendTwoFactorChallengeToReturnTarget(
@@ -2023,11 +2023,11 @@ function appendTwoFactorChallengeToReturnTarget(
   challengeId: string,
   primaryMethod: string
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
   url.searchParams.set('challengeId', challengeId);
   url.searchParams.set('primaryMethod', primaryMethod);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function assertAllowedReturnTarget(
@@ -2068,6 +2068,19 @@ function isWebScheme(protocol: string): boolean {
   return protocol === 'https:' || protocol === 'http:';
 }
 
+/** Placeholder base used only to edit a relative return target's query and fragment. */
+const RELATIVE_RETURN_TARGET_BASE = 'https://relative-return-target.invalid';
+
+/** Parses an allowlisted return target, which may be a same-site path. */
+function parseReturnTarget(returnTo: string): URL {
+  return isSameOriginPath(returnTo) ? new URL(returnTo, RELATIVE_RETURN_TARGET_BASE) : new URL(returnTo);
+}
+
+/** Formats a target edited after parseReturnTarget, keeping a relative one relative. */
+function formatReturnTarget(returnTo: string, url: URL): string {
+  return isSameOriginPath(returnTo) ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+}
+
 /**
  * A path on the current site: starts with one `/` (not `//`, which a browser
  * reads as another host) and has no backslash or control characters, which
@@ -2096,8 +2109,8 @@ function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boole
   try {
     target = new URL(returnTo);
   } catch {
-    // A relative target stays on the site that started the flow; it must be
-    // listed exactly and be a plain path.
+    // A relative target (resolved by the browser against the callback's
+    // origin) must be listed exactly and be a plain path.
     return isSameOriginPath(returnTo) && allowlist.includes(returnTo);
   }
   if (FORBIDDEN_RETURN_TARGET_SCHEMES.has(target.protocol)) {
@@ -2581,7 +2594,8 @@ function isWebReturnTarget(returnTo: string | undefined): boolean {
     const protocol = new URL(returnTo).protocol.toLowerCase();
     return protocol === 'http:' || protocol === 'https:';
   } catch {
-    return false;
+    // A relative target is a page on the web.
+    return isSameOriginPath(returnTo);
   }
 }
 
@@ -2801,7 +2815,7 @@ async function createSocialHandoffCode(
  * `handoff=code` tells the client to exchange it with its verifier.
  */
 function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionId: string | undefined): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', code);
   fragment.set('handoff', 'code');
@@ -2809,5 +2823,5 @@ function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionI
     fragment.set('regionId', regionId);
   }
   url.hash = fragment.toString();
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }

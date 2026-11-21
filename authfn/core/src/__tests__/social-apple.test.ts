@@ -526,6 +526,64 @@ describe('authfn apple social oauth', () => {
       expect((await start('/\\evil.example', ['/\\evil.example'])).status).toBe(400);
     });
 
+    it('keeps an allowlisted relative target relative when the callback redirects with an error', async () => {
+      const auth = createTestServer({
+        database: memoryAdapter({ debug: false }),
+        namespace: 'authfn',
+        plugins: [authFnSocialOAuthPlugin()],
+        pluginRuntime: {
+          socialOAuth: {
+            providers: {
+              apple: {
+                clientId: 'apple-client-id',
+                clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
+                allowlistedReturnTo: ['/post-auth']
+              }
+            },
+            fetcher: async () => createResponse({ status: 200, body: JSON.stringify({ access_token: 'apple-access-token', token_type: 'Bearer', id_token: createIdToken({ sub: 'apple-user-09' }) }) })
+          }
+        }
+      });
+      const started = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'apple', returnTo: '/post-auth' })
+      }));
+      const stateId = (await started.json()).data.stateId as string;
+      const callback = await auth.router.handle(new Request(
+        `https://account.example.com/auth/social/callback/apple?code=apple_code&state=${encodeURIComponent(stateId)}`
+      ));
+      expect(callback.status).toBe(303);
+      const location = callback.headers.get('location')!;
+      expect(location.startsWith('/post-auth?')).toBe(true);
+      expect(new URLSearchParams(location.slice(location.indexOf('?') + 1)).get('auth_error')).toBe('oauth_callback_failed');
+    });
+
+    it('treats a relative target as a web target for allowWebSessionTokenHandoff', async () => {
+      const auth = createTestServer({
+        database: memoryAdapter({ debug: false }),
+        namespace: 'authfn',
+        plugins: [authFnSocialOAuthPlugin({ allowWebSessionTokenHandoff: false })],
+        pluginRuntime: {
+          socialOAuth: {
+            providers: {
+              apple: {
+                clientId: 'apple-client-id',
+                clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
+                allowlistedReturnTo: ['/post-auth']
+              }
+            }
+          }
+        }
+      });
+      const response = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'apple', returnTo: '/post-auth', handoffMode: 'session-token' })
+      }));
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    });
+
     it('refuses a script scheme even when it is allowlisted exactly', async () => {
       const response = await start('javascript:alert(1)', ['javascript:alert(1)']);
       expect(response.status).toBe(400);
