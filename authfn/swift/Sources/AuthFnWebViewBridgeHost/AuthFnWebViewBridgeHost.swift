@@ -78,7 +78,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if let separator = string.range(of: "://") {
             let rest = string[separator.upperBound...]
             let authority = rest[..<(rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex)]
-            if authority.contains("@") || authority.contains("\\") || authority.lowercased().contains("%5c") {
+            if authority.contains("@") || authority.contains("\\") {
                 return nil
             }
         }
@@ -99,14 +99,22 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
             // to a forbidden character (`example.test%3A8443` would otherwise
             // read as another origin's host and port), and one that ends in a
             // number but is not a valid IPv4 address.
+            // Only plain host characters are accepted (letters, digits, '-',
+            // '.', '_' once decoded): anything else is a spelling Foundation
+            // and WebKit can serialize or parse differently.
             guard let decoded = parts.host.removingPercentEncoding,
-                  !decoded.isEmpty, decoded.allSatisfy(\.isASCII),
-                  !decoded.unicodeScalars.contains(where: { forbiddenHostScalars.contains($0) || $0.value < 0x20 || $0.value == 0x7F }) else {
+                  !decoded.isEmpty, decoded.allSatisfy(isPlainHostCharacter) else {
                 return nil
             }
             if endsInNumber(decoded.lowercased()) && canonicalIPv4(decoded.lowercased()) == nil {
                 return nil
             }
+        }
+        if !isSpecial(parts.scheme) && !parts.host.allSatisfy(isPlainHostCharacter) {
+            // A custom-scheme host is kept as given (WebKit does not decode
+            // it), so it may only use plain host characters: no escapes,
+            // quotes or other characters whose spelling Foundation changes.
+            return nil
         }
         if let port = parts.port, !port.isEmpty {
             // A port that is not a number in range is refused rather than read
@@ -217,6 +225,11 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return true
     }
 
+    /// Letters, digits, '-', '.' and '_' (ASCII only).
+    static func isPlainHostCharacter(_ character: Character) -> Bool {
+        character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "." || character == "_")
+    }
+
     static func isASCIIDigit(_ character: Character) -> Bool {
         ("0"..."9").contains(character)
     }
@@ -225,8 +238,6 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         ("0"..."9").contains(scalar) || ("a"..."f").contains(scalar) || ("A"..."F").contains(scalar)
     }
 
-    /// Characters WebKit refuses in a domain host.
-    static let forbiddenHostScalars = Set(" #%/:<>?@[\\]^|".unicodeScalars)
 
     /// The labels of a host, without one trailing empty label (`a.b.`).
     private static func ipv4Parts(_ host: String) -> [Substring] {

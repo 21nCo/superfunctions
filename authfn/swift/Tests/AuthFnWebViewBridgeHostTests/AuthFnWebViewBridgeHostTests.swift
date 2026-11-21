@@ -31,16 +31,16 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
     func testOriginPolicyMatchesHostsAsWebKitReportsThem() {
         let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
             URL(string: "http://[::1]:5173")!,
-            URL(string: "app://tenant%2Dassets")!,
+            URL(string: "app://tenant-assets")!,
             URL(string: "app:///index.html")!,
             URL(string: "custom://portal")!,
         ])
 
         // IPv6 literals keep their brackets, as WebKit reports them.
         XCTAssertTrue(policy.allows(scheme: "http", host: "[::1]", port: 5173))
-        // A percent-escaped custom-scheme host is not decoded into another host.
-        XCTAssertTrue(policy.allows(scheme: "app", host: "tenant%2dassets", port: 0))
-        XCTAssertFalse(policy.allows(scheme: "app", host: "tenant-assets", port: 0))
+        // A custom-scheme host is compared as given.
+        XCTAssertTrue(policy.allows(scheme: "app", host: "tenant-assets", port: 0))
+        XCTAssertFalse(policy.allows(scheme: "app", host: "tenant%2dassets", port: 0))
         // An empty host is kept for custom schemes.
         XCTAssertTrue(policy.allows(scheme: "app", host: "", port: 0))
         // An explicit port 0 is not the same origin as no port.
@@ -134,6 +134,12 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         // No userinfo, and no backslash Foundation and WebKit could split
         // differently.
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://expected.example%5C@other.example/"))
+        // Custom-scheme hosts with escapes or quotes, whose spelling
+        // Foundation and WebKit can disagree on, are refused.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://tenant%2Dassets"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://tenant\"assets/"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://tenant%5Cassets/"))
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("app://tenant_assets.v2"), "app://tenant_assets.v2")
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://expected.example\\@other.example/"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://user@portal.example"))
         // Userinfo or a port delimiter with no host is not the hostless origin.
