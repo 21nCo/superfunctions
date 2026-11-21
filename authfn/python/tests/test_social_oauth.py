@@ -913,10 +913,10 @@ async def test_writes_with_the_key_checked_up_front_even_if_the_resolver_fails_l
     vault = DbEncryptedTokenVault(
         AuthFnConfig(database=db, namespace="authfn"), default_key_ref="", now=datetime.utcnow, key_resolver=flaky
     )
-    vault.assert_configured()
+    request_vault = vault.for_request()
     record = _token_record()
     record["keyRef"] = "oauth-default"
-    await vault.put(record)
+    await request_vault.put(record)
     assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"
 
 
@@ -989,3 +989,48 @@ async def test_migration_needs_atomic_writes_and_each_callback_keeps_its_own_key
     # ...but this callback still writes with the key it checked.
     await callback_vault.put(_token_record())
     assert len(db.storage["oauth_tokens"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_rotation_uses_the_current_secret_after_a_callback_used_a_newer_one() -> None:
+    from cryptography.fernet import Fernet
+
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault, _fernet_key_from_secret
+
+    keys = {"current": b"test-oauth-first-key-not-a-real-secret-000"}
+    db = MockDatabaseAdapter()
+    shared = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow,
+        key_resolver=lambda _ref: keys["current"],
+    )
+    # A sign-in starts with the first secret, which is then replaced.
+    shared.assert_configured()
+    keys["current"] = b"test-oauth-second-key-not-a-real-secret-00"
+    callback_vault = shared.for_request()
+    await callback_vault.put(_token_record())
+    # The shared service holds no earlier secret, so it rotates the row.
+    await shared.rotate_key("tok_test_1", "oauth-default")
+    stored = db.storage["oauth_tokens"][0]["encrypted_payload"].encode("utf-8")
+    assert Fernet(_fernet_key_from_secret(keys["current"])).decrypt(stored) == b"test-provider-token-payload"
+
+
+@pytest.mark.asyncio
+async def test_migration_stops_when_update_many_reports_no_row_count() -> None:
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault
+    from authfn.types import ConfigError
+
+    class StubCount(MockDatabaseAdapter):
+        async def update_many(self, **_kwargs: Any) -> Any:  # type: ignore[override]
+            # Like the inherited Adapter.update_many stub: no count at all.
+            return None
+
+    db = StubCount()
+    await db.create(model="oauth_tokens", data=_legacy_row(), namespace="authfn")
+    before = dict(db.storage["oauth_tokens"][0])
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default",
+        now=datetime.utcnow, key_resolver=_test_oauth_key,
+    )
+    with pytest.raises(ConfigError):
+        await vault.migrate_legacy_tokens()
+    assert db.storage["oauth_tokens"][0] == before

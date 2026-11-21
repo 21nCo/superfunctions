@@ -178,14 +178,18 @@ class DbEncryptedTokenVault:
         default_key_ref: str,
         now: Callable[[], datetime],
         key_resolver: Optional[Callable[[str], bytes | str]] = None,
+        _pin_keys: bool = False,
     ):
         self.config = config
         # The shared flow stores under this reference when a record names none.
         self.default_key_ref = default_key_ref or "oauth-default"
         self.now = now
         self.key_resolver = key_resolver
-        # Ciphers resolved by this vault, so a sign-in that checked its key up
-        # front writes with that same key even if the resolver fails later.
+        # Only a per-request vault (for_request) keeps the ciphers it resolved,
+        # so a sign-in that checked its key up front writes with that same key
+        # even if the resolver fails later. The shared vault resolves keys
+        # afresh on every use, so it never holds an outdated secret.
+        self._pin_keys = _pin_keys
         self._ciphers: Dict[str, Fernet] = {}
 
     async def put(self, record: TokenRecord) -> None:
@@ -250,8 +254,10 @@ class DbEncryptedTokenVault:
         row = await self.get(token_id)
         if row is None:
             return
-        decrypted = self._cipher(row.key_ref).decrypt(row.encrypted_payload.encode("utf-8"))
-        rotated = self._cipher(new_key_ref).encrypt(decrypted).decode("utf-8")
+        # Both keys are resolved afresh: rotation follows the resolver's
+        # current secrets, not ones an earlier request pinned.
+        decrypted = self._cipher(row.key_ref, fresh=True).decrypt(row.encrypted_payload.encode("utf-8"))
+        rotated = self._cipher(new_key_ref, fresh=True).encrypt(decrypted).decode("utf-8")
         await self.config.database.update(
             model="oauth_tokens",
             where=[{"field": "token_id", "operator": "eq", "value": token_id}],
@@ -273,8 +279,8 @@ class DbEncryptedTokenVault:
     def assert_configured(self) -> None:
         """Raises ConfigError unless a valid key is configured for the default
         key reference. Called when a sign-in starts and when its callback
-        arrives, before any side effect: it resolves the current key afresh,
-        which that request's write then reuses."""
+        arrives, before any side effect: it resolves the current key afresh.
+        A per-request vault (for_request) then writes with that key."""
         self._ciphers.pop(self.default_key_ref, None)
         self._cipher(self.default_key_ref)
 
@@ -286,6 +292,7 @@ class DbEncryptedTokenVault:
             default_key_ref=self.default_key_ref,
             now=self.now,
             key_resolver=self.key_resolver,
+            _pin_keys=True,
         )
         vault.assert_configured()
         return vault
@@ -347,18 +354,26 @@ class DbEncryptedTokenVault:
         count = await self.config.database.update_many(
             model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
         )
-        return isinstance(count, int) and not isinstance(count, bool) and count >= 1
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            # Zero is a confirmed no-match; anything else (None from an
+            # inherited stub, a float, a negative) cannot tell whether the row
+            # was written, so the run stops rather than report it as skipped.
+            raise ConfigError(
+                "migrate_legacy_tokens needs update_many to return the number of rows it changed"
+            )
+        return count >= 1
 
-    def _cipher(self, key_ref: str) -> Fernet:
+    def _cipher(self, key_ref: str, *, fresh: bool = False) -> Fernet:
         """The cipher for a key reference, from the configured secret key."""
         key_ref = key_ref or self.default_key_ref
-        cached = self._ciphers.get(key_ref)
+        cached = None if fresh else self._ciphers.get(key_ref)
         if cached is not None:
             return cached
         if self.key_resolver is None:
             raise ConfigError("Social OAuth encryption_key_resolver must be configured to store provider tokens")
         cipher = Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
-        self._ciphers[key_ref] = cipher
+        if self._pin_keys and not fresh:
+            self._ciphers[key_ref] = cipher
         return cipher
 
 
