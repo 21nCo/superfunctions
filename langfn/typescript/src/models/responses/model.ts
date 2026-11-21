@@ -54,6 +54,11 @@ export interface ResponsesChatModelConfig {
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** fetch accepts only Latin-1 (ByteString) header values; CR, LF and NUL are never valid. */
+function isHeaderValue(value: unknown): value is string {
+  return typeof value === "string" && /^[^\r\n\0\u0100-\uffff]*$/.test(value);
+}
 const DEFAULT_MAX_STREAM_LINE_BYTES = 16 * 1024 * 1024;
 
 /**
@@ -152,16 +157,21 @@ export class ResponsesChatModel extends ChatModel {
     // Events may already be buffered when the caller aborts or the body fails, so both are
     // checked before every yield and as soon as the caller resumes, before the mapper reads
     // further: after either, nothing more is delivered, and the stream rejects with the abort
-    // reason or the body error instead of finishing normally or failing on a later frame.
+    // reason or the body error instead of finishing normally or failing on a later frame. The
+    // body error goes first: it is the first failure, since a caller abort before it errors the
+    // body with the abort reason. Once the terminal response is parsed the mapper has released
+    // the body, so a later deadline or byte limit cannot fail the turn; after `end` is
+    // delivered nothing is checked and the stream completes normally.
     const check = () => {
-      throwIfAborted(signal);
       throwIfBodyFailed(bodyError);
+      throwIfAborted(signal);
     };
     const events = readServerSentEvents(response.body, this.maxStreamLineBytes, { bodyError });
     try {
       for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sentCallIds(payload) })) {
         check();
         yield event;
+        if (event.type === "end") return;
         check();
       }
     } catch (error) {
@@ -296,7 +306,7 @@ function validateHeaders(headers: unknown): Record<string, string> {
   const seen = new Set<string>();
   for (const [name, value] of Object.entries(headers)) {
     if (!HEADER_NAME.test(name)) throw new ValidationError(`Invalid header name: ${name}`);
-    if (typeof value !== "string" || /[\r\n\0]/.test(value)) throw new ValidationError(`Header ${name} must be a single-line string`);
+    if (!isHeaderValue(value)) throw new ValidationError(`Header ${name} must be a single-line Latin-1 string`);
     const lower = name.toLowerCase();
     if (lower === "content-type" || lower === "accept") throw new ValidationError(`Header ${name} is set by the model`);
     if (seen.has(lower)) throw new ValidationError(`Header ${name} is set more than once`);

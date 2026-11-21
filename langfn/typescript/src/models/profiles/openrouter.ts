@@ -33,8 +33,9 @@ export function openRouterHeaders(attribution: OpenRouterAttribution = {}): Reco
   for (const [field, header] of [["referer", "HTTP-Referer"], ["title", "X-Title"]] as const) {
     const value = attribution[field];
     if (value === undefined) continue;
-    if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value)) {
-      throw new ValidationError(`OpenRouter ${field} must be a non-empty single-line string`);
+    // fetch accepts only Latin-1 (ByteString) header values; CR, LF and NUL are never valid.
+    if (typeof value !== "string" || !value.trim() || !/^[^\r\n\0\u0100-\uffff]*$/.test(value)) {
+      throw new ValidationError(`OpenRouter ${field} must be a non-empty single-line Latin-1 string`);
     }
     headers[header] = value;
   }

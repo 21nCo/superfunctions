@@ -14,6 +14,7 @@ import type { StreamEvent } from "../src/core/types.js";
 import {
   defineCapabilityProfile,
   openAIProfile,
+  openRouterHeaders,
   UnsupportedCapabilityError,
   type CapabilityProfile,
 } from "../src/models/profiles/index.js";
@@ -199,6 +200,16 @@ describe("stream mapping", () => {
       expect(outcome.error).toBeInstanceOf(ProviderError);
       expect(String(outcome.error)).toContain(`event ${event} conflicts with its type ${type}`);
       expect(outcome.seen).toEqual([]);
+      // A reported error, on the event or its response, decides the typed failure before the conflict.
+      const rateLimit = { code: "rate_limit_exceeded", message: "slow down" };
+      for (const data of [
+        { type, error: rateLimit, response: completed([call]) },
+        { type, response: { ...completed([call]), error: rateLimit } },
+      ]) {
+        const reported = await mapRaw(frame(done(0)) + frame(data, event));
+        expect(reported.error).toBeInstanceOf(RateLimitError);
+        expect(reported.seen).toEqual([]);
+      }
     }
     // Agreeing names, or a discriminator in only one place, still work.
     for (const text of [
@@ -957,6 +968,13 @@ describe("ResponsesChatModel configuration", () => {
     }
     expect(new ResponsesChatModel({ ...base, path: "/v2/responses.json" }).provider).toBe("custom-gateway-responses:https://gateway.example.test/v2/responses.json");
     expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": "a\r\nb" } })).toThrow(ValidationError);
+    // fetch rejects header values outside Latin-1 on send, so they fail at construction instead.
+    for (const value of ["a\0b", "caf\u2603", "\u{1F600}"]) {
+      expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": value } })).toThrow("single-line Latin-1");
+      expect(() => openRouterHeaders({ title: value })).toThrow(ValidationError);
+    }
+    expect(new ResponsesChatModel({ ...base, headers: { "x-test": "caf\u00e9" } })).toBeInstanceOf(ResponsesChatModel);
+    expect(openRouterHeaders({ title: "caf\u00e9" })).toEqual({ "X-Title": "caf\u00e9" });
     expect(() => new ResponsesChatModel({ ...base, reasoning: { effort: "low" } })).toThrow(UnsupportedCapabilityError);
     expect(() => defineCapabilityProfile({ ...customProfile, vision: "yes" as never })).toThrow(ValidationError);
     expect(() => defineCapabilityProfile({ ...customProfile, contextWindow: 10, maxOutputTokens: 20 })).toThrow(ValidationError);
@@ -1128,6 +1146,58 @@ describe("ResponsesChatModel configuration", () => {
     const complete = await pausing(gateway(async () => new Response(stalled(text), { status: 200 }), { timeout: 0 }), 0);
     expect(complete.outcome).toBeUndefined();
     expect(complete.seen.map((event) => event.type)).toEqual(["content", "tool_call", "message", "end"]);
+  });
+
+  it("delivers a fully received turn even when the body would fail after its terminal response", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    // One chunk holds the whole terminal response; the body stays open past the deadline.
+    const text = `data: ${JSON.stringify({ type: "response.completed", response: completed([call]) })}\n\n`;
+    const model = () => gateway(async () => new Response(stalled(text), { status: 200 }), { timeout: 40 });
+
+    // The consumer pauses past the deadline on the tool call.
+    const seen: StreamEvent[] = [];
+    for await (const event of model().streamChat({ messages: [{ role: "user", content: "x" }] })) {
+      seen.push(event);
+      if (event.type === "tool_call") await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+
+    // A deadline or a caller abort after end does not fail the turn.
+    const controller = new AbortController();
+    const afterEnd: StreamEvent[] = [];
+    for await (const event of model().streamChat({ messages: [{ role: "user", content: "x" }], signal: controller.signal })) {
+      afterEnd.push(event);
+      if (event.type === "end") {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        controller.abort(new Error("caller cancelled after end"));
+      }
+    }
+    expect(afterEnd.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+
+    // LangFn.stream ends with end, not an error event.
+    const viaClient: StreamEvent[] = [];
+    for await (const event of new LangFn({ model: model() }).stream("x")) {
+      viaClient.push(event);
+      if (event.type === "message") await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    expect(viaClient.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+  });
+
+  it("keeps the first failure when the caller aborts after a transport deadline", async () => {
+    const delta = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial" })}\n\n`;
+    const controller = new AbortController();
+    const seen: StreamEvent[] = [];
+    const outcome = await (async () => {
+      const model = gateway(async () => new Response(stalled(delta), { status: 200 }), { timeout: 30 });
+      for await (const event of model.streamChat({ messages: [{ role: "user", content: "x" }], signal: controller.signal })) {
+        seen.push(event);
+        // The deadline passes during this pause; the caller aborts only afterwards.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        controller.abort(new Error("caller cancelled after the deadline"));
+      }
+    })().catch((caught: unknown) => caught);
+    expect(outcome).toBeInstanceOf(TimeoutError);
+    expect(seen.map((event) => event.type)).toEqual(["content"]);
   });
 
   it("rejects a returned call that reuses a call_id from the sent history, before any tool call", async () => {

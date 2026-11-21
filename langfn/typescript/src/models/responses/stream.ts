@@ -211,7 +211,9 @@ function isRecord(value: unknown): value is JsonRecord {
  * success status, two finished items on one output index) throws a typed error before any tool
  * call or end. So does a terminal response that disagrees with what the stream already
  * reported as finished (see {@link reconcileFinishedItems}), a different response id, or a
- * returned call reusing a call_id of the sent history (`options.sentCallIds`).
+ * returned call reusing a call_id of the sent history (`options.sentCallIds`). Once the
+ * terminal response is validated, the events are released (the body is no longer read) before
+ * its `tool_call`, `token_usage`, `message` and `end` events are yielded.
  */
 export async function* mapResponsesStream(
   events: AsyncIterable<ServerSentEvent>,
@@ -223,8 +225,9 @@ export async function* mapResponsesStream(
   const statedIndexes = new Set<number>();
   const argumentsDone: ArgumentsDone[] = [];
   let startedId: string | undefined;
+  let terminal: StreamEvent[] | undefined;
 
-  for await (const frame of events) {
+  frames: for await (const frame of events) {
     if (frame.data === "[DONE]") break;
     let payload: unknown;
     try {
@@ -238,6 +241,9 @@ export async function* mapResponsesStream(
     const jsonType = typeof payload.type === "string" ? payload.type : undefined;
     if (jsonType !== undefined && frame.event !== undefined && frame.event !== jsonType
       && (TERMINAL_EVENTS.has(jsonType) || TERMINAL_EVENTS.has(frame.event))) {
+      // A reported error is the outcome either way, so it decides the typed failure first.
+      assertNoReportedError(payload, provider);
+      if (isRecord(payload.response)) assertNoReportedError(payload.response, provider);
       throw fail(`Responses stream event ${frame.event} conflicts with its type ${jsonType}`);
     }
     const type = jsonType ?? frame.event;
@@ -329,20 +335,21 @@ export async function* mapResponsesStream(
           reconcileFinishedItems({ done, argumentsDone, output, omitted, completed: status === "completed", fail, provider });
         }
         const result = parseResponsesResponse({ ...response, status, output }, provider, options);
+        terminal = [];
         for (const call of result.toolCalls ?? []) {
-          yield { type: "tool_call", id: call.id, toolName: call.name, args: call.arguments };
+          terminal.push({ type: "tool_call", id: call.id, toolName: call.name, args: call.arguments });
         }
         if (result.usage) {
-          yield {
+          terminal.push({
             type: "token_usage",
             prompt_tokens: result.usage.prompt_tokens,
             completion_tokens: result.usage.completion_tokens,
             total_tokens: result.usage.total_tokens,
-          };
+          });
         }
-        yield { type: "message", message: result.message };
-        yield { type: "end", finish_reason: result.finishReason };
-        return;
+        terminal.push({ type: "message", message: result.message });
+        terminal.push({ type: "end", finish_reason: result.finishReason });
+        break frames;
       }
       case "response.failed": {
         const response = isRecord(payload.response) ? payload.response : {};
@@ -355,5 +362,8 @@ export async function* mapResponsesStream(
         break;
     }
   }
-  throw fail("Responses stream ended before a terminal response event");
+  if (!terminal) throw fail("Responses stream ended before a terminal response event");
+  // Leaving the frame loop has already released the body (which cancels the read and clears a
+  // transport deadline), so the fully received turn is delivered whatever the body would do next.
+  yield* terminal;
 }
