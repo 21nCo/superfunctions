@@ -601,7 +601,11 @@ describe('authfn apple social oauth', () => {
       expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
     });
 
-    it('percent-encodes an allowlisted non-ASCII path in a successful cookie-only redirect', async () => {
+    it.each([
+      ['/会員', '/%E4%BC%9A%E5%93%A1'],
+      ['/post-auth#', '/post-auth#'],
+      ['/post-auth?', '/post-auth?']
+    ])('sends the allowlisted target %s as %s in a successful cookie-only redirect', async (returnTo, expected) => {
       const auth = createTestServer({
         database: memoryAdapter({ debug: false }),
         namespace: 'authfn',
@@ -612,7 +616,7 @@ describe('authfn apple social oauth', () => {
               apple: {
                 clientId: 'apple-client-id',
                 clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
-                allowlistedReturnTo: ['/会員']
+                allowlistedReturnTo: [returnTo]
               }
             },
             fetcher: async () => createResponse({
@@ -629,7 +633,7 @@ describe('authfn apple social oauth', () => {
       const started = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: 'apple', returnTo: '/会員' })
+        body: JSON.stringify({ provider: 'apple', returnTo })
       }));
       expect(started.status).toBe(200);
       const stateId = (await started.json()).data.stateId as string;
@@ -639,7 +643,7 @@ describe('authfn apple social oauth', () => {
         body: new URLSearchParams({ code: 'apple_code', state: stateId })
       }));
       expect(callback.status).toBe(303);
-      expect(callback.headers.get('location')).toBe('/%E4%BC%9A%E5%93%A1');
+      expect(callback.headers.get('location')).toBe(expected);
       expect(callback.headers.getSetCookie().length).toBeGreaterThan(0);
     });
 

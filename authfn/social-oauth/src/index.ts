@@ -2124,7 +2124,9 @@ function serializeReturnTarget(returnTo: string): string {
 
 /** Formats a target edited after parseReturnTarget, keeping a relative one relative. */
 function formatReturnTarget(returnTo: string, url: URL): string {
-  return isSameOriginPath(returnTo) ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+  // href keeps an empty `?` or `#`; pathname + search + hash would drop
+  // them, and a target without its own `#` takes the callback URL's fragment.
+  return isSameOriginPath(returnTo) ? url.href.slice(url.origin.length) : url.href;
 }
 
 /**
