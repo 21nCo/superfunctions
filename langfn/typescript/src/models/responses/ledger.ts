@@ -94,6 +94,23 @@ function sameJson(left: unknown, right: unknown): boolean {
   return true;
 }
 
+/** Chunks that name a content_index, grouped by it in one pass, each group in arrival order. */
+function byContentIndex(chunks: Chunk[]): Map<number, Chunk[]> {
+  const groups = new Map<number, Chunk[]>();
+  for (const chunk of chunks) {
+    if (chunk.contentIndex === undefined) continue;
+    const group = groups.get(chunk.contentIndex);
+    if (group) group.push(chunk);
+    else groups.set(chunk.contentIndex, [chunk]);
+  }
+  return groups;
+}
+
+/** Append without spreading, so a large merged entry never exceeds the argument limit. */
+function append<T>(target: T[], source: T[]): void {
+  for (const value of source) target.push(value);
+}
+
 function joined(chunks: Chunk[]): string {
   return [...chunks].sort((left, right) => left.seq - right.seq).map((chunk) => chunk.text).join("");
 }
@@ -260,12 +277,14 @@ export class OutputLedger {
   /**
    * Reconcile the ledger with the terminal response, before any tool call, message or end:
    * - A supplied output is validated like a JSON one and merges into the ledger item by item at
-   *   its positions. Every finished item (one output_item.done finished, or a running snapshot
-   *   showed completed) that names an index or identity must be in it, as the
+   *   its positions. Every finished item (one output_item.done finished, or an announcement or
+   *   running snapshot showed completed) that names an index or identity must be in it, as the
    *   same item: the finished item (and a running snapshot that showed it completed) and the
    *   terminal item agree on every field both state, and the final item takes the fields it
    *   omits from them. An item that held streamed text is there too. An omitted output (absent or `[]`) is rebuilt from the finished items
    *   (see {@link rebuild}). Each final item carries the id and call_id the ledger holds for it.
+   *   On an incomplete turn an interrupted item ({@link interrupted}) may be absent; if present,
+   *   it agrees like any other.
    * - On a completed turn every announced item has finished, and every finished call is
    *   executable. An incomplete turn may stop with items unfinished.
    * - Each function_call_arguments.done repeats the arguments of the call it names; on a
@@ -326,7 +345,7 @@ export class OutputLedger {
         return item;
       });
       for (const entry of this.entries) {
-        if (forms.has(entry) && !entry.terminal && hasLocator(entry)) {
+        if (forms.has(entry) && !entry.terminal && hasLocator(entry) && (completed || !this.interrupted(entry))) {
           throw this.fail(`Responses terminal output does not have the finished ${this.describe(entry)}`);
         }
         if (holdsText(entry) && !entry.terminal) {
@@ -367,6 +386,17 @@ export class OutputLedger {
     }
 
     return { output, undelivered: this.undelivered(output, type) };
+  }
+
+  /**
+   * An item the stream stated only in an unfinished terminal status (an announcement or running
+   * snapshot with status incomplete or failed, and no output_item.done): on an incomplete turn
+   * it may be absent from the terminal output, supplied or omitted alike, and is then neither
+   * run nor replayed, as with a call whose arguments only streamed. Only output_item.done or a
+   * completed form makes an item finished, so that it must appear.
+   */
+  private interrupted(entry: Entry): boolean {
+    return entry.finished === undefined && entry.settled !== undefined && entry.settled.status !== "completed";
   }
 
   /** The final item with the id, and a function call's call_id, that the ledger holds for it. */
@@ -464,8 +494,8 @@ export class OutputLedger {
     if (other.settled) {
       entry.settled = entry.settled ? this.agree(entry, other.settled, entry.settled, what) : other.settled;
     }
-    entry.text.push(...other.text);
-    entry.args.push(...other.args);
+    append(entry.text, other.text);
+    append(entry.args, other.args);
     for (const [contentIndex, snapshot] of other.snapshots) {
       const known = entry.snapshots.get(contentIndex);
       if (known !== undefined && known !== snapshot) throw this.fail(`Responses ${what} states different text for one text part`);
@@ -538,8 +568,8 @@ export class OutputLedger {
    */
   private parts(record: TextRecord, type: string): string[] {
     const loose = record.text.filter((chunk) => chunk.contentIndex === undefined);
-    const located = record.text.filter((chunk) => chunk.contentIndex !== undefined);
-    const named = located.length > 0 || record.snapshots.size > 0;
+    const located = byContentIndex(record.text);
+    const named = located.size > 0 || record.snapshots.size > 0;
     if (named && (loose.length || record.whole !== undefined)) {
       throw this.fail("Responses stream text events name one text part in two ways");
     }
@@ -550,12 +580,9 @@ export class OutputLedger {
       return snapshot ?? streamed;
     };
     if (!named) return [part(joined(loose), record.whole)];
-    const indexes = [...new Set([...located.map((chunk) => chunk.contentIndex as number), ...record.snapshots.keys()])]
+    const indexes = [...new Set([...located.keys(), ...record.snapshots.keys()])]
       .sort((left, right) => left - right);
-    return indexes.map((contentIndex) => part(
-      joined(located.filter((chunk) => chunk.contentIndex === contentIndex)),
-      record.snapshots.get(contentIndex),
-    ));
+    return indexes.map((contentIndex) => part(joined(located.get(contentIndex) ?? []), record.snapshots.get(contentIndex)));
   }
 
   /**
@@ -576,11 +603,7 @@ export class OutputLedger {
     const fail = () => this.fail(`Responses ${type} event text of ${this.describe(entry)} differs from the text the stream stated for it`);
     if (!whole.startsWith(joined(entry.text))) throw fail();
     // Text streamed to a named part is a prefix of that part.
-    const byPart = new Map<number, Chunk[]>();
-    for (const chunk of entry.text) {
-      if (chunk.contentIndex !== undefined) byPart.set(chunk.contentIndex, [...(byPart.get(chunk.contentIndex) ?? []), chunk]);
-    }
-    for (const [contentIndex, chunks] of byPart) {
+    for (const [contentIndex, chunks] of byContentIndex(entry.text)) {
       const text = textAt(contentIndex);
       if (text === undefined || !text.startsWith(joined(chunks))) throw fail();
     }
@@ -597,10 +620,7 @@ export class OutputLedger {
    */
   private assertUnlocatedText(output: JsonRecord[], type: string): void {
     const record = this.unlocated;
-    const byPart = new Map<number, Chunk[]>();
-    for (const chunk of record.text) {
-      if (chunk.contentIndex !== undefined) byPart.set(chunk.contentIndex, [...(byPart.get(chunk.contentIndex) ?? []), chunk]);
-    }
+    const byPart = byContentIndex(record.text);
     if (record.snapshots.size === 0 && record.whole === undefined && byPart.size === 0) return;
     if (output.some((item) => this.synthesized.has(item))) return;
     const parts = answerParts(output);

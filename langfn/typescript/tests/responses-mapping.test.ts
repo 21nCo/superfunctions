@@ -1426,6 +1426,78 @@ describe("stream mapping", () => {
     expect(completedTurn.seen.map((event) => event.type)).toEqual(["content"]);
   });
 
+  it("lets an incomplete turn drop an item the stream stated only as interrupted", async () => {
+    const hi = { ...said("Hi"), id: "msg_fixture" };
+    const cutCall = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "lookup", arguments: "{", status: "incomplete" };
+    const response = { id: "resp_fixture_mapping", status: "in_progress" };
+    const running = (output: unknown[]) => frame({ type: "response.in_progress", response: { ...response, output } });
+    const added = (item: unknown, index: number) => frame({ type: "response.output_item.added", output_index: index, item });
+    const truncated = { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } };
+    const incomplete = (output?: unknown[]) => frame({ type: "response.incomplete", response: { ...truncated, ...(output ? { output } : {}) } });
+    const types = (seen: StreamEvent[]) => seen.map((event) => event.type);
+
+    // A running snapshot or an announcement shows the call interrupted; the terminal output
+    // supplies only the message, or is omitted: either way the answer and length outcome stay,
+    // and the call is neither run nor replayed.
+    for (const prefix of [running([hi, cutCall]), added(hi, 0) + added(cutCall, 1) + frame({ type: "response.output_item.done", output_index: 0, item: hi })]) {
+      for (const output of [[hi], undefined]) {
+        const outcome = await mapRaw(prefix + incomplete(output));
+        expect(outcome.error, `${prefix} ${String(output)}`).toBeUndefined();
+        expect(types(outcome.seen)).toEqual(["content", "message", "end"]);
+        const message = (outcome.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+        expect(message.content).toBe("Hi");
+        expect(message.toolCalls ?? []).toEqual([]);
+        expect(JSON.stringify(message.responsesOutput)).not.toContain("call_fixture");
+        expect(outcome.seen.at(-1)).toMatchObject({ finish_reason: "length" });
+      }
+    }
+    // When the terminal output does have it, it still agrees with the interrupted form.
+    const changed = await mapRaw(running([hi, cutCall]) + incomplete([hi, { ...cutCall, arguments: "{\"a\":1}" }]));
+    expect(String(changed.error)).toContain("terminal output changes the arguments of function_call item call_fixture");
+    expect(changed.seen).toEqual([]);
+    // A completed turn may not drop it (nor finish it).
+    const completedTurn = await mapRaw(running([hi, cutCall]) + frame({ type: "response.completed", response: completed([hi]) }));
+    expect(completedTurn.error).toBeInstanceOf(ProviderError);
+    expect(completedTurn.seen).toEqual([]);
+    // An output_item.done finishes an item whatever its status, so the output must have it.
+    const finished = await mapRaw(added(hi, 0) + frame({ type: "response.output_item.done", output_index: 0, item: hi })
+      + frame({ type: "response.output_item.done", output_index: 1, item: cutCall }) + incomplete([hi]));
+    expect(String(finished.error)).toContain("terminal output does not have the finished function_call item call_fixture");
+  });
+
+  it("reconciles a long stream of text deltas in time linear in their number", async () => {
+    const count = 100_000;
+    const text = "x".repeat(count);
+    const item = { type: "message", id: "msg_fixture", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] };
+    for (const output of [[item], undefined]) {
+      const frames: Array<{ data: string }> = [
+        { data: JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", content: [] } }) },
+      ];
+      for (let index = 0; index < count; index += 1) {
+        frames.push({ data: JSON.stringify({ type: "response.output_text.delta", item_id: "msg_fixture", output_index: 0, content_index: 0, delta: "x" }) });
+      }
+      frames.push({ data: JSON.stringify({ type: "response.output_item.done", output_index: 0, item }) });
+      frames.push({ data: JSON.stringify({ type: "response.completed", response: completed(output ?? []) }) });
+      let terminalAt = 0;
+      async function* source() {
+        for (const [index, value] of frames.entries()) {
+          if (index === frames.length - 1) terminalAt = performance.now();
+          yield value;
+        }
+      }
+      let deltas = 0;
+      let message: ResponsesMessage | undefined;
+      for await (const event of mapResponsesStream(source(), "fixture")) {
+        if (event.type === "content") deltas += 1;
+        if (event.type === "message") message = (event as { message: ResponsesMessage }).message;
+      }
+      // Grouping each delta by copying its part's chunks took over 15 s here.
+      expect(performance.now() - terminalAt).toBeLessThan(1000);
+      expect(deltas).toBe(count);
+      expect(message?.content).toBe(text);
+    }
+  }, 30_000);
+
   it("rejects content part events without a typed part, and sparse arrays in an output", async () => {
     const callItem = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "lookup", arguments: "{}", status: "completed" };
     const terminal = frame({ type: "response.completed", response: completed([callItem]) });
