@@ -1,0 +1,51 @@
+package-lock.json
+  s_b996deaa3d01f1::t_a234f394f80e67 61986,62011,62026,62042,62057,62072,62087,62142,63532
+searchfn/adapter-contracts/package.json
+  s_b996deaa3d01f1::t_b0fc06c797181b 3
+searchfn/adapter-elasticsearch/__tests__/elasticsearch.test.ts
+  s_b996deaa3d01f1::t_43e92a92e07e54 132
+searchfn/adapter-elasticsearch/package.json
+  s_b996deaa3d01f1::t_215d4d16cbd1fa 34
+searchfn/adapter-elasticsearch/src/internal/redaction.ts
+  s_b996deaa3d01f1::t_a159edffb28e45 1-62
+searchfn/adapter-indexeddb/package.json
+  s_b996deaa3d01f1::t_a360b4c6f6cf28 32
+searchfn/adapter-meilisearch/__tests__/meilisearch.test.ts
+  s_b996deaa3d01f1::t_bc3a45df53bea7 129
+searchfn/adapter-meilisearch/package.json
+  s_b996deaa3d01f1::t_a23bffb1e67943 34
+searchfn/adapter-meilisearch/src/internal/redaction.ts
+  s_b996deaa3d01f1::t_402c5bde5154d9 1-85
+searchfn/adapter-memory/package.json
+  s_b996deaa3d01f1::t_b1392e1dbe2250 32
+searchfn/adapter-memory/src/index.ts
+  s_b996deaa3d01f1::t_0c45d2cc0b7df2 217-225
+searchfn/adapter-opensearch/package.json
+  s_b996deaa3d01f1::t_8eae499ddab265 34
+searchfn/adapter-postgres/__tests__/postgres.test.ts
+  s_b996deaa3d01f1::t_27972a40830ebc 375
+searchfn/adapter-postgres/package.json
+  s_b996deaa3d01f1::t_710a028fe0723c 37
+searchfn/adapter-postgres/src/internal/redaction.ts
+  s_b996deaa3d01f1::t_5f4b20162d209b 1-85
+searchfn/admin/package.json
+  s_b996deaa3d01f1::t_8e8494ac7f0d89 41
+searchfn/server/package.json
+  s_b996deaa3d01f1::t_fcff2edee570bb 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "861f8670941baf97bfec5baf6d21cc097ebdf8ba",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

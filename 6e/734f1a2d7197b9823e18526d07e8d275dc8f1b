@@ -1,0 +1,21 @@
+authfn/docs/content/docs/sdk/python.md
+  s_2cd8e700ac0da3::t_ba7de3783f9bea 193
+authfn/docs/static/llms-full.txt
+  s_2cd8e700ac0da3::t_e2d8f07df3a4a5 11367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e734f1a2d7197b9823e18526d07e8d275dc8f1b",
+  "prompts": {},
+  "sessions": {
+    "s_2cd8e700ac0da3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa56bf8e-3da2-4a0b-b4bc-43acc85ec3b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

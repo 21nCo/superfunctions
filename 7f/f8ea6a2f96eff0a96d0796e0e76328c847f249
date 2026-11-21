@@ -1,0 +1,21 @@
+authfn/swift/Sources/AuthFnClient/AuthFnClient.swift
+  s_e5ac07859c1bc9::t_586b418e5a9cd3 84-88,97-98
+authfn/swift/Tests/AuthFnClientTests/AuthFnClientTests.swift
+  s_e5ac07859c1bc9::t_06767a7fcfd0fb 68-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ff8ea6a2f96eff0a96d0796e0e76328c847f249",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

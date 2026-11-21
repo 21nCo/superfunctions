@@ -1,0 +1,73 @@
+datafn/client/src/query.ts
+  s_ae93a251dbd776::t_f6b9c5b5a4bef3 310
+datafn/client/src/sync/__tests__/engine.test.ts
+  s_ae93a251dbd776::t_c38b703321f759 425-495,1096-1158
+datafn/client/src/sync/engine.ts
+  s_ae93a251dbd776::t_c1e1b9040b419c 183,1332,1359,1367,1376-1380,1393-1407,1420,1934-1942,1945-1946,1954-1957,1983,1985-1990
+datafn/server/__tests__/public-links-plugin.test.ts
+  s_ae93a251dbd776::t_a235d6f847506f 570-728
+datafn/server/src/execution/mutation/permission-directory-outbox.ts
+  s_ae93a251dbd776::t_3ac8a23be542ef 330-339,349,358
+datafn/server/src/execution/sync/push.ts
+  s_ae93a251dbd776::t_1a27e66ed62775 1273-1283
+datafn/server/src/routes/query.ts
+  s_ae93a251dbd776::t_3278988e90c1a1 226
+datafn/server/src/validation/schema.ts
+  s_ae93a251dbd776::t_4c16e0f32635da 122-126
+datafn/client/__tests__/e2ee.test.ts
+  s_b996deaa3d01f1::t_2b0c1b5ce5d4e4 159,185,188-194
+datafn/client/__tests__/performance.test.ts
+  s_b996deaa3d01f1::t_ed644511c6aeda 30-41,43-45
+datafn/client/__tests__/query.test.ts
+  s_b996deaa3d01f1::t_427d054f170618 167,195
+datafn/client/src/__tests__/query-routing.test.ts
+  s_b996deaa3d01f1::t_f56166a721e2e8 99,125,135,142,161-167
+datafn/client/src/e2ee.ts
+  s_b996deaa3d01f1::t_76b1b5b52721ff 46-47,158-173,180,183-186
+datafn/python/datafn/validation.py
+  s_b996deaa3d01f1::t_9a7b176697feb5 87-91,134,144-160,187-189
+datafn/python/tests/test_validation_enhanced.py
+  s_b996deaa3d01f1::t_8867a66f5b5bb6 54-90,134-152,191-218
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_b996deaa3d01f1::t_25a621959d84fe 27,1932-1999,2345-2419,2531-2658,2920-2995
+datafn/server/src/execution/query/__tests__/shared-with-me.test.ts
+  s_b996deaa3d01f1::t_27cbdffa28c70f 2-5,8,201-255
+datafn/server/src/plugins/public-links.ts
+  s_b996deaa3d01f1::t_17135ab07ca644 738-741,911-975
+datafn/server/src/validation/__tests__/schema-capabilities.test.ts
+  s_b996deaa3d01f1::t_3167fd42f1ced4 38-64
+datafn/swift-bridge/__tests__/nativeSyncController.test.ts
+  s_b996deaa3d01f1::t_a85041c1feeb8a 221-283
+datafn/swift-bridge/src/nativeSyncController.ts
+  s_b996deaa3d01f1::t_d39d5a7533b72c 53-55
+datafn/swift-bridge/src/protocol.ts
+  s_b996deaa3d01f1::t_fdf1a396166f2e 23-28
+datafn/swift/Tests/DatafnSwiftUITests/ObservedQueryTests.swift
+  s_b996deaa3d01f1::t_4ea16f50cef7ff 27-32,57-59
+datafn/swift/Tests/DatafnWebViewBridgeHostTests/BridgeHostTests.swift
+  s_b996deaa3d01f1::t_94e184fcb54775 74,76-78,194-196,233-235,409-422
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35d998a0e917550e0f7a970168f2bde89ffdfe15",
+  "prompts": {},
+  "sessions": {
+    "s_ae93a251dbd776": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe75-02b0-78a0-a8f9-d49c36ec6cdc",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

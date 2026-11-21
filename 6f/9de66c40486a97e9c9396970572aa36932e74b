@@ -1,0 +1,55 @@
+clifn/core/CHANGELOG.md
+  s_b15184ae60b291::t_95a7ee5bdc7d60 3-10
+clifn/core/package.json
+  s_b15184ae60b291::t_9e40430397ec91 3,66-68,76-77
+clifn/core/tests/consumer-contract.table.ts
+  s_b15184ae60b291::t_33f6742c19f176 1-59
+clifn/core/tests/consumer-contract.test-d.ts
+  s_b15184ae60b291::t_81340b22722c06 1-133
+clifn/core/tests/consumer-contract.test.ts
+  s_b15184ae60b291::t_841f9cb5e17e08 1-78
+clifn/core/tests/consumer-import-scanner.ts
+  s_b15184ae60b291::t_254c6f4660920f 1-126
+clifn/core/tests/consumer-scan.test.ts
+  s_b15184ae60b291::t_7c3df25c13d417 1-112
+clifn/core/tests/fixtures/consumer-scan/listed-forms.ts
+  s_b15184ae60b291::t_5542573ac674c9 1-18
+clifn/core/tests/fixtures/consumer-scan/unlisted-imports.ts
+  s_b15184ae60b291::t_7e24438f4fa55c 1-11
+clifn/core/tsconfig.typecheck.json
+  s_b15184ae60b291::t_c9e8f2b62dc480 1-10
+clifn/core/turbo.json
+  s_b15184ae60b291::t_f8629e23d1e1af 1-9
+clifn/core/vitest.config.ts
+  s_b15184ae60b291::t_a6179c45d9ccc5 7-12,16
+devfn/cli/package.json
+  s_b15184ae60b291::t_3da8530343be0d 17
+devfn/config/package.json
+  s_b15184ae60b291::t_17db0989dcc81c 22
+extfn/cli/__tests__/dev.test.ts
+  s_b15184ae60b291::t_b20fe5a324ca66 97
+extfn/cli/package.json
+  s_b15184ae60b291::t_9a336f07ec31aa 38
+mailfn/cli/package.json
+  s_b15184ae60b291::t_119de729a13dc4 17
+package-lock.json
+  s_b15184ae60b291::t_79342e2c13f952 9096,9109-9111,11337,11413,12013,16404,60323
+plugfn/cli/package.json
+  s_b15184ae60b291::t_16d08c379be5bd 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f9de66c40486a97e9c9396970572aa36932e74b",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
