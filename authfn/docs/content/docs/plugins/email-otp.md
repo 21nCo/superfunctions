@@ -54,7 +54,7 @@ authApp.createServer({
 | `maxAttempts` | `pluginRuntime.emailOtp` | `5` | Verification attempts per challenge before invalidation. |
 | `maxFailedAttemptsPerEmail` | `pluginRuntime.emailOtp` | `10` | Wrong codes accepted for one email across all of its challenges and purposes within the window. Further verifications for that email return `AUTHFN_RATE_LIMITED`, even with the right code, until older challenges leave the window. |
 | `maxChallengesPerEmail` | `pluginRuntime.emailOtp` | `20` | Challenges that can be sent to one email, across purposes, within the window. Further sends return `AUTHFN_RATE_LIMITED`. |
-| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. Never shorter than `challengeTtlSeconds`. |
+| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. A challenge that outlives the window keeps counting until it expires. Configure the same limits for `pluginRuntime.password.otp`: both plugins count the same challenges. |
 
 ### Delivery provider
 

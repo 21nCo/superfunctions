@@ -1189,6 +1189,80 @@ describe('authfn otp plugin', () => {
       expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(429);
     });
 
+    it('compares at most the remaining budget when wrong codes for several challenges arrive concurrently', async () => {
+      const { config, post } = setup();
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 5; guess += 1) {
+        await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+      }
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 4; guess += 1) {
+        await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+      }
+      // Nine failures so far; one guess is left. A fresh challenge per purpose
+      // allows five attempts each, so only the per-email count can stop this.
+      const purposes = ['sign-in', 'sign-up', 'verify-email', 'reset-password'];
+      for (const purpose of purposes) {
+        config.__clock.advance(1000);
+        expect((await post('/otp/send', { purpose, email: 'ada@example.com' })).status).toBe(200);
+      }
+      codeComparisons.count = 0;
+      const responses = await Promise.all(purposes.flatMap((purpose) => Array.from({ length: 5 }, () =>
+        post('/otp/verify', { purpose, email: 'ada@example.com', code: '100000' })
+      )));
+      expect(codeComparisons.count).toBeLessThanOrEqual(1);
+      expect(responses.every((response) => response.status === 400 || response.status === 429)).toBe(true);
+    });
+
+    it('keeps the challenge cap when sends arrive concurrently', async () => {
+      const { config, post } = setup({ maxChallengesPerEmail: 5 });
+      for (let round = 0; round < 4; round += 1) {
+        config.__clock.advance(1000);
+        expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      }
+      config.__clock.advance(1000);
+      const deliveriesBefore = config.__delivery.deliveries.length;
+      const responses = await Promise.all(Array.from({ length: 6 }, () =>
+        post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })
+      ));
+      expect(responses.filter((response) => response.status === 200).length).toBeLessThanOrEqual(1);
+      expect(config.__delivery.deliveries.length - deliveriesBefore).toBeLessThanOrEqual(1);
+      const rows = await config.database.findMany({
+        model: 'otp_challenges',
+        where: [{ field: 'email', operator: 'eq', value: 'ada@example.com' }],
+        namespace: 'authfn'
+      });
+      expect(rows.length).toBeLessThanOrEqual(5);
+    });
+
+    it('keeps counting a challenge that outlives the window until it expires, across plugins', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 3 });
+      // The email OTP plugin issues reset codes that live two hours; the
+      // password plugin, which completes resets, keeps its one-hour window.
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: 2 * 60 * 60 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'reset-password', email: 'ada@example.com' });
+      config.__clock.advance(70 * 60 * 1000);
+      for (let guess = 0; guess < 3; guess += 1) {
+        const response = await post('/password/reset/complete', {
+          email: 'ada@example.com',
+          code: '100000',
+          newPassword: 'An0therSecurePassphrase!'
+        });
+        expect(response.status).toBe(400);
+      }
+      const refused = await post('/password/reset/complete', {
+        email: 'ada@example.com',
+        code: '731942',
+        newPassword: 'An0therSecurePassphrase!'
+      });
+      expect(refused.status).toBe(429);
+      expect((await refused.json()).error.details.resetAt).toBe('2026-03-22T02:00:00.000Z');
+    });
+
     it.each([0, -1, 1.5, Number.NaN])('rejects %s as a limit', async (value) => {
       const { post } = setup({ maxFailedAttemptsPerEmail: value });
       const response = await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });

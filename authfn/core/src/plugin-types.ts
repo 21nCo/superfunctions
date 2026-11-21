@@ -54,8 +54,9 @@ export interface EmailOtpPluginRuntimeConfig {
   maxChallengesPerEmail?: number;
   /**
    * Window, in seconds, for `maxFailedAttemptsPerEmail` and
-   * `maxChallengesPerEmail`, measured from each challenge's creation. Never
-   * shorter than `challengeTtlSeconds`. Defaults to 3600.
+   * `maxChallengesPerEmail`, measured from each challenge's creation. A
+   * challenge that outlives the window keeps counting until it expires.
+   * Defaults to 3600.
    */
   emailAttemptWindowSeconds?: number;
 }
