@@ -817,15 +817,47 @@ async function recordTotpStep(
       config,
       'two_factor_enrollments',
       current.id,
-      [{ field: 'lastUsedCounter', operator: 'eq', value: lastUsed }],
+      [
+        { field: 'lastUsedCounter', operator: 'eq', value: lastUsed },
+        // The secret the code was checked against, so a replaced secret on
+        // the same row is not credited with the old secret's step.
+        { field: 'secretEncrypted', operator: 'eq', value: enrollment.secretEncrypted }
+      ],
       { lastUsedCounter: step, updatedAt: resolveNow(pluginConfig) }
     );
     if (recorded) {
       return;
     }
-    current = await requireTwoFactorEnrollment(config, enrollment.userId);
+    const reloaded = await reloadSameEnrollment(config, enrollment);
+    if (!reloaded) {
+      break;
+    }
+    current = reloaded;
   }
   throw invalidSecondFactorCode(enrollment.userId);
+}
+
+/**
+ * Re-reads the enrollment a code was checked against, by id, or returns null
+ * when it has been removed or replaced (a new secret, as re-enrolling writes)
+ * since: a code from the old secret must not be recorded against the new one.
+ */
+async function reloadSameEnrollment(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollment: AuthFnTwoFactorEnrollmentRecord
+): Promise<AuthFnTwoFactorEnrollmentRecord | null> {
+  const current = await config.database.findOne<AuthFnTwoFactorEnrollmentRecord>({
+    model: 'two_factor_enrollments',
+    where: [{ field: 'id', operator: 'eq', value: enrollment.id }],
+    namespace: namespace(config)
+  });
+  if (!current || current.secretEncrypted !== enrollment.secretEncrypted) {
+    return null;
+  }
+  if (enrollment.confirmedAt && !current.confirmedAt) {
+    return null;
+  }
+  return current;
 }
 
 async function verifyTwoFactorTotp(
@@ -855,15 +887,22 @@ async function verifyTwoFactorTotp(
       config,
       'two_factor_enrollments',
       currentEnrollment.id,
-      [{ field: 'lastUsedCounter', operator: 'eq', value: currentEnrollment.lastUsedCounter ?? null }],
+      [
+        { field: 'lastUsedCounter', operator: 'eq', value: currentEnrollment.lastUsedCounter ?? null },
+        { field: 'secretEncrypted', operator: 'eq', value: enrollment.secretEncrypted }
+      ],
       { lastUsedCounter: matchedCounter, updatedAt: now }
     );
     if (recorded) {
       return;
     }
     // Another request used a code first: check this one against the newer
-    // counter.
-    currentEnrollment = await requireTwoFactorEnrollment(config, enrollment.userId);
+    // counter, on the same enrollment and secret.
+    const reloaded = await reloadSameEnrollment(config, enrollment);
+    if (!reloaded) {
+      break;
+    }
+    currentEnrollment = reloaded;
   }
 
   throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {

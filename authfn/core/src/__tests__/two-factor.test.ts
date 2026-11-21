@@ -1087,6 +1087,37 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(await finishing).toBe('ok');
   });
 
+  it('does not record a code from a secret that was replaced while the sign-in was in flight', async () => {
+    const setup = await enrolledUser();
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    setup.clock.advanceSeconds(30);
+    const challengeId = await setup.challenge();
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_challenges' && params.data.consumedAt instanceof Date);
+    const finishing = satisfyTwoFactorChallenge(config, challengeId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig)
+      .then(() => 'ok', (error) => error.code);
+    await reached;
+    // Meanwhile the user disables 2FA and enrolls again: a new enrollment
+    // with a new secret.
+    await setup.config.database.delete({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'id', operator: 'eq', value: setup.enrollmentId }],
+      namespace: 'authfn'
+    });
+    const now = setup.clock.now();
+    await setup.config.database.create({
+      model: 'two_factor_enrollments',
+      data: {
+        id: 'tfe_test_replacement', userId: setup.userId, secretEncrypted: 'test-replacement-secret',
+        lastUsedCounter: null, failedAttemptCount: null, lockedUntil: null, confirmedAt: now, createdAt: now, updatedAt: now
+      },
+      namespace: 'authfn'
+    });
+    paused.release();
+    expect(await finishing).toBe('AUTHFN_2FA_INVALID_CODE');
+  });
+
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;
