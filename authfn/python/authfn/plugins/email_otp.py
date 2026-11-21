@@ -532,6 +532,12 @@ def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> Au
                         "name": "idx_authfn_otp_challenges_expires_at",
                         "fields": ["expiresAt"],
                     },
+                    {
+                        # Same as the TypeScript kernel: the per-email budget
+                        # reads an email's newest challenges across purposes.
+                        "name": "idx_authfn_otp_challenges_email_created_at",
+                        "fields": ["email", "createdAt", "id"],
+                    },
                 ],
             }
         ],
