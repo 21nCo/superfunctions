@@ -79,6 +79,8 @@ jobs:
         run: |
           set -euo pipefail
           gates="${RUNNER_TEMP}/release-gates"
+          # The dispatching branch may have moved or been deleted since dispatch; fetch its commit by SHA if needed.
+          git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git worktree add --detach "${gates}" "${GITHUB_SHA}"
           node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}"
 

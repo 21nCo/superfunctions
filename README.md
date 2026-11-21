@@ -64,11 +64,12 @@ tag whose npm slug or Python project is owned by the other repository in
 `superfunctions.owners.json` / `superfunctions.owners.next.json`, is listed in
 neither or in both (`scripts/assert-release-owner.mjs`), and a tag whose commit
 has no completed, successful CI run on that exact SHA
-(`scripts/assert-release-ci.mjs`). On `21nCo/superfunctions` that is a `push` or
-`workflow_dispatch` run of `.github/workflows/ci.yml` (a `pull_request` run tests
-a merge commit, so it does not count); `"ci": {"workflow": "<file>"}` in
-`superfunctions.owners.json` names another workflow file. On `next`, CI runs on
-Depot, so `superfunctions.owners.next.json` must name the check run with
+(`scripts/assert-release-ci.mjs`). On `21nCo/superfunctions` that is a `push` run
+of `.github/workflows/ci.yml`, and every such run on the commit must have
+succeeded (`pull_request` and `workflow_dispatch` runs do not count: one tests a
+merge commit, the other may plan no package jobs); `"ci": {"workflow": "<file>"}`
+in `superfunctions.owners.json` names another workflow file. On `next`, CI runs
+on Depot, so `superfunctions.owners.next.json` must name the check run with
 `"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}`; without it `next`
 refuses every tag. Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch

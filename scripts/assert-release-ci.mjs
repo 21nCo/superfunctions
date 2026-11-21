@@ -5,10 +5,11 @@
 //   node scripts/assert-release-ci.mjs <40-hex release commit>
 //
 // The running repository comes from GITHUB_REPOSITORY and selects the CI to require. On public it is the `ci` section
-// of superfunctions.owners.json, defaulting to the GitHub Actions workflow .github/workflows/ci.yml; only push and
-// workflow_dispatch runs count, because a pull_request run tests a merge commit, not the tagged one. On next, CI runs
-// on Depot and the synced GitHub Actions CI skips every job, so superfunctions.owners.next.json must name the Depot
-// check run in its `ci` section; without one, next refuses. The GitHub API is read with GITHUB_TOKEN (or GH_TOKEN) at
+// of superfunctions.owners.json, defaulting to the GitHub Actions workflow .github/workflows/ci.yml; only push runs
+// count, because a pull_request run tests a merge commit and a workflow_dispatch run may plan no package jobs. On next,
+// CI runs on Depot and the synced GitHub Actions CI skips every job, so superfunctions.owners.next.json must name the
+// Depot check run in its `ci` section; without one, or with a workflow there, next refuses. Every counted run on the
+// commit must have succeeded, and there must be at least one. The GitHub API is read with GITHUB_TOKEN (or GH_TOKEN) at
 // GITHUB_API_URL.
 
 import { realpathSync } from 'node:fs';
@@ -19,8 +20,11 @@ import { DEFAULT_RELEASE_CI, REPO_ROOT, loadOwners } from './owners.mjs';
 import { PUBLISHING_REPOSITORIES, releaseRepoKind } from './assert-release-owner.mjs';
 
 const PER_PAGE = 100;
-/** Workflow run events that test the commit itself; pull_request runs test a merge of it into the base. */
-export const TESTED_COMMIT_EVENTS = Object.freeze(['push', 'workflow_dispatch']);
+/**
+ * Workflow run events that test the commit itself with the planned package jobs: a pull_request run tests a merge of
+ * it into the base, and a workflow_dispatch run of a commit already on dev plans an empty diff.
+ */
+export const TESTED_COMMIT_EVENTS = Object.freeze(['push']);
 const MAX_PAGES = 10;
 
 export class ReleaseCiError extends Error {
@@ -39,30 +43,33 @@ export class ReleaseCiError extends Error {
 
 /** Human description of a release CI requirement. */
 export function describeCi(ci) {
-  if (ci.kind === 'workflow') return `GitHub Actions workflow .github/workflows/${ci.name} (push or workflow_dispatch run)`;
+  if (ci.kind === 'workflow') return `GitHub Actions workflow .github/workflows/${ci.name} (push run)`;
   return `check run ${JSON.stringify(ci.name)}${ci.app ? ` from app ${JSON.stringify(ci.app)}` : ''}`;
 }
 
 /**
  * The CI a repository requires: on public its manifest's `ci` section or .github/workflows/ci.yml; on next the `ci`
- * section of the next manifest, which must exist (the public section and the default never apply there).
+ * section of the next manifest, which must name a check run (the public section and the default never apply there,
+ * and GitHub Actions workflows skip every job on next).
  * @param {'public' | 'next'} repo
  * @param {ReturnType<typeof loadOwners>} owners
  */
 export function releaseCiFor(repo, owners) {
   if (repo === 'public') return owners.publicManifest.ci ?? DEFAULT_RELEASE_CI;
-  if (owners.nextManifest?.ci) return owners.nextManifest.ci;
+  const ci = owners.nextManifest?.ci;
+  if (ci?.kind === 'check-run') return ci;
+  const problem = ci ? 'names a GitHub Actions workflow in its "ci" section instead of' : 'has no "ci" section naming';
   throw new ReleaseCiError(
     'missing-config',
-    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: superfunctions.owners.next.json has no "ci" section naming the Depot check run ({"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}}). CI there runs on Depot, and the synced GitHub Actions CI skips every job outside ${PUBLISHING_REPOSITORIES.public}.`,
+    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: superfunctions.owners.next.json ${problem} the Depot check run ({"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}}). CI there runs on Depot, and the synced GitHub Actions CI skips every job outside ${PUBLISHING_REPOSITORIES.public}.`,
   );
 }
 
 /**
  * Decides the gate from runs already fetched. A workflow run counts only when its file is the configured workflow and
- * its event tested the commit itself (push or workflow_dispatch); a check run only when its name and app match. It
- * must also have the release commit as its head SHA, and at least one counted run must be completed with conclusion
- * "success".
+ * its event tested the commit itself (push); a check run only when its name and app match. It must also have the
+ * release commit as its head SHA. At least one run must count, and every counted run must be completed with
+ * conclusion "success": a failure on the commit is not outvoted by another run.
  * @param {{ sha: string, ci: { kind: string, name: string, app: string | null }, runs: { name?: string, path?: string, event?: string, headSha?: string, status?: string, conclusion?: string | null, app?: string | null, url?: string }[] }} input
  */
 export function evaluateCiRuns({ sha, ci, runs }) {
@@ -73,8 +80,6 @@ export function evaluateCiRuns({ sha, ci, runs }) {
   );
   const onCommit = named.filter(run => run.headSha === sha);
   const what = describeCi(ci);
-  const success = onCommit.find(run => run.status === 'completed' && run.conclusion === 'success');
-  if (success) return { run: success, message: `${what} succeeded on ${sha}${success.url ? ` (${success.url})` : ''}.` };
   const pending = onCommit.filter(run => run.status !== 'completed');
   if (pending.length > 0) {
     throw new ReleaseCiError(
@@ -83,17 +88,22 @@ export function evaluateCiRuns({ sha, ci, runs }) {
       { sha },
     );
   }
-  if (onCommit.length > 0) {
+  const unsuccessful = onCommit.filter(run => run.conclusion !== 'success');
+  if (unsuccessful.length > 0) {
     throw new ReleaseCiError(
       'failed',
-      `Refusing to publish: ${what} on ${sha} concluded ${onCommit.map(run => run.conclusion ?? 'without a conclusion').join(', ')}, not success.`,
+      `Refusing to publish: ${what} on ${sha} concluded ${unsuccessful.map(run => `${run.conclusion ?? 'without a conclusion'}${run.url ? ` (${run.url})` : ''}`).join(', ')}, not success.`,
       { sha },
     );
+  }
+  if (onCommit.length > 0) {
+    const urls = onCommit.map(run => run.url).filter(Boolean);
+    return { run: onCommit[0], message: `${what} succeeded on ${sha}${urls.length > 0 ? ` (${urls.join(', ')})` : ''}.` };
   }
   const notes = [];
   if (named.length > 0) notes.push(`${named.length} matching run(s) belong to other commits`);
   const otherEvents = ci.kind === 'workflow' ? runs.filter(run => run.path === `.github/workflows/${ci.name}` && run.headSha === sha && !TESTED_COMMIT_EVENTS.includes(run.event)) : [];
-  if (otherEvents.length > 0) notes.push(`${otherEvents.length} ${[...new Set(otherEvents.map(run => run.event))].join('/')} run(s) tested a different tree`);
+  if (otherEvents.length > 0) notes.push(`${otherEvents.length} ${[...new Set(otherEvents.map(run => run.event))].join('/')} run(s) on it are not push runs`);
   const why = notes.length > 0 ? ` (${notes.join('; ')}, so they do not count)` : '';
   throw new ReleaseCiError('missing', `Refusing to publish: no ${what} ran on ${sha}${why}. A tag publishes only a commit that passed CI.`, { sha });
 }

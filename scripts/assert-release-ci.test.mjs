@@ -85,14 +85,14 @@ const refuses = async (promise, code, ...fragments) =>
 const RUNS_PATH = `/repos/${PUBLIC_REPO}/actions/workflows/ci.yml/runs`;
 const CHECKS_PATH = `/repos/${NEXT_REPO}/commits/${RELEASE_SHA}/check-runs`;
 
-test('public: a successful push or dispatch run of ci.yml on the release commit passes, read with the token for that SHA', async t => {
+test('public: a successful push run of ci.yml on the release commit passes, read with the token for that SHA', async t => {
   const root = checkout(t);
-  const { fetchImpl, requests } = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ id: 7, event: 'pull_request', conclusion: 'failure' }), workflowRun({ id: 8 })) });
+  const { fetchImpl, requests } = recordedFetch({
+    [RUNS_PATH]: workflowRuns(workflowRun({ id: 7, event: 'pull_request', conclusion: 'failure' }), workflowRun({ id: 8 }), workflowRun({ id: 9, sha: OTHER_SHA, conclusion: 'failure' })),
+  });
   const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl });
   assert.deepEqual(result.ci, DEFAULT_RELEASE_CI);
-  assert.match(result.message, /workflow \.github\/workflows\/ci\.yml \(push or workflow_dispatch run\) succeeded on a{40} \(https:\/\/github.com\/21nCo\/superfunctions\/actions\/runs\/8\)/);
-  const dispatched = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ event: 'workflow_dispatch' })) }).fetchImpl;
-  await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: dispatched });
+  assert.match(result.message, /workflow \.github\/workflows\/ci\.yml \(push run\) succeeded on a{40} \(https:\/\/github.com\/21nCo\/superfunctions\/actions\/runs\/8\)/);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url.searchParams.get('head_sha'), RELEASE_SHA);
   assert.equal(requests[0].headers.authorization, `Bearer ${TOKEN}`);
@@ -101,14 +101,19 @@ test('public: a successful push or dispatch run of ci.yml on the release commit 
 test('public: a failed, in-progress, missing or other-commit CI run is refused', async t => {
   const root = checkout(t);
   const cases = [
-    ['failed', workflowRuns(workflowRun({ conclusion: 'failure' })), 'concluded failure, not success'],
-    ['failed', workflowRuns(workflowRun({ conclusion: 'cancelled' }), workflowRun({ id: 2, conclusion: 'skipped' })), 'concluded cancelled, skipped'],
+    ['failed', workflowRuns(workflowRun({ conclusion: 'failure' })), 'concluded failure (https://github.com/21nCo/superfunctions/actions/runs/1), not success'],
+    ['failed', workflowRuns(workflowRun({ conclusion: 'cancelled' }), workflowRun({ id: 2, conclusion: 'skipped' })), 'concluded cancelled (https://github.com/21nCo/superfunctions/actions/runs/1), skipped'],
     ['in-progress', workflowRuns(workflowRun({ status: 'in_progress', conclusion: null })), 'has not completed (in_progress)'],
     ['in-progress', workflowRuns(workflowRun({ conclusion: 'failure' }), workflowRun({ id: 2, status: 'queued', conclusion: null })), 'queued'],
     ['missing', workflowRuns(), 'no GitHub Actions workflow .github/workflows/ci.yml'],
     // A pull_request run tests the merge of the tagged commit into its base, not the tagged commit itself.
-    ['missing', workflowRuns(workflowRun({ event: 'pull_request' })), '1 pull_request run(s) tested a different tree'],
-    ['failed', workflowRuns(workflowRun({ conclusion: 'failure' }), workflowRun({ id: 2, event: 'pull_request' })), 'concluded failure'],
+    ['missing', workflowRuns(workflowRun({ event: 'pull_request' })), '1 pull_request run(s) on it are not push runs'],
+    // A dispatch run of a commit already on dev plans an empty diff, so it proves nothing about the packages.
+    ['missing', workflowRuns(workflowRun({ event: 'workflow_dispatch' })), '1 workflow_dispatch run(s) on it are not push runs'],
+    ['failed', workflowRuns(workflowRun({ conclusion: 'failure' }), workflowRun({ id: 2, event: 'pull_request' }), workflowRun({ id: 3, event: 'workflow_dispatch' })), 'concluded failure'],
+    // A failed push run on the commit is not outvoted by a successful one.
+    ['failed', workflowRuns(workflowRun({ id: 1 }), workflowRun({ id: 2, conclusion: 'failure' })), 'concluded failure (https://github.com/21nCo/superfunctions/actions/runs/2)'],
+    ['in-progress', workflowRuns(workflowRun({ id: 1 }), workflowRun({ id: 2, status: 'in_progress', conclusion: null })), 'has not completed'],
     // Any workflow can set its run name to "CI" (pullfrog.yml takes it as an input); only ci.yml's runs count.
     ['missing', workflowRuns(workflowRun({ name: 'CI', file: 'pullfrog.yml' })), 'no GitHub Actions workflow'],
     ['missing', workflowRuns(workflowRun({ sha: OTHER_SHA })), '1 matching run(s) belong to other commits'],
@@ -150,6 +155,12 @@ test('next refuses without a ci section in its own manifest, even when GitHub Ac
       'superfunctions.owners.next.json has no "ci" section naming the Depot check run',
     );
   }
+  // An explicit GitHub Actions workflow on next is refused too: its jobs are skipped there.
+  await refuses(
+    assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: checkout(t, { nextCi: { workflow: 'ci.yml' } }), fetchImpl }),
+    'missing-config',
+    'names a GitHub Actions workflow in its "ci" section instead of the Depot check run',
+  );
   assert.equal(requests.length, 0);
 });
 
@@ -187,14 +198,15 @@ test('bad input, a missing token, an API error or an unknown repository refuses'
   await assert.rejects(assertReleaseCi({ sha: RELEASE_SHA, repository: 'someone/fork', token: TOKEN, root, fetchImpl }), /only public/);
 });
 
-test('a success on the release commit wins over failures and other commits', () => {
+test('a failure on the release commit is not outvoted; runs on other commits never count', () => {
   const runs = [
     { path: '.github/workflows/ci.yml', event: 'push', headSha: OTHER_SHA, status: 'completed', conclusion: 'success' },
     { path: '.github/workflows/ci.yml', event: 'push', headSha: RELEASE_SHA, status: 'completed', conclusion: 'failure' },
-    { path: '.github/workflows/ci.yml', event: 'workflow_dispatch', headSha: RELEASE_SHA, status: 'completed', conclusion: 'success' },
+    { path: '.github/workflows/ci.yml', event: 'push', headSha: RELEASE_SHA, status: 'completed', conclusion: 'success' },
   ];
-  assert.match(evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs }).message, /succeeded/);
-  assert.throws(() => evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs: runs.slice(0, 2) }), error => error.code === 'failed');
+  assert.throws(() => evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs }), error => error.code === 'failed');
+  assert.match(evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs: [runs[0], runs[2]] }).message, /succeeded/);
+  assert.throws(() => evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs: [runs[0]] }), error => error.code === 'missing');
 });
 
 test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN and GITHUB_API_URL and exits non-zero on refusal', async t => {
@@ -224,7 +236,7 @@ test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN and GITHUB_API_URL and e
   assert.match(passed.stdout, /succeeded on a{40}/);
   const refused = await run(OTHER_SHA);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /concluded failure, not success/);
+  assert.match(refused.stderr, /concluded failure \(https:\/\/github.com\/21nCo\/superfunctions\/actions\/runs\/1\), not success/);
   assert.equal(seen[0].authorization, `Bearer ${TOKEN}`);
   assert.ok(seen[0].url.startsWith(`/repos/${PUBLIC_REPO}/actions/workflows/ci.yml/runs?`));
 });

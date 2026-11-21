@@ -79,6 +79,8 @@ const WORKFLOWS = [
     ownerRun: [
       'set -euo pipefail',
       'gates="${RUNNER_TEMP}/release-gates"',
+      '# The dispatching branch may have moved or been deleted since dispatch; fetch its commit by SHA if needed.',
+      'git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"',
       'git worktree add --detach "${gates}" "${GITHUB_SHA}"',
       'node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}"',
       '',
@@ -146,30 +148,39 @@ test("publish-tag.yml: the owner step gates a channel-only dispatch of a tag mad
   const step = steps.find(candidate => candidate.name === 'Require this repository to own the release');
   const temp = mkdtempSync(path.join(tmpdir(), 'release-gate-legacy-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const source = path.join(temp, 'source');
+  const origin = path.join(temp, 'origin.git');
   const repo = path.join(temp, 'repo');
-  mkdirSync(repo);
-  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init', '-q');
-  git('config', 'user.name', 'Release gate test');
-  git('config', 'user.email', 'release-gate-test@example.invalid');
+  mkdirSync(source);
+  const gitIn = cwd => (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const src = gitIn(source);
+  src('init', '-q');
+  src('config', 'user.name', 'Release gate test');
+  src('config', 'user.email', 'release-gate-test@example.invalid');
   // The legacy tag: a commit with neither the gate script nor an ownership manifest.
-  writeFileSync(path.join(repo, 'README.md'), 'legacy release\n');
-  git('add', '.');
-  git('commit', '-q', '-m', 'Legacy release');
-  git('tag', 'widget-core-v0.1.0-beta.0');
-  // The dispatching branch: the gate and a manifest that gives widget-core to public.
-  mkdirSync(path.join(repo, 'scripts'));
+  writeFileSync(path.join(source, 'README.md'), 'legacy release\n');
+  src('add', '.');
+  src('commit', '-q', '-m', 'Legacy release');
+  src('tag', 'widget-core-v0.1.0-beta.0');
+  // The dispatching commit: the gate and a manifest that gives widget-core to public.
+  mkdirSync(path.join(source, 'scripts'));
   for (const file of ['assert-release-owner.mjs', 'owners.mjs', 'resolve-release-tag.mjs']) {
-    copyFileSync(path.join(import.meta.dirname, file), path.join(repo, 'scripts', file));
+    copyFileSync(path.join(import.meta.dirname, file), path.join(source, 'scripts', file));
   }
   writeFileSync(
-    path.join(repo, 'superfunctions.owners.json'),
+    path.join(source, 'superfunctions.owners.json'),
     JSON.stringify({ version: 1, paths: { scripts: 'public' }, rootFiles: { public: ['README.md'] }, releases: { 'widget-core': 'public' } }),
   );
-  git('add', '.');
-  git('commit', '-q', '-m', 'Add the release gates');
-  const workflowCommit = git('rev-parse', 'HEAD');
-  git('checkout', '-q', '--detach', 'widget-core-v0.1.0-beta.0');
+  src('add', '.');
+  src('commit', '-q', '-m', 'Add the release gates');
+  const workflowCommit = src('rev-parse', 'HEAD');
+  src('branch', '-M', 'dispatch');
+  execFileSync('git', ['clone', '-q', '--bare', source, origin]);
+  execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true']);
+  // The tag checkout holds only the tag commit, as if the dispatching branch had moved or been deleted.
+  execFileSync('git', ['clone', '-q', '--depth=1', '--branch', 'widget-core-v0.1.0-beta.0', `file://${origin}`, repo], { stdio: 'ignore' });
+  const git = gitIn(repo);
+  assert.throws(() => git('cat-file', '-e', `${workflowCommit}^{commit}`), 'the dispatching commit starts out missing');
   const run = (repository, runnerTemp) =>
     spawnSync('bash', ['-c', step.run], {
       cwd: repo,

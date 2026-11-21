@@ -89,11 +89,18 @@ test('an unknown slug or project is refused in both repositories', t => {
     'no repository owns it',
   );
   refuses(() => assertReleaseOwner({ kind: 'python', tag: 'python-ghostfn-v1.0', repository: NEXT_REPO, root }), 'unlisted', 'Python project "ghostfn"');
-  refuses(
-    () => assertReleaseOwner({ kind: 'npm', tag: 'docsfn-core-v1.0.0', repository: PUBLIC_REPO, root: checkout(t, { next: null }) }),
-    'unlisted',
-    'not listed in superfunctions.owners.json,',
-  );
+  // A public checkout has no next manifest: a next-owned slug is refused as outside public's allow-list, pointing at next.
+  const publicOnly = checkout(t, { next: null });
+  for (const [kind, tag] of [['npm', 'docsfn-core-v1.0.0'], ['python', 'python-docsfn-v1.0']]) {
+    assert.throws(
+      () => assertReleaseOwner({ kind, tag, repository: PUBLIC_REPO, root: publicOnly }),
+      error =>
+        error.code === 'unlisted' &&
+        error.message.includes('is not listed in superfunctions.owners.json, the public allow-list') &&
+        error.message.includes(`if next (${NEXT_REPO}) owns it, push the tag there`) &&
+        !error.message.includes('no repository owns it'),
+    );
+  }
 });
 
 test('a slug or project listed in both manifests is refused, naming both repositories', t => {
