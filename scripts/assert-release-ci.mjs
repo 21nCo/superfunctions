@@ -7,12 +7,15 @@
 // The manifests come from --root (in the publish workflows, the tag checkout), defaulting to this script's checkout.
 // The running repository comes from GITHUB_REPOSITORY and selects the CI to require. On public it is the `ci` section
 // of superfunctions.owners.json, defaulting to the GitHub Actions workflow .github/workflows/ci.yml; only push runs
-// count, because a pull_request run tests a merge commit and a workflow_dispatch run may plan no package jobs. On next,
-// CI runs on Depot and the synced GitHub Actions CI skips every job, so superfunctions.owners.next.json must name the
-// check run Depot's GitHub App (slug "depot") reports in its `ci` section; without one, or with a workflow or another
-// app there, next refuses. Every counted run on the
-// commit must have succeeded, and there must be at least one. The GitHub API is read with GITHUB_TOKEN (or GH_TOKEN) at
-// GITHUB_API_URL.
+// count, because a pull_request run tests a merge commit and a workflow_dispatch run may plan no package jobs. Every
+// counted run on the commit must have succeeded, and there must be at least one. The GitHub API is read with
+// GITHUB_TOKEN (or GH_TOKEN) at GITHUB_API_URL.
+//
+// On next, CI runs on Depot and the synced GitHub Actions CI skips every job. A Depot check run carries no trigger
+// event, and GitHub puts every run of one app on a commit into one check suite, so nothing GitHub reports shows that a
+// green Depot check came from a full push run of the tagged commit rather than a dispatched or pull request run that
+// may test nothing. Until SFNS-160 shows an invocation-level Depot signal, next refuses every CI-gated tag as unproven,
+// whatever its manifest's `ci` section says (owner decision, 2026-11-21).
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -27,13 +30,11 @@ const PER_PAGE = 100;
  * it into the base, and a workflow_dispatch run of a commit already on dev plans an empty diff.
  */
 export const TESTED_COMMIT_EVENTS = Object.freeze(['push']);
-/** The GitHub App whose check runs carry next's CI result (Depot CI); the live slug is confirmed by SFNS-160. */
-export const DEPOT_APP_SLUG = 'depot';
 const MAX_PAGES = 10;
 
 export class ReleaseCiError extends Error {
   /**
-   * @param {'invalid-commit' | 'missing-config' | 'missing-token' | 'api-error' | 'missing' | 'in-progress' | 'failed'} code
+   * @param {'invalid-commit' | 'missing-config' | 'unproven' | 'missing-token' | 'api-error' | 'missing' | 'in-progress' | 'failed'} code
    * @param {string} message
    * @param {Record<string, unknown>} [details]
    */
@@ -47,14 +48,23 @@ export class ReleaseCiError extends Error {
 
 /** Human description of a release CI requirement. */
 export function describeCi(ci) {
-  if (ci.kind === 'workflow') return `GitHub Actions workflow .github/workflows/${ci.name} (push run)`;
-  return `check run ${JSON.stringify(ci.name)}${ci.app ? ` from app ${JSON.stringify(ci.app)}` : ''}`;
+  return `GitHub Actions workflow .github/workflows/${ci.name} (push run)`;
 }
 
 /**
- * The CI a repository requires: on public its manifest's `ci` workflow or .github/workflows/ci.yml; on next the `ci`
- * section of the next manifest, which must name a check run (the public section and the default never apply there,
- * and GitHub Actions workflows skip every job on next).
+ * A workflow run's file, without the `@<ref>` suffix GitHub may report (".github/workflows/ci.yml@main" or
+ * "...@refs/heads/main"); workflow file names never contain "@".
+ * @param {unknown} runPath
+ */
+export function workflowFile(runPath) {
+  if (typeof runPath !== 'string') return runPath;
+  const at = runPath.indexOf('@');
+  return at === -1 ? runPath : runPath.slice(0, at);
+}
+
+/**
+ * The CI a repository requires: on public its manifest's `ci` workflow or .github/workflows/ci.yml. next refuses:
+ * no Depot result can yet be tied to a full push run of the tagged commit (see the header).
  * @param {'public' | 'next'} repo
  * @param {ReturnType<typeof loadOwners>} owners
  */
@@ -67,32 +77,23 @@ export function releaseCiFor(repo, owners) {
       `Refusing to publish from ${PUBLISHING_REPOSITORIES.public}: superfunctions.owners.json names a check run from app ${JSON.stringify(ci.app)} in its "ci" section; public releases require a GitHub Actions workflow ({"ci": {"workflow": "<file>"}}).`,
     );
   }
-  const ci = owners.nextManifest?.ci;
-  if (ci?.kind === 'check-run' && ci.app === DEPOT_APP_SLUG) return ci;
-  const problem = !ci
-    ? 'has no "ci" section naming'
-    : ci.kind === 'workflow'
-      ? 'names a GitHub Actions workflow in its "ci" section instead of'
-      : `names a check run from app ${JSON.stringify(ci.app)} in its "ci" section instead of`;
   throw new ReleaseCiError(
-    'missing-config',
-    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: superfunctions.owners.next.json ${problem} the Depot check run ({"ci": {"checkRun": "<name>", "app": "${DEPOT_APP_SLUG}"}}). CI there runs on Depot, and the synced GitHub Actions CI skips every job outside ${PUBLISHING_REPOSITORIES.public}.`,
+    'unproven',
+    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: its CI is unproven. CI there runs on Depot, the synced GitHub Actions CI skips every job, and nothing GitHub reports shows that a green Depot check run came from a full push run of the tagged commit rather than a dispatched or pull request run that may test nothing. Every CI-gated next tag is refused, whatever the "ci" section of superfunctions.owners.next.json says, until SFNS-160 shows an invocation-level Depot signal; a channel_only dispatch skips this check.`,
   );
 }
 
 /**
- * Decides the gate from runs already fetched. A workflow run counts only when its file is the configured workflow and
- * its event tested the commit itself (push); a check run only when its name and app match. It must also have the
- * release commit as its head SHA. At least one run must count, and every counted run must be completed with
+ * Decides the gate from runs already fetched. A workflow run counts only when its file (without an `@<ref>` suffix) is
+ * the configured workflow and its event tested the commit itself (push). It must also have the release commit as its
+ * head SHA. At least one run must count, and every counted run must be completed with
  * conclusion "success": a failure on the commit is not outvoted by another run.
- * @param {{ sha: string, ci: { kind: string, name: string, app: string | null }, runs: { name?: string, path?: string, event?: string, headSha?: string, status?: string, conclusion?: string | null, app?: string | null, url?: string }[] }} input
+ * @param {{ sha: string, ci: { kind: string, name: string, app: string | null }, runs: { name?: string, path?: string, event?: string, headSha?: string, status?: string, conclusion?: string | null, url?: string }[] }} input
  */
 export function evaluateCiRuns({ sha, ci, runs }) {
-  const named = runs.filter(run =>
-    ci.kind === 'workflow'
-      ? run.path === `.github/workflows/${ci.name}` && TESTED_COMMIT_EVENTS.includes(run.event)
-      : run.name === ci.name && run.app === ci.app,
-  );
+  const file = `.github/workflows/${ci.name}`;
+  const ofWorkflow = runs.filter(run => workflowFile(run.path) === file);
+  const named = ofWorkflow.filter(run => TESTED_COMMIT_EVENTS.includes(run.event));
   const onCommit = named.filter(run => run.headSha === sha);
   const what = describeCi(ci);
   const pending = onCommit.filter(run => run.status !== 'completed');
@@ -117,7 +118,7 @@ export function evaluateCiRuns({ sha, ci, runs }) {
   }
   const notes = [];
   if (named.length > 0) notes.push(`${named.length} matching run(s) belong to other commits`);
-  const otherEvents = ci.kind === 'workflow' ? runs.filter(run => run.path === `.github/workflows/${ci.name}` && run.headSha === sha && !TESTED_COMMIT_EVENTS.includes(run.event)) : [];
+  const otherEvents = ofWorkflow.filter(run => run.headSha === sha && !TESTED_COMMIT_EVENTS.includes(run.event));
   if (otherEvents.length > 0) notes.push(`${otherEvents.length} ${[...new Set(otherEvents.map(run => run.event))].join('/')} run(s) on it are not push runs`);
   const why = notes.length > 0 ? ` (${notes.join('; ')}, so they do not count)` : '';
   throw new ReleaseCiError('missing', `Refusing to publish: no ${what} ran on ${sha}${why}. A tag publishes only a commit that passed CI.`, { sha });
@@ -125,29 +126,17 @@ export function evaluateCiRuns({ sha, ci, runs }) {
 
 function apiUrl(base, repository, ci, sha, page) {
   const root = `${base.replace(/\/+$/, '')}/repos/${repository}`;
-  const query = new URLSearchParams({ per_page: String(PER_PAGE), page: String(page) });
-  if (ci.kind === 'workflow') {
-    query.set('head_sha', sha);
-    return `${root}/actions/workflows/${encodeURIComponent(ci.name)}/runs?${query}`;
-  }
-  query.set('check_name', ci.name);
-  query.set('filter', 'latest');
-  return `${root}/commits/${sha}/check-runs?${query}`;
+  const query = new URLSearchParams({ per_page: String(PER_PAGE), page: String(page), head_sha: sha });
+  return `${root}/actions/workflows/${encodeURIComponent(ci.name)}/runs?${query}`;
 }
 
-const normalize = {
-  workflow: run => ({ name: run?.name, path: run?.path, event: run?.event, headSha: run?.head_sha, status: run?.status, conclusion: run?.conclusion, app: null, url: run?.html_url }),
-  'check-run': run => ({ name: run?.name, headSha: run?.head_sha, status: run?.status, conclusion: run?.conclusion, app: run?.app?.slug ?? null, url: run?.html_url }),
-};
+const normalize = run => ({ name: run?.name, path: run?.path, event: run?.event, headSha: run?.head_sha, status: run?.status, conclusion: run?.conclusion, url: run?.html_url });
 
-/**
- * Reads every page of workflow runs (for a workflow requirement) or check runs (for a check-run requirement) for the
- * release commit.
- */
+/** Reads every page of the configured workflow's runs for the release commit. */
 export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https://api.github.com', fetchImpl = fetch }) {
   const runs = [];
   const ids = new Set();
-  const field = ci.kind === 'workflow' ? 'workflow_runs' : 'check_runs';
+  const field = 'workflow_runs';
   // The largest total_count any page advertised: a later page that drops it does not shrink the results owed.
   let advertised = null;
   // Whether the previous page promised another (a Link rel="next" or an unmet total): an empty answer then is truncation.
@@ -175,7 +164,7 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
       // Offset paging shifts when a run is added mid-read: a repeated id means a result may have been skipped.
       if (item?.id !== undefined && ids.has(item.id)) throw incomplete(url, `repeat result ${item.id} (they changed while paging)`);
       if (item?.id !== undefined) ids.add(item.id);
-      runs.push(normalize[ci.kind](item));
+      runs.push(normalize(item));
     }
     if (Number.isInteger(body.total_count)) advertised = Math.max(advertised ?? 0, body.total_count);
     // More results remain while the Link header offers a next page or an advertised total exceeds what was read;

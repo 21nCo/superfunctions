@@ -73,7 +73,7 @@ jobs:
       # SFNS-124: only the repository that owns the slug publishes it, and only a commit that passed CI; both run
       # before anything is installed, built or packed. A channel-only dispatch republishes nothing, so it skips the CI gate.
       # Both gates run from this run's own commit, because a dispatch may name a tag made before the gates existed, and
-      # read the tag checkout's manifests; only a channel-only dispatch of a tag that has no manifests, which republishes
+      # read the tag checkout's manifests; only a channel-only dispatch of a tag that has neither manifest, which republishes
       # nothing, reads the run commit's. Every run but a channel-only dispatch has checked above that it is the tag commit.
       - name: Require this repository to own the release
         shell: bash
@@ -86,7 +86,7 @@ jobs:
           git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git worktree add --detach "${gates}" "${GITHUB_SHA}"
           manifests="${GITHUB_WORKSPACE}"
-          if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" ]]; then manifests="${gates}"; fi
+          if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" && ! -f "${manifests}/superfunctions.owners.next.json" ]]; then manifests="${gates}"; fi
           node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}" --root "${manifests}"
 
       - name: Require successful CI on the release commit

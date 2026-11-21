@@ -16,12 +16,12 @@ const TOKEN = 'test-github-token';
 const script = path.join(import.meta.dirname, 'assert-release-ci.mjs');
 
 // Trimmed recordings of GET /repos/{repo}/actions/workflows/{file}/runs?head_sha=... (workflow runs) and
-// GET /repos/{repo}/commits/{sha}/check-runs?check_name=...&filter=latest (check runs), keeping the fields the gate
-// reads plus enough context to show the real shape.
-const workflowRun = ({ id = 1, name = 'CI', file = 'ci.yml', event = 'push', sha = RELEASE_SHA, status = 'completed', conclusion = 'success' } = {}) => ({
+// GET /repos/{repo}/commits/{sha}/check-runs (Depot check runs on next), keeping the fields the gate reads plus enough
+// context to show the real shape. `ref` adds the "@<ref>" suffix GitHub may report on a workflow run's path.
+const workflowRun = ({ id = 1, name = 'CI', file = 'ci.yml', ref = '', event = 'push', sha = RELEASE_SHA, status = 'completed', conclusion = 'success' } = {}) => ({
   id,
   name,
-  path: `.github/workflows/${file}`,
+  path: `.github/workflows/${file}${ref}`,
   head_branch: 'dev',
   head_sha: sha,
   event,
@@ -31,20 +31,6 @@ const workflowRun = ({ id = 1, name = 'CI', file = 'ci.yml', event = 'push', sha
   html_url: `https://github.com/${PUBLIC_REPO}/actions/runs/${id}`,
 });
 const workflowRuns = (...runs) => ({ total_count: runs.length, workflow_runs: runs });
-const checkRun = ({ id = 1, name = 'CI', sha = RELEASE_SHA, status = 'completed', conclusion = 'success', app = 'depot' } = {}) => ({
-  id,
-  name,
-  head_sha: sha,
-  status,
-  conclusion,
-  started_at: '2026-11-20T00:00:00Z',
-  completed_at: status === 'completed' ? '2026-11-20T00:10:00Z' : null,
-  html_url: `https://github.com/${NEXT_REPO}/runs/${id}`,
-  app: { id: 1, slug: app, name: app },
-  check_suite: { id: 1 },
-});
-const checkRuns = (...runs) => ({ total_count: runs.length, check_runs: runs });
-
 /** A checkout whose manifests carry the given `ci` sections. */
 function checkout(t, { publicCi, nextCi } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'release-ci-'));
@@ -84,7 +70,6 @@ const refuses = async (promise, code, ...fragments) =>
   });
 
 const RUNS_PATH = `/repos/${PUBLIC_REPO}/actions/workflows/ci.yml/runs`;
-const CHECKS_PATH = `/repos/${NEXT_REPO}/commits/${RELEASE_SHA}/check-runs`;
 
 test('public: a successful push run of ci.yml on the release commit passes, read with the token for that SHA', async t => {
   const root = checkout(t);
@@ -117,6 +102,12 @@ test('public: a failed, in-progress, missing or other-commit CI run is refused',
     ['in-progress', workflowRuns(workflowRun({ id: 1 }), workflowRun({ id: 2, status: 'in_progress', conclusion: null })), 'has not completed'],
     // Any workflow can set its run name to "CI" (pullfrog.yml takes it as an input); only ci.yml's runs count.
     ['missing', workflowRuns(workflowRun({ name: 'CI', file: 'pullfrog.yml' })), 'no GitHub Actions workflow'],
+    ['missing', workflowRuns(workflowRun({ name: 'CI', file: 'pullfrog.yml', ref: '@main' })), 'no GitHub Actions workflow'],
+    ['missing', workflowRuns(workflowRun({ file: 'ci.yml.bak', ref: '@main' })), 'no GitHub Actions workflow'],
+    // An "@<ref>" suffix on the path changes neither which runs count nor what the diagnostics say.
+    ['failed', workflowRuns(workflowRun({ ref: '@main' }), workflowRun({ id: 2, ref: '@refs/heads/dev', conclusion: 'failure' })), 'concluded failure (https://github.com/21nCo/superfunctions/actions/runs/2)'],
+    ['missing', workflowRuns(workflowRun({ ref: '@main', event: 'workflow_dispatch' })), '1 workflow_dispatch run(s) on it are not push runs'],
+    ['missing', workflowRuns(workflowRun({ ref: '@main', sha: OTHER_SHA })), '1 matching run(s) belong to other commits'],
     ['missing', workflowRuns(workflowRun({ sha: OTHER_SHA })), '1 matching run(s) belong to other commits'],
   ];
   for (const [code, body, fragment] of cases) {
@@ -125,50 +116,39 @@ test('public: a failed, in-progress, missing or other-commit CI run is refused',
   }
 });
 
-test('next: the Depot check run named in the next manifest decides, not GitHub Actions', async t => {
-  const root = checkout(t, { publicCi: { workflow: 'ci.yml' }, nextCi: { checkRun: 'Depot CI', app: 'depot' } });
-  const { fetchImpl, requests } = recordedFetch({ [CHECKS_PATH]: checkRuns(checkRun({ name: 'Depot CI' })) });
-  const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl });
-  assert.deepEqual(result.ci, { kind: 'check-run', name: 'Depot CI', app: 'depot' });
-  assert.equal(requests[0].url.searchParams.get('check_name'), 'Depot CI');
-  assert.equal(requests[0].url.searchParams.get('filter'), 'latest');
-
-  const cases = [
-    ['failed', checkRuns(checkRun({ name: 'Depot CI', conclusion: 'failure' })), 'check run "Depot CI" from app "depot" on'],
-    ['in-progress', checkRuns(checkRun({ name: 'Depot CI', status: 'in_progress', conclusion: null })), 'has not completed'],
-    ['missing', checkRuns(), 'no check run "Depot CI"'],
-    ['missing', checkRuns(checkRun({ name: 'Depot CI', sha: OTHER_SHA })), 'belong to other commits'],
-    // A check run with the right name from another app is not Depot's CI.
-    ['missing', checkRuns(checkRun({ name: 'Depot CI', app: 'some-other-app' })), 'no check run'],
-  ];
-  for (const [code, body, fragment] of cases) {
-    await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl: recordedFetch({ [CHECKS_PATH]: body }).fetchImpl }), code, fragment);
+test('public: a successful push run whose path GitHub reports with an @<ref> suffix passes', async t => {
+  const root = checkout(t);
+  for (const ref of ['@main', '@refs/heads/dev']) {
+    const { fetchImpl } = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ ref })) });
+    const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl });
+    assert.match(result.message, /workflow \.github\/workflows\/ci\.yml \(push run\) succeeded on a{40}/);
   }
 });
 
-test('next refuses without a ci section in its own manifest, even when GitHub Actions CI is green; the public section does not apply', async t => {
-  // The synced ci.yml skips every job outside public, so its green runs on next test nothing.
-  const { fetchImpl, requests } = recordedFetch({ [`/repos/${NEXT_REPO}/actions/workflows/ci.yml/runs`]: workflowRuns(workflowRun()) });
-  for (const root of [checkout(t, { publicCi: { checkRun: 'Public only', app: 'depot' }, nextCi: null }), checkout(t)]) {
-    await refuses(
-      assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl }),
-      'missing-config',
-      'superfunctions.owners.next.json has no "ci" section naming the Depot check run',
-    );
+test('next refuses every CI-gated tag as unproven, even with a green Depot check run its manifest names (owner decision 2026-11-21)', async t => {
+  // A green Depot check run of the configured name and app on the exact commit, plus green synced GitHub Actions runs:
+  // neither shows that a full push run tested the tagged commit, so neither is read.
+  const greenDepot = { total_count: 1, check_runs: [{ id: 1, name: 'Depot CI', head_sha: RELEASE_SHA, status: 'completed', conclusion: 'success', app: { slug: 'depot' } }] };
+  const { fetchImpl, requests } = recordedFetch({
+    [`/repos/${NEXT_REPO}/commits/${RELEASE_SHA}/check-runs`]: greenDepot,
+    [`/repos/${NEXT_REPO}/actions/workflows/ci.yml/runs`]: workflowRuns(workflowRun()),
+  });
+  const roots = [
+    checkout(t, { nextCi: { checkRun: 'Depot CI', app: 'depot' } }),
+    checkout(t, { nextCi: { checkRun: 'Depot CI', app: 'depot-checks' } }),
+    checkout(t, { nextCi: { workflow: 'ci.yml' } }),
+    checkout(t, { publicCi: { workflow: 'ci.yml' }, nextCi: null }),
+    checkout(t),
+  ];
+  for (const root of roots) {
+    for (const token of [TOKEN, '']) {
+      await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token, root, fetchImpl }), 'unproven', '21nCo/super-functions.next: its CI is unproven', 'SFNS-160');
+    }
   }
-  // A check run from another app is not Depot's CI result, whatever the manifest says.
-  await refuses(
-    assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: checkout(t, { nextCi: { checkRun: 'CI', app: 'some-other-app' } }), fetchImpl }),
-    'missing-config',
-    'names a check run from app "some-other-app" in its "ci" section instead of the Depot check run',
-  );
-  // An explicit GitHub Actions workflow on next is refused too: its jobs are skipped there.
-  await refuses(
-    assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: checkout(t, { nextCi: { workflow: 'ci.yml' } }), fetchImpl }),
-    'missing-config',
-    'names a GitHub Actions workflow in its "ci" section instead of the Depot check run',
-  );
   assert.equal(requests.length, 0);
+  // The public gate is unchanged by the same manifests.
+  const pub = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun()) });
+  await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root: roots[0], fetchImpl: pub.fetchImpl });
 });
 
 test('public refuses a check-run ci section: its releases need a GitHub Actions workflow', async t => {
@@ -209,10 +189,9 @@ test('a short page is not the last page while total_count or the Link header say
   await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: byTotal.fetchImpl }), 'failed');
   assert.equal(byTotal.requests.length, 2);
   const byLink = recordedFetch({
-    [CHECKS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), check_runs: [checkRun({ name: 'Depot CI' })] } : { check_runs: [checkRun({ id: 2, name: 'Depot CI', conclusion: 'failure' })] }),
+    [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), workflow_runs: [workflowRun()] } : { workflow_runs: [workflowRun({ id: 2, conclusion: 'failure' })] }),
   });
-  const depot = checkout(t, { nextCi: { checkRun: 'Depot CI', app: 'depot' } });
-  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: depot, fetchImpl: byLink.fetchImpl }), 'failed');
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: byLink.fetchImpl }), 'failed');
   assert.equal(byLink.requests.length, 2);
   // A response that promises more but delivers an empty page refuses.
   const truncated = recordedFetch({ [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 3, workflow_runs: [workflowRun()] } : { total_count: 3, workflow_runs: [] }) });
@@ -222,9 +201,9 @@ test('a short page is not the last page while total_count or the Link header say
   await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: dropped.fetchImpl }), 'api-error', 'end early (1 of 2)');
   // An empty answer to a page the Link header promised is truncation, even without counts.
   const linkOnly = recordedFetch({
-    [CHECKS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), check_runs: [checkRun({ name: 'Depot CI' })] } : { check_runs: [] }),
+    [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), workflow_runs: [workflowRun()] } : { workflow_runs: [] }),
   });
-  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: depot, fetchImpl: linkOnly.fetchImpl }), 'api-error', 'end early (1 of more)');
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: linkOnly.fetchImpl }), 'api-error', 'end early (1 of more)');
   // A run added mid-read shifts offset paging: page 2 repeats a page-1 result, and an unseen run may be skipped.
   const shifted = recordedFetch({
     [RUNS_PATH]: url =>

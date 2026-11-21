@@ -68,10 +68,13 @@ has no completed, successful CI run on that exact SHA
 of `.github/workflows/ci.yml`, and every such run on the commit must have
 succeeded (`pull_request` and `workflow_dispatch` runs do not count: one tests a
 merge commit, the other may plan no package jobs); `"ci": {"workflow": "<file>"}`
-in `superfunctions.owners.json` names another workflow file. On `next`, CI runs
-on Depot, so `superfunctions.owners.next.json` must name the check run with
-`"ci": {"checkRun": "<name>", "app": "depot"}`; without it, or with another app,
-`next` refuses every tag. Tag only a commit whose CI has passed; if CI was still
+in `superfunctions.owners.json` names another workflow file; GitHub may report its
+path with an `@<ref>` suffix, which is ignored. On `next`, CI runs on Depot, and
+no GitHub API field shows that a Depot check run came from a full push run of the
+tagged commit rather than a dispatched or pull request run that may test nothing.
+So `next` refuses every CI-gated tag as unproven, whatever the `ci` section of
+`superfunctions.owners.next.json` says, until SFNS-160 shows an invocation-level
+Depot signal (owner decision, 2026-11-21). Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
 republishes nothing and skips only the CI check.
 
@@ -82,7 +85,7 @@ ungated workflow; closing that route needs a repository rule such as a tag
 ruleset, which is deferred to SFNS-158. A Python dispatch or an npm
 `channel_only` dispatch started from a newer ref runs the checks from that ref,
 even for an older tag; the tag's own manifests still decide ownership, and only a
-`channel_only` dispatch of a tag that has no manifests uses the run commit's.
+`channel_only` dispatch of a tag that has neither manifest uses the run commit's.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

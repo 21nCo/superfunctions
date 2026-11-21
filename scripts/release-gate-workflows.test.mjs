@@ -70,7 +70,7 @@ function readJob(file, job) {
 }
 
 // Both gates come from the run's own commit (a dispatch may name a tag made before the gates existed) and read the tag
-// checkout's manifests; only a channel-only npm dispatch of a tag without manifests reads the run commit's.
+// checkout's manifests; only a channel-only npm dispatch of a tag with neither manifest reads the run commit's.
 const ownerRun = kind =>
   [
     'set -euo pipefail',
@@ -81,7 +81,8 @@ const ownerRun = kind =>
     ...(kind === 'npm'
       ? [
           'manifests="${GITHUB_WORKSPACE}"',
-          'if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" ]]; then manifests="${gates}"; fi',
+          // Only a tag with neither manifest predates them; a tag with only the next manifest still decides.
+          'if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" && ! -f "${manifests}/superfunctions.owners.next.json" ]]; then manifests="${gates}"; fi',
           'node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}" --root "${manifests}"',
         ]
       : ['node "${gates}/scripts/assert-release-owner.mjs" python "${RELEASE_TAG}" --root "${GITHUB_WORKSPACE}"']),
@@ -176,9 +177,10 @@ const ownersManifest = (kind, release, owner) => {
 /**
  * Runs a workflow's owner step in a tag checkout that holds only the tag commit, with the run's own commit (the
  * gates plus `runOwner`'s manifest) fetched by SHA, as when the dispatching branch has moved since dispatch.
- * `tagOwner` null means the tag predates the manifests.
+ * `tagOwner` null means the tag predates the manifests; 'next-only' gives the tag only a next manifest that owns the release.
+ * `nextCi` is the `ci` section of every next manifest written.
  */
-function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'public' }) {
+function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'public', nextCi }) {
   const step = readJob(file, 'build').steps.find(candidate => candidate.name === 'Require this repository to own the release');
   const temp = mkdtempSync(path.join(tmpdir(), 'release-gate-dispatch-'));
   t.after(() => rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -198,9 +200,9 @@ function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'p
     rmSync(path.join(source, 'superfunctions.owners.json'), { force: true });
     rmSync(path.join(source, 'superfunctions.owners.next.json'), { force: true });
     if (owner === null) return;
-    writeFileSync(path.join(source, 'superfunctions.owners.json'), JSON.stringify(ownersManifest(kind, release, owner)));
-    if (owner === 'next') {
-      writeFileSync(path.join(source, 'superfunctions.owners.next.json'), JSON.stringify({ version: 1, [kind === 'npm' ? 'releases' : 'python']: { [release]: 'next' } }));
+    if (owner !== 'next-only') writeFileSync(path.join(source, 'superfunctions.owners.json'), JSON.stringify(ownersManifest(kind, release, owner)));
+    if (owner === 'next' || owner === 'next-only') {
+      writeFileSync(path.join(source, 'superfunctions.owners.next.json'), JSON.stringify({ version: 1, [kind === 'npm' ? 'releases' : 'python']: { [release]: 'next' }, ...(nextCi ? { ci: nextCi } : {}) }));
     }
   };
   // The tag commit: no gate scripts; manifests only when tagOwner is set.
@@ -235,9 +237,19 @@ function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'p
     assert.equal(git('rev-parse', 'HEAD'), git('rev-parse', `${tag}^{commit}`));
     assert.equal(existsSync(path.join(repo, 'scripts')), false);
     if (result.status === 0) assert.equal(existsSync(path.join(runnerTemp, 'release-gates', 'scripts', 'assert-release-ci.mjs')), true);
-    return result;
+    return { ...result, runnerTemp };
   };
-  return { run };
+  /** Runs the owner step and then the workflow's CI step, as written, on the tag commit with an unreachable API. */
+  const runWithCi = options => {
+    const owner = run(options);
+    assert.equal(owner.status, 0, owner.stderr);
+    const ciStep = readJob(file, 'build').steps.find(candidate => candidate.name === 'Require successful CI on the release commit');
+    const script = ciStep.run.replace(/\$\{\{ steps\.\w+\.outputs\.release_commit \}\}/, git('rev-parse', `${tag}^{commit}`));
+    const env = { ...gitEnv, RUNNER_TEMP: owner.runnerTemp, GITHUB_WORKSPACE: repo, GITHUB_REPOSITORY: options.repository, GITHUB_TOKEN: 'test-github-token', GH_TOKEN: '' };
+    // Nothing may be read: a request to this closed port would fail as an API error instead of the refusal.
+    return spawnSync('bash', ['-c', script], { cwd: repo, encoding: 'utf8', env: { ...env, GITHUB_API_URL: 'http://127.0.0.1:9' } });
+  };
+  return { run, runWithCi };
 }
 
 const DISPATCHES = [
@@ -264,6 +276,15 @@ for (const dispatch of DISPATCHES) {
   });
 }
 
+for (const dispatch of DISPATCHES) {
+  test(`${dispatch.file}: on next the CI step refuses a next-owned tag as unproven even with a Depot check run configured`, t => {
+    const fixture = ownerStepFixture(t, { ...dispatch, tagOwner: 'next', runOwner: 'next', nextCi: { checkRun: 'Depot CI', app: 'depot' } });
+    const ci = fixture.runWithCi({ repository: '21nCo/super-functions.next' });
+    assert.equal(ci.status, 1);
+    assert.match(ci.stderr, /21nCo\/super-functions\.next: its CI is unproven/);
+  });
+}
+
 test('publish-tag.yml: a channel-only dispatch of a tag made before the manifests is gated by the run commit\'s manifests', t => {
   const legacy = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner: null, runOwner: 'public' });
   const owned = legacy.run({ channelOnly: 'true' });
@@ -274,4 +295,10 @@ test('publish-tag.yml: a channel-only dispatch of a tag made before the manifest
   // A channel-only dispatch of a tag that has manifests still follows the tag.
   const tagSaysNext = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner: 'next', runOwner: 'public' }).run({ channelOnly: 'true' });
   assert.equal(tagSaysNext.status, 1);
+  // A tag with only the next manifest does not predate the manifests: it decides, and the step refuses before the
+  // reconcile job can install a client, instead of taking public ownership from the run commit.
+  const nextOnly = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner: 'next-only', runOwner: 'public' }).run({ channelOnly: 'true' });
+  assert.equal(nextOnly.status, 1);
+  assert.match(nextOnly.stderr, /superfunctions\.owners\.json not found/);
+  assert.doesNotMatch(nextOnly.stdout, /is owned by public/);
 });
