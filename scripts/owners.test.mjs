@@ -122,6 +122,35 @@ test("Python projects are one distribution per PEP 503 canonical name", () => {
   throwsCode(() => parseManifest({ ...nextData(), python: { "a.b": "next", A_B: "next" } }, { kind: "next" }), "malformed-manifest");
 });
 
+test("the optional ci section names the release CI as a workflow or a check run (SFNS-124)", () => {
+  assert.equal(parseManifest(publicData(), { kind: "public" }).ci, null);
+  assert.deepEqual(parseManifest({ ...publicData(), ci: { workflow: "ci.yml" } }, { kind: "public" }).ci, { kind: "workflow", name: "ci.yml", app: null });
+  assert.deepEqual(parseManifest({ ...nextData(), ci: { checkRun: "Depot CI", app: "depot" } }, { kind: "next" }).ci, {
+    kind: "check-run",
+    name: "Depot CI",
+    app: "depot",
+  });
+  for (const ci of [
+    "CI",
+    [],
+    {},
+    { workflow: "ci.yml", checkRun: "CI", app: "depot" },
+    { workflow: "ci.yml", app: "depot" },
+    { workflow: "" },
+    // A workflow is named by its file, not by its display name, which any workflow's run-name can copy.
+    { workflow: "CI" },
+    { workflow: "../ci.yml" },
+    // A check run needs its app, because any app with checks access can name a check run.
+    { checkRun: "CI" },
+    { checkRun: " CI", app: "depot" },
+    { checkRun: "CI", app: "" },
+    { checkRun: 1, app: "depot" },
+    { checkRun: "CI", app: "depot", branch: "dev" },
+  ]) {
+    throwsCode(() => parseManifest({ ...nextData(), ci }, { kind: "next" }), "malformed-manifest");
+  }
+});
+
 test("parseManifest rejects an unsupported kind with a typed error", () => {
   for (const kind of ["typo", "generated", "", null, 1]) {
     throwsCode(() => parseManifest({ version: 1, paths: { datafn: "typo" } }, { kind }), "malformed-manifest");

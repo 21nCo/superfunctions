@@ -39,6 +39,9 @@ const STANDALONE_SCRIPTS = [
   "scripts/verify-package-lockfiles.*",
   "scripts/resolve-release-tag.*",
   "scripts/uifn-docs-cli-resolution.*",
+  "scripts/assert-release-owner.*",
+  "scripts/assert-release-ci.*",
+  "scripts/release-gate-workflows.*",
 ];
 
 const STANDALONE_SCRIPT_PATTERNS = STANDALONE_SCRIPTS.map(

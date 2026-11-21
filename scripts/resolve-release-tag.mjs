@@ -86,10 +86,16 @@ export async function loadReleaseTargets({ root = repoRoot } = {}) {
   return merged;
 }
 
-export async function resolveReleaseTag(tag, { root = repoRoot } = {}) {
+/** Splits `<package-slug>-v<strict-semver>` into its slug, version and prerelease (undefined for a stable version). */
+export function parseReleaseTag(tag) {
   const match = typeof tag === 'string' && tag.match(tagPattern);
   if (!match) throw new Error(`Unsupported tag format: ${tag}. Expected <package-slug>-v<strict-semver>.`);
   const [, slug, version, prerelease] = match;
+  return { slug, version, prerelease };
+}
+
+export async function resolveReleaseTag(tag, { root = repoRoot } = {}) {
+  const { slug, version, prerelease } = parseReleaseTag(tag);
   const distTag = prerelease ? prerelease.split('.')[0] : 'latest';
   // npm rejects dist-tags that parse as version ranges; prereleases must never
   // move latest, even when someone names the prerelease "latest".
