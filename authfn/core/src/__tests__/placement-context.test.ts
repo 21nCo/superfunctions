@@ -635,6 +635,20 @@ describe('AuthFn placement-bound auth context', () => {
     await expect(stale.issuer.derive(mixed)).rejects.toBeInstanceOf(AuthFnSessionRevokedError);
   });
 
+  it('refuses a disabled user\'s bearer and cookie sessions', async () => {
+    const setup = await setupIssuer();
+    await setup.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: setup.user.id }],
+      data: { metadata: { disabled: true } },
+      namespace: 'authfn'
+    });
+    await expect(setup.issuer.derive(new Request('https://account.example.com/auth/session', {
+      headers: { authorization: `Bearer ${setup.sessionToken}` }
+    }))).rejects.toBeInstanceOf(AuthFnSessionRevokedError);
+    await expect(setup.issuer.derive(setup.request)).rejects.toBeInstanceOf(AuthFnSessionRevokedError);
+  });
+
   it('uses stored authentication time for cookie and bearer of the same session', async () => {
     const setup = await setupIssuer();
     const authenticatedAt = new Date('2026-09-01T00:00:00.000Z');

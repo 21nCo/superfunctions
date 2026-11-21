@@ -66,7 +66,7 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -365,6 +365,30 @@ function createSocialRoutes(
         if (!user) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
         }
+        if (isAuthFnUserDisabled(user)) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
+        }
+        // The code was minted by a social sign-in through a linked provider
+        // account. If that link is gone (for example, the account was claimed
+        // by the owner of its mailbox since), the code no longer stands, even
+        // if the same provider has been linked again: the exact link row it
+        // was minted for must still exist.
+        // A code without that link id (minted before AUTH-32) is refused; it
+        // lives for minutes, and the user signs in again.
+        const mintedFor = readOptionalString(metadata.oauthAccountId);
+        const link = mintedFor
+          ? await ctx.config.database.findOne({
+              model: 'oauth_accounts',
+              where: [
+                { field: 'id', operator: 'eq', value: mintedFor },
+                { field: 'userId', operator: 'eq', value: user.id }
+              ],
+              namespace: ctx.config.namespace ?? 'authfn'
+            })
+          : null;
+        if (!link) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff account link no longer exists', { userId });
+        }
         const methods = Array.isArray(metadata.methods)
           ? metadata.methods.filter((method): method is string => typeof method === 'string')
           : [];
@@ -559,7 +583,8 @@ function createSocialRoutes(
             userId: user.id,
             regionId: runtime.regionId,
             methods: [SOCIAL_PROVIDER_METHODS[providerId]],
-            challenge: handoffChallenge
+            challenge: handoffChallenge,
+            oauthAccountId
           });
           const completion = {
             provider: providerId,
@@ -2776,6 +2801,8 @@ async function createSocialHandoffCode(
     regionId?: string;
     methods: string[];
     challenge: string;
+    /** The provider-account link the sign-in went through. */
+    oauthAccountId?: string;
   }
 ): Promise<string> {
   const code = `shc_${randomBytes(24).toString('base64url')}`;
@@ -2797,7 +2824,8 @@ async function createSocialHandoffCode(
         kind: SOCIAL_HANDOFF_KIND,
         userId: input.userId,
         methods: input.methods,
-        challenge: input.challenge
+        challenge: input.challenge,
+        oauthAccountId: input.oauthAccountId
       }
     },
     createdAt: now.toISOString(),

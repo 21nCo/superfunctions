@@ -40,7 +40,9 @@ export function createAuthFnClient(
       http.requestJson({
         method: 'POST',
         path: '/sign-up/password',
-        body: input
+        body: input,
+        // Adding a password to the signed-in account needs the CSRF token.
+        csrf: true
       }),
     signInWithPassword: (input) =>
       http.requestJson({
@@ -82,7 +84,11 @@ export function createAuthFnClient(
       http.requestJson({
         method: 'POST',
         path: '/otp/verify',
-        body: input
+        body: input,
+        // A signed-in user verifying their own email proves they hold the
+        // account with the CSRF token; without it the code counts as a first
+        // proof of the mailbox by someone else.
+        csrf: true
       }),
     completePasswordReset: (input) =>
       http.requestJson({

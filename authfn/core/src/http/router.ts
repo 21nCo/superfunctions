@@ -232,7 +232,11 @@ export function createBaseRoutes(
         const state = await getCookieSessionState(config, request);
         const body = await readOptionalJson<{ allSessions?: boolean }>(request);
 
-        if (!state.session || !state.sessionRecord || !state.user) {
+        // A disabled user can still end their own session (state.disabled
+        // with the record and user), so a copy of the token does not come
+        // back to life when the flag is cleared.
+        const sessionId = state.session?.id ?? (state.disabled ? state.sessionRecord?.id : undefined);
+        if (!sessionId || !state.sessionRecord || !state.user) {
           const cookies = Object.values(clearSessionCookies(state.cookiePolicy));
           return jsonSuccess(request, {
             revoked: false,
@@ -247,7 +251,7 @@ export function createBaseRoutes(
         if (body.allSessions) {
           await revokeSessionsForUser(config, state.user.id);
         } else {
-          await revokeSessionById(config, state.session.id, {
+          await revokeSessionById(config, sessionId, {
             userId: state.user.id
           });
         }
@@ -256,9 +260,9 @@ export function createBaseRoutes(
           type: 'authfn.session.revoked',
           requestId: eventRequestId(request),
           actorId: state.user.id,
-          sessionId: body.allSessions ? undefined : state.session.id,
+          sessionId: body.allSessions ? undefined : sessionId,
           userId: state.user.id,
-          regionId: state.session.regionId,
+          regionId: state.session?.regionId ?? state.runtime.regionId,
           outcome: body.allSessions ? 'revoked-all' : 'revoked-current',
           metadata: {
             allSessions: Boolean(body.allSessions)

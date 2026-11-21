@@ -18,13 +18,28 @@ import {
   AuthFnOtpInvalidError,
   AuthFnOtpReplayedError,
   AuthFnPluginAbortedError,
+  AuthFnSessionRevokedError,
+  AuthFnUnauthenticatedError,
   AuthFnValidationError
 } from './errors.js';
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
 import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
-import { hashSecret } from './sessions.js';
-import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
+import {
+  assertValidCsrf,
+  authenticateAccountRequest,
+  getCookieSessionState,
+  hashSecret,
+  revokeSessionsForUser
+} from './sessions.js';
+import { removePendingTwoFactorChallenges, removePreVerificationAccess } from './account-claim.js';
+import {
+  createUser,
+  findUserByPrimaryEmail,
+  isAuthFnUserDisabled,
+  markUserEmailVerified,
+  readSignUpProfile
+} from './users.js';
 import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
@@ -58,6 +73,13 @@ export interface VerifyOtpInput {
   email: string;
   code: string;
   profile?: Record<string, unknown>;
+  /**
+   * For `verify-email`: only verify as the signed-in holder of the account.
+   * When the request is not that account's live session, it is refused with
+   * `AUTHFN_UNAUTHENTICATED` before the code is used, instead of being taken
+   * as someone else proving the mailbox (which claims the account).
+   */
+  requireAccountHolder?: boolean;
 }
 
 export interface CompleteResetPasswordInput {
@@ -293,6 +315,7 @@ export async function verifyOtpChallenge(
   let linkedExistingUser = false;
   let user: AuthFnUserRecord | null;
   let pendingSignUp: OtpSignUpUserInput | undefined;
+  let verifiedByHolder = false;
   // The code matched, so this attempt was not a wrong guess. When the request
   // ends before consuming the challenge (missing user, conflict, hook
   // rejection), the reserved attempt is handed back only if no other request
@@ -328,6 +351,17 @@ export async function verifyOtpChallenge(
             }
           });
         }
+        if (normalizeEmail(pendingSignUp.primaryEmail) !== email) {
+          // A hook changed the address: the code proves the submitted one,
+          // not this account's, so it neither links nor claims it.
+          throw new AuthFnConflictError('A user with this email already exists', {
+            primaryEmail: pendingSignUp.primaryEmail,
+            linking: {
+              method: 'email-otp',
+              reason: 'email_not_proved'
+            }
+          });
+        }
         linkedExistingUser = true;
       }
     } else if (input.purpose === 'reset-password') {
@@ -338,6 +372,34 @@ export async function verifyOtpChallenge(
       }
     }
 
+    // Checked before the code is used, so a refused request leaves it unused.
+    // A disabled account is not signed in to, linked, verified or claimed by
+    // an email code: its holder's own session no longer authenticates, so
+    // their request could not be told apart from someone else's, and a claim
+    // would wipe their credentials for a session that is refused anyway.
+    if (
+      user
+      && isAuthFnUserDisabled(user)
+      && (
+        input.purpose === 'sign-in'
+        || input.purpose === 'verify-email'
+        || (input.purpose === 'sign-up' && linkedExistingUser)
+        // A reset of an unverified account would claim it.
+        || (input.purpose === 'reset-password' && !user.emailVerifiedAt)
+      )
+    ) {
+      throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
+    }
+    if (input.purpose === 'verify-email' && input.requireAccountHolder) {
+      // No account, or not its live session: refused before the code is used.
+      verifiedByHolder = user ? await isAccountHolderRequest(config, input.request, user.id) : false;
+      if (!verifiedByHolder) {
+        throw new AuthFnUnauthenticatedError('Verifying this email requires the account\'s own signed-in session');
+      }
+    } else if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
+      verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
+    }
+
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
     await releaseOtpAttempt(config, reserved, now);
@@ -345,12 +407,16 @@ export async function verifyOtpChallenge(
   }
 
   if (input.purpose === 'verify-email') {
-    if (user) {
+    if (user && !user.emailVerifiedAt && !verifiedByHolder) {
+      // The code was entered by someone other than a signed-in holder of
+      // this account, so it is the first proof of the mailbox: claim it.
+      user = await claimUnverifiedAccount(config, user, now);
+    } else if (user) {
       user = await markUserEmailVerified(config, user.id, now);
     }
-  } else if (input.purpose === 'sign-up' && linkedExistingUser && user) {
+  } else if ((input.purpose === 'sign-in' || (input.purpose === 'sign-up' && linkedExistingUser)) && user) {
     if (!user.emailVerifiedAt) {
-      user = await markUserEmailVerified(config, user.id, now);
+      user = await claimUnverifiedAccount(config, user, now);
     }
   } else if (input.purpose === 'sign-up' && pendingSignUp && !user) {
     user = await createUser(config, {
@@ -442,6 +508,79 @@ async function consumeOtpChallenge(
   return consumed ?? { ...challenge, consumedAt, updatedAt: consumedAt };
 }
 
+/**
+ * The first time someone proves control of an unverified account's mailbox by
+ * signing in or up with an email code, whatever was set up on the account
+ * before that proof may belong to someone else: anyone can sign up with a
+ * password for an address they do not own and keep the session it returns.
+ * So the account's password is removed and its sessions are revoked before
+ * the email is marked verified and the caller's session is issued. The owner
+ * can set a password again afterwards.
+ */
+async function claimUnverifiedAccount(
+  config: AuthFnRuntimeConfig,
+  user: AuthFnUserRecord,
+  now: Date
+): Promise<AuthFnUserRecord> {
+  await removePreVerificationAccess(config, user.id, now);
+  return markUserEmailVerified(config, user.id, now);
+}
+
+/**
+ * Whether the request is made by a signed-in holder of the account (a session
+ * cookie with its CSRF token, or a bearer session token). Such a holder who
+ * also has the emailed code controls both, as when someone who signed up with
+ * a password verifies their own address.
+ */
+async function isAccountHolderRequest(
+  config: AuthFnRuntimeConfig,
+  request: Request | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!request) {
+    return false;
+  }
+  const cookieState = await getCookieSessionState(config, request, { touch: false });
+  if (countCookiesNamed(request, cookieState.cookiePolicy.sessionCookieName) > 1) {
+    // Only one value is read, and an empty or stale duplicate could hide the
+    // holder's live session and turn their own verification into a claim.
+    throw new AuthFnValidationError('Request carries more than one session cookie', {
+      cookie: cookieState.cookiePolicy.sessionCookieName
+    });
+  }
+  if (cookieState.session?.type === 'session' && cookieState.session.actorId === userId) {
+    // A live session of this very account must come with its CSRF token.
+    // Without it the request may be cross-site, or come from a browser whose
+    // CSRF cookie ran out before its session cookie; either way it must not
+    // count as someone else proving the mailbox, which would wipe the
+    // holder's own password. AUTHFN_CSRF_INVALID; the code stays unused.
+    assertValidCsrf(request, cookieState);
+    return true;
+  }
+  if (
+    countCookiesNamed(request, cookieState.cookiePolicy.sessionCookieName) > 0
+    && request.headers.get('authorization')
+  ) {
+    // Any other session cookie (stale, or another account's) hides the
+    // bearer token next to it, so a holder signed in by bearer would look
+    // anonymous and their verification would wipe their account. They can
+    // retry with one credential.
+    throw new AuthFnValidationError('Request carries both a session cookie and an Authorization header', {
+      cookie: cookieState.cookiePolicy.sessionCookieName
+    });
+  }
+  const session = await authenticateAccountRequest(config, request);
+  return session?.actorId === userId;
+}
+
+function countCookiesNamed(request: Request, name: string): number {
+  const header = request.headers.get('cookie');
+  if (!header) {
+    return 0;
+  }
+  return header.split(';').filter((part) => part.split('=')[0]?.trim() === name).length;
+}
+
 export async function completeResetPassword(
   config: AuthFnRuntimeConfig,
   runtimeOptions: OtpRuntimeOptions,
@@ -473,6 +612,20 @@ export async function completeResetPassword(
     email,
     purpose: 'reset-password'
   });
+  // Whoever reset the password proved control of the mailbox. Sessions and
+  // unfinished two-factor sign-ins that began before the reset (possibly by
+  // someone who knew the old password) stop working. On an account whose
+  // email was not verified yet, the reset is also its first proof of the
+  // mailbox, so everything set up before it is removed (the new password is
+  // kept) and the email is marked verified.
+  if (user.emailVerifiedAt) {
+    await removePendingTwoFactorChallenges(config, user.id);
+    await revokeSessionsForUser(config, user.id);
+  } else {
+    const now = resolveNow(runtimeOptions);
+    await removePreVerificationAccess(config, user.id, now, { keepPassword: true });
+    await markUserEmailVerified(config, user.id, now);
+  }
 
   return {
     passwordUpdated: true
@@ -822,15 +975,16 @@ async function resolveOtpSignUpUserInput(
   verifiedAt: Date
 ): Promise<OtpSignUpUserInput> {
   const hookContext = await buildChallengeHookContext(config, input.request);
+  const profile = readSignUpProfile(input.profile);
   const beforeUserInput = await runBeforeUserCreateHook(hooks, hookContext, {
     primaryEmail: normalizeEmail(input.email),
     emailVerifiedAt: verifiedAt,
-    metadata: input.profile ?? {}
+    metadata: profile
   });
 
   return {
     primaryEmail: normalizeEmail(readString(beforeUserInput.primaryEmail) ?? input.email),
-    metadata: readRecord(beforeUserInput.metadata) ?? input.profile,
+    metadata: readRecord(beforeUserInput.metadata) ?? profile,
     environment: hookContext.environment
   };
 }

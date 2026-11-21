@@ -323,6 +323,15 @@ describe('authfn integration browser flows', () => {
     });
     expect(resetComplete.ok).toBe(true);
 
+    // A completed reset revokes the sessions issued before it.
+    const revokedSession = await client.getSession();
+    expect(revokedSession.ok && revokedSession.data.session).toBeFalsy();
+    const signInAfterReset = await client.signInWithPassword({
+      email: 'ada@example.com',
+      password: 'An0therSecurePassphrase!'
+    });
+    expect(signInAfterReset.ok).toBe(true);
+
     const currentSession = await client.getSession();
     expect(currentSession.ok).toBe(true);
     if (!currentSession.ok) {

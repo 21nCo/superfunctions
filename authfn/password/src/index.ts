@@ -10,7 +10,7 @@ import {
   type AuthFnSchemaDefinition
 } from 'authfn';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
-import { authenticateRequest, issueSession } from 'authfn/core/sessions';
+import { authenticateAccountRequest, issueSession } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
 import { jsonSuccess } from 'authfn/http/envelopes';
@@ -92,7 +92,9 @@ function createPasswordRoutes(
           sessionMode?: AuthFnSessionResponseMode;
         }>(request);
         const runtime = await resolveEnvironment(ctx.config, request);
-        const authenticatedSession = await authenticateRequest(ctx.config, request);
+        // Adding a password to the signed-in account needs a session cookie
+        // with its CSRF token, or a bearer session token.
+        const authenticatedSession = await authenticateAccountRequest(ctx.config, request);
         const result = await signUpWithPassword(ctx.config, ctx.hooks, {
           email: body.email ?? '',
           password: body.password ?? '',
