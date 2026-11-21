@@ -19,6 +19,7 @@ import {
   AuthFnOtpReplayedError,
   AuthFnPluginAbortedError,
   AuthFnSessionRevokedError,
+  AuthFnUnauthenticatedError,
   AuthFnValidationError
 } from './errors.js';
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
@@ -72,6 +73,13 @@ export interface VerifyOtpInput {
   email: string;
   code: string;
   profile?: Record<string, unknown>;
+  /**
+   * For `verify-email`: only verify as the signed-in holder of the account.
+   * When the request is not that account's live session, it is refused with
+   * `AUTHFN_UNAUTHENTICATED` before the code is used, instead of being taken
+   * as someone else proving the mailbox (which claims the account).
+   */
+  requireAccountHolder?: boolean;
 }
 
 export interface CompleteResetPasswordInput {
@@ -371,8 +379,13 @@ export async function verifyOtpChallenge(
     ) {
       throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
     }
-    if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
+    if (input.purpose === 'verify-email' && user && (!user.emailVerifiedAt || input.requireAccountHolder)) {
       verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
+      if (input.requireAccountHolder && !verifiedByHolder) {
+        throw new AuthFnUnauthenticatedError('Verifying this email requires the account\'s own signed-in session', {
+          userId: user.id
+        });
+      }
     }
 
     consumed = await consumeOtpChallenge(config, challenge, now);

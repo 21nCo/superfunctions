@@ -90,7 +90,10 @@ public final class AuthFnClient: Sendable {
                   stored.session.primaryEmail.map(normalize) == normalize(email) else {
                 throw AuthFnError.unauthenticated
             }
-            _ = try await verifyEmail(email: email, code: code, bearerToken: stored.token)
+            // requireAccountHolder: if the stored session is no longer live,
+            // the server refuses before using the code instead of taking it as
+            // someone else claiming the account.
+            _ = try await verifyEmail(email: email, code: code, bearerToken: stored.token, requireAccountHolder: true)
             return stored
         }
         return try await credentialFromRegionalRequest(identifier: email) { regionId in
@@ -115,19 +118,28 @@ public final class AuthFnClient: Sendable {
     /// removes everything set up on the account before. Cookies are left out,
     /// so a stale or unrelated session cookie cannot get in the way.
     public func verifyEmail(email: String, code: String) async throws -> Bool {
-        try await verifyEmail(email: email, code: code, bearerToken: try await credentialStore.loadCredential()?.token)
+        try await verifyEmail(email: email, code: code, bearerToken: try await credentialStore.loadCredential()?.token, requireAccountHolder: false)
     }
 
-    private func verifyEmail(email: String, code: String, bearerToken holderToken: String?) async throws -> Bool {
+    private func verifyEmail(
+        email: String,
+        code: String,
+        bearerToken holderToken: String?,
+        requireAccountHolder: Bool
+    ) async throws -> Bool {
         let regionId = try await regionIdFor(identifier: email)
+        var body: [String: Any] = [
+            "email": normalize(email),
+            "purpose": "verify-email",
+            "code": code,
+        ]
+        if requireAccountHolder {
+            body["requireAccountHolder"] = true
+        }
         let result: AuthFnEmailVerification = try await post(
             path: "/otp/verify",
             regionId: regionId,
-            body: [
-                "email": normalize(email),
-                "purpose": "verify-email",
-                "code": code,
-            ],
+            body: body,
             bearerToken: holderToken,
             sendCookies: false
         )

@@ -276,6 +276,25 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
   });
 
+  it('refuses, without using the code, a verify-email that requires the holder but has no live session', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password', sessionMode: 'hybrid' }));
+    const token = (await signUp.clone().json()).data.token as string;
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const code = ctx.codeFor('verify-email', OWNER);
+    const refused = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code, requireAccountHolder: true }, {
+      authorization: 'Bearer test-expired-session-token'
+    }));
+    expect(refused.status).toBe(401);
+    expect((await refused.json()).error.code).toBe('AUTHFN_UNAUTHENTICATED');
+    // Nothing was claimed, and the code still works with the live session.
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code, requireAccountHolder: true }, {
+      authorization: `Bearer ${token}`
+    }));
+    expect(verified.status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+  });
+
   it('neither verifies nor claims a disabled account, so its holder keeps their credentials', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));

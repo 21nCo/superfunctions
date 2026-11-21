@@ -106,13 +106,15 @@ function createOtpRoutes(ctx: AuthFnPluginRuntimeContext): Route[] {
           code?: string;
           profile?: Record<string, unknown>;
           sessionMode?: AuthFnSessionResponseMode;
+          requireAccountHolder?: boolean;
         }>(request);
         const verification = await verifyOtpChallenge(ctx.config, ctx.hooks, runtimeConfig, {
           request,
           purpose: body.purpose ?? 'verify-email',
           email: body.email ?? '',
           code: body.code ?? '',
-          profile: body.profile
+          profile: body.profile,
+          requireAccountHolder: body.requireAccountHolder === true
         });
 
         if ((body.purpose === 'sign-in' || body.purpose === 'sign-up') && verification.user) {
