@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -140,4 +140,14 @@ test('the command reads GITHUB_REPOSITORY and exits non-zero with the refusal on
   assert.equal(wrong.status, 1);
   assert.match(wrong.stderr, /owned by public \(21nCo\/superfunctions\)/);
   assert.equal(run(PUBLIC_REPO, 'wheel', 'datafn-core-v1.0.0').status, 1);
+});
+
+test('the command still runs the gate when reached through a symlink', t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-owner-link-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, 'assert-release-owner.mjs');
+  symlinkSync(script, link);
+  const result = spawnSync(process.execPath, [link, 'npm', 'datafn-core-v1.0.0'], { encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: NEXT_REPO } });
+  assert.equal(result.status, 1, 'a skipped gate would exit 0');
+  assert.match(result.stderr, /owned by public/);
 });

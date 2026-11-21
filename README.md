@@ -63,13 +63,17 @@ Before anything is installed, built or packed, both publish workflows refuse a
 tag whose npm slug or Python project is owned by the other repository in
 `superfunctions.owners.json` / `superfunctions.owners.next.json`, is listed in
 neither or in both (`scripts/assert-release-owner.mjs`), and a tag whose commit
-has no completed, successful `CI` run on that exact SHA
-(`scripts/assert-release-ci.mjs`). Tag only a commit whose CI has passed; if CI
-was still running, dispatch the workflow again once it succeeds. An owners
-manifest may name a different CI check with `"ci": {"checkRun": "<name>",
-"app": "<GitHub App slug>"}` (Depot on `next`); without it the GitHub Actions
-workflow `CI` is required. A `channel_only` dispatch republishes nothing and
-skips only the CI check.
+has no completed, successful CI run on that exact SHA
+(`scripts/assert-release-ci.mjs`). On `21nCo/superfunctions` that is a `push` or
+`workflow_dispatch` run of `.github/workflows/ci.yml` (a `pull_request` run tests
+a merge commit, so it does not count); `"ci": {"workflow": "<file>"}` in
+`superfunctions.owners.json` names another workflow file. On `next`, CI runs on
+Depot, so `superfunctions.owners.next.json` must name the check run with
+`"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}`; without it `next`
+refuses every tag. Tag only a commit whose CI has passed; if CI was still
+running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
+republishes nothing and skips only the CI check; its owner check runs from the
+dispatching commit, so it also works for tags made before the check existed.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

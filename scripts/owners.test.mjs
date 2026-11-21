@@ -124,24 +124,28 @@ test("Python projects are one distribution per PEP 503 canonical name", () => {
 
 test("the optional ci section names the release CI as a workflow or a check run (SFNS-124)", () => {
   assert.equal(parseManifest(publicData(), { kind: "public" }).ci, null);
-  assert.deepEqual(parseManifest({ ...publicData(), ci: { workflow: "CI" } }, { kind: "public" }).ci, { kind: "workflow", name: "CI", app: null });
+  assert.deepEqual(parseManifest({ ...publicData(), ci: { workflow: "ci.yml" } }, { kind: "public" }).ci, { kind: "workflow", name: "ci.yml", app: null });
   assert.deepEqual(parseManifest({ ...nextData(), ci: { checkRun: "Depot CI", app: "depot" } }, { kind: "next" }).ci, {
     kind: "check-run",
     name: "Depot CI",
     app: "depot",
   });
-  assert.deepEqual(parseManifest({ ...nextData(), ci: { checkRun: "CI" } }, { kind: "next" }).ci, { kind: "check-run", name: "CI", app: null });
   for (const ci of [
     "CI",
     [],
     {},
-    { workflow: "CI", checkRun: "CI" },
-    { workflow: "CI", app: "depot" },
+    { workflow: "ci.yml", checkRun: "CI", app: "depot" },
+    { workflow: "ci.yml", app: "depot" },
     { workflow: "" },
-    { checkRun: " CI" },
+    // A workflow is named by its file, not by its display name, which any workflow's run-name can copy.
+    { workflow: "CI" },
+    { workflow: "../ci.yml" },
+    // A check run needs its app, because any app with checks access can name a check run.
+    { checkRun: "CI" },
+    { checkRun: " CI", app: "depot" },
     { checkRun: "CI", app: "" },
-    { checkRun: 1 },
-    { checkRun: "CI", branch: "dev" },
+    { checkRun: 1, app: "depot" },
+    { checkRun: "CI", app: "depot", branch: "dev" },
   ]) {
     throwsCode(() => parseManifest({ ...nextData(), ci }, { kind: "next" }), "malformed-manifest");
   }

@@ -11,8 +11,8 @@ export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
 export const REPOS = Object.freeze(["public", "next"]);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-/** CI a release tag's commit must pass when a manifest has no `ci` section (SFNS-124): the GitHub Actions workflow "CI". */
-export const DEFAULT_RELEASE_CI = Object.freeze({ kind: "workflow", name: "CI", app: null });
+/** CI a public release tag's commit must pass when the public manifest has no `ci` section (SFNS-124): .github/workflows/ci.yml. */
+export const DEFAULT_RELEASE_CI = Object.freeze({ kind: "workflow", name: "ci.yml", app: null });
 
 export class OwnersError extends Error {
   /**
@@ -94,8 +94,10 @@ function nameList(file, where, value) {
 
 /**
  * The optional `ci` section names the CI a release tag's commit must pass in the repository that reads this manifest
- * (SFNS-124): `{"workflow": "<GitHub Actions workflow name>"}` or `{"checkRun": "<check run name>", "app": "<GitHub
- * App slug>"}` for CI that reports check runs from another app, such as Depot on `next`. Absent means null.
+ * (SFNS-124): `{"workflow": "<file under .github/workflows>"}` for a GitHub Actions workflow, identified by its file
+ * rather than its display name, or `{"checkRun": "<check run name>", "app": "<GitHub App slug>"}` for CI that reports
+ * check runs from another app, such as Depot on `next`; the app is required because any app can name a check run.
+ * Absent means null.
  */
 function releaseCi(file, value) {
   if (value === undefined) return null;
@@ -110,9 +112,11 @@ function releaseCi(file, value) {
   if ((value.workflow === undefined) === (value.checkRun === undefined)) throw malformed(file, "ci needs exactly one of workflow or checkRun");
   if (value.workflow !== undefined) {
     if (value.app !== undefined) throw malformed(file, "ci.app applies only to checkRun");
-    return Object.freeze({ kind: "workflow", name: nonEmpty("workflow"), app: null });
+    if (!/^[A-Za-z0-9._-]+\.ya?ml$/.test(nonEmpty("workflow"))) throw malformed(file, "ci.workflow must be a workflow file name such as ci.yml");
+    return Object.freeze({ kind: "workflow", name: value.workflow, app: null });
   }
-  return Object.freeze({ kind: "check-run", name: nonEmpty("checkRun"), app: value.app === undefined ? null : nonEmpty("app") });
+  if (value.app === undefined) throw malformed(file, "ci.checkRun needs ci.app, the slug of the GitHub App that reports it");
+  return Object.freeze({ kind: "check-run", name: nonEmpty("checkRun"), app: nonEmpty("app") });
 }
 
 /**

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,16 +15,16 @@ const OTHER_SHA = 'b'.repeat(40);
 const TOKEN = 'test-github-token';
 const script = path.join(import.meta.dirname, 'assert-release-ci.mjs');
 
-// Trimmed recordings of GET /repos/{repo}/actions/runs?head_sha=... (workflow runs) and
+// Trimmed recordings of GET /repos/{repo}/actions/workflows/{file}/runs?head_sha=... (workflow runs) and
 // GET /repos/{repo}/commits/{sha}/check-runs?check_name=...&filter=latest (check runs), keeping the fields the gate
 // reads plus enough context to show the real shape.
-const workflowRun = ({ id = 1, name = 'CI', sha = RELEASE_SHA, status = 'completed', conclusion = 'success' } = {}) => ({
+const workflowRun = ({ id = 1, name = 'CI', file = 'ci.yml', event = 'push', sha = RELEASE_SHA, status = 'completed', conclusion = 'success' } = {}) => ({
   id,
   name,
-  path: name === 'CI' ? '.github/workflows/ci.yml' : '.github/workflows/other.yml',
+  path: `.github/workflows/${file}`,
   head_branch: 'dev',
   head_sha: sha,
-  event: 'push',
+  event,
   status,
   conclusion,
   run_attempt: 1,
@@ -50,6 +50,7 @@ function checkout(t, { publicCi, nextCi } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'release-ci-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const pub = { version: 1, paths: { datafn: 'public' }, rootFiles: { public: [] }, releases: { 'datafn-core': 'public' } };
+  // nextCi: undefined writes no next manifest, null a next manifest without a ci section.
   if (publicCi) pub.ci = publicCi;
   writeFileSync(path.join(root, 'superfunctions.owners.json'), JSON.stringify(pub));
   if (nextCi !== undefined) {
@@ -81,15 +82,17 @@ const refuses = async (promise, code, ...fragments) =>
     return true;
   });
 
-const RUNS_PATH = `/repos/${PUBLIC_REPO}/actions/runs`;
+const RUNS_PATH = `/repos/${PUBLIC_REPO}/actions/workflows/ci.yml/runs`;
 const CHECKS_PATH = `/repos/${NEXT_REPO}/commits/${RELEASE_SHA}/check-runs`;
 
-test('public: a successful CI workflow run on the release commit passes, read with the token for that SHA', async t => {
+test('public: a successful push or dispatch run of ci.yml on the release commit passes, read with the token for that SHA', async t => {
   const root = checkout(t);
-  const { fetchImpl, requests } = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ id: 7, name: 'Docs', conclusion: 'failure' }), workflowRun({ id: 8 })) });
+  const { fetchImpl, requests } = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ id: 7, event: 'pull_request', conclusion: 'failure' }), workflowRun({ id: 8 })) });
   const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl });
   assert.deepEqual(result.ci, DEFAULT_RELEASE_CI);
-  assert.match(result.message, /GitHub Actions workflow "CI" succeeded on a{40} \(https:\/\/github.com\/21nCo\/superfunctions\/actions\/runs\/8\)/);
+  assert.match(result.message, /workflow \.github\/workflows\/ci\.yml \(push or workflow_dispatch run\) succeeded on a{40} \(https:\/\/github.com\/21nCo\/superfunctions\/actions\/runs\/8\)/);
+  const dispatched = recordedFetch({ [RUNS_PATH]: workflowRuns(workflowRun({ event: 'workflow_dispatch' })) }).fetchImpl;
+  await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: dispatched });
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url.searchParams.get('head_sha'), RELEASE_SHA);
   assert.equal(requests[0].headers.authorization, `Bearer ${TOKEN}`);
@@ -102,8 +105,12 @@ test('public: a failed, in-progress, missing or other-commit CI run is refused',
     ['failed', workflowRuns(workflowRun({ conclusion: 'cancelled' }), workflowRun({ id: 2, conclusion: 'skipped' })), 'concluded cancelled, skipped'],
     ['in-progress', workflowRuns(workflowRun({ status: 'in_progress', conclusion: null })), 'has not completed (in_progress)'],
     ['in-progress', workflowRuns(workflowRun({ conclusion: 'failure' }), workflowRun({ id: 2, status: 'queued', conclusion: null })), 'queued'],
-    ['missing', workflowRuns(), 'no GitHub Actions workflow "CI" ran on'],
-    ['missing', workflowRuns(workflowRun({ name: 'Publish tagged package' })), 'no GitHub Actions workflow "CI" ran on'],
+    ['missing', workflowRuns(), 'no GitHub Actions workflow .github/workflows/ci.yml'],
+    // A pull_request run tests the merge of the tagged commit into its base, not the tagged commit itself.
+    ['missing', workflowRuns(workflowRun({ event: 'pull_request' })), '1 pull_request run(s) tested a different tree'],
+    ['failed', workflowRuns(workflowRun({ conclusion: 'failure' }), workflowRun({ id: 2, event: 'pull_request' })), 'concluded failure'],
+    // Any workflow can set its run name to "CI" (pullfrog.yml takes it as an input); only ci.yml's runs count.
+    ['missing', workflowRuns(workflowRun({ name: 'CI', file: 'pullfrog.yml' })), 'no GitHub Actions workflow'],
     ['missing', workflowRuns(workflowRun({ sha: OTHER_SHA })), '1 matching run(s) belong to other commits'],
   ];
   for (const [code, body, fragment] of cases) {
@@ -113,7 +120,7 @@ test('public: a failed, in-progress, missing or other-commit CI run is refused',
 });
 
 test('next: the Depot check run named in the next manifest decides, not GitHub Actions', async t => {
-  const root = checkout(t, { publicCi: { workflow: 'CI' }, nextCi: { checkRun: 'Depot CI', app: 'depot' } });
+  const root = checkout(t, { publicCi: { workflow: 'ci.yml' }, nextCi: { checkRun: 'Depot CI', app: 'depot' } });
   const { fetchImpl, requests } = recordedFetch({ [CHECKS_PATH]: checkRuns(checkRun({ name: 'Depot CI' })) });
   const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl });
   assert.deepEqual(result.ci, { kind: 'check-run', name: 'Depot CI', app: 'depot' });
@@ -133,17 +140,30 @@ test('next: the Depot check run named in the next manifest decides, not GitHub A
   }
 });
 
-test('next without a ci section requires the GitHub Actions workflow "CI"; the public section does not apply there', async t => {
-  const root = checkout(t, { publicCi: { checkRun: 'Public only' }, nextCi: null });
-  const { fetchImpl, requests } = recordedFetch({ [`/repos/${NEXT_REPO}/actions/runs`]: workflowRuns(workflowRun()) });
-  const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl });
-  assert.deepEqual(result.ci, DEFAULT_RELEASE_CI);
-  assert.equal(requests[0].url.pathname, `/repos/${NEXT_REPO}/actions/runs`);
+test('next refuses without a ci section in its own manifest, even when GitHub Actions CI is green; the public section does not apply', async t => {
+  // The synced ci.yml skips every job outside public, so its green runs on next test nothing.
+  const { fetchImpl, requests } = recordedFetch({ [`/repos/${NEXT_REPO}/actions/workflows/ci.yml/runs`]: workflowRuns(workflowRun()) });
+  for (const root of [checkout(t, { publicCi: { checkRun: 'Public only', app: 'depot' }, nextCi: null }), checkout(t)]) {
+    await refuses(
+      assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root, fetchImpl }),
+      'missing-config',
+      'superfunctions.owners.next.json has no "ci" section naming the Depot check run',
+    );
+  }
+  assert.equal(requests.length, 0);
+});
+
+test('public uses its own manifest ci section when present', async t => {
+  const root = checkout(t, { publicCi: { workflow: 'release-ci.yml' }, nextCi: { checkRun: 'Depot CI', app: 'depot' } });
+  const { fetchImpl, requests } = recordedFetch({ [`/repos/${PUBLIC_REPO}/actions/workflows/release-ci.yml/runs`]: workflowRuns(workflowRun({ file: 'release-ci.yml' })) });
+  const result = await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl });
+  assert.deepEqual(result.ci, { kind: 'workflow', name: 'release-ci.yml', app: null });
+  assert.equal(requests.length, 1);
 });
 
 test('every page of runs is read before deciding', async t => {
   const root = checkout(t);
-  const filler = Array.from({ length: 100 }, (_, index) => workflowRun({ id: index + 10, name: 'Other' }));
+  const filler = Array.from({ length: 100 }, (_, index) => workflowRun({ id: index + 10, event: 'pull_request' }));
   const { fetchImpl, requests } = recordedFetch({
     [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 101, workflow_runs: filler } : { total_count: 101, workflow_runs: [workflowRun({ id: 9 })] }),
   });
@@ -169,9 +189,9 @@ test('bad input, a missing token, an API error or an unknown repository refuses'
 
 test('a success on the release commit wins over failures and other commits', () => {
   const runs = [
-    { name: 'CI', headSha: OTHER_SHA, status: 'completed', conclusion: 'success', app: null },
-    { name: 'CI', headSha: RELEASE_SHA, status: 'completed', conclusion: 'failure', app: null },
-    { name: 'CI', headSha: RELEASE_SHA, status: 'completed', conclusion: 'success', app: null },
+    { path: '.github/workflows/ci.yml', event: 'push', headSha: OTHER_SHA, status: 'completed', conclusion: 'success' },
+    { path: '.github/workflows/ci.yml', event: 'push', headSha: RELEASE_SHA, status: 'completed', conclusion: 'failure' },
+    { path: '.github/workflows/ci.yml', event: 'workflow_dispatch', headSha: RELEASE_SHA, status: 'completed', conclusion: 'success' },
   ];
   assert.match(evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs }).message, /succeeded/);
   assert.throws(() => evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs: runs.slice(0, 2) }), error => error.code === 'failed');
@@ -206,5 +226,15 @@ test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN and GITHUB_API_URL and e
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /concluded failure, not success/);
   assert.equal(seen[0].authorization, `Bearer ${TOKEN}`);
-  assert.ok(seen[0].url.startsWith(`/repos/${PUBLIC_REPO}/actions/runs?`));
+  assert.ok(seen[0].url.startsWith(`/repos/${PUBLIC_REPO}/actions/workflows/ci.yml/runs?`));
+});
+
+test('the command still runs the gate when reached through a symlink', t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-ci-link-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, 'assert-release-ci.mjs');
+  symlinkSync(script, link);
+  const result = spawnSync(process.execPath, [link, 'HEAD'], { encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: PUBLIC_REPO } });
+  assert.equal(result.status, 1, 'a skipped gate would exit 0');
+  assert.match(result.stderr, /full 40-character SHA/);
 });

@@ -7,6 +7,7 @@
 //
 // The running repository comes from GITHUB_REPOSITORY.
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -129,7 +130,8 @@ export function assertReleaseOwner({ kind, tag, repository, root = REPO_ROOT }) 
   return { owner, name: release.name, repository: PUBLISHING_REPOSITORIES[running], manifest };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// realpath: a symlinked path to this file (such as macOS's /var -> /private/var) must still run the gate, never skip it.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [kind, tag] = process.argv.slice(2);
     const result = assertReleaseOwner({ kind, tag, repository: process.env.GITHUB_REPOSITORY });
