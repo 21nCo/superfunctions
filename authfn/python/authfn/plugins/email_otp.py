@@ -495,8 +495,10 @@ def _as_utc(value: Any) -> datetime:
     if isinstance(value, str):
         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value
+        return value.replace(tzinfo=timezone.utc)
+    # Compare instants, not wall times (a daylight-saving fall-back repeats an
+    # hour in the same zone).
+    return value.astimezone(timezone.utc)
 
 
 def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> AuthFnPlugin:

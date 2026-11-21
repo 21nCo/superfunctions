@@ -402,3 +402,15 @@ async def test_skips_a_newer_challenge_the_typescript_kernel_never_admitted() ->
     )
     verified = await service.verify_challenge("verify-email", "ada@example.com", "731942")
     assert verified["verified"] is True
+
+
+def test_compares_challenge_times_as_instants_across_a_daylight_saving_fall_back() -> None:
+    from zoneinfo import ZoneInfo
+
+    from authfn.plugins.email_otp import _is_admitted
+
+    new_york = ZoneInfo("America/New_York")
+    created = datetime(2026, 11, 1, 1, 55, tzinfo=new_york, fold=0)  # 01:55 EDT
+    expires = datetime(2026, 11, 1, 1, 5, tzinfo=new_york, fold=1)  # 01:05 EST, ten minutes later
+    assert _is_admitted({"createdAt": created, "expiresAt": expires}) is True
+    assert _is_admitted({"createdAt": created, "expiresAt": created}) is False
