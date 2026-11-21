@@ -24,6 +24,10 @@ export async function removePreVerificationAccess(
     keepPassword?: boolean;
   } = {}
 ): Promise<void> {
+  // Sessions go first, so the holder being locked out cannot use one to add
+  // a new credential after its table has been cleared. (A request already
+  // past authentication when this runs can still finish; see AUTH-32.)
+  await revokeSessionsForUser(config, userId);
   if (hasPlugin(config, 'password') && !options.keepPassword) {
     await deleteMany(config, 'password_credentials', 'userId', userId);
   }
@@ -54,6 +58,7 @@ export async function removePreVerificationAccess(
     // Remembered consent would let a client get a new grant without asking.
     await deleteMany(config, 'oauth_provider_consents', 'userId', userId);
   }
+  // Again at the end, for sessions issued while the rest ran.
   await revokeSessionsForUser(config, userId);
 }
 

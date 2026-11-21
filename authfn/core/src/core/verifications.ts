@@ -361,7 +361,13 @@ export async function verifyOtpChallenge(
     if (
       user
       && isAuthFnUserDisabled(user)
-      && (input.purpose === 'sign-in' || input.purpose === 'verify-email' || (input.purpose === 'sign-up' && linkedExistingUser))
+      && (
+        input.purpose === 'sign-in'
+        || input.purpose === 'verify-email'
+        || (input.purpose === 'sign-up' && linkedExistingUser)
+        // A reset of an unverified account would claim it.
+        || (input.purpose === 'reset-password' && !user.emailVerifiedAt)
+      )
     ) {
       throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
     }

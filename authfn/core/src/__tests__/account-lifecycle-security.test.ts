@@ -325,6 +325,57 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect(credentials).toHaveLength(1);
   });
 
+  it('refuses a password reset of a disabled, unverified account without claiming it', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const userId = (await signUp.clone().json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+    await ctx.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: userId }],
+      data: { metadata: { disabled: true } },
+      namespace: 'authfn'
+    });
+    await ctx.handle(json('/password/reset/start', { email: OWNER }));
+    const refused = await ctx.handle(json('/password/reset/complete', {
+      email: OWNER,
+      code: ctx.codeFor('reset-password', OWNER),
+      newPassword: 'new-owner-test-password'
+    }));
+    expect(refused.status).toBe(401);
+    expect((await remaining(ctx, userId)).apiKeys).toBe(1);
+  });
+
+  it('revokes the account\'s sessions before removing anything else when it is claimed', async () => {
+    const writes: string[] = [];
+    const base = memoryAdapter({ debug: false });
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== 'function') {
+          return value;
+        }
+        if (['update', 'updateMany', 'delete', 'deleteMany'].includes(property as string)) {
+          return async (params: { model: string }) => {
+            writes.push(params.model);
+            return value.call(target, params);
+          };
+        }
+        return value.bind(target);
+      }
+    });
+    const ctx = createFullContext({ database });
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
+    const userId = (await signUp.json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+    writes.length = 0;
+    expect((await signInByOtp(ctx, 'sign-in', OWNER)).status).toBe(200);
+    const firstSessionWrite = writes.indexOf('sessions');
+    expect(firstSessionWrite).toBeGreaterThanOrEqual(0);
+    expect(firstSessionWrite).toBeLessThan(writes.indexOf('password_credentials'));
+    expect(firstSessionWrite).toBeLessThan(writes.indexOf('api_keys'));
+  });
+
   it('treats a password reset on an unverified account as its claim, keeping the new password', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
