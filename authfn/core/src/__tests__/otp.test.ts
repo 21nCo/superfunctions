@@ -17,6 +17,7 @@ import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
 import { getLatestOtpChallenge } from '../core/verifications.js';
 import { getSchema } from '../schema.js';
+import { AuthFnOtpReplayedError } from '../core/errors.js';
 
 // Counts constant-time comparisons: in the verify-email flow the only caller
 // is the OTP code check, so this is the number of codes compared.
@@ -1277,6 +1278,27 @@ describe('authfn otp plugin', () => {
       config.__clock.advance(1000);
       await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
       expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+    });
+
+    it('hands back only the matching attempt when a hook ends a correct sign-up with a replay error', async () => {
+      const { config } = setup();
+      config.hooks = {
+        beforeUserCreate: async () => {
+          throw new AuthFnOtpReplayedError('test replay from a host hook');
+        }
+      };
+      const auth = createTestServer(config);
+      const send = (body: Record<string, unknown>, path: string) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await send({ purpose: 'sign-up', email: 'new@example.com' }, '/otp/send');
+      expect((await send({ purpose: 'sign-up', email: 'new@example.com', code: '100000' }, '/otp/verify')).status).toBe(400);
+      expect((await send({ purpose: 'sign-up', email: 'new@example.com', code: '731942' }, '/otp/verify')).status).toBe(409);
+      const latest = await getLatestOtpChallenge(config, 'sign-up', 'new@example.com');
+      // The wrong code stays counted; only the matching attempt was handed back.
+      expect(latest?.attemptCount).toBe(1);
     });
 
     it('applies the strictest limit configured for either OTP plugin', async () => {

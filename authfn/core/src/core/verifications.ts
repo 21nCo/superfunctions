@@ -363,8 +363,8 @@ export async function verifyOtpChallenge(
 
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
-    await releaseOtpAttempt(config, reserved, now);
-    if (error instanceof AuthFnOtpReplayedError) {
+    const released = await releaseOtpAttempt(config, reserved, now);
+    if (!released && error instanceof AuthFnOtpReplayedError) {
       // Another request consumed the challenge with the same correct code;
       // this attempt matched too, so it is not a wrong guess. The challenge
       // is spent, so handing the attempt back allows no further comparison.
@@ -824,10 +824,7 @@ async function assertOtpGuessBudget(
   const budget = resolveOtpEmailBudget(config, runtimeOptions);
   const usage = await readOtpEmailUsage(config, email, budget, now);
   const cap = reservation ? budget.maxFailedAttempts + 1 : budget.maxFailedAttempts;
-  // A live challenge outside the rows read (pushed out by newer rows) would
-  // be guessed without its count being seen, so it is refused.
-  const unseen = !usage.scannedIds.has(challengeId);
-  if (capResetAt(usage.counted, failedAttempts, cap) || usage.incomplete || unseen) {
+  if (capResetAt(usage.counted, failedAttempts, cap) || usage.incomplete) {
     // The caller hands this request's reservation back, so a new request
     // passes once the count without it is under the cap.
     const settled = reservation
@@ -841,6 +838,14 @@ async function assertOtpGuessBudget(
       'failed-attempts',
       usage.incomplete ? laterOf(resetAt, usage.incompleteUntil!) : resetAt
     );
+  }
+  if (!usage.scannedIds.has(challengeId)) {
+    // A live challenge outside the rows read (pushed out by many newer rows)
+    // would be guessed without its count being seen. Waiting does not bring
+    // it back into the scan, so the caller is told to request a new code.
+    throw new AuthFnOtpExpiredError('OTP code has expired; request a new code', {
+      challengeId
+    });
   }
 }
 
@@ -987,9 +992,9 @@ async function releaseOtpAttempt(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   reservation: OtpAttemptReservation,
   updatedAt: Date
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await updateOtpChallengeIfMatches(
+    return await updateOtpChallengeIfMatches(
       config,
       reservation.challengeId,
       [
@@ -1004,6 +1009,7 @@ async function releaseOtpAttempt(
   } catch {
     // Keeping the reservation is the safe outcome; the caller rethrows the
     // error that ended the request.
+    return false;
   }
 }
 
