@@ -128,6 +128,13 @@ apifn check --write   # rewrite a stale spec instead of failing
 - `--report <path>` — also write the report to a file (never the spec itself)
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
+`check` accepts only this grammar: a second positional (for example a ref given without
+`--base`), any argument after `--`, a value on `--write` or `--allow-breaking`, or a repeated
+value option is a usage error.
+
+Committed and base specs may use any number of YAML aliases; a document whose aliases expand
+past 5,000,000 nodes or form a cycle is rejected (an unparseable committed spec, or a base load
+error).
 
 Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
 canonical JSON (key order and formatting do not count).
