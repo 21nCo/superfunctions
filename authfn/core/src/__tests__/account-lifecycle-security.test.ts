@@ -284,6 +284,31 @@ describe('AF-06: sessions end on password reset and while the user is disabled',
   });
 });
 
+describe('AF-06: a disabled user can still sign out', () => {
+  it('revokes the session on sign-out while disabled, so it stays dead once re-enabled', async () => {
+    const ctx = createContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'original-test-password', sessionMode: 'hybrid' }));
+    const body = await signUp.clone().json();
+    const cookies = cookieHeader(signUp);
+    const token = body.data.token as string;
+    const userId = body.data.session.actorId as string;
+    const setDisabled = (disabled: boolean) => ctx.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: userId }],
+      data: { metadata: { disabled } },
+      namespace: 'authfn'
+    });
+
+    await setDisabled(true);
+    const signOut = await ctx.handle(json('/sign-out', {}, { cookie: cookies, 'x-authfn-csrf': csrfToken(signUp) }));
+    expect(signOut.status).toBe(200);
+    expect((await signOut.json()).data.revoked).toBe(true);
+
+    await setDisabled(false);
+    expect((await account(ctx, { authorization: `Bearer ${token}` })).status).toBe(401);
+  });
+});
+
 describe('AF-08: the sign-up profile is caller data', () => {
   it('drops the AuthFn-owned disabled key from a sign-up profile', async () => {
     const ctx = createContext();
@@ -338,14 +363,32 @@ describe('AF-09: adding a password to the signed-in account needs the CSRF token
     }));
     expect(wrongToken.status).toBe(409);
 
-    // A valid session cookie followed by an empty one of the same name is
-    // still a cookie request, so a bearer token sent with it does not count.
-    const sessionCookieName = cookieHeader(owner).split('; ').find((part) => /session=/.test(part))!.split('=')[0]!;
-    const bearer = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-chosen-test-password', sessionMode: 'hybrid' }, {
-      cookie: `${cookieHeader(owner)}; ${sessionCookieName}=`,
-      authorization: 'Bearer test-not-a-session-token'
+  });
+
+  it('does not fall back to a bearer token when the request carries a session cookie, even an empty one', async () => {
+    const ctx = createContext({ accountLinking: { passwordForAuthenticatedUser: true } });
+    await ctx.handle(json('/otp/send', { purpose: 'sign-up', email: OWNER }));
+    const owner = await ctx.handle(json('/otp/verify', {
+      purpose: 'sign-up', email: OWNER, code: ctx.codeFor('sign-up', OWNER), sessionMode: 'hybrid'
     }));
-    expect(bearer.status).toBe(409);
+    const token = (await owner.clone().json()).data.token as string;
+    expect(token).toBeTruthy();
+    const sessionCookieName = cookieHeader(owner).split('; ').find((part) => /session=/.test(part))!.split('=')[0]!;
+
+    // A valid session cookie followed by an empty one of the same name is
+    // still a cookie request, so the valid bearer token sent with it does
+    // not count.
+    const mixed = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }, {
+      cookie: `${cookieHeader(owner)}; ${sessionCookieName}=`,
+      authorization: `Bearer ${token}`
+    }));
+    expect(mixed.status).toBe(409);
+
+    // The same bearer token alone does add the password.
+    const bearerOnly = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }, {
+      authorization: `Bearer ${token}`
+    }));
+    expect(bearerOnly.status).toBe(200);
   });
 
   it('adds the password with the CSRF token', async () => {

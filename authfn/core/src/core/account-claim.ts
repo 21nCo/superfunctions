@@ -51,6 +51,8 @@ export async function removePreVerificationAccess(
       data: { revokedAt: now, revokedReason: 'account_claimed', updatedAt: now },
       namespace: namespace(config)
     });
+    // Remembered consent would let a client get a new grant without asking.
+    await deleteMany(config, 'oauth_provider_consents', 'userId', userId);
   }
   await revokeSessionsForUser(config, userId);
 }

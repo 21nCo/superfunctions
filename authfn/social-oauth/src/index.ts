@@ -66,7 +66,7 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -364,6 +364,23 @@ function createSocialRoutes(
         const user = await findUserById(ctx.config, userId);
         if (!user) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
+        }
+        if (isAuthFnUserDisabled(user)) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
+        }
+        // The code was minted by a social sign-in through a linked provider
+        // account. If that link is gone (for example, the account was claimed
+        // by the owner of its mailbox since), the code no longer stands.
+        const link = await ctx.config.database.findOne({
+          model: 'oauth_accounts',
+          where: [
+            { field: 'userId', operator: 'eq', value: user.id },
+            { field: 'provider', operator: 'eq', value: pending.providerId }
+          ],
+          namespace: ctx.config.namespace ?? 'authfn'
+        });
+        if (!link) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff account link no longer exists', { userId });
         }
         const methods = Array.isArray(metadata.methods)
           ? metadata.methods.filter((method): method is string => typeof method === 'string')

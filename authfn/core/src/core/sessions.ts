@@ -63,6 +63,8 @@ export interface AuthenticatedRequestState {
   sessionToken?: string;
   csrfToken?: string;
   failureReason?: 'missing' | 'expired' | 'revoked';
+  /** Set with failureReason 'revoked' when the session is live but its user is disabled. */
+  disabled?: boolean;
 }
 
 let lastIssuedTimestampMs = 0;
@@ -302,7 +304,9 @@ export async function getCookieSessionState(
     return {
       ...state,
       sessionRecord: record,
-      failureReason: 'revoked'
+      user,
+      failureReason: 'revoked',
+      disabled: true
     };
   }
 

@@ -232,6 +232,23 @@ export function createBaseRoutes(
         const state = await getCookieSessionState(config, request);
         const body = await readOptionalJson<{ allSessions?: boolean }>(request);
 
+        if (state.disabled && state.sessionRecord && state.user) {
+          // A disabled user can still end their own session, so a copy of the
+          // token does not come back to life when the flag is cleared.
+          assertValidCsrf(request, state);
+          if (body.allSessions) {
+            await revokeSessionsForUser(config, state.user.id);
+          } else {
+            await revokeSessionById(config, state.sessionRecord.id, { userId: state.user.id });
+          }
+          return jsonSuccess(request, {
+            revoked: true,
+            allSessions: Boolean(body.allSessions)
+          }, {
+            setCookies: Object.values(clearSessionCookies(state.cookiePolicy))
+          });
+        }
+
         if (!state.session || !state.sessionRecord || !state.user) {
           const cookies = Object.values(clearSessionCookies(state.cookiePolicy));
           return jsonSuccess(request, {
