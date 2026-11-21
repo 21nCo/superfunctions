@@ -81,10 +81,14 @@ public final class AuthFnClient: Sendable {
     }
 
     public func verifyOtp(email: String, code: String, purpose: String = "sign-in") async throws -> AuthFnSessionCredential {
-        // A verify-email code entered by the signed-in holder must say so:
-        // without the session, the server takes it as someone else proving
-        // the mailbox first and removes the account's earlier setup.
-        let holderToken = purpose == "verify-email" ? try await credentialStore.loadCredential()?.token : nil
+        if purpose == "verify-email" {
+            // Verifying an email issues no session; the stored one stays.
+            _ = try await verifyEmail(email: email, code: code)
+            guard let stored = try await credentialStore.loadCredential() else {
+                throw AuthFnError.unauthenticated
+            }
+            return stored
+        }
         return try await credentialFromRegionalRequest(identifier: email) { regionId in
             try await self.post(
                 path: "/otp/verify",
@@ -94,10 +98,33 @@ public final class AuthFnClient: Sendable {
                     "purpose": purpose,
                     "code": code,
                     "sessionMode": "bearer",
-                ],
-                bearerToken: holderToken
+                ]
             )
         }
+    }
+
+    /// Verifies the email address with a `verify-email` code.
+    ///
+    /// Sends the stored session as a bearer token, so the server knows the
+    /// code comes from the signed-in holder of the account. Without it, the
+    /// server takes the code as someone else proving the mailbox first and
+    /// removes everything set up on the account before. Cookies are left out,
+    /// so a stale or unrelated session cookie cannot get in the way.
+    public func verifyEmail(email: String, code: String) async throws -> Bool {
+        let holderToken = try await credentialStore.loadCredential()?.token
+        let regionId = try await regionIdFor(identifier: email)
+        let result: AuthFnEmailVerification = try await post(
+            path: "/otp/verify",
+            regionId: regionId,
+            body: [
+                "email": normalize(email),
+                "purpose": "verify-email",
+                "code": code,
+            ],
+            bearerToken: holderToken,
+            sendCookies: false
+        )
+        return result.verified
     }
 
     public func startWebHandoff(returnTo: String = "/") async throws -> AuthFnHandoffStart {
@@ -240,9 +267,16 @@ public final class AuthFnClient: Sendable {
         return try await send(request)
     }
 
-    private func post<T: Decodable>(path: String, regionId: String, body: [String: Any], bearerToken: String? = nil) async throws -> T {
+    private func post<T: Decodable>(
+        path: String,
+        regionId: String,
+        body: [String: Any],
+        bearerToken: String? = nil,
+        sendCookies: Bool = true
+    ) async throws -> T {
         var request = URLRequest(url: configuration.resolveBaseURL(regionId).appendingPathComponent(String(path.dropFirst())))
         request.httpMethod = "POST"
+        request.httpShouldHandleCookies = sendCookies
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         if let bearerToken {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "authorization")
@@ -293,3 +327,7 @@ public final class AuthFnClient: Sendable {
 }
 
 private struct EmptyData: Decodable {}
+
+private struct AuthFnEmailVerification: Decodable {
+    var verified: Bool
+}
