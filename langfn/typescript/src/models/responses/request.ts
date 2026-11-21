@@ -109,6 +109,10 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
   const input: Record<string, unknown>[] = [];
   const calls = new Set<string>();
   const results = new Set<string>();
+  // forEach skips the holes of a sparse array, which would silently drop those turns.
+  for (let index = 0; index < messages.length; index += 1) {
+    if (!(index in messages)) throw new ValidationError(`Message ${index} must be an object`);
+  }
   messages.forEach((message, index) => {
     if (!message || typeof message !== "object") throw new ValidationError(`Message ${index} must be an object`);
     if (!ROLES.has(message.role)) throw new ValidationError(`Message ${index} has an unsupported role`);
@@ -301,6 +305,9 @@ function toResponsesToolChoice(choice: string | Record<string, unknown>): string
     // Chat Completions shape: { type: "function", function: { name } }.
     return { type: "function", name: nested.name };
   }
+  if (choice.type === "function" && (typeof choice.name !== "string" || !choice.name)) {
+    throw new ValidationError("tool_choice of type function requires a function name");
+  }
   return { ...choice };
 }
 
@@ -313,6 +320,9 @@ function toTextFormat(format: ResponsesTextFormat): Record<string, unknown> {
     }
     if (!format.schema || typeof format.schema !== "object" || Array.isArray(format.schema)) {
       throw new ValidationError("responseFormat schema must be an object");
+    }
+    if (format.strict !== undefined && typeof format.strict !== "boolean") {
+      throw new ValidationError("responseFormat strict must be a boolean");
     }
     return {
       type: "json_schema",

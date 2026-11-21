@@ -211,6 +211,16 @@ export function parseOutputItems(
         break;
       }
       case "function_call":
+        // A truncated call is never run or replayed, but its fields still have their wire types;
+        // only its arguments may be cut short.
+        for (const field of ["call_id", "name", "arguments"]) {
+          if (item[field] !== undefined && item[field] !== null && typeof item[field] !== "string") {
+            throw fail(`Responses function_call ${field} must be a string`);
+          }
+        }
+        if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
+          throw fail(`Responses function_call has unexpected status ${describeWireValue(item.status)}`);
+        }
         if (!options.incomplete) {
           // A completed turn whose call is still unfinished is contradictory: executing the
           // other calls alone, or reporting a normal stop, would hide the lost call.
