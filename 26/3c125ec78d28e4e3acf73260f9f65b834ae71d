@@ -1,0 +1,31 @@
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_bdc87b3794e554 3128,5764
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_af043a9be3e11e 57
+authfn/core/src/__tests__/otp.test.ts
+  s_e5ac07859c1bc9::t_bdc87b3794e554 1241-1265
+  s_e5ac07859c1bc9::t_f51132400edeae 1192-1240
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_7ab253f5fa8b2b 294,297,562-571,576-581,583-588,590,595-596,604,607-608,610-619,622-660,665,677-683,688-692,694,697,701-703,705-714,716-744
+  s_e5ac07859c1bc9::t_ab3a8b0c737864 132-133,544-548
+authfn/docs/content/docs/core-concepts/rate-limiting.md
+  s_e5ac07859c1bc9::t_af043a9be3e11e 35
+authfn/core/src/plugin-types.ts
+  s_e5ac07859c1bc9::t_af043a9be3e11e 57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "263c125ec78d28e4e3acf73260f9f65b834ae71d",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

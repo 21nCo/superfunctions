@@ -1,0 +1,59 @@
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_b996deaa3d01f1::t_8e2bd2c44dd6c0 6,28,31-32,42-44,46,54,65,69
+memoryfn/docs/content/docs/reference/api.md
+  s_b996deaa3d01f1::t_50924d97550a37 27
+memoryfn/docs/content/docs/storage.md
+  s_b996deaa3d01f1::t_546ea10d041879 31
+memoryfn/docs/static/llms-full.txt
+  s_b996deaa3d01f1::t_bdd2662616faf8 16,38,41-42,52-54,56,64,75,79,307,509
+memoryfn/typescript/README.md
+  s_b996deaa3d01f1::t_d07bc691893da8 36
+memoryfn/typescript/package.json
+  s_b996deaa3d01f1::t_fbfa54bc5b959b 42
+memoryfn/typescript/src/chunking/markdown.ts
+  s_b996deaa3d01f1::t_f4973fe9282f89 23-24,42-47,50-58,60-61,64-78,83-85,87-89,91-97,99-100,102,106-116,118,121-123,127,135-137,140,143-149,151-173,176
+memoryfn/typescript/src/core/config.ts
+  s_b996deaa3d01f1::t_2b62bcac935824 82-87
+memoryfn/typescript/src/core/pipeline.ts
+  s_b996deaa3d01f1::t_178178d5b312aa 4,6-11,55-57,97-98,104-105,110,118-129,135-139,143
+memoryfn/typescript/src/core/types.ts
+  s_b996deaa3d01f1::t_ae8a08a8b92159 11-13,107-111,115
+memoryfn/typescript/src/extraction/dedup.ts
+  s_b996deaa3d01f1::t_32da41ea916747 13-17,24-25,28-29
+memoryfn/typescript/src/http/router.ts
+  s_b996deaa3d01f1::t_5c8ef97aebbe01 6,10,12-18,75,81
+memoryfn/typescript/src/storage/adapter.ts
+  s_b996deaa3d01f1::t_b2510adb55e0b7 78-79,197-221,245
+memoryfn/typescript/src/storage/memory/adapter.ts
+  s_b996deaa3d01f1::t_ed5c7fe1172009 187,195
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_b996deaa3d01f1::t_86c004b2d52a08 123,143
+memoryfn/typescript/tests/chunking.test.ts
+  s_b996deaa3d01f1::t_97b2bf2704af07 2,75-108
+memoryfn/typescript/tests/documents.test.ts
+  s_b996deaa3d01f1::t_db581c44d99e1d 130-165,199-241
+memoryfn/typescript/tests/http-documents.test.ts
+  s_b996deaa3d01f1::t_5a6bae45771f1a 119-141
+memoryfn/typescript/tests/postgres-source-statements.test.ts
+  s_b996deaa3d01f1::t_cf63bcefa7306a 98-108
+memoryfn/typescript/tests/types/legacy-consumers.ts
+  s_b996deaa3d01f1::t_8970d537859471 1-18
+memoryfn/typescript/tsconfig.types.json
+  s_b996deaa3d01f1::t_1dab5d2002ea7b 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77593fb2bf7eea51db257dac231ed5639bf2c592",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
