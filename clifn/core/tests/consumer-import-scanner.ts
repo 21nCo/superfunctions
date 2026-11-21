@@ -8,29 +8,40 @@ import { contractKey } from "./consumer-contract.table.js";
 /**
  * Static `@clifn/core` import scanner for the consumer contract (CLI-11).
  *
- * One regular expression matches the closed form set of static statements: single-line and multi-line
- * named imports, `import type`, inline `type` specifiers and `export ... from`. Its clause is one brace
- * list (or a namespace, default or `*` clause, reported as unsupported), so a match never spans two
- * statements. It runs over the source with every comment the TypeScript parser sees blanked to spaces
- * (newlines kept, so offsets and line numbers stay those of the file).
+ * The TypeScript parser is the one authority. Every static module reference whose decoded specifier is
+ * `@clifn/core` or a subpath is collected from the whole syntax tree (nested blocks, `declare module` bodies
+ * and JSDoc included): import and `export ... from` declarations, `import x = require(...)` and inline
+ * `import("...").Member` type references. Its specifier, bound symbols and line come from the parser only,
+ * so byte order marks, line terminators, comments, string escapes, quoted names and the preceding token
+ * cannot change how a reference is read.
  *
- * The scan fails closed against the TypeScript parser: every import, export-from and import-equals
- * declaration whose module specifier is `@clifn/core` or a subpath must be the exact specifier position a
- * statement match consumed, and the match must name exactly the symbols the declaration binds; any other
- * declaration is reported as unrecognized. A regular-expression match the parser does not see as a module
- * specifier (inside a string, template or regular expression literal) is not a module reference: it is
- * dropped and the scan resumes just after where it started, so it never consumes a real declaration.
+ * The issue's one statement expression (`CLIFN_IMPORT_STATEMENT`, the closed form set of named imports,
+ * `import type` and `export ... from`) is the locator and cross-check. It runs over the source with every
+ * comment blanked; a match that starts inside a string, template, regular expression or JSX text literal is
+ * a lookalike and is skipped, and a match in code whose specifier is not a parser reference is reported, so a
+ * reference the collector missed fails the scan instead of passing it.
  *
- * Non-goal: dynamic `import()` and `require()` are not scanned; no consumer uses them for
+ * Non-goal: dynamic `import()` and `require()` calls are not scanned; no consumer uses them for
  * `@clifn/core` at the reference commit.
  */
 export const CLIFN_IMPORT_STATEMENT =
-  /(?:^|[;\n])[ \t]*(import|export)\b\s*(?:(type)(?=[\s{*])\s*)?(\{[^{}]*\}|\*\s*as\s+[\w$]+|\*|[\w$]+(?:\s*,\s*(?:\{[^{}]*\}|\*\s*as\s+[\w$]+))?)\s*\bfrom\s*(['"])(@clifn\/core(?:\/[^'"\n]*)?)\4/dg;
+  /\b(import|export)\b\s*(?:(type)\s*)?(\{[^{}]*\}|\*)\s*from\s*(["'])(@clifn\/core(?:\/[^"'\r\n]*)?)\4/dg;
 
 const CLIFN_SPECIFIER = /^@clifn\/core(?:\/.*)?$/s;
 
 const SCANNED_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"]);
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "coverage"]);
+
+const LITERAL_KINDS = new Set([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateHead,
+  ts.SyntaxKind.TemplateMiddle,
+  ts.SyntaxKind.TemplateTail,
+  ts.SyntaxKind.RegularExpressionLiteral,
+  ts.SyntaxKind.JsxText,
+  ts.SyntaxKind.JsxTextAllWhiteSpaces,
+]);
 
 export interface ScannedSymbol {
   readonly symbol: string;
@@ -41,22 +52,17 @@ export interface ScannedImport {
   readonly file: string;
   readonly line: number;
   readonly statement: "import" | "export";
+  /** The decoded module specifier. */
   readonly specifier: string;
+  /** The named symbols the reference binds; empty for a zero-binding reference (`{}` or a bare import). */
   readonly symbols: readonly ScannedSymbol[];
-  /** Set when the clause is not a non-empty named list, such as `* as core`, a default import or `{}`. */
+  /** Whether the statement expression located this reference (inline type references are never located). */
+  readonly located: boolean;
+  /** Set for a namespace, default or `*` clause, which binds no named symbol the contract can check. */
   readonly unsupportedClause?: string;
-  /** Set when the parser found a declaration the statement expression did not parse to the same symbols. */
+  /** Set for a reference the contract cannot check: `import = require`, a bare inline import type, or a
+   * statement match the parser does not see as a module reference. */
   readonly unrecognized?: string;
-}
-
-/** A static `@clifn/core` module reference as the TypeScript parser sees it. */
-interface ParsedDeclaration {
-  readonly start: number;
-  readonly specifierOffset: number;
-  readonly specifier: string;
-  readonly text: string;
-  /** The bound named symbols, or undefined for any other clause (namespace, default, `*`, `{}`, none). */
-  readonly symbols: readonly ScannedSymbol[] | undefined;
 }
 
 function scriptKindFor(file: string): ts.ScriptKind {
@@ -72,75 +78,137 @@ function scriptKindFor(file: string): ts.ScriptKind {
   }
 }
 
+function parse(source: string, file: string): ts.SourceFile {
+  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindFor(file));
+}
+
+function normalized(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function namedSymbols(
   elements: ts.NodeArray<ts.ImportSpecifier | ts.ExportSpecifier>,
   statementTypeOnly: boolean,
-): ScannedSymbol[] | undefined {
-  if (elements.length === 0) {
-    return undefined;
-  }
+): ScannedSymbol[] {
   return elements.map((element) => ({
     symbol: (element.propertyName ?? element.name).text,
     typeOnly: statementTypeOnly || element.isTypeOnly,
   }));
 }
 
-function clauseSymbols(statement: ts.ImportDeclaration | ts.ExportDeclaration): ScannedSymbol[] | undefined {
+/** The clause of an import or export declaration: named symbols, or the clause text when it binds none by name. */
+function readClause(
+  statement: ts.ImportDeclaration | ts.ExportDeclaration,
+  sourceFile: ts.SourceFile,
+): { symbols: ScannedSymbol[] } | { unsupportedClause: string } {
   if (ts.isExportDeclaration(statement)) {
     const clause = statement.exportClause;
-    return clause !== undefined && ts.isNamedExports(clause)
-      ? namedSymbols(clause.elements, statement.isTypeOnly)
-      : undefined;
+    if (clause !== undefined && ts.isNamedExports(clause)) {
+      return { symbols: namedSymbols(clause.elements, statement.isTypeOnly) };
+    }
+    const text = clause === undefined ? "*" : normalized(clause.getText(sourceFile));
+    return { unsupportedClause: statement.isTypeOnly ? `type ${text}` : text };
   }
   const clause = statement.importClause;
-  if (clause === undefined || clause.name !== undefined || clause.namedBindings === undefined) {
-    return undefined;
+  if (clause === undefined) {
+    return { symbols: [] };
   }
-  return ts.isNamedImports(clause.namedBindings)
-    ? namedSymbols(clause.namedBindings.elements, clause.isTypeOnly)
-    : undefined;
+  if (clause.name === undefined && clause.namedBindings !== undefined && ts.isNamedImports(clause.namedBindings)) {
+    return { symbols: namedSymbols(clause.namedBindings.elements, clause.isTypeOnly) };
+  }
+  return { unsupportedClause: normalized(clause.getText(sourceFile)) };
 }
 
-function moduleSpecifierOf(statement: ts.Statement): ts.Expression | undefined {
-  if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
-    return statement.moduleSpecifier;
-  }
-  if (ts.isImportEqualsDeclaration(statement) && ts.isExternalModuleReference(statement.moduleReference)) {
-    return statement.moduleReference.expression;
-  }
-  return undefined;
+/** The exported member an inline `import("...").A.B` type names: the leftmost name of its qualifier. */
+function leftmostName(name: ts.EntityName): string {
+  return ts.isIdentifier(name) ? name.text : leftmostName(name.left);
 }
 
-/** Collects every static `@clifn/core` declaration, including those inside `declare module` blocks. */
-function parsedDeclarations(sourceFile: ts.SourceFile): ParsedDeclaration[] {
-  const found: ParsedDeclaration[] = [];
-  const visitStatements = (statements: readonly ts.Statement[]): void => {
-    for (const statement of statements) {
-      if (ts.isModuleDeclaration(statement)) {
-        let body = statement.body;
-        while (body !== undefined && ts.isModuleDeclaration(body)) {
-          body = body.body;
-        }
-        if (body !== undefined && ts.isModuleBlock(body)) {
-          visitStatements(body.statements);
-        }
-        continue;
-      }
-      const specifier = moduleSpecifierOf(statement);
-      if (specifier === undefined || !ts.isStringLiteralLike(specifier) || !CLIFN_SPECIFIER.test(specifier.text)) {
-        continue;
-      }
-      found.push({
-        start: statement.getStart(sourceFile),
-        specifierOffset: specifier.getStart(sourceFile) + 1,
-        specifier: specifier.text,
-        text: statement.getText(sourceFile).replace(/\s+/g, " ").trim(),
-        symbols: ts.isImportEqualsDeclaration(statement) ? undefined : clauseSymbols(statement),
-      });
+interface CollectedReference extends Omit<ScannedImport, "located"> {
+  /** Offset just after the opening quote of a declaration's specifier; undefined for inline type references. */
+  readonly specifierOffset?: number;
+}
+
+interface ParsedFile {
+  readonly references: CollectedReference[];
+  /** Sorted, non-overlapping [start, end) ranges of string, template, regular expression and JSX text tokens. */
+  readonly literals: Array<readonly [number, number]>;
+}
+
+function lineOf(sourceFile: ts.SourceFile, offset: number): number {
+  return sourceFile.getLineAndCharacterOfPosition(offset).line + 1;
+}
+
+function collect(sourceFile: ts.SourceFile, file: string): ParsedFile {
+  const references: CollectedReference[] = [];
+  const literals: Array<readonly [number, number]> = [];
+  const reference = (node: ts.Node, specifier: ts.StringLiteralLike, fields: Partial<CollectedReference>): void => {
+    if (!CLIFN_SPECIFIER.test(specifier.text)) {
+      return;
     }
+    references.push({
+      file,
+      line: lineOf(sourceFile, node.getStart(sourceFile)),
+      statement: "import",
+      specifier: specifier.text,
+      symbols: [],
+      ...fields,
+    });
   };
-  visitStatements(sourceFile.statements);
-  return found;
+  const visit = (node: ts.Node, inJsDoc: boolean): void => {
+    if (LITERAL_KINDS.has(node.kind) && !inJsDoc) {
+      literals.push([node.getStart(sourceFile), node.end]);
+    }
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifier = node.moduleSpecifier;
+      if (specifier !== undefined && ts.isStringLiteralLike(specifier)) {
+        reference(node, specifier, {
+          statement: ts.isImportDeclaration(node) ? "import" : "export",
+          specifierOffset: specifier.getStart(sourceFile) + 1,
+          ...readClause(node, sourceFile),
+        });
+      }
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const specifier = node.moduleReference.expression;
+      if (ts.isStringLiteralLike(specifier)) {
+        reference(node, specifier, {
+          specifierOffset: specifier.getStart(sourceFile) + 1,
+          unrecognized: normalized(node.getText(sourceFile)),
+        });
+      }
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
+      reference(
+        node,
+        node.argument.literal,
+        node.qualifier === undefined
+          ? { unrecognized: normalized(node.getText(sourceFile)) }
+          : { symbols: [{ symbol: leftmostName(node.qualifier), typeOnly: true }] },
+      );
+    }
+    for (const doc of (node as { jsDoc?: readonly ts.Node[] }).jsDoc ?? []) {
+      visit(doc, true);
+    }
+    ts.forEachChild(node, (child) => visit(child, inJsDoc));
+  };
+  visit(sourceFile, false);
+  return { references, literals };
+}
+
+function insideLiteral(literals: ParsedFile["literals"], offset: number): boolean {
+  let low = 0;
+  let high = literals.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const [start, end] = literals[middle];
+    if (offset < start) {
+      high = middle - 1;
+    } else if (offset >= end) {
+      low = middle + 1;
+    } else {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -148,8 +216,7 @@ function parsedDeclarations(sourceFile: ts.SourceFile): ParsedDeclaration[] {
  * template, regular expression and JSX text content, so a comment cannot hide or break a statement.
  */
 export function blankComments(source: string, file = "source.ts"): string {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindFor(file));
-  return blankParsedComments(sourceFile);
+  return blankParsedComments(parse(source, file));
 }
 
 function blankParsedComments(sourceFile: ts.SourceFile): string {
@@ -184,96 +251,45 @@ function blankParsedComments(sourceFile: ts.SourceFile): string {
   return out.join("");
 }
 
-function parseNamedClause(clause: string, statementTypeOnly: boolean): ScannedSymbol[] | undefined {
-  const trimmed = clause.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    return undefined;
-  }
-  const symbols = trimmed
-    .slice(1, -1)
-    .split(",")
-    .map((element) => element.trim())
-    .filter((element) => element.length > 0)
-    .map((element) => {
-      const inlineType = /^type\s+/.test(element);
-      const name = element.replace(/^type\s+/, "").split(/\s+as\s+/)[0].trim();
-      return { symbol: name, typeOnly: statementTypeOnly || inlineType };
-    });
-  return symbols.length > 0 ? symbols : undefined;
-}
-
-function sameSymbols(left: readonly ScannedSymbol[] | undefined, right: readonly ScannedSymbol[] | undefined): boolean {
-  if (left === undefined || right === undefined) {
-    return left === right;
-  }
-  return (
-    left.length === right.length &&
-    left.every((symbol, index) => symbol.symbol === right[index].symbol && symbol.typeOnly === right[index].typeOnly)
-  );
-}
-
-function lineAt(source: string, offset: number): number {
-  return source.slice(0, offset).split("\n").length;
-}
-
-interface StatementMatch {
-  readonly statement: "import" | "export";
-  readonly keywordOffset: number;
-  readonly specifier: string;
-  readonly clause: string;
-  readonly symbols: readonly ScannedSymbol[] | undefined;
-}
-
 export function scanSource(source: string, file: string): ScannedImport[] {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindFor(file));
-  const blanked = blankParsedComments(sourceFile);
+  const sourceFile = parse(source, file);
+  const { references, literals } = collect(sourceFile, file);
+  const bySpecifierOffset = new Map(
+    references.flatMap((found) => (found.specifierOffset === undefined ? [] : [[found.specifierOffset, found] as const])),
+  );
 
-  const declarations = parsedDeclarations(sourceFile);
-  const declarationOffsets = new Set(declarations.map((declaration) => declaration.specifierOffset));
-
-  // A match whose specifier is not a parser declaration started inside a literal; it is dropped and the scan
-  // resumes one character after its start, so it cannot consume a real declaration later on the same line.
-  const matches = new Map<number, StatementMatch>();
+  // Cross-check: each statement match in code must be a parser reference. A match that starts inside a literal is
+  // skipped and the scan resumes one character later, so it cannot consume a real statement after it.
+  const located = new Set<CollectedReference>();
+  const unmatched: ScannedImport[] = [];
   const pattern = new RegExp(CLIFN_IMPORT_STATEMENT.source, CLIFN_IMPORT_STATEMENT.flags);
+  const blanked = blankParsedComments(sourceFile);
   for (let match = pattern.exec(blanked); match !== null; match = pattern.exec(blanked)) {
-    const specifierOffset = match.indices?.[5]?.[0] ?? -1;
-    if (!declarationOffsets.has(specifierOffset)) {
+    if (insideLiteral(literals, match.index)) {
       pattern.lastIndex = match.index + 1;
       continue;
     }
-    const [, statement, typeKeyword, clause, , specifier] = match;
-    const typePrefix = typeKeyword === undefined ? "" : "type ";
-    matches.set(specifierOffset, {
-      statement: statement as "import" | "export",
-      keywordOffset: match.indices?.[1]?.[0] ?? match.index ?? 0,
-      specifier,
-      clause: `${typePrefix}${clause.replace(/\s+/g, " ").trim()}`,
-      symbols: parseNamedClause(clause, typeKeyword !== undefined),
-    });
+    const found = bySpecifierOffset.get(match.indices?.[5]?.[0] ?? -1);
+    if (found === undefined) {
+      unmatched.push({
+        file,
+        line: lineOf(sourceFile, match.index),
+        statement: match[1] as "import" | "export",
+        specifier: match[5],
+        symbols: [],
+        located: true,
+        unrecognized: normalized(match[0]),
+      });
+    } else {
+      located.add(found);
+    }
   }
 
-  // Reconcile with the parser: each declaration must be one statement match with exactly its symbols.
-  return declarations.map((declaration): ScannedImport => {
-    const match = matches.get(declaration.specifierOffset);
-    if (match === undefined || !sameSymbols(match.symbols, declaration.symbols)) {
-      return {
-        file,
-        line: lineAt(source, declaration.start),
-        statement: match?.statement ?? "import",
-        specifier: declaration.specifier,
-        symbols: [],
-        unrecognized: declaration.text,
-      };
-    }
-    return {
-      file,
-      line: lineAt(source, match.keywordOffset),
-      statement: match.statement,
-      specifier: match.specifier,
-      symbols: match.symbols ?? [],
-      ...(match.symbols === undefined ? { unsupportedClause: match.clause } : {}),
-    };
+  const scanned = references.map((found): ScannedImport => {
+    const { specifierOffset: _offset, ...fields } = found;
+    return { ...fields, located: located.has(found) };
   });
+  return [...scanned, ...unmatched].sort((left, right) => left.line - right.line);
 }
 
 function listSourceFiles(directory: string): string[] {
@@ -289,7 +305,7 @@ function listSourceFiles(directory: string): string[] {
       files.push(entryPath);
     }
   }
-  return files.sort();
+  return files.sort((left, right) => left.localeCompare(right, "en"));
 }
 
 /** Scans every source file under `directory`, reporting files relative to `relativeTo`. */
@@ -307,30 +323,35 @@ export function findContractViolations(imports: readonly ScannedImport[], contra
   const violations: string[] = [];
   for (const scanned of imports) {
     const where = `${scanned.file}:${scanned.line}`;
+    const listedSubpath = contractSpecifiers.has(scanned.specifier);
+    const subpathNote = listedSubpath ? "" : ` "${scanned.specifier}" is also not a subpath in ${CONTRACT_TABLE_PATH}.`;
     if (scanned.unrecognized !== undefined) {
       violations.push(
         `${where}: \`${scanned.unrecognized}\` names "${scanned.specifier}" in a form the consumer scan does not parse; ` +
-          `write it as a named \`import { ... } from\` or \`export { ... } from\` statement, or extend the scanner and ${CONTRACT_TABLE_PATH}.`,
+          `write it as a named \`import { ... } from\` or \`export { ... } from\` statement, or extend the scanner and ${CONTRACT_TABLE_PATH}.${subpathNote}`,
       );
-      continue;
-    }
-    if (scanned.unsupportedClause !== undefined) {
-      const subpathNote = contractSpecifiers.has(scanned.specifier)
-        ? ""
-        : ` "${scanned.specifier}" is also not a subpath in ${CONTRACT_TABLE_PATH}.`;
+    } else if (scanned.unsupportedClause !== undefined) {
       violations.push(
         `${where}: \`${scanned.statement} ${scanned.unsupportedClause} from "${scanned.specifier}"\` is not a named import or export; ` +
           `import named symbols so the consumer contract can check them, or extend the scanner and ${CONTRACT_TABLE_PATH}.${subpathNote}`,
       );
-      continue;
-    }
-    for (const { symbol } of scanned.symbols) {
-      if (!contractKeys.has(contractKey(scanned.specifier, symbol))) {
+    } else if (scanned.symbols.length === 0) {
+      // A zero-binding reference (`import {} from` or a bare import) depends only on the subpath existing.
+      if (!listedSubpath) {
         violations.push(
-          `${where}: "${symbol}" from "${scanned.specifier}" is not in the @clifn/core consumer contract; ` +
-            `add { specifier: "${scanned.specifier}", symbol: "${symbol}", kind, usedBy } to ${CONTRACT_TABLE_PATH} ` +
-            `and cover it in consumer-contract.test-d.ts when it is a type.`,
+          `${where}: "${scanned.specifier}" is not a subpath in the @clifn/core consumer contract; ` +
+            `add the rows its consumers rely on to ${CONTRACT_TABLE_PATH}, or remove the reference.`,
         );
+      }
+    } else {
+      for (const { symbol } of scanned.symbols) {
+        if (!contractKeys.has(contractKey(scanned.specifier, symbol))) {
+          violations.push(
+            `${where}: "${symbol}" from "${scanned.specifier}" is not in the @clifn/core consumer contract; ` +
+              `add { specifier: "${scanned.specifier}", symbol: "${symbol}", kind, usedBy } to ${CONTRACT_TABLE_PATH} ` +
+              `and cover it in consumer-contract.test-d.ts when it is a type.`,
+          );
+        }
       }
     }
   }

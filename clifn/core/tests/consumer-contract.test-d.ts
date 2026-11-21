@@ -19,12 +19,13 @@ import {
   type CredentialStore,
   type PromptApi,
   type RunnerContext as RootRunnerContext,
+  type ScaffoldOperation,
   type ScaffoldService,
 } from "@clifn/core";
 import { createDiagnostic, redactValue as redactDiagnosticValue } from "@clifn/core/diagnostics";
 import { readStringEnv } from "@clifn/core/env";
-import { createExec, type ExecService } from "@clifn/core/exec";
-import { createOutput as createSubpathOutput, type OutputService } from "@clifn/core/output";
+import { createExec, type ExecOptions, type ExecResult, type ExecService } from "@clifn/core/exec";
+import { createOutput as createSubpathOutput, type OutputService, type OutputTable } from "@clifn/core/output";
 import { runAction as runSubpathAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "@clifn/core/runner";
 
 type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
@@ -88,7 +89,23 @@ describe("@clifn/core consumer contract types", () => {
       "mode" | "debug" | "info" | "success" | "warn" | "error" | "json" | "table" | "spinner"
     >();
     expectTypeOf<OutputService["info"]>().toEqualTypeOf<(message: string, details?: unknown) => void>();
+    expectTypeOf<OutputService["success"]>().toEqualTypeOf<(message: string, details?: unknown) => void>();
+    expectTypeOf<OutputService["warn"]>().toEqualTypeOf<(message: string, details?: unknown) => void>();
+    expectTypeOf<OutputService["error"]>().toEqualTypeOf<(message: string, details?: unknown) => void>();
     expectTypeOf<OutputService["json"]>().toEqualTypeOf<(value: unknown) => void>();
+    // extfn's build summary table; devfn and mailfn report status with and without details.
+    expectTypeOf<Parameters<OutputService["table"]>>().toEqualTypeOf<[input: OutputTable]>();
+    expectTypeOf<OutputService["table"]>().returns.toEqualTypeOf<void>();
+    expectTypeOf<RequiredKeys<OutputTable>>().toEqualTypeOf<"columns" | "rows">();
+    expectTypeOf<OutputTable["columns"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<OutputTable["rows"]>().toEqualTypeOf<
+      ReadonlyArray<Record<string, string | number | boolean | null | undefined>>
+    >();
+    const output = {} as OutputService;
+    output.table({ columns: ["target", "outputDir"], rows: ["chrome"].map((target) => ({ target, outputDir: "dist" })) });
+    output.success("Inbox created");
+    output.warn("Scan detected blocking findings.", { blocking: 1 });
+    output.error("build failed: example", { code: "EXTFN_BUILD" });
     expectTypeOf(createOutput).toEqualTypeOf(createSubpathOutput);
     expectTypeOf(createOutput).returns.toEqualTypeOf<OutputService>();
     createOutput({ mode: "json", stdout: (_text: string) => {}, stderr: (_text: string) => {}, color: false, quiet: true, verbose: false });
@@ -100,8 +117,24 @@ describe("@clifn/core consumer contract types", () => {
     expectTypeOf(createExec).returns.toEqualTypeOf<ExecService>();
     const exec = {} as ExecService;
     exec.command("open", ["-a", "Browser", "https://example.test"], { cwd: "/tmp", env: {}, timeoutMs: 1_000 });
-    expectTypeOf(exec.command).returns.resolves.toHaveProperty("exitCode").toEqualTypeOf<number | null>();
-    expectTypeOf(exec.command).returns.resolves.toHaveProperty("stdout").toEqualTypeOf<string>();
+    // extfn's vite build streams both channels through callbacks.
+    exec.command("npx", ["vite", "build"], {
+      cwd: "/tmp",
+      env: {},
+      streamOutput: true,
+      stdout: (chunk) => process.stdout.write(chunk),
+      stderr: (chunk) => process.stderr.write(chunk),
+      timeoutMs: 120_000,
+    });
+    expectTypeOf(exec.command).parameter(2).toEqualTypeOf<ExecOptions | undefined>();
+    expectTypeOf<RequiredKeys<ExecOptions>>().toEqualTypeOf<never>();
+    expectTypeOf<ExecOptions["streamOutput"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<ExecOptions["stdout"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
+    expectTypeOf<ExecOptions["stderr"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
+    expectTypeOf(exec.command).returns.resolves.toEqualTypeOf<ExecResult>();
+    expectTypeOf<ExecResult["exitCode"]>().toEqualTypeOf<number | null>();
+    expectTypeOf<ExecResult["stdout"]>().toEqualTypeOf<string>();
+    expectTypeOf<ExecResult["stderr"]>().toEqualTypeOf<string>();
   });
 
   it("keeps ConfigLoaderOptions.exportNames and the loadConfig result the devfn and plugfn packages use", () => {
@@ -133,6 +166,16 @@ describe("@clifn/core consumer contract types", () => {
     createDiagnostic({ code: "EXTFN_BUILD", severity: "error", message: "failed", path: "src", details: { target: "chrome" } });
     expectTypeOf(readStringEnv("EXTFN_PACKAGE_OUT_DIR", { defaultValue: "artifacts", env: {} })).toEqualTypeOf<string>();
     expectTypeOf(createScaffold).returns.toEqualTypeOf<ScaffoldService>();
+    // devfn's init writes its config file and fails when it already exists.
+    const scaffold = {} as ScaffoldService;
+    expectTypeOf(
+      scaffold.apply([{ kind: "write-file", path: "devfn.config.ts", content: "export default {};", ifExists: "error" }], {
+        cwd: "/repo",
+      }),
+    ).resolves.toExtend<{ written: string[]; skipped: string[] }>();
+    expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["ifExists"]>().toEqualTypeOf<
+      "error" | "skip" | "overwrite" | undefined
+    >();
   });
 
   it("adds no required member to the exported service interfaces (D2)", () => {

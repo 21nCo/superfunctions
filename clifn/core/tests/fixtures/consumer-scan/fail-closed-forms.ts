@@ -9,7 +9,7 @@ import {
   readNumberEnv,
 } from "@clifn/core/env";
 import {} from "@clifn/core/scaffold";
-import "@clifn/core/runner";
+import "@clifn/core/prompt";
 /* a "quoted" comment */ import { formatDiagnosticsText } from "@clifn/core/diagnostics";
 
 export const used = [readIntEnv, createPrompt, readNumberEnv, formatDiagnosticsText];

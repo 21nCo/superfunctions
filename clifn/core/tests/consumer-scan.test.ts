@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -106,6 +107,8 @@ describe("@clifn/core consumer import scan", () => {
         symbols: [{ symbol: "ConfigLoaderError", typeOnly: false }],
       },
     ]);
+    // The statement expression locates every form of the closed set; the parser supplies what each one binds.
+    expect(imports.every((scanned) => scanned.located)).toBe(true);
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([]);
   });
 
@@ -133,21 +136,109 @@ describe("@clifn/core consumer import scan", () => {
       startingWith('fail-closed-forms.ts:2: "readIntEnv" from "@clifn/core" is not in'),
       startingWith('fail-closed-forms.ts:3: "createPrompt" from "@clifn/core/prompt" is not in'),
       startingWith('fail-closed-forms.ts:7: "readNumberEnv" from "@clifn/core/env" is not in'),
-      startingWith('fail-closed-forms.ts:11: `import {} from "@clifn/core/scaffold"` is not a named import'),
-      startingWith('fail-closed-forms.ts:12: `import "@clifn/core/runner";` names "@clifn/core/runner" in a form the consumer scan does not parse'),
+      startingWith('fail-closed-forms.ts:11: "@clifn/core/scaffold" is not a subpath in the @clifn/core consumer contract'),
+      startingWith('fail-closed-forms.ts:12: "@clifn/core/prompt" is not a subpath in the @clifn/core consumer contract'),
       startingWith('fail-closed-forms.ts:13: "formatDiagnosticsText" from "@clifn/core/diagnostics" is not in'),
     ]);
-    expect(violations[3]).toContain('"@clifn/core/scaffold" is also not a subpath in');
   });
 
-  it("reports a declaration the statement expression did not consume", () => {
-    // A listed symbol after a block on the same line is valid at module scope but does not start a line or
-    // follow `;`, so only the parser-side reconciliation sees it.
-    const imports = scanSource('const ok = 1;\n{} import { createOutput } from "@clifn/core/output";\n', "inline.ts");
+  it("accepts a zero-binding reference to a listed subpath and checks the subpath of every reference", () => {
+    const source = [
+      'import {} from "@clifn/core/runner";',
+      'export {} from "@clifn/core/env";',
+      'import "@clifn/core/exec";',
+      'export * from "@clifn/core/ui";',
+    ].join("\n");
+    const imports = scanSource(source, "zero.ts");
+
+    expect(imports.map(({ line, specifier, symbols }) => ({ line, specifier, symbols }))).toEqual([
+      { line: 1, specifier: "@clifn/core/runner", symbols: [] },
+      { line: 2, specifier: "@clifn/core/env", symbols: [] },
+      { line: 3, specifier: "@clifn/core/exec", symbols: [] },
+      { line: 4, specifier: "@clifn/core/ui", symbols: [] },
+    ]);
+    const violations = findContractViolations(imports, CONSUMER_CONTRACT_KEYS);
+    expect(violations).toEqual([startingWith('zero.ts:4: `export * from "@clifn/core/ui"` is not a named import or export')]);
+    expect(violations[0]).toContain('"@clifn/core/ui" is also not a subpath in');
+  });
+
+  // Each form is valid TypeScript the parser reads to the same reference; the listed variant must parse to
+  // exactly its symbol and the unlisted variant must fail on its symbol, at the parser's line.
+  const pairedForms: ReadonlyArray<readonly [form: string, build: (symbol: string, specifier: string) => string, line: number]> = [
+    ["a byte order mark", (symbol, specifier) => `\uFEFFimport { ${symbol} } from "${specifier}";\n`, 1],
+    ["CR line ends", (symbol, specifier) => `const a = 1;\r\rimport { ${symbol} } from "${specifier}";\r`, 3],
+    ["CRLF line ends", (symbol, specifier) => `const a = 1;\r\nimport { ${symbol} } from "${specifier}";\r\n`, 2],
+    ["a line separator", (symbol, specifier) => `const a = 1;\u2028import { ${symbol} } from "${specifier}";\n`, 2],
+    ["a paragraph separator", (symbol, specifier) => `const a = 1;\u2029import { ${symbol} } from "${specifier}";\n`, 2],
+    ["a statement after a block", (symbol, specifier) => `const ok = 1;\n{} import { ${symbol} } from "${specifier}";\n`, 2],
+    ["an escaped specifier", (symbol, specifier) => `import { ${symbol} } from "${specifier.replace("@", "\\u0040")}";\n`, 1],
+    ["a quoted name", (symbol, specifier) => `import { "${symbol}" as local } from "${specifier}";\n`, 1],
+    ["a quoted alias", (symbol, specifier) => `export { ${symbol} as "local" } from "${specifier}";\n`, 1],
+    ["an inline type specifier", (symbol, specifier) => `import { type ${symbol} as Local } from "${specifier}";\n`, 1],
+    ["a template that looks like an import", (symbol, specifier) => `const t = \`\nimport { x } from "@clifn/core/\`; import { ${symbol} } from "${specifier}";\n`, 2],
+  ];
+
+  it.each(pairedForms)("reads a listed and an unlisted symbol through %s", (_form, build, line) => {
+    const listed = scanSource(build("createOutput", "@clifn/core/output"), "listed.ts");
+    expect(listed.map(({ line: at, specifier, symbols }) => ({ line: at, specifier, symbols: symbols.map((s) => s.symbol) }))).toEqual([
+      { line, specifier: "@clifn/core/output", symbols: ["createOutput"] },
+    ]);
+    expect(findContractViolations(listed, CONSUMER_CONTRACT_KEYS)).toEqual([]);
+
+    const unlisted = findContractViolations(scanSource(build("readIntEnv", "@clifn/core"), "unlisted.ts"), CONSUMER_CONTRACT_KEYS);
+    expect(unlisted).toEqual([startingWith(`unlisted.ts:${line}: "readIntEnv" from "@clifn/core" is not in the @clifn/core consumer contract`)]);
+  });
+
+  it("checks inline import types against the contract and leaves runtime import() unscanned", () => {
+    const source = [
+      'export type Unlisted = import("@clifn/core/output").OutputOptions;',
+      'import type { OutputOptions } from "@clifn/core/output";',
+      'export type Listed = import("@clifn/core/exec").ExecService | typeof import("@clifn/core").createOutput;',
+      'export type Whole = import("@clifn/core/output");',
+      'export const lazy = () => import("@clifn/core/prompt");',
+    ].join("\n");
+    const imports = scanSource(source, "inline-types.ts");
+
+    expect(imports.map(({ line, specifier, symbols, located }) => ({ line, specifier, symbols: symbols.map((s) => s.symbol), located }))).toEqual([
+      { line: 1, specifier: "@clifn/core/output", symbols: ["OutputOptions"], located: false },
+      { line: 2, specifier: "@clifn/core/output", symbols: ["OutputOptions"], located: true },
+      { line: 3, specifier: "@clifn/core/exec", symbols: ["ExecService"], located: false },
+      { line: 3, specifier: "@clifn/core", symbols: ["createOutput"], located: false },
+      { line: 4, specifier: "@clifn/core/output", symbols: [], located: false },
+    ]);
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('inline-types.ts:1: "OutputOptions" from "@clifn/core/output" is not in'),
+      startingWith('inline-types.ts:2: "OutputOptions" from "@clifn/core/output" is not in'),
+      startingWith('inline-types.ts:4: `import("@clifn/core/output")` names "@clifn/core/output" in a form the consumer scan does not parse'),
+    ]);
+
+    const jsDoc = scanSource('/** @type {import("@clifn/core/output").OutputOptions} */\nlet options;\n', "doc.js");
+    expect(findContractViolations(jsDoc, CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('doc.js:1: "OutputOptions" from "@clifn/core/output" is not in'),
+    ]);
+  });
+
+  it("reports a statement match the parser does not read as a module reference", () => {
+    const imports = scanSource('let o = { export { readIntEnv } from "@clifn/core" };\n', "malformed.ts");
 
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
-      startingWith('inline.ts:2: `import { createOutput } from "@clifn/core/output";` names "@clifn/core/output"'),
+      startingWith('malformed.ts:1: `export { readIntEnv } from "@clifn/core"` names "@clifn/core" in a form the consumer scan does not parse'),
     ]);
+  });
+
+  it("scans pathological input in bounded time", () => {
+    const inputs = [
+      `import ${" ".repeat(200_000)}`,
+      `import {${"a,".repeat(100_000)}`,
+      "import { a } from '".repeat(20_000),
+      `export type${" ".repeat(200_000)}{`,
+      `import * ${" ".repeat(200_000)}fro`,
+    ];
+    for (const input of inputs) {
+      const started = performance.now();
+      scanSource(input, "large.ts");
+      expect(performance.now() - started).toBeLessThan(5_000);
+    }
   });
 
   it("keeps each statement to its own symbols across export lists, comments and literals", () => {
@@ -178,15 +269,6 @@ describe("@clifn/core consumer import scan", () => {
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([]);
   });
 
-  it("reports a statement match whose symbols differ from the parsed declaration", () => {
-    // A quoted specifier name is valid syntax the brace-list parse reads differently from the parser.
-    const imports = scanSource('import { "createOutput" as out } from "@clifn/core";\n', "quoted.ts");
-
-    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
-      startingWith('quoted.ts:1: `import { "createOutput" as out } from "@clifn/core";` names "@clifn/core" in a form'),
-    ]);
-  });
-
   it("fails when a fixture consumer directory holds an unlisted import", () => {
     const imports = scanDirectory(fixturesDir, fixturesDir);
 
@@ -194,5 +276,17 @@ describe("@clifn/core consumer import scan", () => {
       expect.arrayContaining(["fail-closed-forms.ts", "statement-boundary-forms.ts", "unlisted-imports.ts"]),
     );
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(18);
+  });
+
+  it("lists files in a stable, case-insensitive alphabetical order", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clifn-consumer-scan-"));
+    try {
+      for (const name of ["B.ts", "a.ts", "c.ts"]) {
+        fs.writeFileSync(path.join(directory, name), 'import { readIntEnv } from "@clifn/core";\n');
+      }
+      expect(scanDirectory(directory, directory).map((scanned) => scanned.file)).toEqual(["a.ts", "B.ts", "c.ts"]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
