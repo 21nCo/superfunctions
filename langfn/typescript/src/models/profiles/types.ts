@@ -33,7 +33,30 @@ export interface CapabilityProfile {
   readonly contextWindow?: number;
   /** Largest output token budget per response; undefined when unknown. */
   readonly maxOutputTokens?: number;
+  /**
+   * The route accepts only streamed requests: every request is sent with `stream: true`, and a
+   * whole-turn call (`chat()`) reads the stream and returns the finished turn. Needs `streaming`.
+   */
+  readonly streamOnly?: boolean;
+  /** Request options the route refuses; each fails with {@link RouteRestrictionError} before sending. */
+  readonly restrictions?: readonly RouteRestriction[];
 }
+
+/**
+ * A request option a route refuses:
+ * - `hostedTools`: provider-hosted tools (any tool, tool choice or replayed item that is not a function tool);
+ * - `previousResponseId`: `previous_response_id` continuation from a stored response;
+ * - `background`: background mode;
+ * - `hostedHistory`: server-side history (`conversation`, or `store` other than false).
+ */
+export type RouteRestriction = "hostedTools" | "previousResponseId" | "background" | "hostedHistory";
+
+export const ROUTE_RESTRICTIONS: readonly RouteRestriction[] = Object.freeze([
+  "hostedTools",
+  "previousResponseId",
+  "background",
+  "hostedHistory",
+]);
 
 export type CapabilityProfileOverrides = Partial<Omit<CapabilityProfile, "id">>;
 
@@ -48,6 +71,28 @@ export class UnsupportedCapabilityError extends LangFnError {
       { code: "UNSUPPORTED_CAPABILITY", provider: profileId, metadata: { capability, profile: profileId } },
     );
     this.capability = capability;
+    this.profileId = profileId;
+  }
+}
+
+/**
+ * Thrown before a request is sent when it uses an option its profile's route refuses (see
+ * {@link CapabilityProfile.restrictions}), or asks a stream-only route for a non-streamed request.
+ */
+export class RouteRestrictionError extends LangFnError {
+  readonly restriction: RouteRestriction | "streamOnly";
+  /** The request option that was refused, such as `previous_response_id` or `tools[0]`. */
+  readonly option: string;
+  readonly profileId: string;
+
+  constructor(restriction: RouteRestriction | "streamOnly", option: string, profileId: string) {
+    super(`Request option ${option} is not accepted by profile "${profileId}" (${restriction})`, {
+      code: "ROUTE_RESTRICTION",
+      provider: profileId,
+      metadata: { restriction, option, profile: profileId },
+    });
+    this.restriction = restriction;
+    this.option = option;
     this.profileId = profileId;
   }
 }
@@ -76,6 +121,13 @@ export function defineCapabilityProfile(profile: CapabilityProfile): CapabilityP
   if (contextWindow !== undefined && maxOutputTokens !== undefined && maxOutputTokens > contextWindow) {
     throw new ValidationError("Capability profile maxOutputTokens cannot exceed contextWindow");
   }
+  if (profile.streamOnly !== undefined && typeof profile.streamOnly !== "boolean") {
+    throw new ValidationError("Capability profile streamOnly must be a boolean");
+  }
+  if (profile.streamOnly && !profile.streaming) {
+    throw new ValidationError("Capability profile streamOnly needs the streaming capability");
+  }
+  const restrictions = routeRestrictions(profile.restrictions);
   return Object.freeze({
     id: profile.id,
     tools: profile.tools,
@@ -85,7 +137,23 @@ export function defineCapabilityProfile(profile: CapabilityProfile): CapabilityP
     reasoning: profile.reasoning,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(profile.streamOnly ? { streamOnly: true } : {}),
+    ...(restrictions.length ? { restrictions: Object.freeze(restrictions) } : {}),
   });
+}
+
+function routeRestrictions(value: unknown): RouteRestriction[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new ValidationError("Capability profile restrictions must be an array");
+  const result: RouteRestriction[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const restriction: unknown = value[index];
+    if (!ROUTE_RESTRICTIONS.includes(restriction as RouteRestriction)) {
+      throw new ValidationError(`Capability profile restriction ${index} is not one of ${ROUTE_RESTRICTIONS.join(", ")}`);
+    }
+    if (!result.includes(restriction as RouteRestriction)) result.push(restriction as RouteRestriction);
+  }
+  return result;
 }
 
 export function requireCapability(profile: CapabilityProfile, capability: Capability, detail?: string): void {

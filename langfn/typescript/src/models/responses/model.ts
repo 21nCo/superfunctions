@@ -1,10 +1,19 @@
-import { ContextLengthError, LangFnError, NotConfiguredError, ProviderError, ValidationError } from "../../core/errors.js";
+import {
+  ContextLengthError,
+  LangFnError,
+  NotConfiguredError,
+  ProviderAuthError,
+  ProviderError,
+  ValidationError,
+} from "../../core/errors.js";
 import type { CompletionRequest, CompletionResponse, StreamEvent } from "../../core/types.js";
 import { type SecretProvider, resolveSecret } from "../../tools/policy.js";
 import { ChatModel } from "../base.js";
 import { defineCapabilityProfile, requireCapability, type CapabilityProfile } from "../profiles/types.js";
 import { type BodyErrorState, throwIfBodyFailed } from "../stream-lines.js";
 import { getTransportClient } from "../transport.js";
+import { type CredentialSource, isBearerToken } from "./credentials.js";
+import { ReauthRequiredError } from "./errors.js";
 import { buildResponsesPayload } from "./request.js";
 import { isCallerAbort, parseResponsesResponse, raiseForResponsesStatus, readResponsesBody } from "./response.js";
 import { mapResponsesStream, readServerSentEvents } from "./stream.js";
@@ -28,6 +37,13 @@ export interface ResponsesChatModelConfig {
   provider?: string;
   /** Sent as `Authorization: Bearer <key>`. Omit for endpoints authenticated by `headers`. */
   apiKey?: string;
+  /**
+   * A pluggable bearer credential, such as an {@link OAuthTokenSource} for Sign in with ChatGPT,
+   * asked before every request and told about a 401 (see {@link CredentialSource}). Exclusive
+   * with `apiKey`, `apiKeyRef` and an Authorization header: a failed request never falls back to
+   * another credential.
+   */
+  credentials?: CredentialSource;
   apiKeyRef?: string;
   secretProvider?: SecretProvider;
   /** Extra request headers, such as OpenRouter attribution or a custom endpoint's auth header. */
@@ -77,6 +93,7 @@ export class ResponsesChatModel extends ChatModel {
   private readonly rawApiKey?: string;
   private readonly apiKeyRef?: string;
   private readonly secretProvider?: SecretProvider;
+  private readonly credentials?: CredentialSource;
   private readonly headers: Record<string, string>;
   private readonly timeout: number;
   private readonly fetchImpl?: typeof fetch;
@@ -104,6 +121,16 @@ export class ResponsesChatModel extends ChatModel {
     const hasAuthHeader = Object.keys(this.headers).some((name) => name.toLowerCase() === "authorization");
     if (hasAuthHeader && (config.apiKey !== undefined || config.apiKeyRef !== undefined)) {
       throw new ValidationError("Configure either apiKey/apiKeyRef or an Authorization header, not both");
+    }
+    if (config.credentials !== undefined) {
+      const source = config.credentials as Partial<CredentialSource> | null;
+      if (!source || typeof source.getAccessToken !== "function" || typeof source.onAuthError !== "function") {
+        throw new ValidationError("credentials must implement getAccessToken() and onAuthError()");
+      }
+      if (hasAuthHeader || config.apiKey !== undefined || config.apiKeyRef !== undefined) {
+        throw new ValidationError("Configure credentials alone, without apiKey, apiKeyRef or an Authorization header");
+      }
+      this.credentials = config.credentials;
     }
     // The credential becomes a header value; a value fetch would reject fails here, typed and
     // without echoing it.
@@ -138,6 +165,7 @@ export class ResponsesChatModel extends ChatModel {
   }
 
   async chat(request: ResponsesChatRequest): Promise<ResponsesChatResponse> {
+    if (this.profile.streamOnly) return await this.chatFromStream(request);
     const payload = this.payload(request, false);
     // The call ids of the history as sent, before the caller can change its messages.
     const sent = sentCallIds(payload);
@@ -162,6 +190,23 @@ export class ResponsesChatModel extends ChatModel {
 
   /** Stream a full chat request (history, tools, structured output, reasoning). */
   async *streamChat(request: ResponsesChatRequest): AsyncIterable<StreamEvent> {
+    yield* this.streamTurn(request);
+  }
+
+  /** A stream-only route's whole turn: the streamed request, read to its terminal response. */
+  private async chatFromStream(request: ResponsesChatRequest): Promise<ResponsesChatResponse> {
+    let result: ResponsesChatResponse | undefined;
+    for await (const event of this.streamTurn(request, (response) => { result = response; })) {
+      if (event.type === "end") break;
+    }
+    if (!result) throw new ProviderError("Responses stream ended before a terminal response event", { provider: this.provider });
+    return result;
+  }
+
+  private async *streamTurn(
+    request: ResponsesChatRequest,
+    onResponse?: (response: ResponsesChatResponse) => void,
+  ): AsyncIterable<StreamEvent> {
     const payload = this.payload(request, true);
     // The call ids of the history as sent, before the caller can change its messages.
     const sent = sentCallIds(payload);
@@ -191,7 +236,7 @@ export class ResponsesChatModel extends ChatModel {
     const events = readServerSentEvents(response.body, this.maxStreamLineBytes, { bodyError });
     try {
       try {
-        for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sent })) {
+        for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sent, onResponse })) {
           check();
           yield event;
           if (event.type === "end") return;
@@ -232,9 +277,49 @@ export class ResponsesChatModel extends ChatModel {
     return payload;
   }
 
+  /**
+   * Send with the configured credential. A credential source sees a 401 and may renew its token
+   * for one retry; any other outcome, a quota or rate limit included, is final.
+   */
   private async send(payload: Record<string, unknown>, signal: AbortSignal | undefined, accept: string): Promise<Response> {
+    const source = this.credentials;
+    if (!source) return await this.sendOnce(payload, signal, accept);
+    let token = await this.accessToken(source, signal);
+    let firstRejection: ProviderAuthError;
+    try {
+      return await this.sendOnce(payload, signal, accept, token);
+    } catch (error) {
+      if (!isUnauthorized(error)) throw error;
+      firstRejection = error;
+    }
+    const retry = await untilAborted(Promise.resolve().then(() => source.onAuthError({ token, error: firstRejection, attempt: 1 })), signal);
+    if (retry !== true) throw firstRejection;
+    token = await this.accessToken(source, signal);
+    try {
+      return await this.sendOnce(payload, signal, accept, token);
+    } catch (error) {
+      if (!isUnauthorized(error)) throw error;
+      await untilAborted(Promise.resolve().then(() => source.onAuthError({ token, error, attempt: 2 })), signal);
+      throw new ReauthRequiredError(undefined, { provider: this.provider, metadata: error.metadata, cause: error });
+    }
+  }
+
+  private async accessToken(source: CredentialSource, signal: AbortSignal | undefined): Promise<string> {
+    const token = await untilAborted(Promise.resolve().then(() => source.getAccessToken()), signal);
+    // Checked without echoing the token.
+    if (typeof token !== "string" || !token.trim()) {
+      throw new NotConfiguredError(`${this.provider} credential source returned no access token`, { provider: this.provider });
+    }
+    if (!isBearerToken(token)) {
+      throw new ValidationError(`${this.provider} access token must be a single-line Latin-1 string`, { provider: this.provider });
+    }
+    return token;
+  }
+
+  private async sendOnce(payload: Record<string, unknown>, signal: AbortSignal | undefined, accept: string, token?: string): Promise<Response> {
     const headers: Record<string, string> = { ...this.headers, "content-type": "application/json", accept };
-    if (this.rawApiKey !== undefined || this.apiKeyRef !== undefined) {
+    if (token !== undefined) headers.authorization = `Bearer ${token}`;
+    else if (this.rawApiKey !== undefined || this.apiKeyRef !== undefined) {
       const apiKey = this.rawApiKey || resolveSecret(this.apiKeyRef, this.secretProvider) || "";
       if (!apiKey.trim()) throw new NotConfiguredError(`${this.provider} API key is required`, { provider: this.provider });
       if (!isHeaderValue(apiKey)) {
@@ -317,6 +402,29 @@ function endpointHref(baseUrl: string, path: string): string {
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason;
+}
+
+/** A 401 from the endpoint itself (not an auth error reported inside a 200 body or stream). */
+function isUnauthorized(error: unknown): error is ProviderAuthError {
+  return error instanceof ProviderAuthError && !(error instanceof ReauthRequiredError) && error.metadata.status === 401;
+}
+
+/** Wait for a credential step, but stop with the abort reason as soon as the caller aborts. */
+async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return await promise;
+  throwIfAborted(signal);
+  // A step that settles after the abort has nobody waiting for it.
+  promise.catch(() => undefined);
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 function discardBody(response: Response): void {

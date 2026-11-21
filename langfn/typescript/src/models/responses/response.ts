@@ -5,6 +5,7 @@ import {
   ProviderError,
   RateLimitError,
 } from "../../core/errors.js";
+import { QuotaExceededError } from "./errors.js";
 import type { ToolCall } from "../../core/types.js";
 import { providerUsage } from "../../core/usage.js";
 import { compareCodeUnits } from "../openai.js";
@@ -499,6 +500,13 @@ export function parseResponsesResponse(
   };
 }
 
+/** Codes and types that report an exhausted plan or credit quota rather than a passing rate limit. */
+const QUOTA_CODES = new Set(["insufficient_quota", "usage_limit_reached", "usage_not_included"]);
+
+function isQuotaCode(value: unknown): boolean {
+  return typeof value === "string" && QUOTA_CODES.has(value);
+}
+
 const CONTEXT_PATTERN = /maximum context length|context[ _]length|context window/i;
 
 /**
@@ -535,7 +543,11 @@ export function responsesError(
   // not (absent, a 200 stream or body error, or another status).
   const authError = () => new ProviderAuthError(undefined, { provider, metadata, ...cause });
   const rateLimitError = () => new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata, ...cause });
+  const quotaError = () => new QuotaExceededError(undefined, { provider, retryAfter: details.retryAfter, metadata, ...cause });
   if (details.status === 401) return authError();
+  // An exhausted quota is not a passing rate limit, even on a 429: retrying cannot succeed
+  // until the plan resets or credit is added.
+  if (details.status === 402 || isQuotaCode(code) || isQuotaCode(error?.type) || isQuotaCode(errorType)) return quotaError();
   if (details.status === 429) return rateLimitError();
   // A native code that names the class decides; else OpenRouter's canonical error_type does.
   if (code === "invalid_api_key" || code === 401) return authError();
@@ -580,12 +592,12 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
   try {
     text = await response.text();
   } catch (error) {
-    // A caller abort always wins. Otherwise a status that names the error class (401, 429)
+    // A caller abort always wins. Otherwise a status that names the error class (401, 402, 429)
     // decides whatever stopped the body read (a timeout, a transport error, an oversized body),
     // so retry policies still see the auth failure or the rate limit and its Retry-After; any
     // other status keeps a timed-out or oversized body's own error.
     if (isCallerAbort(error, signal)) throw error;
-    const classified = response.status === 401 || response.status === 429;
+    const classified = response.status === 401 || response.status === 402 || response.status === 429;
     if (!classified && error instanceof LangFnError) throw error;
     // The status still classifies the failure; the transport error is kept as its cause.
     readError = error;

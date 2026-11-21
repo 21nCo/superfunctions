@@ -13,6 +13,7 @@ import {
   terminalStatus,
   type ParseResponsesOptions,
 } from "./response.js";
+import type { ResponsesChatResponse } from "./types.js";
 
 export interface ServerSentEvent {
   event?: string;
@@ -223,6 +224,11 @@ function runningEnvelopeId(payload: JsonRecord, type: string, provider: string, 
   return id;
 }
 
+export interface MapResponsesStreamOptions extends ParseResponsesOptions {
+  /** Receives the parsed terminal turn, as `chat()` returns it, before its terminal events are yielded. */
+  onResponse?: (response: ResponsesChatResponse) => void;
+}
+
 /**
  * Map Responses API stream events to LangFn stream events: text deltas to `content` and
  * reasoning summary and reasoning text deltas to `reasoning` as they arrive; then, from the
@@ -251,8 +257,9 @@ function runningEnvelopeId(payload: JsonRecord, type: string, provider: string, 
 export async function* mapResponsesStream(
   events: AsyncIterable<ServerSentEvent>,
   provider: string,
-  options: ParseResponsesOptions = {},
+  options: MapResponsesStreamOptions = {},
 ): AsyncIterable<StreamEvent> {
+  const { onResponse, ...parseOptions } = options;
   const fail = (message: string) => new ProviderError(message, { provider });
   const ledger = new OutputLedger(fail, provider);
   let startedId: string | undefined;
@@ -391,7 +398,8 @@ export async function* mapResponsesStream(
         if (status !== "failed") {
           ({ output, undelivered } = ledger.resolve({ output: response.output, omitted, completed: status === "completed", type }));
         }
-        const result = parseResponsesResponse({ ...response, status, output }, provider, options);
+        const result = parseResponsesResponse({ ...response, status, output }, provider, parseOptions);
+        onResponse?.(result);
         terminal = [];
         if (undelivered) terminal.push({ type: "content", content: undelivered, delta: undelivered });
         for (const call of result.toolCalls ?? []) {

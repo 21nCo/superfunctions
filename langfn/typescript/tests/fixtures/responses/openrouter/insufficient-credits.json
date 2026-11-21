@@ -1,0 +1,12 @@
+{
+  "status": 402,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "code": 402,
+      "message": "Insufficient credits. Add more using https://openrouter.ai/settings/credits"
+    }
+  }
+}
