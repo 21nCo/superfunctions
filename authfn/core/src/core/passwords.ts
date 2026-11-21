@@ -304,6 +304,12 @@ export async function signInWithPassword(
 ): Promise<PasswordSignInResult> {
   const email = normalizeEmail(input.email);
   assertPasswordInput(email, input.password);
+  // A password longer than any stored one can be is refused before any
+  // lookup or hashing, the same way for every email, so the request (and
+  // its body) is not held while it waits for scrypt.
+  if (typeof input.password === 'string' && Buffer.byteLength(input.password, 'utf8') > MAX_SUBMITTED_PASSWORD_BYTES) {
+    throw new AuthFnInvalidCredentialsError('Invalid email or password');
+  }
 
   const user = await findUserByPrimaryEmail(config, email);
   // The credential table is read for an unknown email too (an id no user
@@ -323,8 +329,9 @@ export async function signInWithPassword(
   // runtime: a current-cost hash is checked next to a dummy legacy check; a
   // legacy hash is checked next to deriving its current-cost upgrade; no
   // stored hash means two dummy checks.
-  // A password that is not a string, or is too long, is checked as '' (the
-  // same work) and then refused, even against a stored hash of ''.
+  // A password that is not a string is checked as '' (the same work) and
+  // then refused, even against a stored hash of ''. (Too long ones were
+  // refused above; the check stays as a backstop.)
   const notString = typeof input.password !== 'string';
   const submitted = notString ? '' : input.password;
   const tooLong = Buffer.byteLength(submitted, 'utf8') > MAX_SUBMITTED_PASSWORD_BYTES;
