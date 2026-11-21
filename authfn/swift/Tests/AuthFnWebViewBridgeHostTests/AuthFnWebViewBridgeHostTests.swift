@@ -50,6 +50,22 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertFalse(AuthFnBridgeOriginPolicy.hasExplicitPortZero("custom://portal/page"))
     }
 
+    func testOriginPolicyRefusesFilePagesBadPortsAndCanonicalizesIPv6() {
+        let fileOnly = AuthFnBridgeOriginPolicy(trustedOrigins: [URL(fileURLWithPath: "/tmp/index.html")])
+        XCTAssertTrue(fileOnly.trustedOrigins.isEmpty)
+        XCTAssertFalse(fileOnly.allows(scheme: "file", host: "", port: 0))
+
+        let badPort = AuthFnBridgeOriginPolicy(trustedOrigins: [URL(string: "https://example.test:999999999999999999999")!])
+        XCTAssertTrue(badPort.trustedOrigins.isEmpty)
+        XCTAssertFalse(badPort.allows(scheme: "https", host: "example.test", port: 0))
+
+        let expanded = AuthFnBridgeOriginPolicy(trustedOrigins: [URL(string: "http://[0:0:0:0:0:0:0:1]:5173")!])
+        XCTAssertTrue(expanded.allows(scheme: "http", host: "[::1]", port: 5173))
+
+        XCTAssertTrue(AuthFnBridgeOriginPolicy.sameSchemeAndHost("app://portal:0/x", scheme: "app", host: "portal"))
+        XCTAssertFalse(AuthFnBridgeOriginPolicy.sameSchemeAndHost("about:blank", scheme: "app", host: "portal"))
+    }
+
     func testOriginPolicyWithoutOriginsTrustsNothing() {
         let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [])
         XCTAssertFalse(policy.allows(scheme: "https", host: "app.example.com", port: 0))
