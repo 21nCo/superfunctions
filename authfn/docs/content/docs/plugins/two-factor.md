@@ -104,7 +104,9 @@ Recovery codes are outside this limit and keep working while TOTP is locked: at 
 
 A recovery code submitted to finish a sign-in challenge is spent only after that request has claimed the challenge, so two requests racing on one challenge spend at most one code. If the code turns out to have been spent elsewhere meanwhile, the challenge is given back.
 
-During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port verifies both hash formats.
+During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port verifies both hash formats and spends a code only while it is unused.
+
+A TOTP code is recorded as used only after its request has claimed the sign-in challenge, so a request that loses the challenge to another one leaves its code usable. A schema override (`authFnTwoFactorPlugin({ schema })`) written for an earlier version gets the two new columns added with their default names.
 
 ## Disabling 2FA
 

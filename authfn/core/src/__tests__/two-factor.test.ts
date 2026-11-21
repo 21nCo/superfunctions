@@ -13,8 +13,10 @@ import {
   confirmTwoFactorEnrollment,
   createTwoFactorChallenge,
   createTwoFactorEnrollment,
+  satisfyTwoFactorChallenge,
   verifyTwoFactorCode
 } from '../core/two-factor.js';
+import { getSchema } from '../schema.js';
 import { createUser } from '../core/users.js';
 
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
@@ -876,6 +878,83 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
       challengeId: await setup.challenge(),
       code: setup.recoveryCodes[0]
     })).status).toBe(200);
+  });
+
+  it('treats an all-digit legacy recovery code as a recovery code when TOTP codes have as many digits', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 1 });
+    const { createHash } = await import('node:crypto');
+    await setup.config.database.create({
+      model: 'two_factor_recovery_codes',
+      data: {
+        id: 'recovery_test_numeric',
+        enrollmentId: setup.enrollmentId,
+        codeHash: createHash('sha256').update('1234509876').digest('hex'),
+        usedAt: null,
+        createdAt: new Date()
+      },
+      namespace: 'authfn'
+    });
+    const tenDigits = { ...setup.pluginConfig, digits: 10 };
+    // Lock TOTP first: the recovery code must still work.
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, '0000000000', tenDigits))
+      .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, '12345-09876', tenDigits))
+      .resolves.toEqual({ usedRecoveryCode: true });
+  });
+
+  it('keeps a TOTP code usable when its request loses the challenge to another one', async () => {
+    const setup = await enrolledUser();
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    const challengeId = await setup.challenge();
+    const totp = generateTotp(setup.secret, setup.clock.now());
+
+    // The TOTP request waits at its attempt reservation while a recovery
+    // code finishes the same challenge.
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_enrollments' && 'failedAttemptCount' in params.data);
+    const slow = satisfyTwoFactorChallenge(config, challengeId, totp, setup.pluginConfig)
+      .then(() => 'ok', (error) => error.code);
+    await reached;
+    expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[0] })).status).toBe(200);
+    paused.release();
+    expect(await slow).toBe('AUTHFN_2FA_INVALID_CODE');
+
+    // The TOTP code was not spent, so it finishes a new sign-in.
+    expect((await setup.post('/2fa/challenge', { challengeId: await setup.challenge(), code: totp })).status).toBe(200);
+  });
+
+  it('dates a lock again when its write was slow', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 1, lockoutSeconds: 60 });
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_enrollments' && params.data.lockedUntil instanceof Date);
+    const locking = verifyTwoFactorCode(config, setup.userId, setup.wrongCode(setup.clock.now()), setup.pluginConfig)
+      .then(() => 'ok', (error) => error.code);
+    await reached;
+    // The write waits two minutes, longer than the lock itself.
+    setup.clock.advanceSeconds(120);
+    paused.release();
+    expect(await locking).toBe('AUTHFN_2FA_INVALID_CODE');
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
+  it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
+    const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
+    const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;
+    const override = getSchema(createConfig()).schemas
+      .filter((table) => table.modelName.startsWith('two_factor_'))
+      .map((table) => table.modelName === 'two_factor_enrollments'
+        ? { ...table, fields: { ...older, secretEncrypted: { ...older.secretEncrypted!, fieldName: 'test_custom_secret' } } }
+        : table);
+    const config = createConfig();
+    config.plugins = [authFnPasswordPlugin(), authFnTwoFactorPlugin({ schema: override })];
+    const enrollments = getSchema(config).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
+    expect(enrollments.fields.failedAttemptCount).toMatchObject({ fieldName: 'failed_attempt_count', required: false });
+    expect(enrollments.fields.lockedUntil).toMatchObject({ fieldName: 'locked_until', required: false });
+    expect(enrollments.fields.secretEncrypted).toMatchObject({ fieldName: 'test_custom_secret' });
   });
 
   it('spends one recovery code when two arrive for the same challenge', async () => {

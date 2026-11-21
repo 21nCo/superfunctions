@@ -339,36 +339,45 @@ export async function satisfyTwoFactorChallenge(
     challengeId
   });
 
+  // The credential (a TOTP step or a recovery code) is spent only after
+  // this request holds the challenge, so a request that loses the challenge
+  // to another one keeps its code; if spending then fails, the challenge is
+  // given back so a valid code can still finish it.
+  const reopenChallenge = async () => {
+    try {
+      await updateRowIfMatches(config, 'two_factor_challenges', challenge.id, [], {
+        consumedAt: null,
+        updatedAt: now
+      });
+    } catch {
+      // The challenge stays used; the user signs in again.
+    }
+  };
+
   let usedRecoveryCode = false;
-  if (isTotpShaped(code, pluginConfig)) {
+  const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
+  if (submitted.kind === 'totp') {
     await withAttemptReservation(config, enrollment.id, pluginConfig, () =>
-      verifyTwoFactorTotp(config, enrollment, code, pluginConfig)
+      assertTotpMatches(config, enrollment, code, pluginConfig)
     );
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
+    try {
+      await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+    } catch (error) {
+      await reopenChallenge();
+      throw error;
+    }
   } else {
-    // A recovery code is spent only after this request holds the challenge,
-    // so requests racing on one challenge with different codes cannot spend
-    // more than one of them.
-    const matched = await findUnusedRecoveryCode(config, enrollment.id, code);
-    if (!matched) {
+    if (!submitted.recoveryCode) {
       throw invalidSecondFactorCode(enrollment.userId);
     }
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
-    if (!(await spendRecoveryCode(config, matched.id, now))) {
-      // The code was spent elsewhere in the meantime: give the challenge back
-      // so a valid code can still finish it.
-      try {
-        await updateRowIfMatches(config, 'two_factor_challenges', challenge.id, [], {
-          consumedAt: null,
-          updatedAt: now
-        });
-      } catch {
-        // The challenge stays used; the user signs in again.
-      }
+    if (!(await spendRecoveryCode(config, submitted.recoveryCode.id, now))) {
+      await reopenChallenge();
       throw invalidSecondFactorCode(enrollment.userId);
     }
     usedRecoveryCode = true;
@@ -502,14 +511,28 @@ async function requireConfirmedEnrollment(
   return enrollment;
 }
 
+/** Lengths of recovery codes once normalized: 20 now, 10 before AUTH-32. */
+const RECOVERY_CODE_LENGTHS = new Set([10, 20]);
+
 /**
- * A code with the TOTP shape (`digits` decimal digits) is checked as a TOTP
- * code; anything else as a recovery code. Recovery codes are 10 or 20
- * hexadecimal characters, so the two never overlap at the default 6 digits.
+ * Decides how a submitted code is checked. A code with the TOTP shape
+ * (`digits` decimal digits) is a TOTP code, unless its length is also a
+ * recovery code's and it matches an unused recovery code (an all-digit legacy
+ * code with `digits: 10`). Anything else is a recovery code.
  */
-function isTotpShaped(code: string, pluginConfig: TwoFactorPluginRuntimeConfig): boolean {
+async function resolveSubmittedCode(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollmentId: string,
+  code: string,
+  pluginConfig: TwoFactorPluginRuntimeConfig
+): Promise<{ kind: 'totp' } | { kind: 'recovery'; recoveryCode: AuthFnTwoFactorRecoveryCodeRecord | null }> {
   const normalized = normalizeTwoFactorCode(code);
-  return normalized.length === (pluginConfig.digits ?? DEFAULT_DIGITS) && /^[0-9]+$/.test(normalized);
+  const totpShaped = normalized.length === (pluginConfig.digits ?? DEFAULT_DIGITS) && /^[0-9]+$/.test(normalized);
+  if (totpShaped && !RECOVERY_CODE_LENGTHS.has(normalized.length)) {
+    return { kind: 'totp' };
+  }
+  const recoveryCode = await findUnusedRecoveryCode(config, enrollmentId, code);
+  return totpShaped && !recoveryCode ? { kind: 'totp' } : { kind: 'recovery', recoveryCode };
 }
 
 /**
@@ -527,15 +550,15 @@ async function checkSecondFactor(
   code: string,
   pluginConfig: TwoFactorPluginRuntimeConfig
 ): Promise<{ usedRecoveryCode: boolean }> {
-  if (isTotpShaped(code, pluginConfig)) {
+  const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
+  if (submitted.kind === 'totp') {
     await withAttemptReservation(config, enrollment.id, pluginConfig, () =>
       verifyTwoFactorTotp(config, enrollment, code, pluginConfig)
     );
     return { usedRecoveryCode: false };
   }
 
-  const matched = await findUnusedRecoveryCode(config, enrollment.id, code);
-  if (!matched || !(await spendRecoveryCode(config, matched.id, resolveNow(pluginConfig)))) {
+  if (!submitted.recoveryCode || !(await spendRecoveryCode(config, submitted.recoveryCode.id, resolveNow(pluginConfig)))) {
     throw invalidSecondFactorCode(enrollment.userId);
   }
   return { usedRecoveryCode: true };
@@ -620,7 +643,8 @@ async function reserveSecondFactorAttempt(
     const next = readAttemptCount(current.failedAttemptCount) + 1;
     // The check that completes a run is still made; the lock applies to the
     // ones after it.
-    const data: Record<string, unknown> = next % limits.maxFailedAttempts === 0
+    const locks = next % limits.maxFailedAttempts === 0;
+    const data: Record<string, unknown> = locks
       ? { failedAttemptCount: next, lockedUntil: new Date(now.getTime() + limits.lockoutMs), updatedAt: now }
       : { failedAttemptCount: next, updatedAt: now };
     const reserved = await updateRowIfMatches(
@@ -631,11 +655,45 @@ async function reserveSecondFactorAttempt(
       data
     );
     if (reserved) {
+      if (locks) {
+        await redateSlowLock(config, enrollmentId, pluginConfig, limits, next, now);
+      }
       return next;
     }
   }
   // Lost every round to concurrent requests: treat as over the limit.
   throw twoFactorLockedError(new Date(now.getTime() + 1000));
+}
+
+/**
+ * A lock is dated from the clock read just before its write. If the write
+ * itself took a while (waiting for a connection or a row lock), the lock is
+ * dated again from when the write returned, so a short `lockoutSeconds` is
+ * not already over when it lands. Only while no later attempt was counted.
+ */
+async function redateSlowLock(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollmentId: string,
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  limits: TwoFactorAttemptLimits,
+  reserved: number,
+  writtenAt: Date
+): Promise<void> {
+  const after = resolveNow(pluginConfig);
+  if (after.getTime() <= writtenAt.getTime()) {
+    return;
+  }
+  try {
+    await updateRowIfMatches(
+      config,
+      'two_factor_enrollments',
+      enrollmentId,
+      [{ field: 'failedAttemptCount', operator: 'eq', value: reserved }],
+      { lockedUntil: new Date(after.getTime() + limits.lockoutMs), updatedAt: after }
+    );
+  } catch {
+    // The first lock stands.
+  }
 }
 
 function readAttemptCount(value: unknown): number {
@@ -726,6 +784,29 @@ function spendRecoveryCode(
 
 function hashRecoveryCode(enrollmentId: string, normalizedCode: string): string {
   return hashSecret(`authfn-recovery:${enrollmentId}:${normalizedCode}`);
+}
+
+/**
+ * Checks a TOTP code against the enrollment without recording its use; the
+ * use is recorded (and replays refused) by verifyTwoFactorTotp.
+ */
+async function assertTotpMatches(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollment: AuthFnTwoFactorEnrollmentRecord,
+  code: string,
+  pluginConfig: TwoFactorPluginRuntimeConfig
+): Promise<void> {
+  const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
+  const matched = verifyTotpCode(
+    secret,
+    normalizeTwoFactorCode(code),
+    pluginConfig,
+    resolveNow(pluginConfig),
+    enrollment.lastUsedCounter ?? null
+  );
+  if (matched === null) {
+    throw invalidSecondFactorCode(enrollment.userId);
+  }
 }
 
 async function verifyTwoFactorTotp(

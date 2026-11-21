@@ -407,14 +407,36 @@ class TwoFactorService:
         )
         for row in rows:
             if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code, enrollment_id):
-                await self.config.database.update(
-                    model="two_factor_recovery_codes",
-                    where=[{"field": "id", "operator": "eq", "value": row["id"]}],
-                    data={"usedAt": self.plugin_config.now()},
-                    namespace=self.config.namespace,
-                )
-                return True
+                return await self._spend_recovery_code(row["id"])
         return False
+
+    async def _spend_recovery_code(self, row_id: str) -> bool:
+        """Marks a recovery code used only while it is still unused, so two
+        requests (in this kernel or the TypeScript one) cannot both spend it."""
+        where = [
+            {"field": "id", "operator": "eq", "value": row_id},
+            {"field": "usedAt", "operator": "eq", "value": None},
+        ]
+        data = {"usedAt": self.plugin_config.now()}
+        update_many = getattr(self.config.database, "update_many", None)
+        if callable(update_many):
+            count = await update_many(
+                model="two_factor_recovery_codes",
+                where=where,
+                data=data,
+                namespace=self.config.namespace,
+            )
+            return isinstance(count, int) and count == 1
+        try:
+            await self.config.database.update(
+                model="two_factor_recovery_codes",
+                where=where,
+                data=data,
+                namespace=self.config.namespace,
+            )
+        except NotFoundError:
+            return False
+        return True
 
     def _verify_totp(self, secret: str, code: str) -> bool:
         now = self.plugin_config.now()

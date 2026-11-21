@@ -83,6 +83,20 @@ class MockDatabaseAdapter:
                 return row
         raise AssertionError(f"row not found in {model}")
 
+    async def update_many(
+        self,
+        model: str,
+        where: List[Dict[str, Any]],
+        data: Dict[str, Any],
+        namespace: str,
+    ) -> int:
+        count = 0
+        for row in self.storage.get(model, []):
+            if _matches(row, where):
+                row.update(data)
+                count += 1
+        return count
+
     async def delete_many(
         self,
         model: str,
@@ -369,3 +383,35 @@ async def test_accepts_recovery_codes_hashed_by_the_typescript_kernel() -> None:
             code="TEST0-TEST0-TEST0-TEST3",
             primary_email="ada@example.com",
         )
+
+
+@pytest.mark.asyncio
+async def test_spends_a_recovery_code_only_while_it_is_unused() -> None:
+    db = MockDatabaseAdapter()
+    now = datetime(2026, 3, 22, 0, 0, 0)
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: now,
+            recovery_code_count=1,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], now))
+    enrollment_id = db.storage["two_factor_enrollments"][0]["id"]
+    recovery = enrolled["recoveryCodes"][0]
+
+    # Another request spent the code after this one read it as unused.
+    stale_rows = [dict(row) for row in db.storage["two_factor_recovery_codes"]]
+    db.storage["two_factor_recovery_codes"][0]["usedAt"] = now
+    original_find_many = db.find_many
+
+    async def stale_find_many(**kwargs: Any) -> List[Dict[str, Any]]:
+        if kwargs.get("model") == "two_factor_recovery_codes":
+            return stale_rows
+        return await original_find_many(**kwargs)
+
+    db.find_many = stale_find_many  # type: ignore[method-assign]
+    assert await service._consume_recovery_code(enrollment_id, recovery) is False
