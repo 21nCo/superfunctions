@@ -1,13 +1,49 @@
-import { describe, expect, it } from 'vitest';
+import { sign } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
 import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnSocialOAuthPlugin } from '@authfn/social-oauth';
 import type { AuthFnRuntimeConfig } from '../index.js';
 
+// Apple identity tokens are verified against Apple's published key set. The
+// tests sign their tokens with a key pair made for this run and serve its
+// public key in place of Apple's remote key set.
+const appleTestKeys = vi.hoisted(() => {
+  // vi.hoisted runs before imports, so node:crypto is required here.
+  const { generateKeyPairSync: generate } = require('node:crypto') as typeof import('node:crypto');
+  const { privateKey, publicKey } = generate('ec', { namedCurve: 'P-256' });
+  return { privateKey, jwk: { ...publicKey.export({ format: 'jwk' }), kid: 'apple-test-key', alg: 'ES256', use: 'sig' } };
+});
+vi.mock('jose', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('jose')>();
+  return {
+    ...actual,
+    createRemoteJWKSet: () => actual.createLocalJWKSet({ keys: [appleTestKeys.jwk] })
+  };
+});
+
+function encodeSegment(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
 function createIdToken(claims: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
-  return `${header}.${payload}.signature`;
+  const signingInput = `${encodeSegment({ alg: 'ES256', kid: 'apple-test-key', typ: 'JWT' })}.${encodeSegment({
+    iss: 'https://appleid.apple.com',
+    ...claims
+  })}`;
+  const signature = sign('sha256', Buffer.from(signingInput), {
+    key: appleTestKeys.privateKey,
+    dsaEncoding: 'ieee-p1363'
+  });
+  return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+/** The pre-fix test token shape: `alg: none` with no signature check. */
+function createUnsignedIdToken(claims: Record<string, unknown>): string {
+  return `${encodeSegment({ alg: 'none', typ: 'JWT' })}.${encodeSegment({
+    iss: 'https://appleid.apple.com',
+    ...claims
+  })}.`;
 }
 
 describe('authfn apple social oauth', () => {
@@ -340,6 +376,152 @@ describe('authfn apple social oauth', () => {
     expect(linked?.email).toBe('native.apple@example.com');
     expect(linked?.profile).toMatchObject({
       name: 'Native Apple'
+    });
+  });
+
+  describe('identity token signatures', () => {
+    function nativeConfig(): AuthFnRuntimeConfig {
+      return {
+        database: memoryAdapter({ debug: false }),
+        namespace: 'authfn',
+        plugins: [authFnSocialOAuthPlugin()],
+        pluginRuntime: {
+          socialOAuth: {
+            providers: {
+              apple: {
+                clientId: 'apple-client-id',
+                nativeClientIds: ['io.nucleum'],
+                clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
+                allowlistedReturnTo: ['nucleum://oauthsignin']
+              }
+            }
+          }
+        }
+      };
+    }
+
+    async function completeNative(tokenFor: (nonce: string) => string) {
+      const auth = createTestServer(nativeConfig());
+      const start = await auth.router.handle(
+        new Request('https://account.example.com/auth/social/native/apple/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ returnTo: 'nucleum://oauthsignin', handoffMode: 'session-token' })
+        })
+      );
+      const startBody = await start.json();
+      return auth.router.handle(
+        new Request('https://account.example.com/auth/social/native/apple/complete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ stateId: startBody.data.stateId, identityToken: tokenFor(startBody.data.nonce) })
+        })
+      );
+    }
+
+    const claims = (nonce: string) => ({
+      aud: 'io.nucleum',
+      sub: 'native-apple-user-02',
+      email: 'native.apple@example.com',
+      email_verified: 'true',
+      nonce
+    });
+
+    it('refuses an unsigned (alg: none) token even when NODE_ENV is test or the old switch is set', async () => {
+      // Security audit AF-11: these two settings used to turn signature
+      // verification off for Apple identity tokens.
+      vi.stubEnv('NODE_ENV', 'test');
+      vi.stubEnv('AUTHFN_ALLOW_UNSIGNED_APPLE_TOKENS', 'true');
+      try {
+        const response = await completeNative((nonce) => createUnsignedIdToken(claims(nonce)));
+        expect(response.status).toBe(400);
+        expect((await response.json()).error.code).toBe('AUTHFN_OAUTH_CALLBACK_INVALID');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('refuses a token whose signature does not verify', async () => {
+      const response = await completeNative((nonce) => {
+        const [header, , signature] = createIdToken(claims(nonce)).split('.');
+        const forged = Buffer.from(JSON.stringify({
+          iss: 'https://appleid.apple.com',
+          ...claims(nonce),
+          sub: 'someone-else'
+        })).toString('base64url');
+        return `${header}.${forged}.${signature}`;
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('AUTHFN_OAUTH_CALLBACK_INVALID');
+    });
+
+    it('accepts a correctly signed token', async () => {
+      const response = await completeNative((nonce) => createIdToken(claims(nonce)));
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe('return targets with custom schemes', () => {
+    // Security audit AF-04: every non-http URL has the origin "null", so an
+    // allowlisted custom-scheme entry used to accept any custom scheme.
+    async function start(returnTo: string, allowlistedReturnTo: string[]) {
+      const auth = createTestServer({
+        database: memoryAdapter({ debug: false }),
+        namespace: 'authfn',
+        plugins: [authFnSocialOAuthPlugin()],
+        pluginRuntime: {
+          socialOAuth: {
+            providers: {
+              apple: {
+                clientId: 'apple-client-id',
+                nativeClientIds: ['io.nucleum'],
+                clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
+                allowlistedReturnTo
+              }
+            }
+          }
+        }
+      });
+      return auth.router.handle(
+        new Request('https://account.example.com/auth/social/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ provider: 'apple', returnTo })
+        })
+      );
+    }
+
+    it.each([
+      'evilapp://steal',
+      'evilapp://oauthsignin',
+      'exampleapp://other-host',
+      'javascript:alert(document.domain)//',
+      'data:text/html,hello',
+      'file:///etc/passwd'
+    ])('refuses %s when only exampleapp://oauthsignin is allowlisted', async (returnTo) => {
+      const response = await start(returnTo, ['exampleapp://oauthsignin', 'https://app.example.com']);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('AUTHFN_REDIRECT_URI_DISALLOWED');
+    });
+
+    it.each([
+      'exampleapp://oauthsignin',
+      'exampleapp://oauthsignin/done?x=1',
+      'https://app.example.com/after-sign-in'
+    ])('accepts %s', async (returnTo) => {
+      const response = await start(returnTo, ['exampleapp://oauthsignin', 'https://app.example.com']);
+      expect(response.status).toBe(200);
+    });
+
+    it('matches a host-less custom-scheme entry only exactly', async () => {
+      expect((await start('myapp:callback', ['myapp:callback'])).status).toBe(200);
+      expect((await start('myapp:other', ['myapp:callback'])).status).toBe(400);
+      expect((await start('otherapp:callback', ['myapp:'])).status).toBe(400);
+    });
+
+    it('refuses a script scheme even when it is allowlisted exactly', async () => {
+      const response = await start('javascript:alert(1)', ['javascript:alert(1)']);
+      expect(response.status).toBe(400);
     });
   });
 });

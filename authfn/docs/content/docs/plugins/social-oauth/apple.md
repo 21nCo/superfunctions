@@ -107,6 +107,10 @@ Apple sends the user's name on the very first authorization only — subsequent 
 
 Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privaterelay.appleid.com`). authfn treats relay emails like any other email — they just won't match a "real" inbox. Display names should not assume a particular email format.
 
+## Signature checks in every environment
+
+Every Apple identity token the kernel accepts is checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set.
+
 ## Errors specific to Apple
 
 - `invalid_client` from Apple typically means an expired or wrong client-secret JWT. Verify your `clientSecretResolver` is producing fresh JWTs.

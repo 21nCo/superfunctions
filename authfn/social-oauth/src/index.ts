@@ -1576,12 +1576,6 @@ async function verifyAppleIdentityToken(
   identityToken: string,
   audience: string | string[]
 ): Promise<JWTPayload> {
-  if (isUnsignedTestToken(identityToken)) {
-    const claims = parseRawIdTokenPayload(identityToken);
-    assertAppleTokenAudience(claims, audience);
-    return claims;
-  }
-
   try {
     const result = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: 'https://appleid.apple.com',
@@ -1592,60 +1586,6 @@ async function verifyAppleIdentityToken(
     throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
       provider: 'apple',
       reason: error instanceof Error ? error.message : 'verification_failed'
-    });
-  }
-}
-
-function assertAppleTokenAudience(claims: JWTPayload, audience: string | string[]): void {
-  const accepted = Array.isArray(audience) ? audience : [audience];
-  const tokenAudiences = Array.isArray(claims.aud)
-    ? claims.aud
-    : typeof claims.aud === 'string'
-      ? [claims.aud]
-      : [];
-  if (!tokenAudiences.some((aud) => accepted.includes(aud))) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
-      provider: 'apple',
-      reason: 'unexpected "aud" claim value'
-    });
-  }
-}
-
-function isUnsignedTestToken(identityToken: string): boolean {
-  if (!allowUnsignedAppleTokensForTests()) {
-    return false;
-  }
-  try {
-    const [header] = identityToken.split('.');
-    const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')) as Record<string, unknown>;
-    return parsed.alg === 'none';
-  } catch {
-    return false;
-  }
-}
-
-function allowUnsignedAppleTokensForTests(): boolean {
-  const env = (globalThis as unknown as {
-    process?: {
-      env?: Record<string, string | undefined>;
-    };
-  }).process?.env;
-  return env?.AUTHFN_ALLOW_UNSIGNED_APPLE_TOKENS === 'true' || env?.NODE_ENV === 'test';
-}
-
-function parseRawIdTokenPayload(identityToken: string): JWTPayload {
-  const parts = identityToken.split('.');
-  if (parts.length < 2) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token is malformed', {
-      provider: 'apple'
-    });
-  }
-
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as JWTPayload;
-  } catch {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token payload is malformed', {
-      provider: 'apple'
     });
   }
 }
@@ -2113,16 +2053,46 @@ function assertAllowedReturnTarget(
   }
 }
 
-function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
-  if (allowlist.includes(returnTo)) {
-    return true;
-  }
+/** Schemes that run script or read local data and are never a return target. */
+const FORBIDDEN_RETURN_TARGET_SCHEMES = new Set([
+  'javascript:',
+  'vbscript:',
+  'data:',
+  'file:',
+  'blob:',
+  'about:',
+  'filesystem:'
+]);
 
+function isWebScheme(protocol: string): boolean {
+  return protocol === 'https:' || protocol === 'http:';
+}
+
+/**
+ * An entry matches a target when the strings are equal, or when the entry is
+ * a bare origin (no path, query or fragment) that covers the target:
+ *
+ * - `http:`/`https:` entries cover targets with the same origin.
+ * - Other schemes have no URL origin (`new URL('myapp://x').origin` is the
+ *   string "null" for every one of them), so a bare entry such as
+ *   `myapp://oauthsignin` covers only targets with the same scheme, host and
+ *   port. An entry without a host (`myapp:`) only matches exactly.
+ *
+ * Script and local-data schemes are refused whatever the allowlist says.
+ */
+function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
   let target: URL;
   try {
     target = new URL(returnTo);
   } catch {
     return false;
+  }
+  if (FORBIDDEN_RETURN_TARGET_SCHEMES.has(target.protocol)) {
+    return false;
+  }
+
+  if (allowlist.includes(returnTo)) {
+    return true;
   }
 
   return allowlist.some((entry) => {
@@ -2132,7 +2102,13 @@ function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boole
         (allowed.pathname === '/' || allowed.pathname === '')
         && !allowed.search
         && !allowed.hash;
-      return allowsOrigin && allowed.origin === target.origin;
+      if (!allowsOrigin || allowed.protocol !== target.protocol) {
+        return false;
+      }
+      if (isWebScheme(allowed.protocol)) {
+        return allowed.origin === target.origin;
+      }
+      return allowed.host !== '' && allowed.host === target.host;
     } catch {
       return false;
     }

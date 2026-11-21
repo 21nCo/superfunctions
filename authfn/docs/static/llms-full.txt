@@ -6650,6 +6650,10 @@ Apple sends the user's name on the very first authorization only — subsequent 
 
 Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privaterelay.appleid.com`). authfn treats relay emails like any other email — they just won't match a "real" inbox. Display names should not assume a particular email format.
 
+## Signature checks in every environment
+
+Every Apple identity token the kernel accepts is checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set.
+
 ## Errors specific to Apple
 
 - `invalid_client` from Apple typically means an expired or wrong client-secret JWT. Verify your `clientSecretResolver` is producing fresh JWTs.
@@ -7065,7 +7069,15 @@ By default, OAuth identities for an existing email are *not* automatically linke
 
 ## Allowlists
 
-Both `allowlistedRedirectUris` and `allowlistedReturnTo` are *exact-match* allowlists with no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+Both `allowlistedRedirectUris` and `allowlistedReturnTo` have no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+
+`allowlistedRedirectUris` is exact-match. An `allowlistedReturnTo` entry matches a `returnTo` that is the same string, or, when the entry is a bare origin with no path, query or fragment:
+
+- `https://app.example.com` (or `http:`) matches any target with the same origin.
+- A custom scheme such as `myapp://oauthsignin` matches targets with the same scheme, host and port (`myapp://oauthsignin/done` matches; `otherapp://oauthsignin` and `myapp://other` don't). Custom-scheme URLs have no web origin, so they are never compared by origin.
+- An entry without a host, such as `myapp:callback`, matches only itself.
+
+`javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:` and `filesystem:` targets are refused even if listed.
 
 ## Errors
 
