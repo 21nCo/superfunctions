@@ -91,3 +91,39 @@ containing only that exact Bearer token. An AuthProvider's `authorize()` hook
 receives the normalized MCP resource URL before trusted context is created. `auth-diagnose` and
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.
+
+### Authorization endpoint errors
+
+Unknown clients and unregistered `redirect_uri` values always get a JSON error
+from the authorization server, never a redirect. Once the `redirect_uri`
+matches, later validation errors (for example a missing `code_challenge` or
+`state`, an unsupported `response_type`, or a disallowed `resource`) are
+redirected to that URI with `error`, `error_description`, and `state` (echoed
+only when the request supplied a single valid `state`), only for clients whose
+`source` is listed in
+`authorizationErrors.redirectSources`. The default is
+`["pre-registered", "enterprise"]`, the clients whose redirect URIs the operator
+provisioned.
+
+Dynamically registered and Client ID Metadata Document clients choose their
+own redirect URIs without authentication, so redirecting their errors would
+make the issuer an open redirector (RFC 9700 §4.11.2). For them the endpoint
+returns an HTTP 400 `text/html` page with `cache-control: no-store`, showing
+the HTML-escaped OAuth error code and description, with no link to the
+redirect URI and no reflected `state`. `renderMcpAuthorizationErrorPage(error)`
+builds that default page.
+
+```ts
+createMcpAuthorizationCompatibilityHandler({
+  // ...
+  authorizationErrors: {
+    // Optional: replace the default page for non-redirected errors.
+    render: ({ error, client, request }) => renderHostErrorPage(error, client, request),
+  },
+});
+```
+
+Since 0.0.7 this is the default; earlier versions redirected errors for every
+client source. To restore that behaviour, pass all four sources:
+`authorizationErrors: { redirectSources: ["pre-registered", "enterprise",
+"dynamic", "client-metadata-document"] }`.
