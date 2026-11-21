@@ -1,6 +1,8 @@
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
+import { bundledSdkBanner } from "../../scripts/verify-mcpfn-bundled-sdk.mjs";
 
 const require = createRequire(import.meta.url);
 const zodRoot = dirname(require.resolve("zod/package.json"));
@@ -24,4 +26,7 @@ export default defineConfig({
     options.alias = { ...options.alias, zod: zodRoot };
   },
   noExternal: ["@modelcontextprotocol/sdk", "zod"],
+  // Stamp the inlined SDK version into each bundle; the build and the
+  // bundled-SDK test check it against the exact pin (MCP-13).
+  banner: { js: bundledSdkBanner(dirname(fileURLToPath(import.meta.url))) },
 });

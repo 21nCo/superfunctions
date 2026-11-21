@@ -36,9 +36,9 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   // test, so a missing dist only skips it in a local unbuilt checkout.
   it.runIf(built || Boolean(process.env.CI))("inlines only the pinned SDK into the built ESM and CJS bundles", () => {
     const report = verifyBundledSdk(packageRoot);
-    expect(report.bundles.map(({ bundle, versions }) => [bundle, versions])).toEqual([
-      ["index.js", [pinned]],
-      ["index.cjs", [pinned]],
+    expect(report.bundles.map(({ bundle, stamped, versions }) => [bundle, stamped, versions])).toEqual([
+      ["index.js", pinned, [pinned]],
+      ["index.cjs", pinned, [pinned]],
     ]);
   });
 
@@ -58,5 +58,20 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
       dependencies: { ...manifest.dependencies, "@modelcontextprotocol/sdk": "1.29.0" },
     }));
     expect(() => verifyBundledSdk(dir)).toThrow(`bundles @modelcontextprotocol/sdk ${pinned} but package.json pins 1.29.0`);
+  });
+
+  it.runIf(built || Boolean(process.env.CI))("rejects a copy of the built bundle whose stamp names an older SDK", () => {
+    // Pin and installed SDK as in the real build; only the bundled bytes are stale.
+    const dir = mkdtempSync(join(tmpdir(), "mcpfn-auth-bundled-sdk-"));
+    temporary.push(dir);
+    cpSync(join(packageRoot, "dist"), join(dir, "dist"), { recursive: true });
+    for (const file of ["index.js", "index.cjs"]) {
+      const path = join(dir, "dist", file);
+      writeFileSync(path, readFileSync(path, "utf8").replace(`@modelcontextprotocol/sdk@${pinned} */`, "@modelcontextprotocol/sdk@1.29.0 */"));
+      const sourceMap = JSON.parse(readFileSync(`${path}.map`, "utf8"));
+      writeFileSync(`${path}.map`, JSON.stringify({ ...sourceMap, sourceRoot: join(packageRoot, "dist") }));
+    }
+    writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+    expect(() => verifyBundledSdk(dir)).toThrow(`dist/index.js bundles @modelcontextprotocol/sdk 1.29.0 but package.json pins ${pinned}`);
   });
 });

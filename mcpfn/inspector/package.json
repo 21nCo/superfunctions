@@ -27,6 +27,7 @@
     "@superfunctions/oauth-core": "0.1.1"
   },
   "devDependencies": {
+    "@hono/node-server": "2.1.11",
     "@mcpfn/core": "0.0.7",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",

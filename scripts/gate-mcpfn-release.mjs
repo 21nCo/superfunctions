@@ -148,6 +148,10 @@ function verifyMcpSdkSecurityPolicy() {
 // peer dependencies, following workspace links) the way Node resolves
 // node_modules, and checks each reachable copy of the packages below (MCP-13).
 // @hono/node-server is checked against GHSA-rmxm-3fg6-px4f (>=1.19.10 <2.1.3).
+// The SDK range (^1.19.9 || ^2.0.5) allows a patched 2.x, so each McpFn package
+// that depends on the SDK declares @hono/node-server 2.1.11 as a devDependency;
+// npm then places that copy next to the package's SDK without moving the root
+// copy other workspaces resolve (D3: no root override needed).
 function verifyMcpfnLockfileResolution() {
   const workspaces = [
     "mcpfn/core",
@@ -160,12 +164,18 @@ function verifyMcpfnLockfileResolution() {
   ];
   const lock = JSON.parse(readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"));
   const packages = lock.packages ?? {};
+  // Semver order on major.minor.patch; a prerelease sorts below its release
+  // (2.1.3-beta.1 < 2.1.3), so a prerelease of a fixed version still fails.
   const compare = (left, right) => {
-    const a = left.split(/[.-]/).map(Number);
-    const b = right.split(/[.-]/).map(Number);
+    const [leftCore, leftPre] = left.split(/-(.*)/s);
+    const [rightCore, rightPre] = right.split(/-(.*)/s);
+    const a = leftCore.split(".").map(Number);
+    const b = rightCore.split(".").map(Number);
     for (let index = 0; index < 3; index += 1) {
       if (a[index] !== b[index]) return a[index] - b[index];
     }
+    if (leftPre && !rightPre) return -1;
+    if (!leftPre && rightPre) return 1;
     return 0;
   };
   const policies = {
@@ -219,18 +229,40 @@ function verifyMcpfnLockfileResolution() {
     }
   }
   const missing = Object.keys(policies).filter((name) => !resolved[name]);
-  const ok = violations.length === 0 && missing.length === 0;
+  // Every workspace in the repository that depends directly on an McpFn
+  // workspace package must link that workspace. An exact pin on an older
+  // version (for example "@mcpfn/core": "0.0.6" after core moved to 0.0.7)
+  // silently installs the published copy, with its older bundled SDK, instead.
+  const mcpfnWorkspaces = new Set(
+    Object.entries(packages)
+      .filter(([location, entry]) => !location.includes("node_modules/") && entry.name?.startsWith("@mcpfn/"))
+      .map(([, entry]) => entry.name),
+  );
+  const unlinked = [];
+  for (const [location, entry] of Object.entries(packages)) {
+    if (!location || location.includes("node_modules/")) continue;
+    for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      for (const [name, range] of Object.entries(entry[field] ?? {})) {
+        if (!mcpfnWorkspaces.has(name)) continue;
+        const target = resolve(location, name);
+        if (!target || !packages[target].link) {
+          unlinked.push({ from: location, name, range, target, version: target ? packages[target].version : undefined });
+        }
+      }
+    }
+  }
+  const ok = violations.length === 0 && missing.length === 0 && unlinked.length === 0;
   results.push({
     name: "dependencies:mcpfn-lockfile-resolution",
     command: "internal package-lock.json resolution check for McpFn workspaces",
     ok,
     status: ok ? 0 : 1,
-    stdout: JSON.stringify({ resolved, violations, missing }),
+    stdout: JSON.stringify({ resolved, violations, missing, unlinked }),
     stderr: "",
   });
   if (!ok) {
     throw new Error(
-      `McpFn lockfile resolution failed: ${JSON.stringify({ violations, missing })}`,
+      `McpFn lockfile resolution failed: ${JSON.stringify({ violations, missing, unlinked })}`,
     );
   }
 }

@@ -147,7 +147,6 @@
     "gate:langfn-release": "node scripts/gate-langfn-release.mjs"
   },
   "devDependencies": {
-    "@hono/node-server": "2.1.11",
     "@modelcontextprotocol/sdk": "1.25.2",
     "fast-glob": "^3.3.3",
     "@cloudflare/vitest-pool-workers": "^0.10.4",

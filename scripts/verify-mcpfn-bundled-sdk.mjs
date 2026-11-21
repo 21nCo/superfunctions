@@ -1,20 +1,28 @@
-#!/usr/bin/env node
 // Checks that a built McpFn package which inlines @modelcontextprotocol/sdk
 // (tsup `noExternal`) bundled exactly the SDK version its package.json pins
 // (MCP-13). Consumers cannot override bundled code, so a stale or mismatched
 // bundle would ship SDK advisories that the manifest claims are fixed.
 //
+// The package's tsup config writes `bundledSdkBanner()` at the top of every
+// bundle. The banner names the SDK version installed when tsup ran, so the
+// version is part of the built bytes: a dist built from another SDK release
+// keeps its old stamp (or has none) even after node_modules and the pin
+// change. esbuild chains the SDK's own source maps, so the source-map entries
+// name SDK `src/*.ts` files that are not published and carry no
+// sourcesContent; they only show where the SDK was resolved from.
+//
 // Usage: node scripts/verify-mcpfn-bundled-sdk.mjs [packageRoot]
 // (packageRoot defaults to the current directory, so package build scripts
 // can run it after tsup).
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SDK_NAME = "@modelcontextprotocol/sdk";
 const SDK_SEGMENT = `node_modules/${SDK_NAME}/`;
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
+const STAMP = /\/\*! bundled @modelcontextprotocol\/sdk@([^\s*]+) \*\//g;
 const BUNDLES = [
   { file: "index.js", map: "index.js.map" },
   { file: "index.cjs", map: "index.cjs.map" },
@@ -32,21 +40,44 @@ function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-// A real import or require of the SDK in emitted code (not in a bundled JSDoc
-// example, whose lines start with `*` or `//`).
+/**
+ * Finds the SDK that a bare `@modelcontextprotocol/sdk/...` import from
+ * `packageRoot` resolves to (the nearest node_modules copy, as Node and
+ * esbuild resolve it) and returns `{ root, version }`.
+ */
+export function resolveInstalledSdk(packageRoot) {
+  let dir = path.resolve(packageRoot);
+  for (;;) {
+    const manifest = path.join(dir, "node_modules", SDK_NAME, "package.json");
+    if (existsSync(manifest)) return { root: path.dirname(manifest), version: readJson(manifest).version };
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new BundledSdkError(`${SDK_NAME} is not installed for ${packageRoot}`);
+    dir = parent;
+  }
+}
+
+/** The banner the package's tsup config writes at the top of each bundle. */
+export function bundledSdkBanner(packageRoot) {
+  return `/*! bundled ${SDK_NAME}@${resolveInstalledSdk(packageRoot).version} */`;
+}
+
+// A real import or require of the SDK in emitted code. Same-line block
+// comments are removed first; lines inside a multi-line comment (bundled JSDoc
+// examples start with `*`) and `//` comment lines are skipped.
 function externalSdkImports(code) {
   const pattern = new RegExp(
-    String.raw`(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']${SDK_NAME.replace("/", "\\/")}(?:\/[^"']*)?["']`,
+    String.raw`(?:\bfrom\s*|\bimport\s*\(?\s*|(?:\b|_)require\s*\(\s*)["']${SDK_NAME.replace("/", "\\/")}(?:\/[^"']*)?["']`,
   );
-  return code
-    .split("\n")
-    .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line) && pattern.test(line));
+  return code.split("\n").filter((line) => {
+    const stripped = line.replace(/\/\*.*?\*\//g, "");
+    return !/^\s*(?:\*|\/\/|\/\*)/.test(stripped) && pattern.test(stripped);
+  });
 }
 
 /**
  * Verifies the built bundles of the package at `packageRoot`.
- * Returns `{ pinned, bundles: [{ bundle, sdkRoots, versions, sources }] }` or
- * throws a BundledSdkError naming the mismatch.
+ * Returns `{ name, pinned, bundles: [{ bundle, stamped, sdkRoots, versions, sources }] }`
+ * or throws a BundledSdkError naming the mismatch.
  */
 export function verifyBundledSdk(packageRoot) {
   const root = path.resolve(packageRoot);
@@ -67,13 +98,32 @@ export function verifyBundledSdk(packageRoot) {
         bundle: file,
       });
     }
-    const imports = externalSdkImports(readFileSync(bundlePath, "utf8"));
+    const code = readFileSync(bundlePath, "utf8");
+    const imports = externalSdkImports(code);
     if (imports.length > 0) {
       throw new BundledSdkError(`${manifest.name} dist/${file} imports ${SDK_NAME} instead of bundling it`, {
         bundle: file,
         imports,
       });
     }
+
+    // Build-time stamp: the SDK version tsup actually bundled.
+    const stamps = [...new Set([...code.matchAll(STAMP)].map((match) => match[1]))];
+    if (stamps.length === 0) {
+      throw new BundledSdkError(
+        `${manifest.name} dist/${file} has no bundled ${SDK_NAME} version stamp; rebuild it with npm run build`,
+        { bundle: file },
+      );
+    }
+    const wrongStamps = stamps.filter((version) => version !== pinned);
+    if (wrongStamps.length > 0) {
+      throw new BundledSdkError(
+        `${manifest.name} dist/${file} bundles ${SDK_NAME} ${wrongStamps.join(", ")} but package.json pins ${pinned}`,
+        { bundle: file, pinned, stamped: stamps },
+      );
+    }
+
+    // Where the bundled SDK sources were resolved from must be the pinned SDK.
     const sourceMap = readJson(mapPath);
     const sources = (sourceMap.sources ?? []).filter((source) =>
       source.replaceAll("\\", "/").includes(SDK_SEGMENT),
@@ -103,14 +153,15 @@ export function verifyBundledSdk(packageRoot) {
     const mismatched = Object.entries(versions).filter(([, version]) => version !== pinned);
     if (mismatched.length > 0) {
       throw new BundledSdkError(
-        `${manifest.name} dist/${file} bundles ${SDK_NAME} ${mismatched
-          .map(([, version]) => version)
+        `${manifest.name} dist/${map} resolves ${SDK_NAME} from ${mismatched
+          .map(([sdkRoot, version]) => `${sdkRoot} (${version})`)
           .join(", ")} but package.json pins ${pinned}`,
         { bundle: file, pinned, versions },
       );
     }
     bundles.push({
       bundle: file,
+      stamped: pinned,
       sdkRoots: Object.keys(versions).map((sdkRoot) => path.relative(root, sdkRoot)),
       versions: [...new Set(Object.values(versions))],
       sources: sources.length,
@@ -119,7 +170,16 @@ export function verifyBundledSdk(packageRoot) {
   return { name: manifest.name, pinned, bundles };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   try {
     process.stdout.write(`${JSON.stringify(verifyBundledSdk(process.argv[2] ?? process.cwd()))}\n`);
   } catch (error) {

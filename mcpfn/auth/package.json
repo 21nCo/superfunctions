@@ -34,6 +34,7 @@
     }
   },
   "devDependencies": {
+    "@hono/node-server": "2.1.11",
     "@superfunctions/auth": "0.2.1",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",

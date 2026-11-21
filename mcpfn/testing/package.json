@@ -46,6 +46,7 @@
     }
   },
   "devDependencies": {
+    "@hono/node-server": "2.1.11",
     "@playwright/test": "^1.57.0",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",
