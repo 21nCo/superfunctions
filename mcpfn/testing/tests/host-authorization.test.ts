@@ -793,6 +793,46 @@ describe("unvetted-client authorization rejections", () => {
       });
     });
 
+    it("registers nothing when any registered redirect URI is malformed", async () => {
+      const malformedSibling = (fixture: ReturnType<typeof rejectionFixture>) => {
+        fixture.registration.metadata.redirect_uris = [
+          "http://client.example.com/callback",
+          "https://client.example.com/callback",
+        ];
+        fixture.authorization.redirectUri = "https://CLIENT.example.com:443/callback";
+        fixture.expected.errorCode = "invalid_client_metadata";
+      };
+      for (const id of [DYNAMIC, PRE_REGISTERED]) {
+        const fixture = rejectionFixture(id);
+        malformedSibling(fixture);
+        const [envelope] = await runHostedAuthorizationRegression({
+          issuer,
+          prepareRegistration: async () => {},
+          request: async () => Response.json({ error: "invalid_client_metadata" }, { status: 400 }),
+        }, [fixture]);
+        expect(envelope).toMatchObject({ status: "passed", errorCode: "invalid_client_metadata" });
+        const [callback] = await runHostedAuthorizationRegression(callbackTarget(), [fixture]);
+        expect(callback).toMatchObject({
+          status: "failed",
+          error: "Rejected redirect URI must not receive a callback",
+        });
+      }
+    });
+
+    it("never lets another client's registration match an unknown client's redirect", async () => {
+      for (const requested of [LOOPBACK, RUNTIME_PORT]) {
+        const fixture = rejectionFixture(DYNAMIC);
+        redirect(LOOPBACK, requested)(fixture);
+        fixture.authorization.clientId = "unknown-client";
+        delete fixture.expected.errorCode;
+        const [callback] = await runHostedAuthorizationRegression(callbackTarget(), [fixture]);
+        expect(callback).toMatchObject({
+          status: "failed",
+          error: "Rejected redirect URI must not receive a callback",
+        });
+      }
+    });
+
     it.each([
       ["the requested runtime-port URI in HTML", () =>
         htmlPage(`<a href="${RUNTIME_PORT}">Back</a>`)()],

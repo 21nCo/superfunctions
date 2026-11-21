@@ -1,6 +1,7 @@
 import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
   matchMcpRedirectUri,
+  normalizeMcpRedirectUri,
   type McpFnClientRegistrationSource,
   type McpFnRedirectMatch,
   type McpFnRedirectPolicy,
@@ -494,24 +495,28 @@ function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolea
  * The one decision whether the requested redirect URI is registered, made
  * with the authorization server's own matching rule (exact match after
  * normalization, plus RFC 8252 loopback runtime ports unless the policy
- * disables them). A URI that does not match, or that the MCP redirect profile
- * rejects, is never registered.
+ * disables them). Like the server, it applies only to the client the request
+ * names, and a registration whose redirect list holds any URI the MCP redirect
+ * profile rejects registers nothing. A URI that does not match is never
+ * registered.
  */
 function registeredRedirectMatch(
   fixture: McpFnHostedAuthorizationCase,
   policy: McpFnRedirectPolicy | undefined,
 ): McpFnRedirectMatch | undefined {
-  const registered = fixture.registration.metadata.redirect_uris as unknown;
-  if (!Array.isArray(registered)) return undefined;
-  for (const candidate of registered) {
-    if (typeof candidate !== "string") continue;
-    try {
-      return matchMcpRedirectUri(fixture.authorization.redirectUri, [candidate], policy);
-    } catch {
-      // A mismatch or an unparseable URI is not a registration.
-    }
+  const { registration, authorization } = fixture;
+  if (authorization.clientId !== registration.clientId) return undefined;
+  const registered = registration.metadata.redirect_uris as unknown;
+  if (!Array.isArray(registered) || !registered.every((uri) => typeof uri === "string")) {
+    return undefined;
   }
-  return undefined;
+  try {
+    for (const uri of registered) normalizeMcpRedirectUri(uri, policy);
+    return matchMcpRedirectUri(authorization.redirectUri, registered, policy);
+  } catch {
+    // A mismatch or a malformed registration is not a registered redirect.
+    return undefined;
+  }
 }
 
 function isUnvettedErrorPage(
