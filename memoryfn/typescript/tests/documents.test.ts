@@ -516,6 +516,12 @@ describe('upsertDocument document text', () => {
     ['a class instance', { item: new (class Item { name = 'x'; })() }],
     ['an object inheriting from a null-prototype object', { item: Object.create(Object.assign(Object.create(null), { inherited: 'lost' })) }],
     ['an instance of a class extending null', { item: Object.create((class Bare extends null {}).prototype) }],
+    ['a record whose parent forges an Object constructor', (() => {
+      const parent: Record<string, unknown> = Object.create(null);
+      parent.constructor = Object.defineProperty(function Object() {}, 'prototype', { value: parent });
+      parent.toJSON = () => ({ expected: true });
+      return { nested: Object.create(parent) };
+    })()],
   ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockClear();

@@ -308,10 +308,14 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
   }
 }
 
+/** Source text of every realm's built-in Object function. */
+const NATIVE_OBJECT_SOURCE = Function.prototype.toString.call(Object);
+
 /**
  * Whether `value`'s prototype is null or some realm's Object.prototype: a
- * prototype without a parent whose own constructor is a function named Object
- * that points back to it. A class instance, a class extending null and an
+ * prototype without a parent whose own constructor is that realm's built-in
+ * Object function (native source text, not a function merely named Object)
+ * and points back to it. A class instance, a class extending null and an
  * object inheriting from another null-prototype object are not plain records,
  * so their inherited properties are never silently dropped. May throw (a proxy).
  */
@@ -320,7 +324,8 @@ function isPlainRecord(value: object): boolean {
   if (prototype === null) return true;
   if (typeof prototype !== 'object' || Object.getPrototypeOf(prototype) !== null) return false;
   const constructor: unknown = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
-  return typeof constructor === 'function' && constructor.name === 'Object' && constructor.prototype === prototype;
+  return typeof constructor === 'function' && Function.prototype.toString.call(constructor) === NATIVE_OBJECT_SOURCE &&
+    Object.getOwnPropertyDescriptor(constructor, 'prototype')?.value === prototype;
 }
 
 /** UTF-8 bytes of JSON.stringify(text), counted without serializing it. */
