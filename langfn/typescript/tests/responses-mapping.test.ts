@@ -4,6 +4,7 @@ import {
   ContextLengthError,
   LangFnError,
   NotConfiguredError,
+  ProviderAuthError,
   ProviderError,
   RateLimitError,
   TimeoutError,
@@ -148,7 +149,10 @@ describe("stream mapping", () => {
     ]);
     const message = events.find((event) => event.type === "message") as { message: ResponsesMessage };
     expect(message.message.content).toBe("hello");
-    expect(message.message.responsesOutput).toEqual([item]);
+    // The rebuilt item is normalized like any other output: known required fields are filled.
+    expect(message.message.responsesOutput).toEqual([
+      { ...item, status: "completed", content: [{ type: "output_text", text: "hello", annotations: [] }] },
+    ]);
   });
 
   it("rejects a malformed terminal output before any tool call, as the JSON path does", async () => {
@@ -226,6 +230,53 @@ describe("stream mapping", () => {
     const unframed = await mapRaw(frame(done(0)) + `data: ${JSON.stringify({ type: "response.completed", response: completed([call]) })}`);
     expect(String(unframed.error)).toContain("ended before a terminal response event");
     expect(unframed.seen).toEqual([]);
+  });
+
+  it("rejects a terminal output that disagrees with what the stream already finished", async () => {
+    const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
+    const done = (item: unknown = call, index = 0) => frame({ type: "response.output_item.done", output_index: index, item });
+    const argsDone = (args: string) => frame({ type: "response.function_call_arguments.done", item_id: "fc_fixture", output_index: 0, arguments: args });
+    const created = (id: string) => frame({ type: "response.created", response: { id, status: "in_progress", output: [] } });
+    const message = { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done." }] };
+    const terminal = (output: unknown[]) => frame({ type: "response.completed", response: completed(output) });
+
+    const rejected: Array<[string, string]> = [
+      // The finished call vanished: the turn would end with stop and the call would be lost.
+      [done() + terminal([message]), "missing the finished function_call call_fixture"],
+      // The call changed its call_id, name or arguments.
+      [done() + terminal([{ ...call, call_id: "call_fixture_other" }]), "missing the finished function_call call_fixture"],
+      [done() + terminal([{ ...call, name: "delete_everything" }]), "changed the finished function_call call_fixture"],
+      [done() + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call call_fixture"],
+      // Final arguments that differ from the item's, with an explicit or an omitted terminal output.
+      [argsDone("{\"q\":2}") + done() + terminal([call]), "arguments differ from item fc_fixture"],
+      [argsDone("{\"q\":2}") + done() + terminal([]), "arguments differ from item fc_fixture"],
+      [argsDone("{\"q\":2}") + terminal([call]), "arguments differ from item fc_fixture"],
+      // Final arguments for an item that is not a call, or for no item at all.
+      [argsDone("{}") + terminal([message]), "arguments differ from item fc_fixture"],
+      [argsDone("{}") + terminal([]), "unknown item fc_fixture"],
+      // A terminal response for another response id.
+      [created("resp_fixture_other") + terminal([call]), "is for response resp_fixture_mapping, not resp_fixture_other"],
+      // A finished call that is malformed or unfinished in a completed stream.
+      [done({ ...call, arguments: "" }) + terminal([call]), "not empty"],
+      [done({ ...call, status: "in_progress" }) + terminal([call]), "finished an unfinished function_call"],
+    ];
+    for (const [text, error] of rejected) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+
+    // A matching snapshot and the omitted or empty fallback still work.
+    for (const text of [
+      created("resp_fixture_mapping") + argsDone(call.arguments) + done() + terminal([call]),
+      argsDone(call.arguments) + done() + terminal([]),
+      argsDone(call.arguments) + done() + frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed" } }),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
   });
 
   it("rejects empty or whitespace arguments on an executable call on the JSON and SSE paths", async () => {
@@ -394,7 +445,7 @@ describe("response mapping", () => {
     const message = { id: "msg_fixture", type: "message", status: "incomplete", role: "assistant", content: [{ type: "output_text", text: "Part" }] };
     expect(
       parseResponsesResponse({ status: "incomplete", output: [message, reasoning] }, "fixture").message.responsesOutput,
-    ).toEqual([message]);
+    ).toEqual([{ ...message, content: [{ type: "output_text", text: "Part", annotations: [] }] }]);
   });
 
   it("rejects repeated call ids and input-only items in provider output", () => {
@@ -449,11 +500,62 @@ describe("request mapping", () => {
     expect(input[1]).not.toBe(replayed.responsesOutput[1]);
   });
 
-  it("replays a provider message without a role as an assistant message", () => {
-    const item = { id: "msg_fixture", type: "message", status: "completed", content: [{ type: "output_text", text: "Hi." }] };
-    const input = payload([{ role: "user", content: "go" }, { role: "assistant", content: "Hi.", responsesOutput: [item] }])
-      .input as Record<string, unknown>[];
-    expect(input[1]).toEqual({ ...item, role: "assistant" });
+  it("fills only the known required fields a compatible server omits, on the JSON, SSE and replay paths", async () => {
+    const sparse = [
+      { id: "rs_fixture_sparse", type: "reasoning", summary: null, encrypted_content: "fixture-encrypted-reasoning" },
+      { type: "message", status: null, content: [{ type: "output_text", text: "Hi." }] },
+      { id: "fc_fixture_sparse", type: "function_call", status: null, call_id: "call_fixture", name: "lookup", arguments: "{}" },
+    ];
+    // No id is invented for the message that has none.
+    const normalized = [
+      { ...sparse[0], summary: [] },
+      { type: "message", status: "completed", content: [{ type: "output_text", text: "Hi.", annotations: [] }], role: "assistant" },
+      { ...sparse[2], status: "completed" },
+    ];
+    const fromJson = parseResponsesResponse(completed(sparse), "fixture").message.responsesOutput;
+    expect(fromJson).toEqual(normalized);
+    expect(fromJson?.[1]).not.toHaveProperty("id");
+    const text = `data: ${JSON.stringify({ type: "response.completed", response: completed(sparse) })}\n\n`;
+    const events = await collect(mapResponsesStream(readServerSentEvents(body(text)), "fixture"));
+    expect((events.find((event) => event.type === "message") as { message: ResponsesMessage }).message.responsesOutput).toEqual(normalized);
+
+    // Caller-built history with the sparse items is replayed in the same normalized shape.
+    const assistant = {
+      role: "assistant",
+      content: "Hi.",
+      toolCalls: [{ id: "call_fixture", name: "lookup", arguments: {} }],
+      responsesOutput: sparse,
+    } satisfies ResponsesMessage;
+    const reasoningProfile = defineCapabilityProfile({ ...customProfile, reasoning: true });
+    const input = payload([{ role: "user", content: "go" }, assistant], reasoningProfile).input as Record<string, unknown>[];
+    expect(input.slice(1)).toEqual(normalized);
+
+    // Complete items come back exactly as they were sent.
+    expect(parseResponsesResponse(completed(replayed.responsesOutput), "fixture").message.responsesOutput).toEqual(replayed.responsesOutput);
+  });
+
+  it("validates the call ledger across the whole stateless history before sending", () => {
+    const call = (id: string) => ({ id, name: "lookup", arguments: {} });
+    const result = (id: string) => ({ role: "tool" as const, content: "ok", tool_call_id: id });
+    const providerCall = (id: string) => ({ type: "function_call", status: "completed", call_id: id, name: "lookup", arguments: "{}" });
+    const user = { role: "user" as const, content: "go" };
+
+    // Distinct parallel calls answered out of order pass.
+    expect(() => payload([user, { role: "assistant", content: "", toolCalls: [call("call_a"), call("call_b")] }, result("call_b"), result("call_a")]))
+      .not.toThrow();
+    // A call id reused by a later assistant turn, from caller toolCalls or replayed provider items.
+    expect(() => payload([user, { role: "assistant", content: "", toolCalls: [call("call_a")] }, result("call_a"),
+      { role: "assistant", content: "", toolCalls: [call("call_a")] }])).toThrow("call_a is already used earlier");
+    expect(() => payload([user, { role: "assistant", content: "", toolCalls: [call("call_a")] }, result("call_a"),
+      { role: "assistant", content: "", toolCalls: [call("call_a")], responsesOutput: [providerCall("call_a")] }])).toThrow(ValidationError);
+    // A repeated result, and a result with no earlier call.
+    expect(() => payload([user, { role: "assistant", content: "", toolCalls: [call("call_a")] }, result("call_a"), result("call_a")]))
+      .toThrow("call_a already has a result");
+    expect(() => payload([user, result("call_a")])).toThrow("has no earlier matching tool call");
+    expect(() => payload([user, result("call_b"), { role: "assistant", content: "", toolCalls: [call("call_b")] }]))
+      .toThrow("has no earlier matching tool call");
+    // Tool calls on a message that is not from the assistant are refused, not dropped.
+    expect(() => payload([{ ...user, toolCalls: [call("call_a")] }])).toThrow("only accepted on assistant messages");
   });
 
   it("rejects item_reference history, which needs server-side state", () => {
@@ -616,6 +718,10 @@ describe("ResponsesChatModel configuration", () => {
     for (const baseUrl of ["https://gateway.example.test/v1?", "https://gateway.example.test/v1#", "https://gateway.example.test/v1?a=1"]) {
       expect(() => new ResponsesChatModel({ ...base, baseUrl })).toThrow("must not have a query or fragment");
     }
+    // The endpoint is built from the parsed URL, so a trailing backslash cannot yield "//responses".
+    for (const baseUrl of ["https://gateway.example.test/v1\\", "https://gateway.example.test/v1/", "https://gateway.example.test/x/../v1"]) {
+      expect(new ResponsesChatModel({ ...base, baseUrl }).baseUrl).toBe("https://gateway.example.test/v1");
+    }
     expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": "a\r\nb" } })).toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, reasoning: { effort: "low" } })).toThrow(UnsupportedCapabilityError);
     expect(() => defineCapabilityProfile({ ...customProfile, vision: "yes" as never })).toThrow(ValidationError);
@@ -725,6 +831,41 @@ describe("ResponsesChatModel configuration", () => {
       expect(outcome).toBe(reason);
       expect(seen.map((event) => event.type)).toEqual(abortOn === "content" ? ["content"] : ["content", "tool_call"]);
     }
+  });
+
+  it("rejects with the abort reason when the next buffered frame would fail", async () => {
+    const delta = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial" })}\n\n`;
+    for (const failing of [
+      "data: {not json\n\n",
+      `data: ${JSON.stringify({ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "upstream failed" } } })}\n\n`,
+    ]) {
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled");
+      const model = gateway(async () => new Response(delta + failing, { status: 200 }), { timeout: 0 });
+      const seen: StreamEvent[] = [];
+      const outcome = await (async () => {
+        for await (const event of model.streamChat({ messages: [{ role: "user", content: "x" }], signal: controller.signal })) {
+          seen.push(event);
+          controller.abort(reason);
+        }
+      })().catch((caught: unknown) => caught);
+      expect(outcome).toBe(reason);
+      expect(seen.map((event) => event.type)).toEqual(["content"]);
+    }
+  });
+
+  it("lets an HTTP status that names the error class win over a nested provider code", async () => {
+    const failing = (status: number, code: string, headers: Record<string, string> = {}) =>
+      gateway(async () => new Response(JSON.stringify({ error: { code, message: "fixture" } }), { status, headers }))
+        .chat({ messages: [{ role: "user", content: "x" }] })
+        .catch((caught: unknown) => caught);
+    const limited = await failing(429, "invalid_api_key", { "retry-after": "7" });
+    expect(limited).toBeInstanceOf(RateLimitError);
+    expect(limited).toMatchObject({ retryAfter: 7 });
+    expect(await failing(401, "rate_limit_exceeded")).toBeInstanceOf(ProviderAuthError);
+    // A status that does not name the class leaves it to the nested code.
+    expect(await failing(400, "rate_limit_exceeded")).toBeInstanceOf(RateLimitError);
+    expect(await failing(403, "invalid_api_key")).toBeInstanceOf(ProviderAuthError);
   });
 
   it("completes after the terminal event although the body stays open and its cancel never settles", async () => {

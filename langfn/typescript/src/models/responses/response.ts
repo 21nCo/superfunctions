@@ -28,7 +28,8 @@ export interface ParsedOutputItems {
   toolCalls: ToolCall[];
   reasoning: ResponsesReasoningSummary[];
   /**
-   * The items a stateless follow-up can send back, unchanged. Unfinished function calls (only
+   * The items a stateless follow-up can send back, unchanged except for required fields a
+   * compatible server left out whose value is known (see {@link normalizeOutputItem}). Unfinished function calls (only
    * accepted in an incomplete response; a completed one with an unfinished call is rejected),
    * and the reasoning items that led into them, are left out: they are not executable, have no
    * function_call_output to pair with, and a reasoning item replayed without its following
@@ -111,14 +112,14 @@ export function parseOutputItems(
         continue;
       case "reasoning":
         reasoning.push(parseReasoning(item, provider));
-        replayable.push(item as ResponsesOutputItem);
+        replayable.push(normalizeOutputItem(item));
         trailingReasoning += 1;
         continue;
       default:
         // Other item types are kept in responsesOutput but carry no chat content.
         break;
     }
-    replayable.push(item as ResponsesOutputItem);
+    replayable.push(normalizeOutputItem(item));
     trailingReasoning = 0;
   }
   // A turn cut off while reasoning has no item for its last reasoning to lead into.
@@ -130,6 +131,35 @@ export function parseOutputItems(
     reasoning,
     replayable,
   };
+}
+
+/**
+ * Fill the fields the Responses input schema requires on a replayed item when a compatible
+ * server left them out and their value is known: an output message is from the assistant and
+ * finished, its text parts have annotations, a reasoning item has a summary, and a function
+ * call with a null status is finished. Fields that are present stay as they are, so a complete
+ * item comes back unchanged; ids are never invented.
+ */
+export function normalizeOutputItem(item: JsonRecord): ResponsesOutputItem {
+  const normalized = structuredClone(item) as ResponsesOutputItem;
+  switch (normalized.type) {
+    case "message":
+      if (normalized.role === undefined) normalized.role = "assistant";
+      if (normalized.status === undefined || normalized.status === null) normalized.status = "completed";
+      if (Array.isArray(normalized.content)) {
+        for (const part of normalized.content) {
+          if (isRecord(part) && part.type === "output_text" && part.annotations === undefined) part.annotations = [];
+        }
+      }
+      break;
+    case "reasoning":
+      if (normalized.summary === undefined || normalized.summary === null) normalized.summary = [];
+      break;
+    case "function_call":
+      if (normalized.status === null) normalized.status = "completed";
+      break;
+  }
+  return normalized;
 }
 
 /** A function call is finished when its status is `completed`, or absent on servers that omit it. */
@@ -256,12 +286,14 @@ export function responsesError(
   if (details.status !== undefined) metadata.status = details.status;
   if (code !== undefined) metadata.providerCode = code;
 
-  if (details.status === 401 || code === "invalid_api_key" || code === 401) {
-    return new ProviderAuthError(undefined, { provider, metadata });
-  }
-  if (details.status === 429 || code === "rate_limit_exceeded" || code === 429) {
-    return new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata });
-  }
+  // An HTTP status that names the class wins; nested codes decide only when the status does
+  // not (absent, a 200 stream or body error, or another status).
+  const authError = () => new ProviderAuthError(undefined, { provider, metadata });
+  const rateLimitError = () => new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata });
+  if (details.status === 401) return authError();
+  if (details.status === 429) return rateLimitError();
+  if (code === "invalid_api_key" || code === 401) return authError();
+  if (code === "rate_limit_exceeded" || code === 429) return rateLimitError();
   if (code === "context_length_exceeded" || ((details.status === undefined || details.status === 200 || details.status === 400 || details.status === 413 || code === 400) && CONTEXT_PATTERN.test(message))) {
     return new ContextLengthError(undefined, { provider, metadata });
   }

@@ -100,8 +100,15 @@ export function buildResponsesPayload(
   return payload;
 }
 
+/**
+ * In stateless mode the history is the whole call ledger: every function call id appears in
+ * one assistant turn only, and every tool result answers exactly one earlier call. Parallel
+ * calls may be answered in any order.
+ */
 function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfile): Record<string, unknown>[] {
   const input: Record<string, unknown>[] = [];
+  const calls = new Set<string>();
+  const results = new Set<string>();
   messages.forEach((message, index) => {
     if (!message || typeof message !== "object") throw new ValidationError(`Message ${index} must be an object`);
     if (!ROLES.has(message.role)) throw new ValidationError(`Message ${index} has an unsupported role`);
@@ -111,6 +118,9 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
     }
     if (message.responsesOutput !== undefined && message.role !== "assistant") {
       throw new ValidationError(`Message ${index}: responsesOutput is only accepted on assistant messages`);
+    }
+    if (message.role !== "assistant" && (hasItems(message.toolCalls) || hasItems(message.tool_calls))) {
+      throw new ValidationError(`Message ${index}: tool calls are only accepted on assistant messages`);
     }
     switch (message.role) {
       case "system":
@@ -124,14 +134,34 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
         if (typeof message.tool_call_id !== "string" || !message.tool_call_id) {
           throw new ValidationError(`Message ${index}: tool results require tool_call_id`);
         }
+        if (!calls.has(message.tool_call_id)) {
+          throw new ValidationError(`Message ${index}: tool result ${message.tool_call_id} has no earlier matching tool call`);
+        }
+        if (results.has(message.tool_call_id)) {
+          throw new ValidationError(`Message ${index}: tool call ${message.tool_call_id} already has a result`);
+        }
+        results.add(message.tool_call_id);
         input.push({ type: "function_call_output", call_id: message.tool_call_id, output: message.content });
         return;
-      case "assistant":
-        input.push(...toAssistantItems(message, index, profile));
+      case "assistant": {
+        const items = toAssistantItems(message, index, profile);
+        for (const item of items) {
+          if (item.type !== "function_call" || typeof item.call_id !== "string") continue;
+          if (calls.has(item.call_id)) {
+            throw new ValidationError(`Message ${index}: tool call id ${item.call_id} is already used earlier in the history`);
+          }
+          calls.add(item.call_id);
+        }
+        input.push(...items);
         return;
+      }
     }
   });
   return input;
+}
+
+function hasItems(value: unknown): boolean {
+  return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null;
 }
 
 function toUserItem(message: ResponsesMessage, index: number, profile: CapabilityProfile): Record<string, unknown> {
@@ -191,9 +221,9 @@ function toAssistantItems(message: ResponsesMessage, index: number, profile: Cap
  * Replay the provider items of an earlier assistant turn unchanged, with their ids and
  * statuses, as the Responses input schema expects. Reasoning items without encrypted content
  * cannot be resolved without stored state, so they are not replayed; unfinished function
- * calls are never replayed (see {@link parseOutputItems}). A message item without a role is
- * replayed as an assistant message. `item_reference` items are rejected because they need
- * server-side state. An empty item list (a turn cut off before any output) replays as nothing.
+ * calls are never replayed (see {@link parseOutputItems}). Required fields a compatible server
+ * left out are filled where their value is known (see `normalizeOutputItem`). `item_reference`
+ * items are rejected because they need server-side state. An empty item list (a turn cut off before any output) replays as nothing.
  */
 function replayOutputItems(
   message: ResponsesMessage,
@@ -230,10 +260,9 @@ function replayOutputItems(
       if (!encrypted) continue;
       requireCapability(profile, "reasoning", "the history contains encrypted reasoning items");
     }
-    const replayed = structuredClone(item) as Record<string, unknown>;
-    // Compatible servers may omit the role of an output message; the input item requires it.
-    if (replayed.type === "message" && replayed.role === undefined) replayed.role = "assistant";
-    items.push(replayed);
+    // parseOutputItems already filled the known fields a compatible server may omit, such as
+    // a message's role and status.
+    items.push(structuredClone(item) as Record<string, unknown>);
   }
   return items;
 }

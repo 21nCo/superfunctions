@@ -139,11 +139,18 @@ export class ResponsesChatModel extends ChatModel {
     if (!response.body) throw new ProviderError("Responses stream body was empty", { provider: this.provider });
     const signal = request.signal;
     // Events may already be buffered when the caller aborts, so the signal is checked before
-    // every yield: after an abort nothing more is delivered and the stream rejects with the
-    // abort reason instead of finishing normally.
-    for await (const event of mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider)) {
+    // every yield and as soon as the caller resumes, before the mapper reads further: after an
+    // abort nothing more is delivered, and the stream rejects with the abort reason instead of
+    // finishing normally or failing on a later buffered frame.
+    try {
+      for await (const event of mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider)) {
+        throwIfAborted(signal);
+        yield event;
+        throwIfAborted(signal);
+      }
+    } catch (error) {
       throwIfAborted(signal);
-      yield event;
+      throw error;
     }
     throwIfAborted(signal);
   }
@@ -235,7 +242,11 @@ function validateBaseUrl(value: unknown): string {
   if (url.username || url.password) throw new ValidationError("ResponsesChatModel baseUrl must not embed credentials");
   // A bare trailing "?" or "#" leaves url.search and url.hash empty but would still swallow the path.
   if (url.search || url.hash || value.includes("?") || value.includes("#")) throw new ValidationError("ResponsesChatModel baseUrl must not have a query or fragment");
-  return value.endsWith("/") ? value.slice(0, -1) : value;
+  // Build from the parsed URL so non-canonical spellings (a trailing backslash, dot segments)
+  // cannot yield a different path than the one validated.
+  let path = url.pathname;
+  while (path.endsWith("/")) path = path.slice(0, -1);
+  return `${url.origin}${path}`;
 }
 
 function validateHeaders(headers: unknown): Record<string, string> {
