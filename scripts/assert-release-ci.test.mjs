@@ -171,6 +171,17 @@ test('next refuses without a ci section in its own manifest, even when GitHub Ac
   assert.equal(requests.length, 0);
 });
 
+test('public refuses a check-run ci section: its releases need a GitHub Actions workflow', async t => {
+  const root = checkout(t, { publicCi: { checkRun: 'CI', app: 'some-other-app' } });
+  const { fetchImpl, requests } = recordedFetch({});
+  await refuses(
+    assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl }),
+    'missing-config',
+    'public releases require a GitHub Actions workflow',
+  );
+  assert.equal(requests.length, 0);
+});
+
 test('public uses its own manifest ci section when present', async t => {
   const root = checkout(t, { publicCi: { workflow: 'release-ci.yml' }, nextCi: { checkRun: 'Depot CI', app: 'depot' } });
   const { fetchImpl, requests } = recordedFetch({ [`/repos/${PUBLIC_REPO}/actions/workflows/release-ci.yml/runs`]: workflowRuns(workflowRun({ file: 'release-ci.yml' })) });
@@ -206,12 +217,27 @@ test('a short page is not the last page while total_count or the Link header say
   // A response that promises more but delivers an empty page refuses.
   const truncated = recordedFetch({ [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 3, workflow_runs: [workflowRun()] } : { total_count: 3, workflow_runs: [] }) });
   await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: truncated.fetchImpl }), 'api-error', 'end early (1 of 3)');
+  // A later page that drops total_count and the Link header does not cancel the results page 1 advertised.
+  const dropped = recordedFetch({ [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 2, workflow_runs: [workflowRun()] } : { workflow_runs: [] }) });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: dropped.fetchImpl }), 'api-error', 'end early (1 of 2)');
+  // A run added mid-read shifts offset paging: page 2 repeats a page-1 result, and an unseen run may be skipped.
+  const shifted = recordedFetch({
+    [RUNS_PATH]: url =>
+      url.searchParams.get('page') === '1'
+        ? { total_count: 101, workflow_runs: Array.from({ length: 100 }, (_, index) => workflowRun({ id: index + 1 })) }
+        : { total_count: 102, workflow_runs: [workflowRun({ id: 100 }), workflowRun({ id: 101 })] },
+  });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: shifted.fetchImpl }), 'api-error', 'repeat result 100');
 });
 
 test('more results than the gate can page through refuse instead of deciding on part of them', async t => {
   const root = checkout(t);
-  const page = Array.from({ length: 100 }, (_, index) => workflowRun({ id: index + 10 }));
-  const { fetchImpl, requests } = recordedFetch({ [RUNS_PATH]: { total_count: 1001, workflow_runs: page } });
+  const { fetchImpl, requests } = recordedFetch({
+    [RUNS_PATH]: url => {
+      const offset = (Number(url.searchParams.get('page')) - 1) * 100;
+      return { total_count: 1001, workflow_runs: Array.from({ length: 100 }, (_, index) => workflowRun({ id: offset + index + 10 })) };
+    },
+  });
   await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl }), 'api-error', 'more than 1000 results');
   assert.equal(requests.length, 10);
 });

@@ -232,8 +232,9 @@ jobs:
       - name: Setup OIDC dist-tag client
         run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
 
+      # Bound to the commit the build job's owner gate approved: a tag moved since then is refused.
       - name: Require immutable release tag
-        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ needs.build.outputs.release_commit }}"
 
       - name: Resolve publish target
         id: resolve

@@ -52,14 +52,21 @@ export function describeCi(ci) {
 }
 
 /**
- * The CI a repository requires: on public its manifest's `ci` section or .github/workflows/ci.yml; on next the `ci`
+ * The CI a repository requires: on public its manifest's `ci` workflow or .github/workflows/ci.yml; on next the `ci`
  * section of the next manifest, which must name a check run (the public section and the default never apply there,
  * and GitHub Actions workflows skip every job on next).
  * @param {'public' | 'next'} repo
  * @param {ReturnType<typeof loadOwners>} owners
  */
 export function releaseCiFor(repo, owners) {
-  if (repo === 'public') return owners.publicManifest.ci ?? DEFAULT_RELEASE_CI;
+  if (repo === 'public') {
+    const ci = owners.publicManifest.ci ?? DEFAULT_RELEASE_CI;
+    if (ci.kind === 'workflow') return ci;
+    throw new ReleaseCiError(
+      'missing-config',
+      `Refusing to publish from ${PUBLISHING_REPOSITORIES.public}: superfunctions.owners.json names a check run from app ${JSON.stringify(ci.app)} in its "ci" section; public releases require a GitHub Actions workflow ({"ci": {"workflow": "<file>"}}).`,
+    );
+  }
   const ci = owners.nextManifest?.ci;
   if (ci?.kind === 'check-run' && ci.app === DEPOT_APP_SLUG) return ci;
   const problem = !ci
@@ -139,7 +146,12 @@ const normalize = {
  */
 export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https://api.github.com', fetchImpl = fetch }) {
   const runs = [];
+  const ids = new Set();
   const field = ci.kind === 'workflow' ? 'workflow_runs' : 'check_runs';
+  // The largest total_count any page advertised: a later page that drops it does not shrink the results owed.
+  let advertised = null;
+  const incomplete = (url, why) =>
+    new ReleaseCiError('api-error', `Refusing to publish: GitHub's results for ${url} ${why}, so the gate cannot read them all. Dispatch the workflow again.`, { url });
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const url = apiUrl(apiBase, repository, ci, sha, page);
     let response;
@@ -156,16 +168,19 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
     const body = await response.json();
     const items = body?.[field];
     if (!Array.isArray(items)) throw new ReleaseCiError('api-error', `Refusing to publish: GitHub's response for ${url} has no ${field} list`, { url });
-    runs.push(...items.map(normalize[ci.kind]));
-    // More results remain while the Link header offers a next page or total_count exceeds what was read; without
-    // either signal, a full page may still have a successor.
-    const total = Number.isInteger(body.total_count) ? body.total_count : null;
-    const linked = /\brel="next"/.test(response.headers?.get?.('link') ?? '');
-    const more = linked || (total !== null ? runs.length < total : items.length === PER_PAGE);
-    if (!more) return runs;
-    if (items.length === 0) {
-      throw new ReleaseCiError('api-error', `Refusing to publish: GitHub's results for ${url} end early (${runs.length} of ${total ?? 'more'}), so the gate cannot read them all.`, { url });
+    for (const item of items) {
+      // Offset paging shifts when a run is added mid-read: a repeated id means a result may have been skipped.
+      if (item?.id !== undefined && ids.has(item.id)) throw incomplete(url, `repeat result ${item.id} (they changed while paging)`);
+      if (item?.id !== undefined) ids.add(item.id);
+      runs.push(normalize[ci.kind](item));
     }
+    if (Number.isInteger(body.total_count)) advertised = Math.max(advertised ?? 0, body.total_count);
+    // More results remain while the Link header offers a next page or an advertised total exceeds what was read;
+    // without either signal, a full page may still have a successor.
+    const linked = /\brel="next"/.test(response.headers?.get?.('link') ?? '');
+    const more = linked || (advertised !== null ? runs.length < advertised : items.length === PER_PAGE);
+    if (!more) return runs;
+    if (items.length === 0) throw incomplete(url, `end early (${runs.length} of ${advertised ?? 'more'})`);
   }
   // A failure on a page that was never read must not be missed: refuse rather than decide on part of the results.
   throw new ReleaseCiError(

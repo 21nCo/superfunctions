@@ -74,9 +74,11 @@ on Depot, so `superfunctions.owners.next.json` must name the check run with
 `next` refuses every tag. Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
 republishes nothing and skips only the CI check. Both checks run from the
-workflow run's own commit, so a dispatch also works for tags made before the
-checks existed, but the tag's own manifests decide ownership; only a
-`channel_only` dispatch of a tag that has no manifests uses the run commit's.
+workflow run's own commit, so a Python or `channel_only` dispatch also works for
+tags made before the checks existed (an npm publish runs on the tag itself, so a
+tag without the checks stops before install), but the tag's own manifests decide
+ownership; only a `channel_only` dispatch of a tag that has no manifests uses the
+run commit's.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

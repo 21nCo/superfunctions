@@ -103,6 +103,17 @@ test('an unknown slug or project is refused in both repositories', t => {
   }
 });
 
+test('on next, a tag without the next manifest cannot establish ownership of an unlisted release', t => {
+  const root = checkout(t, { next: null });
+  assert.throws(
+    () => assertReleaseOwner({ kind: 'npm', tag: 'docsfn-core-v1.0.0', repository: NEXT_REPO, root }),
+    error =>
+      error.code === 'unlisted' &&
+      error.message.includes('the tag commit has no superfunctions.owners.next.json, so next cannot establish that it owns it') &&
+      !error.message.includes('push the tag there'),
+  );
+});
+
 test('a slug or project listed in both manifests is refused, naming both repositories', t => {
   const both = checkout(t, { next: nextManifest({ releases: { 'datafn-core': 'next' } }) });
   for (const repository of [PUBLIC_REPO, NEXT_REPO]) {

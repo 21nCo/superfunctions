@@ -134,10 +134,13 @@ export function assertReleaseOwner({ kind, tag, repository, root = REPO_ROOT }) 
     owner = kind === 'npm' ? owners.ownerOfRelease(release.name, { repo: lookupRepo }) : owners.ownerOfPython(release.name, { repo: lookupRepo });
   } catch (error) {
     if (!(error instanceof OwnersError)) throw error;
-    // A public checkout has no next manifest, so an unlisted release may be next's: say so instead of "nobody owns it".
+    // Without a next manifest an unlisted release may still be next's: on public point there instead of "nobody owns
+    // it"; on next say the tag commit lacks next's manifest, so ownership cannot be established.
     const verdict = owners.nextManifest
       ? 'so no repository owns it'
-      : `the public allow-list; if ${describe('next')} owns it, push the tag there`;
+      : running === 'public'
+        ? `the public allow-list; if ${describe('next')} owns it, push the tag there`
+        : 'and the tag commit has no superfunctions.owners.next.json, so next cannot establish that it owns it';
     throw new ReleaseOwnerError('unlisted', `Refusing to publish ${tag} from ${PUBLISHING_REPOSITORIES[running]}: ${error.message}, ${verdict}.`, {
       name: release.name,
     });

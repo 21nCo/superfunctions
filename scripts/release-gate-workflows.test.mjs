@@ -148,6 +148,14 @@ test('the publish jobs depend on the build job, so a refused gate publishes noth
   }
 });
 
+test('publish-tag.yml: channel reconciliation is bound to the commit the build job approved', () => {
+  const { steps } = readJob('publish-tag.yml', 'reconcile-channel');
+  const guard = steps.find(step => step.name === 'Require immutable release tag');
+  assert.equal(guard.run, 'node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ needs.build.outputs.release_commit }}"');
+  const names = steps.map(step => step.name ?? step.uses);
+  assert.ok(names.indexOf('Require immutable release tag') < names.indexOf('Keep prereleases off latest'));
+});
+
 test('publish-tag.yml: every run but a channel-only dispatch first proves its own commit is the tag commit', () => {
   const { steps } = readJob('publish-tag.yml', 'build');
   const names = steps.map(step => step.name ?? step.uses);
