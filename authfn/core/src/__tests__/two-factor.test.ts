@@ -1213,8 +1213,19 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     }))?.failedAttemptCount ?? 0;
     const before = await readCount();
     setup.clock.advanceSeconds(30);
-    await expect(verifyTwoFactorCode({ ...setup.config, database: unreported }, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
-      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED', details: { reason: 'attempt-not-recorded' } });
+    // The write is slow: the retry time must be counted from when it returned.
+    const slowUnreported: Adapter = {
+      ...unreported,
+      async updateMany(params) {
+        const count = await unreported.updateMany(params);
+        setup.clock.advanceSeconds(5);
+        return count;
+      }
+    } as Adapter;
+    const refusal = await verifyTwoFactorCode({ ...setup.config, database: slowUnreported }, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig)
+      .catch((error: { code?: string; details?: { reason?: string; resetAt?: string } }) => error);
+    expect(refusal).toMatchObject({ code: 'AUTHFN_RATE_LIMITED', details: { reason: 'attempt-not-recorded' } });
+    expect(new Date((refusal as { details: { resetAt: string } }).details.resetAt).getTime()).toBeGreaterThan(setup.clock.now().getTime());
     expect(await readCount()).toBe(before + 1);
   });
 

@@ -710,14 +710,14 @@ async function reserveSecondFactorAttempt(
     if (reserved === 'unknown') {
       // The attempt may have been counted. Another round could count it
       // again, so this request stops here without checking its code.
-      throw twoFactorLockedError(new Date(now.getTime() + 1000), 'attempt-not-recorded');
+      throw twoFactorLockedError(new Date(resolveNow(pluginConfig).getTime() + 1000), 'attempt-not-recorded');
     }
     if (reserved === 'applied') {
       return next;
     }
   }
   // Lost every round to concurrent requests: treat as over the limit.
-  throw twoFactorLockedError(new Date(now.getTime() + 1000), 'attempt-not-recorded');
+  throw twoFactorLockedError(new Date(resolveNow(pluginConfig).getTime() + 1000), 'attempt-not-recorded');
 }
 
 function readAttemptCount(value: unknown): number {
