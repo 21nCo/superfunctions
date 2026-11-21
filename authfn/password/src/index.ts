@@ -14,7 +14,7 @@ import { authenticateRequest, issueSession } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
 import { jsonSuccess } from 'authfn/http/envelopes';
-import { completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
+import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
 import { emitAccountLinkedEvent } from 'authfn/core/account-linking';
 import { buildSessionResponse, type AuthFnSessionResponseMode } from 'authfn/core/session-responses';
@@ -32,12 +32,37 @@ export type {
 
 export function authFnPasswordPlugin(
   config: PasswordPluginConfig = {}
-): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> {
+): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> & { readonly otpEmailLimits: PasswordOtpEmailLimits } {
+  // One snapshot of the factory `otp` options for the routes, the startup
+  // check and the published limits, so later changes to the caller's object
+  // cannot make them disagree. Other options are read as before.
+  const factoryOtp: PasswordPluginConfig['otp'] = config.otp ? { ...config.otp } : undefined;
   return {
     name: 'password',
+    // Read by core so every OTP route applies these deprecated limits.
+    otpEmailLimits: {
+      maxFailedAttemptsPerEmail: factoryOtp?.maxFailedAttemptsPerEmail,
+      maxChallengesPerEmail: factoryOtp?.maxChallengesPerEmail,
+      emailAttemptWindowSeconds: factoryOtp?.emailAttemptWindowSeconds,
+      // Reset codes may live this long, so every route's scan must reach them.
+      challengeTtlSeconds: factoryOtp?.challengeTtlSeconds
+    },
     schema: () => config.schema ?? createPasswordSchema(),
-    routes: (ctx) => createPasswordRoutes(ctx, config)
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime, {
+      // The same merge the routes use, so the lifetime checked is theirs.
+      ...factoryOtp,
+      ...readPluginRuntimeConfig<PasswordPluginRuntimeConfig>(runtime, 'password').otp
+    }),
+    routes: (ctx) => createPasswordRoutes(ctx, config, factoryOtp)
   };
+}
+
+/** Per-email limits from the deprecated `otp` factory options. */
+export interface PasswordOtpEmailLimits {
+  maxFailedAttemptsPerEmail?: number;
+  maxChallengesPerEmail?: number;
+  emailAttemptWindowSeconds?: number;
+  challengeTtlSeconds?: number;
 }
 
 function createPasswordSchema(): AuthFnSchemaDefinition['schemas'] {
@@ -69,11 +94,12 @@ function createPasswordSchema(): AuthFnSchemaDefinition['schemas'] {
 
 function createPasswordRoutes(
   ctx: AuthFnPluginRuntimeContext,
-  config: PasswordPluginConfig
+  config: PasswordPluginConfig,
+  factoryOtp: PasswordPluginConfig['otp']
 ): Route[] {
   const runtimeConfig = readPluginRuntimeConfig<PasswordPluginRuntimeConfig>(ctx, 'password');
   const otpConfig = {
-    ...config.otp,
+    ...factoryOtp,
     ...runtimeConfig.otp
   };
 
