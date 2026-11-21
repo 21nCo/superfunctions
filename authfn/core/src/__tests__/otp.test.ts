@@ -1473,6 +1473,16 @@ describe('authfn otp plugin', () => {
       Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: undefined });
       expect(() => createTestServer(config)).not.toThrow();
 
+      // A non-enumerable runtime lifetime is skipped by the route's merge, so
+      // the factory lifetime is the one in use: the scan reaches it.
+      const hidden = createConfig() as LimitConfig;
+      hidden.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 12 * 60 * 60 } })];
+      Object.defineProperty((hidden.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, 'challengeTtlSeconds', {
+        value: 600,
+        enumerable: false
+      });
+      expect(resolveOtpEmailBudget(hidden, {}).longestTtlMs).toBe(12 * 60 * 60 * 1000);
+
       const invalid = createConfig() as LimitConfig;
       Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
       expect(() => createTestServer(invalid)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));

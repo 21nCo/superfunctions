@@ -44,7 +44,11 @@ export function authFnPasswordPlugin(
       challengeTtlSeconds: config.otp?.challengeTtlSeconds
     },
     schema: () => config.schema ?? createPasswordSchema(),
-    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime),
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime, {
+      // The same merge the routes use, so the lifetime checked is theirs.
+      ...config.otp,
+      ...readPluginRuntimeConfig<PasswordPluginRuntimeConfig>(runtime, 'password').otp
+    }),
     routes: (ctx) => createPasswordRoutes(ctx, config)
   };
 }

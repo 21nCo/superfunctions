@@ -645,19 +645,18 @@ export function resolveOtpEmailBudget(
   );
   // The calling route's lifetime counts too: it may come from the deprecated
   // factory options.
-  // A factory lifetime counts only where the password route uses it: its
-  // runtime `otp.challengeTtlSeconds` takes precedence, as on that route.
-  // The route merges `{ ...factory otp, ...runtime otp }`, so a runtime key
-  // that is present, even set to undefined, replaces the factory value.
-  const runtimeSetsTtl = Boolean(password.otp && typeof password.otp === 'object'
-    && Object.prototype.hasOwnProperty.call(password.otp, 'challengeTtlSeconds'));
-  const factoryTtls = runtimeSetsTtl
-    ? []
-    : published.filter((source) => source.challengeTtlSeconds !== undefined);
+  // A factory lifetime may be the one the password route uses, so the scan
+  // reaches that far too. Scanning further than needed is harmless, so every
+  // valid factory lifetime counts whether or not runtime config overrides
+  // it; the password plugin checks its effective lifetime at setup.
+  const factoryTtlsMs = published
+    .map((source) => source.challengeTtlSeconds)
+    .filter((value): value is number => isValidOtpLimit(value))
+    .map((value) => value * 1000);
   const longestTtlMs = Math.max(
     resolveTtlMs(options),
     ...sources.map((source) => resolveTtlMs(source)),
-    ...factoryTtls.map((source) => resolveTtlMs(source))
+    ...factoryTtlsMs
   );
   const windowsPerLifetime = Math.ceil(longestTtlMs / windowMs) + 1;
 
@@ -690,10 +689,17 @@ function readDeprecatedPasswordOtpLimits(config: OtpBudgetConfig): OtpRuntimeOpt
 
 /**
  * Checks the per-email OTP limits when the server is set up, so a bad value
- * fails at startup instead of on every send and verify.
+ * fails at startup instead of on every send and verify. `routeOptions` is a
+ * route's own merged options (for the password plugin, its factory `otp`
+ * under its runtime `otp`), whose lifetime is checked too.
  */
-export function assertOtpEmailBudgetConfig(config: OtpBudgetConfig): void {
+export function assertOtpEmailBudgetConfig(config: OtpBudgetConfig, routeOptions: OtpRuntimeOptions = {}): void {
   resolveOtpEmailBudget(config, {});
+  resolveTtlMs(routeOptions);
+}
+
+function isValidOtpLimit(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= OTP_EMAIL_LIMIT_MAX;
 }
 
 function readPositiveInteger(value: number | undefined, fallback: number, field: string): number {
