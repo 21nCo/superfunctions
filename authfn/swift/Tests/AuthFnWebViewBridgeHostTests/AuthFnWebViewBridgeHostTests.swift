@@ -112,6 +112,23 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertFalse(refused.allows(scheme: "https", host: "example.test", port: 8443))
     }
 
+    func testOriginPolicyRefusesSpellingsWebKitRejects() {
+        // Entries Foundation can hold (built from bytes) but WebKit refuses:
+        // they must not turn into the origin they resemble.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[::1%00]"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[::1\u{0}]"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://127.+0.0.1"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https://example.test:+8443"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://0x+7f.0.0.1"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://08.0.0.1"))
+        // Leading zeros do not make a valid part too long.
+        let padded = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "http://127." + String(repeating: "0", count: 34) + ".0.1")!,
+        ])
+        XCTAssertTrue(padded.allows(scheme: "http", host: "127.0.0.1", port: 0))
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("http://[::1]:8080"), "http://[::1]:8080")
+    }
+
     func testOriginPolicyRefusesAnInheritedOriginWhosePortTheFrameCannotShow() {
         let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
             URL(string: "https://portal.example")!,

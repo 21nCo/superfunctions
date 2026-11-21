@@ -76,6 +76,13 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if isUntrustable(scheme: parts.scheme, host: parts.host) {
             return nil
         }
+        if isSpecial(parts.scheme) && parts.host.hasPrefix("[") {
+            // Only hex digits, ':' and '.' (an embedded IPv4 tail) belong in
+            // an IPv6 literal; WebKit refuses anything else, such as `%00`.
+            guard canonicalIPv6(parts.host.lowercased()) != nil else {
+                return nil
+            }
+        }
         if isSpecial(parts.scheme) && !parts.host.hasPrefix("[") {
             // WebKit refuses these hosts: one that decodes to non-ASCII (an
             // internationalized domain not given in punycode), to nothing, or
@@ -94,7 +101,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if let port = parts.port, !port.isEmpty {
             // A port that is not a number in range is refused rather than read
             // as no port (which would trust the default one).
-            guard port.allSatisfy(\.isASCII), let number = Int(port), (0...65535).contains(number) else {
+            guard port.allSatisfy(isASCIIDigit), let number = Int(port), (0...65535).contains(number) else {
                 return nil
             }
         }
@@ -143,19 +150,42 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     /// its canonical form (`[0:0:0:0:0:0:0:1]` becomes `[::1]`).
     static func canonicalHost(_ host: String, scheme: String) -> String {
         var lowered = host.lowercased()
+        if lowered.hasPrefix("[") {
+            // IPv6 literals are never percent-decoded.
+            return canonicalIPv6(lowered) ?? lowered
+        }
         if isSpecial(scheme) {
             lowered = (lowered.removingPercentEncoding ?? lowered).lowercased()
             if let ipv4 = canonicalIPv4(lowered) {
                 return ipv4
             }
         }
-        guard lowered.hasPrefix("["), lowered.hasSuffix("]") else { return lowered }
-        let literal = String(lowered.dropFirst().dropLast())
+        return lowered
+    }
+
+    /// The canonical form of a bracketed IPv6 literal (`[0:0:0:0:0:0:0:1]`
+    /// becomes `[::1]`), or nil when it is not one. Only hex digits, ':' and
+    /// '.' are accepted, so nothing is cut short at a NUL or read past an
+    /// escape.
+    static func canonicalIPv6(_ host: String) -> String? {
+        guard host.hasPrefix("["), host.hasSuffix("]"), host.count > 2 else { return nil }
+        let literal = String(host.dropFirst().dropLast())
+        guard literal.unicodeScalars.allSatisfy({ isHexDigitScalar($0) || $0 == ":" || $0 == "." }) else {
+            return nil
+        }
         var address = in6_addr()
-        guard inet_pton(AF_INET6, literal, &address) == 1 else { return lowered }
+        guard inet_pton(AF_INET6, literal, &address) == 1 else { return nil }
         var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-        guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(buffer.count)) != nil else { return lowered }
+        guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
         return "[\(String(cString: buffer))]"
+    }
+
+    static func isASCIIDigit(_ character: Character) -> Bool {
+        ("0"..."9").contains(character)
+    }
+
+    private static func isHexDigitScalar(_ scalar: Unicode.Scalar) -> Bool {
+        ("0"..."9").contains(scalar) || ("a"..."f").contains(scalar) || ("A"..."F").contains(scalar)
     }
 
     /// Characters WebKit refuses in a domain host.
@@ -216,11 +246,22 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
             digits = digits.dropFirst()
             radix = 8
         }
-        if digits.isEmpty {
+        // Only digits of the radix: Swift's own parser would also take a
+        // leading '+'.
+        let valid: (Character) -> Bool = switch radix {
+        case 16: { $0.isASCII && $0.isHexDigit }
+        case 8: { ("0"..."7").contains($0) }
+        default: { ("0"..."9").contains($0) }
+        }
+        guard digits.allSatisfy(valid) else { return nil }
+        // Leading zeros do not count towards the size; anything still longer
+        // than 11 digits is above 2^32, which no IPv4 part can be.
+        let significant = digits.drop(while: { $0 == "0" })
+        if significant.isEmpty {
             return 0
         }
-        guard digits.allSatisfy(\.isASCII), digits.count <= 32 else { return nil }
-        return UInt64(digits, radix: radix)
+        guard significant.count <= 11 else { return nil }
+        return UInt64(significant, radix: radix)
     }
 
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
