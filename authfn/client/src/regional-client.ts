@@ -83,6 +83,11 @@ export function createAuthFnRegionalClient(
           await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
           return { lookup, answeredBy: lookupRegionId, route: mismatch };
         }
+        if (retry.ok && (retry.data === null || typeof retry.data !== 'object')) {
+          // A success envelope without a lookup answer counts as a failed retry.
+          await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+          return { lookup, answeredBy: lookupRegionId, route: mismatch };
+        }
         const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId, options) : undefined;
         if (retry.ok && retryRegionId) {
           const route = {
