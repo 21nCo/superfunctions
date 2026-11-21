@@ -949,23 +949,26 @@ describe("unvetted-client authorization rejections", () => {
         expect(supported).toMatchObject({ status: "passed", errorCode: "invalid_target" });
       });
 
-      it("applies the server's client_secret_basic default to a metadata document", async () => {
+      it.each([
+        ["omitted", undefined],
+        ["null", null],
+      ])("treats a stored metadata-document registration whose method is %s as none", async (_name, method) => {
+        const storedMethod = (fixture: ReturnType<typeof rejectionFixture>) => {
+          redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+          Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: method });
+        };
+        const [real] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, storedMethod);
+        expect(real).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
         const fixture = rejectionFixture(METADATA_DOCUMENT);
-        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
-        delete fixture.registration.metadata.token_endpoint_auth_method;
-        const [none] = await runHostedAuthorizationRegression(
-          { ...callbackTarget(), tokenEndpointAuthMethods: ["none"] },
-          [fixture],
-        );
-        expect(none).toMatchObject({
-          status: "failed",
-          error: "Rejected redirect URI must not receive a callback",
-        });
-        const [basic] = await runHostedAuthorizationRegression(
+        storedMethod(fixture);
+        const [basicOnly] = await runHostedAuthorizationRegression(
           { ...callbackTarget(), tokenEndpointAuthMethods: ["client_secret_basic"] },
           [fixture],
         );
-        expect(basic).toMatchObject({ status: "passed", errorCode: "invalid_target" });
+        expect(basicOnly).toMatchObject({
+          status: "failed",
+          error: "Rejected redirect URI must not receive a callback",
+        });
       });
 
       it("checks registered scopes only when the target declares supported scopes", async () => {

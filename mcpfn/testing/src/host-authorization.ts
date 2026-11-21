@@ -67,8 +67,10 @@ export interface McpFnHostedAuthorizationTargetAdapter {
   /**
    * Token endpoint authentication methods the target supports (its
    * `capabilities.tokenEndpointAuthMethods`). When declared, a registration
-   * with another method is ineligible and registers no redirect URI. When
-   * omitted, the harness adds no authentication-method constraint.
+   * with another method is ineligible and registers no redirect URI; the
+   * fixture is treated as the stored registration, so an omitted method is
+   * `none`. When omitted, the harness adds no authentication-method
+   * constraint.
    */
   tokenEndpointAuthMethods?: string[];
   /**
@@ -537,7 +539,7 @@ function registeredRedirectMatch(
   const policy = target.redirectPolicy;
   try {
     const client = normalizeMcpClientRegistration({ ...registration, redirectPolicy: policy });
-    if (!isEligibleRegistration(client, registration, target)) return undefined;
+    if (!isEligibleRegistration(client, target)) return undefined;
     return matchMcpRedirectUri(authorization.redirectUri, client.redirectUris, policy);
   } catch {
     // A mismatch or a malformed registration is not a registered redirect.
@@ -550,23 +552,21 @@ function registeredRedirectMatch(
  * before redirect matching: the registration must allow response type `code`
  * and grant type `authorization_code`; its token endpoint authentication
  * method and its `scope` must be supported by the target when the adapter
- * declares `tokenEndpointAuthMethods` or `supportedScopes`.
+ * declares `tokenEndpointAuthMethods` or `supportedScopes`. The fixture is
+ * evaluated as the stored registration the target resolves, so an omitted or
+ * null method is `none`, as on the server's stored-registration path.
  */
 function isEligibleRegistration(
   client: McpFnNormalizedClientRegistration,
-  registration: McpFnHostedRegistrationFixture,
   target: Pick<McpFnHostedAuthorizationTargetAdapter, "tokenEndpointAuthMethods" | "supportedScopes">,
 ): boolean {
   if (!client.responseTypes.includes("code")) return false;
   if (!client.grantTypes.includes("authorization_code")) return false;
-  if (target.tokenEndpointAuthMethods) {
-    // A Client ID Metadata Document without a method defaults to
-    // client_secret_basic on the server.
-    const method = client.source === "client-metadata-document" &&
-        registration.metadata.token_endpoint_auth_method === undefined
-      ? "client_secret_basic"
-      : client.tokenEndpointAuthMethod;
-    if (!target.tokenEndpointAuthMethods.includes(method)) return false;
+  if (
+    target.tokenEndpointAuthMethods &&
+    !target.tokenEndpointAuthMethods.includes(client.tokenEndpointAuthMethod)
+  ) {
+    return false;
   }
   const scope: unknown = client.metadata.scope;
   if (scope === undefined) return true;
