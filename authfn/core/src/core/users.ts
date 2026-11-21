@@ -164,8 +164,13 @@ export function readSignUpProfile(profile: unknown): Record<string, unknown> {
     || Object.getPrototypeOf(profile) !== Object.prototype) {
     throw new AuthFnValidationError('profile must be an object', { field: 'profile' });
   }
-  const size = new TextEncoder().encode(JSON.stringify(profile)).length;
-  if (size > AUTHFN_MAX_SIGN_UP_PROFILE_BYTES) {
+  // A cheap lower bound first, which stops as soon as it passes the limit,
+  // so an oversized profile is refused after work proportional to the limit
+  // rather than to the profile; only a profile within it is serialized.
+  if (
+    jsonSizeExceeds(profile, AUTHFN_MAX_SIGN_UP_PROFILE_BYTES)
+    || new TextEncoder().encode(JSON.stringify(profile)).length > AUTHFN_MAX_SIGN_UP_PROFILE_BYTES
+  ) {
     throw new AuthFnValidationError('profile is too large', {
       field: 'profile',
       maxBytes: AUTHFN_MAX_SIGN_UP_PROFILE_BYTES
@@ -174,4 +179,44 @@ export function readSignUpProfile(profile: unknown): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(profile).filter(([key]) => !SERVER_OWNED_METADATA_KEYS.has(key))
   );
+}
+
+/**
+ * Whether the JSON text of `value` is certainly longer than `budget` bytes.
+ * It adds up a lower bound (each string's length plus its quotes, at least
+ * one byte for every other value or separator) and stops as soon as the sum
+ * passes the budget, so it never walks much more than `budget` nodes or
+ * characters.
+ */
+function jsonSizeExceeds(value: unknown, budget: number): boolean {
+  let used = 0;
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === 'string') {
+      used += current.length + 2;
+    } else if (current !== null && typeof current === 'object') {
+      used += 2;
+      const entries = Array.isArray(current) ? current : Object.entries(current as Record<string, unknown>);
+      for (const entry of entries) {
+        if (used > budget) {
+          return true;
+        }
+        used += 1;
+        if (Array.isArray(current)) {
+          stack.push(entry);
+        } else {
+          const [key, child] = entry as [string, unknown];
+          used += key.length + 3;
+          stack.push(child);
+        }
+      }
+    } else {
+      used += 1;
+    }
+    if (used > budget) {
+      return true;
+    }
+  }
+  return false;
 }

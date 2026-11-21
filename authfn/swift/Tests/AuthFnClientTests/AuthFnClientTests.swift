@@ -66,6 +66,20 @@ final class AuthFnClientTests: XCTestCase {
         XCTAssertNil(cleared)
     }
 
+    func testVerifyEmailRequiresTheHolderUnlessClaimingOnPurpose() {
+        // A stored session is always sent with the holder guard, so an
+        // expired one is refused rather than taken as a mailbox claim.
+        let holder = AuthFnClient.emailVerificationPlan(storedToken: "test-session-token", claimAccount: false)
+        XCTAssertEqual(holder?.bearerToken, "test-session-token")
+        XCTAssertEqual(holder?.requireAccountHolder, true)
+        // No session and no explicit claim: nothing is sent.
+        XCTAssertNil(AuthFnClient.emailVerificationPlan(storedToken: nil, claimAccount: false))
+        // An explicit claim sends neither a session nor the guard.
+        let claim = AuthFnClient.emailVerificationPlan(storedToken: "test-session-token", claimAccount: true)
+        XCTAssertNil(claim?.bearerToken)
+        XCTAssertEqual(claim?.requireAccountHolder, false)
+    }
+
     func testVerifyEmailSendsTheStoredSessionAsBearer() async throws {
         let store = AuthFnInMemoryCredentialStore()
         try await store.saveCredential(AuthFnSessionCredential(

@@ -351,6 +351,17 @@ export async function verifyOtpChallenge(
             }
           });
         }
+        if (normalizeEmail(pendingSignUp.primaryEmail) !== email) {
+          // A hook changed the address: the code proves the submitted one,
+          // not this account's, so it neither links nor claims it.
+          throw new AuthFnConflictError('A user with this email already exists', {
+            primaryEmail: pendingSignUp.primaryEmail,
+            linking: {
+              method: 'email-otp',
+              reason: 'email_not_proved'
+            }
+          });
+        }
         linkedExistingUser = true;
       }
     } else if (input.purpose === 'reset-password') {

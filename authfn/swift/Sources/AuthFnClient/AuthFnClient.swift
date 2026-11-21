@@ -112,13 +112,36 @@ public final class AuthFnClient: Sendable {
 
     /// Verifies the email address with a `verify-email` code.
     ///
-    /// Sends the stored session as a bearer token, so the server knows the
-    /// code comes from the signed-in holder of the account. Without it, the
-    /// server takes the code as someone else proving the mailbox first and
-    /// removes everything set up on the account before. Cookies are left out,
-    /// so a stale or unrelated session cookie cannot get in the way.
-    public func verifyEmail(email: String, code: String) async throws -> Bool {
-        try await verifyEmail(email: email, code: code, bearerToken: try await credentialStore.loadCredential()?.token, requireAccountHolder: false)
+    /// By default this is the signed-in holder verifying their own address:
+    /// the stored session is sent as a bearer token with
+    /// `requireAccountHolder`, so if that session has expired or was revoked
+    /// the server refuses the request and leaves the code unused, instead of
+    /// taking it as someone else proving the mailbox (which removes
+    /// everything set up on the account before). Without a stored session it
+    /// throws `AuthFnError.unauthenticated` and sends nothing.
+    ///
+    /// Pass `claimAccount: true` to prove the mailbox without a session, on
+    /// purpose: the server then removes the account's earlier setup if the
+    /// address was not verified yet. Cookies are never sent.
+    public func verifyEmail(email: String, code: String, claimAccount: Bool = false) async throws -> Bool {
+        let stored = try await credentialStore.loadCredential()
+        guard let plan = Self.emailVerificationPlan(storedToken: stored?.token, claimAccount: claimAccount) else {
+            throw AuthFnError.unauthenticated
+        }
+        return try await verifyEmail(email: email, code: code, bearerToken: plan.bearerToken, requireAccountHolder: plan.requireAccountHolder)
+    }
+
+    /// What `verifyEmail` sends: an explicit claim sends no session and no
+    /// guard; otherwise the stored session is required and sent with the
+    /// guard. Nil means there is no session to verify with.
+    static func emailVerificationPlan(storedToken: String?, claimAccount: Bool) -> (bearerToken: String?, requireAccountHolder: Bool)? {
+        if claimAccount {
+            return (nil, false)
+        }
+        guard let storedToken else {
+            return nil
+        }
+        return (storedToken, true)
     }
 
     private func verifyEmail(

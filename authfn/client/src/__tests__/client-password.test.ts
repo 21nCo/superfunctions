@@ -181,6 +181,17 @@ describe('@authfn/client password flows', () => {
 
     expect((await client.signUpWithPassword({ email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' })).ok).toBe(true);
     expect((await client.sendOtp({ purpose: 'verify-email', email: 'ada@example.com' })).ok).toBe(true);
+    // The holder guard reaches the server in the request body.
+    let sentBody: Record<string, unknown> | undefined;
+    const capturing = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async (_input, init) => {
+        sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({ ok: false, error: { code: 'AUTHFN_UNAUTHENTICATED', message: 'test', retryable: false }, requestId: 'req_test' }, { status: 401 });
+      }
+    });
+    await capturing.verifyOtp({ purpose: 'verify-email', email: 'ada@example.com', code: '000000', requireAccountHolder: true });
+    expect(sentBody).toMatchObject({ purpose: 'verify-email', requireAccountHolder: true });
     const verified = await client.verifyOtp({
       purpose: 'verify-email',
       email: 'ada@example.com',

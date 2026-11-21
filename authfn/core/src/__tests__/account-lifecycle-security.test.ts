@@ -1,7 +1,7 @@
 // Regression tests for the account lifecycle findings of the AuthFn security
 // audit of 2026-11-21 (AF-05, AF-06, AF-08, AF-09). Every value is an obviously
 // fake test value.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnPasswordPlugin } from '@authfn/password';
@@ -10,6 +10,7 @@ import { authFnApiKeyPlugin } from '@authfn/api-keys';
 import { authFnTwoFactorPlugin } from '@authfn/two-factor';
 import { authFnSocialOAuthPlugin } from '@authfn/social-oauth';
 import type { AuthFnRuntimeConfig } from '../index.js';
+import { readSignUpProfile } from '../core/users.js';
 
 const BASE = 'https://account.example.com/auth';
 const OWNER = 'owner@example.com';
@@ -118,6 +119,26 @@ describe('AF-05: a password set before the owner proves the mailbox does not sur
     expect(owner.status).toBe(200);
     expect((await account(ctx, { cookie: attackerCookies })).status).toBe(401);
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password }))).status).toBe(401);
+  });
+
+  it('does not link or claim an account a hook rewrote the sign-up address to', async () => {
+    const ctx = createContext({
+      accountLinking: { otpSignUpExistingUser: true },
+      hooks: {
+        beforeUserCreate: async (_ctx, input) => ({ ...input, primaryEmail: OWNER })
+      }
+    });
+    const password = 'owner-test-password';
+    expect((await ctx.handle(json('/sign-up/password', { email: OWNER, password }))).status).toBe(200);
+
+    // A code for another mailbox, which the hook maps onto OWNER.
+    const other = 'someone-else@example.com';
+    await ctx.handle(json('/otp/send', { purpose: 'sign-up', email: other }));
+    const linked = await ctx.handle(json('/otp/verify', { purpose: 'sign-up', email: other, code: ctx.codeFor('sign-up', other) }));
+    expect(linked.status).toBe(409);
+    expect((await linked.json()).error.details.linking.reason).toBe('email_not_proved');
+    // OWNER's account was not claimed.
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password }))).status).toBe(200);
   });
 
   it('keeps the password of an account whose email was already verified', async () => {
@@ -516,7 +537,7 @@ describe('AF-06: sessions end on password reset and while the user is disabled',
 
   it('refuses cookie and bearer sessions while metadata.disabled is set, and accepts them again once cleared', async () => {
     const ctx = createContext();
-    const { signUp, cookies, token, setDisabled } = await signUpWithDisableSwitch(ctx);
+    const { cookies, token, setDisabled } = await signUpWithDisableSwitch(ctx);
 
     await setDisabled(true);
     expect((await account(ctx, { cookie: cookies })).status).toBe(401);
@@ -559,6 +580,19 @@ describe('AF-08: the sign-up profile is caller data', () => {
     const response = await account(ctx, { cookie: cookieHeader(signUp) });
     expect(response.status).toBe(200);
     expect((await response.json()).data.user.metadata).toEqual({ name: 'New User' });
+  });
+
+  it('refuses a very large profile without serializing it', () => {
+    const huge = { items: Array.from({ length: 200_000 }, (_, index) => `item-${index}`) };
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      expect(() => readSignUpProfile(huge)).toThrow(/too large/);
+      expect(stringify).not.toHaveBeenCalledWith(huge);
+    } finally {
+      stringify.mockRestore();
+    }
+    // A profile within the limit is still serialized and kept.
+    expect(readSignUpProfile({ name: 'New User' })).toEqual({ name: 'New User' });
   });
 
   it.each([
