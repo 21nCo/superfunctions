@@ -1,0 +1,33 @@
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_cf1278c3daee80::t_b0d076daa4659b 130-132
+cifn/typescript/control-plane/src/api/routes.ts
+  s_cf1278c3daee80::t_6b7da3a4c24dbb 19,398,401-411,414-417,421
+cifn/typescript/control-plane/src/index.ts
+  s_cf1278c3daee80::t_2f082589ad58e5 33
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_cf1278c3daee80::t_5796dc2fdce88e 88-91,93,98-101,104,106-107,117-122,124,129,133,135-137,157-159,164,166-167,169,173,175,178-182,184-196,210-211,218-223
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_cf1278c3daee80::t_c670b077ad3a4a 6,780-820
+cifn/typescript/runner/src/log-spool.test.ts
+  s_cf1278c3daee80::t_0dc095ccff7a90 406-427
+cifn/typescript/runner/src/log-spool.ts
+  s_cf1278c3daee80::t_88b9391b837a22 286-289,291-296,354,374-382,384,387-397,400-401
+cifn/typescript/runner/src/runner.ts
+  s_cf1278c3daee80::t_e612096c466ba6 16,175,189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a66be86b1e001c997c1b719c68275c3d96eff86",
+  "prompts": {},
+  "sessions": {
+    "s_cf1278c3daee80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_cf1278c3daee80",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
