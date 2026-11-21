@@ -427,3 +427,32 @@ def test_compares_challenge_times_as_instants_across_a_daylight_saving_fall_back
     expires = datetime(2026, 11, 1, 1, 5, tzinfo=zone, fold=1)  # 06:05 UTC, ten minutes later
     assert _is_admitted({"createdAt": created, "expiresAt": expires}) is True
     assert _is_admitted({"createdAt": created, "expiresAt": created}) is False
+    assert _is_admitted({"createdAt": created}) is False
+
+
+@pytest.mark.asyncio
+async def test_breaks_created_at_ties_by_id_like_the_typescript_kernel() -> None:
+    db = MockDatabaseAdapter()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+    service = EmailOtpService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        EmailOtpPluginConfig(delivery=DeliveryRecorder(), code_generator=lambda: "731942", now=clock.now),
+    )
+    for row_id in ("otp_test_b", "otp_test_a"):
+        await db.create(
+            model="otp_challenges",
+            data={
+                "id": row_id,
+                "purpose": "sign-in",
+                "email": "ada@example.com",
+                "codeHash": "test-code-hash",
+                "attemptCount": 0,
+                "expiresAt": clock.now() + timedelta(minutes=10),
+                "consumedAt": None,
+                "createdAt": clock.now(),
+                "updatedAt": clock.now(),
+            },
+            namespace="authfn",
+        )
+    latest = await service._find_latest_challenge("sign-in", "ada@example.com")
+    assert latest is not None and latest["id"] == "otp_test_b"

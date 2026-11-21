@@ -456,7 +456,8 @@ class EmailOtpService:
                 {"field": "purpose", "operator": "eq", "value": purpose},
                 {"field": "email", "operator": "eq", "value": email},
             ],
-            order_by=[{"field": "createdAt", "direction": "desc"}],
+            # The same order as the TypeScript kernel, id breaking ties.
+            order_by=[{"field": "createdAt", "direction": "desc"}, {"field": "id", "direction": "desc"}],
             namespace=self.config.namespace,
         )
         # The TypeScript kernel creates a challenge expiring as it is created
@@ -487,7 +488,8 @@ def _is_admitted(row: Dict[str, Any]) -> bool:
     expires_at = row.get("expiresAt")
     created_at = row.get("createdAt")
     if expires_at is None or created_at is None:
-        return True
+        # Fail closed, as the TypeScript kernel does.
+        return False
     return _as_utc(expires_at) > _as_utc(created_at)
 
 
