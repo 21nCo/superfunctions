@@ -479,6 +479,18 @@ function createSocialRoutes(
               buildHookContext(ctx.config, request, runtime, user.id),
               completion
             );
+            // As in the other branches: the hook may have changed the target,
+            // so it is checked, and the location built, before the flow is
+            // reported.
+            let challengeLocation: string | undefined;
+            if (completion.callbackMode === 'redirect') {
+              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+              challengeLocation = appendTwoFactorChallengeToReturnTarget(
+                completion.redirectTo as string,
+                pendingChallenge.challenge.id,
+                SOCIAL_PROVIDER_METHODS[providerId]
+              );
+            }
 
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
@@ -509,15 +521,10 @@ function createSocialRoutes(
               }
             });
 
-            if (completion.callbackMode === 'redirect') {
-              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+            if (challengeLocation !== undefined) {
               return redirectWithCookies(
                 request,
-                appendTwoFactorChallengeToReturnTarget(
-                  completion.redirectTo as string,
-                  pendingChallenge.challenge.id,
-                  SOCIAL_PROVIDER_METHODS[providerId]
-                ),
+                challengeLocation,
                 config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
                 303
               );
