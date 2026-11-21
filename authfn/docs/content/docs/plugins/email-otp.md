@@ -52,6 +52,9 @@ authApp.createServer({
 | `now` | `pluginRuntime.emailOtp` | `() => new Date()` | Clock injection (for tests). |
 | `challengeTtlSeconds` | `pluginRuntime.emailOtp` | `600` | OTP lifetime. |
 | `maxAttempts` | `pluginRuntime.emailOtp` | `5` | Verification attempts per challenge before invalidation. |
+| `maxFailedAttemptsPerEmail` | `pluginRuntime.emailOtp` | `10` | Wrong codes accepted for one email across all of its challenges and purposes within the window. Further verifications for that email return `AUTHFN_RATE_LIMITED`, even with the right code, until older challenges leave the window. |
+| `maxChallengesPerEmail` | `pluginRuntime.emailOtp` | `20` | Challenges that can be sent to one email, across purposes, within the window. Further sends return `AUTHFN_RATE_LIMITED`. |
+| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. Never shorter than `challengeTtlSeconds`. |
 
 ### Delivery provider
 
@@ -134,6 +137,7 @@ sequenceDiagram
 | `AUTHFN_OTP_INVALID` | Code doesn't match. |
 | `AUTHFN_OTP_EXPIRED` | Past `expiresAt`. |
 | `AUTHFN_OTP_REPLAYED` | Already consumed. |
+| `AUTHFN_RATE_LIMITED` | The email has used its per-email budget of wrong codes or challenges. `details.limit` is `failed-attempts` or `challenges`; `details.resetAt` says when the oldest counted challenge leaves the window. |
 | `AUTHFN_CONFLICT` | Sign-up but the email already exists (when `otpSignUpExistingUser` is `false`). |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: email is in another region. |
 

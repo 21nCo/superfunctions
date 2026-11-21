@@ -39,6 +39,25 @@ export interface EmailOtpPluginRuntimeConfig {
   challengeTtlSeconds?: number;
   /** Maximum verification attempts allowed before a challenge is rejected. */
   maxAttempts?: number;
+  /**
+   * Maximum wrong codes accepted for one email, across all of its challenges
+   * and purposes, within `emailAttemptWindowSeconds`. Further verifications
+   * for that email are refused with `AUTHFN_RATE_LIMITED` until older
+   * challenges leave the window. Defaults to 10.
+   */
+  maxFailedAttemptsPerEmail?: number;
+  /**
+   * Maximum challenges that can be created for one email, across purposes,
+   * within `emailAttemptWindowSeconds`; further sends are refused with
+   * `AUTHFN_RATE_LIMITED`. Defaults to 20.
+   */
+  maxChallengesPerEmail?: number;
+  /**
+   * Window, in seconds, for `maxFailedAttemptsPerEmail` and
+   * `maxChallengesPerEmail`, measured from each challenge's creation. Never
+   * shorter than `challengeTtlSeconds`. Defaults to 3600.
+   */
+  emailAttemptWindowSeconds?: number;
 }
 export interface ApiKeyPluginConfig extends AuthFnBundledPluginConfig {
   secretPrefix?: string;

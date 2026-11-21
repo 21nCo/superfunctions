@@ -13,11 +13,13 @@ import type {
 } from '../types.js';
 import {
   AuthFnError,
+  AuthFnConfigError,
   AuthFnConflictError,
   AuthFnOtpExpiredError,
   AuthFnOtpInvalidError,
   AuthFnOtpReplayedError,
   AuthFnPluginAbortedError,
+  AuthFnRateLimitedError,
   AuthFnValidationError
 } from './errors.js';
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
@@ -34,6 +36,9 @@ import {
 
 const DEFAULT_OTP_TTL_SECONDS = 60 * 10;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
+const DEFAULT_OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL = 10;
+const DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL = 20;
+const DEFAULT_OTP_EMAIL_WINDOW_SECONDS = 60 * 60;
 
 export interface OtpRuntimeOptions {
   delivery?: AuthFnDeliveryProvider;
@@ -42,6 +47,9 @@ export interface OtpRuntimeOptions {
   now?: () => Date;
   challengeTtlSeconds?: number;
   maxAttempts?: number;
+  maxFailedAttemptsPerEmail?: number;
+  maxChallengesPerEmail?: number;
+  emailAttemptWindowSeconds?: number;
   passwordPolicy?: PasswordPolicyOptions;
 }
 
@@ -96,6 +104,12 @@ export async function sendOtpChallenge(
     metadata: input.metadata ?? {}
   });
 
+  const challengeEmail = assertAuthFnDatabaseKeyLength(
+    normalizeEmail(readString(challengeInput.email) ?? email),
+    'email'
+  );
+  await assertOtpChallengeBudget(config, runtimeOptions, challengeEmail, now);
+
   const challengeCode = resolveCodeGenerator(runtimeOptions)();
   assertValidCode(challengeCode);
   const challenge = await config.database.create<AuthFnOtpChallengeRecord>({
@@ -103,10 +117,7 @@ export async function sendOtpChallenge(
     data: {
       id: createChallengeId(),
       purpose: readPurpose(challengeInput.purpose, input.purpose),
-      email: assertAuthFnDatabaseKeyLength(
-        normalizeEmail(readString(challengeInput.email) ?? email),
-        'email'
-      ),
+      email: challengeEmail,
       codeHash: hashSecret(challengeCode),
       attemptCount: 0,
       deliveryMetadata: readRecord(challengeInput.metadata),
@@ -278,6 +289,7 @@ export async function verifyOtpChallenge(
     });
   }
 
+  await assertOtpGuessBudget(config, runtimeOptions, email, now);
   const maxAttempts = runtimeOptions.maxAttempts ?? DEFAULT_OTP_MAX_ATTEMPTS;
   const reserved = await reserveOtpAttempt(config, challenge, maxAttempts, now);
 
@@ -506,6 +518,163 @@ async function findLatestChallenge(
   });
 
   return rows[0] ?? null;
+}
+
+interface OtpEmailBudget {
+  maxFailedAttempts: number;
+  maxChallenges: number;
+  windowMs: number;
+}
+
+function resolveOtpEmailBudget(options: OtpRuntimeOptions): OtpEmailBudget {
+  return {
+    maxFailedAttempts: readPositiveInteger(
+      options.maxFailedAttemptsPerEmail,
+      DEFAULT_OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL,
+      'maxFailedAttemptsPerEmail'
+    ),
+    maxChallenges: readPositiveInteger(
+      options.maxChallengesPerEmail,
+      DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL,
+      'maxChallengesPerEmail'
+    ),
+    // The window is never shorter than a challenge's lifetime, so every guess
+    // made on a live challenge is still counted.
+    windowMs: Math.max(
+      readPositiveInteger(
+        options.emailAttemptWindowSeconds,
+        DEFAULT_OTP_EMAIL_WINDOW_SECONDS,
+        'emailAttemptWindowSeconds'
+      ) * 1000,
+      resolveTtlMs(options)
+    )
+  };
+}
+
+function readPositiveInteger(value: number | undefined, fallback: number, field: string): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new AuthFnConfigError(`OTP ${field} must be a positive integer`, { field });
+  }
+  return value;
+}
+
+interface RecentOtpChallenge {
+  createdAtMs: number;
+  attemptCount: number;
+  consumed: boolean;
+}
+
+/**
+ * Challenges created for an email (every purpose) inside the window, newest
+ * first. The scan is bounded: it reads at most one row more than the number of
+ * challenges the window allows, which is enough to tell that the window is
+ * full. The window is applied here rather than in the query because adapters
+ * differ in how they compare stored dates; rows come newest first, so the
+ * rows inside the window are a prefix of the result.
+ */
+async function listRecentChallengesForEmail(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  email: string,
+  budget: OtpEmailBudget,
+  now: Date
+): Promise<RecentOtpChallenge[]> {
+  const rows = await config.database.findMany<AuthFnOtpChallengeRecord>({
+    model: 'otp_challenges',
+    where: [{ field: 'email', operator: 'eq', value: email }],
+    orderBy: [
+      { field: 'createdAt', direction: 'desc' },
+      { field: 'id', direction: 'desc' }
+    ],
+    limit: budget.maxChallenges + 1,
+    namespace: namespace(config)
+  });
+  const windowStartMs = now.getTime() - budget.windowMs;
+  const recent: RecentOtpChallenge[] = [];
+  for (const row of rows) {
+    const createdAtMs = new Date(row.createdAt).getTime();
+    if (!(createdAtMs > windowStartMs)) {
+      break;
+    }
+    recent.push({
+      createdAtMs,
+      attemptCount: Number(row.attemptCount) || 0,
+      consumed: Boolean(row.consumedAt)
+    });
+  }
+  return recent;
+}
+
+/**
+ * Refuses a new challenge once the email already has `maxChallengesPerEmail`
+ * challenges in the window. Without this cap a caller could request a fresh
+ * challenge after every few wrong guesses; with it, the number of codes that
+ * can be tried for one email is bounded even when the HTTP rate limiter is
+ * off.
+ */
+async function assertOtpChallengeBudget(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  runtimeOptions: OtpRuntimeOptions,
+  email: string,
+  now: Date
+): Promise<void> {
+  const budget = resolveOtpEmailBudget(runtimeOptions);
+  const recent = await listRecentChallengesForEmail(config, email, budget, now);
+  if (recent.length >= budget.maxChallenges) {
+    // The oldest of the newest maxChallenges rows leaves the window first.
+    const oldest = recent[budget.maxChallenges - 1]!;
+    throw otpEmailLimitError('challenges', new Date(oldest.createdAtMs + budget.windowMs));
+  }
+}
+
+/**
+ * Refuses to compare a code once the email has `maxFailedAttemptsPerEmail`
+ * wrong guesses across all of its challenges in the window, so requesting a
+ * new challenge does not reset the count. A consumed challenge's last attempt
+ * was the correct code and is not counted. When the window holds more
+ * challenges than the cap allows (concurrent sends can overshoot it), the
+ * count is incomplete and the guess is refused.
+ */
+async function assertOtpGuessBudget(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  runtimeOptions: OtpRuntimeOptions,
+  email: string,
+  now: Date
+): Promise<void> {
+  const budget = resolveOtpEmailBudget(runtimeOptions);
+  const recent = await listRecentChallengesForEmail(config, email, budget, now);
+  if (recent.length > budget.maxChallenges) {
+    const oldest = recent[recent.length - 1]!;
+    throw otpEmailLimitError('failed-attempts', new Date(oldest.createdAtMs + budget.windowMs));
+  }
+
+  let failures = 0;
+  for (const row of recent) {
+    failures += Math.max(0, row.attemptCount - (row.consumed ? 1 : 0));
+    if (failures >= budget.maxFailedAttempts) {
+      // Rows are newest first, so this row is the newest one whose expiry
+      // from the window brings the count back under the cap.
+      throw otpEmailLimitError('failed-attempts', new Date(row.createdAtMs + budget.windowMs));
+    }
+  }
+}
+
+function otpEmailLimitError(
+  limit: 'challenges' | 'failed-attempts',
+  resetAt: Date
+): AuthFnRateLimitedError {
+  return new AuthFnRateLimitedError(
+    limit === 'challenges'
+      ? 'Too many codes were requested for this email; try again later'
+      : 'Too many incorrect codes for this email; try again later',
+    {
+      scope: 'otp-email',
+      limit,
+      resetAt: resetAt.toISOString()
+    }
+  );
 }
 
 /**

@@ -1040,4 +1040,159 @@ describe('authfn otp plugin', () => {
     expect(stored?.attemptCount).toBe(0);
     expect(stored?.consumedAt).toBeNull();
   });
+
+  describe('per-email limits across challenges', () => {
+    type LimitConfig = AuthFnRuntimeConfig & {
+      __clock: ReturnType<typeof createClock>;
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+
+    function setup(options: Record<string, unknown> = {}) {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, options);
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, options);
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(
+        new Request(`https://account.example.com/auth${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+      );
+      return { config, auth, post };
+    }
+
+    it('stops evaluating guesses once the email has used its failed-attempt budget, whatever new challenges are sent', async () => {
+      // Security audit AF-02: a new challenge every five guesses used to give
+      // an unlimited number of guesses against one email.
+      const { config, post } = setup();
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      let refused = 0;
+      codeComparisons.count = 0;
+      for (let round = 0; round < 6; round += 1) {
+        config.__clock.advance(1000);
+        const sent = await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+        expect(sent.status).toBe(200);
+        for (let guess = 0; guess < 5; guess += 1) {
+          const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+          const body = await response.json();
+          if (response.status === 429) {
+            expect(body.error.code).toBe('AUTHFN_RATE_LIMITED');
+            refused += 1;
+          } else {
+            expect(body.error.code).toBe('AUTHFN_OTP_INVALID');
+          }
+        }
+      }
+      expect(codeComparisons.count).toBe(10);
+      expect(refused).toBe(20);
+
+      // The correct code is refused too while the email is over its budget.
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      codeComparisons.count = 0;
+      const locked = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(locked.status).toBe(429);
+      const lockedBody = await locked.json();
+      expect(lockedBody.error.details).toMatchObject({ scope: 'otp-email', limit: 'failed-attempts' });
+      expect(codeComparisons.count).toBe(0);
+
+      // Once the window has passed the owner can sign in again.
+      config.__clock.advance(60 * 60 * 1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      const signedIn = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(signedIn.status).toBe(200);
+    });
+
+    it('counts failed guesses for one email across purposes, including password reset', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 4 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 2; guess += 1) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      }
+      config.__clock.advance(1000);
+      await post('/password/reset/start', { email: 'ada@example.com' });
+      for (let guess = 0; guess < 2; guess += 1) {
+        const response = await post('/password/reset/complete', {
+          email: 'ada@example.com',
+          code: '100000',
+          newPassword: 'An0therSecurePassphrase!'
+        });
+        expect(response.status).toBe(400);
+      }
+      const refused = await post('/password/reset/complete', {
+        email: 'ada@example.com',
+        code: '731942',
+        newPassword: 'An0therSecurePassphrase!'
+      });
+      expect(refused.status).toBe(429);
+      expect((await refused.json()).error.code).toBe('AUTHFN_RATE_LIMITED');
+
+      // Another email is not affected.
+      await createUser(config, { primaryEmail: 'bea@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'bea@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'bea@example.com', code: '731942' })).status).toBe(200);
+    });
+
+    it('does not count a correct code against the budget', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 2 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      for (let round = 0; round < 4; round += 1) {
+        config.__clock.advance(1000);
+        await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+        const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+        expect(response.status).toBe(200);
+      }
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(200);
+    });
+
+    it('refuses new challenges for an email once its challenge budget is used', async () => {
+      const { config, post } = setup({ maxChallengesPerEmail: 3 });
+      for (let round = 0; round < 3; round += 1) {
+        expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      }
+      const deliveriesBefore = config.__delivery.deliveries.length;
+      const refused = await post('/otp/send', { purpose: 'reset-password', email: 'ADA@example.com' });
+      expect(refused.status).toBe(429);
+      const body = await refused.json();
+      expect(body.error.code).toBe('AUTHFN_RATE_LIMITED');
+      expect(body.error.details).toMatchObject({
+        scope: 'otp-email',
+        limit: 'challenges',
+        resetAt: '2026-03-22T01:00:00.000Z'
+      });
+      expect((await post('/password/reset/start', { email: 'ada@example.com' })).status).toBe(429);
+      expect(config.__delivery.deliveries.length).toBe(deliveriesBefore);
+
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'bea@example.com' })).status).toBe(200);
+      config.__clock.advance(60 * 60 * 1000);
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+    });
+
+    it('keeps counting guesses for as long as a challenge lives when the window is shorter', async () => {
+      const { config, post } = setup({
+        maxFailedAttemptsPerEmail: 3,
+        emailAttemptWindowSeconds: 60,
+        challengeTtlSeconds: 600
+      });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 3; guess += 1) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+        config.__clock.advance(2 * 60 * 1000);
+      }
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(429);
+    });
+
+    it.each([0, -1, 1.5, Number.NaN])('rejects %s as a limit', async (value) => {
+      const { post } = setup({ maxFailedAttemptsPerEmail: value });
+      const response = await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await response.json()).error.code).toBe('AUTHFN_CONFIG_INVALID');
+    });
+  });
 });
