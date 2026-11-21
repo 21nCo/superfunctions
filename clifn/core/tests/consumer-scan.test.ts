@@ -140,13 +140,47 @@ describe("@clifn/core consumer import scan", () => {
     expect(violations[3]).toContain('"@clifn/core/scaffold" is also not a subpath in');
   });
 
-  it("reports a specifier the statement expression did not consume", () => {
+  it("reports a declaration the statement expression did not consume", () => {
     // A listed symbol after a block on the same line is valid at module scope but does not start a line or
-    // follow `;`, so only the fail-closed pass sees it.
+    // follow `;`, so only the parser-side reconciliation sees it.
     const imports = scanSource('const ok = 1;\n{} import { createOutput } from "@clifn/core/output";\n', "inline.ts");
 
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
-      startingWith('inline.ts:2: `{} import { createOutput } from "@clifn/core/output";` names "@clifn/core/output"'),
+      startingWith('inline.ts:2: `import { createOutput } from "@clifn/core/output";` names "@clifn/core/output"'),
+    ]);
+  });
+
+  it("keeps each statement to its own symbols across export lists, comments and literals", () => {
+    const violations = findContractViolations(scanFixture("statement-boundary-forms.ts"), CONSUMER_CONTRACT_KEYS);
+
+    expect(violations).toEqual([
+      startingWith('statement-boundary-forms.ts:4: "readIntEnv" from "@clifn/core" is not in'),
+      startingWith('statement-boundary-forms.ts:6: "OutputOptions" from "@clifn/core/output" is not in'),
+      startingWith('statement-boundary-forms.ts:7: "readNumberEnv" from "@clifn/core/env" is not in'),
+      startingWith('statement-boundary-forms.ts:8: "createPrompt" from "@clifn/core/prompt" is not in'),
+      startingWith('statement-boundary-forms.ts:9: "formatDiagnosticsJson" from "@clifn/core/diagnostics" is not in'),
+      startingWith('statement-boundary-forms.ts:12: `import core = require("@clifn/core");` names "@clifn/core" in a form'),
+    ]);
+  });
+
+  it("parses listed symbols exactly and ignores commented-out and string-embedded imports", () => {
+    const imports = scanFixture("boundary-listed-forms.ts");
+
+    expect(imports.map(({ line, specifier, symbols }) => ({ line, specifier, symbols }))).toEqual([
+      { line: 2, specifier: "@clifn/core", symbols: [{ symbol: "createOutput", typeOnly: false }] },
+      { line: 4, specifier: "@clifn/core", symbols: [{ symbol: "loadConfig", typeOnly: false }] },
+      { line: 5, specifier: "@clifn/core/exec", symbols: [{ symbol: "createExec", typeOnly: false }] },
+      { line: 6, specifier: "@clifn/core/diagnostics", symbols: [{ symbol: "createDiagnostic", typeOnly: false }] },
+    ]);
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([]);
+  });
+
+  it("reports a statement match whose symbols differ from the parsed declaration", () => {
+    // A quoted specifier name is valid syntax the brace-list parse reads differently from the parser.
+    const imports = scanSource('import { "createOutput" as out } from "@clifn/core";\n', "quoted.ts");
+
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('quoted.ts:1: `import { "createOutput" as out } from "@clifn/core";` names "@clifn/core" in a form'),
     ]);
   });
 
@@ -154,8 +188,8 @@ describe("@clifn/core consumer import scan", () => {
     const imports = scanDirectory(fixturesDir, fixturesDir);
 
     expect(imports.map((scanned) => scanned.file)).toEqual(
-      expect.arrayContaining(["fail-closed-forms.ts", "unlisted-imports.ts"]),
+      expect.arrayContaining(["fail-closed-forms.ts", "statement-boundary-forms.ts", "unlisted-imports.ts"]),
     );
-    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(11);
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(17);
   });
 });
