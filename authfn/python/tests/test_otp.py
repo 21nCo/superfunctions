@@ -438,7 +438,8 @@ async def test_breaks_created_at_ties_by_id_like_the_typescript_kernel() -> None
         AuthFnConfig(database=db, namespace="authfn"),
         EmailOtpPluginConfig(delivery=DeliveryRecorder(), code_generator=lambda: "731942", now=clock.now),
     )
-    for row_id in ("otp_test_b", "otp_test_a"):
+    # Inserted in ascending id order, so only the id tie-break picks the second.
+    for row_id in ("otp_test_a", "otp_test_b"):
         await db.create(
             model="otp_challenges",
             data={
