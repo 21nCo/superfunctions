@@ -36,8 +36,10 @@ so consumers share the same `AdminClient` type.
 core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
 contracts and is not published yet either. `@apifn/cli` **0.1.0** adds `apifn check`;
 its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
-which npm does not serve, so the CLI release publishes after contracts and
-then sdk. Do not republish the already-used CLI 0.0.2.
+which npm does not serve. The `apifn-cli-v0.1.0` tag is therefore not pushed when
+`apifn check` merges: the release issue (API-7) publishes contracts, then sdk,
+then the CLI (owner decision 2026-11-21). Do not republish the already-used
+CLI 0.0.2.
 
 ## Python SDK
 
