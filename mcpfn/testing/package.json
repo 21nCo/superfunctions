@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/testing",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Protocol, authentication, Playwright, contract, scenario, and official conformance testing for MCP servers",
   "type": "module",
   "main": "dist/index.cjs",
