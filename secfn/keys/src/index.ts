@@ -19,3 +19,4 @@ export {
   type PrivateJwkSignerOptions,
   type WebCryptoSignerOptions,
 } from './signer.js';
+// verification change
