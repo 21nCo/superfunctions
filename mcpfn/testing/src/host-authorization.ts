@@ -84,14 +84,17 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    */
   supportedScopes?: string[];
   /**
-   * OAuth error codes the target may return before it looks up the client,
-   * for example from a `beforeClientResolution` hook or an equivalent gateway
-   * policy. A JSON rejection carrying one of these codes is accepted for a
-   * registration the server would otherwise reject as a client error. These
-   * codes never permit an error page or a callback. When omitted, the target
-   * declares no pre-resolution rejection.
+   * Cumulative number of client resolution attempts the target has made:
+   * stored client lookups (such as `clients.resolve` calls) plus
+   * client-metadata-document fetches. Cases run sequentially, so the harness
+   * reads it before and after each authorization request and attributes the
+   * difference to that request. A JSON rejection of a registration the server
+   * would reject as a client error may carry another code (for example from a
+   * `beforeClientResolution` policy) only when that request made no client
+   * resolution. Zero resolutions never permit an error page or a callback.
+   * When omitted, such a rejection must carry a client-stage code.
    */
-  preClientResolutionErrorCodes?: string[];
+  clientResolutionCount?(): number;
   prepareRegistration(fixture: McpFnHostedRegistrationFixture): Promise<void>;
   request(request: Request): Promise<Response>;
 }
@@ -273,9 +276,14 @@ async function runHostedCase(
     phase = "authorization-request";
     const authorization = hostedAuthorizationUrl(target.issuer, fixture);
     responseStatus = undefined;
+    const resolutionsBefore = target.clientResolutionCount?.();
     const authorizationResponse = await target.request(new Request(authorization, {
       redirect: "manual",
     }));
+    const resolutionsAfter = target.clientResolutionCount?.();
+    const resolutions = resolutionsBefore === undefined || resolutionsAfter === undefined
+      ? undefined
+      : resolutionsAfter - resolutionsBefore;
     responseStatus = authorizationResponse.status;
     const decision = redirectDecision(fixture, target);
     const authorizationError = await oauthError(authorizationResponse);
@@ -287,7 +295,7 @@ async function runHostedCase(
         "authorization",
         decision,
       );
-      assertClientStageRejection(decision, authorizationError, target.preClientResolutionErrorCodes);
+      assertClientStageRejection(decision, authorizationError, resolutions);
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture, decision)) {
@@ -655,18 +663,19 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
  * the URI matches, its JSON rejection must carry a client-stage code. A host
  * policy that runs before client resolution (such as `beforeClientResolution`)
  * may reject first with its own code; the response alone cannot tell that from
- * later validation, so only a code the target declares in
- * `preClientResolutionErrorCodes` is accepted in its place. The fixture's
- * expected code is never stage evidence.
+ * later validation, so another code is accepted only when the target's
+ * `clientResolutionCount` shows that this request made no client resolution.
+ * Neither a target-wide declaration nor the fixture's expected code is stage
+ * evidence.
  */
 function assertClientStageRejection(
   decision: RedirectDecision,
   errorCode: string,
-  preClientResolutionErrorCodes: readonly string[] | undefined,
+  resolutions: number | undefined,
 ): void {
   const permitted = decision.permittedClientCodes;
   if (decision.eligibility === "eligible" || !permitted) return;
-  if (permitted.has(errorCode) || preClientResolutionErrorCodes?.includes(errorCode)) return;
+  if (permitted.has(errorCode) || resolutions === 0) return;
   if (decision.eligibility === "indeterminate") throw new Error(INDETERMINATE_ELIGIBILITY);
   throw new Error(
     `An ineligible client registration must be rejected as a client error, not ${errorCode}`,

@@ -512,9 +512,15 @@ describe("unvetted-client authorization rejections", () => {
     capabilities: { tokenEndpointAuthMethods?: string[]; supportedScopes?: string[] } = {},
   ) {
     const registrations = new Map<string, McpFnNormalizedClientRegistration>();
+    let resolutions = 0;
     const handler = createMcpAuthorizationCompatibilityHandler({
       issuer,
-      clients: { resolve: async (clientId) => registrations.get(clientId) ?? null },
+      clients: {
+        resolve: async (clientId) => {
+          resolutions += 1;
+          return registrations.get(clientId) ?? null;
+        },
+      },
       allowedResources: [resource],
       supportedScopes: ["mcp:read"],
       redirectPolicy,
@@ -535,6 +541,7 @@ describe("unvetted-client authorization rejections", () => {
       tokenEndpointAuthMethods: ["none"],
       supportedScopes: ["mcp:read"],
       ...capabilities,
+      clientResolutionCount: () => resolutions,
       async prepareRegistration(fixture) {
         registrations.set(
           fixture.clientId,
@@ -1295,113 +1302,145 @@ describe("unvetted-client authorization rejections", () => {
       const NOT_CLIENT_ERROR = (error: string) =>
         `An ineligible client registration must be rejected as a client error, not ${error}`;
 
-      it("accepts a declared policy rejection that runs before client resolution", async () => {
-        let lookups = 0;
-        const handler = createMcpAuthorizationCompatibilityHandler({
-          issuer,
-          clients: {
-            resolve: async () => {
-              lookups += 1;
-              return null;
-            },
-          },
-          beforeClientResolution: () => {
-            throw new McpFnHostedAuthorizationError("access_denied", "Client is blocked by policy");
-          },
-          allowedResources: [resource],
-          supportedScopes: ["mcp:read"],
-          authorize: async () => new Response("unexpected authorize", { status: 500 }),
-          tokenAuthority: {
-            exchangeAuthorizationCode: async () => {
-              throw new Error("unexpected token exchange");
-            },
-            refreshToken: async () => {
-              throw new Error("unexpected token refresh");
-            },
-          },
-        });
-        const policyTarget = (preClientResolutionErrorCodes?: string[]) => ({
-          issuer,
-          preClientResolutionErrorCodes,
-          prepareRegistration: async () => {},
-          request: (request: Request) => handler(request),
-        });
-        const ineligible = (requested: string, expected?: string) => {
-          const fixture = rejectionFixture(DYNAMIC);
+      /** An ineligible dynamic and an indeterminate metadata-document fixture. */
+      function notEligible(requested: string, expected?: string) {
+        const ineligible = rejectionFixture(DYNAMIC);
+        ineligible.registration.metadata.response_types = ["token"];
+        const indeterminate = rejectionFixture(METADATA_DOCUMENT);
+        delete indeterminate.registration.metadata.token_endpoint_auth_method;
+        for (const fixture of [ineligible, indeterminate]) {
           redirect(LOOPBACK, requested)(fixture);
-          fixture.registration.metadata.response_types = ["token"];
           if (expected) fixture.expected.errorCode = expected;
           else delete fixture.expected.errorCode;
-          return fixture;
-        };
-        const cases = [
-          ineligible("https://other.example.com/cb"),
-          ineligible(RUNTIME_PORT),
-          ineligible(RUNTIME_PORT, "access_denied"),
-        ];
-        for (const fixture of cases) {
-          const [declared] = await runHostedAuthorizationRegression(policyTarget(["access_denied"]), [fixture]);
-          expect(declared).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "access_denied" });
-          const [undeclared] = await runHostedAuthorizationRegression(policyTarget(), [fixture]);
-          expect(undeclared).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("access_denied") });
         }
-        expect(lookups).toBe(0);
-        const [laterStage] = await runHostedAuthorizationRegression({
-          issuer,
-          preClientResolutionErrorCodes: ["access_denied"],
-          prepareRegistration: async () => {},
-          request: async () => Response.json({ error: "invalid_target" }, { status: 400 }),
-        }, [cases[0]]);
-        expect(laterStage).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
-      });
+        return [ineligible, indeterminate] as const;
+      }
+      const URIS = ["https://other.example.com/cb", RUNTIME_PORT];
 
-      it("never takes the expected code as evidence of a pre-resolution rejection", async () => {
-        const indeterminate = rejectionFixture(METADATA_DOCUMENT);
-        redirect(LOOPBACK, RUNTIME_PORT)(indeterminate);
-        delete indeterminate.registration.metadata.token_endpoint_auth_method;
-        indeterminate.expected.errorCode = "invalid_target";
-        const ineligible = rejectionFixture(DYNAMIC);
-        redirect(LOOPBACK, RUNTIME_PORT)(ineligible);
-        ineligible.registration.metadata.response_types = ["token"];
-        ineligible.expected.errorCode = "invalid_target";
-        for (const preClientResolutionErrorCodes of [undefined, ["access_denied"]]) {
+      it.each(["access_denied", "invalid_target"])(
+        "accepts a %s policy rejection made before any client resolution",
+        async (policyError) => {
+          let resolutions = 0;
+          const handler = createMcpAuthorizationCompatibilityHandler({
+            issuer,
+            clients: {
+              resolve: async () => {
+                resolutions += 1;
+                return null;
+              },
+            },
+            clientMetadataDocuments: {
+              enabled: true,
+              allow: async () => true,
+              fetch: async () => {
+                resolutions += 1;
+                return new Response(null, { status: 404 });
+              },
+            },
+            beforeClientResolution: () => {
+              throw new McpFnHostedAuthorizationError(policyError, "Client is blocked by policy");
+            },
+            allowedResources: [resource],
+            supportedScopes: ["mcp:read"],
+            authorize: async () => new Response("unexpected authorize", { status: 500 }),
+            tokenAuthority: {
+              exchangeAuthorizationCode: async () => {
+                throw new Error("unexpected token exchange");
+              },
+              refreshToken: async () => {
+                throw new Error("unexpected token refresh");
+              },
+            },
+          });
           const target = {
             issuer,
             tokenEndpointAuthMethods: ["none"],
-            preClientResolutionErrorCodes,
             prepareRegistration: async () => {},
-            request: async () => Response.json({ error: "invalid_target" }, { status: 400 }),
+            request: (request: Request) => handler(request),
           };
-          const [a, b] = await runHostedAuthorizationRegression(target, [indeterminate, ineligible]);
-          expect(a).toMatchObject({ status: "failed", error: INDETERMINATE });
-          expect(b).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
+          for (const requested of URIS) {
+            for (const expected of [undefined, policyError]) {
+              const fixtures = notEligible(requested, expected);
+              const results = await runHostedAuthorizationRegression(
+                { ...target, clientResolutionCount: () => resolutions },
+                [...fixtures],
+              );
+              for (const result of results) {
+                expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: policyError });
+              }
+              // Without the count, the stage is unknown: client-stage codes only.
+              const [a, b] = await runHostedAuthorizationRegression(target, [...fixtures]);
+              expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR(policyError) });
+              expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+            }
+          }
+          expect(resolutions).toBe(0);
+        },
+      );
+
+      it("rejects a non-client code from a request that resolved the client", async () => {
+        let resolutions = 0;
+        const resolvingTarget = {
+          issuer,
+          tokenEndpointAuthMethods: ["none"],
+          prepareRegistration: async () => {},
+          request: async () => {
+            resolutions += 1;
+            return Response.json({ error: "invalid_target" }, { status: 400 });
+          },
+        };
+        for (const requested of URIS) {
+          for (const expected of [undefined, "invalid_target"]) {
+            const fixtures = [...notEligible(requested, expected)];
+            for (const target of [
+              { ...resolvingTarget, clientResolutionCount: () => resolutions },
+              resolvingTarget,
+            ]) {
+              const [a, b] = await runHostedAuthorizationRegression(target, fixtures);
+              expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
+              expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+            }
+          }
         }
       });
 
-      it("never lets a declared policy code permit a post-match response", async () => {
-        const ineligible = rejectionFixture(DYNAMIC);
-        redirect(LOOPBACK, RUNTIME_PORT)(ineligible);
-        ineligible.registration.metadata.response_types = ["token"];
-        const indeterminate = rejectionFixture(METADATA_DOCUMENT);
-        redirect(LOOPBACK, RUNTIME_PORT)(indeterminate);
-        delete indeterminate.registration.metadata.token_endpoint_auth_method;
-        for (const fixture of [ineligible, indeterminate]) delete fixture.expected.errorCode;
-        const declared = { tokenEndpointAuthMethods: ["none"], preClientResolutionErrorCodes: ["access_denied"] };
+      it("never lets a request without client resolution permit a post-match response", async () => {
+        const fixtures = [...notEligible(RUNTIME_PORT)];
+        const unresolved = { tokenEndpointAuthMethods: ["none"], clientResolutionCount: () => 0 };
         const page = {
           issuer,
-          ...declared,
+          ...unresolved,
           prepareRegistration: async () => {},
           request: async () => htmlPage("<p><code>access_denied</code></p>")(),
         };
-        const callback = { ...callbackTarget(undefined, "access_denied"), ...declared };
+        const callback = { ...callbackTarget(undefined, "access_denied"), ...unresolved };
         // An ineligible registration's page is not an unvetted error page at all.
         for (const [target, ineligibleError] of [
           [page, "Authorization request did not redirect (HTTP 400)"],
           [callback, "Rejected redirect URI must not receive a callback"],
         ] as const) {
-          const [a, b] = await runHostedAuthorizationRegression(target, [ineligible, indeterminate]);
+          const [a, b] = await runHostedAuthorizationRegression(target, fixtures);
           expect(a).toMatchObject({ status: "failed", error: ineligibleError });
           expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+        }
+        // Zero resolutions never excuse a reflected redirect URI.
+        for (const requested of ["HTTP://127.0.0.1:49152/callback", RUNTIME_PORT, LOOPBACK]) {
+          const reflecting = notEligible("HTTP://127.0.0.1:49152/callback");
+          const results = await runHostedAuthorizationRegression({
+            issuer,
+            ...unresolved,
+            prepareRegistration: async () => {},
+            request: async () => Response.json(
+              { error: "access_denied", error_description: `Blocked ${requested}` },
+              { status: 400 },
+            ),
+          }, [...reflecting]);
+          for (const result of results) {
+            expect(result).toMatchObject({
+              status: "failed",
+              error: "Authorization error response must not reflect the client redirect URI",
+            });
+          }
         }
       });
 
