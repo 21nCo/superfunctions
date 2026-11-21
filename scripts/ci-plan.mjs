@@ -279,13 +279,7 @@ function canonicalJson(value) {
 
 function readLockfileAt(commitish) {
   try {
-    const source = execFileSync("git", ["show", `${commitish}:${LOCKFILE}`], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 256 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return JSON.parse(source);
+    return JSON.parse(git(["show", `${commitish}:${LOCKFILE}`], { maxBuffer: 256 * 1024 * 1024 }));
   } catch {
     return null;
   }
@@ -420,12 +414,9 @@ function collectSourceReferences(packageDirs) {
   const references = new Map();
   let files = [];
   try {
-    files = execFileSync("git", ["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 256 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).split("\0").filter(Boolean);
+    files = git(["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], { maxBuffer: 256 * 1024 * 1024 })
+      .split("\0")
+      .filter(Boolean);
   } catch {
     return references;
   }
