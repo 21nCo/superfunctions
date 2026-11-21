@@ -1,18 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TestCase } from "@testfn/core";
-import { ApifnTestAdapter } from "../src/integrations/testfn.js";
+// Imported through the package export so the test covers the built `./testfn` entry.
+import { ApifnTestAdapter } from "@apifn/core/testfn";
 
 const mocks = vi.hoisted(() => {
   return {
-    fastGlob: vi.fn(),
     readCollection: vi.fn(),
     runCollection: vi.fn(),
   };
 });
-
-vi.mock("fast-glob", () => ({
-  default: mocks.fastGlob,
-}));
 
 vi.mock("@apifn/collections", () => ({
   readCollection: mocks.readCollection,
@@ -20,8 +19,15 @@ vi.mock("@apifn/collections", () => ({
 }));
 
 describe("ApifnTestAdapter", () => {
+  let workdir: string | undefined;
+
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (workdir) rmSync(workdir, { recursive: true, force: true });
+    workdir = undefined;
   });
 
   it("TV-TESTFN-001: exposes apifn adapter identity", () => {
@@ -34,8 +40,12 @@ describe("ApifnTestAdapter", () => {
   });
 
   it("TV-TESTFN-002: discovers request-level test cases from opencollection directories", async () => {
+    // The built entry bundles fast-glob, so discovery runs against a real directory.
+    workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-testfn-adapter-")));
+    const orders = path.join(workdir, "orders");
+    mkdirSync(orders);
+    writeFileSync(path.join(orders, "opencollection.yml"), "info:\n  name: Orders API\n");
     const adapter = new ApifnTestAdapter();
-    mocks.fastGlob.mockResolvedValue(["/tmp/work/orders/opencollection.yml"]);
     mocks.readCollection.mockResolvedValue({
       info: { name: "Orders API" },
       environments: {},
@@ -49,13 +59,13 @@ describe("ApifnTestAdapter", () => {
       ],
     });
 
-    const tests = await adapter.discover(["/tmp/work/orders"]);
+    // Glob patterns use forward slashes (a backslash is a glob escape), and fast-glob returns
+    // forward-slash paths, so compare paths in that form on every platform.
+    const toPosix = (value: string) => value.replaceAll("\\", "/");
+    const tests = await adapter.discover([toPosix(workdir)]);
 
-    expect(mocks.fastGlob).toHaveBeenCalledWith(
-      "/tmp/work/orders/**/opencollection.yml",
-      { absolute: true },
-    );
-    expect(mocks.readCollection).toHaveBeenCalledWith("/tmp/work/orders");
+    expect(mocks.readCollection).toHaveBeenCalledTimes(1);
+    expect(toPosix(mocks.readCollection.mock.calls[0]![0] as string)).toBe(toPosix(orders));
     expect(tests).toHaveLength(2);
     expect(tests.map((t: TestCase) => t.name)).toEqual(["List Orders", "Login"]);
     expect(tests[0]?.suite).toBe("Orders API");

@@ -21,20 +21,23 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The prepared release versions are `@apifn/core`, `@apifn/react`, and
-`@apifn/svelte` **0.0.3**, plus `@apifn/docsfn` **0.1.0**. Publish core first;
-React, Svelte, and `@apifn/admin` **0.1.0** require that exact core version.
-Publish DocsFn after both renderers: it pins core, React, and Svelte to 0.0.3.
-The admin wrapper also requires the published `@superfunctions/admin` **^0.1.4**
-peer so consumers share the same `AdminClient` type.
-`@apifn/contracts` **0.1.0** also pins core to exactly 0.0.3 and publishes after
-core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either. The next `@apifn/cli` release depends on
-both, so it publishes after contracts and then sdk.
+The prepared release versions are `@apifn/core` **0.1.0** (the optional
+`@testfn/core` peer and the new `@apifn/core/testfn` subpath) and the next patch of
+every published package that pins it exactly: `@apifn/collections`,
+`@apifn/mock`, `@apifn/snippets`, `@apifn/react`, and `@apifn/svelte` (collections
+and mock **0.0.4**, the others **0.0.5**), `@apifn/admin` **0.1.2**, and
+`@apifn/docsfn` **0.1.2**. Publish core first, then collections, mock, snippets,
+React, Svelte, and admin, which all require that exact core version. Publish
+DocsFn after both renderers: it pins core 0.1.0 and React and Svelte 0.0.5. The
+admin wrapper also requires the published `@superfunctions/admin` **^0.1.4** peer
+so consumers share the same `AdminClient` type.
 
-All ApiFn workspace callers use the new exact core pin. CLI, collections, mock,
-and snippets retain their current package versions and are not included in this
-publication batch; do not republish their already-used versions.
+`@apifn/contracts` **0.1.0** also pins core to exactly 0.1.0 and publishes after
+core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
+contracts and is not published yet either. `@apifn/cli` keeps version **0.0.2**:
+its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
+which npm does not serve, so the next CLI release publishes after contracts and
+then sdk. Do not republish the already-used CLI 0.0.2.
 
 ## Python SDK
 
