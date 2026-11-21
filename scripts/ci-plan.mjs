@@ -409,7 +409,61 @@ function readDependencyNames(manifest) {
 }
 
 // The packages turbo's `..../<dir>` filter selects: each seed and every package that depends on it, transitively.
-function collectJsDependents(seedDirs, manifests) {
+// Code files whose relative paths can reach into another package: a test importing a sibling package's source, a
+// vitest or tsconfig file pointing at shared fixtures, a probe loading another package's build.
+const SOURCE_REFERENCE_FILES = ["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro"];
+const RELATIVE_PARENT_PATH = /["'`](\.\.\/[^"'`\n$]*)["'`]/g;
+
+// Edges Turbo's package graph cannot see: package A's tracked code names a "../" path inside package B, so a change
+// to B can break A's tests without A depending on B. Returns dependency dir -> the dirs that reference it.
+function collectSourceReferences(packageDirs) {
+  const references = new Map();
+  let files = [];
+  try {
+    files = execFileSync("git", ["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).split("\0").filter(Boolean);
+  } catch {
+    return references;
+  }
+
+  for (const file of files) {
+    const owner = findNearestManifestDir(file, packageDirs);
+    if (!owner) {
+      continue;
+    }
+    let source;
+    try {
+      source = readFileSync(path.join(repoRoot, file), "utf8");
+    } catch {
+      continue;
+    }
+    for (const [, specifier] of source.matchAll(RELATIVE_PARENT_PATH)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier));
+      if (target.startsWith("../")) {
+        continue;
+      }
+      // A path naming a package directory itself (`../viewer`) belongs to that package, as does anything inside it.
+      const referenced = findNearestManifestDir(`${target.replace(/\/+$/, "")}/-`, packageDirs);
+      if (referenced && referenced !== owner) {
+        if (!references.has(referenced)) {
+          references.set(referenced, new Set());
+        }
+        references.get(referenced).add(owner);
+      }
+    }
+  }
+
+  return references;
+}
+
+// The packages turbo's `..../<dir>` filter selects (each seed and every package that depends on it, transitively),
+// plus packages whose code references a selected package by relative path, and their dependents. `referencedOnly` holds
+// the packages reached through such a reference alone; Turbo's filters cannot reach them, so they become seeds too.
+function collectJsDependents(seedDirs, manifests, sourceReferences = new Map()) {
   const dirsByName = new Map();
   for (const manifest of manifests) {
     if (!dirsByName.has(manifest.name)) {
@@ -431,17 +485,26 @@ function collectJsDependents(seedDirs, manifests) {
   }
 
   const selected = new Set(seedDirs);
+  const referencedOnly = new Set();
   const queue = [...seedDirs];
   while (queue.length > 0) {
-    for (const dependent of dependents.get(queue.shift()) || []) {
+    const dir = queue.shift();
+    for (const dependent of dependents.get(dir) || []) {
       if (!selected.has(dependent)) {
         selected.add(dependent);
         queue.push(dependent);
       }
     }
+    for (const consumer of sourceReferences.get(dir) || []) {
+      if (!selected.has(consumer)) {
+        selected.add(consumer);
+        referencedOnly.add(consumer);
+        queue.push(consumer);
+      }
+    }
   }
 
-  return selected;
+  return Object.assign(selected, { referencedOnly });
 }
 
 function writeOutput(name, value) {
@@ -531,19 +594,6 @@ const pythonPackages = discoverPythonPackages(repoRoot).map((manifest) => ({
 const jsByDir = new Map(jsPackages.map((manifest) => [manifest.dir, manifest]));
 const pythonByDir = new Map(pythonPackages.map((manifest) => [manifest.dir, manifest]));
 const pythonByName = new Map(pythonPackages.map((manifest) => [manifest.name, manifest]));
-
-// The workflow passes Turbo filters through the shell unquoted, and Turbo reads `...` and `{}` in a filter as
-// selectors, so every package directory must be plain path segments: letters, digits, `_`, `@`, `-`, and single dots
-// inside a segment or before it (`.github`). Every directory qualifies today; the plan fails rather than build a filter
-// that splits or selects the wrong packages.
-const SAFE_FILTER_DIR = /^\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*(?:\/\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*)*$/;
-const unsafeDirs = jsPackages.map((manifest) => manifest.dir).filter((dir) => !SAFE_FILTER_DIR.test(dir));
-if (unsafeDirs.length > 0) {
-  console.error(
-    `CI planner: these package directories cannot be passed to Turbo as filters; rename them: ${unsafeDirs.map((dir) => JSON.stringify(dir)).join(", ")}`
-  );
-  process.exit(1);
-}
 
 const jsDirs = new Set(jsByDir.keys());
 const pythonDirs = new Set(pythonByDir.keys());
@@ -637,10 +687,11 @@ const selectedPythonPackages = fullPython
 
 // Every changed package seeds the Turbo filters, whatever scripts it has: `..../<dir>` runs a task in the seed and in
 // each dependent that defines it, so a seed without a task still selects its dependents' runs of that task.
-const jsSeedDirs = new Set(selectedJsPackages.map((manifest) => manifest.dir));
+const jsChangedDirs = new Set(selectedJsPackages.map((manifest) => manifest.dir));
 const jsSelection = fullJs
   ? new Set(jsPackages.map((manifest) => manifest.dir))
-  : collectJsDependents(jsSeedDirs, jsPackages);
+  : collectJsDependents(jsChangedDirs, jsPackages, collectSourceReferences(jsDirs));
+const jsSeedDirs = new Set([...jsChangedDirs, ...(jsSelection.referencedOnly || [])]);
 const selectionHas = (task) => [...jsSelection].some((dir) => jsByDir.get(dir)?.scripts[task]);
 const jsSeedFilters = fullJs ? "" : buildTurboFilters(jsSeedDirs);
 const hasJsBuild = selectionHas("build");
@@ -684,6 +735,24 @@ const summary = {
 };
 
 console.log(JSON.stringify(summary, null, 2));
+
+// The workflow passes Turbo filters through the shell unquoted, and Turbo reads `...` and `{}` in a filter as
+// selectors, so a directory that reaches a filter must be plain path segments: letters, digits, `_`, `@`, `-`, and
+// single dots inside a segment or before it (`.github`). Every package directory qualifies today; the plan fails
+// rather than emit a filter that splits or selects the wrong packages. Directories no filter names are not checked.
+const SAFE_FILTER_DIR = /^\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*(?:\/\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*)*$/;
+const filterDirs = new Set([
+  ...(fullJs ? [] : jsSeedDirs),
+  ...devfnTestPackages,
+  ...jsPackages.map((manifest) => manifest.dir).filter(isDevfnDir),
+]);
+const unsafeDirs = [...filterDirs].filter((dir) => !SAFE_FILTER_DIR.test(dir)).sort(compareStrings);
+if (unsafeDirs.length > 0) {
+  console.error(
+    `CI planner: these package directories cannot be passed to Turbo as filters; rename them: ${unsafeDirs.map((dir) => JSON.stringify(dir)).join(", ")}`
+  );
+  process.exit(1);
+}
 
 writeOutput("plan_mode", PLAN_MODE);
 writeOutput("base_ref", baseRef);

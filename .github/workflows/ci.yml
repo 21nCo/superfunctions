@@ -19,10 +19,12 @@ on:
 permissions:
   contents: read
 
-# The event name keeps the nightly run and dev pushes from cancelling each other.
+# A newer push to a pull request cancels its older run. Every other run (a push to dev/next/main, the nightly run, a
+# manual run) gets a group of its own and always finishes: the release CI gate needs a successful full push run on the
+# exact release commit.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:

@@ -478,20 +478,47 @@ test("a changed package without a task still runs that task in its dependents", 
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test("a package directory Turbo cannot take as a filter fails the plan", () => {
-  for (const dir of ["filefn/reference assets", "devfn/reference assets", "filefn/reference...", "filefn/{x}"]) {
-    const { root, plan } = devfnFixture({ [`${dir}/package.json`]: JSON.stringify({ name: "@fixture/odd" }) });
+test("a package directory Turbo cannot take as a filter fails the plan when a filter would name it", () => {
+  for (const [dir, file] of [
+    ["filefn/reference assets", "filefn/reference assets/notes.md"],
+    ["devfn/reference assets", "README.md"],
+    ["filefn/reference...", "filefn/reference.../notes.md"],
+    ["filefn/{x}", "filefn/{x}/notes.md"],
+  ]) {
+    const { root, plan } = devfnFixture({ [`${dir}/package.json`]: JSON.stringify({ name: "@fixture/odd" }), "README.md": "# Fixture\n" });
     try {
-      assert.throws(() => plan("filefn/core/src/index.ts"), (error) => {
+      assert.throws(() => plan(({ put }) => put(file, "changed\n")), (error) => {
         assert.match(String(error.stderr), /cannot be passed to Turbo as filters/, dir);
         return true;
       }, dir);
     } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
   }
+  // Outside DevFn, an odd directory that no filter names does not block other changes or a full run.
+  const odd = devfnFixture({ "fixtures/with space/package.json": JSON.stringify({ name: "@fixture/odd" }) });
+  try {
+    assert.equal(odd.plan("filefn/core/src/index.ts").js_build_filters, "--filter=..../filefn/core");
+    assert.equal(odd.plan("filefn/core/src/index.ts", { CI_PLAN_MODE: "full" }).full_js, "true");
+  } finally { rmSync(odd.root, { recursive: true, force: true, maxRetries: 5 }); }
   // A leading dot, as in .github/apifn-cli-install, is fine.
   const { root, plan } = devfnFixture({ ".github/apifn-cli-install/package.json": JSON.stringify({ name: "apifn-cli-install" }) });
   try {
     assert.equal(plan(".github/apifn-cli-install/package.json").js_build_filters, "--filter=..../.github/apifn-cli-install");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a package whose code references another package's files by relative path is selected with it", () => {
+  const { root, plan } = devfnFixture({
+    // otherfn/cli's test imports filefn/core's source without depending on it; filefn/core's own "../" paths stay inside it.
+    "otherfn/cli/tests/integration.test.ts": 'import { x } from "../../../filefn/core/src/index.ts";\nconst outside = "../../../../elsewhere";\n',
+    "filefn/core/tests/self.test.ts": 'import "../src/index.ts";\n',
+  });
+  try {
+    const outputs = plan("filefn/core/src/index.ts");
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.js_build_filters, "--filter=..../filefn/core --filter=..../otherfn/cli");
+    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../otherfn/cli ${EXCLUDE_DEVFN}`);
+    // Nothing references otherfn/cli, so a change there selects only it.
+    assert.equal(plan("otherfn/cli/src/index.ts").js_build_filters, "--filter=..../otherfn/cli");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
