@@ -15,6 +15,7 @@ import {
   endpointIncludes,
   endpointList,
   findRelationMatch,
+  firstEndpoint,
   getCapabilityFields,
   getTemporalClauses,
   getTemporalGroupAliases,
@@ -661,15 +662,11 @@ function findOwnForeignKeyField(
   const match = findRelationMatch(schema, resourceName, relationName);
   if (!match) return undefined;
   const { relation, direction } = match;
-  // htree: only the inverse (parent) direction writes this record's own FK,
-  // and only for a self-referential tree is the written record of this
-  // resource (with distinct endpoints the executor writes the `from` side).
+  // htree: only the inverse (parent) direction writes an FK, on the model the
+  // executor picks (the first `from` endpoint); the alias applies only when
+  // that is this resource, i.e. the write lands on the authorized record.
   if (relation.type === "htree" && direction === "inverse") {
-    const froms = endpointList(relation.from);
-    const tos = endpointList(relation.to);
-    const selfReferential =
-      froms.length === 1 && tos.length === 1 && froms[0] === resourceName && tos[0] === resourceName;
-    return selfReferential
+    return firstEndpoint(relation.from) === resourceName
       ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
       : undefined;
   }
