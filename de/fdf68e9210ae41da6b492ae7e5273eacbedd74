@@ -1,0 +1,19 @@
+authfn/core/src/core/passwords.ts
+  s_e5ac07859c1bc9::t_080e342dec1401 1,40-45,49-52,54-55,268-272,276-277,284,387-390,392,395-396,410-425,432-455,457,459-465,467-496,604-609
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "defdf68e9210ae41da6b492ae7e5273eacbedd74",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
