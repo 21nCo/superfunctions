@@ -293,6 +293,16 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     }));
     expect(verified.status).toBe(200);
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+
+    // An address without an account is refused the same way.
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: 'nobody@example.com' }));
+    const missing = await ctx.handle(json('/otp/verify', {
+      purpose: 'verify-email',
+      email: 'nobody@example.com',
+      code: ctx.codeFor('verify-email', 'nobody@example.com'),
+      requireAccountHolder: true
+    }, { authorization: `Bearer ${token}` }));
+    expect(missing.status).toBe(401);
   });
 
   it('neither verifies nor claims a disabled account, so its holder keeps their credentials', async () => {

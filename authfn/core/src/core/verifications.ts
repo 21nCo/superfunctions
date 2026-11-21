@@ -379,13 +379,14 @@ export async function verifyOtpChallenge(
     ) {
       throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
     }
-    if (input.purpose === 'verify-email' && user && (!user.emailVerifiedAt || input.requireAccountHolder)) {
-      verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
-      if (input.requireAccountHolder && !verifiedByHolder) {
-        throw new AuthFnUnauthenticatedError('Verifying this email requires the account\'s own signed-in session', {
-          userId: user.id
-        });
+    if (input.purpose === 'verify-email' && input.requireAccountHolder) {
+      // No account, or not its live session: refused before the code is used.
+      verifiedByHolder = user ? await isAccountHolderRequest(config, input.request, user.id) : false;
+      if (!verifiedByHolder) {
+        throw new AuthFnUnauthenticatedError('Verifying this email requires the account\'s own signed-in session');
       }
+    } else if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
+      verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
     }
 
     consumed = await consumeOtpChallenge(config, challenge, now);
