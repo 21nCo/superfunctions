@@ -787,12 +787,17 @@ async function admitOtpChallenge(
   }
 
   const expiresAt = new Date(now.getTime() + resolveTtlMs(runtimeOptions));
-  const admitted = await updateOtpChallengeIfMatches(
-    config,
-    challenge.id,
-    [{ field: 'consumedAt', operator: 'eq', value: null }],
-    { expiresAt, updatedAt: now }
-  );
+  let admitted = false;
+  try {
+    admitted = await updateOtpChallengeIfMatches(
+      config,
+      challenge.id,
+      [{ field: 'consumedAt', operator: 'eq', value: null }],
+      { expiresAt, updatedAt: now }
+    );
+  } catch {
+    // The write may have committed before the error; read back below.
+  }
   if (!admitted) {
     // The write may have applied without an acknowledgement; the stored row
     // says whether it was admitted.

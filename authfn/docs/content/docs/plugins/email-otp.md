@@ -135,7 +135,7 @@ sequenceDiagram
 | `AUTHFN_VALIDATION_ERROR` | Missing email/purpose. |
 | `AUTHFN_DELIVERY_FAILED` | `delivery.send` threw or returned `sent: false`. |
 | `AUTHFN_OTP_INVALID` | Code doesn't match. |
-| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`. |
+| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`, or (rarely) the challenge is older than the newest challenges the per-email count reads, after a flood of new ones. Either way, request a new code. |
 | `AUTHFN_OTP_REPLAYED` | Already consumed. |
 | `AUTHFN_RATE_LIMITED` | The email has used its per-email budget of wrong codes or challenges. `details.limit` is `failed-attempts` or `challenges`. `details.resetAt` is when enough counted challenges will have left the window (or expired) for a new request to pass; that is not always the oldest one. A refusal caused only by concurrent requests reports a retry about a second later. |
 | `AUTHFN_CONFLICT` | Sign-up but the email already exists (when `otpSignUpExistingUser` is `false`). |
