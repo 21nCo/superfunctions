@@ -839,3 +839,66 @@ async def test_refuses_a_non_bytes_key_and_checks_the_key_before_a_sign_in_start
         await service.handle_callback("google", code="test-code", state="test-state")
     assert db.storage.get("users", []) == []
     assert db.storage.get("oauth_states", []) == []
+
+
+@pytest.mark.asyncio
+async def test_migrates_legacy_rows_to_a_new_key_reference_and_skips_rows_changed_meanwhile() -> None:
+    from cryptography.fernet import Fernet
+
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault, _fernet_key_from_secret
+
+    def only_new_ref(key_ref: str) -> bytes:
+        if key_ref != "oauth-new":
+            raise KeyError(key_ref)
+        return b"test-oauth-new-reference-key-not-a-real-secret"
+
+    db = MockDatabaseAdapter()
+    config = AuthFnConfig(database=db, namespace="authfn")
+    await db.create(model="oauth_tokens", data=_legacy_row(), namespace="authfn")
+    vault = DbEncryptedTokenVault(config, default_key_ref="oauth-new", now=datetime.utcnow, key_resolver=only_new_ref)
+    assert await vault.migrate_legacy_tokens("oauth-new") == 1
+    row = db.storage["oauth_tokens"][0]
+    assert row["key_ref"] == "oauth-new"
+    assert Fernet(_fernet_key_from_secret(only_new_ref("oauth-new"))).decrypt(
+        row["encrypted_payload"].encode("utf-8")
+    ) == b"test-provider-token-payload"
+
+    # A row that changed after it was read is skipped, not overwritten.
+    db2 = MockDatabaseAdapter()
+    await db2.create(model="oauth_tokens", data=_legacy_row(), namespace="authfn")
+    stale = [dict(item) for item in db2.storage["oauth_tokens"]]
+    db2.storage["oauth_tokens"][0]["encrypted_payload"] = "test-replaced-after-read"
+    original_find_many = db2.find_many
+
+    async def stale_find_many(**kwargs: Any) -> List[Dict[str, Any]]:
+        return stale if kwargs.get("model") == "oauth_tokens" else await original_find_many(**kwargs)
+
+    db2.find_many = stale_find_many  # type: ignore[method-assign]
+    vault2 = DbEncryptedTokenVault(
+        AuthFnConfig(database=db2, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=_test_oauth_key
+    )
+    assert await vault2.migrate_legacy_tokens() == 0
+    assert db2.storage["oauth_tokens"][0]["encrypted_payload"] == "test-replaced-after-read"
+
+
+@pytest.mark.asyncio
+async def test_writes_with_the_key_checked_up_front_even_if_the_resolver_fails_later() -> None:
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault
+
+    calls = {"count": 0}
+
+    def flaky(key_ref: str) -> bytes:
+        calls["count"] += 1
+        if calls["count"] > 1:
+            raise RuntimeError("test key service unavailable")
+        return _test_oauth_key(key_ref)
+
+    db = MockDatabaseAdapter()
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="", now=datetime.utcnow, key_resolver=flaky
+    )
+    vault.assert_configured()
+    record = _token_record()
+    record["keyRef"] = "oauth-default"
+    await vault.put(record)
+    assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"

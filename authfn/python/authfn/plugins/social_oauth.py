@@ -180,9 +180,13 @@ class DbEncryptedTokenVault:
         key_resolver: Optional[Callable[[str], bytes | str]] = None,
     ):
         self.config = config
-        self.default_key_ref = default_key_ref
+        # The shared flow stores under this reference when a record names none.
+        self.default_key_ref = default_key_ref or "oauth-default"
         self.now = now
         self.key_resolver = key_resolver
+        # Ciphers resolved by this vault, so a sign-in that checked its key up
+        # front writes with that same key even if the resolver fails later.
+        self._ciphers: Dict[str, Fernet] = {}
 
     async def put(self, record: TokenRecord) -> None:
         normalized = (
@@ -271,7 +275,7 @@ class DbEncryptedTokenVault:
         key reference. Called before a sign-in has any side effect."""
         self._cipher(self.default_key_ref)
 
-    async def migrate_legacy_tokens(self) -> int:
+    async def migrate_legacy_tokens(self, destination_key_ref: Optional[str] = None) -> int:
         """Re-encrypts, with the configured key, every row still encrypted
         with the key earlier releases derived from the namespace alone (which
         anyone could compute). Run it once after upgrading; it returns how many
@@ -287,35 +291,63 @@ class DbEncryptedTokenVault:
         )
         migrated = 0
         for row in rows:
-            key_ref = row.get("key_ref") or self.default_key_ref
-            ciphertext = str(row.get("encrypted_payload") or "").encode("utf-8")
-            target = self._cipher(key_ref)
+            stored_ref = row.get("key_ref") or self.default_key_ref
+            ciphertext = str(row.get("encrypted_payload") or "")
             try:
-                target.decrypt(ciphertext)
-                continue
-            except InvalidToken:
-                pass
-            try:
-                plaintext = Fernet(_legacy_fernet_key(self.config.namespace, key_ref)).decrypt(ciphertext)
+                # Rows the old key cannot open were written with a configured
+                # key (or are corrupt) and are left alone.
+                plaintext = Fernet(_legacy_fernet_key(self.config.namespace, stored_ref)).decrypt(
+                    ciphertext.encode("utf-8")
+                )
             except InvalidToken:
                 continue
-            await self.config.database.update(
-                model="oauth_tokens",
-                where=[{"field": "token_id", "operator": "eq", "value": row["token_id"]}],
-                data={
-                    "encrypted_payload": target.encrypt(plaintext).decode("utf-8"),
+            target_ref = destination_key_ref or stored_ref
+            written = await self._replace_if_unchanged(
+                row,
+                ciphertext,
+                {
+                    "encrypted_payload": self._cipher(target_ref).encrypt(plaintext).decode("utf-8"),
+                    "key_ref": target_ref,
                     "updated_at": self.now().isoformat(),
                 },
-                namespace=self.config.namespace,
             )
-            migrated += 1
+            if written:
+                migrated += 1
         return migrated
+
+    async def _replace_if_unchanged(self, row: Dict[str, Any], ciphertext: str, data: Dict[str, Any]) -> bool:
+        """Writes only while the row still holds the ciphertext that was read,
+        so a row changed or deleted meanwhile (a new token, a disconnect) is
+        skipped rather than overwritten or stopping the run."""
+        where = [
+            {"field": "token_id", "operator": "eq", "value": row["token_id"]},
+            {"field": "encrypted_payload", "operator": "eq", "value": ciphertext},
+        ]
+        update_many = getattr(self.config.database, "update_many", None)
+        if callable(update_many):
+            count = await update_many(
+                model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
+            )
+            return isinstance(count, int) and not isinstance(count, bool) and count >= 1
+        try:
+            await self.config.database.update(
+                model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
+            )
+        except Exception:  # noqa: BLE001
+            return False
+        return True
 
     def _cipher(self, key_ref: str) -> Fernet:
         """The cipher for a key reference, from the configured secret key."""
+        key_ref = key_ref or self.default_key_ref
+        cached = self._ciphers.get(key_ref)
+        if cached is not None:
+            return cached
         if self.key_resolver is None:
             raise ConfigError("Social OAuth encryption_key_resolver must be configured to store provider tokens")
-        return Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
+        cipher = Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
+        self._ciphers[key_ref] = cipher
+        return cipher
 
 
 class FetchOAuthTokenHttpClient:
