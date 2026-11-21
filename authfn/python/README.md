@@ -59,7 +59,7 @@ auth = create_authfn(
 )
 ```
 
-After upgrading from a release that stored social OAuth tokens without a configured key, re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()` (pass `destination_key_ref=` when your resolver only knows a new key reference).
+After upgrading from a release that stored social OAuth tokens without a configured key, re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()` (when your resolver only knows a new key reference, set the plugin's `encryption_key_ref` to it and pass the same value as `destination_key_ref=`).
 
 Mount the emitted routes through the shared adapters:
 

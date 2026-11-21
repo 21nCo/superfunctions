@@ -284,12 +284,13 @@ class DbEncryptedTokenVault:
         self._ciphers.pop(self.default_key_ref, None)
         self._cipher(self.default_key_ref)
 
-    def for_request(self) -> "DbEncryptedTokenVault":
-        """A vault for one request, holding the current key for the default
-        reference, checked now (ConfigError if missing or bad)."""
+    def for_request(self, key_ref: Optional[str] = None) -> "DbEncryptedTokenVault":
+        """A vault for one request, holding the current key for `key_ref`
+        (this vault's default reference when not given), checked now
+        (ConfigError if missing or bad)."""
         vault = DbEncryptedTokenVault(
             self.config,
-            default_key_ref=self.default_key_ref,
+            default_key_ref=key_ref or self.default_key_ref,
             now=self.now,
             key_resolver=self.key_resolver,
             _pin_keys=True,
@@ -580,8 +581,9 @@ class SocialOAuthService:
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
         # A missing or bad token key fails here, before the provider redirect
-        # or any user is created, not after the callback has written rows.
-        self.token_vault.assert_configured()
+        # or any user is created, not after the callback has written rows. The
+        # reference checked is the one configured now.
+        self.token_vault.for_request(self.plugin_config.encryption_key_ref)
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         resolved = await self._run_before_start(
@@ -643,8 +645,11 @@ class SocialOAuthService:
         # A missing or bad token key fails here, before the provider exchange
         # or any user is created, not after the callback has written rows. This
         # callback gets its own vault holding the key it checked, so its write
-        # uses that key whatever other calls on this service do meanwhile.
-        vault = self.token_vault.for_request()
+        # uses that key whatever other calls on this service do meanwhile. The
+        # key reference is read once here and used for both the check and the
+        # write, even if the configuration changes during the callback.
+        key_ref = self.plugin_config.encryption_key_ref
+        vault = self.token_vault.for_request(key_ref)
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         settings = self._resolve_provider_settings(provider_id, runtime)
@@ -655,6 +660,7 @@ class SocialOAuthService:
             runtime=runtime,
             settings=settings,
             token_vault=vault,
+            key_ref=key_ref,
         )
 
         try:
@@ -759,6 +765,7 @@ class SocialOAuthService:
         runtime: Optional[AuthFnRuntimeResolution],
         settings: SocialProviderConfig,
         token_vault: Optional["DbEncryptedTokenVault"] = None,
+        key_ref: Optional[str] = None,
     ) -> OAuthFlowService:
         resolved_runtime = runtime or resolve_runtime(self.config, request)
 
@@ -866,7 +873,7 @@ class SocialOAuthService:
                             "onDisconnected": on_disconnected,
                         }
                     ),
-                    "keyRef": self.plugin_config.encryption_key_ref,
+                    "keyRef": key_ref or self.plugin_config.encryption_key_ref,
                     "stateTtlSeconds": self.plugin_config.state_ttl_seconds,
                     "now": self.plugin_config.now,
                     "emitEvent": emit_flow_event,

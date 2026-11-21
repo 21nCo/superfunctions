@@ -1034,3 +1034,43 @@ async def test_migration_stops_when_update_many_reports_no_row_count() -> None:
     with pytest.raises(ConfigError):
         await vault.migrate_legacy_tokens()
     assert db.storage["oauth_tokens"][0] == before
+
+
+@pytest.mark.asyncio
+async def test_callback_reads_the_key_reference_once_for_its_check_and_its_write() -> None:
+    db = MockDatabaseAdapter()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+    exchanged = {"done": False}
+    google = build_google_fetcher()
+
+    async def fetcher(url: str, init: Dict[str, Any]) -> MockResponse:
+        response = await google(url, init)
+        exchanged["done"] = True
+        return response
+
+    def resolver(key_ref: str) -> bytes:
+        # The key service goes down once the provider exchange has happened.
+        if exchanged["done"]:
+            raise RuntimeError("test key service unavailable")
+        return _test_oauth_key(key_ref)
+
+    plugin_config = SocialOAuthPluginConfig(
+        encryption_key_resolver=resolver,
+        encryption_key_ref="test-ref-a",
+        now=clock.now,
+        fetcher=fetcher,
+        providers={
+            "google": SocialProviderConfig(
+                client_id="google-client-id",
+                client_secret="test-google-secret",
+                allowlisted_return_to=["https://app.example.com/post-auth"],
+            )
+        },
+    )
+    service = SocialOAuthService(AuthFnConfig(database=db, namespace="authfn"), plugin_config)
+    started = await service.start("google", return_to="https://app.example.com/post-auth")
+    # The application switches to a new key reference before the callback.
+    plugin_config.encryption_key_ref = "test-ref-b"
+    completed = await service.handle_callback("google", code="abc123", state=started["stateId"])
+    assert completed["status"] == 303
+    assert db.storage["oauth_tokens"][0]["key_ref"] == "test-ref-b"
