@@ -75,7 +75,8 @@ export interface StorageAdapter {
    * writes never hide an ordinary candidate from add(). The built-in adapters
    * declare it only while their searchVectors is the built-in one, and an
    * adapter they open for a transaction declares what its parent declares; a
-   * subclass that overrides searchVectors must declare it itself. Only true
+   * subclass that overrides searchVectors must declare it itself, by
+   * overriding their excludesSources getter. Only true
    * declares it.
    */
   readonly excludesSources?: boolean;
