@@ -309,6 +309,62 @@ describe("@clifn/core consumer import scan", () => {
     expect(scanSource('export const lazy = () => import("@clifn/core/prompt");\n/** trailing */\n', "lazy.ts")).toEqual([]);
   });
 
+  it("fails closed on standard and diff3 merge conflicts and checks the sections the parser skips", () => {
+    const marker = (file: string, line: number, text: string): unknown =>
+      startingWith(`${file}:${line}: unresolved merge conflict marker \`${text}\``);
+    const hidden = (file: string, line: number, statement: string): unknown => startingWith(`${file}:${line}: \`${statement}\` names`);
+    const standard = [
+      "<<<<<<< HEAD",
+      'import { createOutput } from "@clifn/core/output";',
+      'export { readIntEnv } from "@clifn/core";',
+      "=======",
+      'import { NotInContract } from "@clifn/core/runner";',
+      'export { AlsoMissing } from "@clifn/core";',
+      ">>>>>>> branch",
+      "export const x = 1;",
+    ].join("\n");
+    expect(findContractViolations(scanSource(standard, "standard.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      marker("standard.ts", 1, "<<<<<<<"),
+      startingWith('standard.ts:3: "readIntEnv" from "@clifn/core" is not in'),
+      marker("standard.ts", 4, "======="),
+      hidden("standard.ts", 5, 'import { NotInContract } from "@clifn/core/runner"'),
+      hidden("standard.ts", 6, 'export { AlsoMissing } from "@clifn/core"'),
+      marker("standard.ts", 7, ">>>>>>>"),
+    ]);
+
+    const diff3 = [
+      "<<<<<<< HEAD",
+      'export { readIntEnv } from "@clifn/core";',
+      "||||||| base",
+      'import { BaseMissing } from "@clifn/core";',
+      'export { BaseExport } from "@clifn/core/output";',
+      "=======",
+      'import { NotInContract } from "@clifn/core/runner";',
+      'export { AlsoMissing } from "@clifn/core";',
+      ">>>>>>> branch",
+    ].join("\n");
+    expect(findContractViolations(scanSource(diff3, "diff3.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      marker("diff3.ts", 1, "<<<<<<<"),
+      startingWith('diff3.ts:2: "readIntEnv" from "@clifn/core" is not in'),
+      marker("diff3.ts", 3, "|||||||"),
+      hidden("diff3.ts", 4, 'import { BaseMissing } from "@clifn/core"'),
+      hidden("diff3.ts", 5, 'export { BaseExport } from "@clifn/core/output"'),
+      marker("diff3.ts", 6, "======="),
+      hidden("diff3.ts", 7, 'import { NotInContract } from "@clifn/core/runner"'),
+      hidden("diff3.ts", 8, 'export { AlsoMissing } from "@clifn/core"'),
+      marker("diff3.ts", 9, ">>>>>>>"),
+    ]);
+
+    // A conflict fails even when every side is listed, and marker-like text inside a literal is not a conflict.
+    const listedOnly = "<<<<<<< HEAD\nexport const a = 1;\n=======\nexport const a = 2;\n>>>>>>> branch\n";
+    expect(findContractViolations(scanSource(listedOnly, "listed.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      marker("listed.ts", 1, "<<<<<<<"),
+      marker("listed.ts", 3, "======="),
+      marker("listed.ts", 5, ">>>>>>>"),
+    ]);
+    expect(scanSource("export const doc = `\n=======\n>>>>>>> branch\n`;\n", "literal.ts")).toEqual([]);
+  });
+
   it("reports a statement match the parser does not read as a module reference", () => {
     const imports = scanSource('let o = { export { readIntEnv } from "@clifn/core" };\n', "malformed.ts");
 

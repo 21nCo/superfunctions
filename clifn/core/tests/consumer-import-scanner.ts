@@ -19,7 +19,8 @@ import { contractKey } from "./consumer-contract.table.js";
  * `import type` and `export ... from`) is the locator and cross-check. It runs over the source with every
  * comment blanked; a match that starts inside a string, template, regular expression or JSX text literal is
  * a lookalike and is skipped, and a match in code whose specifier is not a parser reference is reported, so a
- * reference the collector missed fails the scan instead of passing it.
+ * reference the collector missed fails the scan instead of passing it. Text the parser skips (a merge conflict
+ * section) is never blanked, and every conflict marker is reported, so a conflicted file fails closed.
  *
  * Non-goal: dynamic `import()` and `require()` calls are not scanned; no consumer uses them for
  * `@clifn/core` at the reference commit.
@@ -52,7 +53,7 @@ export interface ScannedImport {
   readonly file: string;
   readonly line: number;
   readonly statement: "import" | "export";
-  /** The decoded module specifier. */
+  /** The decoded module specifier; empty for a merge conflict marker. */
   readonly specifier: string;
   /** The named symbols the reference binds; empty for a zero-binding reference (`{}` or a bare import). */
   readonly symbols: readonly ScannedSymbol[];
@@ -63,6 +64,8 @@ export interface ScannedImport {
   /** Set for a reference the contract cannot check: `import = require`, a bare inline import type, or a
    * statement match the parser does not see as a module reference. */
   readonly unrecognized?: string;
+  /** Set for an unresolved merge conflict marker: the parser skips a conflict section, so the file cannot be checked. */
+  readonly conflictMarker?: string;
 }
 
 function scriptKindFor(file: string): ts.ScriptKind {
@@ -239,27 +242,66 @@ function insideLiteral(literals: ParsedFile["literals"], offset: number): boolea
   return false;
 }
 
+/** Trivia the mask blanks. Any other text between parser tokens (a merge conflict section, a token the parser skipped)
+ * stays visible to the cross-check, because the parser did not read it. */
+const BLANKED_TRIVIA = new Set([
+  ts.SyntaxKind.WhitespaceTrivia,
+  ts.SyntaxKind.NewLineTrivia,
+  ts.SyntaxKind.SingleLineCommentTrivia,
+  ts.SyntaxKind.MultiLineCommentTrivia,
+  ts.SyntaxKind.ShebangTrivia,
+]);
+
+interface MaskedSource {
+  readonly text: string;
+  /** Offsets of the merge conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) the parser skipped as trivia. */
+  readonly conflictMarkers: readonly number[];
+}
+
 /**
- * Keeps only the text of the tokens the TypeScript parser reads and replaces everything between them (whitespace,
- * every comment, JSDoc and the hashbang) with spaces, keeping newlines and offsets. String, template, regular
- * expression and JSX text tokens keep their content, so a comment cannot hide or break a statement, and comment
- * text, including the trivia before the end-of-file token, is never read as code.
+ * Keeps the text of the tokens the TypeScript parser reads and blanks the whitespace, comments, JSDoc and hashbang
+ * between them, keeping newlines and offsets. String, template, regular expression and JSX text tokens keep their
+ * content, so a comment cannot hide or break a statement, and comment text, including the trivia before the
+ * end-of-file token, is never read as code. The text between tokens is classified by the TypeScript scanner, so a
+ * merge conflict section the parser skips is kept and its markers are returned for a fail-closed diagnostic.
  */
 export function blankComments(source: string, file = "source.ts"): string {
-  return blankParsedComments(parse(source, file));
+  return maskTrivia(parse(source, file)).text;
 }
 
 function isJsDocNode(node: ts.Node): boolean {
   return node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode;
 }
 
-function blankParsedComments(sourceFile: ts.SourceFile): string {
+function maskTrivia(sourceFile: ts.SourceFile): MaskedSource {
   const text = sourceFile.text;
   const out = Array.from({ length: text.length }, (_, index) => (text[index] === "\n" || text[index] === "\r" ? text[index] : " "));
+  const conflictMarkers: number[] = [];
   const keep = (start: number, end: number): void => {
     for (let index = start; index < end; index += 1) {
       out[index] = text[index];
     }
+  };
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, sourceFile.languageVariant);
+  const gap = (start: number, end: number): void => {
+    if (start >= end) {
+      return;
+    }
+    scanner.setText(text, start, end - start);
+    for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+      if (kind === ts.SyntaxKind.ConflictMarkerTrivia) {
+        conflictMarkers.push(scanner.getTokenStart());
+      }
+      if (!BLANKED_TRIVIA.has(kind)) {
+        keep(scanner.getTokenStart(), Math.min(scanner.getTokenEnd(), end));
+      }
+    }
+  };
+  let cursor = 0;
+  const token = (start: number, end: number): void => {
+    gap(cursor, start);
+    keep(start, end);
+    cursor = Math.max(cursor, end);
   };
   const visit = (node: ts.Node): void => {
     // A JSDoc comment is attached to the node it documents (the end-of-file token included) but is trivia.
@@ -268,13 +310,14 @@ function blankParsedComments(sourceFile: ts.SourceFile): string {
       children.forEach(visit);
     } else if (node.kind === ts.SyntaxKind.JsxText || node.kind === ts.SyntaxKind.JsxTextAllWhiteSpaces) {
       // JSX text is content from its first character: a `//` inside it is not a comment.
-      keep(node.pos, node.end);
+      token(node.pos, node.end);
     } else {
-      keep(node.getStart(sourceFile), node.end);
+      token(node.getStart(sourceFile), node.end);
     }
   };
   visit(sourceFile);
-  return out.join("");
+  gap(cursor, text.length);
+  return { text: out.join(""), conflictMarkers };
 }
 
 export function scanSource(source: string, file: string): ScannedImport[] {
@@ -289,8 +332,8 @@ export function scanSource(source: string, file: string): ScannedImport[] {
   const located = new Set<CollectedReference>();
   const unmatched: ScannedImport[] = [];
   const pattern = new RegExp(CLIFN_IMPORT_STATEMENT.source, CLIFN_IMPORT_STATEMENT.flags);
-  const blanked = blankParsedComments(sourceFile);
-  for (let match = pattern.exec(blanked); match !== null; match = pattern.exec(blanked)) {
+  const masked = maskTrivia(sourceFile);
+  for (let match = pattern.exec(masked.text); match !== null; match = pattern.exec(masked.text)) {
     if (insideLiteral(literals, match.index)) {
       pattern.lastIndex = match.index + 1;
       continue;
@@ -315,7 +358,19 @@ export function scanSource(source: string, file: string): ScannedImport[] {
     const { specifierOffset: _offset, ...fields } = found;
     return { ...fields, located: located.has(found) };
   });
-  return [...scanned, ...unmatched].sort((left, right) => left.line - right.line);
+  // The parser skips the section after a `|||||||` or `=======` marker, so a conflicted file fails closed at every marker.
+  const conflicts = masked.conflictMarkers.map(
+    (offset): ScannedImport => ({
+      file,
+      line: lineOf(sourceFile, offset),
+      statement: "import",
+      specifier: "",
+      symbols: [],
+      located: false,
+      conflictMarker: sourceFile.text.slice(offset, offset + 7),
+    }),
+  );
+  return [...scanned, ...unmatched, ...conflicts].sort((left, right) => left.line - right.line);
 }
 
 /** Alphabetical, with a code-unit tie-break so distinct paths that collate equally (`é`, `e\u0301`) keep one order. */
@@ -354,6 +409,13 @@ export function findContractViolations(imports: readonly ScannedImport[], contra
   const violations: string[] = [];
   for (const scanned of imports) {
     const where = `${scanned.file}:${scanned.line}`;
+    if (scanned.conflictMarker !== undefined) {
+      violations.push(
+        `${where}: unresolved merge conflict marker \`${scanned.conflictMarker}\`; the TypeScript parser skips conflict ` +
+          `sections, so the consumer scan cannot check the @clifn/core references in this file. Resolve the conflict.`,
+      );
+      continue;
+    }
     const listedSubpath = contractSpecifiers.has(scanned.specifier);
     const subpathNote = listedSubpath ? "" : ` "${scanned.specifier}" is also not a subpath in ${CONTRACT_TABLE_PATH}.`;
     if (scanned.unrecognized !== undefined) {
