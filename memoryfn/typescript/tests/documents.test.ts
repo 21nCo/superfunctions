@@ -931,6 +931,8 @@ describe('add() candidates and source rows', () => {
       during = new MemoryStorageAdapter();
       expect([before.excludesSources, during.excludesSources]).toEqual([true, false]);
       expect(await during.transaction(async tx => tx.excludesSources)).toBe(false);
+      // A transaction opened now stages a replaced search, so it is undeclared although its parent is declared.
+      expect(await before.transaction(async tx => tx.excludesSources)).toBe(false);
       await expect(new MemoryFn({ storage: { kind: 'memory' } }, during, embedder).upsertDocument({ ...scope, content: docV1 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
     } finally {
       MemoryStorageAdapter.prototype.searchVectors = builtIn;
@@ -940,6 +942,27 @@ describe('add() candidates and source rows', () => {
     // Restoring the prototype changes neither adapter's declaration.
     expect([before.excludesSources, during.excludesSources]).toEqual([true, false]);
     expect(await before.transaction(outer => outer.transaction!(async inner => [outer.excludesSources, inner.excludesSources]))).toEqual([true, true]);
+  });
+
+  it('leaves a subclass undeclared, even one that only adds a searchVectors class field, unless it overrides the getter', async () => {
+    const llm = fakeLLM();
+    class Field extends MemoryStorageAdapter {
+      searchVectors = (params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) => {
+        const { excludeSources: _ignored, ...rest } = params;
+        return MemoryStorageAdapter.prototype.searchVectors.call(this, rest);
+      };
+    }
+    const field = new Field();
+    expect(field.excludesSources).toBe(false);
+    expect(await field.transaction(async tx => tx.excludesSources)).toBe(false);
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, field, embedder, llm);
+    await expect(memory.upsertDocument({ ...scope, content: docV1, extract: true })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    await expect(field.transaction(tx => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder, llm).upsertDocument({ ...scope, content: docV1 })))
+      .rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    expect(await field.getSourceState(scope)).toBeNull();
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(llm.generateJSON).not.toHaveBeenCalled();
+    expect(new (class extends MemoryStorageAdapter {})().excludesSources).toBe(false);
   });
 
   describe('a searchVectors replaced after construction', () => {

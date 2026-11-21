@@ -74,14 +74,16 @@ export interface StorageAdapter {
    * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
    * writes never hide an ordinary candidate from add(). It is a capability
    * fixed for the adapter's lifetime: an adapter that declares it must keep it
-   * constant. The built-in adapters compute it once, at construction, as
-   * whether their searchVectors is the built-in one, and an adapter they open
-   * for a transaction takes its parent's value. A subclass that overrides
-   * searchVectors as a method must declare it itself, by overriding their
-   * excludesSources getter. Replacing searchVectors after construction (a spy,
-   * a tracing wrapper, or a subclass class field, which is assigned after the
-   * base constructor) does not change it; a replacement that ignores excludeSources can
-   * only make add() miss an ordinary candidate, never change a source row.
+   * constant. The built-in adapters compute it once, at construction, and
+   * declare it only for the exact built-in class whose searchVectors is the
+   * built-in one. Any subclass, including one that only adds a searchVectors
+   * class field, is undeclared and opts in by overriding the excludesSources
+   * getter (its searchVectors must then honour excludeSources). An adapter
+   * they open for a transaction is declared only when its own search is the
+   * built-in one and its parent is declared. Instrumenting searchVectors on an
+   * instance after construction (a spy or a tracing wrapper) does not change
+   * it; a replacement that ignores excludeSources can only make add() miss an
+   * ordinary candidate, never change a source row.
    * Only true declares it. The guarantee covers exact search, the shipped default:
    * an approximate pgvector index filters source rows after its candidate scan,
    * like the tenant and scope filters, and can return fewer candidates.

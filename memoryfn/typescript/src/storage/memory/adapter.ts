@@ -87,13 +87,13 @@ export class MemoryStorageAdapter implements StorageAdapter {
   private relationships = new Map<string, MemoryRelationship>();
   private sequence = 0;
   private mutationVersion = 0;
-  /** Fixed at construction: a subclass override or a prototype replaced earlier is undeclared, a later replacement changes nothing. */
-  private declared = this.searchVectors === builtInMemorySearch;
+  /** Fixed at construction: only the exact built-in class with its built-in search declares; a subclass opts in through the getter. */
+  private declared = Object.getPrototypeOf(this) === MemoryStorageAdapter.prototype && this.searchVectors === builtInMemorySearch;
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
     const version = this.mutationVersion;
     const staged = new MemoryStorageAdapter();
-    staged.declared = this.excludesSources === true;
+    staged.declared = staged.declared && this.excludesSources === true;
     const memories = new StagedMap(this.memories);
     const relationships = new StagedMap(this.relationships);
     staged.memories = memories; staged.relationships = relationships;
@@ -181,10 +181,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   /**
-   * Fixed for the adapter's lifetime: declared when searchVectors was the
-   * built-in one at construction. A subclass that overrides searchVectors
-   * declares excludesSources by overriding this getter. A staged adapter takes
-   * its parent's value when the transaction opens.
+   * Fixed for the adapter's lifetime: declared only by the built-in class
+   * whose searchVectors was the built-in one at construction. A subclass is
+   * undeclared and opts in by overriding this getter (and must then honour
+   * excludeSources). A staged adapter is declared only when its own search is
+   * the built-in one and its parent is declared when the transaction opens.
    */
   get excludesSources(): boolean {
     return this.declared;

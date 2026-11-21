@@ -219,10 +219,17 @@ describe('document routes', () => {
       override async searchVectors(params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) { return super.searchVectors(params); }
     }
     const embedder = { embed: vi.fn(), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
-    const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, new Undeclared(), embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
-    const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x' }));
-    expect(response.status).toBe(501);
-    expect(await response.json()).toEqual({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' });
+    class Field extends MemoryStorageAdapter {
+      searchVectors = (params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) => MemoryStorageAdapter.prototype.searchVectors.call(this, params);
+    }
+    for (const storage of [new Undeclared(), new Field()]) {
+      const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
+      const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x' }));
+      expect(response.status).toBe(501);
+      expect(await response.json()).toEqual({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' });
+      // DELETE does not need the declaration.
+      expect((await router.handle(json('DELETE', '/v1/documents', { sourceKey: 'k' }))).status).toBe(200);
+    }
     expect(embedder.embedBatch).not.toHaveBeenCalled();
   });
 

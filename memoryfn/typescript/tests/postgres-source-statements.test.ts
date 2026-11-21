@@ -127,10 +127,18 @@ describe('PostgresAdapter source statements', () => {
       replaced = recorder();
       expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
       expect(await replaced.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+      // A transaction opened now scopes a replaced search, so it is undeclared although its parent is declared.
+      expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
     } finally {
       PostgresAdapter.prototype.searchVectors = builtIn;
     }
     expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
+    expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(true);
+    // Only the exact built-in class declares it: a subclass, even one that only adds a searchVectors class field, opts in through the getter.
+    class Field extends PostgresAdapter { searchVectors = (params: Parameters<PostgresAdapter['searchVectors']>[0]) => builtIn.call(this, params); }
+    class OptIn extends PostgresAdapter { override get excludesSources(): boolean { return true; } }
+    const db = drizzle({} as unknown as postgres.Sql, { schema });
+    expect([new Field(db).excludesSources, new (class extends PostgresAdapter {})(db).excludesSources, new OptIn(db).excludesSources]).toEqual([false, false, true]);
     excluded.statements.length = 0;
     await excluded.adapter.searchVectors({ ...search, excludeSources: true });
     expect(excluded.statements).toHaveLength(1);
