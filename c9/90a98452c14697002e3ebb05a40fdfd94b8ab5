@@ -1,0 +1,21 @@
+langfn/typescript/src/models/responses/ledger.ts
+  s_b15184ae60b291::t_8fd17a63717dfb 97-113,280-281,286-287,348,391-401,497-498,571-572,583,585,606,623
+langfn/typescript/tests/responses-mapping.test.ts
+  s_b15184ae60b291::t_8581e87c6da3f3 1429-1500
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c990a98452c14697002e3ebb05a40fdfd94b8ab5",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
