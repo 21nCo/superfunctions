@@ -2,26 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type postgres from 'postgres';
 import { PostgresAdapter } from '../src/storage/pg/adapter';
-import { MemorySourceLimitError } from '../src/storage/adapter';
+import { MemorySourceLimitError, type StorageAdapter } from '../src/storage/adapter';
 import * as pgEntry from '../src/storage/pg/index';
 import * as schema from '../src/storage/pg/schema';
 
 /** A postgres-js stand-in that records each statement and answers it without a database. */
-function recorder(onQuery: (query: string) => void = () => {}) {
+function recorder(onQuery: (query: string) => void = () => {}, values: (query: string) => unknown[][] = () => []) {
   const statements: Array<{ query: string; params: unknown[] }> = [];
+  /** Top-level transactions whose callback resolved, so postgres-js would commit them; a rejected one rolls back. */
+  const commits = { count: 0, beforeCommit: () => {} };
   const client: Record<string, unknown> = {
     options: { parsers: {}, serializers: {} },
     unsafe(query: string, params: unknown[] = []) {
       onQuery(query);
       statements.push({ query, params });
       const rows = /transaction_isolation/.test(query) ? [{ isolation: 'read committed' }] : [];
-      return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve([]) });
+      return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve(values(query)) });
     },
-    begin: (operation: (tx: unknown) => unknown) => operation(client),
+    begin: async (operation: (tx: unknown) => unknown) => { const result = await operation(client); commits.beforeCommit(); commits.count++; return result; },
     savepoint: (operation: (tx: unknown) => unknown) => operation(client),
   };
   const adapter = new PostgresAdapter(drizzle(client as unknown as postgres.Sql, { schema }));
-  return { adapter, statements };
+  return { adapter, statements, commits };
 }
 
 const TAG = 'probe-tag-0001';
@@ -94,5 +96,79 @@ describe('PostgresAdapter source statements', () => {
     expect([new MemorySourceLimitError() instanceof AppLimit, foreign instanceof AppLimit, new AppLimit() instanceof AppLimit, new AppLimit() instanceof pgEntry.MemorySourceLimitError])
       .toEqual([false, false, true, true]);
     expect([new Renamed() instanceof MemorySourceLimitError, new Renamed() instanceof Renamed, new AppLimit() instanceof Renamed]).toEqual([true, true, false]);
+  });
+
+  it('reads the source state after the source locks and skips the write when the hash matches', async () => {
+    const kinds = (statements: Array<{ query: string }>) => statements.map(({ query }) =>
+      /pg_advisory_xact_lock/.test(query) ? 'lock' : /for update/.test(query) ? 'row-lock' : /count\(\*\)/.test(query) ? 'state'
+        : /^with .*insert into "memories"/s.test(query) ? 'write' : /^delete from "memory_relationships"/.test(query) ? 'invalidate' : 'other');
+    const stored = (hash: string) => (query: string) => /count\(\*\)/.test(query) ? [[hash, 2]] : [];
+    const same = recorder(undefined, stored('hash-1'));
+    expect(await same.adapter.replaceSourceIfChanged({ ...scope, contentHash: 'hash-1', chunks: [chunk] }))
+      .toEqual({ unchanged: true, state: { contentHash: 'hash-1', chunkCount: 2 } });
+    expect(kinds(same.statements)).toEqual(['other', 'other', 'lock', 'row-lock', 'state', 'invalidate']);
+    const changed = recorder(undefined, stored('hash-0'));
+    expect(await changed.adapter.replaceSourceIfChanged({ ...scope, contentHash: 'hash-1', chunks: [chunk] })).toMatchObject({ unchanged: false });
+    expect(kinds(changed.statements)).toEqual(['other', 'other', 'lock', 'row-lock', 'state', 'write', 'invalidate']);
+  });
+
+  it('leaves source rows out of a vector search only when excludeSources is set', async () => {
+    const search = { tenantId: 'tenant-a', containerTags: ['docs'], embedding: [1, 0], topK: 1, threshold: 0.95 };
+    const excluded = recorder();
+    // It declares that capability, which upsertDocument requires.
+    expect(excluded.adapter.excludesSources).toBe(true);
+    expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(true);
+    // An adapter constructed while the built-in search is replaced is undeclared, as is the one it opens for a
+    // transaction; the declaration is fixed at construction, so restoring the prototype changes neither adapter.
+    const builtIn = PostgresAdapter.prototype.searchVectors;
+    let replaced!: ReturnType<typeof recorder>;
+    PostgresAdapter.prototype.searchVectors = function (this: PostgresAdapter, params) { return builtIn.call(this, params); };
+    try {
+      replaced = recorder();
+      expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
+      expect(await replaced.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+      // A transaction opened now scopes a replaced search, so it is undeclared although its parent is declared.
+      expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+    } finally {
+      PostgresAdapter.prototype.searchVectors = builtIn;
+    }
+    expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
+    expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(true);
+    // Only the exact built-in class declares it: a subclass, even one that only adds a searchVectors class field, opts in through the getter.
+    class Field extends PostgresAdapter { searchVectors = (params: Parameters<PostgresAdapter['searchVectors']>[0]) => builtIn.call(this, params); }
+    class OptIn extends PostgresAdapter { override get excludesSources(): boolean { return true; } }
+    const db = drizzle({} as unknown as postgres.Sql, { schema });
+    expect([new Field(db).excludesSources, new (class extends PostgresAdapter {})(db).excludesSources, new OptIn(db).excludesSources]).toEqual([false, false, true]);
+    excluded.statements.length = 0;
+    await excluded.adapter.searchVectors({ ...search, excludeSources: true });
+    expect(excluded.statements).toHaveLength(1);
+    expect(excluded.statements[0].query).toMatch(/"source_key" is null/);
+    const included = recorder();
+    await included.adapter.searchVectors(search);
+    expect(included.statements[0].query).not.toMatch(/"source_key" is null/);
+  });
+
+  it('keeps the declaration and the commit when the search is replaced during the lock wait, in the callback or before COMMIT', async () => {
+    let onQuery = (_query: string) => {};
+    const { adapter, statements, commits } = recorder(query => onQuery(query));
+    const replace = () => { adapter.searchVectors = params => PostgresAdapter.prototype.searchVectors.call(adapter, params); };
+    const write = (tx: StorageAdapter) => tx.replaceSourceIfChanged!({ ...scope, contentHash: 'hash-1', chunks: [chunk] });
+    const inserts = () => statements.filter(({ query }) => /insert into "memories"/.test(query)).length;
+    // A direct write whose search is replaced while it waits for the source locks commits once.
+    onQuery = query => { if (/pg_advisory_xact_lock/.test(query)) replace(); };
+    expect(await write(adapter)).toMatchObject({ unchanged: false });
+    onQuery = () => {};
+    expect([inserts(), commits.count, adapter.excludesSources]).toEqual([1, 1, true]);
+    // Inside a caller's transaction, nested or not, replaced in the callback or in the COMMIT window.
+    expect(await adapter.transaction(async tx => { await write(tx); replace(); return tx.excludesSources; })).toBe(true);
+    commits.beforeCommit = replace;
+    expect(await adapter.transaction(outer => outer.transaction!(async inner => { await write(inner); return [outer.excludesSources, inner.excludesSources]; }))).toEqual([true, true]);
+    commits.beforeCommit = () => {};
+    // A replacement then a deletion of the source commits with the rest of the transaction.
+    await adapter.transaction(async tx => { await write(tx); await tx.deleteSource(scope); replace(); });
+    expect([inserts(), commits.count]).toEqual([4, 4]);
+    // A callback that fails still rolls back.
+    await expect(adapter.transaction(async tx => { await write(tx); throw new Error('caller failure'); })).rejects.toThrow('caller failure');
+    expect([inserts(), commits.count]).toEqual([5, 4]);
   });
 });

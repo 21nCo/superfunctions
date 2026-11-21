@@ -24,6 +24,10 @@ export interface SourceReplace extends SourceScope {
   /** Each chunk must carry the source's tenantId and tag set; chunkIndex is its array position. */
   chunks: MemoryInsert[];
 }
+/** Result of replaceSourceIfChanged: the state it found unchanged, or the chunks it wrote. */
+export type SourceReplaceResult =
+  | { unchanged: true; state: SourceState }
+  | { unchanged: false; memories: Memory[] };
 
 // Input limits shared by every adapter. A source call over a limit is rejected
 // with MemorySourceLimitError before any lock or write.
@@ -63,6 +67,28 @@ export class MemorySourceLimitError extends Error {
 export interface StorageAdapter {
   /** Fixed vector dimension, shared across bundled entrypoints. */
   readonly embeddingDimensions?: number;
+  /**
+   * Declares that searchVectors honours excludeSources: it leaves out source
+   * rows before ranking and truncating to topK. upsertDocument requires it,
+   * with replaceSourceIfChanged, and otherwise fails with
+   * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
+   * writes never hide an ordinary candidate from add(). It is a capability
+   * fixed for the adapter's lifetime: an adapter that declares it must keep it
+   * constant. The built-in adapters compute it once, at construction, and
+   * declare it only for the exact built-in class whose searchVectors is the
+   * built-in one. Any subclass, including one that only adds a searchVectors
+   * class field, is undeclared and opts in by overriding the excludesSources
+   * getter (its searchVectors must then honour excludeSources). An adapter
+   * they open for a transaction is declared only when its own search is the
+   * built-in one and its parent is declared. Instrumenting searchVectors on an
+   * instance after construction (a spy or a tracing wrapper) does not change
+   * it; a replacement that ignores excludeSources can only make add() miss an
+   * ordinary candidate, never change a source row.
+   * Only true declares it. The guarantee covers exact search, the shipped default:
+   * an approximate pgvector index filters source rows after its candidate scan,
+   * like the tenant and scope filters, and can return fewer candidates.
+   */
+  readonly excludesSources?: boolean;
   close?(): Promise<void>;
   /** Commit all callback writes together, or leave storage unchanged on failure. */
   transaction?<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T>;
@@ -75,6 +101,16 @@ export interface StorageAdapter {
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
+    /**
+     * Leave out chunks and facts of sources (rows with a sourceKey) before
+     * ranking and truncating to topK. add() sets it for deduplication and
+     * conflict resolution, in one call per path. An adapter that honours it
+     * says so with excludesSources. One that does not may return source rows
+     * (written, for example, through replaceSource); add() drops them without
+     * querying again, so they can only make add() miss a candidate, never
+     * change a source row or make a larger request.
+     */
+    excludeSources?: boolean;
   }): Promise<Memory[]>;
   getMemory(scope: MemoryScope & { id: string }): Promise<Memory | null>;
   updateMemory(input: MemoryUpdate): Promise<Memory>;
@@ -87,6 +123,17 @@ export interface StorageAdapter {
    * An empty `chunks` list leaves the source without live chunks.
    */
   replaceSource(input: SourceReplace): Promise<Memory[]>;
+  /**
+   * replaceSource, except that it first reads the source's state inside the
+   * same per-source serialization: when the live chunks all carry `contentHash`
+   * it writes nothing and returns that state. Of concurrent calls with one hash,
+   * at most one writes; the others report unchanged. Input is validated, and
+   * rejected, exactly as by replaceSource. Optional, so an adapter written
+   * before it still serves the memory operations. upsertDocument requires it
+   * and the excludesSources declaration, and otherwise fails with
+   * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call.
+   */
+  replaceSourceIfChanged?(input: SourceReplace): Promise<SourceReplaceResult>;
   /** Soft-deletes every live chunk of the source and returns how many it deleted. */
   deleteSource(scope: SourceScope): Promise<number>;
 }
@@ -107,9 +154,14 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 /** PostgreSQL text rejects NUL while the memory adapter would store it. */
 const NUL = String.fromCharCode(0);
 
+/** True when every adapter stores and compares `value` unchanged: it holds no NUL and no unpaired surrogate. */
+export function isStorableText(value: string): boolean {
+  return !value.includes(NUL) && !LONE_SURROGATE.test(value);
+}
+
 /** A non-empty string that every adapter stores and compares unchanged. */
 function isSourceText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== '' && !value.includes(NUL) && !LONE_SURROGATE.test(value);
+  return typeof value === 'string' && value.trim() !== '' && isStorableText(value);
 }
 
 /**
@@ -178,18 +230,78 @@ export function sameTagSet(left: string[], right: string[]): boolean {
  * runtime's string capacity (a RangeError) is far over MAX_SOURCE_REPLACE_BYTES.
  */
 function jsonBytes(value: unknown): number {
+  return utf8Bytes(jsonText(value));
+}
+
+function jsonText(value: unknown): string {
   try {
-    return utf8Bytes(JSON.stringify(value));
+    return JSON.stringify(value);
   } catch (error) {
     if (error instanceof RangeError) throw sourceLimitExceeded();
     throw error;
   }
 }
 
+/**
+ * The JSON escape of a NUL or of an unpaired surrogate (JSON.stringify writes
+ * a paired one as is), when its backslash is not itself escaped.
+ */
+const UNSTORABLE_JSON_ESCAPE = /(?:^|[^\\])(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/;
+
 /** Bytes a copied (normalized) chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
 function chunkBytes(chunk: MemoryInsert): number {
   return utf8Bytes(chunk.type!) + utf8Bytes(chunk.content!) + jsonBytes(chunk.metadata ?? {})
     + (chunk.embedding ? jsonBytes(chunk.embedding) : 0);
+}
+
+/**
+ * Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk before it is embedded: its
+ * type (an empty one as 'conversational'), its content, and `metadataBytes`
+ * (from sourceMetadataBytes). Lets a caller reject a replacement before paying
+ * for embeddings.
+ */
+export function sourceChunkBytesBeforeEmbedding(type: string, content: string, metadataBytes: number): number {
+  return utf8Bytes(type || 'conversational') + utf8Bytes(content) + metadataBytes;
+}
+
+/**
+ * UTF-8 bytes of the JSON array of `tags`. MAX_SOURCE_REPLACE_BYTES does not
+ * count a replacement's tags; upsertDocument adds this once per record to its
+ * own budget, because every record stores a copy of the tag array.
+ */
+export function sourceTagsBytes(tags: string[]): number {
+  return jsonBytes(tags);
+}
+
+/** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's embedding. */
+export function sourceEmbeddingBytes(embedding: number[]): number {
+  return jsonBytes(embedding);
+}
+
+/** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's metadata (undefined counts as {}). */
+export function sourceMetadataBytes(metadata: unknown): number {
+  return jsonBytes(metadata ?? {});
+}
+
+/**
+ * sourceMetadataBytes, after rejecting metadata whose JSON holds a NUL or an
+ * unpaired surrogate in a key or string (MEMORY_METADATA_INVALID): PostgreSQL
+ * jsonb rejects both, while the memory adapter would store them.
+ */
+export function storableMetadataBytes(metadata: unknown): number {
+  const text = jsonText(metadata ?? {});
+  if (UNSTORABLE_JSON_ESCAPE.test(text)) throw new Error('MEMORY_METADATA_INVALID');
+  return utf8Bytes(text);
+}
+
+/**
+ * Validates a replacement's contentHash as replaceSource does: a storable
+ * non-blank string (MEMORY_SOURCE_HASH_REQUIRED) of at most
+ * MAX_SOURCE_IDENTITY_BYTES (MemorySourceLimitError).
+ */
+export function requireSourceHash(contentHash: unknown): asserts contentHash is string {
+  if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+  if (utf8Bytes(contentHash) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
 }
 
 type ChunkFields = Pick<MemoryInsert, 'type' | 'content' | 'id' | 'isLatest'>;
@@ -215,8 +327,7 @@ function chunkFields({ type, content, id, isLatest }: ChunkFields): ChunkFields 
 export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapshot {
   const { scope } = requireSourceScope(input);
   const { contentHash, chunks } = input;
-  if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
-  if (utf8Bytes(contentHash) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+  requireSourceHash(contentHash);
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   // The length is checked before the array is read, and the copy is taken by index, not through its iterator.
   const count = chunks.length;
