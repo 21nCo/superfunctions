@@ -171,12 +171,15 @@ const ownersManifest = (kind, release, owner) => {
 function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'public' }) {
   const step = readJob(file, 'build').steps.find(candidate => candidate.name === 'Require this repository to own the release');
   const temp = mkdtempSync(path.join(tmpdir(), 'release-gate-dispatch-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  t.after(() => rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  // No detached background gc or maintenance after a fetch may still be writing when the folder is removed.
+  const quietGit = { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'gc.auto', GIT_CONFIG_VALUE_0: '0', GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false' };
   const source = path.join(temp, 'source');
   const origin = path.join(temp, 'origin.git');
   const repo = path.join(temp, 'repo');
   mkdirSync(source);
-  const gitIn = cwd => (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const gitEnv = { ...process.env, ...quietGit };
+  const gitIn = cwd => (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv }).trim();
   const src = gitIn(source);
   src('init', '-q');
   src('config', 'user.name', 'Release gate test');
@@ -206,9 +209,9 @@ function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'p
   src('commit', '-q', '-m', 'Add the release gates');
   const workflowCommit = src('rev-parse', 'HEAD');
   src('branch', '-M', 'dispatch');
-  execFileSync('git', ['clone', '-q', '--bare', source, origin]);
-  execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true']);
-  execFileSync('git', ['clone', '-q', '--depth=1', '--branch', tag, `file://${origin}`, repo], { stdio: 'ignore' });
+  execFileSync('git', ['clone', '-q', '--bare', source, origin], { env: gitEnv });
+  execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true'], { env: gitEnv });
+  execFileSync('git', ['clone', '-q', '--depth=1', '--branch', tag, `file://${origin}`, repo], { stdio: 'ignore', env: gitEnv });
   const git = gitIn(repo);
   assert.throws(() => git('cat-file', '-e', `${workflowCommit}^{commit}`), 'the run commit starts out missing from the tag checkout');
   const run = ({ repository = '21nCo/superfunctions', channelOnly = 'false' } = {}) => {
@@ -216,7 +219,7 @@ function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'p
     const result = spawnSync('bash', ['-c', step.run], {
       cwd: repo,
       encoding: 'utf8',
-      env: { ...process.env, RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: repo, GITHUB_SHA: workflowCommit, RELEASE_TAG: tag, GITHUB_REPOSITORY: repository, CHANNEL_ONLY: channelOnly },
+      env: { ...gitEnv, RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: repo, GITHUB_SHA: workflowCommit, RELEASE_TAG: tag, GITHUB_REPOSITORY: repository, CHANNEL_ONLY: channelOnly },
     });
     // Whatever happened, the tag checkout is untouched and the CI step's gate is in place.
     assert.equal(git('rev-parse', 'HEAD'), git('rev-parse', `${tag}^{commit}`));
