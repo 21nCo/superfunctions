@@ -586,6 +586,13 @@ function createSocialRoutes(
             handoffMode: 'session-token',
             handoffChallenge
           });
+          // Built from the values just checked, before anything else is
+          // awaited, so later changes to the completion object do not apply.
+          const handoffLocation = appendHandoffCodeToReturnTarget(
+            completion.redirectTo as string,
+            handoffCode,
+            runtime.regionId
+          );
           await emitAuthEvent(ctx.config, {
             type: 'authfn.oauth.completed',
             requestId,
@@ -600,12 +607,7 @@ function createSocialRoutes(
               connectionId: callbackResult.connectionId
             }
           });
-          return redirectWithCookies(
-            request,
-            appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
-            [],
-            303
-          );
+          return redirectWithCookies(request, handoffLocation, [], 303);
         }
 
         const issued = await issueSession(ctx.config, ctx.hooks, {
@@ -637,11 +639,13 @@ function createSocialRoutes(
           buildHookContext(ctx.config, request, runtime, user.id, issued.session),
           completion as unknown as Record<string, unknown>
         );
+        let redirectLocation: string | undefined;
         if (completion.callbackMode === 'redirect') {
           // The hook may have changed the target, so the allowlist and the
           // handoff policy are checked again before the flow is reported
           // complete. A refused session's token and cookies never leave the
-          // server.
+          // server. The location is built from the checked values before
+          // anything else is awaited.
           assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
           assertAllowedHandoff(config, {
             returnTo: completion.redirectTo,
@@ -649,6 +653,9 @@ function createSocialRoutes(
             handoffMode: completion.handoffMode,
             handoffChallenge
           });
+          redirectLocation = completion.handoffMode === 'session-token'
+            ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
+            : completion.redirectTo!;
         }
 
         await emitAuthEvent(ctx.config, {
@@ -668,15 +675,8 @@ function createSocialRoutes(
           }
         });
 
-        if (completion.callbackMode === 'redirect') {
-          return redirectWithCookies(
-            request,
-            completion.handoffMode === 'session-token'
-              ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
-              : completion.redirectTo!,
-            cookies,
-            303
-          );
+        if (redirectLocation !== undefined) {
+          return redirectWithCookies(request, redirectLocation, cookies, 303);
         }
 
         return jsonSuccess(request, {
