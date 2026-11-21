@@ -917,7 +917,7 @@ async def test_writes_with_the_key_checked_up_front_even_if_the_resolver_fails_l
     record = _token_record()
     record["keyRef"] = "oauth-default"
     await request_vault.put(record)
-    assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"
+    assert [row["key_ref"] for row in db.storage["oauth_tokens"]] == ["oauth-default"]
 
 
 @pytest.mark.asyncio
@@ -935,7 +935,7 @@ async def test_migrates_a_legacy_row_stored_with_an_empty_key_reference() -> Non
         AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=_test_oauth_key
     )
     assert await vault.migrate_legacy_tokens() == 1
-    assert db.storage["oauth_tokens"][0]["key_ref"] == "oauth-default"
+    assert [row["key_ref"] for row in db.storage["oauth_tokens"]] == ["oauth-default"]
 
 
 @pytest.mark.asyncio
@@ -1074,3 +1074,12 @@ async def test_callback_reads_the_key_reference_once_for_its_check_and_its_write
     completed = await service.handle_callback("google", code="abc123", state=started["stateId"])
     assert completed["status"] == 303
     assert db.storage["oauth_tokens"][0]["key_ref"] == "test-ref-b"
+
+    # Resetting it to empty means the default reference, for both the check
+    # and the write.
+    exchanged["done"] = False
+    second = await service.start("google", return_to="https://app.example.com/post-auth")
+    plugin_config.encryption_key_ref = ""
+    completed = await service.handle_callback("google", code="abc123", state=second["stateId"])
+    assert completed["status"] == 303
+    assert [row["key_ref"] for row in db.storage["oauth_tokens"]] == ["oauth-default"]

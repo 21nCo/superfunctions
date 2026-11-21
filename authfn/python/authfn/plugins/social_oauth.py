@@ -572,6 +572,12 @@ class SocialOAuthService:
             key_resolver=self.plugin_config.encryption_key_resolver,
         )
 
+    def _effective_key_ref(self) -> str:
+        """The key reference tokens are stored under now: the configured one,
+        or "oauth-default" when it is empty, as the vault and flow both read
+        an empty one."""
+        return self.plugin_config.encryption_key_ref or "oauth-default"
+
     async def start(
         self,
         provider: str,
@@ -583,7 +589,7 @@ class SocialOAuthService:
         # A missing or bad token key fails here, before the provider redirect
         # or any user is created, not after the callback has written rows. The
         # reference checked is the one configured now.
-        self.token_vault.for_request(self.plugin_config.encryption_key_ref)
+        self.token_vault.for_request(self._effective_key_ref())
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         resolved = await self._run_before_start(
@@ -648,7 +654,7 @@ class SocialOAuthService:
         # uses that key whatever other calls on this service do meanwhile. The
         # key reference is read once here and used for both the check and the
         # write, even if the configuration changes during the callback.
-        key_ref = self.plugin_config.encryption_key_ref
+        key_ref = self._effective_key_ref()
         vault = self.token_vault.for_request(key_ref)
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
