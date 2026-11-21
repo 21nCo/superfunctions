@@ -326,26 +326,6 @@ export async function getPasswordCredentialByUserId(
   });
 }
 
-/**
- * Deletes the user's password credential, if the password plugin is in use.
- * Used when someone first proves control of the account's mailbox by another
- * method: a password set before that proof may belong to whoever signed up
- * with an address they did not own.
- */
-export async function removePasswordCredentialsForUser(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'plugins'>,
-  userId: string
-): Promise<void> {
-  if (!config.plugins?.some((plugin) => plugin.name === 'password')) {
-    return;
-  }
-  await config.database.deleteMany({
-    model: 'password_credentials',
-    where: [{ field: 'userId', operator: 'eq', value: userId }],
-    namespace: namespace(config)
-  });
-}
-
 export async function updatePasswordCredential(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   input: { userId: string; password: string },

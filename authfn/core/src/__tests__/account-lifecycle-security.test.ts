@@ -6,6 +6,9 @@ import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnPasswordPlugin } from '@authfn/password';
 import { authFnEmailOtpPlugin } from '@authfn/email-otp';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
+import { authFnTwoFactorPlugin } from '@authfn/two-factor';
+import { authFnSocialOAuthPlugin } from '@authfn/social-oauth';
 import type { AuthFnRuntimeConfig } from '../index.js';
 
 const BASE = 'https://account.example.com/auth';
@@ -106,6 +109,137 @@ describe('AF-05: a password set before the owner proves the mailbox does not sur
   });
 });
 
+describe('AF-05: everything set up before the mailbox was proven is removed when it is claimed', () => {
+  function createFullContext(extra: Partial<AuthFnRuntimeConfig> = {}) {
+    const ctx = createContext({
+      plugins: [
+        authFnPasswordPlugin(),
+        authFnEmailOtpPlugin(),
+        authFnApiKeyPlugin(),
+        authFnTwoFactorPlugin(),
+        authFnSocialOAuthPlugin()
+      ],
+      ...extra
+    });
+    return ctx;
+  }
+
+  async function plantAccess(ctx: ReturnType<typeof createContext>, userId: string) {
+    const now = new Date();
+    const create = (model: string, data: Record<string, unknown>) =>
+      ctx.config.database.create({ model, data, namespace: 'authfn' });
+    await create('api_keys', {
+      id: 'key_test_planted', userId, name: 'planted', secretHash: 'test-planted-key-hash', scopes: ['*'],
+      metadata: {}, createdAt: now, updatedAt: now
+    });
+    await create('two_factor_enrollments', {
+      id: 'tfe_test_planted', userId, secretEncrypted: 'test-planted-secret', lastUsedCounter: null,
+      confirmedAt: now, createdAt: now, updatedAt: now
+    });
+    await create('two_factor_recovery_codes', {
+      id: 'tfr_test_planted', enrollmentId: 'tfe_test_planted', codeHash: 'test-planted-code-hash', usedAt: null, createdAt: now
+    });
+    await create('two_factor_challenges', {
+      id: 'tfc_test_planted', userId, primaryMethod: 'password', expiresAt: new Date(now.getTime() + 300_000),
+      consumedAt: null, createdAt: now, updatedAt: now
+    });
+    await create('oauth_accounts', {
+      id: 'oa_test_planted', userId, provider: 'google', providerAccountId: 'test-planted-google-account',
+      email: OWNER, createdAt: now, updatedAt: now
+    });
+  }
+
+  async function remaining(ctx: ReturnType<typeof createContext>, userId: string) {
+    const count = async (model: string, field: string, value: string) =>
+      (await ctx.config.database.findMany({ model, where: [{ field, operator: 'eq', value }], namespace: 'authfn' })).length;
+    return {
+      apiKeys: await count('api_keys', 'userId', userId),
+      enrollments: await count('two_factor_enrollments', 'userId', userId),
+      recoveryCodes: await count('two_factor_recovery_codes', 'enrollmentId', 'tfe_test_planted'),
+      challenges: await count('two_factor_challenges', 'userId', userId),
+      oauthAccounts: await count('oauth_accounts', 'userId', userId)
+    };
+  }
+
+  const none = { apiKeys: 0, enrollments: 0, recoveryCodes: 0, challenges: 0, oauthAccounts: 0 };
+
+  it('removes API keys, second factors, pending challenges and linked accounts on the owner\'s first email-code sign-in', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
+    const userId = (await signUp.json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+
+    const owner = await signInByOtp(ctx, 'sign-in', OWNER);
+    expect(owner.status).toBe(200);
+    expect(await remaining(ctx, userId)).toEqual(none);
+  });
+
+  it('claims the account when someone other than a signed-in holder enters a verify-email code', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
+    const attackerCookies = cookieHeader(signUp);
+    const userId = (await signUp.json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code: ctx.codeFor('verify-email', OWNER) }));
+    expect(verified.status).toBe(200);
+    expect(await remaining(ctx, userId)).toEqual(none);
+    expect((await account(ctx, { cookie: attackerCookies })).status).toBe(401);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'attacker-test-password' }))).status).toBe(401);
+  });
+
+  it('only verifies the email when the signed-in holder enters the verify-email code', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const cookies = cookieHeader(signUp);
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code: ctx.codeFor('verify-email', OWNER) }, {
+      cookie: cookies,
+      'x-authfn-csrf': csrfToken(signUp)
+    }));
+    expect(verified.status).toBe(200);
+    expect((await account(ctx, { cookie: cookies })).status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+  });
+
+  it('treats a password reset on an unverified account as its claim, keeping the new password', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
+    const userId = (await signUp.json()).data.session.actorId as string;
+    await plantAccess(ctx, userId);
+
+    await ctx.handle(json('/password/reset/start', { email: OWNER }));
+    const reset = await ctx.handle(json('/password/reset/complete', {
+      email: OWNER, code: ctx.codeFor('reset-password', OWNER), newPassword: 'owner-new-test-password'
+    }));
+    expect(reset.status).toBe(200);
+    expect(await remaining(ctx, userId)).toEqual(none);
+
+    // The email is now verified, so a later email-code sign-in keeps the
+    // password the owner just chose.
+    expect((await signInByOtp(ctx, 'sign-in', OWNER)).status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-new-test-password' }))).status).toBe(200);
+  });
+
+  it('ends unfinished two-factor sign-ins on a password reset of a verified account', async () => {
+    const ctx = createFullContext();
+    const signedUp = await signInByOtp(ctx, 'sign-up', OWNER);
+    const userId = (await signedUp.json()).data.session.actorId as string;
+    const now = new Date();
+    await ctx.config.database.create({
+      model: 'two_factor_challenges',
+      data: { id: 'tfc_test_pending', userId, primaryMethod: 'password', expiresAt: new Date(now.getTime() + 300_000), consumedAt: null, createdAt: now, updatedAt: now },
+      namespace: 'authfn'
+    });
+    await ctx.handle(json('/password/reset/start', { email: OWNER }));
+    await ctx.handle(json('/password/reset/complete', {
+      email: OWNER, code: ctx.codeFor('reset-password', OWNER), newPassword: 'owner-new-test-password'
+    }));
+    expect((await remaining(ctx, userId)).challenges).toBe(0);
+  });
+});
+
 describe('AF-06: sessions end on password reset and while the user is disabled', () => {
   it('revokes sessions issued before a password reset', async () => {
     const ctx = createContext();
@@ -203,6 +337,15 @@ describe('AF-09: adding a password to the signed-in account needs the CSRF token
       'x-authfn-csrf': 'test-wrong-csrf-token'
     }));
     expect(wrongToken.status).toBe(409);
+
+    // A valid session cookie followed by an empty one of the same name is
+    // still a cookie request, so a bearer token sent with it does not count.
+    const sessionCookieName = cookieHeader(owner).split('; ').find((part) => /session=/.test(part))!.split('=')[0]!;
+    const bearer = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-chosen-test-password', sessionMode: 'hybrid' }, {
+      cookie: `${cookieHeader(owner)}; ${sessionCookieName}=`,
+      authorization: 'Bearer test-not-a-session-token'
+    }));
+    expect(bearer.status).toBe(409);
   });
 
   it('adds the password with the CSRF token', async () => {

@@ -129,9 +129,10 @@ function normalizeEmail(value: string | undefined): string | undefined {
  * AuthFn has no user status column; a host disables a user by setting
  * `metadata.disabled` to `true` on the user record. Every API-key path
  * (`authenticateApiKey` and the placement-context issuer) checks it through
- * `findActiveApiKeyOwner`, and session cookies and bearer session tokens stop
- * authenticating while it is set (the session is not revoked, so clearing the
- * flag restores it).
+ * `findActiveApiKeyOwner`, and session cookies, bearer session tokens and
+ * placement contexts refuse the user's sessions while it is set. The session
+ * records are not revoked, so clearing the flag restores bearer tokens (a
+ * browser whose cookies were cleared in the meantime signs in again).
  */
 export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
   return user.metadata?.disabled === true;

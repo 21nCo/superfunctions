@@ -125,7 +125,7 @@ sequenceDiagram
   Kernel-->>Client: 200 OK { ok, data: { reset: true } }
 ```
 
-A completed reset revokes all of the user's sessions (cookie and bearer), including any held by someone who knew the old password. API keys are not revoked.
+A completed reset revokes all of the user's sessions (cookie and bearer) and any unfinished two-factor sign-in, including those started by someone who knew the old password. API keys are not revoked (on a verified account). On an account whose email was not verified yet, the reset also claims the account: see [Unverified accounts](#unverified-accounts).
 
 ## Account-linking interactions
 
@@ -133,7 +133,13 @@ When a user is already authenticated and `accountLinking.passwordForAuthenticate
 
 ## Unverified accounts
 
-Password sign-up does not verify the email, so anyone can sign up with an address they don't own. When someone later proves control of that mailbox by signing in (or up, with `otpSignUpExistingUser`) with an email code, and the account's email is still unverified, AuthFn removes the account's password, revokes its sessions and marks the email verified before issuing the new session. The owner can then set a password of their own. An account whose email is already verified is not affected.
+Password sign-up does not verify the email, so anyone can sign up with an address they don't own, and with the session it returns add more ways in. The first proof of the mailbox claims the account for whoever made it. That proof is any of:
+
+- signing in (or up, with `otpSignUpExistingUser`) with an email code;
+- a `verify-email` code entered by anyone other than a signed-in holder of the account (a session cookie with its CSRF token, or a bearer session token);
+- a completed password reset.
+
+AuthFn then removes everything set up on the account before: the password (a reset keeps the new one), API keys, the second factor with its recovery codes and pending challenges, linked social accounts, native handoff codes and grants to OAuth clients (`@authfn/oauth-provider`). It revokes every session and marks the email verified before issuing the new session. Only installed plugins' data is touched. An account whose email is already verified is not affected.
 
 ## Sign-up profile
 

@@ -5192,7 +5192,7 @@ When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn`
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used. Session cookies and bearer session tokens of a disabled user are refused the same way while the flag is set; clearing it restores them.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used. Session cookies and bearer session tokens of a disabled user are refused the same way while the flag is set (including for placement contexts). The session records are kept, so clearing the flag restores bearer tokens; a browser whose cookies were cleared by a `GET /session` in the meantime signs in again.
 5. Updates `lastUsedAt`.
 6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, `scopes` set to the key's stored scopes that the registry can grant (`[]` when it has none), and `credential: { type: 'api-key', id: <keyId> }`.
 
@@ -5856,7 +5856,7 @@ sequenceDiagram
 
 Set `accountLinking.otpSignUpExistingUser: true` to make OTP sign-up for an existing email succeed as a sign-in. The OTP itself is proof of email control, so this is safe for almost all consumer apps. See [Concepts → Account linking](../core-concepts/account-linking).
 
-A successful `sign-in` (or `sign-up` linked to an existing user) on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes the account's password credential, revokes its existing sessions and marks the email verified, so a password or session set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts).
+A successful `sign-in` (or `sign-up` linked to an existing user), or a `verify-email` code entered by anyone other than a signed-in holder of the account, on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes everything set up on the account before (password, API keys, second factor, linked social accounts, handoff codes, OAuth client grants), revokes its sessions and marks the email verified, so access set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts).
 
 ## Email anti-enumeration
 
@@ -6463,7 +6463,7 @@ sequenceDiagram
   Kernel-->>Client: 200 OK { ok, data: { reset: true } }
 ```
 
-A completed reset revokes all of the user's sessions (cookie and bearer), including any held by someone who knew the old password. API keys are not revoked.
+A completed reset revokes all of the user's sessions (cookie and bearer) and any unfinished two-factor sign-in, including those started by someone who knew the old password. API keys are not revoked (on a verified account). On an account whose email was not verified yet, the reset also claims the account: see [Unverified accounts](#unverified-accounts).
 
 ## Account-linking interactions
 
@@ -6471,7 +6471,13 @@ When a user is already authenticated and `accountLinking.passwordForAuthenticate
 
 ## Unverified accounts
 
-Password sign-up does not verify the email, so anyone can sign up with an address they don't own. When someone later proves control of that mailbox by signing in (or up, with `otpSignUpExistingUser`) with an email code, and the account's email is still unverified, AuthFn removes the account's password, revokes its sessions and marks the email verified before issuing the new session. The owner can then set a password of their own. An account whose email is already verified is not affected.
+Password sign-up does not verify the email, so anyone can sign up with an address they don't own, and with the session it returns add more ways in. The first proof of the mailbox claims the account for whoever made it. That proof is any of:
+
+- signing in (or up, with `otpSignUpExistingUser`) with an email code;
+- a `verify-email` code entered by anyone other than a signed-in holder of the account (a session cookie with its CSRF token, or a bearer session token);
+- a completed password reset.
+
+AuthFn then removes everything set up on the account before: the password (a reset keeps the new one), API keys, the second factor with its recovery codes and pending challenges, linked social accounts, native handoff codes and grants to OAuth clients (`@authfn/oauth-provider`). It revokes every session and marks the email verified before issuing the new session. Only installed plugins' data is touched. An account whose email is already verified is not affected.
 
 ## Sign-up profile
 

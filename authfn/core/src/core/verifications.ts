@@ -23,13 +23,10 @@ import {
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
 import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
-import { hashSecret, revokeSessionsForUser } from './sessions.js';
+import { authenticateAccountRequest, hashSecret, revokeSessionsForUser } from './sessions.js';
+import { removePendingTwoFactorChallenges, removePreVerificationAccess } from './account-claim.js';
 import { createUser, findUserByPrimaryEmail, markUserEmailVerified, readSignUpProfile } from './users.js';
-import {
-  type PasswordPolicyOptions,
-  removePasswordCredentialsForUser,
-  updatePasswordCredential
-} from './passwords.js';
+import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -349,7 +346,11 @@ export async function verifyOtpChallenge(
   }
 
   if (input.purpose === 'verify-email') {
-    if (user) {
+    if (user && !user.emailVerifiedAt && !(await isAccountHolderRequest(config, input.request, user.id))) {
+      // The code was entered by someone other than a signed-in holder of
+      // this account, so it is the first proof of the mailbox: claim it.
+      user = await claimUnverifiedAccount(config, user, now);
+    } else if (user) {
       user = await markUserEmailVerified(config, user.id, now);
     }
   } else if ((input.purpose === 'sign-in' || (input.purpose === 'sign-up' && linkedExistingUser)) && user) {
@@ -460,9 +461,26 @@ async function claimUnverifiedAccount(
   user: AuthFnUserRecord,
   now: Date
 ): Promise<AuthFnUserRecord> {
-  await removePasswordCredentialsForUser(config, user.id);
-  await revokeSessionsForUser(config, user.id);
+  await removePreVerificationAccess(config, user.id, now);
   return markUserEmailVerified(config, user.id, now);
+}
+
+/**
+ * Whether the request is made by a signed-in holder of the account (a session
+ * cookie with its CSRF token, or a bearer session token). Such a holder who
+ * also has the emailed code controls both, as when someone who signed up with
+ * a password verifies their own address.
+ */
+async function isAccountHolderRequest(
+  config: AuthFnRuntimeConfig,
+  request: Request | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!request) {
+    return false;
+  }
+  const session = await authenticateAccountRequest(config, request);
+  return session?.actorId === userId;
 }
 
 export async function completeResetPassword(
@@ -496,10 +514,20 @@ export async function completeResetPassword(
     email,
     purpose: 'reset-password'
   });
-  // Whoever reset the password proved control of the mailbox; sessions
-  // issued before the reset (possibly to someone who knew the old password)
-  // stop working.
-  await revokeSessionsForUser(config, user.id);
+  // Whoever reset the password proved control of the mailbox. Sessions and
+  // unfinished two-factor sign-ins that began before the reset (possibly by
+  // someone who knew the old password) stop working. On an account whose
+  // email was not verified yet, the reset is also its first proof of the
+  // mailbox, so everything set up before it is removed (the new password is
+  // kept) and the email is marked verified.
+  if (user.emailVerifiedAt) {
+    await removePendingTwoFactorChallenges(config, user.id);
+    await revokeSessionsForUser(config, user.id);
+  } else {
+    const now = resolveNow(runtimeOptions);
+    await removePreVerificationAccess(config, user.id, now, { keepPassword: true });
+    await markUserEmailVerified(config, user.id, now);
+  }
 
   return {
     passwordUpdated: true
