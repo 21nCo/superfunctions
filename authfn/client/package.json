@@ -30,7 +30,7 @@
     "access": "public"
   },
   "dependencies": {
-    "authfn": "0.3.0",
+    "authfn": "0.8.0",
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
