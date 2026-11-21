@@ -211,6 +211,14 @@ export interface AuthFnClient {
     code: string;
     profile?: Record<string, unknown>;
     sessionMode?: 'cookie' | 'bearer' | 'hybrid';
+    /**
+     * For `verify-email`: set it when the signed-in holder verifies their own
+     * address. The server then refuses the request, leaving the code unused,
+     * unless it comes from the account's own live session, so an expired
+     * session cannot turn it into a mailbox claim that removes the
+     * account's earlier setup.
+     */
+    requireAccountHolder?: boolean;
   }): Promise<AuthFnSessionEnvelope | AuthFnVerifyOtpEnvelope | AuthFnErrorEnvelope>;
   completePasswordReset(input: {
     email: string;
