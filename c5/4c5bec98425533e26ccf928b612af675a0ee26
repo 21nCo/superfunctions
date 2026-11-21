@@ -1,0 +1,45 @@
+mcpfn/auth/README.md
+  s_8cf174d3438d52::t_563ee9e5a5d566 94-129
+mcpfn/auth/package.json
+  s_8cf174d3438d52::t_8a6b9742c2b42c 3
+mcpfn/auth/src/hosted-authorization.ts
+  s_8cf174d3438d52::t_64fcda5f140a3c 363-393,416-417,458,764,774-849
+mcpfn/auth/tests/authorization-errors.test.ts
+  s_8cf174d3438d52::t_7dc0cb708309a7 1-298
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_8cf174d3438d52::t_d0157c5f72d6ee 788-792
+mcpfn/cli/package.json
+  s_8cf174d3438d52::t_db5bda316e77b7 3,26,29-30
+mcpfn/datafn/package.json
+  s_8cf174d3438d52::t_5e5ab8ed99b3db 3,30
+mcpfn/docs/content/docs/reference/auth.md
+  s_8cf174d3438d52::t_1b5d7913ed0280 97-132
+mcpfn/docs/static/llms-full.txt
+  s_8cf174d3438d52::t_9a6c558a92c285 518-553
+mcpfn/inspector/package.json
+  s_8cf174d3438d52::t_9006c3a5dd6fa2 3,25
+mcpfn/testing/package.json
+  s_8cf174d3438d52::t_fa04ca740f6dbc 3,33
+mcpfn/testing/src/host-authorization.ts
+  s_8cf174d3438d52::t_abe74d11a513de 2-9,46-52,58-71,74-113,298,300,303-311,314-323,327-328,467,469,515,518,521-526,534-939,946,949-951,956
+mcpfn/testing/tests/host-authorization.test.ts
+  s_8cf174d3438d52::t_baf6e575436576 1,5,8,14-15,484-1845
+package-lock.json
+  s_8cf174d3438d52::t_f75b8c558979c6 16918,17378,17381,17384-17385,18727,18735,19187,19191,19639,19642
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c54c5bec98425533e26ccf928b612af675a0ee26",
+  "prompts": {},
+  "sessions": {
+    "s_8cf174d3438d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8cf174d3438d52",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
