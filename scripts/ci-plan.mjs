@@ -42,6 +42,7 @@ const STANDALONE_SCRIPTS = [
   "scripts/assert-release-owner.*",
   "scripts/assert-release-ci.*",
   "scripts/release-gate-workflows.*",
+  "scripts/notify-next-sync-workflow.*",
 ];
 
 const STANDALONE_SCRIPT_PATTERNS = STANDALONE_SCRIPTS.map(
