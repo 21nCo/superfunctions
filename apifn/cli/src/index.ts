@@ -8,6 +8,7 @@ import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
 import { runCheckCommand } from "./commands/check.js";
+import { parseCheckArgv } from "./commands/check-args.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
@@ -27,32 +28,6 @@ function toArray(value: string | string[] | undefined): string[] | undefined {
     return undefined;
   }
   return Array.isArray(value) ? value : [value];
-}
-
-/**
- * The literal values given for a long option (`--name value` or `--name=value`), read from argv
- * before `--`. cac/mri turn number-looking values into numbers (`1.10` -> 1.1, `0123` -> 123),
- * which is wrong for paths and git refs.
- */
-function literalOptionValues(argv: string[], name: string): string[] {
-  const camel = (value: string) => value.replace(/([a-z])-([a-z])/g, (_, a, b) => a + b.toUpperCase());
-  const wanted = camel(name);
-  const values: string[] = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    if (token === "--") break;
-    if (!token.startsWith("--")) continue;
-    const eq = token.indexOf("=");
-    const key = camel(eq === -1 ? token.slice(2) : token.slice(2, eq));
-    if (key !== wanted) continue;
-    if (eq !== -1) {
-      values.push(token.slice(eq + 1));
-    } else if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
-      values.push(argv[i + 1]);
-      i += 1;
-    }
-  }
-  return values;
 }
 
 export async function runCli(
@@ -333,73 +308,40 @@ export async function runCli(
     .option("--write", "Rewrite a drifted spec instead of failing")
     .option("--format <type>", "Report format: text | json | markdown (default: text)")
     .option("--report <path>", "Also write the report to this file")
-    .action(
-      async (
-        routerPath: string | undefined,
-        options: {
-          spec?: unknown;
-          base?: unknown;
-          baseSpec?: unknown;
-          allowBreaking?: boolean;
-          write?: boolean;
-          format?: unknown;
-          report?: unknown;
-        }
-      ) => {
-        const globals = getGlobals();
-        const output = createOutput({
-          quiet: globals.quiet,
-          verbose: globals.verbose,
-          color: globals.color !== false,
-          writeStdout: runOptions.stdout,
-          writeStderr: runOptions.stderr,
-        });
+    // The options above are declared for help and for cac's own parse errors; the action reads
+    // the arguments itself (see check-args.ts), so cac's coercions and dropped arguments never
+    // reach the check.
+    .action(async () => {
+      const globals = getGlobals();
+      const output = createOutput({
+        quiet: globals.quiet,
+        verbose: globals.verbose,
+        color: globals.color !== false,
+        writeStdout: runOptions.stdout,
+        writeStderr: runOptions.stderr,
+      });
 
-        const single = (name: string, value: unknown): string | undefined => {
-          if (value === undefined) return undefined;
-          const literal = literalOptionValues(argv, name);
-          if (
-            Array.isArray(value) ||
-            typeof value === "boolean" ||
-            value === "" ||
-            literal.length !== 1 ||
-            literal[0] === ""
-          ) {
-            throw new Error(`--${name} takes one value`);
-          }
-          return literal[0];
-        };
-
-        let config;
-        let args;
-        try {
-          args = {
-            specPath: single("spec", options.spec),
-            base: single("base", options.base),
-            baseSpec: single("base-spec", options.baseSpec),
-            format: single("format", options.format),
-            reportPath: single("report", options.report),
-          };
-          ({ config } = await loadConfig({ cwd: runOptions.cwd, configPath: globals.config }));
-        } catch (error) {
-          output.error(error instanceof Error ? error.message : String(error));
-          exitCode = 2;
-          return;
-        }
-
-        const result = await runCheckCommand({
-          routerPath: routerPath === undefined ? undefined : String(routerPath),
-          ...args,
-          allowBreaking: options.allowBreaking === true,
-          write: options.write === true,
-          cwd: runOptions.cwd,
-          config,
-          output,
-          writeStdout: runOptions.stdout,
-        });
-        if (result !== 0) exitCode = result;
+      let args;
+      let config;
+      try {
+        const { configPath, ...checkArgs } = parseCheckArgv(argv);
+        args = checkArgs;
+        ({ config } = await loadConfig({ cwd: runOptions.cwd, configPath }));
+      } catch (error) {
+        output.error(error instanceof Error ? error.message : String(error));
+        exitCode = 2;
+        return;
       }
-    );
+
+      const result = await runCheckCommand({
+        ...args,
+        cwd: runOptions.cwd,
+        config,
+        output,
+        writeStdout: runOptions.stdout,
+      });
+      if (result !== 0) exitCode = result;
+    });
 
   cli
     .command("serve [specPath]", "Serve interactive API explorer")

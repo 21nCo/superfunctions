@@ -15,9 +15,10 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, parseDocument, visit, isAlias, isCollection, isPair, isScalar } from "yaml";
+import type { Alias, Node as YamlNode } from "yaml";
 import { diffOpenAPI, parseOpenAPI, validateOpenAPI } from "@apifn/core";
 import type { DiffEntry, DiffResult, OpenAPIDocument } from "@apifn/core";
 import type { ApifnConfig } from "../config.js";
@@ -83,7 +84,7 @@ class CheckUsageError extends Error {}
 const DRIFT_PROBLEMS: Record<DriftState, string> = {
   none: "matches the router",
   missing: "does not exist",
-  unparseable: "is not valid YAML or JSON",
+  unparseable: "cannot be read as YAML or JSON",
   stale: "differs from the spec generated from the router",
 };
 
@@ -402,6 +403,96 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// ---------------------------------------------------------------------------
+// Spec parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * The most nodes a committed or base spec may hold once its YAML aliases are expanded. The yaml
+ * package's default guard (`maxAliasCount: 100`) rejects any spec that `apifn generate` wrote
+ * for a router reusing one object (a shared `security` array, say) more than about 100 times,
+ * so the check bounds the expanded size instead: linear to measure, and far above any real spec.
+ */
+export const MAX_EXPANDED_SPEC_NODES = 5_000_000;
+
+/** Number of nodes the document expands to, every alias replaced by its anchored node. */
+function expandedNodeCount(doc: ReturnType<typeof parseDocument>): number {
+  // An alias names the last node with that anchor before it in document order.
+  const anchors = new Map<string, YamlNode>();
+  const targets = new Map<Alias, YamlNode | undefined>();
+  visit(doc, (_key, node) => {
+    if (isAlias(node)) {
+      targets.set(node, anchors.get(node.source));
+    } else if ((isCollection(node) || isScalar(node)) && node.anchor) {
+      anchors.set(node.anchor, node);
+    }
+  });
+
+  const sizes = new Map<unknown, number>();
+  const open = new Set<unknown>();
+  const size = (node: unknown): number => {
+    if (node === null || node === undefined) return 0;
+    const known = sizes.get(node);
+    if (known !== undefined) return known;
+    if (open.has(node)) throw new Error("the YAML aliases form a cycle");
+    open.add(node);
+    let total: number;
+    if (isAlias(node)) {
+      const target = targets.get(node);
+      if (!target) throw new Error(`unresolved alias *${node.source}`);
+      total = size(target);
+    } else if (isPair(node)) {
+      total = size(node.key) + size(node.value);
+    } else if (isCollection(node)) {
+      total = 1;
+      for (const item of node.items) total += size(item);
+    } else {
+      total = 1;
+    }
+    open.delete(node);
+    sizes.set(node, total);
+    return total;
+  };
+  return size(doc.contents);
+}
+
+/**
+ * Parses YAML (or JSON, which YAML 1.2 contains) from outside the process: aliases are allowed in
+ * any number, but the expanded document must stay under MAX_EXPANDED_SPEC_NODES and be acyclic.
+ */
+function parseSpecText(raw: string): unknown {
+  const doc = parseDocument(raw);
+  if (doc.errors.length > 0) {
+    throw doc.errors[0];
+  }
+  const nodes = expandedNodeCount(doc);
+  if (nodes > MAX_EXPANDED_SPEC_NODES) {
+    throw new Error(
+      `the YAML aliases expand to ${nodes} nodes (limit ${MAX_EXPANDED_SPEC_NODES})`
+    );
+  }
+  return doc.toJS({ maxAliasCount: -1 });
+}
+
+/** A base spec, as `parseOpenAPI` reads a string (JSON first, then YAML) but with parseSpecText. */
+function parseBaseSpec(raw: string): OpenAPIDocument {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return parseOpenAPI(raw);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    try {
+      parsed = parseSpecText(trimmed);
+    } catch (error) {
+      throw new Error(`Invalid OpenAPI input: failed to parse JSON or YAML (${errorMessage(error)})`);
+    }
+  }
+  return parseOpenAPI(parsed as Record<string, unknown>);
+}
+
 type CommittedSpec = { state: "present"; doc: unknown } | { state: "missing" | "unparseable" };
 
 async function readCommittedSpec(specPath: string): Promise<CommittedSpec> {
@@ -416,7 +507,7 @@ async function readCommittedSpec(specPath: string): Promise<CommittedSpec> {
   }
   try {
     // YAML 1.2 is a superset of JSON, so this reads both forms.
-    return { state: "present", doc: parseYaml(raw) };
+    return { state: "present", doc: parseSpecText(raw) };
   } catch {
     return { state: "unparseable" };
   }
@@ -432,9 +523,60 @@ function serializeForPath(generated: OpenAPIDocument, specPath: string): string 
     : serializeSpec(generated);
 }
 
-/** True when both paths name the same file (same resolved path, or the same inode once both exist). */
-async function sameFile(a: string, b: string): Promise<boolean> {
-  if (path.resolve(a) === path.resolve(b)) {
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/**
+ * The path a write to `target` lands on: every existing symlink on the way, the leaf included,
+ * is followed as the kernel would; components that do not exist yet are kept as given.
+ */
+async function writeDestination(target: string): Promise<string> {
+  const absolute = path.resolve(target);
+  let resolved = path.parse(absolute).root;
+  const pending = absolute.slice(resolved.length).split(path.sep);
+  let links = 0;
+  while (pending.length > 0) {
+    const part = pending.shift() as string;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      resolved = path.dirname(resolved);
+      continue;
+    }
+    const candidate = path.join(resolved, part);
+    let link: string | null = null;
+    try {
+      if ((await lstat(candidate)).isSymbolicLink()) {
+        link = await readlink(candidate);
+      }
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+    }
+    if (link === null) {
+      resolved = candidate;
+      continue;
+    }
+    links += 1;
+    if (links > 40) {
+      throw new CheckUsageError(`Too many symbolic links in ${target}.`);
+    }
+    if (path.isAbsolute(link)) {
+      resolved = path.parse(link).root;
+      pending.unshift(...link.slice(resolved.length).split(path.sep));
+    } else {
+      pending.unshift(...link.split(path.sep));
+    }
+  }
+  return resolved;
+}
+
+/**
+ * True when writing `a` would write the file `b` names: the same destination after symlinks
+ * (even where the file or its directory does not exist yet), or the same inode once both exist.
+ */
+async function sameWriteTarget(a: string, b: string): Promise<boolean> {
+  if ((await writeDestination(a)) === (await writeDestination(b))) {
     return true;
   }
   try {
@@ -458,7 +600,7 @@ async function loadBase(options: CheckCommandOptions, specPath: string, cwd: str
       return { source: "git", ref: options.base, doc: null };
     }
     try {
-      return { source: "git", ref: options.base, doc: parseOpenAPI(raw) };
+      return { source: "git", ref: options.base, doc: parseBaseSpec(raw) };
     } catch (error) {
       throw new CheckUsageError(`Failed to parse the base spec at ${options.base}: ${errorMessage(error)}`);
     }
@@ -471,7 +613,7 @@ async function loadBase(options: CheckCommandOptions, specPath: string, cwd: str
       throw new CheckUsageError(`Failed to load base spec '${options.baseSpec}': ${errorMessage(error)}`);
     }
     try {
-      return { source: "file", ref: options.baseSpec, doc: parseOpenAPI(raw) };
+      return { source: "file", ref: options.baseSpec, doc: parseBaseSpec(raw) };
     } catch (error) {
       throw new CheckUsageError(`Failed to parse base spec '${options.baseSpec}': ${errorMessage(error)}`);
     }
@@ -540,14 +682,15 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const specPath = resolveSpecPath({ specPath: options.specPath, cwd, config: options.config });
     const reportPath =
       options.reportPath === undefined ? undefined : path.resolve(cwd, options.reportPath);
-    if (reportPath !== undefined && (await sameFile(reportPath, specPath))) {
+    if (reportPath !== undefined && (await sameWriteTarget(reportPath, specPath))) {
       throw new CheckUsageError(
         `--report ${options.reportPath} is the spec itself; write the report to another file.`
       );
     }
 
     // The head document is what `apifn generate` would commit, read back.
-    const head = parseYaml(serializeSpec(generated)) as OpenAPIDocument;
+    // It is this process's own output, so its aliases (one per reused object) are not limited.
+    const head = parseYaml(serializeSpec(generated), { maxAliasCount: -1 }) as OpenAPIDocument;
     const failures: string[] = [];
     const warnings: string[] = [];
     const specLabel = path.relative(cwd, specPath).split(path.sep).join("/") || specPath;

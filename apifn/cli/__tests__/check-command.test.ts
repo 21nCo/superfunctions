@@ -3,7 +3,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
@@ -562,5 +562,213 @@ describe("apifn check: report formats", () => {
     );
     expect(result.code).toBe(1);
     expect(await readFile(path.join(dir, "out", "report.md"), "utf8")).toBe(result.stdout);
+  });
+});
+
+describe("apifn check: YAML aliases", () => {
+  /** A router whose 120 routes share one security array, so `apifn generate` writes 119 aliases. */
+  async function sharedSecurityService(): Promise<string> {
+    const dir = await tempDir("apifn-check-aliases-");
+    const routes = Array.from(
+      { length: 120 },
+      (_, i) => `    {
+      method: "GET",
+      path: "/items${i}",
+      handler: async () => Response.json({}),
+      meta: { operationId: "getItems${i}", security: SHARED, responses: { 200: { description: "ok" } } },
+    },`
+    ).join("\n");
+    await writeFile(
+      path.join(dir, "router.ts"),
+      `const SHARED = [{ bearerAuth: [] }];\nexport default {\n  getRoutes() {\n    return [\n${routes}\n    ];\n  },\n};\n`
+    );
+    await writeFile(
+      path.join(dir, "apifn.config.ts"),
+      `export default { router: "./router.ts", openapi: { info: { title: "Aliases", version: "1.0.0" } } };\n`
+    );
+    await commitSpec(dir);
+    return dir;
+  }
+
+  /**
+   * `apifn generate` copies every object (core sortObjectDeep), so its own YAML has no aliases;
+   * a YAML tool that re-serializes the spec, or another generator, shares the equal security
+   * arrays as one anchor and 119 aliases, past the yaml package's default limit of 100.
+   */
+  async function aliasedSpec(dir: string): Promise<string> {
+    const doc = parseYaml(await readFile(path.join(dir, SPEC), "utf8")) as {
+      paths: Record<string, { get: { security: unknown } }>;
+    };
+    const shared = [{ bearerAuth: [] }];
+    for (const item of Object.values(doc.paths)) item.get.security = shared;
+    const text = toYaml(doc);
+    expect(text.match(/\*a\d+/g)?.length ?? 0).toBeGreaterThan(100);
+    expect(() => parseYaml(text)).toThrow(/alias/i);
+    return text;
+  }
+
+  it("a spec apifn generate wrote for a router sharing one security constant checks clean", async () => {
+    const dir = await sharedSecurityService();
+    const { code, report } = await runJson(["check"], dir);
+    expect(code).toBe(0);
+    expect(report.drift).toBe(false);
+  });
+
+  it("a committed spec with more than 100 aliases is compared by value, not rejected", async () => {
+    const dir = await sharedSecurityService();
+    await writeFile(path.join(dir, SPEC), await aliasedSpec(dir));
+    const { code, report } = await runJson(["check"], dir);
+    expect(code).toBe(0);
+    expect(report.drift).toBe(false);
+  });
+
+  it("a base spec with more than 100 aliases is diffed, from a file and from git", async () => {
+    const dir = await sharedSecurityService();
+    await writeFile(path.join(dir, "base.yml"), await aliasedSpec(dir));
+    const asBase = await runJson(["check", "--base-spec", "base.yml"], dir);
+    expect(asBase.code).toBe(0);
+    expect(asBase.report.base.status).toBe("compared");
+    expect(asBase.report.diff?.breaking).toEqual([]);
+    expect(asBase.report.diff?.nonBreaking).toEqual([]);
+
+    git(dir, "init", "-q");
+    await writeFile(path.join(dir, SPEC), await readFile(path.join(dir, "base.yml"), "utf8"));
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "contract");
+    await commitSpec(dir);
+    const asGitBase = await runJson(["check", "--base", "HEAD"], dir);
+    expect(asGitBase.code).toBe(0);
+    expect(asGitBase.report.base.status).toBe("compared");
+    expect(asGitBase.report.diff?.breaking).toEqual([]);
+    expect(asGitBase.report.diff?.nonBreaking).toEqual([]);
+  });
+
+  /** 10 aliases per level over 8 levels: about 10^8 nodes once expanded. */
+  const ALIAS_BOMB = [
+    "openapi: 3.1.0",
+    "a0: &a0 [x, x, x, x, x, x, x, x, x, x]",
+    ...Array.from(
+      { length: 7 },
+      (_, i) => `a${i + 1}: &a${i + 1} [${Array(10).fill(`*a${i}`).join(", ")}]`
+    ),
+  ].join("\n");
+
+  it("a committed spec that expands past the limit is drift, not a hang", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    await writeFile(path.join(dir, SPEC), ALIAS_BOMB);
+    const { code, report } = await runJson(["check"], dir);
+    expect(code).toBe(1);
+    expect(report.driftState).toBe("unparseable");
+  });
+
+  it("a committed spec whose aliases form a cycle is drift", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\nloop: &loop\n  self: *loop\n");
+    const { code, report } = await runJson(["check"], dir);
+    expect(code).toBe(1);
+    expect(report.driftState).toBe("unparseable");
+  });
+
+  it("a base spec that expands past the limit is a load error", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await writeFile(path.join(dir, "bomb.yml"), ALIAS_BOMB);
+    const result = await run(["check", "--base-spec", "bomb.yml"], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("expand to");
+    expect(result.stdout).toBe("");
+  });
+});
+
+describe("apifn check: argument grammar", () => {
+  it.each([
+    [["./router.ts", "HEAD"]],
+    [["--allow-breaking="]],
+    [["--allow-breaking=false"]],
+    [["--write=false"]],
+    [["--", "./router.ts"]],
+    [["./router.ts", "--", "extra"]],
+    [["--base-spec", "a.yml", "--base-spec", "b.yml"]],
+    [["-x"]],
+  ])("%j exits 2 with no report and no write", async (args) => {
+    const root = await fixtures();
+    const dir = path.join(root, "breaking");
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    const result = await run(["check", "--write", ...args], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).not.toBe("");
+    expect(result.stdout).toBe("");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+  });
+
+  it("a router path that looks like a number is read literally", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await mkdir(path.join(dir, "1.10"));
+    await cp(path.join(dir, "router.ts"), path.join(dir, "1.10", "index.ts"));
+    const { code, report } = await runJson(["check", "1.10"], dir);
+    expect(code).toBe(0);
+    expect(report.drift).toBe(false);
+  });
+
+  it("global options and the declared options in any order still parse", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const result = await run(
+      ["--quiet", "check", "--format=json", "./router.ts", "--config", "apifn.config.ts", "--allow-breaking"],
+      dir
+    );
+    expect(result.code).toBe(0);
+    expect((JSON.parse(result.stdout) as CheckReport).verdict).toBe("pass");
+  });
+});
+
+describe("apifn check: --report never writes the spec", () => {
+  async function missingSpec(): Promise<string> {
+    const root = await fixtures();
+    return path.join(root, "compatible");
+  }
+
+  async function expectRejected(dir: string, reportPath: string): Promise<void> {
+    const result = await run(["check", "--write", "--report", reportPath], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("is the spec itself");
+    await expect(access(path.join(dir, SPEC))).rejects.toThrow();
+  }
+
+  it("through a symlinked directory while the spec does not exist yet", async () => {
+    const dir = await missingSpec();
+    await mkdir(path.join(dir, ".apifn"));
+    await symlink(".apifn", path.join(dir, "alias"));
+    await expectRejected(dir, "alias/openapi.yml");
+  });
+
+  it("through a dangling directory symlink whose target --write would create", async () => {
+    const dir = await missingSpec();
+    await symlink(".apifn", path.join(dir, "alias"));
+    await expectRejected(dir, "alias/openapi.yml");
+  });
+
+  it("through a dangling report symlink that points at the missing spec", async () => {
+    const dir = await missingSpec();
+    await mkdir(path.join(dir, ".apifn"));
+    await symlink(path.join(".apifn", "openapi.yml"), path.join(dir, "report.md"));
+    await expectRejected(dir, "report.md");
+  });
+
+  it("a report beside the spec is written normally", async () => {
+    const dir = await missingSpec();
+    const result = await run(["check", "--write", "--report", ".apifn/report.txt"], dir);
+    expect(result.code).toBe(0);
+    expect(await readFile(path.join(dir, ".apifn", "report.txt"), "utf8")).toBe(result.stdout);
+    expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
   });
 });
