@@ -295,7 +295,7 @@ async function runHostedCase(
     const authorizationResponse = await target.request(new Request(authorization, {
       redirect: "manual",
     }));
-    const evidence = target.authorizationEvidence?.(authorizationResponse);
+    const evidence = validEvidence(target.authorizationEvidence?.(authorizationResponse));
     responseStatus = authorizationResponse.status;
     const decision = redirectDecision(fixture, target);
     const authorizationError = await oauthError(authorizationResponse);
@@ -670,6 +670,24 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
   if (!decision?.postMatchPermitted) {
     throw new Error("Rejected redirect URI must not receive a callback");
   }
+}
+
+/** Evidence must count resolutions as a nonnegative safe integer. */
+function validEvidence(
+  evidence: McpFnHostedAuthorizationEvidence | undefined,
+): McpFnHostedAuthorizationEvidence | undefined {
+  if (evidence === undefined) return undefined;
+  const { clientResolutions, preClientResolutionDenial } = evidence;
+  if (
+    !Number.isSafeInteger(clientResolutions) ||
+    clientResolutions < 0 ||
+    typeof preClientResolutionDenial !== "boolean"
+  ) {
+    throw new Error(
+      "Authorization evidence must report clientResolutions as a nonnegative integer and preClientResolutionDenial as a boolean",
+    );
+  }
+  return evidence;
 }
 
 /**

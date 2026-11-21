@@ -1589,6 +1589,32 @@ describe("unvetted-client authorization rejections", () => {
               : { status: "failed", error: NO_RESOLUTION });
           }
         }
+        // Malformed evidence fails every response rather than counting as a resolution.
+        const [ineligibleClient] = notEligible(RUNTIME_PORT);
+        const malformedEvidence = [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]
+          .map((clientResolutions) => evidence(clientResolutions, false))
+          .concat([{ clientResolutions: 1, preClientResolutionDenial: "no" } as never]);
+        for (const reported of malformedEvidence) {
+          const [fixture, respond] = postMatchResponders()[0]!;
+          for (const [target, cases] of [
+            [{ issuer, prepareRegistration: async () => {}, request: respond }, [fixture]],
+            [{
+              issuer,
+              tokenEndpointAuthMethods: ["none"],
+              prepareRegistration: async () => {},
+              request: async () => Response.json({ error: "invalid_client" }, { status: 400 }),
+            }, [ineligibleClient]],
+          ] as const) {
+            const [result] = await runHostedAuthorizationRegression(
+              { ...target, authorizationEvidence: () => reported },
+              [...cases],
+            );
+            expect(result).toMatchObject({
+              status: "failed",
+              error: expect.stringContaining("Authorization evidence must report clientResolutions"),
+            });
+          }
+        }
         // A denial with no resolution still requires a valid OAuth error code.
         const [ineligible] = notEligible(RUNTIME_PORT);
         const [malformed] = await runHostedAuthorizationRegression({
