@@ -3,6 +3,7 @@ import type { CompletionRequest, CompletionResponse, StreamEvent } from "../../c
 import { type SecretProvider, resolveSecret } from "../../tools/policy.js";
 import { ChatModel } from "../base.js";
 import { defineCapabilityProfile, requireCapability, type CapabilityProfile } from "../profiles/types.js";
+import { type BodyErrorState, throwIfBodyFailed } from "../stream-lines.js";
 import { getTransportClient } from "../transport.js";
 import { buildResponsesPayload } from "./request.js";
 import { parseResponsesResponse, raiseForResponsesStatus, readResponsesBody } from "./response.js";
@@ -85,10 +86,7 @@ export class ResponsesChatModel extends ChatModel {
     this.profile = defineCapabilityProfile(config.profile);
     this.model = config.model;
     this.baseUrl = validateBaseUrl(config.baseUrl);
-    this.path = config.path ?? "/responses";
-    if (typeof this.path !== "string" || !this.path.startsWith("/") || this.path.startsWith("//")) {
-      throw new ValidationError("ResponsesChatModel path must start with a single /");
-    }
+    this.path = validatePath(config.path ?? "/responses");
     if (config.provider !== undefined && (typeof config.provider !== "string" || !config.provider.trim())) {
       throw new ValidationError("ResponsesChatModel provider must be a non-empty string");
     }
@@ -131,7 +129,7 @@ export class ResponsesChatModel extends ChatModel {
     } catch (error) {
       throw new ProviderError("Responses body is not valid JSON", { provider: this.provider, cause: error });
     }
-    return parseResponsesResponse(data, this.provider);
+    return parseResponsesResponse(data, this.provider, { sentCallIds: sentCallIds(payload) });
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
@@ -148,21 +146,29 @@ export class ResponsesChatModel extends ChatModel {
     const response = await this.send(payload, request.signal, "text/event-stream");
     if (!response.body) throw new ProviderError("Responses stream body was empty", { provider: this.provider });
     const signal = request.signal;
-    // Events may already be buffered when the caller aborts, so the signal is checked before
-    // every yield and as soon as the caller resumes, before the mapper reads further: after an
-    // abort nothing more is delivered, and the stream rejects with the abort reason instead of
-    // finishing normally or failing on a later buffered frame.
+    // The transport errors the body on a timeout, a byte limit crossed by a prefetched chunk or
+    // an abort; the line reader records that error.
+    const bodyError: BodyErrorState = {};
+    // Events may already be buffered when the caller aborts or the body fails, so both are
+    // checked before every yield and as soon as the caller resumes, before the mapper reads
+    // further: after either, nothing more is delivered, and the stream rejects with the abort
+    // reason or the body error instead of finishing normally or failing on a later frame.
+    const check = () => {
+      throwIfAborted(signal);
+      throwIfBodyFailed(bodyError);
+    };
+    const events = readServerSentEvents(response.body, this.maxStreamLineBytes, { bodyError });
     try {
-      for await (const event of mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider)) {
-        throwIfAborted(signal);
+      for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sentCallIds(payload) })) {
+        check();
         yield event;
-        throwIfAborted(signal);
+        check();
       }
     } catch (error) {
-      throwIfAborted(signal);
+      check();
       throw error;
     }
-    throwIfAborted(signal);
+    check();
   }
 
   private payload(request: ResponsesChatRequest, stream: boolean): Record<string, unknown> {
@@ -223,6 +229,30 @@ export class ResponsesChatModel extends ChatModel {
     await raiseForResponsesStatus(this.provider, response, signal);
     return response;
   }
+}
+
+/** The function call ids in the history a payload sends: its stateless call ledger. */
+function sentCallIds(payload: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+  for (const item of payload.input as Record<string, unknown>[]) {
+    if (item.type === "function_call" && typeof item.call_id === "string") ids.add(item.call_id);
+  }
+  return ids;
+}
+
+/**
+ * The endpoint path stays below the base URL and is canonical, so the request and the default
+ * cache identity name the same endpoint: no query, fragment, whitespace, backslash or dot
+ * segment (also percent-encoded).
+ */
+function validatePath(path: unknown): string {
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+    throw new ValidationError("ResponsesChatModel path must start with a single /");
+  }
+  if (/[\s?#\\]/.test(path) || path.split("/").some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment))) {
+    throw new ValidationError("ResponsesChatModel path must not contain whitespace, ?, #, a backslash or dot segments");
+  }
+  return path;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -10,6 +10,24 @@ export interface ReadStreamLinesOptions {
    * line and a CRLF line keeps its trailing CR.
    */
   crLineBreaks?: boolean;
+  /**
+   * Opt in to stopping at a body error: once the body errors (a transport timeout, a byte limit
+   * crossed by a prefetched chunk, an abort), no further line is yielded, not even one from a
+   * chunk already read, and the iterator rejects with that error. The error is also recorded
+   * on this object so a consumer can stop events it already derived from earlier lines. By
+   * default lines from a chunk already read are still yielded.
+   */
+  bodyError?: BodyErrorState;
+}
+
+/** Records the error a stream body failed with; see {@link ReadStreamLinesOptions.bodyError}. */
+export interface BodyErrorState {
+  failed?: { error: unknown };
+}
+
+/** Throw the recorded body error, if any. */
+export function throwIfBodyFailed(state: BodyErrorState | undefined): void {
+  if (state?.failed) throw state.failed.error;
 }
 
 function findLineBreak(value: Uint8Array, start: number, crLineBreaks: boolean): number {
@@ -29,6 +47,14 @@ export async function* readStreamLines(
   if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 0) throw new RangeError("maxLineBytes must be a nonnegative safe integer");
   const crLineBreaks = options.crLineBreaks === true;
   const reader = body.getReader();
+  const watch = options.bodyError;
+  // Releasing the lock rejects `closed` too; that is not a body error.
+  let released = false;
+  if (watch) {
+    reader.closed.then(undefined, (error: unknown) => {
+      if (!released && !watch.failed) watch.failed = { error };
+    });
+  }
   const decoder = new TextDecoder();
   let buffer = "";
   let bufferedBytes = 0;
@@ -51,7 +77,9 @@ export async function* readStreamLines(
         buffer += decoder.decode(value.subarray(start, end), { stream: true });
         if (lineBreak === -1) break;
         buffer += decoder.decode(value.subarray(lineBreak, lineBreak + 1), { stream: true });
+        throwIfBodyFailed(watch);
         yield buffer.slice(0, -1);
+        throwIfBodyFailed(watch);
         buffer = "";
         bufferedBytes = 0;
         start = lineBreak + 1;
@@ -65,7 +93,10 @@ export async function* readStreamLines(
       }
     }
     buffer += decoder.decode();
-    if (buffer) yield buffer;
+    if (buffer) {
+      throwIfBodyFailed(watch);
+      yield buffer;
+    }
   } finally {
     // Cancel without waiting: a cancel that never settles must not withhold the error, the
     // completion or the early return that ended the read, and its rejection must not replace them.
@@ -74,6 +105,7 @@ export async function* readStreamLines(
     } catch {
       // A reader that cannot be cancelled is still released.
     }
+    released = true;
     reader.releaseLock();
   }
 }

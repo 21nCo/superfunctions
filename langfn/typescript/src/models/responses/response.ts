@@ -62,7 +62,7 @@ const INPUT_ONLY_ITEM_TYPES = new Set([
 /** Content part types that only exist in request input messages. */
 const INPUT_ONLY_PART_TYPES = new Set(["input_text", "input_image", "input_file", "input_audio"]);
 
-const MESSAGE_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
+const ITEM_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
 
 /** Read the text, refusal, function calls and reasoning out of Responses output items. */
 export function parseOutputItems(
@@ -88,7 +88,7 @@ export function parseOutputItems(
     switch (item.type) {
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
-        if (item.status !== undefined && item.status !== null && !MESSAGE_STATUSES.has(item.status as string)) {
+        if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
           throw fail(`Responses output message has unexpected status ${String(item.status)}`);
         }
         if (!Array.isArray(item.content)) throw fail("Responses output message content must be an array");
@@ -99,6 +99,9 @@ export function parseOutputItems(
             if (typeof part.text !== "string") throw fail("Responses output_text part requires text");
             if (part.annotations !== undefined && part.annotations !== null && !Array.isArray(part.annotations)) {
               throw fail("Responses output_text annotations must be an array");
+            }
+            if (Array.isArray(part.annotations) && !part.annotations.every(isRecord)) {
+              throw fail("Responses output_text annotations must be objects");
             }
             text.push(part.text);
           } else if (part.type === "refusal") {
@@ -150,7 +153,8 @@ export function parseOutputItems(
  * Fill the fields the Responses input schema requires on a replayed item when a compatible
  * server left them out and their value is known: an output message is from the assistant and
  * finished, its text parts have annotations, a reasoning item has a summary of summary_text
- * parts, a function call with a null status is finished, and a null id is dropped. Fields that are present stay as they are, so a complete
+ * parts and no null status or content, a function call with a null status is finished, and a
+ * null id is dropped. Fields that are present stay as they are, so a complete
  * item comes back unchanged; ids are never invented.
  */
 export function normalizeOutputItem(item: JsonRecord): ResponsesOutputItem {
@@ -170,6 +174,9 @@ export function normalizeOutputItem(item: JsonRecord): ResponsesOutputItem {
       }
       break;
     case "reasoning":
+      // A null status or content is no value; sent back as null it would be rejected.
+      if (normalized.status === null) delete normalized.status;
+      if (normalized.content === null) delete normalized.content;
       if (normalized.summary === undefined || normalized.summary === null) normalized.summary = [];
       if (Array.isArray(normalized.summary)) {
         for (const part of normalized.summary) {
@@ -220,6 +227,9 @@ function parseReasoning(item: JsonRecord, provider: string): ResponsesReasoningS
       return part.text;
     });
   };
+  if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
+    throw fail(`Responses reasoning item has unexpected status ${String(item.status)}`);
+  }
   if (item.encrypted_content !== undefined && item.encrypted_content !== null && typeof item.encrypted_content !== "string") {
     throw fail("Responses reasoning encrypted_content must be a string");
   }
@@ -259,8 +269,21 @@ export function assertNoReportedError(data: JsonRecord, provider: string): void 
   throw new ProviderError(`${provider} Responses request failed${detail}`, { provider, metadata: { status: 200, body: data } });
 }
 
+export interface ParseResponsesOptions {
+  /**
+   * Function call ids already in the history sent with the request. A tool agent runs every
+   * returned call, so a returned call reusing one of them (a call that already ran) is rejected
+   * instead of executed again.
+   */
+  sentCallIds?: ReadonlySet<string>;
+}
+
 /** Map a complete Responses API response object (non-streaming or the terminal stream event). */
-export function parseResponsesResponse(data: unknown, provider: string): ResponsesChatResponse {
+export function parseResponsesResponse(
+  data: unknown,
+  provider: string,
+  options: ParseResponsesOptions = {},
+): ResponsesChatResponse {
   if (!isRecord(data)) throw new ProviderError("Responses body must be a JSON object", { provider });
   const status = data.status;
   assertNoReportedError(data, provider);
@@ -270,6 +293,14 @@ export function parseResponsesResponse(data: unknown, provider: string): Respons
   }
 
   const parsed = parseOutputItems(data.output, provider, { incomplete: status === "incomplete" });
+  for (const call of parsed.toolCalls) {
+    if (options.sentCallIds?.has(call.id)) {
+      throw new ProviderError(`Responses returned function_call call_id ${call.id}, which the sent history already used`, {
+        provider,
+        metadata: { callId: call.id },
+      });
+    }
+  }
   const usage = isRecord(data.usage)
     ? providerUsage(data.usage.input_tokens, data.usage.output_tokens, data.usage.total_tokens)
     : undefined;

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readStreamLines } from "../src/models/stream-lines.js";
+import { type BodyErrorState, readStreamLines } from "../src/models/stream-lines.js";
 it("decodes fragmented utf8 and an unterminated last line", async () => {
   const bytes = new TextEncoder().encode("é\r\nlast");
   const body = new ReadableStream<Uint8Array>({
@@ -86,4 +86,32 @@ it("splits on bare CR and CRLF across chunks only when asked", async () => {
   const lfOnly: string[] = [];
   for await (const line of readStreamLines(stream())) lfOnly.push(line);
   expect(lfOnly).toEqual(["a\r", "b\rc\r"]);
+});
+it("stops yielding buffered lines once the body errors, only when asked to", async () => {
+  const failure = new Error("body failed");
+  const run = async (bodyError?: BodyErrorState) => {
+    let fail: (() => void) | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("a\nb\nc\n"));
+        fail = () => c.error(failure);
+      },
+    });
+    const lines: string[] = [];
+    const outcome = await (async () => {
+      for await (const line of readStreamLines(body, 1024, { bodyError })) {
+        lines.push(line);
+        if (line === "a") {
+          fail?.();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+    })().catch((caught: unknown) => caught);
+    return { lines, outcome, locked: body.locked };
+  };
+  // By default the lines of a chunk already read are still delivered.
+  expect(await run()).toEqual({ lines: ["a", "b", "c"], outcome: failure, locked: false });
+  const state: BodyErrorState = {};
+  expect(await run(state)).toEqual({ lines: ["a"], outcome: failure, locked: false });
+  expect(state.failed).toEqual({ error: failure });
 });

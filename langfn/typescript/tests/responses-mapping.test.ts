@@ -220,11 +220,15 @@ describe("stream mapping", () => {
     }
     expect(parseResponsesResponse(completed([call], { error: null }), "fixture").toolCalls).toHaveLength(1);
 
-    // Two finished items on one output index would silently drop one of them.
+    // Two finished items on one output index, or one call finished twice, would silently drop
+    // or duplicate a call. An unindexed item never takes an arrival position as its index.
     const other = { ...call, call_id: "call_fixture_other" };
-    for (const frames of [[done(0), done(0, other)], [done(1), done(undefined, other)]]) {
+    for (const [frames, error] of [
+      [[done(0), done(0, other)], "repeats output_index 0"],
+      [[done(1), done(undefined, call)], "output_item.done repeats function_call call_id call_fixture"],
+    ] as const) {
       const outcome = await mapRaw(frames.map((item) => frame(item)).join("") + frame({ type: "response.completed", response: completed([]) }));
-      expect(String(outcome.error)).toContain("repeats output_index");
+      expect(String(outcome.error)).toContain(error);
       expect(outcome.seen).toEqual([]);
     }
     expect(String((await mapRaw(frame(done(-1)))).error)).toContain("non-negative integer");
@@ -339,6 +343,62 @@ describe("stream mapping", () => {
       expect(outcome.error).toBeUndefined();
       expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
     }
+  });
+
+  it("reconciles finished items with the terminal output as one ledger", async () => {
+    const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
+    const note = { id: "msg_fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Done.", annotations: [] }] };
+    const done = (item: unknown, index?: number) => frame({ type: "response.output_item.done", ...(index === undefined ? {} : { output_index: index }), item });
+    const argsDone = (locator: Record<string, unknown>, args = call.arguments) => frame({ type: "response.function_call_arguments.done", ...locator, arguments: args });
+    const terminal = (output: unknown[], envelope: Record<string, unknown> = {}) => frame({ type: "response.completed", response: completed(output), ...envelope });
+
+    const rejected: Array<[string, string, typeof ProviderError]> = [
+      // An unindexed finished item of any type that has an id must be in the terminal output.
+      [done(note) + terminal([call]), "does not have the finished message item msg_fixture", ProviderError],
+      // An unindexed call is found by its id first, so a changed id is not hidden by its call_id.
+      [done({ ...call, id: "fc_fixture_first" }) + terminal([call]), "does not have the finished function_call item call_fixture", ProviderError],
+      // An unindexed call without an id is found by call_id and must be unchanged.
+      [done({ ...call, id: undefined }) + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call call_fixture", ProviderError],
+      // A terminal output that names one item id, or one call_id, twice is ambiguous.
+      [done(call, 0) + terminal([call, { ...call, call_id: "call_fixture_other" }]), "terminal output repeats item id fc_fixture", ProviderError],
+      [done(call, 0) + terminal([call, { ...call, id: "fc_fixture_other" }]), "terminal output repeats function_call call_id call_fixture", ProviderError],
+      [done(call, 0) + argsDone({ item_id: "fc_fixture" }) + terminal([call, { ...call, call_id: "call_fixture_other" }]), "repeats item id fc_fixture", ProviderError],
+      // Two finished items cannot both be one terminal item.
+      [done({ ...note, id: undefined }, 0) + done(note) + terminal([note, call]), "matches two finished items", ProviderError],
+      // An arrival position is never an output_index, with an omitted output either.
+      [done(call) + argsDone({ output_index: 0 }) + terminal([]), "unknown output_index 0", ProviderError],
+      // A populated error on the terminal event itself fails like one on its response.
+      [done(call, 0) + terminal([call], { error: "upstream failed" }), "Responses request failed: upstream failed", ProviderError],
+      [done(call, 0) + terminal([call], { error: { code: "rate_limit_exceeded", message: "slow down" } }), "", RateLimitError],
+      [done(call, 0) + terminal([call], { error: { code: 429, message: "slow down" } }), "", RateLimitError],
+    ];
+    for (const [text, error, type] of rejected) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(type);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+
+    for (const text of [
+      // An unindexed message and a call reordered to terminal index 0, with both locators.
+      done(note) + done(call, 0) + argsDone({ item_id: "fc_fixture", output_index: 0 }) + terminal([call, note]),
+      done(note) + done(call) + argsDone({ item_id: "fc_fixture", output_index: 0 }) + terminal([call, note]),
+      // An unindexed call without an id matched by call_id; an item with neither is exempt.
+      done({ ...call, id: undefined }) + terminal([call]),
+      done({ ...note, id: undefined }) + done(call) + terminal([call]),
+      // Matching snapshots and the omitted or empty fallback.
+      done(note, 0) + done(call, 1) + argsDone({ item_id: "fc_fixture", output_index: 1 }) + terminal([note, call], { error: null }),
+      done(call, 1) + done(note, 0) + argsDone({ output_index: 1 }) + terminal([]),
+      done(note) + done(call) + argsDone({ item_id: "fc_fixture" }) + terminal([]),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+    // The omitted output follows the stated indexes, not arrival order.
+    const rebuilt = await mapRaw(done(call, 1) + done(note, 0) + terminal([]));
+    const message = rebuilt.seen.find((event) => event.type === "message");
+    expect(message && message.type === "message" ? message.message.responsesOutput?.map((item) => item.type) : undefined).toEqual(["message", "function_call"]);
   });
 
   it("rejects empty or whitespace arguments on an executable call on the JSON and SSE paths", async () => {
@@ -607,12 +667,19 @@ describe("request mapping", () => {
     const reasoning = (summary: unknown[]) => ({ id: "rs_fixture", type: "reasoning", summary, encrypted_content: "fixture-encrypted-reasoning" });
     expect(parseResponsesResponse(completed([reasoning([{ text: "think" }]), text({})]), "fixture").message.responsesOutput?.[0])
       .toEqual(reasoning([{ text: "think", type: "summary_text" }]));
+    // A null reasoning status or content is dropped; a valid status stays.
+    expect(parseResponsesResponse(completed([{ ...reasoning([]), status: null, content: null }, text({})]), "fixture").message.responsesOutput?.[0])
+      .toEqual(reasoning([]));
+    expect(parseResponsesResponse(completed([{ ...reasoning([]), status: "completed" }, text({})]), "fixture").message.responsesOutput?.[0])
+      .toEqual({ ...reasoning([]), status: "completed" });
 
     const malformed: Array<[unknown, string]> = [
       [text({ annotations: "none" }), "annotations must be an array"],
       [text({}, { id: 7 }), "item id must be a string"],
       [text({}, { status: "done" }), "unexpected status done"],
       [reasoning([{ type: "reasoning_text", text: "think" }]), "unexpected type reasoning_text"],
+      [{ ...reasoning([]), status: "done" }, "reasoning item has unexpected status done"],
+      [text({ annotations: ["cite"] }), "annotations must be objects"],
       [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "Hi." }] }, "must not contain input_text parts"],
       [{ type: "message", role: "assistant", content: [{ type: "input_image", image_url: "https://example.test/a.png" }] }, "input_image"],
     ];
@@ -848,6 +915,11 @@ describe("ResponsesChatModel configuration", () => {
     for (const baseUrl of ["https://gateway.example.test/v1\\", "https://gateway.example.test/v1/", "https://gateway.example.test/x/../v1"]) {
       expect(new ResponsesChatModel({ ...base, baseUrl }).baseUrl).toBe("https://gateway.example.test/v1");
     }
+    // The path stays below the base URL and canonical, as the default cache identity assumes.
+    for (const path of ["/v1/responses?x=1", "/responses#a", "/re sponses", "/v1\\responses", "/v1/../responses", "/./responses", "/%2E%2e/responses"]) {
+      expect(() => new ResponsesChatModel({ ...base, path })).toThrow("must not contain whitespace");
+    }
+    expect(new ResponsesChatModel({ ...base, path: "/v2/responses.json" }).provider).toBe("custom-gateway-responses:https://gateway.example.test/v2/responses.json");
     expect(() => new ResponsesChatModel({ ...base, headers: { "x-test": "a\r\nb" } })).toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, reasoning: { effort: "low" } })).toThrow(UnsupportedCapabilityError);
     expect(() => defineCapabilityProfile({ ...customProfile, vision: "yes" as never })).toThrow(ValidationError);
@@ -978,6 +1050,78 @@ describe("ResponsesChatModel configuration", () => {
       expect(outcome).toBe(reason);
       expect(seen.map((event) => event.type)).toEqual(["content"]);
     }
+  });
+
+  it("stops at a transport failure of the body, even when events are already buffered", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    // One chunk holds a delta and a completed call; the body stays open.
+    const text = [
+      { type: "response.output_text.delta", delta: "partial" },
+      { type: "response.completed", response: completed([call]) },
+    ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
+    const pausing = async (model: ResponsesChatModel, pause: number) => {
+      const seen: StreamEvent[] = [];
+      const outcome = await (async () => {
+        for await (const event of model.streamChat({ messages: [{ role: "user", content: "x" }] })) {
+          seen.push(event);
+          await new Promise((resolve) => setTimeout(resolve, pause));
+        }
+      })().catch((caught: unknown) => caught);
+      return { seen, outcome };
+    };
+
+    // The timeout fires while the consumer pauses after the delta.
+    const timedOut = await pausing(gateway(async () => new Response(stalled(text), { status: 200 }), { timeout: 30 }), 80);
+    expect(timedOut.outcome).toBeInstanceOf(TimeoutError);
+    expect(timedOut.seen.map((event) => event.type)).toEqual(["content"]);
+
+    // A prefetched second chunk crosses maxResponseBytes while the consumer pauses.
+    const encoded = new TextEncoder().encode(text);
+    const prefetched = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded);
+        controller.enqueue(new TextEncoder().encode(`: ${"x".repeat(256)}\n`));
+      },
+    }), { status: 200 });
+    const tooLarge = await pausing(gateway(async () => prefetched(), { timeout: 0, maxResponseBytes: encoded.byteLength + 16 }), 10);
+    expect(tooLarge.outcome).toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+    // The prefetch may fail before or after the delta is delivered, but never lets more through.
+    expect(tooLarge.seen.filter((event) => event.type !== "content")).toEqual([]);
+
+    // Without a failure the same buffered body completes.
+    const complete = await pausing(gateway(async () => new Response(stalled(text), { status: 200 }), { timeout: 0 }), 0);
+    expect(complete.outcome).toBeUndefined();
+    expect(complete.seen.map((event) => event.type)).toEqual(["content", "tool_call", "message", "end"]);
+  });
+
+  it("rejects a returned call that reuses a call_id from the sent history, before any tool call", async () => {
+    const history: ResponsesMessage[] = [
+      { role: "user", content: "look it up" },
+      { role: "assistant", content: "", toolCalls: [{ id: "call_fixture_sent", name: "lookup", arguments: {} }] },
+      { role: "tool", content: "ok", tool_call_id: "call_fixture_sent" },
+    ];
+    const call = (id: string) => ({ type: "function_call", status: "completed", call_id: id, name: "lookup", arguments: "{}" });
+    const json = (id: string) => gateway(async () => new Response(JSON.stringify(completed([call(id)])), { status: 200 }));
+    const sse = (id: string) => gateway(async () => new Response(
+      `data: ${JSON.stringify({ type: "response.completed", response: completed([call("call_fixture_parallel"), call(id)]) })}\n\n`,
+      { status: 200 },
+    ));
+
+    const reused = await json("call_fixture_sent").chat({ messages: history }).catch((caught: unknown) => caught);
+    expect(reused).toBeInstanceOf(ProviderError);
+    expect(String(reused)).toContain("call_id call_fixture_sent, which the sent history already used");
+    const seen: StreamEvent[] = [];
+    const streamed = await (async () => {
+      for await (const event of sse("call_fixture_sent").streamChat({ messages: history })) seen.push(event);
+    })().catch((caught: unknown) => caught);
+    expect(streamed).toBeInstanceOf(ProviderError);
+    expect(seen).toEqual([]);
+
+    // New ids, including parallel ones, pass.
+    expect((await json("call_fixture_new").chat({ messages: history })).toolCalls?.map((item) => item.id)).toEqual(["call_fixture_new"]);
+    const events = await collect(sse("call_fixture_new").streamChat({ messages: history }));
+    expect(events.filter((event) => event.type === "tool_call").map((event) => event.type === "tool_call" && event.id))
+      .toEqual(["call_fixture_parallel", "call_fixture_new"]);
   });
 
   it("lets an HTTP status that names the error class win over a nested provider code", async () => {
