@@ -309,10 +309,11 @@ describe("@clifn/core consumer import scan", () => {
     expect(scanSource('export const lazy = () => import("@clifn/core/prompt");\n/** trailing */\n', "lazy.ts")).toEqual([]);
   });
 
-  it("fails closed on standard and diff3 merge conflicts and checks the sections the parser skips", () => {
+  it("fails closed at every parser-reported merge conflict marker, in standard, diff3 and JSX-recovered conflicts", () => {
     const marker = (file: string, line: number, text: string): unknown =>
       startingWith(`${file}:${line}: unresolved merge conflict marker \`${text}\``);
-    const hidden = (file: string, line: number, statement: string): unknown => startingWith(`${file}:${line}: \`${statement}\` names`);
+    // The parsed (HEAD) side is checked as usual; the sections the parser skips, whatever they hold (imports,
+    // re-exports, commented-out or string-embedded lookalikes), fail at their markers and are not read as code.
     const standard = [
       "<<<<<<< HEAD",
       'import { createOutput } from "@clifn/core/output";',
@@ -320,6 +321,7 @@ describe("@clifn/core consumer import scan", () => {
       "=======",
       'import { NotInContract } from "@clifn/core/runner";',
       'export { AlsoMissing } from "@clifn/core";',
+      '// import { Commented } from "@clifn/core";',
       ">>>>>>> branch",
       "export const x = 1;",
     ].join("\n");
@@ -327,9 +329,7 @@ describe("@clifn/core consumer import scan", () => {
       marker("standard.ts", 1, "<<<<<<<"),
       startingWith('standard.ts:3: "readIntEnv" from "@clifn/core" is not in'),
       marker("standard.ts", 4, "======="),
-      hidden("standard.ts", 5, 'import { NotInContract } from "@clifn/core/runner"'),
-      hidden("standard.ts", 6, 'export { AlsoMissing } from "@clifn/core"'),
-      marker("standard.ts", 7, ">>>>>>>"),
+      marker("standard.ts", 8, ">>>>>>>"),
     ]);
 
     const diff3 = [
@@ -347,22 +347,26 @@ describe("@clifn/core consumer import scan", () => {
       marker("diff3.ts", 1, "<<<<<<<"),
       startingWith('diff3.ts:2: "readIntEnv" from "@clifn/core" is not in'),
       marker("diff3.ts", 3, "|||||||"),
-      hidden("diff3.ts", 4, 'import { BaseMissing } from "@clifn/core"'),
-      hidden("diff3.ts", 5, 'export { BaseExport } from "@clifn/core/output"'),
       marker("diff3.ts", 6, "======="),
-      hidden("diff3.ts", 7, 'import { NotInContract } from "@clifn/core/runner"'),
-      hidden("diff3.ts", 8, 'export { AlsoMissing } from "@clifn/core"'),
       marker("diff3.ts", 9, ">>>>>>>"),
     ]);
 
-    // A conflict fails even when every side is listed, and marker-like text inside a literal is not a conflict.
-    const listedOnly = "<<<<<<< HEAD\nexport const a = 1;\n=======\nexport const a = 2;\n>>>>>>> branch\n";
-    expect(findContractViolations(scanSource(listedOnly, "listed.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
-      marker("listed.ts", 1, "<<<<<<<"),
-      marker("listed.ts", 3, "======="),
-      marker("listed.ts", 5, ">>>>>>>"),
+    // A conflict fails even when no side names @clifn/core, including markers JSX error recovery leaves in JSX text.
+    const plain = "<<<<<<< HEAD\nexport const a = 1;\n=======\nexport const a = 2;\n>>>>>>> branch\n";
+    expect(findContractViolations(scanSource(plain, "plain.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      marker("plain.ts", 1, "<<<<<<<"),
+      marker("plain.ts", 3, "======="),
+      marker("plain.ts", 5, ">>>>>>>"),
     ]);
+    const jsx = "const x = <div>{\na\n=======\nb\n>>>>>>> branch\n";
+    expect(findContractViolations(scanSource(jsx, "recovered.tsx"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      marker("recovered.tsx", 3, "======="),
+      marker("recovered.tsx", 5, ">>>>>>>"),
+    ]);
+
+    // Marker-like text inside a literal or valid JSX text is not a conflict.
     expect(scanSource("export const doc = `\n=======\n>>>>>>> branch\n`;\n", "literal.ts")).toEqual([]);
+    expect(scanSource("export const view = <p>\n=======\n</p>;\n", "view.tsx")).toEqual([]);
   });
 
   it("reports a statement match the parser does not read as a module reference", () => {

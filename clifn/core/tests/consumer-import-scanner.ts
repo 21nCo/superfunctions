@@ -19,8 +19,8 @@ import { contractKey } from "./consumer-contract.table.js";
  * `import type` and `export ... from`) is the locator and cross-check. It runs over the source with every
  * comment blanked; a match that starts inside a string, template, regular expression or JSX text literal is
  * a lookalike and is skipped, and a match in code whose specifier is not a parser reference is reported, so a
- * reference the collector missed fails the scan instead of passing it. Text the parser skips (a merge conflict
- * section) is never blanked, and every conflict marker is reported, so a conflicted file fails closed.
+ * reference the collector missed fails the scan instead of passing it. The parser skips merge conflict sections, so
+ * every conflict marker it reports fails the scan at its own line.
  *
  * Non-goal: dynamic `import()` and `require()` calls are not scanned; no consumer uses them for
  * `@clifn/core` at the reference commit.
@@ -242,66 +242,28 @@ function insideLiteral(literals: ParsedFile["literals"], offset: number): boolea
   return false;
 }
 
-/** Trivia the mask blanks. Any other text between parser tokens (a merge conflict section, a token the parser skipped)
- * stays visible to the cross-check, because the parser did not read it. */
-const BLANKED_TRIVIA = new Set([
-  ts.SyntaxKind.WhitespaceTrivia,
-  ts.SyntaxKind.NewLineTrivia,
-  ts.SyntaxKind.SingleLineCommentTrivia,
-  ts.SyntaxKind.MultiLineCommentTrivia,
-  ts.SyntaxKind.ShebangTrivia,
-]);
-
-interface MaskedSource {
-  readonly text: string;
-  /** Offsets of the merge conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) the parser skipped as trivia. */
-  readonly conflictMarkers: readonly number[];
-}
-
 /**
- * Keeps the text of the tokens the TypeScript parser reads and blanks the whitespace, comments, JSDoc and hashbang
- * between them, keeping newlines and offsets. String, template, regular expression and JSX text tokens keep their
- * content, so a comment cannot hide or break a statement, and comment text, including the trivia before the
- * end-of-file token, is never read as code. The text between tokens is classified by the TypeScript scanner, so a
- * merge conflict section the parser skips is kept and its markers are returned for a fail-closed diagnostic.
+ * Keeps only the text of the tokens the TypeScript parser reads and replaces everything between them (whitespace,
+ * every comment, JSDoc and the hashbang) with spaces, keeping newlines and offsets. String, template, regular
+ * expression and JSX text tokens keep their content, so a comment cannot hide or break a statement, and comment
+ * text, including the trivia before the end-of-file token, is never read as code. Text the parser skips (a merge
+ * conflict section) is blanked too, so `conflictMarkerOffsets` makes such a file fail closed.
  */
 export function blankComments(source: string, file = "source.ts"): string {
-  return maskTrivia(parse(source, file)).text;
+  return blankParsedComments(parse(source, file));
 }
 
 function isJsDocNode(node: ts.Node): boolean {
   return node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode;
 }
 
-function maskTrivia(sourceFile: ts.SourceFile): MaskedSource {
+function blankParsedComments(sourceFile: ts.SourceFile): string {
   const text = sourceFile.text;
   const out = Array.from({ length: text.length }, (_, index) => (text[index] === "\n" || text[index] === "\r" ? text[index] : " "));
-  const conflictMarkers: number[] = [];
   const keep = (start: number, end: number): void => {
     for (let index = start; index < end; index += 1) {
       out[index] = text[index];
     }
-  };
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, sourceFile.languageVariant);
-  const gap = (start: number, end: number): void => {
-    if (start >= end) {
-      return;
-    }
-    scanner.setText(text, start, end - start);
-    for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-      if (kind === ts.SyntaxKind.ConflictMarkerTrivia) {
-        conflictMarkers.push(scanner.getTokenStart());
-      }
-      if (!BLANKED_TRIVIA.has(kind)) {
-        keep(scanner.getTokenStart(), Math.min(scanner.getTokenEnd(), end));
-      }
-    }
-  };
-  let cursor = 0;
-  const token = (start: number, end: number): void => {
-    gap(cursor, start);
-    keep(start, end);
-    cursor = Math.max(cursor, end);
   };
   const visit = (node: ts.Node): void => {
     // A JSDoc comment is attached to the node it documents (the end-of-file token included) but is trivia.
@@ -310,14 +272,31 @@ function maskTrivia(sourceFile: ts.SourceFile): MaskedSource {
       children.forEach(visit);
     } else if (node.kind === ts.SyntaxKind.JsxText || node.kind === ts.SyntaxKind.JsxTextAllWhiteSpaces) {
       // JSX text is content from its first character: a `//` inside it is not a comment.
-      token(node.pos, node.end);
+      keep(node.pos, node.end);
     } else {
-      token(node.getStart(sourceFile), node.end);
+      keep(node.getStart(sourceFile), node.end);
     }
   };
   visit(sourceFile);
-  gap(cursor, text.length);
-  return { text: out.join(""), conflictMarkers };
+  return out.join("");
+}
+
+/** TypeScript's "Merge conflict marker encountered." parse diagnostic. */
+const MERGE_CONFLICT_MARKER_DIAGNOSTIC = 1185;
+
+/**
+ * Offsets of the merge conflict markers the parser reports, wherever its recovery leaves them (trivia between
+ * statements, JSX text). The parser skips the section after a `|||||||` or `=======` marker, so these come from its
+ * own diagnostics rather than from the tree or the mask; marker-like text inside a literal or valid JSX is not one.
+ */
+function conflictMarkerOffsets(sourceFile: ts.SourceFile): number[] {
+  const options: ts.CompilerOptions = { allowJs: true, noLib: true, noResolve: true, types: [] };
+  const host = ts.createCompilerHost(options);
+  host.getSourceFile = (fileName) => (fileName === sourceFile.fileName ? sourceFile : undefined);
+  const program = ts.createProgram({ rootNames: [sourceFile.fileName], options, host });
+  return program
+    .getSyntacticDiagnostics(sourceFile)
+    .flatMap((diagnostic) => (diagnostic.code === MERGE_CONFLICT_MARKER_DIAGNOSTIC && diagnostic.start !== undefined ? [diagnostic.start] : []));
 }
 
 export function scanSource(source: string, file: string): ScannedImport[] {
@@ -332,8 +311,8 @@ export function scanSource(source: string, file: string): ScannedImport[] {
   const located = new Set<CollectedReference>();
   const unmatched: ScannedImport[] = [];
   const pattern = new RegExp(CLIFN_IMPORT_STATEMENT.source, CLIFN_IMPORT_STATEMENT.flags);
-  const masked = maskTrivia(sourceFile);
-  for (let match = pattern.exec(masked.text); match !== null; match = pattern.exec(masked.text)) {
+  const blanked = blankParsedComments(sourceFile);
+  for (let match = pattern.exec(blanked); match !== null; match = pattern.exec(blanked)) {
     if (insideLiteral(literals, match.index)) {
       pattern.lastIndex = match.index + 1;
       continue;
@@ -359,7 +338,7 @@ export function scanSource(source: string, file: string): ScannedImport[] {
     return { ...fields, located: located.has(found) };
   });
   // The parser skips the section after a `|||||||` or `=======` marker, so a conflicted file fails closed at every marker.
-  const conflicts = masked.conflictMarkers.map(
+  const conflicts = conflictMarkerOffsets(sourceFile).map(
     (offset): ScannedImport => ({
       file,
       line: lineOf(sourceFile, offset),
