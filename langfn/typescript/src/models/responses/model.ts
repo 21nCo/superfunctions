@@ -139,6 +139,8 @@ export class ResponsesChatModel extends ChatModel {
 
   async chat(request: ResponsesChatRequest): Promise<ResponsesChatResponse> {
     const payload = this.payload(request, false);
+    // The call ids of the history as sent, before the caller can change its messages.
+    const sent = sentCallIds(payload);
     const response = await this.send(payload, request.signal, "application/json");
     const text = await readResponsesBody(this.provider, response, request.signal);
     let data: unknown;
@@ -147,7 +149,7 @@ export class ResponsesChatModel extends ChatModel {
     } catch (error) {
       throw new ProviderError("Responses body is not valid JSON", { provider: this.provider, cause: error });
     }
-    return parseResponsesResponse(data, this.provider, { sentCallIds: sentCallIds(payload) });
+    return parseResponsesResponse(data, this.provider, { sentCallIds: sent });
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
@@ -161,6 +163,8 @@ export class ResponsesChatModel extends ChatModel {
   /** Stream a full chat request (history, tools, structured output, reasoning). */
   async *streamChat(request: ResponsesChatRequest): AsyncIterable<StreamEvent> {
     const payload = this.payload(request, true);
+    // The call ids of the history as sent, before the caller can change its messages.
+    const sent = sentCallIds(payload);
     const response = await this.send(payload, request.signal, "text/event-stream");
     if (!response.body) throw new ProviderError("Responses stream body was empty", { provider: this.provider });
     const signal = request.signal;
@@ -181,7 +185,7 @@ export class ResponsesChatModel extends ChatModel {
     };
     const events = readServerSentEvents(response.body, this.maxStreamLineBytes, { bodyError });
     try {
-      for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sentCallIds(payload) })) {
+      for await (const event of mapResponsesStream(events, this.provider, { sentCallIds: sent })) {
         check();
         yield event;
         if (event.type === "end") return;

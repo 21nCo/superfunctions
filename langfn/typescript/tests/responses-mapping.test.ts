@@ -903,6 +903,8 @@ describe("stream mapping", () => {
     const messageOf = (seen: StreamEvent[]) => (seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
     const truncated = { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } };
     const omitted = frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed" } });
+    // The global delivery rule, or the rule that an item's streamed text is a prefix of its final text.
+    const differs = /answer text differs from the streamed text|differs from the text the stream stated for it/;
     for (const [text, expected, answer] of [
       // Streamed, then a completed turn that omits its output and finished no item: the streamed text stands.
       [delta("hel", "msg_1", 0) + delta("lo", "msg_1", 0) + omitted, ["hel", "lo"], "hello"],
@@ -932,41 +934,200 @@ describe("stream mapping", () => {
     for (const [text, message, streamed] of [
       // A later item streamed first: content Answer then "Note. " would not be the answer "Note. Answer".
       [delta("Answer", "msg_1", 1) + frame({ type: "response.completed", response: completed([parts("msg_0", "Note. "), parts("msg_1", "Answer")]) }),
-        "answer text differs from the streamed text", ["Answer"]],
+        differs, ["Answer"]],
       // Deltas interleaved across two items.
       [delta("a", "msg_1", 0) + delta("b", "msg_2", 1) + delta("c", "msg_1", 0)
         + frame({ type: "response.completed", response: completed([parts("msg_1", "ac"), parts("msg_2", "b")]) }),
-        "answer text differs from the streamed text", ["a", "b", "c"]],
+        differs, ["a", "b", "c"]],
       // Content parts streamed out of order, with the output supplied or omitted.
       [delta("world", "msg_1", 0, 1) + delta("Hello ", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
-        "answer text differs from the streamed text", ["world", "Hello "]],
-      [delta("world", "msg_1", 0, 1) + delta("Hello ", "msg_1", 0, 0) + omitted, "answer text differs from the streamed text", ["world", "Hello "]],
+        differs, ["world", "Hello "]],
+      [delta("world", "msg_1", 0, 1) + delta("Hello ", "msg_1", 0, 0) + omitted, differs, ["world", "Hello "]],
       // A part's streamed text that the answer does not continue.
       [delta("world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "worl")]) }),
-        "answer text differs from the streamed text", ["world"]],
+        differs, ["world"]],
       // A supplied output must have every item text was streamed to.
       [delta("gone", "msg_9", 3) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello")]) }),
         "terminal output does not have the streamed message item msg_9", ["gone"]],
       // A truncated turn with an explicit output that drops the streamed text.
       [delta("partial", "msg_1", 0) + frame({ type: "response.incomplete", response: completed([{ ...parts("msg_1"), status: "incomplete" }], truncated) }),
-        "answer text differs from the streamed text", ["partial"]],
+        differs, ["partial"]],
       [delta("partial") + frame({ type: "response.incomplete", response: completed([{ ...parts("msg_1", "Other"), status: "incomplete" }], truncated) }),
-        "answer text differs from the streamed text", ["partial"]],
+        differs, ["partial"]],
       // item_id and output_index name different items.
       [delta("Hi", "msg_2", 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hi"), parts("msg_2", "There")]) }),
         "terminal output states id msg_1 for message item msg_2", ["Hi"]],
       // Rebuilding an omitted output from items that state an output_index only in part.
       [delta("Hi", "msg_1", 0) + done(parts("msg_1", "Hi"), 0) + done({ type: "reasoning", id: "rs_fixture", summary: [] }) + omitted,
         "state an output_index only in part", ["Hi"]],
-    ] as Array<[string, string, string[]]>) {
+    ] as Array<[string, string | RegExp, string[]]>) {
       const outcome = await mapRaw(text);
       expect(outcome.error).toBeInstanceOf(ProviderError);
-      expect(String(outcome.error)).toContain(message);
+      if (typeof message === "string") expect(String(outcome.error)).toContain(message);
+      else expect(String(outcome.error)).toMatch(message);
       expect(contents(outcome.seen)).toEqual(streamed);
       expect(outcome.seen.every((event) => event.type === "content")).toBe(true);
     }
     expect(String((await mapRaw(frame({ type: "response.output_text.delta", content_index: -1, delta: "x" }))).error))
       .toContain("output_text.delta content_index must be a non-negative integer");
+  });
+
+  it("holds every item the stream stated to its final form, and fills an omitted output from text snapshots", async () => {
+    const msg = (id: string, ...texts: string[]) => ({
+      type: "message", id, role: "assistant", status: "completed",
+      content: texts.map((text) => ({ type: "output_text", text, annotations: [] })),
+    });
+    const call = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "lookup", arguments: "{}", status: "completed" };
+    const delta = (text: string, item_id?: string, output_index?: number, content_index?: number) => frame({
+      type: "response.output_text.delta", ...(item_id ? { item_id } : {}), ...(output_index === undefined ? {} : { output_index }),
+      ...(content_index === undefined ? {} : { content_index }), delta: text,
+    });
+    const textDone = (text: string, item_id: string, output_index: number, content_index?: number) => frame({
+      type: "response.output_text.done", item_id, output_index, ...(content_index === undefined ? {} : { content_index }), text,
+    });
+    const partDone = (text: string, item_id: string, output_index: number, content_index: number) => frame({
+      type: "response.content_part.done", item_id, output_index, content_index, part: { type: "output_text", text, annotations: [] },
+    });
+    const finish = (output?: unknown[]) => frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed", ...(output ? { output } : {}) } });
+    const truncate = (output?: unknown[]) => frame({
+      type: "response.incomplete",
+      response: { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" }, ...(output ? { output } : {}) },
+    });
+    const contents = (seen: StreamEvent[]) => seen.filter((event) => event.type === "content").map((event) => (event as { delta: string }).delta);
+    const messageOf = (seen: StreamEvent[]) => (seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+
+    // A text snapshot (output_text.done or content_part.done) fills the rebuilt message and the rest is delivered once.
+    for (const [text, expected, answer] of [
+      [delta("hel", "msg_1", 0, 0) + textDone("hello", "msg_1", 0, 0) + finish(), ["hel", "lo"], "hello"],
+      [delta("hel", "msg_1", 0, 0) + partDone("hello", "msg_1", 0, 0) + finish(), ["hel", "lo"], "hello"],
+      [delta("hel", "msg_1", 0, 0) + truncate(), ["hel"], "hel"],
+      // A snapshot that only repeats the streamed text, or a snapshot with nothing streamed.
+      [delta("hel", "msg_1", 0, 0) + delta("lo", "msg_1", 0, 0) + textDone("hello", "msg_1", 0, 0) + partDone("hello", "msg_1", 0, 0) + finish(), ["hel", "lo"], "hello"],
+      [textDone("hello", "msg_1", 0, 0) + finish(), ["hello"], "hello"],
+      // A snapshot with no content_index is the whole item text.
+      [delta("hel", "msg_1", 0) + textDone("hello", "msg_1", 0) + finish(), ["hel", "lo"], "hello"],
+      // Snapshots that agree with a supplied output.
+      [delta("hel", "msg_1", 0, 0) + textDone("hello", "msg_1", 0, 0) + finish([msg("msg_1", "hello")]), ["hel", "lo"], "hello"],
+    ] as Array<[string, string[], string]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(contents(outcome.seen)).toEqual(expected);
+      expect(messageOf(outcome.seen).content).toBe(answer);
+      expect(JSON.stringify(messageOf(outcome.seen).responsesOutput)).toContain(JSON.stringify(answer));
+    }
+
+    for (const [text, message] of [
+      // A snapshot that does not extend the text streamed to its part.
+      [delta("help", "msg_1", 0, 0) + textDone("hello", "msg_1", 0, 0) + finish(), "a text done event differs from the streamed text"],
+      // Two snapshots of one part that disagree.
+      [textDone("hello", "msg_1", 0, 0) + partDone("hullo", "msg_1", 0, 0) + finish(), "states different text for one text part"],
+      // A snapshot that differs from the supplied (or finished) part.
+      [delta("hel", "msg_1", 0, 0) + textDone("hello", "msg_1", 0, 0) + finish([msg("msg_1", "help")]), "differs from the text the stream stated for it"],
+      [textDone("hello", "msg_1", 0, 0) + frame({ type: "response.output_item.done", output_index: 0, item: msg("msg_1", "help") }) + finish(),
+        "differs from the text the stream stated for it"],
+      [textDone("hello", "msg_1", 0, 1) + finish([msg("msg_1", "hello")]), "differs from the text the stream stated for it"],
+      // An item's streamed text that its final text does not continue, though the whole answer does.
+      [delta("Hello", "msg_1", 1, 0) + finish([msg("msg_0", "Hello"), msg("msg_1", "World")]), "text of message item msg_1 differs from the text the stream stated"],
+      // Unlocated parts streamed out of content order, with the output omitted.
+      [delta("world", undefined, undefined, 1) + delta("Hello ", undefined, undefined, 0) + finish(), "answer text differs from the streamed text"],
+      // A snapshot of an item the supplied output does not have.
+      [textDone("zzz", "msg_9", 1, 0) + finish([call]), "terminal output does not have the streamed message item msg_9"],
+    ] as Array<[string, string]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(message);
+      expect(outcome.seen.every((event) => event.type === "content")).toBe(true);
+    }
+
+    // On a completed turn, every item any event named is in the final output: an empty argument
+    // delta, a reasoning delta, a content part or a built-in tool event naming an item the
+    // output lacks fails before any tool call or end.
+    for (const event of [
+      { type: "response.function_call_arguments.delta", item_id: "fc_missing", output_index: 1, delta: "" },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_missing", output_index: 1, summary_index: 0, delta: "thinking" },
+      { type: "response.content_part.added", item_id: "msg_missing", output_index: 1, content_index: 0, part: { type: "output_text", text: "" } },
+      { type: "response.web_search_call.in_progress", item_id: "ws_missing", output_index: 1 },
+    ]) {
+      for (const terminal of [finish([call]), frame({ type: "response.output_item.done", output_index: 0, item: call }) + finish()]) {
+        const outcome = await mapRaw(frame(event) + terminal);
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toContain("never resolved");
+        expect(outcome.seen.every((seen) => seen.type === "reasoning")).toBe(true);
+      }
+      // A truncated turn may stop before the item is in its output; it runs no call.
+      const truncated = await mapRaw(frame(event) + truncate([{ ...call, status: "in_progress", arguments: "{" }]));
+      expect(truncated.error).toBeUndefined();
+      expect(truncated.seen.some((seen) => seen.type === "tool_call")).toBe(false);
+    }
+    // The same events naming an item the output has still pass.
+    const named = await mapRaw(frame({ type: "response.function_call_arguments.delta", item_id: "fc_fixture", output_index: 0, delta: "{}" }) + finish([call]));
+    expect(named.error).toBeUndefined();
+    expect(named.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+  });
+
+  it("reconciles the call_id of every call item, not only function calls", async () => {
+    const custom = (call_id: string, status = "completed") => ({ type: "custom_tool_call", id: "ctc_fixture", call_id, name: "grammar", input: "x", status });
+    const added = frame({ type: "response.output_item.added", output_index: 0, item: custom("call_a", "in_progress") });
+    for (const text of [
+      added + frame({ type: "response.output_item.done", output_index: 0, item: custom("call_b") }) + frame({ type: "response.completed", response: completed([custom("call_b")]) }),
+      added + frame({ type: "response.output_item.done", output_index: 0, item: custom("call_a") }) + frame({ type: "response.completed", response: completed([custom("call_b")]) }),
+      // A finished custom call whose input the terminal output changed.
+      added + frame({ type: "response.output_item.done", output_index: 0, item: custom("call_a") })
+        + frame({ type: "response.completed", response: completed([{ ...custom("call_a"), input: "y" }]) }),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(outcome.seen).toEqual([]);
+    }
+    // An agreeing custom call replays with the call_id the stream stated, even when the terminal item omits it.
+    const outcome = await mapRaw(added + frame({ type: "response.output_item.done", output_index: 0, item: custom("call_a") })
+      + frame({ type: "response.completed", response: completed([{ ...custom("call_a"), call_id: undefined }]) }));
+    expect(outcome.error).toBeUndefined();
+    const message = (outcome.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+    expect(message.responsesOutput).toEqual([custom("call_a")]);
+  });
+
+  it("validates announcements and running output snapshots like an output that may be cut short", async () => {
+    const call = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "lookup", arguments: "{}", status: "completed" };
+    const truncated = { type: "response.incomplete", response: { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } } };
+    for (const [text, message] of [
+      [frame({ type: "response.in_progress", response: { id: "resp_fixture_mapping", status: "in_progress", output: [null] } })
+        + frame({ type: "response.completed", response: completed([call]) }), "output item is malformed"],
+      [frame({ type: "response.created", response: { id: "resp_fixture_mapping", status: "in_progress", output: [{ type: "message", role: "user", content: [] }] } })
+        + frame({ type: "response.completed", response: completed([call]) }), "must be from the assistant"],
+      [frame({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: 7, arguments: null, status: "in_progress" } })
+        + frame(truncated), "function_call name must be a string"],
+      [frame({ type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1", role: "user", status: "in_progress", content: [] } })
+        + frame({ type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "hi" }) + frame(truncated), "must be from the assistant"],
+    ] as Array<[string, string]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(message);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Real announcements: a message before its content (with or without content []) and a call with no arguments yet.
+    const outcome = await mapRaw(
+      frame({ type: "response.created", response: { id: "resp_fixture_mapping", status: "in_progress", output: [] } })
+      + frame({ type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress" } })
+      + frame({ type: "response.output_item.added", output_index: 1, item: { ...call, arguments: "", status: "in_progress" } })
+      + frame({ type: "response.output_item.done", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [] } })
+      + frame({ type: "response.output_item.done", output_index: 1, item: call })
+      + frame({ type: "response.completed", response: completed([]) }),
+    );
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+  });
+
+  it("gives the caller executable arguments apart from the replayed message", async () => {
+    const call = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}", status: "completed" };
+    const { seen } = await mapRaw(frame({ type: "response.completed", response: completed([call]) }));
+    const toolCall = seen.find((event) => event.type === "tool_call") as { args: Record<string, unknown> };
+    const message = (seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+    toolCall.args.q = 2;
+    expect(message.toolCalls?.[0]?.arguments).toEqual({ q: 1 });
+    const parsed = parseResponsesResponse(completed([call]), "fixture");
+    (parsed.toolCalls?.[0]?.arguments as Record<string, unknown>).q = 3;
+    expect(parsed.message.toolCalls?.[0]?.arguments).toEqual({ q: 1 });
   });
 
   it("rebuilds an omitted output in stated output_index order, whatever order the items finished in", async () => {

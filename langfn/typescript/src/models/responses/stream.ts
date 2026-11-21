@@ -1,7 +1,7 @@
 import { LangFnError, ProviderError } from "../../core/errors.js";
 import type { StreamEvent } from "../../core/types.js";
 import { type BodyErrorState, readStreamLines } from "../stream-lines.js";
-import { OutputLedger } from "./ledger.js";
+import { OutputLedger, validateRunningItems } from "./ledger.js";
 import {
   assertNoReportedError,
   describeWireValue,
@@ -114,7 +114,6 @@ const TERMINAL_EVENTS = new Set(["response.completed", "response.incomplete"]);
 const CANCELLED_EVENTS = new Set(["response.cancelled", "response.canceled"]);
 /** The item type an event about an output item implies; other events that name one imply none. */
 const ITEM_EVENT_TYPES: Record<string, string> = {
-  "response.output_text.done": "message",
   "response.output_text.annotation.added": "message",
   "response.refusal.delta": "message",
   "response.refusal.done": "message",
@@ -167,6 +166,8 @@ function runningEnvelopeId(payload: JsonRecord, type: string, provider: string):
   if (response.output !== undefined && !Array.isArray(response.output)) {
     throw fail(`Responses ${type} event response output must be an array`);
   }
+  // Its items so far follow the rules of an output that may still be cut short.
+  if (Array.isArray(response.output)) validateRunningItems(response.output, provider, `${type} output`);
   const status = terminalStatus(response, provider);
   if (status !== undefined && status !== "queued" && status !== "in_progress") {
     // A populated error was raised already; a failure that names none is still a failure.
@@ -270,6 +271,29 @@ export async function* mapResponsesStream(
         if (payload.delta) yield { type: "reasoning", step, thinking: payload.delta };
         break;
       }
+      case "response.output_text.done":
+      case "response.content_part.done": {
+        const what = type.slice("response.".length);
+        const item = itemId(payload.item_id, what, fail);
+        const index = outputIndex(payload.output_index, what, fail);
+        const contentIndex = outputIndex(payload.content_index, what, fail, "content_index");
+        if (type === "response.output_text.done") {
+          if (typeof payload.text !== "string") throw fail("Responses output_text.done requires text");
+          ledger.textDone(item, index, contentIndex, payload.text, what);
+          break;
+        }
+        // A finished text part states its whole text, like output_text.done; other parts state
+        // only their item.
+        const part = payload.part;
+        if (isRecord(part) && part.type === "output_text") {
+          if (typeof part.text !== "string") throw fail("Responses content_part.done output_text part requires text");
+          ledger.textDone(item, index, contentIndex, part.text, what);
+        } else {
+          const implied = isRecord(part) && typeof part.type === "string" && Object.hasOwn(PART_ITEM_TYPES, part.type) ? PART_ITEM_TYPES[part.type] : undefined;
+          ledger.note(implied, item, index, what);
+        }
+        break;
+      }
       case "response.function_call_arguments.delta":
       case "response.function_call_arguments.done": {
         const what = type.slice("response.".length);
@@ -330,7 +354,8 @@ export async function* mapResponsesStream(
         terminal = [];
         if (undelivered) terminal.push({ type: "content", content: undelivered, delta: undelivered });
         for (const call of result.toolCalls ?? []) {
-          terminal.push({ type: "tool_call", id: call.id, toolName: call.name, args: call.arguments });
+          // The executable arguments are the caller's own copy, apart from the replayed message.
+          terminal.push({ type: "tool_call", id: call.id, toolName: call.name, args: structuredClone(call.arguments) });
         }
         if (result.usage) {
           terminal.push({
@@ -356,7 +381,7 @@ export async function* mapResponsesStream(
         // part, reasoning or built-in tool event) states that item, with the type it implies.
         // It carries no new data for LangFn stream events.
         const what = type.slice("response.".length) || "stream event";
-        const part = type === "response.content_part.added" || type === "response.content_part.done"
+        const part = type === "response.content_part.added"
           ? (isRecord(payload.part) && typeof payload.part.type === "string" && Object.hasOwn(PART_ITEM_TYPES, payload.part.type)
             ? PART_ITEM_TYPES[payload.part.type]
             : undefined)

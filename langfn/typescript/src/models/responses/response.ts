@@ -481,7 +481,8 @@ export function parseResponsesResponse(
   const message: ResponsesMessage = {
     role: "assistant",
     content: parsed.content,
-    ...(toolCalls ? { toolCalls } : {}),
+    // The replayed message keeps its own copy of the calls, apart from the ones a caller runs.
+    ...(toolCalls ? { toolCalls: structuredClone(toolCalls) } : {}),
     ...(parsed.refusal !== undefined ? { refusal: parsed.refusal } : {}),
     responsesOutput: structuredClone(parsed.replayable),
   };

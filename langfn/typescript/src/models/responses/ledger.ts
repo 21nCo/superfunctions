@@ -23,16 +23,27 @@ interface Chunk {
   text: string;
 }
 
-interface Entry extends ItemFacts {
+/** Streamed text and the text snapshots stated for one item (or for no item). */
+interface TextRecord {
+  text: Chunk[];
+  /** output_text.done and content_part.done text, by content_index. */
+  snapshots: Map<number, string>;
+  /** Snapshot text that names no content_index: the item's whole text. */
+  whole?: string;
+}
+
+interface Entry extends ItemFacts, TextRecord {
   /** Arrival order of the first event naming the item. */
   seq: number;
   announced?: JsonRecord;
   finished?: JsonRecord;
   terminal?: JsonRecord;
-  text: Chunk[];
   args: Chunk[];
   argsDone?: string;
 }
+
+/** Item types whose call_id and name identify a call. */
+const CALL_TYPES = new Set(["function_call", "custom_tool_call"]);
 
 function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -40,6 +51,21 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function hasLocator(facts: ItemFacts): boolean {
   return facts.index !== undefined || facts.id !== undefined || facts.callId !== undefined;
+}
+
+function holdsText(record: TextRecord): boolean {
+  return record.text.length > 0 || record.snapshots.size > 0 || record.whole !== undefined;
+}
+
+/**
+ * Validate an item a running stream states before it finishes (an announcement or an item of a
+ * running response's output) by the rules of an incomplete output, since it may be cut short. A
+ * message announced before its content is filled may omit the content.
+ */
+export function validateRunningItems(items: unknown[], provider: string, what: string): void {
+  const filled = items.map((item) => (isRecord(item) && item.type === "message" && item.content === undefined ? { ...item, content: [] } : item));
+  outputItemIdentities(filled, provider, what);
+  parseOutputItems(filled, provider, { incomplete: true });
 }
 
 function joined(chunks: Chunk[]): string {
@@ -51,10 +77,10 @@ export function itemFacts(item: JsonRecord, provider: string, index?: number): I
   const identity = outputItemIdentity(item, provider);
   const facts: ItemFacts = { type: identity.type };
   if (identity.id !== undefined) facts.id = identity.id;
-  if (identity.type === "function_call") {
-    if (identity.callId !== undefined) facts.callId = identity.callId;
-    if (typeof item.name === "string" && item.name) facts.name = item.name;
-  }
+  // Any item that states a call_id (a function call, a custom tool call, a built-in tool call)
+  // is located and reconciled by it; a call's name identifies it too.
+  if (identity.callId !== undefined) facts.callId = identity.callId;
+  if (CALL_TYPES.has(identity.type) && typeof item.name === "string" && item.name) facts.name = item.name;
   if (index !== undefined) facts.index = index;
   return facts;
 }
@@ -80,8 +106,10 @@ export interface ResolvedOutput {
  */
 export class OutputLedger {
   private readonly entries: Entry[] = [];
-  /** Text deltas that name no item: they cover the whole answer. */
-  private readonly unlocated: Chunk[] = [];
+  /** Text deltas and snapshots that name no item: they cover the whole answer. */
+  private readonly unlocated: TextRecord = { text: [], snapshots: new Map() };
+  /** Entries whose final item was rebuilt from their streamed text. */
+  private readonly synthesized = new Set<Entry>();
   /** Every text delta already yielded as content, in arrival order. */
   private streamed = "";
   private seq = 0;
@@ -90,6 +118,7 @@ export class OutputLedger {
 
   /** output_item.added */
   announce(item: JsonRecord, index: number | undefined): void {
+    validateRunningItems([item], this.provider, "output_item.added");
     const facts = itemFacts(item, this.provider, index);
     const entry = hasLocator(facts) ? this.locate(facts, "output_item.added") : this.create(facts);
     if (entry.announced) throw this.fail(`Responses output_item.added announces ${this.describe(entry)} twice`);
@@ -129,12 +158,27 @@ export class OutputLedger {
   text(itemId: string | undefined, index: number | undefined, contentIndex: number | undefined, delta: string): void {
     const chunk: Chunk = { seq: this.seq++, ...(contentIndex !== undefined ? { contentIndex } : {}), text: delta };
     if (itemId === undefined && index === undefined) {
-      if (delta) this.unlocated.push(chunk);
+      if (delta) this.unlocated.text.push(chunk);
     } else {
       const entry = this.locate({ type: "message", ...(itemId !== undefined ? { id: itemId } : {}), ...(index !== undefined ? { index } : {}) }, "output_text.delta");
       if (delta) entry.text.push(chunk);
     }
     this.streamed += delta;
+  }
+
+  /**
+   * output_text.done, or content_part.done with an output_text part: the whole text of that
+   * part (of the whole item when no content_index is named). The final item must hold exactly
+   * this text there, and when the output is omitted it fills the part.
+   */
+  textDone(itemId: string | undefined, index: number | undefined, contentIndex: number | undefined, text: string, what: string): void {
+    const record: TextRecord = itemId === undefined && index === undefined
+      ? this.unlocated
+      : this.locate({ type: "message", ...(itemId !== undefined ? { id: itemId } : {}), ...(index !== undefined ? { index } : {}) }, what);
+    const known = contentIndex === undefined ? record.whole : record.snapshots.get(contentIndex);
+    if (known !== undefined && known !== text) throw this.fail(`Responses ${what} states different text for one text part`);
+    if (contentIndex === undefined) record.whole = text;
+    else record.snapshots.set(contentIndex, text);
   }
 
   /** function_call_arguments.delta; an empty delta still states its item. */
@@ -195,8 +239,8 @@ export class OutputLedger {
         const item = this.withIdentity(entry, supplied);
         entry.terminal = item;
         final.set(entry, item);
-        if (entry.finished && entry.type === "function_call"
-          && (entry.finished.name !== item.name || entry.finished.arguments !== item.arguments)) {
+        if (entry.finished && CALL_TYPES.has(entry.type as string)
+          && (entry.finished.name !== item.name || entry.finished.arguments !== item.arguments || entry.finished.input !== item.input)) {
           throw this.fail(`Responses terminal output changed the finished ${this.describe(entry)}`);
         }
         return item;
@@ -205,12 +249,12 @@ export class OutputLedger {
         if (entry.finished && !entry.terminal && hasLocator(entry)) {
           throw this.fail(`Responses terminal output does not have the finished ${this.describe(entry)}`);
         }
-        if (entry.text.length && !entry.terminal) {
+        if (holdsText(entry) && !entry.terminal) {
           throw this.fail(`Responses terminal output does not have the streamed ${this.describe(entry)}`);
         }
       }
     } else {
-      output = this.rebuild(completed, final);
+      output = this.rebuild(completed, final, type);
     }
 
     for (const entry of this.entries) {
@@ -218,16 +262,24 @@ export class OutputLedger {
         throw this.fail(`Responses completed stream never finished the announced ${this.describe(entry)}`);
       }
       const item = final.get(entry);
+      // Every snapshot and located text the stream stated for the item agrees with its final form.
+      if (item && holdsText(entry)) this.assertText(entry, item, type);
       const call = item?.type === "function_call" ? item : undefined;
       // Streamed argument deltas are only judged on a completed turn; a truncated call never runs.
       const streamedArgs = completed && entry.args.length ? joined(entry.args) : undefined;
-      if (entry.argsDone === undefined && streamedArgs === undefined) continue;
-      if (!call) throw this.fail(`Responses function_call arguments name an unknown ${this.describe(entry)}`);
-      if (entry.argsDone !== undefined && call.arguments !== entry.argsDone) {
-        throw this.fail(`Responses function_call_arguments.done arguments differ from ${this.describe(entry)}`);
+      if (entry.argsDone !== undefined || streamedArgs !== undefined) {
+        if (!call) throw this.fail(`Responses function_call arguments name an unknown ${this.describe(entry)}`);
+        if (entry.argsDone !== undefined && call.arguments !== entry.argsDone) {
+          throw this.fail(`Responses function_call_arguments.done arguments differ from ${this.describe(entry)}`);
+        }
+        if (streamedArgs !== undefined && call.arguments !== streamedArgs) {
+          throw this.fail(`Responses streamed function_call arguments differ from ${this.describe(entry)}`);
+        }
       }
-      if (streamedArgs !== undefined && call.arguments !== streamedArgs) {
-        throw this.fail(`Responses streamed function_call arguments differ from ${this.describe(entry)}`);
+      // On a completed turn, every item any event named (an announcement, a delta, empty or not,
+      // a done event, a reasoning or content part event) is in the final output.
+      if (completed && !item && hasLocator(entry)) {
+        throw this.fail(`Responses completed stream never resolved the ${this.describe(entry)} its events named`);
       }
     }
 
@@ -238,7 +290,7 @@ export class OutputLedger {
   private withIdentity(entry: Entry, item: JsonRecord): JsonRecord {
     const missing = (value: unknown) => value === undefined || value === null;
     const id = entry.id !== undefined && missing(item.id) ? { id: entry.id } : {};
-    const callId = entry.type === "function_call" && entry.callId !== undefined && missing(item.call_id) ? { call_id: entry.callId } : {};
+    const callId = entry.callId !== undefined && missing(item.call_id) ? { call_id: entry.callId } : {};
     return Object.keys(id).length || Object.keys(callId).length ? { ...item, ...id, ...callId } : item;
   }
 
@@ -248,7 +300,7 @@ export class OutputLedger {
   }
 
   private create(facts: ItemFacts, seq = this.seq++): Entry {
-    const entry: Entry = { seq, text: [], args: [] };
+    const entry: Entry = { seq, text: [], snapshots: new Map(), args: [] };
     this.state(entry, facts, "");
     this.entries.push(entry);
     return entry;
@@ -299,6 +351,15 @@ export class OutputLedger {
     }
     entry.text.push(...other.text);
     entry.args.push(...other.args);
+    for (const [contentIndex, snapshot] of other.snapshots) {
+      const known = entry.snapshots.get(contentIndex);
+      if (known !== undefined && known !== snapshot) throw this.fail(`Responses ${what} states different text for one text part`);
+      entry.snapshots.set(contentIndex, snapshot);
+    }
+    if (other.whole !== undefined) {
+      if (entry.whole !== undefined && entry.whole !== other.whole) throw this.fail(`Responses ${what} states different text for one text part`);
+      entry.whole = other.whole;
+    }
     this.entries.splice(this.entries.indexOf(other), 1);
   }
 
@@ -309,9 +370,9 @@ export class OutputLedger {
    * by arrival when none states one; a mix is ambiguous and a ProviderError. Text that names no
    * item, when no item holds text, becomes a message after them.
    */
-  private rebuild(completed: boolean, final: Map<Entry, JsonRecord>): JsonRecord[] {
+  private rebuild(completed: boolean, final: Map<Entry, JsonRecord>, type: string): JsonRecord[] {
     const status = completed ? "completed" : "incomplete";
-    const message = (entry: { announced?: JsonRecord; id?: string }, chunks: Chunk[]): JsonRecord => {
+    const message = (entry: TextRecord & { announced?: JsonRecord; id?: string }): JsonRecord => {
       const base = entry.announced?.type === "message" ? structuredClone(entry.announced) : {};
       return {
         ...base,
@@ -319,13 +380,19 @@ export class OutputLedger {
         ...(entry.id !== undefined ? { id: entry.id } : {}),
         role: "assistant",
         status,
-        content: this.parts(chunks).map(({ text }) => ({ type: "output_text", text, annotations: [] })),
+        content: this.parts(entry, type).map((text) => ({ type: "output_text", text, annotations: [] })),
       };
     };
     const items: Array<{ entry: Entry; item: JsonRecord }> = [];
+    // A message built from streamed text is consistent with it by construction (parts).
+    this.synthesized.clear();
     for (const entry of this.entries) {
       if (entry.finished) items.push({ entry, item: this.withIdentity(entry, entry.finished) });
-      else if (entry.text.length) items.push({ entry, item: message(entry, entry.text) });
+      else if (holdsText(entry)) {
+        const item = message(entry);
+        this.synthesized.add(entry);
+        items.push({ entry, item });
+      }
     }
     const indexed = items.filter(({ entry }) => entry.index !== undefined).length;
     if (indexed && indexed !== items.length) {
@@ -336,21 +403,59 @@ export class OutputLedger {
       : left.entry.seq - right.entry.seq));
     for (const { entry, item } of ordered) final.set(entry, item);
     const output = ordered.map(({ item }) => item);
-    const holdsText = output.some((item) => item.type === "message" && Array.isArray(item.content)
+    const hasAnswer = output.some((item) => item.type === "message" && Array.isArray(item.content)
       && item.content.some((part) => isRecord(part) && part.type === "output_text"));
-    if (this.unlocated.length && !holdsText) output.push(message({}, this.unlocated.map(({ seq, text }) => ({ seq, text }))));
+    if (holdsText(this.unlocated) && !hasAnswer) output.push(message(this.unlocated));
     return output;
   }
 
-  /** Streamed text grouped by the content part it names, in content order; one group when none is named. */
-  private parts(chunks: Chunk[]): Array<{ contentIndex?: number; text: string }> {
-    const located = chunks.filter((chunk) => chunk.contentIndex !== undefined);
-    if (located.length && located.length !== chunks.length) {
-      throw this.fail("Responses stream text deltas name one text part in two ways");
+  /**
+   * The text parts of a message rebuilt from what the stream stated, in content order: each
+   * named part holds its snapshot, else its streamed text, and a snapshot must extend the text
+   * streamed to its part. Text that names no part is one part. Naming a part in some events and
+   * not in others is ambiguous and a ProviderError.
+   */
+  private parts(record: TextRecord, type: string): string[] {
+    const loose = record.text.filter((chunk) => chunk.contentIndex === undefined);
+    const located = record.text.filter((chunk) => chunk.contentIndex !== undefined);
+    const named = located.length > 0 || record.snapshots.size > 0;
+    if (named && (loose.length || record.whole !== undefined)) {
+      throw this.fail("Responses stream text events name one text part in two ways");
     }
-    if (!located.length) return [{ text: joined(chunks) }];
-    const indexes = [...new Set(located.map((chunk) => chunk.contentIndex as number))].sort((left, right) => left - right);
-    return indexes.map((contentIndex) => ({ contentIndex, text: joined(located.filter((chunk) => chunk.contentIndex === contentIndex)) }));
+    const part = (streamed: string, snapshot: string | undefined) => {
+      if (snapshot !== undefined && !snapshot.startsWith(streamed)) {
+        throw this.fail(`Responses ${type} event: a text done event differs from the streamed text`);
+      }
+      return snapshot ?? streamed;
+    };
+    if (!named) return [part(joined(loose), record.whole)];
+    const indexes = [...new Set([...located.map((chunk) => chunk.contentIndex as number), ...record.snapshots.keys()])]
+      .sort((left, right) => left - right);
+    return indexes.map((contentIndex) => part(
+      joined(located.filter((chunk) => chunk.contentIndex === contentIndex)),
+      record.snapshots.get(contentIndex),
+    ));
+  }
+
+  /**
+   * The text the stream stated for an item agrees with its final form: the text streamed to the
+   * item, in arrival order, is a prefix of the item's whole text (its output_text parts in
+   * content order), and a snapshot is exactly the text of the part it names (of the whole item
+   * when it names none). The order of the parts is judged by the delivery rule (undelivered). A message rebuilt from the stream agrees by
+   * construction, whatever positions its parts take.
+   */
+  private assertText(entry: Entry, item: JsonRecord, type: string): void {
+    if (this.synthesized.has(entry)) return;
+    const content = Array.isArray(item.content) ? item.content : [];
+    const textAt = (contentIndex: number): string | undefined => {
+      const part: unknown = content[contentIndex];
+      return isRecord(part) && part.type === "output_text" && typeof part.text === "string" ? part.text : undefined;
+    };
+    const whole = content.map((_, contentIndex) => textAt(contentIndex) ?? "").join("");
+    const fail = () => this.fail(`Responses ${type} event text of ${this.describe(entry)} differs from the text the stream stated for it`);
+    if (!whole.startsWith(joined(entry.text))) throw fail();
+    for (const [contentIndex, snapshot] of entry.snapshots) if (textAt(contentIndex) !== snapshot) throw fail();
+    if (entry.whole !== undefined && whole !== entry.whole) throw fail();
   }
 
   /** The answer text not yet delivered: the content yielded so far must be a prefix of the answer. */
