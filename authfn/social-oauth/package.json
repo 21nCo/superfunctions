@@ -1,6 +1,6 @@
 {
   "name": "@authfn/social-oauth",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Social OAuth plugin for AuthFn",
   "repository": {
     "type": "git",

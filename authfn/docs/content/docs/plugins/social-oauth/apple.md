@@ -103,6 +103,14 @@ The `AuthFnSwift` SDK encapsulates this flow — see [SDKs → Swift](../sdk/swi
 
 Apple sends the user's name on the very first authorization only — subsequent flows return only the `sub` and email. The kernel persists the name on `authfn_users.metadata` if you provide one in the initial request body (`profile.name`). The native iOS API will give you a `fullName` you should pass through.
 
+## Email and verification
+
+authfn takes the email, and whether it is verified, only from the identity token after checking its signature, audience and nonce. The `user` value Apple posts on the first authorization (and the `user` object the native complete route accepts) is not signed, so authfn reads only the name from it and ignores any `email` in it.
+
+- The email counts as verified only when the token's `email_verified` claim is `true`. An unverified email is never used to link to an existing account through `accountLinking.oauthByVerifiedEmail`, and a new account gets no `emailVerifiedAt`.
+- The web callback (`/social/callback/apple`) rejects a token without an `email` claim.
+- The native route (`/social/native/apple/complete`) resolves a token without an `email` claim by the Apple subject alone: an Apple ID already linked to an account signs in as before, and a new one creates an account with no email. It never links by email.
+
 ## Email relay
 
 Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privaterelay.appleid.com`). authfn treats relay emails like any other email — they just won't match a "real" inbox. Display names should not assume a particular email format.
