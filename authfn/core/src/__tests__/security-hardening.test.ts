@@ -685,6 +685,42 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_STATE_REPLAYED');
   });
 
+  it('refuses a handoff code once the link it was minted for is gone, even after the provider is linked again', async () => {
+    const config = createConfig({ requireHandoffChallenge: true });
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const handoffChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge });
+    const completed = await callback(auth, (await started.json()).data.stateId as string);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+
+    // The mailbox owner claims the account (which removes the link), then
+    // links the same provider again.
+    const original = await config.database.findOne<Record<string, unknown>>({
+      model: 'oauth_accounts',
+      where: [{ field: 'provider', operator: 'ne', value: null }],
+      namespace: 'authfn'
+    });
+    await config.database.deleteMany({
+      model: 'oauth_accounts',
+      where: [{ field: 'id', operator: 'eq', value: original!.id }],
+      namespace: 'authfn'
+    });
+    await config.database.create({
+      model: 'oauth_accounts',
+      data: { ...original, id: 'oauth_test_relinked', providerAccountId: 'test-relinked-account' },
+      namespace: 'authfn'
+    });
+
+    const exchanged = await auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier })
+    }));
+    expect(exchanged.status).toBe(400);
+    expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_CALLBACK_INVALID');
+  });
+
   it('returns a one-time code instead of a session token and exchanges it only with the verifier', async () => {
     const auth = createTestServer(createConfig({ requireHandoffChallenge: true }));
     const verifier = 'test-verifier-'.padEnd(64, 'v');

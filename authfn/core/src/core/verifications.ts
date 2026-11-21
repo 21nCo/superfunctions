@@ -23,7 +23,13 @@ import {
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
 import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
-import { authenticateAccountRequest, hashSecret, revokeSessionsForUser } from './sessions.js';
+import {
+  assertValidCsrf,
+  authenticateAccountRequest,
+  getCookieSessionState,
+  hashSecret,
+  revokeSessionsForUser
+} from './sessions.js';
 import { removePendingTwoFactorChallenges, removePreVerificationAccess } from './account-claim.js';
 import { createUser, findUserByPrimaryEmail, markUserEmailVerified, readSignUpProfile } from './users.js';
 import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
@@ -294,6 +300,7 @@ export async function verifyOtpChallenge(
   let linkedExistingUser = false;
   let user: AuthFnUserRecord | null;
   let pendingSignUp: OtpSignUpUserInput | undefined;
+  let verifiedByHolder = false;
   // The code matched, so this attempt was not a wrong guess. When the request
   // ends before consuming the challenge (missing user, conflict, hook
   // rejection), the reserved attempt is handed back only if no other request
@@ -337,6 +344,10 @@ export async function verifyOtpChallenge(
           email
         });
       }
+    } else if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
+      // Decided before the code is used, so a refused request leaves it for
+      // a retry.
+      verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
     }
 
     consumed = await consumeOtpChallenge(config, challenge, now);
@@ -346,7 +357,7 @@ export async function verifyOtpChallenge(
   }
 
   if (input.purpose === 'verify-email') {
-    if (user && !user.emailVerifiedAt && !(await isAccountHolderRequest(config, input.request, user.id))) {
+    if (user && !user.emailVerifiedAt && !verifiedByHolder) {
       // The code was entered by someone other than a signed-in holder of
       // this account, so it is the first proof of the mailbox: claim it.
       user = await claimUnverifiedAccount(config, user, now);
@@ -478,6 +489,16 @@ async function isAccountHolderRequest(
 ): Promise<boolean> {
   if (!request) {
     return false;
+  }
+  const cookieState = await getCookieSessionState(config, request, { touch: false });
+  if (cookieState.session?.type === 'session' && cookieState.session.actorId === userId) {
+    // A live session of this very account must come with its CSRF token.
+    // Without it the request may be cross-site, or come from a browser whose
+    // CSRF cookie ran out before its session cookie; either way it must not
+    // count as someone else proving the mailbox, which would wipe the
+    // holder's own password. AUTHFN_CSRF_INVALID; the code stays unused.
+    assertValidCsrf(request, cookieState);
+    return true;
   }
   const session = await authenticateAccountRequest(config, request);
   return session?.actorId === userId;

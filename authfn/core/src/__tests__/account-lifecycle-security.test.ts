@@ -203,6 +203,28 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
   });
 
+  it('refuses, without using the code, a verify-email from the holder\'s own session that lacks the CSRF token', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const cookies = cookieHeader(signUp);
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const code = ctx.codeFor('verify-email', OWNER);
+    // The CSRF cookie ran out before the session cookie: only the session
+    // cookie is sent, and no CSRF header.
+    const sessionOnly = cookies.split('; ').filter((cookie) => !/csrf=/.test(cookie)).join('; ');
+    const refused = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, { cookie: sessionOnly }));
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error.code).toBe('AUTHFN_CSRF_INVALID');
+    // Nothing was wiped, and the code still works with the token.
+    expect((await account(ctx, { cookie: cookies })).status).toBe(200);
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      cookie: cookies,
+      'x-authfn-csrf': csrfToken(signUp)
+    }));
+    expect(verified.status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+  });
+
   it('treats a password reset on an unverified account as its claim, keeping the new password', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));
@@ -286,7 +308,10 @@ describe('AF-06: sessions end on password reset and while the user is disabled',
 
 describe('AF-06: a disabled user can still sign out', () => {
   it('revokes the session on sign-out while disabled, so it stays dead once re-enabled', async () => {
-    const ctx = createContext();
+    const events: Array<{ type: string; outcome?: string }> = [];
+    const ctx = createContext({
+      observability: { events: { emit: async (event: { type: string; outcome?: string }) => { events.push(event); } } } as never
+    });
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'original-test-password', sessionMode: 'hybrid' }));
     const body = await signUp.clone().json();
     const cookies = cookieHeader(signUp);
@@ -303,6 +328,7 @@ describe('AF-06: a disabled user can still sign out', () => {
     const signOut = await ctx.handle(json('/sign-out', {}, { cookie: cookies, 'x-authfn-csrf': csrfToken(signUp) }));
     expect(signOut.status).toBe(200);
     expect((await signOut.json()).data.revoked).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'authfn.session.revoked', outcome: 'revoked-current' }));
 
     await setDisabled(false);
     expect((await account(ctx, { authorization: `Bearer ${token}` })).status).toBe(401);

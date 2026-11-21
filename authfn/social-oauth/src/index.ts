@@ -370,13 +370,21 @@ function createSocialRoutes(
         }
         // The code was minted by a social sign-in through a linked provider
         // account. If that link is gone (for example, the account was claimed
-        // by the owner of its mailbox since), the code no longer stands.
+        // by the owner of its mailbox since), the code no longer stands, even
+        // if the same provider has been linked again: the exact link row it
+        // was minted for must still exist.
+        const mintedFor = readOptionalString(metadata.oauthAccountId);
         const link = await ctx.config.database.findOne({
           model: 'oauth_accounts',
-          where: [
-            { field: 'userId', operator: 'eq', value: user.id },
-            { field: 'provider', operator: 'eq', value: pending.providerId }
-          ],
+          where: mintedFor
+            ? [
+                { field: 'id', operator: 'eq', value: mintedFor },
+                { field: 'userId', operator: 'eq', value: user.id }
+              ]
+            : [
+                { field: 'userId', operator: 'eq', value: user.id },
+                { field: 'provider', operator: 'eq', value: pending.providerId }
+              ],
           namespace: ctx.config.namespace ?? 'authfn'
         });
         if (!link) {
@@ -576,7 +584,8 @@ function createSocialRoutes(
             userId: user.id,
             regionId: runtime.regionId,
             methods: [SOCIAL_PROVIDER_METHODS[providerId]],
-            challenge: handoffChallenge
+            challenge: handoffChallenge,
+            oauthAccountId
           });
           const completion = {
             provider: providerId,
@@ -2793,6 +2802,8 @@ async function createSocialHandoffCode(
     regionId?: string;
     methods: string[];
     challenge: string;
+    /** The provider-account link the sign-in went through. */
+    oauthAccountId?: string;
   }
 ): Promise<string> {
   const code = `shc_${randomBytes(24).toString('base64url')}`;
@@ -2814,7 +2825,8 @@ async function createSocialHandoffCode(
         kind: SOCIAL_HANDOFF_KIND,
         userId: input.userId,
         methods: input.methods,
-        challenge: input.challenge
+        challenge: input.challenge,
+        oauthAccountId: input.oauthAccountId
       }
     },
     createdAt: now.toISOString(),

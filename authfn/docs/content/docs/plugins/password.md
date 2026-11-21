@@ -136,7 +136,7 @@ When a user is already authenticated and `accountLinking.passwordForAuthenticate
 Password sign-up does not verify the email, so anyone can sign up with an address they don't own, and with the session it returns add more ways in. The first proof of the mailbox claims the account for whoever made it. That proof is any of:
 
 - signing in (or up, with `otpSignUpExistingUser`) with an email code;
-- a `verify-email` code entered by anyone other than a signed-in holder of the account (a session cookie with its CSRF token, or a bearer session token);
+- a `verify-email` code entered by anyone other than a signed-in holder of the account (a session cookie with its CSRF token, or a bearer session token). A request that carries a live session cookie of the same account without a valid CSRF token is refused with `AUTHFN_CSRF_INVALID` and the code stays unused, so a browser whose CSRF cookie expired before its session cannot wipe its own account;
 - a completed password reset.
 
 AuthFn then removes everything set up on the account before: the password (a reset keeps the new one), API keys, the second factor with its recovery codes and pending challenges, linked social accounts, native handoff codes and grants to OAuth clients (`@authfn/oauth-provider`). It revokes every session and marks the email verified before issuing the new session. Only installed plugins' data is touched. An account whose email is already verified is not affected.
