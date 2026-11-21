@@ -146,7 +146,7 @@ These version axes stay separate: `descriptorVersion`, `api.version`, `specDiges
 
 ```bash
 npx turbo run build typecheck test lint --filter=@apifn/contracts...
-npm run build --workspace @apifn/contracts && npm run verify:packed --workspace @apifn/contracts
+npx turbo run build --filter=@apifn/contracts && npm run verify:packed --workspace @apifn/contracts
 ```
 
-`verify:packed` packs the workspace, installs the tarball into a clean temp project outside the monorepo, and imports the ESM and CJS exports there. It also checks that the `failure-event` graph has no `@apifn/core` or Node built-ins. Set `UPDATE_FIXTURES=1` when running tests to regenerate committed fixtures after an intentional contract change.
+`verify:packed` packs `@apifn/contracts` and the workspace `@apifn/core` it pins, installs both tarballs into a clean temp project outside the monorepo, and imports the ESM and CJS exports there, so it works before that core version is on npm. After the pinned core is published, `npm run verify:packed:registry --workspace @apifn/contracts` runs the same checks with only the contracts tarball and `@apifn/core` from the registry. It also checks that the `failure-event` graph has no `@apifn/core` or Node built-ins. Set `UPDATE_FIXTURES=1` when running tests to regenerate committed fixtures after an intentional contract change.

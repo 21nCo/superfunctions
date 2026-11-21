@@ -1,6 +1,6 @@
 {
   "name": "@apifn/core",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "Core library for ApiFn — route introspection, schema conversion, OpenAPI generation, and diff",
   "type": "module",
   "main": "dist/index.cjs",
@@ -16,24 +16,35 @@
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js",
       "require": "./dist/types.cjs"
+    },
+    "./testfn": {
+      "import": {
+        "types": "./dist/testfn.d.ts",
+        "default": "./dist/testfn.js"
+      },
+      "require": {
+        "types": "./dist/testfn.d.cts",
+        "default": "./dist/testfn.cjs"
+      }
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/fix-testfn-cjs-types.mjs",
     "dev": "tsup --watch",
-    "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "test": "vitest run && node scripts/verify-packed-consumer.mjs",
+    "lint": "tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed-consumer.mjs"
   },
   "dependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
-    "@testfn/core": "0.0.2",
     "yaml": "^2.8.1",
     "zod": "^3.25.28",
     "zod-to-json-schema": "^3.24.6"
   },
   "peerDependencies": {
     "@sinclair/typebox": "*",
-    "@superfunctions/http": "0.2.0"
+    "@superfunctions/http": ">=0.2.0 <0.4.0",
+    "@testfn/core": ">=0.0.2 <0.1.0"
   },
   "peerDependenciesMeta": {
     "@sinclair/typebox": {
@@ -41,11 +52,15 @@
     },
     "@superfunctions/http": {
       "optional": false
+    },
+    "@testfn/core": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.41",
-    "@superfunctions/http": "0.2.0",
+    "@superfunctions/http": "0.3.1",
+    "@testfn/core": "0.0.4",
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
