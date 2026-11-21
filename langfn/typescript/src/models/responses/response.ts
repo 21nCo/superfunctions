@@ -62,6 +62,35 @@ const INPUT_ONLY_ITEM_TYPES = new Set([
 /** Content part types that only exist in request input messages. */
 const INPUT_ONLY_PART_TYPES = new Set(["input_text", "input_image", "input_file", "input_audio"]);
 
+/**
+ * Known content part types. One of them as a top-level output item is a part at the wrong
+ * level, not a new item type, so it is rejected; unknown item types still pass.
+ */
+const PART_TYPES = new Set([...INPUT_ONLY_PART_TYPES, "output_text", "refusal", "summary_text", "reasoning_text"]);
+
+/**
+ * Known item types. One of them as a message content part is an item at the wrong level, not a
+ * new part type, so it is rejected; unknown part types still pass.
+ */
+const ITEM_TYPES = new Set([
+  ...INPUT_ONLY_ITEM_TYPES,
+  "message",
+  "function_call",
+  "reasoning",
+  "custom_tool_call",
+  "computer_call",
+  "web_search_call",
+  "file_search_call",
+  "image_generation_call",
+  "code_interpreter_call",
+  "local_shell_call",
+  "shell_call",
+  "apply_patch_call",
+  "mcp_call",
+  "mcp_list_tools",
+  "mcp_approval_request",
+]);
+
 const ITEM_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
 
 /** The identities of one Responses output item, validated. */
@@ -133,6 +162,7 @@ export function parseOutputItems(
   for (const item of output) {
     if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
     if (INPUT_ONLY_ITEM_TYPES.has(item.type)) throw fail(`Responses output must not contain ${item.type} items`);
+    if (PART_TYPES.has(item.type)) throw fail(`Responses output item has the content part type ${item.type}`);
     switch (item.type) {
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
@@ -143,6 +173,7 @@ export function parseOutputItems(
         for (const part of item.content) {
           if (!isRecord(part) || typeof part.type !== "string" || !part.type) throw fail("Responses output content part is malformed");
           if (INPUT_ONLY_PART_TYPES.has(part.type)) throw fail(`Responses output message must not contain ${part.type} parts`);
+          if (ITEM_TYPES.has(part.type)) throw fail(`Responses output content part has the item type ${part.type}`);
           if (part.type === "output_text") {
             if (typeof part.text !== "string") throw fail("Responses output_text part requires text");
             if (part.annotations !== undefined && part.annotations !== null && !Array.isArray(part.annotations)) {
@@ -322,6 +353,27 @@ export function assertNoReportedError(data: JsonRecord, provider: string): void 
   throw new ProviderError(`${provider} Responses request failed${detail}`, { provider, metadata: { status: 200, body: data } });
 }
 
+/**
+ * The one terminal status rule for a JSON response and a terminal stream event: a null status
+ * is no status, and populated incomplete_details (not absent, null or `{}`) report a truncated
+ * turn. With no status the turn is incomplete; beside a completed status it is a contradiction
+ * (a call must not become executable on a turn that reports truncation). Any other status is
+ * returned as it is, for the caller to judge.
+ */
+export function terminalStatus(data: JsonRecord, provider: string): unknown {
+  const details = data.incomplete_details;
+  if (details !== undefined && details !== null && !isRecord(details)) {
+    throw new ProviderError("Responses incomplete_details must be an object", { provider });
+  }
+  const truncated = isRecord(details) && Object.keys(details).length > 0;
+  const status = data.status === null ? undefined : data.status;
+  if (status === undefined) return truncated ? "incomplete" : undefined;
+  if (status === "completed" && truncated) {
+    throw new ProviderError("Responses completed response reports incomplete_details", { provider, metadata: { status } });
+  }
+  return status;
+}
+
 /** A response id, when supplied (not absent or null), is a non-empty string. */
 export function responseId(data: JsonRecord, provider: string): string | undefined {
   const id = data.id;
@@ -346,9 +398,9 @@ export function parseResponsesResponse(
   options: ParseResponsesOptions = {},
 ): ResponsesChatResponse {
   if (!isRecord(data)) throw new ProviderError("Responses body must be a JSON object", { provider });
-  // A null status is no status, as in a terminal stream event.
-  const status = data.status === null ? undefined : data.status;
+  // A reported error is the outcome first; then one status rule, shared with the stream.
   assertNoReportedError(data, provider);
+  const status = terminalStatus(data, provider);
   if (status === "failed") throw responsesError(provider, { status: 200, body: data, error: data.error });
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
     throw new ProviderError(`Responses returned unexpected status ${String(status)}`, { provider, metadata: { status } });

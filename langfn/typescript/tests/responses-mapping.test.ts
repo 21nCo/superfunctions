@@ -642,6 +642,73 @@ describe("stream mapping", () => {
     }
   });
 
+  it("judges a reported provider error on every frame, before anything that frame or a later one yields", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const rateLimit = { code: "rate_limit_exceeded", message: "slow down" };
+    const terminal = frame({ type: "response.completed", response: completed([call]) });
+    for (const text of [
+      // A data-only gateway error frame, alone and before a terminal response with a call.
+      frame({ error: rateLimit }),
+      frame({ error: rateLimit }) + terminal,
+      // A lifecycle event whose response reports an error, before a terminal response with a call.
+      frame({ type: "response.in_progress", response: { id: "resp_fixture_mapping", status: "in_progress", error: rateLimit } }) + terminal,
+      // A delta that carries an error is not delivered.
+      frame({ type: "response.output_text.delta", delta: "Hi.", error: rateLimit }) + terminal,
+      // An empty event error defers to the populated response error.
+      frame({ type: "error", error: {}, response: { error: rateLimit } }),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(RateLimitError);
+      expect(outcome.seen).toEqual([]);
+    }
+    // A null or empty error on a lifecycle frame is the normal shape and reports nothing.
+    const normal = await mapRaw(
+      frame({ type: "response.created", error: null, response: { id: "resp_fixture_mapping", status: "in_progress", error: null } })
+      + frame({ type: "response.in_progress", response: { id: "resp_fixture_mapping", status: "in_progress", error: {} } })
+      + terminal,
+    );
+    expect(normal.error).toBeUndefined();
+    expect(normal.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+  });
+
+  it("judges incomplete_details by one status rule shared with the JSON path", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const truncated = { incomplete_details: { reason: "max_output_tokens" } };
+    // Truncation reported beside a completed status is a contradiction; with no status the turn
+    // is incomplete, which a response.completed event contradicts as an explicit one would.
+    for (const [response, error] of [
+      [completed([call], truncated), "completed response reports incomplete_details"],
+      [completed([call], { ...truncated, status: undefined }), "response.completed event conflicts with its response status incomplete"],
+      [completed([call], { ...truncated, status: null }), "response.completed event conflicts with its response status incomplete"],
+    ] as Array<[unknown, string]>) {
+      const outcome = await mapRaw(frame({ type: "response.completed", response }));
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+    const contradiction = await mapRaw(frame({ type: "response.incomplete", response: completed([call], truncated) }));
+    expect(String(contradiction.error)).toContain("completed response reports incomplete_details");
+    // A response.incomplete event with no status keeps its reason and executes nothing.
+    const cut = await mapRaw(frame({ type: "response.incomplete", response: completed([call], { ...truncated, status: undefined }) }));
+    expect(cut.seen.map((event) => event.type)).toEqual(["message", "end"]);
+    expect(cut.seen.at(-1)).toEqual({ type: "end", finish_reason: "length" });
+    // The JSON path: completed beside truncation fails; no or a null status is incomplete.
+    expect(() => parseResponsesResponse(completed([call], truncated), "fixture")).toThrow("completed response reports incomplete_details");
+    for (const status of [undefined, null]) {
+      const parsed = parseResponsesResponse(completed([call], { ...truncated, status }), "fixture");
+      expect(parsed.finishReason).toBe("length");
+      expect(parsed.toolCalls).toBeUndefined();
+    }
+    // Null or empty incomplete_details report nothing; any other non-object is malformed.
+    for (const details of [null, {}]) {
+      expect(parseResponsesResponse(completed([call], { incomplete_details: details }), "fixture").finishReason).toBe("tool_calls");
+      const streamed = await mapRaw(frame({ type: "response.completed", response: completed([call], { incomplete_details: details, status: undefined }) }));
+      expect(streamed.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+    expect(() => parseResponsesResponse(completed([call], { incomplete_details: "max_output_tokens" }), "fixture"))
+      .toThrow("incomplete_details must be an object");
+  });
+
   it("maps raw reasoning text deltas and an OpenAI-shaped error event", async () => {
     const events: StreamEvent[] = [];
     const error = await (async () => {
@@ -865,6 +932,7 @@ describe("request mapping", () => {
     expect(parseResponsesResponse(completed([{ ...reasoning([]), status: "completed" }, text({})]), "fixture").message.responsesOutput?.[0])
       .toEqual({ ...reasoning([]), status: "completed" });
 
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
     const malformed: Array<[unknown, string]> = [
       [text({ annotations: "none" }), "annotations must be an array"],
       [text({}, { id: 7 }), "item id must be a string"],
@@ -878,6 +946,12 @@ describe("request mapping", () => {
       [{ type: "", id: "item_fixture" }, "output item is malformed"],
       [{ type: "message", role: "assistant", content: [{ type: "", text: "Hi." }] }, "content part is malformed"],
       [{ ...reasoning([]), content: [{ type: "summary_text", text: "think" }] }, "reasoning content part has unexpected type summary_text"],
+      // A known discriminator at the wrong level: a content part as an item, an item as a part.
+      [{ type: "output_text", text: "Hi.", annotations: [] }, "item has the content part type output_text"],
+      [{ type: "input_text", text: "Hi." }, "item has the content part type input_text"],
+      [{ type: "message", role: "assistant", content: [call] }, "content part has the item type function_call"],
+      [{ type: "message", role: "assistant", content: [{ type: "message", role: "assistant", content: [] }] }, "content part has the item type message"],
+      [{ type: "message", role: "assistant", content: [{ type: "reasoning", summary: [] }] }, "content part has the item type reasoning"],
     ];
     const reasoningProfile = defineCapabilityProfile({ ...customProfile, reasoning: true });
     for (const [item, error] of malformed) {
@@ -889,10 +963,13 @@ describe("request mapping", () => {
     for (const part of [{ type: "reasoning_text", text: "think" }, { text: "think" }]) {
       expect(parseResponsesResponse(completed([{ ...reasoning([]), content: [part] }, text({})]), "fixture").reasoning[0].content).toEqual(["think"]);
     }
+    // Unknown item and part types still pass, for forward compatibility, on parse and on replay.
+    const future = [{ type: "future_item_fixture" }, { type: "message", role: "assistant", content: [{ type: "future_part_fixture" }] }];
+    expect(parseResponsesResponse(completed(future), "fixture").message.responsesOutput).toHaveLength(2);
+    expect(() => payload([{ role: "user", content: "go" }, { role: "assistant", content: "", responsesOutput: future } as unknown as ResponsesMessage], reasoningProfile)).not.toThrow();
     // An untyped reasoning content part is replayed as reasoning_text, from a JSON and from a
     // stream-derived turn, so the continuation request carries its discriminator.
     const untyped = { ...reasoning([]), content: [{ text: "think" }] };
-    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
     const fromJson = parseResponsesResponse(completed([untyped, call]), "fixture").message;
     const continuation = (assistant: ResponsesMessage) => payload(
       [{ role: "user", content: "go" }, assistant, { role: "tool", content: "ok", tool_call_id: "call_fixture" } as ResponsesMessage],
