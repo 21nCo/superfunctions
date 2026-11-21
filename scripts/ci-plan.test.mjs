@@ -151,8 +151,8 @@ test("a DevFn change selects DevFn tests for the DevFn job and leaves them out o
     assert.equal(outputs.devfn_test_filters, "--filter=./devfn/core");
     // The JavaScript job still tests otherfn/cli, which depends on devfn/core, and builds devfn/core.
     assert.equal(outputs.has_js_test, "true");
-    assert.equal(outputs.js_test_filters, `--filter=..../devfn/core ${EXCLUDE_DEVFN}`);
-    assert.equal(outputs.js_build_filters, "--filter=..../devfn/core");
+    assert.equal(outputs.js_test_filters, `--filter=..../devfn/core --filter=..../otherfn/cli ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_build_filters, "--filter=..../devfn/core --filter=..../otherfn/cli");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
@@ -175,7 +175,7 @@ test("a change to a package DevFn depends on selects its DevFn dependents for th
     assert.equal(outputs.run_devfn, "true");
     assert.equal(outputs.devfn_test_filters, "--filter=./devfn/config --filter=./devfn/core");
     assert.equal(outputs.has_js_test, "true");
-    assert.equal(outputs.js_test_filters, `--filter=..../clifn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_test_filters, `--filter=..../clifn/core --filter=..../devfn/config --filter=..../devfn/core --filter=..../otherfn/cli ${EXCLUDE_DEVFN}`);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
@@ -430,9 +430,10 @@ test("a lockfile-only workspace version bump selects that package and its depend
   try {
     // clifn/core is shared: devfn/config depends on it, devfn/core on devfn/config, otherfn/cli on devfn/core.
     const outputs = plan(bump("clifn/core"));
+    const selected = "--filter=..../clifn/core --filter=..../devfn/config --filter=..../devfn/core --filter=..../otherfn/cli";
     assert.equal(outputs.full_js, "false");
-    assert.equal(outputs.js_build_filters, "--filter=..../clifn/core");
-    assert.equal(outputs.js_test_filters, `--filter=..../clifn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_build_filters, selected);
+    assert.equal(outputs.js_test_filters, `${selected} ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.devfn_test_filters, "--filter=./devfn/config --filter=./devfn/core");
     assert.equal(outputs.has_js_test, "true");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
@@ -469,12 +470,12 @@ test("a changed package without a task still runs that task in its dependents", 
   });
   try {
     const outputs = plan(({ put, read }) => put("basefn/core/index.js", "export {};\n"));
-    assert.equal(outputs.js_typecheck_filters, "--filter=..../basefn/core");
+    assert.equal(outputs.js_typecheck_filters, "--filter=..../basefn/app --filter=..../basefn/core");
     assert.equal(outputs.has_js_typecheck, "true");
     assert.equal(outputs.has_js_lint, "true");
     assert.equal(outputs.has_js_test, "true");
     assert.equal(outputs.has_js_build, "false");
-    assert.equal(outputs.js_test_filters, `--filter=..../basefn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_test_filters, `--filter=..../basefn/app --filter=..../basefn/core ${EXCLUDE_DEVFN}`);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
@@ -525,6 +526,28 @@ test("a package whose code references another package's files by relative path i
     assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/devfn\/core/);
     // Nothing references otherfn/cli, so a change there selects only it.
     assert.equal(plan("otherfn/cli/src/index.ts").js_build_filters, "--filter=..../otherfn/cli");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a package whose turbo.json names inputs in another package is selected when those inputs change", () => {
+  const { root, plan } = devfnFixture({
+    "filefn/core/turbo.json": JSON.stringify({ extends: ["//"], tasks: { test: { inputs: ["$TURBO_DEFAULT$", "$TURBO_ROOT$/devfn/proxy/**/*.ts", "!$TURBO_ROOT$/clifn/**"] } } }),
+  });
+  try {
+    const outputs = plan("devfn/proxy/src/index.ts");
+    assert.equal(outputs.js_build_filters, "--filter=..../devfn/proxy --filter=..../filefn/core");
+    // A negated input selects nothing.
+    assert.equal(plan("clifn/core/src/index.ts").js_build_filters.includes("filefn/core"), false);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a dependent that pins an older published version is still passed to Turbo", () => {
+  const { root, plan } = devfnFixture({
+    // Turbo treats a version that the workspace does not satisfy as external, so only the plan's own filter reaches it.
+    "pinfn/app/package.json": JSON.stringify({ name: "@pinfn/app", scripts: { test: "vitest run" }, dependencies: { "@filefn/core": "0.0.1" } }),
+  });
+  try {
+    assert.match(plan("filefn/core/src/index.ts").js_test_filters, /--filter=\.\.\.\.\/pinfn\/app/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 

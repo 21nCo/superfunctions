@@ -467,9 +467,10 @@ function collectSourceReferences(packageDirs) {
   return references;
 }
 
-// The packages turbo's `..../<dir>` filter selects (each seed and every package that depends on it, transitively),
-// plus packages whose code references a selected package by relative path, and their dependents. `referencedOnly` holds
-// the packages reached through such a reference; Turbo's filters may not reach them, so they become seeds too.
+// Each seed, every package that depends on it by name (whatever version it pins), transitively, and every package
+// whose code references a selected package by relative path, with its dependents. The plan passes every selected
+// package to Turbo as a filter, so packages Turbo's own graph cannot reach (a reference, a dependency through a
+// published package or an older pin) still run.
 function collectJsDependents(seedDirs, manifests, sourceReferences = new Map()) {
   const dirsByName = new Map();
   for (const manifest of manifests) {
@@ -492,30 +493,59 @@ function collectJsDependents(seedDirs, manifests, sourceReferences = new Map()) 
   }
 
   const selected = new Set(seedDirs);
-  const referencedOnly = new Set();
   const queue = [...seedDirs];
   while (queue.length > 0) {
     const dir = queue.shift();
-    for (const dependent of dependents.get(dir) || []) {
-      if (!selected.has(dependent)) {
-        selected.add(dependent);
-        queue.push(dependent);
-      }
-    }
-    // A consumer is a seed even when a manifest edge also reaches it: the manifest may pin a published version, which
-    // Turbo treats as external, while the reference reads the workspace's files.
-    for (const consumer of sourceReferences.get(dir) || []) {
-      if (!seedDirs.has(consumer)) {
-        referencedOnly.add(consumer);
-      }
-      if (!selected.has(consumer)) {
-        selected.add(consumer);
-        queue.push(consumer);
+    for (const next of [...(dependents.get(dir) || []), ...(sourceReferences.get(dir) || [])]) {
+      if (!selected.has(next)) {
+        selected.add(next);
+        queue.push(next);
       }
     }
   }
 
-  return Object.assign(selected, { referencedOnly });
+  return selected;
+}
+
+// Package turbo.json files can name inputs in other packages ("$TURBO_ROOT$/extfn/cli/**/*.ts" in clifn/core, whose
+// contract test scans those CLIs). Returns [owner package dir, path prefix] pairs: a changed file under a prefix
+// selects the owner. The prefix is the glob's literal part, so it can only over-select.
+function collectTurboRootInputs(packageDirs) {
+  const inputs = [];
+  let files = [];
+  try {
+    files = git(["ls-files", "-z", "--format=|%(path)", "--", "*/turbo.json"])
+      .split("\0")
+      .filter((record) => record.startsWith("|"))
+      .map((record) => record.slice(1));
+  } catch {
+    return inputs;
+  }
+
+  for (const file of files) {
+    const owner = findNearestManifestDir(path.posix.dirname(file), packageDirs);
+    if (!owner) {
+      continue;
+    }
+    let config;
+    try {
+      config = JSON.parse(readFileSync(path.join(repoRoot, file), "utf8"));
+    } catch {
+      continue;
+    }
+    for (const task of Object.values(config?.tasks || config?.pipeline || {})) {
+      for (const input of Array.isArray(task?.inputs) ? task.inputs : []) {
+        if (typeof input !== "string" || !input.startsWith("$TURBO_ROOT$/")) {
+          continue;
+        }
+        const glob = input.slice("$TURBO_ROOT$/".length);
+        const literal = glob.split(/[*?{[!]/, 1)[0];
+        inputs.push([owner, literal]);
+      }
+    }
+  }
+
+  return inputs;
 }
 
 function writeOutput(name, value) {
@@ -618,8 +648,16 @@ const fullPlan = PLAN_MODE === "full";
 const runMcpfn = fullPlan || changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
 let lockfile = null;
 
+const turboRootInputs = PLAN_MODE === "full" ? [] : collectTurboRootInputs(jsDirs);
+
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
+    for (const [owner, prefix] of turboRootInputs) {
+      if (changedPath.startsWith(prefix)) {
+        changedJsDirs.add(owner);
+      }
+    }
+
     if (changedPath === LOCKFILE) {
       // The diff compares HEAD with the merge base (base...HEAD), so the lockfile is read at the same two commits.
       const lockfileBase = mergeBaseWith(baseRef) || baseRef;
@@ -707,7 +745,7 @@ const jsChangedDirs = new Set(selectedJsPackages.map((manifest) => manifest.dir)
 const jsSelection = fullJs
   ? new Set(jsPackages.map((manifest) => manifest.dir))
   : collectJsDependents(jsChangedDirs, jsPackages, collectSourceReferences(jsDirs));
-const jsSeedDirs = new Set([...jsChangedDirs, ...(jsSelection.referencedOnly || [])]);
+const jsSeedDirs = jsSelection;
 const selectionHas = (task) => [...jsSelection].some((dir) => jsByDir.get(dir)?.scripts[task]);
 const jsSeedFilters = fullJs ? "" : buildTurboFilters(jsSeedDirs);
 const hasJsBuild = selectionHas("build");
