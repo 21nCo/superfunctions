@@ -64,6 +64,20 @@ const MAX_PASSWORD_LENGTH = 1024;
  * evaluated, which bounds the work a stored hash can ask for.
  */
 const ISSUED_PARAMETER_SETS = new Set(['32768:8:3', '16384:8:1']);
+/**
+ * Longest submitted password that is hashed; a longer one is refused as
+ * wrong (after the same work), so a request cannot hand scrypt a huge input.
+ * Far above what any earlier release could have stored in practice.
+ */
+const MAX_SUBMITTED_PASSWORD_LENGTH = 64 * 1024;
+/**
+ * scrypt jobs run at once in this process, and jobs allowed to wait for one.
+ * Sign-in costs two jobs even for an unknown email, so without a bound a
+ * flood of anonymous sign-ins could fill the crypto thread pool and memory.
+ * Beyond the queue, requests get AUTHFN_RATE_LIMITED.
+ */
+const MAX_CONCURRENT_SCRYPT_JOBS = 16;
+const MAX_QUEUED_SCRYPT_JOBS = 1024;
 const LEGACY_PARAMETER_SET = '16384:8:1';
 
 export interface PasswordSignUpInput {
@@ -290,7 +304,9 @@ export async function signInWithPassword(
   // runtime: a current-cost hash is checked next to a dummy legacy check; a
   // legacy hash is checked next to deriving its current-cost upgrade; no
   // stored hash means two dummy checks.
-  const password = typeof input.password === 'string' ? input.password : '';
+  const submitted = typeof input.password === 'string' ? input.password : '';
+  const tooLong = submitted.length > MAX_SUBMITTED_PASSWORD_LENGTH;
+  const password = tooLong ? '' : submitted;
   const storedHash = credential?.passwordHash;
   const legacy = storedHash !== undefined && isLegacyHash(storedHash);
   const [valid, upgradedHash] = await Promise.all([
@@ -299,36 +315,46 @@ export async function signInWithPassword(
       ? derivePasswordHash(password)
       : verifyPassword(password, DUMMY_LEGACY_HASH).then(() => undefined)
   ]);
-  if (!user || !credential || !valid) {
+  if (!user || !credential || !valid || tooLong) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
-  // Checked only after the password, so the answer reveals nothing to someone
-  // who does not know it.
+  // The credential may have changed while the hash ran: a reset (the checked
+  // password is no longer the account's) or another sign-in's upgrade (it
+  // still is). The submitted password must match what is stored now, read
+  // again after every check, a few times at most.
+  let checkedHash = credential.passwordHash;
+  let latest: AuthFnPasswordCredentialRecord | null = null;
+  for (let round = 0; round < 3 && !latest; round += 1) {
+    const current = await getPasswordCredentialByUserId(config, user.id);
+    if (!current) {
+      throw new AuthFnInvalidCredentialsError('Invalid email or password');
+    }
+    if (current.passwordHash === checkedHash) {
+      latest = current;
+    } else if (await verifyPassword(password, current.passwordHash)) {
+      checkedHash = current.passwordHash;
+    } else {
+      throw new AuthFnInvalidCredentialsError('Invalid email or password');
+    }
+  }
+  if (!latest) {
+    throw new AuthFnInvalidCredentialsError('Invalid email or password');
+  }
+
+  // Checked only once the password is known to be the account's current
+  // one, so the answer reveals nothing to someone who does not know it.
   if (options.requireEmailVerifiedForSignIn && !user.emailVerifiedAt) {
     throw new AuthFnEmailNotVerifiedError('Email address must be verified before signing in', {
       primaryEmail: user.primaryEmail
     });
   }
 
-  // The credential may have changed while the hash ran: a reset (the checked
-  // password is no longer the account's) or another sign-in's upgrade (it
-  // still is). The submitted password must match what is stored now.
-  const current = await getPasswordCredentialByUserId(config, user.id);
-  if (!current) {
-    throw new AuthFnInvalidCredentialsError('Invalid email or password');
-  }
-  if (current.passwordHash !== credential.passwordHash) {
-    if (!(await verifyPassword(password, current.passwordHash))) {
-      throw new AuthFnInvalidCredentialsError('Invalid email or password');
-    }
-    return { user, credential: current };
-  }
-  if (upgradedHash) {
+  if (upgradedHash && latest.passwordHash === credential.passwordHash) {
     await upgradePasswordHash(config, credential, upgradedHash, password);
   }
 
-  return { user, credential };
+  return { user, credential: latest };
 }
 
 export async function createPasswordCredential(
@@ -496,7 +522,31 @@ function parseStoredHash(storedHash: string): { salt: string; expected: Buffer; 
   };
 }
 
-function scryptAsync(password: string, salt: string, keyLength: number, options: ScryptOptions): Promise<Buffer> {
+let runningScryptJobs = 0;
+const waitingScryptJobs: Array<() => void> = [];
+
+async function scryptAsync(password: string, salt: string, keyLength: number, options: ScryptOptions): Promise<Buffer> {
+  if (runningScryptJobs >= MAX_CONCURRENT_SCRYPT_JOBS) {
+    if (waitingScryptJobs.length >= MAX_QUEUED_SCRYPT_JOBS) {
+      throw new AuthFnRateLimitedError('Too many password checks at once; try again shortly', {
+        scope: 'password-hashing',
+        resetAt: new Date(Date.now() + 1000).toISOString()
+      });
+    }
+    await new Promise<void>((resolve) => {
+      waitingScryptJobs.push(resolve);
+    });
+  }
+  runningScryptJobs += 1;
+  try {
+    return await runScrypt(password, salt, keyLength, options);
+  } finally {
+    runningScryptJobs -= 1;
+    waitingScryptJobs.shift()?.();
+  }
+}
+
+function runScrypt(password: string, salt: string, keyLength: number, options: ScryptOptions): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, keyLength, options, (error, derived) => {
       if (error) {

@@ -235,6 +235,7 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     )
     assert lookup == {
         "identifier": "ada@example.com",
+        "userId": "user_1",
         "regionId": "eu-west-1",
         "authority": "https://eu.account.example.com",
         "domain": ".example.com",

@@ -204,25 +204,29 @@ class MultiRegionService:
         runtime = self.resolve_runtime(request or _default_request())
         located = await self._lookup_record(normalized, request, runtime)
         current = _normalize_authority(runtime.base_url)
-        if located is None or current == _normalize_authority(located["authority"]):
+        current_region = runtime.region_id or self.plugin_config.default_region_id
+        if located is None or located["regionId"] == current_region:
             # An unknown identifier and an account in this region get the same
-            # answer, and no answer names the user, as in the TypeScript kernel:
-            # the route needs no sign-in.
+            # answer, as in the TypeScript kernel: the route needs no sign-in.
             return {
                 "identifier": normalized,
-                "regionId": runtime.region_id or self.plugin_config.default_region_id or "unknown",
+                "regionId": current_region or "unknown",
                 "authority": current,
                 "domain": None,
                 "continueLocally": True,
                 "redirectTo": None,
             }
+        target = _normalize_authority(located["authority"])
+        continue_locally = current == target
         return {
             "identifier": normalized,
+            # Internal only: the route drops it from the response.
+            "userId": located.get("userId"),
             "regionId": located["regionId"],
-            "authority": _normalize_authority(located["authority"]),
+            "authority": target,
             "domain": located.get("domain"),
-            "continueLocally": False,
-            "redirectTo": _normalize_authority(located["authority"]),
+            "continueLocally": continue_locally,
+            "redirectTo": None if continue_locally else target,
         }
 
     async def ensure_region_alignment(self, *, user_id: str, request: Optional[Any] = None) -> Dict[str, Any]:

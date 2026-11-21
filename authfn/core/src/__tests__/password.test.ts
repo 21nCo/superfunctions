@@ -552,6 +552,26 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
       .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
   });
 
+  it('refuses a submitted password longer than 64 KiB without hashing it', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    const huge = 'x'.repeat(64 * 1024 + 1);
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash(huge) });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: huge }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  });
+
+  it('checks the email is verified only after the current password matched', async () => {
+    const auth = createTestServer({
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      plugins: [authFnPasswordPlugin({ requireEmailVerifiedForSignIn: true })]
+    });
+    await post(auth, '/sign-up/password', { email: 'bea@example.com', password: 'test-password-strong' });
+    const wrong = await post(auth, '/sign-in/password', { email: 'bea@example.com', password: 'test-password-other' });
+    expect((await wrong.json()).error.code).toBe('AUTHFN_INVALID_CREDENTIALS');
+  });
+
   it('refuses a stored hash whose digest is not the full length', async () => {
     const empty = ['scrypt', '32768', '8', '3', 'test-salt', ''].join('$');
     await expect(verifyPassword('test-password-anything', empty)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });

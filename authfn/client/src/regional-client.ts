@@ -130,9 +130,11 @@ export function createAuthFnRegionalClient(
     }
 
     // The lookup names no user and answers a local account like an unknown
-    // one, so only an account in another region is known here; a local one
-    // is reported by sign-up itself.
-    const existingAccount = lookup.data.continueLocally === false;
+    // one, so only an account owned by another region is known here (even
+    // when both regions share an authority); a local one is reported by
+    // sign-up itself.
+    const existingAccount = lookup.data.continueLocally === false
+      || (selectedRegionId !== undefined && lookup.data.regionId !== selectedRegionId);
     if (input.flow === 'sign-up' && existingAccount) {
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
