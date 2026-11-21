@@ -206,29 +206,68 @@ async function gitOk(args: string[], cwd: string): Promise<string> {
   return result.stdout;
 }
 
+/** The nearest ancestor of `target` (itself excluded) that exists, symlinks followed. */
+function nearestExistingDir(target: string): string {
+  let dir = path.dirname(target);
+  while (!existsSync(dir) && path.dirname(dir) !== dir) {
+    dir = path.dirname(dir);
+  }
+  return dir;
+}
+
+/**
+ * Spellings of `target` in canonical directories: the leaf (and any missing components) as given
+ * below the native realpath of the nearest existing directory, plus the native realpath of the
+ * file itself when it exists (a leaf symlink followed, the on-disk case and Unicode form).
+ */
+function canonicalSpellings(target: string): string[] {
+  const dir = nearestExistingDir(target);
+  const spellings = [path.join(realpathSync.native(dir), path.relative(dir, target))];
+  if (existsSync(target)) {
+    spellings.unshift(realpathSync.native(target));
+  }
+  return spellings;
+}
+
+/** NFC plus case folding: the key under which a case-insensitive filesystem treats names as one. */
+function foldPath(value: string): string {
+  return value.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
+}
+
+interface TreeEntry {
+  mode: string;
+  type: string;
+  object: string;
+  path: string;
+}
+
+function parseTreeListing(listing: string): TreeEntry[] {
+  const entries: TreeEntry[] = [];
+  for (const line of listing.split("\0")) {
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const [mode, type, object] = line.slice(0, tab).split(" ");
+    entries.push({ mode, type, object, path: line.slice(tab + 1) });
+  }
+  return entries;
+}
+
 /**
  * Reads the spec as committed at `ref`. Git resolves the ref once to a commit; every later call
- * uses that commit. Returns null only when git lists no entry for the spec path in that commit
- * (a new contract); any other git failure is an error.
+ * uses that commit. Every path the spec may have been tracked under is a candidate: the path as
+ * given and the file a write to it lands on (symlinks followed, dangling ones included), each in
+ * its canonical directory spelling, and, when the repository ignores case, any tracked path equal
+ * to a candidate under NFC and case folding. Returns null (a new contract) only when git lists no
+ * entry for any candidate in that commit. Several distinct matching blobs, a match that is not a
+ * regular file, or any git failure is an error.
  */
 async function readSpecAtRef(ref: string, specPath: string): Promise<string | null> {
   if (ref.length === 0 || ref.startsWith("-")) {
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
 
-  // The spec's canonical location: an existing spec is resolved in full (a leaf symlink followed,
-  // the on-disk case and Unicode form of every component), so an alias of the tracked file is
-  // looked up under the name git stores. A missing spec keeps its leaf below the nearest existing
-  // directory, resolved the same way.
   // The repository is the one holding the spec path as given.
-  let dir = path.dirname(specPath);
-  while (!existsSync(dir) && path.dirname(dir) !== dir) {
-    dir = path.dirname(dir);
-  }
-  const canonical = existsSync(specPath)
-    ? realpathSync.native(specPath)
-    : path.join(realpathSync.native(dir), path.relative(dir, specPath));
-
+  const dir = nearestExistingDir(specPath);
   const toplevelResult = await runGit(["rev-parse", "--show-toplevel"], dir);
   if (toplevelResult.code !== 0) {
     throw new CheckUsageError(
@@ -236,10 +275,29 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
     );
   }
   const root = realpathSync.native(toplevelResult.stdout.trim());
-  const relative = path.relative(root, canonical).split(path.sep).join("/");
-  if (relative === "" || relative.startsWith("../") || relative === ".." || path.isAbsolute(relative)) {
-    throw new CheckUsageError(`Spec ${specPath} (${canonical}) is outside the git repository at ${root}`);
+  const inRepo = (absolute: string): string | null => {
+    const relative = path.relative(root, absolute).split(path.sep).join("/");
+    if (relative === "" || relative === ".." || relative.startsWith("../") || path.isAbsolute(relative)) {
+      return null;
+    }
+    return relative;
+  };
+
+  // The file the check reads and --write writes must be inside the repository.
+  const destination = await writeDestination(specPath);
+  const destinationSpellings = canonicalSpellings(destination);
+  if (inRepo(destinationSpellings[0]) === null) {
+    throw new CheckUsageError(
+      `Spec ${specPath} (${destinationSpellings[0]}) is outside the git repository at ${root}`
+    );
   }
+  const candidates = [
+    ...new Set(
+      [...destinationSpellings, ...canonicalSpellings(specPath)]
+        .map(inRepo)
+        .filter((relative): relative is string => relative !== null)
+    ),
+  ];
 
   const resolved = await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root);
   if (resolved.code !== 0) {
@@ -249,21 +307,40 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
   }
   const commit = resolved.stdout.trim();
 
-  // --literal-pathspecs: the spec path is a path, never a pathspec pattern.
-  const listing = await gitOk(
-    ["--literal-pathspecs", "ls-tree", "-z", commit, "--", relative],
-    root
-  );
-  const entry = listing.split("\0").find((line) => line.endsWith(`\t${relative}`));
-  if (!entry) {
+  // --literal-pathspecs: each candidate is a path, never a pathspec pattern.
+  const exact = parseTreeListing(
+    await gitOk(["--literal-pathspecs", "ls-tree", "-z", commit, "--", ...candidates], root)
+  ).filter((entry) => candidates.includes(entry.path));
+  const matches = new Map(exact.map((entry) => [entry.path, entry]));
+
+  const ignoreCase = await runGit(["config", "--type=bool", "--get", "core.ignorecase"], root);
+  if (ignoreCase.code === 0 && ignoreCase.stdout.trim() === "true") {
+    const folded = new Set(candidates.map(foldPath));
+    const all = parseTreeListing(await gitOk(["ls-tree", "-r", "-z", "--full-tree", commit], root));
+    for (const entry of all) {
+      if (folded.has(foldPath(entry.path))) matches.set(entry.path, entry);
+    }
+  }
+  if (matches.size === 0) {
     return null;
   }
-  const type = entry.split(" ")[1];
-  if (type !== "blob") {
-    throw new CheckUsageError(`${relative} at ${ref} (${commit}) is a ${type}, not a spec file`);
-  }
 
-  return gitOk(["show", `${commit}:${relative}`], root);
+  const files = [...matches.values()].filter(
+    (entry) => entry.type === "blob" && (entry.mode === "100644" || entry.mode === "100755")
+  );
+  const blobs = new Map(files.map((entry) => [entry.object, entry]));
+  if (blobs.size > 1) {
+    throw new CheckUsageError(
+      `The spec matches several different files at ${ref} (${commit}): ${files.map((e) => e.path).join(", ")}. Pass --spec with the tracked path.`
+    );
+  }
+  if (blobs.size === 0) {
+    const entry = [...matches.values()][0];
+    const kind = entry.mode === "120000" ? "symbolic link" : entry.type;
+    throw new CheckUsageError(`${entry.path} at ${ref} (${commit}) is a ${kind}, not a spec file`);
+  }
+  const [entry] = blobs.values();
+  return gitOk(["show", `${commit}:${entry.path}`], root);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,12 +497,21 @@ function errorMessage(error: unknown): string {
  */
 export const MAX_EXPANDED_SPEC_NODES = 5_000_000;
 
-/** Number of nodes the document expands to, every alias replaced by its anchored node. */
+/**
+ * Number of nodes the document expands to, every alias replaced by its anchored node. Rejects a
+ * mapping key that is an alias or a collection: the yaml package checks key uniqueness on the
+ * key nodes as written, so an alias key resolving to a literal key beside it would pass and one
+ * of the two values would be lost when the mapping becomes JSON.
+ */
 function expandedNodeCount(doc: ReturnType<typeof parseDocument>): number {
   // An alias names the last node with that anchor before it in document order.
   const anchors = new Map<string, YamlNode>();
   const targets = new Map<Alias, YamlNode | undefined>();
   visit(doc, (_key, node) => {
+    if (isPair(node) && (isAlias(node.key) || isCollection(node.key))) {
+      const kind = isAlias(node.key) ? `the alias *${node.key.source}` : "a collection";
+      throw new Error(`a mapping key is ${kind}, which JSON cannot represent faithfully`);
+    }
     if (isAlias(node)) {
       targets.set(node, anchors.get(node.source));
     } else if ((isCollection(node) || isScalar(node)) && node.anchor) {
@@ -462,11 +548,13 @@ function expandedNodeCount(doc: ReturnType<typeof parseDocument>): number {
 }
 
 /**
- * Parses YAML (or JSON, which YAML 1.2 contains) from outside the process: aliases are allowed in
- * any number, but the expanded document must stay under MAX_EXPANDED_SPEC_NODES and be acyclic.
+ * The one parser for a committed or base spec, YAML or JSON (which YAML 1.2 contains): duplicate
+ * mapping keys are an error (JSON.parse would silently keep the last one), aliases are allowed in
+ * any number, but the expanded document must stay under MAX_EXPANDED_SPEC_NODES, be acyclic,
+ * use no alias or collection as a mapping key and have a faithful JSON form (toFaithfulJson).
  */
 function parseSpecText(raw: string): unknown {
-  const doc = parseDocument(raw);
+  const doc = parseDocument(raw, { uniqueKeys: true });
   if (doc.errors.length > 0) {
     throw doc.errors[0];
   }
@@ -533,18 +621,6 @@ export function toFaithfulJson(value: unknown): unknown {
         });
       }
       result = record;
-    } else if (Object.getPrototypeOf(node) === Object.prototype || Object.getPrototypeOf(node) === null) {
-      // JSON.parse output: plain objects whose keys are already unique strings.
-      const record: Record<string, unknown> = {};
-      for (const key of Object.keys(node)) {
-        Object.defineProperty(record, key, {
-          value: convert((node as Record<string, unknown>)[key], `${at}.${key}`),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
-      result = record;
     } else {
       const kind = (node as { constructor?: { name?: string } }).constructor?.name ?? "object";
       throw new Error(`${at} is a ${kind}, which JSON cannot represent`);
@@ -555,28 +631,16 @@ export function toFaithfulJson(value: unknown): unknown {
   return convert(value, "$");
 }
 
-/** A base spec, as `parseOpenAPI` reads a string (JSON first, then YAML) but with parseSpecText. */
+/** A base spec, read by parseSpecText (the committed spec's strict parser), then parseOpenAPI. */
 function parseBaseSpec(raw: string): OpenAPIDocument {
-  const trimmed = raw.trim();
-  if (!trimmed) {
+  if (!raw.trim()) {
     return parseOpenAPI(raw);
   }
   let parsed: unknown;
   try {
-    // JSON.parse turns an overflowing number literal into Infinity, so check it too.
-    parsed = JSON.parse(trimmed);
-  } catch {
-    try {
-      parsed = parseSpecText(trimmed);
-    } catch (error) {
-      throw new Error(`Invalid OpenAPI input: failed to parse JSON or YAML (${errorMessage(error)})`);
-    }
-    return parseOpenAPI(parsed as Record<string, unknown>);
-  }
-  try {
-    parsed = toFaithfulJson(parsed);
+    parsed = parseSpecText(raw);
   } catch (error) {
-    throw new Error(`Invalid OpenAPI input: ${errorMessage(error)}`);
+    throw new Error(`Invalid OpenAPI input: failed to parse JSON or YAML (${errorMessage(error)})`);
   }
   return parseOpenAPI(parsed as Record<string, unknown>);
 }
@@ -660,19 +724,61 @@ async function writeDestination(target: string): Promise<string> {
 }
 
 /**
- * True when writing `a` would write the file `b` names: the same destination after symlinks
- * (even where the file or its directory does not exist yet), or the same inode once both exist.
+ * True when a write to `a` may land on the file `b` names. Both are compared where they lead
+ * after symlinks (even where the file or its directory does not exist yet), conservatively: under
+ * NFC and case folding, so a case or Unicode alias counts as the same file even on a filesystem
+ * that would keep them apart. Once both exist, the same inode (a hard link) also counts.
  */
-async function sameWriteTarget(a: string, b: string): Promise<boolean> {
-  if ((await writeDestination(a)) === (await writeDestination(b))) {
+async function mayAlias(a: string, b: string): Promise<boolean> {
+  const [left, right] = await Promise.all([writeDestination(a), writeDestination(b)]);
+  if (foldPath(left) === foldPath(right)) {
     return true;
   }
   try {
-    const [left, right] = await Promise.all([stat(a), stat(b)]);
-    return left.dev === right.dev && left.ino === right.ino;
+    const [l, r] = await Promise.all([stat(a), stat(b)]);
+    return l.dev === r.dev && l.ino === r.ino;
   } catch {
     return false;
   }
+}
+
+interface RunFiles {
+  specPath: string;
+  /** The spec is a write destination (--write). */
+  writeSpec: boolean;
+  reportPath?: string;
+  /** A local --base-spec file (never an HTTP URL). */
+  baseSpecPath?: string;
+}
+
+/**
+ * No write destination of the run may alias another file the run reads or writes: the report
+ * never lands on the spec or the base spec, and --write never lands on the base spec (a later run
+ * would compare the head with itself). Checked before any write, and again before the report is
+ * written once --write has created the spec.
+ */
+async function assertNoWriteAliasing(files: RunFiles, flags: { report: string; baseSpec?: string }): Promise<void> {
+  if (files.reportPath !== undefined && (await mayAlias(files.reportPath, files.specPath))) {
+    throw new CheckUsageError(`--report ${flags.report} is the spec itself; write the report to another file.`);
+  }
+  if (files.baseSpecPath === undefined) {
+    return;
+  }
+  if (files.reportPath !== undefined && (await mayAlias(files.reportPath, files.baseSpecPath))) {
+    throw new CheckUsageError(
+      `--report ${flags.report} is the --base-spec file ${flags.baseSpec}; write the report to another file.`
+    );
+  }
+  if (files.writeSpec && (await mayAlias(files.specPath, files.baseSpecPath))) {
+    throw new CheckUsageError(
+      `--write would rewrite the --base-spec file ${flags.baseSpec}; pass a base spec other than the spec itself.`
+    );
+  }
+}
+
+/** `--base-spec` names an HTTP(S) URL, which `loadSpec` fetches, rather than a local file. */
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 interface BaseSpec {
@@ -770,11 +876,17 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const specPath = resolveSpecPath({ specPath: options.specPath, cwd, config: options.config });
     const reportPath =
       options.reportPath === undefined ? undefined : path.resolve(cwd, options.reportPath);
-    if (reportPath !== undefined && (await sameWriteTarget(reportPath, specPath))) {
-      throw new CheckUsageError(
-        `--report ${options.reportPath} is the spec itself; write the report to another file.`
-      );
-    }
+    const runFiles: RunFiles = {
+      specPath,
+      writeSpec: options.write === true,
+      reportPath,
+      baseSpecPath:
+        options.baseSpec === undefined || isHttpUrl(options.baseSpec)
+          ? undefined
+          : path.resolve(cwd, options.baseSpec),
+    };
+    const flags = { report: options.reportPath ?? "", baseSpec: options.baseSpec };
+    await assertNoWriteAliasing(runFiles, flags);
 
     // The head document is what `apifn generate` would commit, read back.
     // It is this process's own output, so its aliases (one per reused object) are not limited.
@@ -876,6 +988,8 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
 
     const rendered = renderReport(report, format);
     if (reportPath !== undefined) {
+      // --write may have just created the spec: check again now that both files can exist.
+      await assertNoWriteAliasing(runFiles, flags);
       try {
         await mkdir(path.dirname(reportPath), { recursive: true });
         await writeFile(reportPath, rendered, "utf8");

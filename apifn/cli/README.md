@@ -120,22 +120,28 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`, the spec path resolved through symlinks to its on-disk name inside the repository); no spec at the ref means a new contract, so the diff is skipped and reported, not failed; any other git error exits `2`
+- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`). The spec is looked up under every path it may be tracked as: the path as given and the file a write to it lands on (symlinks followed, dangling ones included), and, when the repository sets `core.ignorecase`, any tracked path equal to one of them under case folding and Unicode normalization. No entry for any of them means a new contract, so the diff is skipped and reported, not failed; several different matching files, a match that is not a regular file, a spec outside the repository or any other git error exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
 - `--allow-breaking` — report breaking changes without failing
 - `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes
 - `--format <type>` — `text` (default), `json` or `markdown`
-- `--report <path>` — also write the report to a file (never the spec itself)
+- `--report <path>` — also write the report to a file
+
+No write may land on another file of the run: `--report` naming the spec or a local `--base-spec`
+file, or `--write` with a local `--base-spec` naming the spec, exits `2` before anything is written.
+Paths are compared after symlinks and, conservatively, ignoring case and Unicode normalization.
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 `check` accepts only this grammar: a second positional (for example a ref given without
 `--base`), any argument after `--`, a value on `--write` or `--allow-breaking`, or a repeated
 value option is a usage error.
 
-Committed and base specs may use any number of YAML aliases; a document whose aliases expand
+Committed and base specs are read by one strict parser (YAML, which contains JSON): a duplicate
+mapping key is an error, never a silently kept last value. They may use any number of YAML aliases; a document whose aliases expand
 past 5,000,000 nodes or form a cycle is rejected (an unparseable committed spec, or a base load
 error). So is a document with no faithful JSON form: a `.nan` or `.inf` value, a mapping key that
-is not a string or number, or two keys that become the same JSON key (`200` and `"200"`).
+is not a string or number (an alias or collection key included), or two keys that become the same
+JSON key (`200` and `"200"`).
 
 Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
 canonical JSON (key order and formatting do not count).

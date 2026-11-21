@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { access, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
@@ -473,6 +473,35 @@ describe("apifn check: --base <git-ref>", () => {
     }
   );
 
+  it("a dangling --spec symlink to the deleted tracked spec is diffed against it, even with --write", async () => {
+    const { service } = await trackedBaseSpec();
+    await rm(path.join(service, SPEC));
+    await symlink(SPEC, path.join(service, "contract.yml"));
+
+    const { code, report } = await runJson(
+      ["check", "--spec", "contract.yml", "--base", "HEAD", "--write"],
+      service
+    );
+    expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+    expect(report.breaking.length).toBeGreaterThan(0);
+    expect(report.written).toBe(true);
+    expect(code).toBe(1);
+  });
+
+  it.skipIf(!CASE_INSENSITIVE_FS)(
+    "a case-only rename on disk is diffed against the old tracked name (case-insensitive filesystem)",
+    async () => {
+      const { service } = await trackedBaseSpec();
+      const renamed = path.join(".apifn", "OpenAPI.yml");
+      await rename(path.join(service, SPEC), path.join(service, renamed));
+
+      const { code, report } = await runJson(["check", "--spec", renamed, "--base", "HEAD"], service);
+      expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+      expect(report.breaking.length).toBeGreaterThan(0);
+      expect(code).toBe(1);
+    }
+  );
+
   it("a --spec symlink that resolves outside the repository exits 2", async () => {
     const { service } = await trackedBaseSpec();
     const outside = path.join(await tempDir("apifn-check-outside-"), "openapi.yml");
@@ -562,6 +591,52 @@ describe("apifn check: documents without a faithful JSON form", () => {
       expect({ label, code: result.code, stdout: result.stdout }).toEqual({ label, code: 2, stdout: "" });
       expect(result.stderr).toContain("JSON");
     }
+  });
+
+  it("a JSON base spec with a duplicate key is a load error (exit 2), not its last value", async () => {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "breaking");
+    await commitSpec(dir);
+    const base = parseYaml(await readFile(path.join(root, "base", SPEC), "utf8")) as Record<string, unknown>;
+    // JSON.parse keeps the last "paths", so the removed endpoints would never be diffed.
+    await writeFile(path.join(dir, "base.json"), `${JSON.stringify(base).slice(0, -1)},"paths":{}}`);
+
+    const result = await run(["check", "--base-spec", "base.json"], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unique");
+    expect(result.stdout).toBe("");
+  });
+
+  it("an alias mapping key that repeats a literal key is drift as the committed spec and a load error as the base", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    // The alias key *k resolves to "description"; the literal key after it would silently win.
+    let seen = 0;
+    const aliased = generated.replace(/^( +)description: /gm, (line, indent: string) => {
+      seen += 1;
+      if (seen === 1) return `${indent}&k description: `;
+      if (seen === 2) return `${indent}*k : hidden\n${line}`;
+      return line;
+    });
+    expect(seen).toBeGreaterThanOrEqual(2);
+    expect(parseYaml(aliased)).toEqual(parseYaml(generated));
+
+    await writeFile(path.join(dir, SPEC), aliased);
+    const committed = await runJson(["check"], dir);
+    expect({ code: committed.code, driftState: committed.report.driftState }).toEqual({
+      code: 1,
+      driftState: "unparseable",
+    });
+
+    await writeFile(path.join(dir, "base.yml"), aliased);
+    await writeFile(path.join(dir, SPEC), generated);
+    const result = await run(["check", "--base-spec", "base.yml"], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("alias *k");
+    expect(result.stdout).toBe("");
   });
 
   it("a JSON base spec with an overflowing number is a load error (exit 2)", async () => {
@@ -912,11 +987,58 @@ describe("apifn check: --report never writes the spec", () => {
     await expectRejected(dir, "report.md");
   });
 
+  it("through a case alias of the missing spec, on every filesystem", async () => {
+    const dir = await missingSpec();
+    await expectRejected(dir, path.join(".apifn", "OpenAPI.yml"));
+  });
+
   it("a report beside the spec is written normally", async () => {
     const dir = await missingSpec();
     const result = await run(["check", "--write", "--report", ".apifn/report.txt"], dir);
     expect(result.code).toBe(0);
     expect(await readFile(path.join(dir, ".apifn", "report.txt"), "utf8")).toBe(result.stdout);
     expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
+  });
+});
+
+describe("apifn check: no write lands on the base spec", () => {
+  /** The breaking service with the base contract's spec committed (stale) and kept as base.yml. */
+  async function staleService(): Promise<{ dir: string; baseText: string }> {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "breaking");
+    const baseText = await readFile(path.join(root, "base", SPEC), "utf8");
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    await writeFile(path.join(dir, SPEC), baseText);
+    await writeFile(path.join(dir, "base.yml"), baseText);
+    return { dir, baseText };
+  }
+
+  it("--write with --base-spec naming the spec exits 2 and leaves it unchanged", async () => {
+    const { dir, baseText } = await staleService();
+    for (const baseSpec of [SPEC, path.join(".apifn", "OpenAPI.yml")]) {
+      const result = await run(["check", "--write", "--base-spec", baseSpec], dir);
+      expect({ baseSpec, code: result.code, stdout: result.stdout }).toEqual({ baseSpec, code: 2, stdout: "" });
+      expect(result.stderr).toContain("--base-spec");
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(baseText);
+    }
+  });
+
+  it("--report naming the --base-spec file exits 2 and leaves it unchanged", async () => {
+    const { dir, baseText } = await staleService();
+    for (const report of ["base.yml", "BASE.yml", "./out/../base.yml"]) {
+      const result = await run(["check", "--base-spec", "base.yml", "--report", report], dir);
+      expect({ report, code: result.code, stdout: result.stdout }).toEqual({ report, code: 2, stdout: "" });
+      expect(result.stderr).toContain("--base-spec");
+      expect(await readFile(path.join(dir, "base.yml"), "utf8")).toBe(baseText);
+    }
+  });
+
+  it("--write with a base spec elsewhere still repairs the spec", async () => {
+    const { dir } = await staleService();
+    const result = await run(["check", "--write", "--base-spec", "base.yml", "--report", "report.txt"], dir);
+    expect(result.code).toBe(1);
+    expect(await readFile(path.join(dir, "report.txt"), "utf8")).toBe(result.stdout);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe(await readFile(path.join(dir, "base.yml"), "utf8"));
   });
 });
