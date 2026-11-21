@@ -91,7 +91,26 @@ const ITEM_TYPES = new Set([
   "mcp_approval_request",
 ]);
 
+/**
+ * Reasoning part types. They belong in a reasoning item's summary or content; inside an
+ * assistant message they are a part at the wrong level whose text would be dropped.
+ */
+const REASONING_PART_TYPES = new Set(["summary_text", "reasoning_text"]);
+
 const ITEM_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
+
+/**
+ * Describe a wire value for an error message without trusting it: a string as it is, anything
+ * else as JSON, and the type name when even that fails (a BigInt, a cycle, a throwing toJSON).
+ */
+export function describeWireValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? typeof value;
+  } catch {
+    return typeof value;
+  }
+}
 
 /** The identities of one Responses output item, validated. */
 export interface OutputItemIdentity {
@@ -167,13 +186,14 @@ export function parseOutputItems(
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
         if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
-          throw fail(`Responses output message has unexpected status ${String(item.status)}`);
+          throw fail(`Responses output message has unexpected status ${describeWireValue(item.status)}`);
         }
         if (!Array.isArray(item.content)) throw fail("Responses output message content must be an array");
         for (const part of item.content) {
           if (!isRecord(part) || typeof part.type !== "string" || !part.type) throw fail("Responses output content part is malformed");
           if (INPUT_ONLY_PART_TYPES.has(part.type)) throw fail(`Responses output message must not contain ${part.type} parts`);
           if (ITEM_TYPES.has(part.type)) throw fail(`Responses output content part has the item type ${part.type}`);
+          if (REASONING_PART_TYPES.has(part.type)) throw fail(`Responses output message must not contain ${part.type} parts`);
           if (part.type === "output_text") {
             if (typeof part.text !== "string") throw fail("Responses output_text part requires text");
             if (part.annotations !== undefined && part.annotations !== null && !Array.isArray(part.annotations)) {
@@ -306,13 +326,13 @@ function parseReasoning(item: JsonRecord, provider: string): ResponsesReasoningS
       if (!isRecord(part) || typeof part.text !== "string") throw fail(`Responses reasoning ${field} part requires text`);
       const expected = field === "summary" ? "summary_text" : "reasoning_text";
       if (part.type !== undefined && part.type !== expected) {
-        throw fail(`Responses reasoning ${field} part has unexpected type ${String(part.type)}`);
+        throw fail(`Responses reasoning ${field} part has unexpected type ${describeWireValue(part.type)}`);
       }
       return part.text;
     });
   };
   if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
-    throw fail(`Responses reasoning item has unexpected status ${String(item.status)}`);
+    throw fail(`Responses reasoning item has unexpected status ${describeWireValue(item.status)}`);
   }
   if (item.encrypted_content !== undefined && item.encrypted_content !== null && typeof item.encrypted_content !== "string") {
     throw fail("Responses reasoning encrypted_content must be a string");
@@ -403,7 +423,7 @@ export function parseResponsesResponse(
   const status = terminalStatus(data, provider);
   if (status === "failed") throw responsesError(provider, { status: 200, body: data, error: data.error });
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
-    throw new ProviderError(`Responses returned unexpected status ${String(status)}`, { provider, metadata: { status } });
+    throw new ProviderError(`Responses returned unexpected status ${describeWireValue(status)}`, { provider, metadata: { status } });
   }
   const id = responseId(data, provider);
 

@@ -62,6 +62,14 @@ const completed = (output: unknown[], extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+/** An assistant message output item with one text part. */
+const said = (text: string) => ({
+  type: "message",
+  role: "assistant",
+  status: "completed",
+  content: [{ type: "output_text", text, annotations: [] }],
+});
+
 beforeEach(() => {
   vi.stubGlobal("fetch", () => {
     throw new Error("Network access is not allowed in Responses mapping tests");
@@ -253,7 +261,7 @@ describe("stream mapping", () => {
   it("treats the default SSE event names as absent and requires a non-empty JSON type", async () => {
     const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
     const json = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
-    const terminal = { type: "response.completed", response: completed([call]) };
+    const terminal = { type: "response.completed", response: completed([said("Hi"), call]) };
     // "event: message" and an empty event field are the WHATWG default type: the JSON type decides.
     for (const prefix of ["event: message\n", "event:\n", "event: \n"]) {
       const outcome = await mapRaw(`${prefix}${json({ type: "response.output_text.delta", delta: "Hi" })}${prefix}${json(terminal)}`);
@@ -366,7 +374,7 @@ describe("stream mapping", () => {
       frame({ delta: "Hi" }, "response.output_text.delta"),
       frame({ type: "response.output_item.done", output_index: 0, item: call }),
     ]) {
-      const outcome = await mapRaw(text + frame({ type: "response.completed", response: completed([call]) }));
+      const outcome = await mapRaw(text + frame({ type: "response.completed", response: completed([call, said("Hi")]) }));
       expect(outcome.error).toBeUndefined();
       expect(outcome.seen.map((event) => event.type).filter((type) => type !== "content")).toEqual(["tool_call", "message", "end"]);
     }
@@ -502,7 +510,7 @@ describe("stream mapping", () => {
     ]) {
       const outcome = await mapRaw(text);
       expect(outcome.error).toBeUndefined();
-      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+      expect(outcome.seen.map((event) => event.type)).toEqual(["content", "tool_call", "message", "end"]);
     }
   });
 
@@ -570,7 +578,8 @@ describe("stream mapping", () => {
     ]) {
       const outcome = await mapRaw(text);
       expect(outcome.error).toBeUndefined();
-      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+      // The note text, never streamed as deltas, arrives as one content event.
+      expect(outcome.seen.map((event) => event.type).filter((type) => type !== "content")).toEqual(["tool_call", "message", "end"]);
     }
     // The omitted output follows the stated indexes, not arrival order.
     const rebuilt = await mapRaw(done(call, 1) + done(note, 0) + terminal([]));
@@ -757,6 +766,133 @@ describe("stream mapping", () => {
     const { message } = events.find((event) => event.type === "message") as { message: ResponsesMessage };
     expect(events.at(-1)).toEqual({ type: "end", finish_reason: "length" });
     expect(payload([{ role: "user", content: "go" }, message]).input).toEqual([{ type: "message", role: "user", content: "go" }]);
+  });
+
+  it("fails a completed turn that never finished an announced item, before any tool call or end", async () => {
+    const call = { id: "fc_fixture_1", type: "function_call", status: "completed", call_id: "call_fixture_1", name: "lookup", arguments: "{\"q\":1}" };
+    const second = { id: "fc_fixture_2", type: "function_call", status: "completed", call_id: "call_fixture_2", name: "lookup", arguments: "{\"q\":2}" };
+    const added = (item: Record<string, unknown>, index?: number) => frame({
+      type: "response.output_item.added", ...(index === undefined ? {} : { output_index: index }), item: { ...item, status: "in_progress", arguments: "" },
+    });
+    const done = (item: unknown, index?: number) => frame({ type: "response.output_item.done", ...(index === undefined ? {} : { output_index: index }), item });
+    const partial = frame({ type: "response.function_call_arguments.delta", output_index: 1, item_id: "fc_fixture_2", delta: "{\"q\"" });
+    const terminal = (output: unknown[], status = "completed") => frame({ type: `response.${status}`, response: completed(output, { status }) });
+    for (const text of [
+      // The terminal output is omitted: rebuilt from the finished items, it would drop the second call.
+      added(call, 0) + added(second, 1) + done(call, 0) + partial + terminal([]),
+      // The supplied terminal output also leaves it out.
+      added(call, 0) + added(second, 1) + done(call, 0) + partial + terminal([call]),
+      // Even a supplied output that has it does not finish an announced item.
+      added(call, 0) + added(second, 1) + done(call, 0) + terminal([call, second]),
+      // Announced by id only.
+      added(call) + added(second) + done(call) + terminal([call]),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain("never finished the announced function_call item");
+      expect(outcome.seen).toEqual([]);
+    }
+    // The item finished at an announced index must be the announced one.
+    for (const text of [
+      added(call, 0) + done(second, 0) + terminal([second]),
+      added(call, 0) + done(said("Hi"), 0) + terminal([said("Hi")]),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(String(outcome.error)).toContain("finished a different item than the announced function_call item");
+      expect(outcome.seen).toEqual([]);
+    }
+    expect(String((await mapRaw(added(call, 0) + added(second, 0))).error)).toContain("output_item.added repeats output_index 0");
+    expect(String((await mapRaw(added(call, -1))).error)).toContain("output_item.added output_index must be a non-negative integer");
+    expect(String((await mapRaw(frame({ type: "response.output_item.added", item: "x" }))).error)).toContain("output_item.added requires an item");
+
+    // Valid parallel calls, announced and finished, with the output supplied or omitted, still run.
+    for (const output of [[call, second], []]) {
+      const outcome = await mapRaw(added(call, 0) + added(second, 1) + done(call, 0) + done(second, 1) + terminal(output));
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.filter((event) => event.type === "tool_call").map((event) => (event as { id: string }).id))
+        .toEqual(["call_fixture_1", "call_fixture_2"]);
+    }
+    // An incomplete turn may stop with an announced item unfinished: no tool calls, length.
+    const incomplete = await mapRaw(added(call, 0) + added(second, 1) + done(call, 0) + partial
+      + frame({ type: "response.incomplete", response: completed([call], { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }) }));
+    expect(incomplete.error).toBeUndefined();
+    expect(incomplete.seen.map((event) => event.type)).toEqual(["message", "end"]);
+    expect(incomplete.seen.at(-1)).toEqual({ type: "end", finish_reason: "length" });
+  });
+
+  it("fails a lifecycle frame whose response status is not a running one, before any tool call or end", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const terminal = frame({ type: "response.completed", response: completed([call]) });
+    for (const type of ["response.created", "response.queued", "response.in_progress"]) {
+      for (const [status, error] of [
+        ["failed", "Responses request failed"],
+        ["completed", `${type} event reports response status completed`],
+        ["incomplete", `${type} event reports response status incomplete`],
+        ["cancelled", `${type} event reports response status cancelled`],
+        [{ toString: null }, `${type} event reports response status {"toString":null}`],
+      ] as Array<[unknown, string]>) {
+        const outcome = await mapRaw(frame({ type, response: { id: "resp_fixture_mapping", status, output: [] } }) + terminal);
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toContain(error);
+        expect(outcome.seen).toEqual([]);
+      }
+      // A running, null or absent status still passes.
+      for (const status of ["queued", "in_progress", null, undefined]) {
+        const outcome = await mapRaw(frame({ type, response: { id: "resp_fixture_mapping", status, output: [] } }) + terminal);
+        expect(outcome.error).toBeUndefined();
+        expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+      }
+    }
+  });
+
+  it("delivers terminal text that was not streamed as deltas, once, before the tool calls and end", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const delta = (text: string) => frame({ type: "response.output_text.delta", delta: text });
+    const terminal = frame({ type: "response.completed", response: completed([said("hello"), call]) });
+    const contents = (seen: StreamEvent[]) => seen.filter((event) => event.type === "content").map((event) => (event as { delta: string }).delta);
+    for (const [text, expected] of [
+      [terminal, ["hello"]],
+      [delta("hel") + terminal, ["hel", "lo"]],
+      [delta("hel") + delta("lo") + terminal, ["hel", "lo"]],
+    ] as Array<[string, string[]]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(contents(outcome.seen)).toEqual(expected);
+      expect(outcome.seen.slice(-3).map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+    // Terminal text that does not extend the streamed text is a contradiction.
+    const differs = await mapRaw(delta("bye") + terminal);
+    expect(String(differs.error)).toContain("text differs from the streamed text");
+    expect(differs.seen.map((event) => event.type)).toEqual(["content"]);
+    // An incomplete turn delivers its partial terminal text the same way.
+    const incomplete = await mapRaw(frame({
+      type: "response.incomplete",
+      response: completed([{ ...said("Part"), status: "incomplete" }], { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }),
+    }));
+    expect(incomplete.seen.map((event) => event.type)).toEqual(["content", "message", "end"]);
+    expect(contents(incomplete.seen)).toEqual(["Part"]);
+  });
+
+  it("judges a reported error before a malformed frame type, and reasoning parts inside a message", async () => {
+    for (const type of [null, 7, ""]) {
+      const outcome = await mapRaw(frame({ type, error: { code: "rate_limit_exceeded", message: "slow down" } }));
+      expect(outcome.error).toBeInstanceOf(RateLimitError);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Reasoning parts inside an assistant message would drop their text: rejected in the terminal
+    // output and in the output rebuilt from finished items.
+    for (const part of [{ type: "summary_text", text: "think" }, { type: "reasoning_text", text: "think" }]) {
+      const message = { id: "msg_fixture", type: "message", role: "assistant", status: "completed", content: [part] };
+      for (const text of [
+        frame({ type: "response.completed", response: completed([message]) }),
+        frame({ type: "response.output_item.done", output_index: 0, item: message }) + frame({ type: "response.completed", response: completed([]) }),
+      ]) {
+        const outcome = await mapRaw(text);
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toContain(`must not contain ${part.type} parts`);
+        expect(outcome.seen).toEqual([]);
+      }
+    }
   });
 });
 
@@ -952,6 +1088,11 @@ describe("request mapping", () => {
       [{ type: "message", role: "assistant", content: [call] }, "content part has the item type function_call"],
       [{ type: "message", role: "assistant", content: [{ type: "message", role: "assistant", content: [] }] }, "content part has the item type message"],
       [{ type: "message", role: "assistant", content: [{ type: "reasoning", summary: [] }] }, "content part has the item type reasoning"],
+      // Reasoning parts belong in a reasoning item; inside a message their text would be dropped.
+      [{ type: "message", role: "assistant", content: [{ type: "summary_text", text: "think" }] }, "must not contain summary_text parts"],
+      [{ type: "message", role: "assistant", content: [{ type: "reasoning_text", text: "think" }] }, "must not contain reasoning_text parts"],
+      // A wire value is described safely, never through its own toString.
+      [text({}, { status: { toString: null } }), 'unexpected status {"toString":null}'],
     ];
     const reasoningProfile = defineCapabilityProfile({ ...customProfile, reasoning: true });
     for (const [item, error] of malformed) {
@@ -1124,6 +1265,36 @@ describe("ResponsesChatModel configuration", () => {
       );
     };
   }
+
+  it("records terminal-only answer text in a LangFn.stream trace", async () => {
+    const saveTrace = vi.fn(async (_trace: unknown) => {});
+    const sse = `data: ${JSON.stringify({ type: "response.completed", response: completed([said("hello")]) })}\n\n`;
+    const model = new ResponsesChatModel({
+      model: "m", baseUrl: "https://gateway.example.test", profile: customProfile,
+      fetchImpl: async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    });
+    const lang = new LangFn({ model, observability: { traceStorage: { saveTrace, findMany: async () => [] } } });
+    const deltas: string[] = [];
+    for await (const event of lang.stream("hi")) if (event.type === "content") deltas.push(event.delta);
+    expect(deltas).toEqual(["hello"]);
+    expect(saveTrace).toHaveBeenCalledOnce();
+    expect(saveTrace.mock.calls[0][0]).toMatchObject({ kind: "stream_completion", output: "hello" });
+  });
+
+  it("sends every request to the canonical endpoint its default provider identity names", async () => {
+    const urls: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      urls.push(String(input));
+      return await okFetch([])(input, init);
+    };
+    const model = new ResponsesChatModel({ model: "m", baseUrl: "https://GATEWAY.example.test/v1", path: "/r\u00e9ponses", profile: customProfile, fetchImpl });
+    await model.chat({ messages: [{ role: "user", content: "x" }] });
+    expect(urls).toEqual(["https://gateway.example.test/v1/r%C3%A9ponses"]);
+    expect(model.provider).toBe(`custom-gateway-responses:${urls[0]}`);
+    // A wire status is described safely in a JSON response too.
+    expect(() => parseResponsesResponse(completed([], { status: { toString: null } }), "fixture"))
+      .toThrow('unexpected status {"toString":null}');
+  });
 
   it("keeps a default cache identity per endpoint, apart from OpenAIChatModel", async () => {
     const entries = new Map<string, CompletionResponse>();
@@ -1336,7 +1507,7 @@ describe("ResponsesChatModel configuration", () => {
     // The whole body, a delta and a terminal response with two calls, arrives in one chunk.
     const text = [
       { type: "response.output_text.delta", delta: "partial" },
-      { type: "response.completed", response: completed(calls) },
+      { type: "response.completed", response: completed([said("partial"), ...calls]) },
     ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
     for (const abortOn of ["content", "tool_call"] as const) {
       const controller = new AbortController();
@@ -1380,7 +1551,7 @@ describe("ResponsesChatModel configuration", () => {
     // One chunk holds a delta and a completed call; the body stays open.
     const text = [
       { type: "response.output_text.delta", delta: "partial" },
-      { type: "response.completed", response: completed([call]) },
+      { type: "response.completed", response: completed([said("partial"), call]) },
     ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
     const pausing = async (model: ResponsesChatModel, pause: number) => {
       const seen: StreamEvent[] = [];

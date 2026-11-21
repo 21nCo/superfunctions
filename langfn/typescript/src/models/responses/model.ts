@@ -72,6 +72,8 @@ export class ResponsesChatModel extends ChatModel {
   readonly baseUrl: string;
   readonly profile: CapabilityProfile;
   private readonly path: string;
+  /** The canonical endpoint (see {@link endpointHref}); every request goes to exactly this URL. */
+  private readonly endpoint: URL;
   private readonly rawApiKey?: string;
   private readonly apiKeyRef?: string;
   private readonly secretProvider?: SecretProvider;
@@ -93,6 +95,7 @@ export class ResponsesChatModel extends ChatModel {
     this.baseUrl = validateBaseUrl(config.baseUrl);
     this.path = validatePath(config.path ?? "/responses");
     const endpoint = endpointHref(this.baseUrl, this.path);
+    this.endpoint = new URL(endpoint);
     if (config.provider !== undefined && (typeof config.provider !== "string" || !config.provider.trim())) {
       throw new ValidationError("ResponsesChatModel provider must be a non-empty string");
     }
@@ -227,7 +230,9 @@ export class ResponsesChatModel extends ChatModel {
       headers.authorization = `Bearer ${apiKey}`;
     }
     const client = getTransportClient({
-      baseUrl: this.baseUrl,
+      // The transport joins its base and path; the canonical origin and pathname join to the
+      // canonical href, so the request names the endpoint the cache identity names.
+      baseUrl: this.endpoint.origin,
       headers,
       timeout: this.timeout,
       fetchImpl: this.fetchImpl,
@@ -235,7 +240,7 @@ export class ResponsesChatModel extends ChatModel {
     });
     // Redirects are never followed: a re-sent POST would carry the credentials, custom auth
     // headers and the caller's history to whatever origin the redirect names.
-    const response = await client.request(this.path, {
+    const response = await client.request(this.endpoint.pathname, {
       method: "POST",
       signal,
       body: JSON.stringify(payload),
