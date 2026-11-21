@@ -73,8 +73,9 @@ on Depot, so `superfunctions.owners.next.json` must name the check run with
 `"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}`; without it `next`
 refuses every tag. Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
-republishes nothing and skips only the CI check; its owner check runs from the
-dispatching commit, so it also works for tags made before the check existed.
+republishes nothing and skips only the CI check. Both checks run from the
+workflow run's own commit, so a dispatch also works for tags made before the
+checks existed.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

@@ -152,7 +152,12 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
     const total = Number.isInteger(body.total_count) ? body.total_count : null;
     if (items.length < PER_PAGE || (total !== null && runs.length >= total)) return runs;
   }
-  return runs;
+  // A failure on a page that was never read must not be missed: refuse rather than decide on part of the results.
+  throw new ReleaseCiError(
+    'api-error',
+    `Refusing to publish: ${describeCi(ci)} has more than ${PER_PAGE * MAX_PAGES} results for ${sha}, so the gate cannot read them all.`,
+    { sha },
+  );
 }
 
 /**

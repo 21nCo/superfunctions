@@ -72,8 +72,8 @@ jobs:
 
       # SFNS-124: only the repository that owns the slug publishes it, and only a commit that passed CI; both run
       # before anything is installed, built or packed. A channel-only dispatch republishes nothing, so it skips the CI gate.
-      # The owner gate and the manifests it reads come from this run's own commit, because a channel-only dispatch may
-      # name a tag made before the gate existed; every other run has checked above that this commit is the tag commit.
+      # Both gates, and the manifests they read, come from this run's own commit, because a dispatch may name a tag made
+      # before the gates existed; every run but a channel-only dispatch has checked above that it is the tag commit.
       - name: Require this repository to own the release
         shell: bash
         run: |
@@ -88,7 +88,7 @@ jobs:
         if: '!inputs.channel_only'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node ./scripts/assert-release-ci.mjs "${{ steps.ref.outputs.release_commit }}"
+        run: node "${RUNNER_TEMP}/release-gates/scripts/assert-release-ci.mjs" "${{ steps.ref.outputs.release_commit }}"
 
       - name: Resolve publish target
         id: resolve

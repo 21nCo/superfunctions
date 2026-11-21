@@ -182,6 +182,14 @@ test('every page of runs is read before deciding', async t => {
   assert.deepEqual(requests.map(request => request.url.searchParams.get('page')), ['1', '2']);
 });
 
+test('more results than the gate can page through refuse instead of deciding on part of them', async t => {
+  const root = checkout(t);
+  const page = Array.from({ length: 100 }, (_, index) => workflowRun({ id: index + 10 }));
+  const { fetchImpl, requests } = recordedFetch({ [RUNS_PATH]: { total_count: 1001, workflow_runs: page } });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl }), 'api-error', 'more than 1000 results');
+  assert.equal(requests.length, 10);
+});
+
 test('bad input, a missing token, an API error or an unknown repository refuses', async t => {
   const root = checkout(t);
   const { fetchImpl } = recordedFetch({});
