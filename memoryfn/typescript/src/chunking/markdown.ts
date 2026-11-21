@@ -21,7 +21,10 @@ const SPACES_OR_TABS = /^[ \t]*$/;
 
 /** One piece of a section: a paragraph, or part of a paragraph that was hard split. */
 interface Atom { text: string; continues: boolean }
-/** A paragraph; `heading` marks a heading line, which starts a new section. */
+/**
+ * A paragraph as it appears in the text, line endings included; `heading`
+ * marks a heading line, which starts a new section.
+ */
 interface Block { text: string; heading: boolean }
 
 /** Validates chunking options and fills in the defaults. */
@@ -89,9 +92,9 @@ class FenceState {
 /**
  * Paragraphs in document order, split at blank lines, headings and fenced code
  * blocks outside fenced code. Lines end at LF, CRLF or CR, and are read one at
- * a time; a paragraph is one slice of the text with its line endings made LF,
- * so stopping the generator stops the work and the allocation for the rest of
- * the text.
+ * a time; a paragraph is one slice of the text, line endings unchanged (pack
+ * makes them LF as it reads), so stopping the generator stops the work and
+ * the allocation for the rest of the text.
  */
 function* blocks(text: string): Generator<Block, void, undefined> {
   const fence = new FenceState();
@@ -101,7 +104,7 @@ function* blocks(text: string): Generator<Block, void, undefined> {
   let end = 0;
   function* flush(heading = false): Generator<Block, void, undefined> {
     // A paragraph never starts with a blank line, so trimming its end keeps indentation; trimEnd is linear.
-    const paragraph = start < 0 ? '' : text.slice(start, end).replace(/\r\n?/g, '\n').trimEnd();
+    const paragraph = start < 0 ? '' : text.slice(start, end).trimEnd();
     start = -1;
     if (paragraph) yield { text: paragraph, heading };
   }
@@ -129,20 +132,44 @@ function* blocks(text: string): Generator<Block, void, undefined> {
   yield* flush();
 }
 
-/** The paragraph as atoms of at most `size` characters; concatenated they give the paragraph back. */
+/** `text` with CRLF and CR line endings made LF. */
+function lf(text: string): string { return text.includes('\r') ? text.replace(/\r\n?/g, '\n') : text; }
+
+/** Length of lf(text), counted without building it. */
+function lfLength(text: string): number {
+  let length = text.length;
+  for (let at = text.indexOf('\r\n'); at >= 0; at = text.indexOf('\r\n', at + 2)) length--;
+  return length;
+}
+
+/**
+ * lf(paragraph) as atoms of at most `size` characters; concatenated they give
+ * it back. The paragraph is read and its line endings made LF a window at a
+ * time, so stopping early leaves the rest of it unread and uncopied.
+ */
 function* hardSplit(paragraph: string, size: number): Generator<Atom, void, undefined> {
-  let start = 0;
+  let read = 0;
+  // lf() of what has been read and not yet returned.
+  let pending = '';
   let continues = false;
-  while (paragraph.length - start > size) {
-    let end = start + size;
-    const space = lastWhitespace(paragraph, start + Math.ceil(size / 2), end);
+  for (;;) {
+    while (pending.length <= size && read < paragraph.length) {
+      let end = Math.min(paragraph.length, read + size + 1 - pending.length);
+      // A CRLF is never split between windows, so it becomes one LF.
+      if (paragraph.charCodeAt(end - 1) === 13 && paragraph.charCodeAt(end) === 10) end++;
+      pending += lf(paragraph.slice(read, end));
+      read = end;
+    }
+    if (pending.length <= size) break;
+    let end = size;
+    const space = lastWhitespace(pending, Math.ceil(size / 2), end);
     if (space >= 0) end = space + 1;
-    else if (isHighSurrogate(paragraph.charCodeAt(end - 1))) end--;
-    yield { text: paragraph.slice(start, end), continues };
-    start = end;
+    else if (isHighSurrogate(pending.charCodeAt(end - 1))) end--;
+    yield { text: pending.slice(0, end), continues };
+    pending = pending.slice(end);
     continues = true;
   }
-  yield { text: paragraph.slice(start), continues };
+  yield { text: pending, continues };
 }
 
 /** Index of the last whitespace in text[from, end), or -1. */
@@ -183,7 +210,7 @@ function* pack(source: Iterable<Block>, targetChars: number, overlapChars: numbe
       previous = '';
     }
     // A paragraph that fits in an empty chunk stays whole; a longer one is split leaving room for the overlap.
-    const atoms = block.text.length <= targetChars ? [{ text: block.text, continues: false }] : hardSplit(block.text, targetChars - overlapChars);
+    const atoms = lfLength(block.text) <= targetChars ? [{ text: lf(block.text), continues: false }] : hardSplit(block.text, targetChars - overlapChars);
     for (const atom of atoms) {
       if (!atom.text.trim()) continue;
       const separator = atom.continues ? '' : PARAGRAPH_SEPARATOR;

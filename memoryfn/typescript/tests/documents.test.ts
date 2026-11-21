@@ -351,6 +351,8 @@ describe('upsertDocument embedding validation', () => {
     ['1e200 components', [[1e200, 1e200], [1, 2]]],
     ['a sum of squares over float32\'s largest value', [[1, 2], [1.4e19, 1.4e19]]],
     ['components below float32\'s smallest normal value', [[1, 2], [1e-30, 1e-30]]],
+    ['a sum of squares that float32 rounding and accumulation would overflow', [new Array(1_536).fill(1), new Array(1_536).fill(470678219267465300)]],
+    ['a billion-element vector with holes', [new Array(1_000_000_000), [1, 2]]],
   ])('rejects %s and keeps the previous chunks searchable', async (_name, batch) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockResolvedValueOnce(batch as number[][]);
@@ -374,11 +376,21 @@ describe('upsertDocument embedding validation', () => {
     expect(found.results.map(chunk => chunk.id)).toEqual([result.memories[0].id]);
   });
 
+  it('charges each number as it is copied, so an endless vector stops at the byte budget', async () => {
+    let reads = 0;
+    const endless = new Proxy([0], { get: (target, key) => (key === 'length' ? 2 ** 31 : typeof key === 'string' && /^\d+$/.test(key) ? (reads++, 0.12345678901234568) : Reflect.get(target, key)) });
+    embedder.embedBatch.mockResolvedValueOnce([endless]);
+    await expect(memory.upsertDocument({ ...scope, content: '# One' })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    // Each number is 20 bytes of JSON with its comma, so the copy stops near 256 MiB / 20.
+    expect(reads).toBeLessThan(14_000_000);
+  });
+
   it.each([
     ['1e200 components', [1e200, 1e200]],
-    ['components below float32\'s smallest normal value', [1e-30, 1e-30]],
+    ['components whose squares vanish in float64', [1e-200, 1e-200]],
     ['a zero vector', [0, 0]],
     ['NaN', [Number.NaN, 1]],
+    ['a hole', [1, , 2]],
   ])('rejects a query vector with %s instead of returning nothing', async (_name, query) => {
     const search = vi.spyOn(storage, 'searchVectors');
     embedder.embed.mockResolvedValueOnce(query);
@@ -386,13 +398,22 @@ describe('upsertDocument embedding validation', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
-  it('sends an in-range query vector to storage exactly as embedded', async () => {
-    const query = [1e15, 2e-15, 3];
+  it('sends storage a plain copy of the query values it checked', async () => {
+    const query = Object.assign([1e15, 2e-15, 3], { toJSON: () => [0, 0, 0] });
     const search = vi.spyOn(storage, 'searchVectors');
     embedder.embed.mockResolvedValueOnce(query);
     await memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags });
-    expect(search.mock.calls[0][0].embedding).toBe(query);
-    expect(query).toEqual([1e15, 2e-15, 3]);
+    const sent = search.mock.calls[0][0].embedding;
+    expect(sent).toEqual([1e15, 2e-15, 3]);
+    expect(JSON.stringify(sent)).toBe('[1000000000000000,2e-15,3]');
+  });
+
+  it('still finds an add() memory whose vector the memory adapter can score, even outside float32 range', async () => {
+    const wide = { embed: vi.fn(async () => [1e20]), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1e20])) };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, wide);
+    const added = await memory.add({ tenantId: scope.tenantId, containerTags: scope.containerTags, content: 'large' });
+    const found = await memory.search({ q: 'large', tenantId: scope.tenantId, containerTags: scope.containerTags, threshold: 1 });
+    expect(found.results.map(entry => entry.id)).toEqual([added.memories[0].id]);
   });
 
   it('rejects vectors of another dimension than the storage keeps', async () => {
@@ -461,6 +482,12 @@ describe('upsertDocument document text', () => {
     ['a value structuredClone cannot copy', { run: () => 1 }],
     ['a cycle', (() => { const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic; return cyclic; })()],
     ['a BigInt', { count: BigInt(1) }],
+    ['a BigInt inside a Map', { map: new Map([['count', BigInt(1)]]) }],
+    ['a Map', { map: new Map([['name', 'retained']]) }],
+    ['a Date', { at: new Date(0) }],
+    ['shared memory', { view: new Int32Array(new SharedArrayBuffer(8)) }],
+    ['NaN', { score: Number.NaN }],
+    ['undefined in an array', { list: [1, undefined] }],
   ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockClear();
@@ -479,17 +506,14 @@ describe('upsertDocument document text', () => {
     expect(result.memories.map(chunk => chunk.metadata)).toEqual([0, 1, 2].map(() => ({ nested: { note: 'original' } })));
   });
 
-  it('detaches metadata backed by shared memory, so changing it while embedding or after the call changes nothing', async () => {
-    const view = new Int32Array(new SharedArrayBuffer(8));
-    view[0] = 1;
-    embedder.embedBatch.mockImplementationOnce(async (texts: string[]) => {
-      view[0] = 2;
-      return texts.map(() => [1, 2]);
-    });
-    const result = await memory.upsertDocument({ ...scope, content: docV1, metadata: { view } });
-    view[0] = 3;
-    const stored = await Promise.all(result.memories.map(chunk => storage.getMemory({ ...scope, id: chunk.id })));
-    expect(stored.map(chunk => chunk!.metadata)).toEqual([0, 1, 2].map(() => ({ view: { 0: 1, 1: 0 } })));
+  it('stores a plain copy of JSON metadata, reading each property once and leaving out undefined properties', async () => {
+    let reads = 0;
+    const metadata = { nested: { get note() { reads++; return reads === 1 ? 'first' : 'later'; }, skipped: undefined }, list: [1, 'two', null, true] };
+    const result = await memory.upsertDocument({ ...scope, content: docV1, metadata });
+    expect(reads).toBe(1);
+    const stored = await storage.getMemory({ ...scope, id: result.memories[0].id });
+    expect(stored!.metadata).toEqual({ nested: { note: 'first' }, list: [1, 'two', null, true] });
+    expect(Object.keys(stored!.metadata!.nested as object)).toEqual(['note']);
   });
 
   it('keeps oversized serializable metadata on the source-limit path, before any provider call', async () => {

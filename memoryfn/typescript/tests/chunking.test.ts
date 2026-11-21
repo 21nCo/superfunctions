@@ -86,6 +86,24 @@ describe('chunkMarkdown', () => {
     expect(process.memoryUsage().heapUsed - before).toBeLessThan(text.length / 4);
   });
 
+  it('hard splits an oversized CRLF fenced block as it reads, without copying the rest of the block', () => {
+    const text = `\`\`\`\r\n${`${'x'.repeat(30)}\r\n`.repeat(750_000)}\`\`\``;
+    text.indexOf('\0'); // flattens the repeated string before measuring
+    const before = process.memoryUsage().heapUsed;
+    const chunks = markdownChunks(text, { targetChars: 64, overlapChars: 32 });
+    const [expected] = chunkMarkdown(`\`\`\`\n${`${'x'.repeat(30)}\n`.repeat(10)}\`\`\``, { targetChars: 64, overlapChars: 32 });
+    expect(chunks.next().value).toBe(expected);
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(text.length / 4);
+  });
+
+  it('hard splits CRLF and CR paragraphs exactly like LF ones', () => {
+    const lines = Array.from({ length: 200 }, (_, index) => `line ${index} ${'w'.repeat(index % 17)}`);
+    const fenced = `\`\`\`\n${lines.join('\n')}\n\`\`\``;
+    const expected = chunkMarkdown(`# T\n\n${fenced}`, { targetChars: 100, overlapChars: 30 });
+    expect(chunkMarkdown(`# T\r\n\r\n${fenced.replace(/\n/g, '\r\n')}`, { targetChars: 100, overlapChars: 30 })).toEqual(expected);
+    expect(chunkMarkdown(`# T\r\r${fenced.replace(/\n/g, '\r')}`, { targetChars: 100, overlapChars: 30 })).toEqual(expected);
+  });
+
   it('keeps a paragraph that fits a fresh chunk whole, shortening the overlap to make room', () => {
     const first = 'aaaa bbb';
     const second = `${'abcd '.repeat(10)}efghi`;

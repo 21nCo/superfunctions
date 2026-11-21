@@ -5,7 +5,7 @@ import {
 } from './types';
 import {
   requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes, sourceTagsBytes,
-  sourceEmbeddingBytes, storableMetadataBytes, isStorableText,
+  storableMetadataBytes, isStorableText,
   MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
   type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert,
 } from '../storage/adapter';
@@ -115,7 +115,7 @@ export class MemoryFn implements IMemoryFn {
     // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
     if (typeof this.storage.replaceSourceIfChanged !== 'function') throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
-    // One detached JSON copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
+    // One plain JSON-data copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
     const metadata = metadataSnapshot(input.metadata);
     const metadataBytes = storableMetadataBytes(metadata);
     const tagsBytes = sourceTagsBytes(scope.containerTags);
@@ -166,8 +166,8 @@ export class MemoryFn implements IMemoryFn {
     }
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     // Plain copies of the embedder's values, each charged before the next is made: what is charged is exactly what storage receives.
-    const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, embedding => {
-      bytes += sourceEmbeddingBytes(embedding);
+    const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, jsonBytes => {
+      bytes += jsonBytes;
       if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
     });
     const written = await this.storage.replaceSourceIfChanged!({
@@ -200,9 +200,11 @@ export class MemoryFn implements IMemoryFn {
   async search(input: SearchMemoryInput): Promise<SearchMemoryResult> {
     requireScope(input.tenantId, input.containerTags);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
-    const embedding = await this.embedder.embed(input.q);
-    // A query no built-in adapter can score is an error, not an empty result; any other query is sent as embedded.
-    if (!Array.isArray(embedding) || embedding.length === 0 || !inCosineRange(embedding)) throw new Error('MEMORY_EMBEDDING_INVALID');
+    // A plain copy of the query's values is what storage ranks and filters by. A query whose norm overflows or
+    // vanishes in float64 cannot be scored by any adapter, so it is an error, not an empty result.
+    const query = plainVector(await this.embedder.embed(input.q), undefined, () => {});
+    if (!query || !Number.isFinite(query.squares) || query.squares === 0) throw new Error('MEMORY_EMBEDDING_INVALID');
+    const embedding = query.values;
 
     // 2. Vector search
     const results = await this.storage.searchVectors({
@@ -225,24 +227,58 @@ export class MemoryFn implements IMemoryFn {
 }
 
 /**
- * A detached plain copy of caller metadata, as JSON can hold it, so later
- * changes to the caller's objects, accessors or shared memory cannot change
- * what is measured or written. Metadata structuredClone cannot copy (such as a
- * function) or JSON cannot express (a cycle, a BigInt) is MEMORY_METADATA_INVALID;
- * metadata too large to serialize is MemorySourceLimitError.
+ * A plain copy of caller metadata as JSON data: plain objects, dense arrays,
+ * strings, finite numbers, booleans and null, each property read once, so
+ * later changes to the caller's objects cannot change what is measured or
+ * written. An object property that is undefined is left out, as JSON does.
+ * Anything else (such as a Map, Date, typed array, BigInt, function or cycle)
+ * is MEMORY_METADATA_INVALID, never silently converted; metadata whose copy
+ * would pass MAX_SOURCE_REPLACE_BYTES is MemorySourceLimitError.
  */
 function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (metadata === undefined) return undefined;
-  let text: string | undefined;
+  const invalid = () => new Error('MEMORY_METADATA_INVALID');
+  const open = new Set<object>();
+  let size = 0;
+  const copy = (value: unknown): unknown => {
+    // A lower bound on its JSON bytes, so shared references cannot expand without limit.
+    size += typeof value === 'string' ? value.length + 2 : 1;
+    if (size > MAX_SOURCE_REPLACE_BYTES) throw new MemorySourceLimitError();
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') { if (!Number.isFinite(value)) throw invalid(); return value; }
+    if (typeof value !== 'object' || open.has(value)) throw invalid();
+    const isArray = Array.isArray(value);
+    const prototype = Object.getPrototypeOf(value);
+    if (!isArray && prototype !== Object.prototype && prototype !== null) throw invalid();
+    open.add(value);
+    let result: unknown;
+    if (isArray) {
+      const items: unknown[] = [];
+      for (let index = 0, count = value.length; index < count; index++) {
+        const item: unknown = value[index];
+        if (item === undefined) throw invalid();
+        items.push(copy(item));
+      }
+      result = items;
+    } else {
+      const entries: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        const item: unknown = (value as Record<string, unknown>)[key];
+        if (item !== undefined) entries[key] = copy(item);
+      }
+      result = entries;
+    }
+    open.delete(value);
+    return result;
+  };
+  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) throw invalid();
   try {
-    // Serialized at once from the clone, so no caller code runs between the copy and its JSON.
-    text = JSON.stringify(structuredClone(metadata));
+    return copy(metadata) as Record<string, unknown>;
   } catch (error) {
+    // Nesting deeper than the stack allows is over the limit, as JSON serialization would be.
     if (error instanceof RangeError) throw new MemorySourceLimitError();
-    throw new Error('MEMORY_METADATA_INVALID');
+    throw error;
   }
-  if (text === undefined) throw new Error('MEMORY_METADATA_INVALID');
-  return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `text`. */
@@ -257,48 +293,56 @@ const FLOAT32_MIN_NORMAL = 2 ** -126;
 const FLOAT32_MAX = 3.4028234663852886e38;
 
 /**
- * Whether every built-in adapter can compute the cosine of `vector`: finite
- * numbers whose sum of squares (float64) is at most FLOAT32_MAX and whose
- * largest square is at least FLOAT32_MIN_NORMAL, so its norm neither
- * overflows nor vanishes in the memory adapter's float64 or pgvector's float32.
+ * A plain copy of `value` if it is a non-empty array of finite numbers (of
+ * `size` numbers when given), with its float64 sum of squares and largest
+ * square; otherwise null. Each number is read once, checked and copied
+ * before the next is read, and `charge` is given the JSON bytes of each
+ * copied number and its separator, and of the opening bracket, and may throw
+ * to stop: an oversized or malformed vector costs no more than its prefix.
  */
-function inCosineRange(vector: readonly unknown[]): boolean {
+function plainVector(value: unknown, size: number | undefined, charge: (jsonBytes: number) => void): { values: number[]; squares: number; largest: number } | null {
+  if (!Array.isArray(value) || value.length === 0 || (size !== undefined && value.length !== size)) return null;
+  const values: number[] = [];
   let squares = 0;
   let largest = 0;
-  // Read by index, so a hole in a sparse array is seen as a missing number.
-  for (let at = 0; at < vector.length; at++) {
-    const number = vector[at];
-    if (typeof number !== 'number' || !Number.isFinite(number)) return false;
+  charge(1);
+  for (let at = 0, count = value.length; at < count; at++) {
+    const number: unknown = value[at];
+    if (typeof number !== 'number' || !Number.isFinite(number)) return null;
+    // JSON writes a finite number as String() does (-0 as 0), followed by a comma or the closing bracket.
+    charge(String(number).length + 1);
+    values.push(number);
     squares += number * number;
     largest = Math.max(largest, number * number);
   }
-  return squares <= FLOAT32_MAX && largest >= FLOAT32_MIN_NORMAL;
+  return { values, squares, largest };
 }
 
 /**
  * Plain copies of an embedding batch, with the embedder's values unchanged, so
  * a query from the same embedder scores a chunk exactly as it scores an add()
- * memory: `count` non-empty vectors with one shared length, equal to the
- * storage's fixed dimension when it has one, each inCosineRange. Anything
- * else is rejected before the source is touched (MEMORY_EMBEDDING_COUNT_MISMATCH
- * or MEMORY_EMBEDDING_INVALID), so the previous chunks stay live and
- * searchable. `accept` sees each copy before the next vector is read, and may
- * throw to stop.
+ * memory: `count` non-empty vectors of finite numbers with one shared length,
+ * equal to the storage's fixed dimension when it has one. Each must be
+ * scorable by every built-in adapter: its largest square at least float32's
+ * smallest normal value, and its sum of squares, with room for float32
+ * rounding of each component, product and partial sum, at most float32's
+ * largest value. Anything else is rejected before the source is touched
+ * (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so the
+ * previous chunks stay live and searchable. `charge` sees the JSON bytes of
+ * each number as it is copied (see plainVector), and may throw to stop.
  */
-function storableEmbeddings(value: unknown, count: number, dimensions: number | undefined, accept: (copy: number[]) => void): number[][] {
+function storableEmbeddings(value: unknown, count: number, dimensions: number | undefined, charge: (jsonBytes: number) => void): number[][] {
   if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
   let size = dimensions;
   const copies: number[][] = [];
   for (let index = 0; index < count; index++) {
-    const vector: unknown = value[index];
-    if (!Array.isArray(vector) || vector.length === 0 || (size !== undefined && vector.length !== size)) throw new Error('MEMORY_EMBEDDING_INVALID');
-    size = vector.length;
-    // Copied before it is checked, so the values checked are the values stored.
-    const copy: unknown[] = [];
-    for (let at = 0; at < size; at++) copy.push(vector[at]);
-    if (!inCosineRange(copy)) throw new Error('MEMORY_EMBEDDING_INVALID');
-    accept(copy as number[]);
-    copies.push(copy as number[]);
+    const vector = plainVector(value[index], size, charge);
+    if (!vector) throw new Error('MEMORY_EMBEDDING_INVALID');
+    size = vector.values.length;
+    // Recursive float32 summation of n terms errs by at most about n units in the last place (2^-24 each).
+    const rounding = 1 + (size + 4) * 2 ** -23;
+    if (vector.largest < FLOAT32_MIN_NORMAL || vector.squares * rounding > FLOAT32_MAX) throw new Error('MEMORY_EMBEDDING_INVALID');
+    copies.push(vector.values);
   }
   return copies;
 }
