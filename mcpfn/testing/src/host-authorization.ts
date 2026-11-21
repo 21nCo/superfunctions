@@ -467,9 +467,7 @@ async function validateOAuthRejection(
   const body = parseJson(text) as { error?: unknown } | null | undefined;
   const registered = redirectMatch !== undefined;
   const unvetted = context === "authorization" && registered && isUnvettedRedirectSource(fixture);
-  // The server rejects an unknown or invalid client registration before it
-  // matches the redirect URI, so those errors never use the callback.
-  const clientRejected = body?.error === "invalid_client" || body?.error === "invalid_client_metadata";
+  const clientRejected = typeof body?.error === "string" && CLIENT_REJECTION_CODES.has(body.error);
   if (context === "authorization" && !clientRejected && registered && !unvetted) {
     throw new Error("Registered authorization requests require an OAuth error callback");
   }
@@ -480,6 +478,15 @@ async function validateOAuthRejection(
   }
   if (unvetted) assertRedirectUriNotReflected(text, fixture, redirectMatch);
 }
+
+/**
+ * The server rejects an unknown or invalid client registration before it
+ * matches the redirect URI, so these errors never use the error callback.
+ */
+const CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set([
+  "invalid_client",
+  "invalid_client_metadata",
+]);
 
 /**
  * Redirect URIs of dynamic and client-metadata-document clients are chosen by
@@ -626,7 +633,7 @@ function validateAuthorizationErrorRedirect(
   if (errors.length !== 1 || !errors[0] || callback.searchParams.has("code")) {
     throw new Error("Invalid OAuth error callback");
   }
-  if (errors[0] === "invalid_client") {
+  if (CLIENT_REJECTION_CODES.has(errors[0])) {
     throw new Error("Invalid-client authorization failures must not redirect");
   }
   callback.searchParams.delete("error");

@@ -858,6 +858,20 @@ describe("unvetted-client authorization rejections", () => {
             responseStatus: 400,
             errorCode: "invalid_client_metadata",
           });
+          const [redirected] = await runHostedAuthorizationRegression({
+            ...callbackTarget(),
+            request: async (request) => {
+              const params = new URL(request.url).searchParams;
+              const callback = new URL(params.get("redirect_uri")!);
+              callback.searchParams.set("error", "invalid_client_metadata");
+              callback.searchParams.set("state", params.get("state")!);
+              return new Response(null, { status: 302, headers: { location: callback.toString() } });
+            },
+          }, [fixture]);
+          expect(redirected).toMatchObject({
+            status: "failed",
+            error: "Invalid-client authorization failures must not redirect",
+          });
         }
       },
     );
