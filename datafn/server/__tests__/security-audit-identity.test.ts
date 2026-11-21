@@ -498,6 +498,32 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     await server.close();
   });
 
+  it("an htree with distinct endpoints does not accept the FK field name as a relation grant", async () => {
+    const distinct = {
+      resources: [
+        {
+          name: "sections",
+          version: 1,
+          fields: [{ name: "name", type: "string", required: true }, { name: "parentId", type: "string", required: false, nullable: true }],
+          permissions: { read: { fields: ["name", "parentId"] }, write: { fields: ["name"] } },
+        },
+        {
+          name: "pages",
+          version: 1,
+          fields: [{ name: "name", type: "string", required: true }, { name: "parentId", type: "string", required: false, nullable: true }],
+          permissions: { read: { fields: ["name", "parentId"] }, write: { fields: ["name", "parentId"] } },
+        },
+      ],
+      relations: [{ from: "sections", to: "pages", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" }],
+    };
+    const { db, server, call } = await fkHarness(distinct);
+    await db.create({ model: "sections", data: { __ns: "tenant:a", id: "s1", name: "S" } } as any);
+    await db.create({ model: "pages", data: { __ns: "tenant:a", id: "g1", name: "G" } } as any);
+    const res = await call({ resource: "pages", version: 1, operation: "relate", id: "g1", relations: { parent: "s1" } });
+    expect(res.status).toBe(403);
+    await server.close();
+  });
+
   it("an htree parent relation is writable when write.fields lists its FK field", async () => {
     const { db, server, call } = await fkHarness(fkSchema);
     await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);

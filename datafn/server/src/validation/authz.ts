@@ -661,9 +661,17 @@ function findOwnForeignKeyField(
   const match = findRelationMatch(schema, resourceName, relationName);
   if (!match) return undefined;
   const { relation, direction } = match;
-  // htree: only the inverse (parent) direction writes this record's own FK.
+  // htree: only the inverse (parent) direction writes this record's own FK,
+  // and only for a self-referential tree is the written record of this
+  // resource (with distinct endpoints the executor writes the `from` side).
   if (relation.type === "htree" && direction === "inverse") {
-    return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
+    const froms = endpointList(relation.from);
+    const tos = endpointList(relation.to);
+    const selfReferential =
+      froms.length === 1 && tos.length === 1 && froms[0] === resourceName && tos[0] === resourceName;
+    return selfReferential
+      ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
+      : undefined;
   }
   if (relation.type === "many-one" && direction === "forward") {
     return relationFkFieldForManyOne(relation);
