@@ -546,8 +546,9 @@ interface RedirectDecision {
   /**
    * The client-stage error codes a correct server may return for a
    * registration that is not eligible, before it matches the redirect URI.
-   * Undefined when the request names another client, whose rejection says
-   * nothing about this registration.
+   * Undefined when the request has a blank client_id (a request-parsing
+   * error) or names another client, whose rejection says nothing about this
+   * registration.
    */
   permittedClientCodes?: ReadonlySet<string>;
   /**
@@ -565,7 +566,9 @@ function redirectDecision(
   >,
 ): RedirectDecision {
   const { registration, authorization } = fixture;
-  if (authorization.clientId !== registration.clientId) {
+  // A blank client_id fails request parsing before any client stage, and a
+  // request naming another client says nothing about this registration.
+  if (!authorization.clientId.trim() || authorization.clientId !== registration.clientId) {
     return { eligibility: "ineligible", postMatchPermitted: false };
   }
   const policy = target.redirectPolicy;

@@ -1403,6 +1403,34 @@ describe("unvetted-client authorization rejections", () => {
       });
     });
 
+    it.each(["", " "])("accepts the request-parsing rejection of the blank client_id %j", async (clientId) => {
+      const handler = createMcpAuthorizationCompatibilityHandler({
+        issuer,
+        clients: { resolve: async () => null },
+        allowedResources: [resource],
+        supportedScopes: ["mcp:read"],
+        authorize: async () => new Response("unexpected authorize", { status: 500 }),
+        tokenAuthority: {
+          exchangeAuthorizationCode: async () => {
+            throw new Error("unexpected token exchange");
+          },
+          refreshToken: async () => {
+            throw new Error("unexpected token refresh");
+          },
+        },
+      });
+      const fixture = rejectionFixture(DYNAMIC);
+      fixture.registration.clientId = clientId;
+      fixture.authorization.clientId = clientId;
+      delete fixture.expected.errorCode;
+      const [result] = await runHostedAuthorizationRegression({
+        issuer,
+        prepareRegistration: async () => {},
+        request: (request) => handler(request),
+      }, [fixture]);
+      expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_request" });
+    });
+
     it("never lets another client's registration match an unknown client's redirect", async () => {
       for (const requested of [LOOPBACK, RUNTIME_PORT]) {
         const fixture = rejectionFixture(DYNAMIC);
