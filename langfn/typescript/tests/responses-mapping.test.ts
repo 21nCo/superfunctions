@@ -454,7 +454,7 @@ describe("stream mapping", () => {
       // The call changed its call_id, name or arguments.
       [done() + terminal([{ ...call, call_id: "call_fixture_other" }]), "terminal output states call_id call_fixture_other for function_call item call_fixture"],
       [done() + terminal([{ ...call, name: "delete_everything" }]), "terminal output states name delete_everything for function_call item call_fixture"],
-      [done() + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call item call_fixture"],
+      [done() + terminal([{ ...call, arguments: "{\"q\":2}" }]), "terminal output changes the arguments of function_call item call_fixture"],
       // Final arguments that differ from the item's, with an explicit or an omitted terminal output.
       [argsDone("{\"q\":2}") + done() + terminal([call]), "arguments differ from function_call item call_fixture"],
       [argsDone("{\"q\":2}") + done() + terminal([]), "arguments differ from function_call item call_fixture"],
@@ -559,7 +559,7 @@ describe("stream mapping", () => {
       // An unindexed call found by its call_id keeps its id, so a changed id is not hidden.
       [done({ ...call, id: "fc_fixture_first" }) + terminal([call]), "terminal output states id fc_fixture for function_call item call_fixture", ProviderError],
       // An unindexed call without an id is found by call_id and must be unchanged.
-      [done({ ...call, id: undefined }) + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call item call_fixture", ProviderError],
+      [done({ ...call, id: undefined }) + terminal([{ ...call, arguments: "{\"q\":2}" }]), "terminal output changes the arguments of function_call item call_fixture", ProviderError],
       // A terminal output that names one item id, or one call_id, twice is ambiguous.
       [done(call, 0) + terminal([call, { ...call, call_id: "call_fixture_other" }]), "terminal output repeats item id fc_fixture", ProviderError],
       [done(call, 0) + terminal([call, { ...call, id: "fc_fixture_other" }]), "terminal output repeats function_call call_id call_fixture", ProviderError],
@@ -919,9 +919,9 @@ describe("stream mapping", () => {
       // Only the first item streamed: the second is delivered whole after it.
       [delta("Note. ", "msg_0", 0) + frame({ type: "response.completed", response: completed([parts("msg_0", "Note. "), parts("msg_1", "Answer")]) }),
         ["Note. ", "Answer"], "Note. Answer"],
-      // A delta whose text runs across two parts of its item is still a prefix of the answer.
-      [delta("Hello world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
-        ["Hello world"], "Hello world"],
+      // A delta that names no part may run across two parts of its item.
+      [frame({ type: "response.output_text.delta", item_id: "msg_1", output_index: 0, delta: "Hello world" })
+        + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }), ["Hello world"], "Hello world"],
       // Streamed only at content_index 1 with the output omitted: the rebuilt message holds it.
       [delta("world", "msg_1", 0, 1) + omitted, ["world"], "world"],
     ] as Array<[string, string[], string]>) {
@@ -943,6 +943,12 @@ describe("stream mapping", () => {
       [delta("world", "msg_1", 0, 1) + delta("Hello ", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
         differs, ["world", "Hello "]],
       [delta("world", "msg_1", 0, 1) + delta("Hello ", "msg_1", 0, 0) + omitted, differs, ["world", "Hello "]],
+      // Text streamed to a named part must be a prefix of that part: not of a later part, nor
+      // run on into the next part, even when the whole answer starts with it.
+      [delta("hi", "msg_1", 0, 9) + frame({ type: "response.completed", response: completed([parts("msg_1", "hi")]) }),
+        differs, ["hi"]],
+      [delta("Hello world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
+        differs, ["Hello world"]],
       // A part's streamed text that the answer does not continue.
       [delta("world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "worl")]) }),
         differs, ["world"]],
@@ -1165,7 +1171,8 @@ describe("stream mapping", () => {
     }
     // An event of another kind that names the item by a different id fails too, and a malformed locator fails.
     const other = await mapRaw(frame({ type: "response.web_search_call.in_progress", item_id: "ws_fixture", output_index: 0 }) + terminal([call]));
-    expect(String(other.error)).toContain("terminal output states id fc_fixture");
+    // A built-in tool event implies its item type, which the terminal function_call contradicts.
+    expect(String(other.error)).toContain("terminal output states type function_call for web_search_call item ws_fixture");
     const malformed = await mapRaw(frame({ type: "response.output_text.done", item_id: 7, output_index: 0, text: "" }) + terminal([call]));
     expect(String(malformed.error)).toContain("item_id must be a non-empty string");
     // Agreeing events pass.
@@ -1236,6 +1243,80 @@ describe("stream mapping", () => {
         expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
       }
     }
+  });
+
+  it("holds running output snapshots and finished items to the final item, field by field", async () => {
+    const call = (id: string, callId: string, name: string, args: string, status = "completed") =>
+      ({ type: "function_call", id, call_id: callId, name, arguments: args, status });
+    const running = (type: string, output: unknown[]) => frame({ type, response: { id: "resp_fixture_mapping", status: "in_progress", output } });
+    const done = (item: unknown, index: number) => frame({ type: "response.output_item.done", output_index: index, item });
+    const terminal = (output: unknown[]) => frame({ type: "response.completed", response: completed(output) });
+    const reasoning = (extra: Record<string, unknown> = {}) =>
+      ({ type: "reasoning", id: "rs_fixture", summary: [{ type: "summary_text", text: "fixture summary" }], ...extra });
+    const lookup = call("fc_fixture", "call_fixture", "lookup", "{}");
+    const rejected: Array<[string, string]> = [
+      // A running snapshot shows one call at index 0, and the terminal output another there.
+      [running("response.in_progress", [call("fc_fixture_first", "call_fixture_first", "delete_account", "", "in_progress")]) + terminal([lookup]),
+        "terminal output states id fc_fixture for function_call item call_fixture_first"],
+      [running("response.created", [{ type: "message", id: "msg_fixture", role: "assistant", content: [] }]) + terminal([lookup]),
+        "terminal output states type function_call for message item msg_fixture"],
+      // Two snapshots of one position that name different items.
+      [running("response.in_progress", [call("fc_fixture", "call_fixture", "lookup", "", "in_progress")])
+        + running("response.in_progress", [call("fc_fixture_other", "call_fixture", "lookup", "", "in_progress")]) + terminal([lookup]),
+        "states id fc_fixture_other"],
+      // A call a snapshot shows as completed is complete: its arguments parse, and they do not change after.
+      [running("response.in_progress", [call("fc_fixture", "call_fixture", "lookup", "[")]) + terminal([lookup]), "arguments are not valid JSON"],
+      [running("response.in_progress", [call("fc_fixture", "call_fixture", "lookup", "{\"q\":1}")]) + terminal([lookup]),
+        "terminal output changes the arguments of function_call item call_fixture"],
+      [running("response.in_progress", [call("fc_fixture", "call_fixture", "lookup", "{\"q\":1}")]) + done(lookup, 0) + terminal([]),
+        "output_item.done changes the arguments of function_call item call_fixture"],
+      // A finished item of any type agrees with its terminal form on every field both state.
+      [done(reasoning(), 0) + terminal([reasoning({ summary: [{ type: "summary_text", text: "other summary" }] })]),
+        "terminal output changes the summary of reasoning item rs_fixture"],
+      [done(reasoning({ encrypted_content: "fixture-encrypted" }), 0) + terminal([reasoning({ encrypted_content: "fixture-other" })]),
+        "terminal output changes the encrypted_content of reasoning item rs_fixture"],
+      [done(said("Hi"), 0) + terminal([{ ...said("Hi"), id: undefined, content: [{ type: "output_text", text: "Hi", annotations: [{ type: "url_citation", url: "https://example.test" }] }] }]),
+        "terminal output changes the content"],
+      // A content part typed as an output item is an item at the wrong level.
+      [frame({ type: "response.content_part.done", item_id: "fc_fixture", output_index: 0, content_index: 0, part: { type: "function_call", name: "x" } }) + terminal([lookup]),
+        "content_part.done part has the item type function_call"],
+      [frame({ type: "response.content_part.added", item_id: "fc_fixture", output_index: 0, content_index: 0, part: { type: "message" } }) + terminal([lookup]),
+        "content_part.added part has the item type message"],
+      // A built-in tool event implies its item type, whatever id it names.
+      [frame({ type: "response.web_search_call.in_progress", item_id: "fc_fixture", output_index: 0 }) + terminal([lookup]),
+        "terminal output states type function_call for web_search_call item fc_fixture"],
+      [frame({ type: "response.mcp_call_arguments.delta", item_id: "fc_fixture", output_index: 0, delta: "" }) + terminal([lookup]),
+        "terminal output states type function_call for mcp_call item fc_fixture"],
+      [frame({ type: "response.custom_tool_call_input.delta", item_id: "fc_fixture", output_index: 0, delta: "" }) + terminal([lookup]),
+        "terminal output states type function_call for custom_tool_call item fc_fixture"],
+    ];
+    for (const [text, error] of rejected) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error, error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+
+    // The final item keeps what an earlier form stated and it omits, for the replayed turn.
+    const replay = async (text: string) => {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+      return (outcome.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message.responsesOutput;
+    };
+    const encrypted = reasoning({ encrypted_content: "fixture-encrypted" });
+    expect(await replay(done(encrypted, 0) + done(lookup, 1) + terminal([reasoning(), lookup]))).toEqual([encrypted, lookup]);
+    // A snapshot that shows the item completed fills it too.
+    const snapshotted = { ...encrypted, status: "completed" };
+    expect(await replay(running("response.in_progress", [snapshotted]) + done(reasoning({ status: "completed" }), 0) + done(lookup, 1) + terminal([])))
+      .toEqual([snapshotted, lookup]);
+    // Running snapshots that agree pass: an empty one, a call still running, then the same call completed.
+    expect(await replay(running("response.created", []) + running("response.in_progress", [call("fc_fixture", "call_fixture", "lookup", "", "in_progress")])
+      + running("response.in_progress", [lookup]) + done(lookup, 0) + terminal([lookup]))).toEqual([lookup]);
+    // A built-in tool event on its own item passes.
+    const search = { type: "web_search_call", id: "ws_fixture", status: "completed" };
+    expect(await replay(frame({ type: "response.web_search_call.completed", item_id: "ws_fixture", output_index: 0 }) + terminal([search, lookup])))
+      .toEqual([search, lookup]);
   });
 
   it("fails a lifecycle frame whose response status is not a running one, before any tool call or end", async () => {
@@ -2092,6 +2173,25 @@ describe("ResponsesChatModel configuration", () => {
     expect(limitedError).toMatchObject({ retryAfter: 7 });
     const unauthorized = gateway(async () => new Response(JSON.stringify(message), { status: 401 }), { maxResponseBytes: 64 });
     await expect(unauthorized.chat({ messages: [{ role: "user", content: "x" }] })).rejects.toBeInstanceOf(ProviderAuthError);
+    // So it does when its body stalls past the timeout, for chat and for a stream.
+    for (const [status, type] of [[429, RateLimitError], [401, ProviderAuthError]] as const) {
+      const stalledStatus = gateway(async () => new Response(stalled("{"), { status, headers: { "retry-after": "7" } }), { timeout: 30 });
+      const chatError = await stalledStatus.chat({ messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught);
+      const streamError = await collect(stalledStatus.streamChat({ messages: [{ role: "user", content: "x" }] })).catch((caught: unknown) => caught);
+      for (const error of [chatError, streamError]) {
+        expect(error).toBeInstanceOf(type);
+        if (status === 429) expect(error).toMatchObject({ retryAfter: 7 });
+      }
+    }
+    // A caller abort while the body of a 429 stalls still wins.
+    const controller = new AbortController();
+    const aborted = gateway(async () => {
+      setTimeout(() => controller.abort(), 5);
+      return new Response(stalled("{"), { status: 429 });
+    }, { timeout: 5_000 });
+    const abortError = await aborted.chat({ messages: [{ role: "user", content: "x" }], signal: controller.signal }).catch((caught: unknown) => caught);
+    expect(abortError).not.toBeInstanceOf(RateLimitError);
+    expect(abortError).toMatchObject({ name: "AbortError" });
   });
 
   it("surfaces a timeout or an abort in the middle of a stream", async () => {

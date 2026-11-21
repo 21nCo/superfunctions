@@ -36,6 +36,8 @@ interface Entry extends ItemFacts, TextRecord {
   /** Arrival order of the first event naming the item. */
   seq: number;
   announced?: JsonRecord;
+  /** The item as a running response's output last showed it with status completed. */
+  completedSnapshot?: JsonRecord;
   finished?: JsonRecord;
   terminal?: JsonRecord;
   args: Chunk[];
@@ -68,6 +70,24 @@ export function validateRunningItems(items: unknown[], provider: string, what: s
   parseOutputItems(filled, provider, { incomplete: true });
 }
 
+/** A value an item states: absent and null state nothing. */
+function stated(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+/** Deep equality of two JSON values, whatever the order of object keys. */
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => sameJson(value, right[index]));
+  }
+  if (!isRecord(left) || !isRecord(right)) return false;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) if (!sameJson(left[key], right[key])) return false;
+  return true;
+}
+
 function joined(chunks: Chunk[]): string {
   return [...chunks].sort((left, right) => left.seq - right.seq).map((chunk) => chunk.text).join("");
 }
@@ -94,8 +114,9 @@ export interface ResolvedOutput {
 
 /**
  * One ledger of the output items a Responses stream reports. Every event that names an item
- * (output_item.added, text, refusal, reasoning, content part and function call argument
- * events, empty deltas included, output_item.done, and the terminal output) merges into one
+ * (output_item.added, the items of a running response's output, text, refusal, reasoning,
+ * content part, built-in tool and function call argument events, empty deltas included,
+ * output_item.done, and the terminal output) merges into one
  * entry under one conflict rule:
  * the entry is found by the stated output_index, else id, else call_id; a stated type, id,
  * call_id, function name or output_index that differs from a value already stated for that
@@ -123,6 +144,20 @@ export class OutputLedger {
     const entry = hasLocator(facts) ? this.locate(facts, "output_item.added") : this.create(facts);
     if (entry.announced) throw this.fail(`Responses output_item.added announces ${this.describe(entry)} twice`);
     entry.announced = item;
+  }
+
+  /**
+   * An item of a running response's output (created, queued, in_progress or any other running
+   * envelope), at its array position, which is its output_index. It merges into its entry like
+   * an announcement, but a running response may show one item many times, so a repeat is allowed
+   * and must agree. An item the snapshot shows as completed is validated as a complete item, and
+   * every later form of the item (a repeat, the finished and the final item) must agree with it.
+   */
+  snapshot(item: JsonRecord, index: number, what: string): void {
+    const entry = this.locate(itemFacts(item, this.provider, index), what);
+    if (item.status !== "completed") return;
+    parseOutputItems([this.withIdentity(entry, item)], this.provider, { incomplete: false });
+    entry.completedSnapshot = entry.completedSnapshot ? this.agree(entry, entry.completedSnapshot, item, what) : item;
   }
 
   /** output_item.done */
@@ -198,8 +233,9 @@ export class OutputLedger {
    * Reconcile the ledger with the terminal response, before any tool call, message or end:
    * - A supplied output is validated like a JSON one and merges into the ledger item by item at
    *   its positions. Every finished item that names an index or identity must be in it, as the
-   *   same item: a function call keeps its name and arguments, and an item that held streamed
-   *   text is there too. An omitted output (absent or `[]`) is rebuilt from the finished items
+   *   same item: the finished item (and a running snapshot that showed it completed) and the
+   *   terminal item agree on every field both state, and the final item takes the fields it
+   *   omits from them. An item that held streamed text is there too. An omitted output (absent or `[]`) is rebuilt from the finished items
    *   (see {@link rebuild}). Each final item carries the id and call_id the ledger holds for it.
    * - On a completed turn every announced item has finished, and every finished call is
    *   executable. An incomplete turn may stop with items unfinished.
@@ -236,13 +272,10 @@ export class OutputLedger {
       outputItemIdentities(state.output, this.provider, "terminal output");
       output = (state.output as JsonRecord[]).map((supplied, position) => {
         const entry = this.locate(itemFacts(supplied, this.provider, position), "terminal output");
-        const item = this.withIdentity(entry, supplied);
+        const earlier = this.earlierForm(entry);
+        const item = this.withIdentity(entry, earlier ? this.agree(entry, earlier, supplied, "terminal output") : supplied);
         entry.terminal = item;
         final.set(entry, item);
-        if (entry.finished && CALL_TYPES.has(entry.type as string)
-          && (entry.finished.name !== item.name || entry.finished.arguments !== item.arguments || entry.finished.input !== item.input)) {
-          throw this.fail(`Responses terminal output changed the finished ${this.describe(entry)}`);
-        }
         return item;
       });
       for (const entry of this.entries) {
@@ -292,6 +325,33 @@ export class OutputLedger {
     const id = entry.id !== undefined && missing(item.id) ? { id: entry.id } : {};
     const callId = entry.callId !== undefined && missing(item.call_id) ? { call_id: entry.callId } : {};
     return Object.keys(id).length || Object.keys(callId).length ? { ...item, ...id, ...callId } : item;
+  }
+
+  /**
+   * The most complete form of an item the stream stated before its final one: the finished item,
+   * filled from (and agreeing with) a completed running snapshot of it.
+   */
+  private earlierForm(entry: Entry): JsonRecord | undefined {
+    const { completedSnapshot, finished } = entry;
+    if (completedSnapshot && finished) return this.agree(entry, completedSnapshot, finished, "output_item.done");
+    return finished ?? completedSnapshot;
+  }
+
+  /**
+   * Two forms of one finished item agree on every field both state (absent and null state
+   * nothing), compared deeply; the later form takes the fields it omits from the earlier one,
+   * so nothing the stream stated (say, a reasoning item's encrypted_content) is dropped.
+   */
+  private agree(entry: Entry, earlier: JsonRecord, later: JsonRecord, what: string): JsonRecord {
+    const merged: JsonRecord = { ...later };
+    for (const [key, value] of Object.entries(earlier)) {
+      if (!stated(value)) continue;
+      if (!stated(later[key])) merged[key] = value;
+      else if (!sameJson(value, later[key])) {
+        throw this.fail(`Responses ${what} changes the ${key} of ${this.describe(entry)}`);
+      }
+    }
+    return merged;
   }
 
   private callEntry(itemId: string | undefined, index: number | undefined, what: string): Entry {
@@ -387,7 +447,7 @@ export class OutputLedger {
     // A message built from streamed text is consistent with it by construction (parts).
     this.synthesized.clear();
     for (const entry of this.entries) {
-      if (entry.finished) items.push({ entry, item: this.withIdentity(entry, entry.finished) });
+      if (entry.finished) items.push({ entry, item: this.withIdentity(entry, this.earlierForm(entry) as JsonRecord) });
       else if (holdsText(entry)) {
         const item = message(entry);
         this.synthesized.add(entry);
@@ -454,6 +514,15 @@ export class OutputLedger {
     const whole = content.map((_, contentIndex) => textAt(contentIndex) ?? "").join("");
     const fail = () => this.fail(`Responses ${type} event text of ${this.describe(entry)} differs from the text the stream stated for it`);
     if (!whole.startsWith(joined(entry.text))) throw fail();
+    // Text streamed to a named part is a prefix of that part.
+    const byPart = new Map<number, Chunk[]>();
+    for (const chunk of entry.text) {
+      if (chunk.contentIndex !== undefined) byPart.set(chunk.contentIndex, [...(byPart.get(chunk.contentIndex) ?? []), chunk]);
+    }
+    for (const [contentIndex, chunks] of byPart) {
+      const text = textAt(contentIndex);
+      if (text === undefined || !text.startsWith(joined(chunks))) throw fail();
+    }
     for (const [contentIndex, snapshot] of entry.snapshots) if (textAt(contentIndex) !== snapshot) throw fail();
     if (entry.whole !== undefined && whole !== entry.whole) throw fail();
   }

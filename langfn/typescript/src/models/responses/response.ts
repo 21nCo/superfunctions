@@ -72,7 +72,7 @@ const PART_TYPES = new Set([...INPUT_ONLY_PART_TYPES, "output_text", "refusal", 
  * Known item types. One of them as a message content part is an item at the wrong level, not a
  * new part type, so it is rejected; unknown part types still pass.
  */
-const ITEM_TYPES = new Set([
+export const ITEM_TYPES = new Set([
   ...INPUT_ONLY_ITEM_TYPES,
   "message",
   "function_call",
@@ -554,12 +554,13 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
   try {
     text = await response.text();
   } catch (error) {
-    // A timed-out, oversized or aborted body keeps its own error, except that a status which
-    // names the error class (401, 429) still decides an oversized body; any other unreadable
-    // error body still yields a typed status error.
+    // A caller abort always wins. Otherwise a status that names the error class (401, 429)
+    // decides whatever stopped the body read (a timeout, a transport error, an oversized body),
+    // so retry policies still see the auth failure or the rate limit and its Retry-After; any
+    // other status keeps a timed-out or oversized body's own error.
+    if (isAbort(error, signal)) throw error;
     const classified = response.status === 401 || response.status === 429;
-    const oversized = error instanceof LangFnError && error.code === "RESPONSE_TOO_LARGE";
-    if (!(classified && oversized) && (error instanceof LangFnError || isAbort(error, signal))) throw error;
+    if (!classified && error instanceof LangFnError) throw error;
   }
   let body: unknown = text;
   try {

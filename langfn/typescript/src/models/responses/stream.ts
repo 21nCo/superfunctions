@@ -5,6 +5,7 @@ import { OutputLedger, validateRunningItems } from "./ledger.js";
 import {
   assertNoReportedError,
   describeWireValue,
+  ITEM_TYPES,
   parseResponsesResponse,
   reportsIncompleteDetails,
   responseId,
@@ -124,6 +125,40 @@ const ITEM_EVENT_TYPES: Record<string, string> = {
   "response.reasoning_text.delta": "reasoning",
   "response.reasoning_text.done": "reasoning",
 };
+/**
+ * The item type the events of a built-in tool item imply, by event name prefix, so an event of
+ * one tool kind cannot name an item of another type.
+ */
+const TOOL_EVENT_PREFIXES: ReadonlyArray<readonly [string, string]> = [
+  ["response.web_search_call.", "web_search_call"],
+  ["response.file_search_call.", "file_search_call"],
+  ["response.custom_tool_call_input.", "custom_tool_call"],
+  ["response.code_interpreter_call.", "code_interpreter_call"],
+  ["response.code_interpreter_call_code.", "code_interpreter_call"],
+  ["response.image_generation_call.", "image_generation_call"],
+  ["response.mcp_call.", "mcp_call"],
+  ["response.mcp_call_arguments.", "mcp_call"],
+  ["response.mcp_list_tools.", "mcp_list_tools"],
+  ["response.computer_call.", "computer_call"],
+  ["response.local_shell_call.", "local_shell_call"],
+  ["response.apply_patch_call.", "apply_patch_call"],
+];
+
+function impliedItemType(type: string): string | undefined {
+  if (Object.hasOwn(ITEM_EVENT_TYPES, type)) return ITEM_EVENT_TYPES[type];
+  return TOOL_EVENT_PREFIXES.find(([prefix]) => type.startsWith(prefix))?.[1];
+}
+
+/**
+ * The item type a content part event (content_part.added or .done) implies by its part type. A
+ * part typed as an output item is an item at the wrong level, a ProviderError.
+ */
+function partItemType(part: unknown, what: string, fail: (message: string) => ProviderError): string | undefined {
+  if (!isRecord(part) || typeof part.type !== "string") return undefined;
+  if (ITEM_TYPES.has(part.type)) throw fail(`Responses ${what} part has the item type ${part.type}`);
+  return Object.hasOwn(PART_ITEM_TYPES, part.type) ? PART_ITEM_TYPES[part.type] : undefined;
+}
+
 /** The item type a content part implies, for response.content_part.added and .done. */
 const PART_ITEM_TYPES: Record<string, string> = {
   output_text: "message",
@@ -155,9 +190,10 @@ function assertNoFrameError(payload: JsonRecord, flat: boolean, provider: string
  * or in_progress (failed, completed, incomplete, cancelled, unknown, or none beside
  * incomplete_details) contradicts the success path that follows; a running turn has not been
  * truncated, so populated incomplete_details fail too, and malformed ones fail in
- * terminalStatus. A supplied response id is returned for the lifecycle id check.
+ * terminalStatus. The items of its output merge into the ledger at their positions
+ * ({@link OutputLedger.snapshot}). A supplied response id is returned for the lifecycle id check.
  */
-function runningEnvelopeId(payload: JsonRecord, type: string, provider: string): string | undefined {
+function runningEnvelopeId(payload: JsonRecord, type: string, provider: string, ledger: OutputLedger): string | undefined {
   const fail = (message: string) => new ProviderError(message, { provider });
   const response = payload.response;
   if (response === undefined && !LIFECYCLE_EVENTS.has(type)) return undefined;
@@ -177,7 +213,12 @@ function runningEnvelopeId(payload: JsonRecord, type: string, provider: string):
   if (reportsIncompleteDetails(response, provider)) {
     throw fail(`Responses ${type} event reports incomplete_details on a running response`);
   }
-  return responseId(response, provider);
+  const id = responseId(response, provider);
+  // Each item so far merges into the ledger at its position, its output_index.
+  if (Array.isArray(response.output)) {
+    response.output.forEach((item, index) => ledger.snapshot(item as JsonRecord, index, `${type} output`));
+  }
+  return id;
 }
 
 /**
@@ -244,7 +285,7 @@ export async function* mapResponsesStream(
 
     if (!TERMINAL_EVENTS.has(type)) {
       // Every envelope before the terminal one describes the same running response.
-      const id = runningEnvelopeId(payload, type, provider);
+      const id = runningEnvelopeId(payload, type, provider, ledger);
       if (id !== undefined) {
         if (startedId !== undefined && startedId !== id) throw fail(`Responses stream changed its response id from ${startedId} to ${id}`);
         startedId = id;
@@ -288,10 +329,7 @@ export async function* mapResponsesStream(
         if (isRecord(part) && part.type === "output_text") {
           if (typeof part.text !== "string") throw fail("Responses content_part.done output_text part requires text");
           ledger.textDone(item, index, contentIndex, part.text, what);
-        } else {
-          const implied = isRecord(part) && typeof part.type === "string" && Object.hasOwn(PART_ITEM_TYPES, part.type) ? PART_ITEM_TYPES[part.type] : undefined;
-          ledger.note(implied, item, index, what);
-        }
+        } else ledger.note(partItemType(part, what, fail), item, index, what);
         break;
       }
       case "response.function_call_arguments.delta":
@@ -381,12 +419,7 @@ export async function* mapResponsesStream(
         // part, reasoning or built-in tool event) states that item, with the type it implies.
         // It carries no new data for LangFn stream events.
         const what = type.slice("response.".length) || "stream event";
-        const part = type === "response.content_part.added"
-          ? (isRecord(payload.part) && typeof payload.part.type === "string" && Object.hasOwn(PART_ITEM_TYPES, payload.part.type)
-            ? PART_ITEM_TYPES[payload.part.type]
-            : undefined)
-          : undefined;
-        const implied = Object.hasOwn(ITEM_EVENT_TYPES, type) ? ITEM_EVENT_TYPES[type] : part;
+        const implied = type === "response.content_part.added" ? partItemType(payload.part, what, fail) : impliedItemType(type);
         ledger.note(implied, itemId(payload.item_id, what, fail), outputIndex(payload.output_index, what, fail), what);
         break;
       }
