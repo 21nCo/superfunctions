@@ -561,6 +561,12 @@ test("lockfile changes outside workspace entries and root config force a full Ja
       ["workspace link retargeted", editLockfile((packages) => { packages["node_modules/@filefn/core"].resolved = "clifn/core"; })],
       ["key one character past a workspace", editLockfile((packages) => { packages["filefn/cores"] = { version: "1.0.0" }; })],
       ["unparseable lockfile", ({ put }) => put("package-lock.json", "{ not json\n")],
+      ["lockfile with leading whitespace", ({ put, read }) => put("package-lock.json", `\u00a0${read("package-lock.json")}`)],
+      ["workspace bump in a lockfile without npm's single trailing newline", ({ put, read }) => {
+        const lockfile = JSON.parse(read("package-lock.json"));
+        lockfile.packages["filefn/core"].version = "0.2.0";
+        put("package-lock.json", `${JSON.stringify(lockfile, null, 2)}\n\n`);
+      }],
       ["root package.json", "package.json"],
     ]) {
       const outputs = plan(change);

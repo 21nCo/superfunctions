@@ -85,15 +85,13 @@ const MCPFN_SUPPORT_PATTERNS = [
   /^release-packages\.json$/,
 ];
 
-// Git's stdout, trimmed unless `raw` is set (structured output such as file contents or NUL-separated lists).
-function git(args, { raw = false, ...options } = {}) {
-  const output = execFileSync("git", args, {
+function git(args, options = {}) {
+  return execFileSync("git", args, {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
-  });
-  return raw ? output : output.trim();
+  }).trim();
 }
 
 function gitOk(args) {
@@ -281,7 +279,14 @@ function canonicalJson(value) {
 
 function readLockfileAt(commitish) {
   try {
-    return JSON.parse(git(["show", `${commitish}:${LOCKFILE}`], { raw: true, maxBuffer: 256 * 1024 * 1024 }));
+    // git() trims its output. npm ends the file with one newline; any other trimmed whitespace makes the file
+    // unreadable here (a full run) rather than letting trimming turn malformed JSON into valid JSON.
+    const source = git(["show", `${commitish}:${LOCKFILE}`], { maxBuffer: 256 * 1024 * 1024 });
+    const size = Number(git(["cat-file", "-s", `${commitish}:${LOCKFILE}`]));
+    if (Buffer.byteLength(source, "utf8") + 1 !== size) {
+      return null;
+    }
+    return JSON.parse(source);
   } catch {
     return null;
   }
@@ -416,9 +421,11 @@ function collectSourceReferences(packageDirs) {
   const references = new Map();
   let files = [];
   try {
-    files = git(["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], { raw: true, maxBuffer: 256 * 1024 * 1024 })
+    // Each path carries a "|" prefix, so trimming the output cannot shorten the first or last path.
+    files = git(["ls-files", "-z", "--format=|%(path)", "--", ...SOURCE_REFERENCE_FILES], { maxBuffer: 256 * 1024 * 1024 })
       .split("\0")
-      .filter(Boolean);
+      .filter((record) => record.startsWith("|"))
+      .map((record) => record.slice(1));
   } catch {
     return references;
   }
