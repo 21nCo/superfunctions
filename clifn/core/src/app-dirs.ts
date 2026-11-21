@@ -89,7 +89,7 @@ export function isAbsoluteWin32(value: string): boolean {
   return !NON_SERVER_SEGMENTS.has(server) && !NON_SHARE_SEGMENTS.has(share);
 }
 
-/** XDG rule: an environment value counts only when it is a non-empty absolute path. */
+/** XDG rule: an environment value counts only when it is a non-empty absolute path (and, as a path, has no NUL). */
 function absoluteEnv(
   env: Readonly<Record<string, string | undefined>>,
   name: string,
@@ -108,7 +108,9 @@ export function appDirResolver(appName: string, options: AppPathsOptions = {}): 
   const platform = options.platform ?? process.platform;
   assertAppName(appName, platform);
   const env = options.env ?? process.env;
-  const isAbsolute = platform === "win32" ? isAbsoluteWin32 : posix.isAbsolute;
+  const isRooted = platform === "win32" ? isAbsoluteWin32 : posix.isAbsolute;
+  // A NUL cannot be in a real path, and joining would let `..` drop the segment that holds it, so it is never usable.
+  const isAbsolute = (value: string): boolean => !value.includes("\0") && isRooted(value);
   let home: string | undefined;
   const homeDir = (): string => {
     if (home === undefined) {

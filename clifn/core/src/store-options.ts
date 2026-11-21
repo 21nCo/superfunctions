@@ -26,14 +26,16 @@ function segmentsOf(value: string, path: typeof posix): string[] {
 }
 
 /**
- * The target of an object-form store must name a file: a non-empty path without NUL characters whose last segment is
- * not empty (a trailing separator), `.` or `..`, and on Windows not a bare drive, a device name or a name ending with a
- * dot or space (see `isWin32AliasedSegment`). The legacy string form is not checked.
+ * The target of an object-form store must name a file: a path without NUL characters that does not end with a
+ * separator and whose base name (after any root, such as `C:`, `C:\\` or a UNC share) is not empty, `.` or `..`, and on
+ * Windows contains no `:` (an alternate data stream) and is not a device name or a name ending with a dot or space
+ * (see `isWin32AliasedSegment`). The legacy string form is not checked.
  */
 export function storeFilePath(value: string, path: typeof posix = pathModuleFor(undefined)): string {
-  const last = segmentsOf(value, path).pop() ?? "";
-  const windowsAlias = path.sep === "\\" && (/^[A-Za-z]:$/.test(last) || isWin32AliasedSegment(last));
-  if (value.includes("\0") || last === "" || last === "." || last === ".." || windowsAlias) {
+  const trailingSeparator = segmentsOf(value, path).pop() === "";
+  const { base } = path.parse(value);
+  const windowsAlias = path.sep === "\\" && (base.includes(":") || isWin32AliasedSegment(base));
+  if (value.includes("\0") || trailingSeparator || base === "" || base === "." || base === ".." || windowsAlias) {
     throw new InvalidStoreOptionsError(`store path ${shown(value)} must name a file and contain no NUL character`);
   }
   return value;
@@ -46,8 +48,8 @@ export function storeFilePath(value: string, path: typeof posix = pathModuleFor(
  * trailing dot or space (see `isWin32AliasedSegment`) in any segment.
  */
 export function joinStoreFile(base: string, fileName: unknown, path: typeof posix): string {
-  if (typeof fileName !== "string" || fileName.length === 0) {
-    throw new InvalidStoreOptionsError("fileName must be a non-empty string");
+  if (typeof fileName !== "string" || fileName.length === 0 || fileName.includes("\0")) {
+    throw new InvalidStoreOptionsError("fileName must be a non-empty string without NUL characters");
   }
   const normalized = path.normalize(fileName);
   const escapes = normalized === ".." || normalized.startsWith(`..${path.sep}`);
@@ -94,7 +96,8 @@ function ownSnapshot(value: object): Record<string, unknown> {
   const snapshot = Object.create(null) as Record<string, unknown>;
   for (const key of Object.getOwnPropertyNames(descriptors)) {
     const descriptor = descriptors[key] as PropertyDescriptor;
-    snapshot[key] = "value" in descriptor ? descriptor.value : descriptor.get?.call(value);
+    const { get } = descriptor;
+    snapshot[key] = "value" in descriptor || get === undefined ? descriptor.value : Reflect.apply(get, value, []);
   }
   return snapshot;
 }
@@ -169,8 +172,8 @@ export function appConfigFile(options: StoreOptionsSnapshot, fileName: unknown):
  */
 export function projectLocalFile(options: StoreOptionsSnapshot): string {
   const { cwd } = options;
-  if (cwd !== undefined && (typeof cwd !== "string" || cwd.length === 0)) {
-    throw new InvalidStoreOptionsError("cwd must be a non-empty string");
+  if (cwd !== undefined && (typeof cwd !== "string" || cwd.length === 0 || cwd.includes("\0"))) {
+    throw new InvalidStoreOptionsError("cwd must be a non-empty string without NUL characters");
   }
   const base = resolve(cwd === undefined ? process.cwd() : cwd);
   return storeFilePath(joinStoreFile(base, options.fileName, pathModuleFor(undefined)));

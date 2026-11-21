@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { createCredentialStore, InvalidStoreOptionsError } from "../src/credentials.js";
 import { createProjectConfig } from "../src/config.js";
-import { InvalidAppNameError } from "../src/paths.js";
+import { InvalidAppNameError, InvalidHomeDirectoryError } from "../src/paths.js";
 import { joinStoreFile, storeFilePath } from "../src/store-options.js";
 
 // The defaults as they are defined at the reference commit (D2): these must never move.
@@ -379,16 +379,30 @@ describe("store options shared by both factories", () => {
     expect(calls).toBe(1);
   });
 
-  it.each(factories)("%s rejects a NUL character in homedir or an environment value", (_name, create) => {
-    rejectsBeforeAnyFilesystemCall(() => create({ appName: "my-cli", env: { XDG_CONFIG_HOME: `/x${"\0"}y`, APPDATA: `C:\\x${"\0"}y` } }));
-    rejectsBeforeAnyFilesystemCall(() => create({ appName: "my-cli", env: {}, homedir: POSIX ? `/h${"\0"}` : `C:\\h${"\0"}` }));
+  it.each(factories)("%s treats an environment value with a NUL like a relative one, and a NUL home as invalid", (_name, create) => {
+    const nulEnv = { XDG_CONFIG_HOME: `${tempRoot}/x${"\0"}/..`, APPDATA: `${tempRoot}\\x${"\0"}\\..` };
+    expect(create({ appName: "my-cli", env: nulEnv, homedir: tempRoot })).toBe(create({ appName: "my-cli", env: {}, homedir: tempRoot }));
+
+    const cwdMode = statSync(process.cwd()).mode;
+    expect(() => create({ appName: "my-cli", env: {}, homedir: `${tempRoot}/h${"\0"}/..` })).toThrow(InvalidHomeDirectoryError);
+    expect(statSync(process.cwd()).mode).toBe(cwdMode);
   });
 
-  it("rejects a NUL character in a config fileName or cwd", () => {
-    const nul = `a${"\0"}b.json`;
-    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ appName: "my-cli", env: appEnv(), fileName: nul }));
-    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd: tempRoot, fileName: nul }));
-    rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd: join(tempRoot, `d${"\0"}`), fileName: "a.json" }));
+  it("rejects a NUL character in a config fileName or cwd, also where normalization would drop it", () => {
+    for (const fileName of [`a${"\0"}b.json`, `a${"\0"}b/../c.json`]) {
+      rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ appName: "my-cli", env: appEnv(), fileName }));
+      rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd: tempRoot, fileName }));
+    }
+    for (const cwd of [join(tempRoot, `d${"\0"}`), `${tempRoot}/d${"\0"}/..`]) {
+      rejectsBeforeAnyFilesystemCall(() => createProjectConfig({ cwd, fileName: "a.json" }));
+    }
+  });
+
+  it.each(factories)("%s calls a getter even when it has an own call property", (_name, create) => {
+    const getter = (): string => "my-cli";
+    Object.defineProperty(getter, "call", { value: null });
+    const options = Object.defineProperty({ env: appEnv() }, "appName", { enumerable: true, get: getter });
+    expect(create(options).startsWith(join(tempRoot, "my-cli"))).toBe(true);
   });
 
   it.each([
@@ -417,7 +431,21 @@ describe("store options shared by both factories", () => {
     expect(joinStoreFile("C:\\base", "nul_x/my.nul", win32)).toBe("C:\\base\\nul_x\\my.nul");
   });
 
-  it.each(["C:\\x\\nul", "C:\\x\\NUL.txt", "C:\\x\\...", "C:\\x\\cfg.", "C:\\x\\cfg ", "C:"])(
+  it.each([
+    "C:\\x\\nul",
+    "C:\\x\\NUL.txt",
+    "C:\\x\\...",
+    "C:\\x\\cfg.",
+    "C:\\x\\cfg ",
+    "C:",
+    "C:\\",
+    "//server/share",
+    "\\\\server\\share\\",
+    "c:nul.txt",
+    "C:/data/config.json:metadata",
+    "C:\\x\\nul:",
+    "\\\\.\\nul",
+  ])(
     "rejects the Windows object-form target %j under win32 only",
     (target) => {
       expect(() => storeFilePath(target, win32)).toThrow(InvalidStoreOptionsError);
@@ -426,6 +454,8 @@ describe("store options shared by both factories", () => {
 
   it("keeps ordinary targets, and POSIX names Windows reserves", () => {
     expect(storeFilePath("C:\\x\\cfg.json", win32)).toBe("C:\\x\\cfg.json");
+    expect(storeFilePath("C:cfg.json", win32)).toBe("C:cfg.json");
+    expect(storeFilePath("//server/share/cfg.json", win32)).toBe("//server/share/cfg.json");
     expect(storeFilePath("/x/nul", posix)).toBe("/x/nul");
     expect(storeFilePath("/x/cfg.", posix)).toBe("/x/cfg.");
   });

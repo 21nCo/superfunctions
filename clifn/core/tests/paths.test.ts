@@ -181,6 +181,17 @@ describe("resolveAppPaths", () => {
     expect(() => resolveAppPaths("my-cli", { platform, homedir: "relative-home", env })).toThrow(InvalidHomeDirectoryError);
   });
 
+  it("treats an environment value with a NUL as unusable, and rejects a home directory with one", () => {
+    const nul = "\0";
+    expect(resolveAppPaths("my-cli", { platform: "linux", homedir: POSIX_HOME, env: { XDG_CONFIG_HOME: `/x${nul}/..` } }).config).toBe(
+      "/home/ada/.config/my-cli",
+    );
+    expect(resolveAppPaths("my-cli", { platform: "win32", homedir: WIN_HOME, env: { APPDATA: `C:\\x${nul}\\..` } }).config).toBe(
+      "C:\\Users\\ada\\AppData\\Roaming\\my-cli",
+    );
+    expect(() => resolveAppPaths("my-cli", { platform: "linux", homedir: `/h${nul}/..`, env: {} })).toThrow(InvalidHomeDirectoryError);
+  });
+
   it("still rejects a non-absolute home directory when one default needs it", () => {
     const env = { XDG_CONFIG_HOME: "/xdg/config", XDG_STATE_HOME: "/xdg/state" };
     expect(() => resolveAppPaths("my-cli", { platform: "linux", homedir: "relative-home", env })).toThrow(InvalidHomeDirectoryError);
