@@ -1,0 +1,25 @@
+authfn/core/src/core/two-factor.ts
+  s_e5ac07859c1bc9::t_8c51f3ce397c42 686
+authfn/docs/content/docs/reference/errors.md
+  s_e5ac07859c1bc9::t_15ee3eabc9d71e 34,79
+authfn/docs/content/docs/sdk/python.md
+  s_e5ac07859c1bc9::t_c7f97fafddfdc3 193
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_04ee8a57eb4ca8 10226,10271,11367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56ec4c7117bbd95136cca0732e4201a67f81893e",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
