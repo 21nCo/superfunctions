@@ -1,0 +1,23 @@
+memoryfn/typescript/src/core/pipeline.ts
+  s_871850191adbe9::t_dcb00e9b80613c 171-173
+memoryfn/typescript/src/extraction/facts.ts
+  s_871850191adbe9::t_d0cb70c980c06d 17-18,100
+memoryfn/typescript/tests/documents.test.ts
+  s_871850191adbe9::t_94db36307794fa 778-793
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6dcb737243077740a272b6d2ee48a2b38e2f77d",
+  "prompts": {},
+  "sessions": {
+    "s_871850191adbe9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e0d5f42-433f-40d2-8097-d768fd4e00b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
