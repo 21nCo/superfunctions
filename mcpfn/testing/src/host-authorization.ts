@@ -3,6 +3,7 @@ import {
   matchMcpRedirectUri,
   normalizeMcpClientRegistration,
   type McpFnClientRegistrationSource,
+  type McpFnNormalizedClientRegistration,
   type McpFnRedirectMatch,
   type McpFnRedirectPolicy,
 } from "@mcpfn/auth";
@@ -63,6 +64,19 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * runtime ports. Defaults to the @mcpfn/auth default policy.
    */
   redirectPolicy?: McpFnRedirectPolicy;
+  /**
+   * Token endpoint authentication methods the target supports (its
+   * `capabilities.tokenEndpointAuthMethods`). When declared, a registration
+   * with another method is ineligible and registers no redirect URI. When
+   * omitted, the harness adds no authentication-method constraint.
+   */
+  tokenEndpointAuthMethods?: string[];
+  /**
+   * Scopes the target supports (its `supportedScopes`). When declared, a
+   * registration whose `scope` names another scope is ineligible. When
+   * omitted, the harness adds no scope constraint.
+   */
+  supportedScopes?: string[];
   prepareRegistration(fixture: McpFnHostedRegistrationFixture): Promise<void>;
   request(request: Request): Promise<Response>;
 }
@@ -248,7 +262,7 @@ async function runHostedCase(
       redirect: "manual",
     }));
     responseStatus = authorizationResponse.status;
-    const redirectMatch = registeredRedirectMatch(fixture, target.redirectPolicy);
+    const redirectMatch = registeredRedirectMatch(fixture, target);
     const authorizationError = await oauthError(authorizationResponse);
     if (authorizationError) {
       await validateOAuthRejection(
@@ -506,23 +520,60 @@ function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolea
  * with the authorization server's own matching rule (exact match after
  * normalization, plus RFC 8252 loopback runtime ports unless the policy
  * disables them). Like the server, it applies only to the client the request
- * names, and a registration the server's validation rejects (any malformed
- * field, including a redirect URI the MCP redirect profile rejects) registers
- * nothing. A URI that does not match is never registered.
+ * names, and a registration the server rejects before it matches the redirect
+ * URI registers nothing: a malformed field (including a redirect URI the MCP
+ * redirect profile rejects) or an ineligible registration (see
+ * `isEligibleRegistration`). A URI that does not match is never registered.
  */
 function registeredRedirectMatch(
   fixture: McpFnHostedAuthorizationCase,
-  policy: McpFnRedirectPolicy | undefined,
+  target: Pick<
+    McpFnHostedAuthorizationTargetAdapter,
+    "redirectPolicy" | "tokenEndpointAuthMethods" | "supportedScopes"
+  >,
 ): McpFnRedirectMatch | undefined {
   const { registration, authorization } = fixture;
   if (authorization.clientId !== registration.clientId) return undefined;
+  const policy = target.redirectPolicy;
   try {
     const client = normalizeMcpClientRegistration({ ...registration, redirectPolicy: policy });
+    if (!isEligibleRegistration(client, registration, target)) return undefined;
     return matchMcpRedirectUri(authorization.redirectUri, client.redirectUris, policy);
   } catch {
     // A mismatch or a malformed registration is not a registered redirect.
     return undefined;
   }
+}
+
+/**
+ * Mirrors the authorization server's client compatibility check, which runs
+ * before redirect matching: the registration must allow response type `code`
+ * and grant type `authorization_code`; its token endpoint authentication
+ * method and its `scope` must be supported by the target when the adapter
+ * declares `tokenEndpointAuthMethods` or `supportedScopes`.
+ */
+function isEligibleRegistration(
+  client: McpFnNormalizedClientRegistration,
+  registration: McpFnHostedRegistrationFixture,
+  target: Pick<McpFnHostedAuthorizationTargetAdapter, "tokenEndpointAuthMethods" | "supportedScopes">,
+): boolean {
+  if (!client.responseTypes.includes("code")) return false;
+  if (!client.grantTypes.includes("authorization_code")) return false;
+  if (target.tokenEndpointAuthMethods) {
+    // A Client ID Metadata Document without a method defaults to
+    // client_secret_basic on the server.
+    const method = client.source === "client-metadata-document" &&
+        registration.metadata.token_endpoint_auth_method === undefined
+      ? "client_secret_basic"
+      : client.tokenEndpointAuthMethod;
+    if (!target.tokenEndpointAuthMethods.includes(method)) return false;
+  }
+  const scope: unknown = client.metadata.scope;
+  if (scope === undefined) return true;
+  if (typeof scope !== "string") return false;
+  if (!target.supportedScopes) return true;
+  const supported = new Set(target.supportedScopes);
+  return scope.split(/\s+/).filter(Boolean).every((entry) => supported.has(entry));
 }
 
 function isUnvettedErrorPage(
