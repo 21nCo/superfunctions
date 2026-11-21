@@ -1272,6 +1272,11 @@ describe('authfn otp plugin', () => {
       if (!latest?.consumedAt) {
         expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(200);
       }
+      // Either way only the two wrong codes count: one more wrong code is
+      // still compared on a new challenge.
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
     });
 
     it('applies the strictest limit configured for either OTP plugin', async () => {
