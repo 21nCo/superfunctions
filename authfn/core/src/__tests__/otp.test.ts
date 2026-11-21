@@ -1301,6 +1301,49 @@ describe('authfn otp plugin', () => {
       expect(latest?.attemptCount).toBe(1);
     });
 
+    it.each([
+      ['the consume write throws after committing', 'throw'],
+      ['the consume write cannot be confirmed', 'unconfirmed']
+    ] as const)('keeps the attempt counted when %s', async (_label, mode) => {
+      const base = memoryAdapter({ debug: false });
+      const database = new Proxy(base, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if (property !== 'update' || typeof value !== 'function') {
+            return typeof value === 'function' ? value.bind(target) : value;
+          }
+          return async (params: { model: string; data: Record<string, unknown> }) => {
+            const row = await value.call(target, params);
+            if (params.model === 'otp_challenges' && params.data.consumedAt) {
+              if (mode === 'throw') {
+                throw new Error('test consume write timed out');
+              }
+              return { id: 'test-other-row' };
+            }
+            return row;
+          };
+        }
+      }) as AuthFnDatabase;
+      const config = createConfig({ database }) as AuthFnRuntimeConfig & {
+        __delivery: ReturnType<typeof createDeliveryRecorder>;
+      };
+      const auth = createTestServer(config);
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await auth.router.handle(new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'sign-in', email: 'ada@example.com' })
+      }));
+      const response = await auth.router.handle(new Request('https://account.example.com/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'sign-in', email: 'ada@example.com', code: '731942' })
+      }));
+      expect(response.status).toBe(mode === 'throw' ? 500 : 400);
+      const stored = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      expect(stored?.attemptCount).toBe(1);
+    });
+
     it('applies the strictest limit configured for either OTP plugin', async () => {
       const { config, post } = setup();
       Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { maxFailedAttemptsPerEmail: 2 });
