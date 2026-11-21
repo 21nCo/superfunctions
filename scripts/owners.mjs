@@ -339,6 +339,9 @@ const CLI_USAGE = "usage: node scripts/owners.mjs [--repo public|next] [--root <
  * @param {{ stdout?: (line: string) => void, stderr?: (line: string) => void }} [io]
  */
 export function runOwnersCli(argv, { stdout = console.log, stderr = console.error } = {}) {
+  // Every diagnostic goes through one place: user- and path-derived text (an option, a --root value inside a
+  // manifest error, a path) must not put a raw line break on stderr, where it could read as a forged record.
+  const report = (message, { usage = false } = {}) => stderr(escapeControlCharacters(message) + (usage ? `\n${CLI_USAGE}` : ""));
   const options = {};
   const targets = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -354,13 +357,13 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
     if (arg.startsWith("-")) {
       const [flag, inline] = arg.split(/=(.*)/s, 2);
       if (flag !== "--repo" && flag !== "--root") {
-        stderr(`error: unknown option ${arg}\n${CLI_USAGE}`);
+        report(`error: unknown option ${quoteForLine(arg)}`, { usage: true });
         return 2;
       }
       const value = inline ?? argv[++index];
       // A separate value that is itself an option (`--root --repo=next`) or `--` means the value is missing.
       if (value === undefined || value === "" || (inline === undefined && value.startsWith("-"))) {
-        stderr(`error: ${flag} needs a value\n${CLI_USAGE}`);
+        report(`error: ${flag} needs a value`, { usage: true });
         return 2;
       }
       options[flag.slice(2)] = value;
@@ -369,18 +372,18 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
     targets.push(arg);
   }
   if (targets.length === 0) {
-    stderr(`error: name at least one path\n${CLI_USAGE}`);
+    report("error: name at least one path", { usage: true });
     return 2;
   }
   if (options.repo !== undefined && !REPOS.includes(options.repo)) {
-    stderr(`error: --repo must be "public" or "next", not ${JSON.stringify(options.repo)}\n${CLI_USAGE}`);
+    report(`error: --repo must be "public" or "next", not ${quoteForLine(options.repo)}`, { usage: true });
     return 2;
   }
   let owners;
   try {
     owners = loadOwners({ root: options.root ? path.resolve(options.root) : REPO_ROOT });
   } catch (error) {
-    stderr(error instanceof OwnersError ? `error (${error.code}): ${error.message}` : `error: ${error.message}`);
+    report(error instanceof OwnersError ? `error (${error.code}): ${error.message}` : `error: ${error.message}`);
     return 1;
   }
   // Without the next manifest (a public checkout), a path the public manifest does not list cannot be classified
@@ -395,8 +398,8 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
         throw new OwnersError("invalid-path", `path ${quoteForLine(target)} contains a control character or line break`, { path: target });
       }
       if (guessesNext && !isPublicListed(owners, target)) {
-        stderr(
-          `error (next-manifest-needed): ${JSON.stringify(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
+        report(
+          `error (next-manifest-needed): ${quoteForLine(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
             "is not in this checkout; run the command in a next checkout to see whether next owns it",
         );
         status = 1;
@@ -405,7 +408,7 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
       stdout(`${normalizePath(target)}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
     } catch (error) {
       if (!(error instanceof OwnersError)) throw error;
-      stderr(`error (${error.code}): ${error.message}`);
+      report(`error (${error.code}): ${error.message}`);
       status = 1;
     }
   }
@@ -421,14 +424,18 @@ function hasControlCharacter(value) {
   return false;
 }
 
+/** Replaces each character hasControlCharacter matches with its `\\uXXXX` escape, so `value` stays on one line. */
+function escapeControlCharacters(value) {
+  let escaped = "";
+  for (const char of value) {
+    escaped += hasControlCharacter(char) ? `\\u${char.codePointAt(0).toString(16).padStart(4, "0")}` : char;
+  }
+  return escaped;
+}
+
 /** JSON-quotes `value` and also escapes what JSON.stringify leaves raw (DEL, C1 controls, U+2028, U+2029). */
 function quoteForLine(value) {
-  let quoted = "";
-  for (const char of JSON.stringify(value)) {
-    const code = char.codePointAt(0);
-    quoted += hasControlCharacter(char) ? `\\u${code.toString(16).padStart(4, "0")}` : char;
-  }
-  return quoted;
+  return escapeControlCharacters(JSON.stringify(value));
 }
 
 /** Whether the public manifest lists `target` (as a top-level path or a root file); invalid paths throw. */

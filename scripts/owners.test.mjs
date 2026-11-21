@@ -285,6 +285,34 @@ test("the owners command prints one record per path argument and rejects control
   }
 });
 
+// Each stderr line is a diagnostic or the usage line: an argument's line break never starts a line of its own.
+const assertDiagnosticLines = (err) => {
+  for (const line of err.split("\n")) {
+    assert.ok(line.startsWith("error") || line.startsWith("usage: "), `unexpected stderr line ${JSON.stringify(line)}`);
+    assert.ok(!hasControl(line), `stderr line has a raw control character: ${JSON.stringify(line)}`);
+  }
+};
+
+test("the owners command escapes control characters in every diagnostic", () => {
+  const forgedRoot = cli(["--root", "/nope\nAGENTS.md: public", "AGENTS.md"]);
+  assert.equal(forgedRoot.status, 1);
+  assert.deepEqual(forgedRoot.out, []);
+  assert.match(forgedRoot.err, /manifest-not-found.*\/nope\\u000aAGENTS\.md: public/);
+  assertDiagnosticLines(forgedRoot.err);
+
+  for (const option of ["--bogus\nAGENTS.md: public", "--bogus AGENTS.md: public"]) {
+    const unknown = cli([option, "AGENTS.md"]);
+    assert.equal(unknown.status, 2);
+    assert.match(unknown.err, /unknown option "--bogus\\(n|u2028)AGENTS\.md: public"/);
+    assertDiagnosticLines(unknown.err);
+  }
+
+  const badRepo = cli(["--repo", "next AGENTS.md: public", "AGENTS.md"]);
+  assert.equal(badRepo.status, 2);
+  assert.match(badRepo.err, /--repo must be .* not "next\\u2028AGENTS\.md: public"/);
+  assertDiagnosticLines(badRepo.err);
+});
+
 test("node scripts/owners.mjs <path> runs as a command in this checkout", () => {
   const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [script, "AGENTS.md", "catchfn/typescript"], { encoding: "utf8" });
