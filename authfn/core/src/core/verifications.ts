@@ -586,11 +586,13 @@ const OTP_EMAIL_SCAN_FLOOR = 100;
 /**
  * Both OTP plugins (email OTP and password reset) count the same challenge
  * rows, so every route uses one email-wide policy: the strictest of the
- * limits set in `pluginRuntime.emailOtp` and `pluginRuntime.password.otp`.
- * They are read from the runtime config only (never from a route's own
- * merged options, which for password reset include the deprecated factory
- * `otp`), so every route sees the same policy; without runtime config the
- * defaults apply.
+ * limits set in `pluginRuntime.emailOtp` and `pluginRuntime.password.otp`
+ * (the defaults without either).
+ *
+ * Two other sources can only tighten that policy, never loosen it: the
+ * deprecated `authFnPasswordPlugin({ otp })` limits, which every plugin that
+ * publishes `otpEmailLimits` contributes on every route, and the `options`
+ * of this call, which apply to this call only.
  */
 function resolveOtpEmailBudget(
   config: OtpBudgetConfig,
