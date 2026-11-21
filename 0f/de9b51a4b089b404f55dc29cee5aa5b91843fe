@@ -1,0 +1,43 @@
+flowfn/typescript/src/adapters/base.ts
+  s_666180e3d05c4d::t_222c231b6e2a87 120-124
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_666180e3d05c4d::t_11493399affb75 403-406,410,413-420
+flowfn/typescript/src/adapters/postgres/transactional-enqueue.test.ts
+  s_58dfec4cd40d44::t_35292c358ff98b 833-842,900-919
+flowfn/typescript/src/queue/queue.ts
+  s_666180e3d05c4d::t_de1c43604bd490 16,27-32,281-285,306-318,326-331,333,335-336,339-354,407
+flowfn/typescript/docs/API.md
+  s_86fd3b69a2bf3f::t_131842a0a8df63 214-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fde9b51a4b089b404f55dc29cee5aa5b91843fe",
+  "prompts": {},
+  "sessions": {
+    "s_58dfec4cd40d44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc4f-b428-7522-a08b-659d8a8f31b6",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_666180e3d05c4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc5e-1463-7290-aeb7-a65bd7d53e70",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_86fd3b69a2bf3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_86fd3b69a2bf3f",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
