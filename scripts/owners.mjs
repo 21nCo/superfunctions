@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
@@ -392,6 +392,10 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
   let status = 0;
   for (const target of targets) {
     try {
+      // A Git path never holds NUL, and a filesystem path cannot: reject it rather than print a record for it.
+      if (target.includes("\0")) {
+        throw new OwnersError("invalid-path", `path ${JSON.stringify(target)} must not contain a NUL character`, { path: target });
+      }
       if (guessesNext && !isPublicListed(owners, target)) {
         report(
           `error (next-manifest-needed): ${quoteForLine(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
@@ -453,9 +457,6 @@ function isPublicListed(owners, target) {
   }
 }
 
-/** Options that make Node evaluate a string (`-e`, `-p`, `-pe`, `--eval=...`), so `process.argv[1]` is not the entry. */
-const EVAL_OPTION = /^(?:-[A-Za-z]*[ep][A-Za-z]*|--(?:eval|print)(?:=.*)?)$/s;
-
 function realPathOr(file) {
   try {
     return realpathSync(file);
@@ -464,37 +465,19 @@ function realPathOr(file) {
   }
 }
 
-// Run the command only from the entry module: never as a side effect of an import, and never from a second instance
-// of this file (a preload under a query or fragment, or a canonical preload of a symlinked entry). Newer Node sets
-// import.meta.main. Otherwise compare this instance's URL with the URLs Node can give the entry: the real path of
-// argv[1], or, under --preserve-symlinks-main, argv[1] as given. When argv[1] is not behind a symlink the two agree and
-// the match runs the command at once. When it is (a symlinked checkout, macOS's /var -> /private/var), the as-given
-// instance exists only as the --preserve-symlinks-main entry and runs at once; the real-path instance is the entry or
-// a preload of that entry, and preloads evaluate first, so it runs at beforeExit unless the entry already ran.
-function entryMatch() {
-  if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return "none";
-  if (!process.argv[1] || /[?#]/.test(import.meta.url)) return "none";
+// Run the command only when this file is the entry module, never as a side effect of an import. Node 22.18+ and
+// 24.2+ set import.meta.main. Older Node: this instance is the entry when no code string is being evaluated (`-e`,
+// `-p`), its URL has no query or fragment, and argv[1] resolves to this file's real path, so a symlinked checkout
+// (macOS's /var -> /private/var, --preserve-symlinks[-main]) still runs the command, as in assert-release-owner.mjs.
+// Preloading this file (--import, --require, a loader) or evaluating it under a second URL is not supported.
+function isEntry() {
+  if (typeof import.meta.main === "boolean") return import.meta.main;
+  if (typeof process._eval === "string" || !process.argv[1] || /[?#]/.test(import.meta.url)) return false;
   try {
-    const given = pathToFileURL(path.resolve(process.argv[1])).href;
-    const real = pathToFileURL(realpathSync(process.argv[1])).href;
-    if (import.meta.url === given) return "now";
-    return import.meta.url === real ? "after-preloads" : "none";
+    return realpathSync(process.argv[1]) === realpathSync(MODULE_FILE);
   } catch {
-    return "none";
+    return false;
   }
 }
 
-const CLI_RAN = Symbol.for("superfunctions.owners.cli.ran");
-const runCli = () => {
-  if (globalThis[CLI_RAN]) return;
-  globalThis[CLI_RAN] = true;
-  process.exitCode = runOwnersCli(process.argv.slice(2));
-};
-
-if (typeof import.meta.main === "boolean") {
-  if (import.meta.main) runCli();
-} else {
-  const match = entryMatch();
-  if (match === "now") runCli();
-  else if (match === "after-preloads") process.once("beforeExit", runCli);
-}
+if (isEntry()) process.exitCode = runOwnersCli(process.argv.slice(2));

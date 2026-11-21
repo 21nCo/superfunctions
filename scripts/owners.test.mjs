@@ -292,6 +292,13 @@ test("the owners command resolves a path with a control character and prints it 
   writeFileSync(path.join(dir, PUBLIC_MANIFEST), JSON.stringify(publicData()));
   writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
   assert.deepEqual(cli(["--root", dir, '"x/y"']), { status: 0, out: ['"\\"x/y\\"": public'], err: "" });
+  // NUL is never part of a path: one escaped invalid-path diagnostic, no record, status 1.
+  const nul = cli(["catchfn/a\u0000b"]);
+  assert.deepEqual({ status: nul.status, out: nul.out }, { status: 1, out: [] });
+  assert.equal(nul.err, 'error (invalid-path): path "catchfn/a\\u0000b" must not contain a NUL character');
+  const mixed = cli(["AGENTS.md", "catchfn/a\u0000b"]);
+  assert.deepEqual({ status: mixed.status, out: mixed.out }, { status: 1, out: ["AGENTS.md: public"] });
+  assertDiagnosticLines(mixed.err);
   // Invalid paths are still rejected, with the control character escaped in the one diagnostic line.
   const outside = cli(["AGENTS.md", "../a\nAGENTS.md: public"]);
   assert.equal(outside.status, 1);
@@ -348,13 +355,13 @@ test("node scripts/owners.mjs runs through a symlinked checkout path and reports
   assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
 });
 
-test("node --preserve-symlinks-main scripts/owners.mjs through a symlinked checkout path still runs the command", (t) => {
+test("node --preserve-symlinks[-main] scripts/owners.mjs through a symlinked checkout path still runs the command", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const link = path.join(dir, "scripts");
   symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
   const script = path.join(link, "owners.mjs");
-  for (const args of [["--preserve-symlinks-main", script], ["--preserve-symlinks", "--preserve-symlinks-main", script]]) {
+  for (const args of [["--preserve-symlinks", script], ["--preserve-symlinks-main", script], ["--preserve-symlinks", "--preserve-symlinks-main", script]]) {
     const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], { encoding: "utf8" });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.stdout, "AGENTS.md: public\n");
@@ -364,7 +371,7 @@ test("node --preserve-symlinks-main scripts/owners.mjs through a symlinked check
 
 test("importing scripts/owners.mjs from an eval entry neither prints nor sets the exit status", () => {
   const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
-  const source = `await import(${JSON.stringify(pathToFileURL(script).href)})`;
+  const source = `await import(${JSON.stringify(pathToFileURL(script).href)}); if (process.exitCode !== undefined) process.exit(9)`;
   for (const flags of [["--input-type=module", "-e", source], ["--input-type=module", `--eval=${source}`], ["-p", `import(${JSON.stringify(pathToFileURL(script).href)}).then(() => "imported")`]]) {
     const result = spawnSync(process.execPath, [...flags, "--", script, "AGENTS.md"], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
@@ -373,41 +380,14 @@ test("importing scripts/owners.mjs from an eval entry neither prints nor sets th
   }
 });
 
-test("a preload of scripts/owners.mjs under another URL stays inert and the entry owns output and exit status", (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+test("importing scripts/owners.mjs from another module neither prints nor sets the exit status", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-import-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const link = path.join(dir, "scripts");
-  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
   const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
-  const linked = path.join(link, "owners.mjs");
-  const url = pathToFileURL(script).href;
-  // A later preload that resets the exit status: only the entry, which runs after every preload, may set it.
-  const reset = ["--import", "data:text/javascript,process.exitCode=0"];
-  const runs = [
-    { args: ["--import", `${url}?preload`, ...reset, script] },
-    // Node resolves an empty query or fragment to the entry's own URL: that preload is the entry instance,
-    // evaluated early (once), so it prints the records once and sets the exit status.
-    { args: ["--import", `${url}?`, script] },
-    { args: ["--import", `${url}#`, script] },
-    { args: ["--preserve-symlinks-main", "--import", url, ...reset, linked] },
-    { args: ["--import", url, ...reset, linked], env: { NODE_OPTIONS: "--preserve-symlinks-main" } },
-    { args: ["--import", url, ...reset, linked], env: { NODE_OPTIONS: '"--preserve-symlinks-main"' } },
-    // Direct runs whose effective symlink setting differs from what a flag scan would see.
-    { args: [linked], env: { NODE_OPTIONS: '"--preserve-symlinks-main"' } },
-    { args: ["--preserve-symlinks-main", "--no-preserve-symlinks-main", linked] },
-    { args: ["--title=--preserve-symlinks-main", linked] },
-    // A preload that ends the process from a timer: the entry has already printed and set the exit status.
-    { args: ["--import", "data:text/javascript,setTimeout(()=>process.exit(process.exitCode),500)", script] },
-    { args: ["--preserve-symlinks-main", "--import", "data:text/javascript,setTimeout(()=>process.exit(process.exitCode),500)", linked] },
-  ];
-  for (const { args, env } of runs) {
-    const options = { encoding: "utf8", env: { ...process.env, ...env } };
-    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], options);
-    assert.equal(result.status, 1, `${args.join(" ")}: ${result.stderr}`);
-    assert.equal(result.stdout, "AGENTS.md: public\n", args.join(" "));
-    assert.equal(result.stderr.match(/invalid-path/g)?.length, 1, result.stderr);
-    const clean = spawnSync(process.execPath, [...args, "AGENTS.md"], options);
-    assert.equal(clean.status, 0, clean.stderr);
-    assert.equal(clean.stdout, "AGENTS.md: public\n");
-  }
+  const entry = path.join(dir, "entry.mjs");
+  writeFileSync(entry, `await import(${JSON.stringify(pathToFileURL(script).href)});\nconsole.log("exitCode=" + process.exitCode);\n`);
+  const result = spawnSync(process.execPath, [entry, "AGENTS.md", "../outside"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.equal(result.stdout, "exitCode=undefined\n");
 });
