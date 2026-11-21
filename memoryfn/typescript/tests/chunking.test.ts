@@ -197,4 +197,10 @@ describe('hard split paragraph separator', () => {
     expect(chunks.join(' ')).toMatch(/x bar/);
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(64);
   });
+
+  it('adds no space after a skipped blank atom when the atom before already ends in whitespace', () => {
+    // Atoms: 47 x and a space, 48 spaces (skipped), 16 b: 48 + 16 fits the 64-character target exactly.
+    const chunks = chunkMarkdown(`${'x'.repeat(47)}${' '.repeat(49)}${'b'.repeat(16)}`, { targetChars: 64, overlapChars: 16 });
+    expect(chunks).toEqual([`${'x'.repeat(47)} ${'b'.repeat(16)}`]);
+  });
 });
