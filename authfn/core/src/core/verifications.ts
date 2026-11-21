@@ -794,9 +794,18 @@ async function admitOtpChallenge(
     { expiresAt, updatedAt: now }
   );
   if (!admitted) {
-    throw new AuthFnOtpInvalidError('OTP challenge could not be created', {
-      challengeId: challenge.id
+    // The write may have applied without an acknowledgement; the stored row
+    // says whether it was admitted.
+    const stored = await config.database.findOne<AuthFnOtpChallengeRecord>({
+      model: 'otp_challenges',
+      where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+      namespace: namespace(config)
     });
+    if (!stored || !isAdmittedChallenge(stored) || stored.consumedAt) {
+      throw new AuthFnOtpInvalidError('OTP challenge could not be created', {
+        challengeId: challenge.id
+      });
+    }
   }
   return { ...challenge, expiresAt, updatedAt: now };
 }
