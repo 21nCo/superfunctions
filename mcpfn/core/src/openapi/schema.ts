@@ -733,7 +733,7 @@ export class SchemaConverter {
       if (!isObject(current)) return;
       const before = visited.get(current);
       let kinds = intersect(reaching, this.admittedValues(current));
-      let conditionalKinds = intersect(under, kinds);
+      let conditionalKinds = under.size === 0 ? NO_KINDS : intersect(under, kinds);
       if (before !== undefined) {
         const covered = [...kinds].every((kind) => before.kinds.has(kind));
         if (covered && [...conditionalKinds].every((kind) => before.conditionalKinds.has(kind))) return;
@@ -751,7 +751,8 @@ export class SchemaConverter {
         const members = arrayOf(current[keyword]);
         const shared = this.sharedKinds(members);
         for (const member of members) {
-          walk(member, new Set([...conditionalKinds, ...intersect(shared, this.admittedValues(member))]), kinds);
+          const overlapping = shared.size === 0 ? NO_KINDS : intersect(shared, this.admittedValues(member));
+          walk(member, overlapping.size === 0 ? conditionalKinds : new Set([...conditionalKinds, ...overlapping]), kinds);
         }
       }
       for (const keyword of ["not", "if", "then", "else"] as const) walk(current[keyword], kinds, kinds);
@@ -759,7 +760,7 @@ export class SchemaConverter {
         for (const [, dependency] of objectEntries(current[keyword])) walk(dependency, kinds, kinds);
       }
     };
-    walk(root, new Set(), EVERYTHING.values);
+    walk(root, NO_KINDS, EVERYTHING.values);
     return entries;
   }
 
@@ -1477,10 +1478,16 @@ function narrowByLiterals(result: AdmittedKinds, literals: unknown[]): AdmittedK
 
 /** The entries that can apply to a value of `kind`, each conditional when it applies to that kind only under a condition. */
 function entriesFor(entries: ClosureEntry[], kind: ValueKind): ClosureEntry[] {
-  return entries
-    .filter((entry) => entry.kinds.has(kind))
-    .map((entry) => ({ ...entry, conditional: entry.conditionalKinds?.has(kind) ?? entry.conditional }));
+  const result: ClosureEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.kinds.has(kind)) continue;
+    const conditional = entry.conditionalKinds?.has(kind) ?? entry.conditional;
+    result.push(conditional === entry.conditional ? entry : { ...entry, conditional });
+  }
+  return result;
 }
+
+const NO_KINDS: ReadonlySet<ValueKind> = new Set();
 
 function intersect(left: ReadonlySet<ValueKind>, right: Iterable<ValueKind>): Set<ValueKind> {
   const allowed = new Set(right);
