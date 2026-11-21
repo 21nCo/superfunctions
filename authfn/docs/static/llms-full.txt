@@ -6283,14 +6283,20 @@ Your iOS code parses the URL, calls `exchangeNativeHandoff`, and lands a bearer 
 
 ## Bridging through `WKScriptMessageHandler`
 
-When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge calls `exchangeNativeHandoff` for you and surfaces a typed credential:
+When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge exchanges native handoff codes, starts web handoffs and signs out for the pages you trust:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: authFnClient)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: authFnClient,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
+
+Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. The initializer without `trustedOrigins` is deprecated and trusts no origin.
 
 ## Web handoff (native → web)
 
