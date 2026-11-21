@@ -590,8 +590,15 @@ function createSocialRoutes(
               connectionId: callbackResult.connectionId
             }
           });
-          // The afterOAuthCallback hook may have changed the target.
+          // The afterOAuthCallback hook may have changed the target, so it is
+          // checked again with the policies /social/start applied.
           assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo as string | undefined,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            handoffChallenge
+          });
           return redirectWithCookies(
             request,
             appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
