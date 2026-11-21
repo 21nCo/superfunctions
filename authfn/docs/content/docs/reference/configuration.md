@@ -110,7 +110,7 @@ Runtime dependencies keyed by plugin name. Schema and policy options stay on the
 
 | Plugin | Typical `pluginRuntime` keys |
 | --- | --- |
-| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts` |
+| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts`, `maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` |
 | `password` | `otp` (password-reset delivery and challenge settings) |
 | `socialOAuth` | `providers` (required), `fetcher`, `tokenHttpClient`, `now` |
 | `twoFactor` | `issuer`, `encryptionKeyRef`, `encryptionKeyResolver`, TOTP window/digits/period |

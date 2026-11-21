@@ -67,6 +67,8 @@ A signed session.
 | `attempts` | integer | Soft per-challenge attempt counter. |
 | `createdAt` / `updatedAt` | timestamp |  |
 
+Indexes: `(email, purpose, createdAt)` for the latest challenge of a purpose, `(expiresAt)`, and `(email, createdAt, id)` for the per-email budget across purposes.
+
 ## Social-OAuth plugin
 
 ### `authfn_oauth_states`

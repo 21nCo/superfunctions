@@ -223,11 +223,14 @@ async function deleteMany(
   field: string,
   value: unknown
 ): Promise<number> {
-  return config.database.deleteMany({
+  const removed = await config.database.deleteMany({
     model,
     where: [{ field, operator: 'eq', value }],
     namespace: namespace(config)
   });
+  // Some adapters report a count they could not read as NaN (Drizzle's
+  // SQLite proxy); the result's counts stay numbers.
+  return Number.isFinite(removed) && removed > 0 ? removed : 0;
 }
 
 function namespace(config: Pick<AuthFnRuntimeConfig, 'namespace'>): string {

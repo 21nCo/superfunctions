@@ -64,6 +64,7 @@ def _build_auth(*, secure: bool = True):
                 authfn_email_otp_plugin(EmailOtpPluginConfig(delivery=DeliveryStub())),
                 authfn_social_oauth_plugin(
                     SocialOAuthPluginConfig(
+                        encryption_key_resolver=lambda _ref: b"test-openapi-oauth-key-not-a-real-secret",
                         providers={
                             "google": SocialProviderConfig(
                                 client_id="google-client-id",

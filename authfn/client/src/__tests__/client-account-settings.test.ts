@@ -29,6 +29,8 @@ function createAccountSettingsConfig(now: () => Date = () => TEST_NOW): AuthFnRu
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
+    // API keys may only carry registered scopes.
+    scopes: { docs: ['read'] },
     plugins: [
       authFnPasswordPlugin(),
       authFnApiKeyPlugin(),
@@ -262,7 +264,7 @@ describe('@authfn/client account-settings flows', () => {
 
     const createdKey = await client.createApiKey({
       name: 'playwright',
-      scopes: ['read']
+      scopes: ['docs:read']
     });
     expect(createdKey.ok).toBe(true);
     if (!createdKey.ok) {
@@ -276,7 +278,7 @@ describe('@authfn/client account-settings flows', () => {
       expect(listedKeys.data.keys).toEqual([
         expect.objectContaining({
           id: createdKey.data.keyId,
-          scopes: ['read']
+          scopes: ['docs:read']
         })
       ]);
     }

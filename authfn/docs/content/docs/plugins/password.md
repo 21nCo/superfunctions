@@ -47,6 +47,7 @@ authApp.createServer({
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
+| `pluginRuntime.password.otp.maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` | runtime | `10`, `20`, `3600` | Per-email limits for reset codes, with the same meaning as in [Email OTP](./email-otp). The count covers every challenge for the email, so reset codes and sign-in codes add up, and the strictest value set for either plugin applies. |
 
 ## Routes
 
