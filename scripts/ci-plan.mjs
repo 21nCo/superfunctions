@@ -612,6 +612,13 @@ const mcpfnOnly =
     matchesAny(MCPFN_PATTERNS, changedPath) ||
     matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
 
+// The workflow passes Turbo filters through the shell unquoted, so a package directory outside this character set
+// (none exists today) falls back to a full run instead of becoming a split or expanded filter.
+const SAFE_FILTER_DIR = /^[A-Za-z0-9._@/-]+$/;
+if (!fullJs && [...collectJsDependents(changedJsDirs, jsPackages)].some((dir) => !SAFE_FILTER_DIR.test(dir))) {
+  fullJs = true;
+}
+
 const selectedJsPackages = fullJs
   ? jsPackages
   : [...changedJsDirs].map((dir) => jsByDir.get(dir)).filter(Boolean);

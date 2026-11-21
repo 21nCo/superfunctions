@@ -478,6 +478,15 @@ test("a changed package without a task still runs that task in its dependents", 
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
+test("a changed package whose directory is not shell-safe forces a full JavaScript run", () => {
+  const { root, plan } = devfnFixture({ "filefn/reference assets/package.json": JSON.stringify({ name: "@filefn/reference-assets" }) });
+  try {
+    const outputs = plan(({ put }) => put("filefn/reference assets/notes.md", "changed\n"));
+    assert.equal(outputs.full_js, "true");
+    assert.equal(outputs.js_build_filters, "");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
 test("a new workspace's lockfile entries select only that workspace", () => {
   const { root, plan } = lockfileFixture();
   try {
