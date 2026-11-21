@@ -1,0 +1,42 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": [
+    "//"
+  ],
+  "tasks": {
+    "test": {
+      "dependsOn": [
+        "^build",
+        "build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/extfn/cli/**/*.{ts,tsx,mts,cts,js,mjs,cjs}",
+        "$TURBO_ROOT$/plugfn/cli/**/*.{ts,tsx,mts,cts,js,mjs,cjs}",
+        "$TURBO_ROOT$/mailfn/cli/**/*.{ts,tsx,mts,cts,js,mjs,cjs}",
+        "$TURBO_ROOT$/devfn/cli/**/*.{ts,tsx,mts,cts,js,mjs,cjs}",
+        "$TURBO_ROOT$/devfn/config/**/*.{ts,tsx,mts,cts,js,mjs,cjs}",
+        "!$TURBO_ROOT$/extfn/cli/**/node_modules/**",
+        "!$TURBO_ROOT$/extfn/cli/**/dist/**",
+        "!$TURBO_ROOT$/extfn/cli/**/coverage/**",
+        "!$TURBO_ROOT$/extfn/cli/**/.turbo/**",
+        "!$TURBO_ROOT$/plugfn/cli/**/node_modules/**",
+        "!$TURBO_ROOT$/plugfn/cli/**/dist/**",
+        "!$TURBO_ROOT$/plugfn/cli/**/coverage/**",
+        "!$TURBO_ROOT$/plugfn/cli/**/.turbo/**",
+        "!$TURBO_ROOT$/mailfn/cli/**/node_modules/**",
+        "!$TURBO_ROOT$/mailfn/cli/**/dist/**",
+        "!$TURBO_ROOT$/mailfn/cli/**/coverage/**",
+        "!$TURBO_ROOT$/mailfn/cli/**/.turbo/**",
+        "!$TURBO_ROOT$/devfn/cli/**/node_modules/**",
+        "!$TURBO_ROOT$/devfn/cli/**/dist/**",
+        "!$TURBO_ROOT$/devfn/cli/**/coverage/**",
+        "!$TURBO_ROOT$/devfn/cli/**/.turbo/**",
+        "!$TURBO_ROOT$/devfn/config/**/node_modules/**",
+        "!$TURBO_ROOT$/devfn/config/**/dist/**",
+        "!$TURBO_ROOT$/devfn/config/**/coverage/**",
+        "!$TURBO_ROOT$/devfn/config/**/.turbo/**"
+      ]
+    }
+  }
+}
