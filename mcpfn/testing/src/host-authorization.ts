@@ -91,7 +91,9 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * difference to that request. A JSON rejection of a registration the server
    * would reject as a client error may carry another code (for example from a
    * `beforeClientResolution` policy) only when that request made no client
-   * resolution. Zero resolutions never permit an error page or a callback.
+   * resolution. Zero resolutions never permit an error page or a callback,
+   * whatever the registration. Count only the requests of one run: a counter
+   * shared with concurrent runs or other traffic misattributes resolutions.
    * When omitted, such a rejection must carry a client-stage code.
    */
   clientResolutionCount?(): number;
@@ -296,10 +298,12 @@ async function runHostedCase(
         decision,
       );
       assertClientStageRejection(decision, authorizationError, resolutions);
+      if (isRedirect(authorizationResponse.status)) assertClientResolved(resolutions);
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture, decision)) {
       assertPostMatchPermitted(decision);
+      assertClientResolved(resolutions);
       const pageErrorCode = await validateUnvettedErrorPage(
         authorizationResponse,
         fixture,
@@ -311,6 +315,7 @@ async function runHostedCase(
       throw new Error(`Authorization request did not redirect (HTTP ${authorizationResponse.status})`);
     }
     assertPostMatchPermitted(decision);
+    assertClientResolved(resolutions);
     const code = validatedRedirectCode(authorizationResponse, fixture, target.issuer);
     if (fixture.token) return runHostedTokenCase(target, fixture, fixture.token, code);
     return assessHostedCase(fixture, phase, responseStatus);
@@ -658,6 +663,17 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
 }
 
 /**
+ * The server matches the redirect URI only after it resolves the client, so
+ * an error page or callback is impossible when the target reports that the
+ * request made no client resolution, whatever the registration.
+ */
+function assertClientResolved(resolutions: number | undefined): void {
+  if (resolutions === 0) {
+    throw new Error("A post-match authorization response requires a client resolution, but the request made none");
+  }
+}
+
+/**
  * The server rejects a registration that is not eligible before it matches
  * the redirect URI or validates the rest of the request, so, whether or not
  * the URI matches, its JSON rejection must carry a client-stage code. A host
@@ -675,7 +691,8 @@ function assertClientStageRejection(
 ): void {
   const permitted = decision.permittedClientCodes;
   if (decision.eligibility === "eligible" || !permitted) return;
-  if (permitted.has(errorCode) || resolutions === 0) return;
+  if (permitted.has(errorCode)) return;
+  if (resolutions === 0 && OAUTH_ERROR_CODE.test(errorCode)) return;
   if (decision.eligibility === "indeterminate") throw new Error(INDETERMINATE_ELIGIBILITY);
   throw new Error(
     `An ineligible client registration must be rejected as a client error, not ${errorCode}`,

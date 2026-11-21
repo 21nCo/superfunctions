@@ -1444,6 +1444,54 @@ describe("unvetted-client authorization rejections", () => {
         }
       });
 
+      it("never accepts a post-match response from a request that resolved no client", async () => {
+        const eligible = rejectionFixture(DYNAMIC);
+        redirect(LOOPBACK, RUNTIME_PORT)(eligible);
+        const allowed = createHostedAuthorizationFixtures({ issuer, resource })
+          .find((item) => item.id === DYNAMIC)!;
+        delete allowed.token;
+        redirect(LOOPBACK, RUNTIME_PORT)(allowed);
+        const codeCallback = async (request: Request) => {
+          const params = new URL(request.url).searchParams;
+          const callback = new URL(params.get("redirect_uri")!);
+          callback.searchParams.set("code", "test-authorization-code");
+          callback.searchParams.set("state", params.get("state")!);
+          return new Response(null, { status: 302, headers: { location: callback.toString() } });
+        };
+        const responders: [McpFnHostedAuthorizationCase, (request: Request) => Promise<Response>][] = [
+          [eligible, async () => htmlPage("<p><code>invalid_target</code></p>")()],
+          [eligible, callbackTarget().request],
+          [allowed, codeCallback],
+        ];
+        for (const [fixture, respond] of responders) {
+          for (const lookups of [0, 1, undefined]) {
+            let resolutions = 0;
+            const [result] = await runHostedAuthorizationRegression({
+              issuer,
+              prepareRegistration: async () => {},
+              request: async (request) => {
+                resolutions += lookups ?? 0;
+                return respond(request);
+              },
+              ...(lookups === undefined ? {} : { clientResolutionCount: () => resolutions }),
+            }, [fixture]);
+            expect(result).toMatchObject(lookups === 0 ? {
+              status: "failed",
+              error: "A post-match authorization response requires a client resolution, but the request made none",
+            } : { status: "passed", phase: "authorization-request" });
+          }
+        }
+        // The zero-resolution exception still requires a valid OAuth error code.
+        const [ineligible] = notEligible(RUNTIME_PORT);
+        const [malformed] = await runHostedAuthorizationRegression({
+          issuer,
+          clientResolutionCount: () => 0,
+          prepareRegistration: async () => {},
+          request: async () => Response.json({ error: "\n" }, { status: 400 }),
+        }, [ineligible]);
+        expect(malformed).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("\n") });
+      });
+
       it("checks registered scopes only when the target declares supported scopes", async () => {
         const [real] = await runAgainstMcpFn([DYNAMIC], undefined, (fixture) => {
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
