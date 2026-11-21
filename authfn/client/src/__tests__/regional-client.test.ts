@@ -373,6 +373,15 @@ describe('@authfn/client regional client', () => {
     expect(sentTo(urls)).toContain('https://us-east-1.account.example.com/');
   });
 
+  it.each([
+    ['a storage that keeps nothing', { storage: { get: async () => null, set: async () => {}, delete: async () => {} } }],
+    ['a cache TTL of 0', { cacheTtlMs: 0 }]
+  ])('routes sign-in to the looked-up region with %s', async (_label, extra) => {
+    const { client, urls } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', regionId: 'eu-west-1', authority: 'https://eu-west-1.account.example.com', continueLocally: false, ownedElsewhere: true, redirectTo: 'https://eu-west-1.account.example.com' }), extra);
+    expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
+    expect(sentTo(urls)).toContain('https://eu-west-1.account.example.com/');
+  });
+
   it('looks up uncached identifiers through the currently selected region', async () => {
     const storage = memoryRegionStorage();
     const urls: string[] = [];

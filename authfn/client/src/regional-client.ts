@@ -49,10 +49,11 @@ export function createAuthFnRegionalClient(
     }
 
     // The same lookup, mismatch retry and caching as preparation, so both
-    // route the identifier the same way; the cache holds the outcome.
-    await lookupCurrentRegionFrom(identifier);
-    const region = await storage.get(identifier);
-    return region && region.expiresAt > Date.now() ? region : null;
+    // route the identifier the same way. The route it decided on is used
+    // directly, so a storage that keeps nothing (no localStorage, a TTL of
+    // 0) does not change the answer; the cache serves later requests.
+    const { route } = await lookupCurrentRegionFrom(identifier);
+    return route;
   };
 
   const regionIdForIdentifier = async (identifier: string): Promise<string> => {
@@ -75,24 +76,28 @@ export function createAuthFnRegionalClient(
         const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
         const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId, options) : undefined;
         if (retry.ok && retryRegionId) {
-          await saveRegion(storage, cacheTtlMs, options, {
+          const route = {
             identifier,
             regionId: retryRegionId,
             authority: retry.data.authority,
             domain: retry.data.domain,
             cachedAt: Date.now(),
             expiresAt: Date.now() + cacheTtlMs
-          }, lookupRegionId);
-        } else if (retry.ok) {
+          };
+          await saveRegion(storage, cacheTtlMs, options, route, lookupRegionId);
+          return { lookup: retry, answeredBy: mismatch.regionId, route };
+        }
+        if (retry.ok) {
           // The retry named no region: the route cached from the mismatch
           // is dropped, so later requests use the default region.
           await storage.delete(identifier);
+          return { lookup: retry, answeredBy: mismatch.regionId, route: null };
         }
-        return { lookup: retry, answeredBy: mismatch.regionId };
-      } else {
-        await storage.delete(identifier);
+        // The retry failed: the mismatch destination stands.
+        return { lookup: retry, answeredBy: mismatch.regionId, route: mismatch };
       }
-      return { lookup, answeredBy: lookupRegionId };
+      await storage.delete(identifier);
+      return { lookup, answeredBy: lookupRegionId, route: null };
     }
 
     const regionId = concreteRegionId(lookup.data, lookupRegionId, options);
@@ -100,17 +105,18 @@ export function createAuthFnRegionalClient(
       // No region named ('unknown', or a gateway answer): nothing to cache,
       // and a route cached earlier is dropped.
       await storage.delete(identifier);
-      return { lookup, answeredBy: lookupRegionId };
+      return { lookup, answeredBy: lookupRegionId, route: null };
     }
-    await saveRegion(storage, cacheTtlMs, options, {
+    const route = {
       identifier,
       regionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       cachedAt: Date.now(),
       expiresAt: Date.now() + cacheTtlMs
-    }, lookupRegionId);
-    return { lookup, answeredBy: lookupRegionId };
+    };
+    await saveRegion(storage, cacheTtlMs, options, route, lookupRegionId);
+    return { lookup, answeredBy: lookupRegionId, route };
   };
 
   const prepareEmailAuth = async (input: {
