@@ -59,11 +59,6 @@ const MIN_PASSWORD_LENGTH = 12;
 /** Longest new password accepted, so one request cannot make hashing expensive. */
 const MAX_PASSWORD_LENGTH = 1024;
 /**
- * Longest password checked against a stored hash. Earlier versions set no
- * limit, so existing passwords up to this length keep working.
- */
-const MAX_VERIFIED_PASSWORD_LENGTH = 4096;
-/**
  * The scrypt parameter sets AuthFn has written: the current one and the one
  * before AUTH-32. Any other stored set is treated as corrupt rather than
  * evaluated, which bounds the work a stored hash can ask for.
@@ -289,11 +284,20 @@ export async function signInWithPassword(
   // the older, cheaper cost is checked while a current-cost hash of the same
   // password is derived alongside (it becomes the upgrade when the password
   // is right).
-  const storedHash = credential?.passwordHash ?? await dummyPasswordHash();
-  const legacy = isLegacyHash(storedHash);
+  //
+  // Every sign-in does the same work, one scrypt at the current cost and one
+  // at the older one, whatever is stored, whatever the thread pool or
+  // runtime: a current-cost hash is checked next to a dummy legacy check; a
+  // legacy hash is checked next to deriving its current-cost upgrade; no
+  // stored hash means two dummy checks.
+  const password = typeof input.password === 'string' ? input.password : '';
+  const storedHash = credential?.passwordHash;
+  const legacy = storedHash !== undefined && isLegacyHash(storedHash);
   const [valid, upgradedHash] = await Promise.all([
-    verifyPassword(input.password, storedHash),
-    legacy ? derivePasswordHash(boundedPassword(input.password)) : Promise.resolve(undefined)
+    verifyPassword(password, storedHash ?? DUMMY_CURRENT_HASH),
+    legacy
+      ? derivePasswordHash(password)
+      : verifyPassword(password, DUMMY_LEGACY_HASH).then(() => undefined)
   ]);
   if (!user || !credential || !valid) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
@@ -307,8 +311,21 @@ export async function signInWithPassword(
     });
   }
 
+  // The credential may have changed while the hash ran: a reset (the checked
+  // password is no longer the account's) or another sign-in's upgrade (it
+  // still is). The submitted password must match what is stored now.
+  const current = await getPasswordCredentialByUserId(config, user.id);
+  if (!current) {
+    throw new AuthFnInvalidCredentialsError('Invalid email or password');
+  }
+  if (current.passwordHash !== credential.passwordHash) {
+    if (!(await verifyPassword(password, current.passwordHash))) {
+      throw new AuthFnInvalidCredentialsError('Invalid email or password');
+    }
+    return { user, credential: current };
+  }
   if (upgradedHash) {
-    await upgradePasswordHash(config, credential, upgradedHash);
+    await upgradePasswordHash(config, credential, upgradedHash, password);
   }
 
   return { user, credential };
@@ -436,7 +453,7 @@ async function derivePasswordHash(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   const parsed = parseStoredHash(storedHash);
-  if (typeof password !== 'string' || password.length > MAX_VERIFIED_PASSWORD_LENGTH) {
+  if (typeof password !== 'string') {
     // Still spend the hash, so the refusal takes as long as a real check.
     await scryptAsync('', parsed.salt, parsed.expected.length, parsed.options);
     return false;
@@ -460,12 +477,19 @@ function parseStoredHash(storedHash: string): { salt: string; expected: Buffer; 
   const n = Number(nRaw);
   const r = Number(rRaw);
   const p = Number(pRaw);
-  if (!ISSUED_PARAMETER_SETS.has(`${nRaw}:${rRaw}:${pRaw}`) || 128 * n * r > PASSWORD_HASH_MAX_MEMORY) {
+  const expected = Buffer.from(digest ?? '', 'base64url');
+  if (
+    !ISSUED_PARAMETER_SETS.has(`${nRaw}:${rRaw}:${pRaw}`)
+    || 128 * n * r > PASSWORD_HASH_MAX_MEMORY
+    // A short (or empty) digest would let scrypt's equally short output match.
+    || expected.length !== PASSWORD_HASH_KEY_LENGTH
+    || !salt
+  ) {
     throw new AuthFnInternalError('Stored password hash format is invalid');
   }
   return {
-    salt: salt!,
-    expected: Buffer.from(digest!, 'base64url'),
+    salt,
+    expected,
     // Room for 128 * N * r bytes plus scrypt's own overhead.
     options: { N: n, r, p, maxmem: Math.max(PASSWORD_HASH_MAXMEM, 2 * 128 * n * r) },
     n
@@ -484,31 +508,18 @@ function scryptAsync(password: string, salt: string, keyLength: number, options:
   });
 }
 
-let dummyHash: Promise<string> | undefined;
-
-/** A hash of a random password, computed once, for checks with no stored hash. */
-function dummyPasswordHash(): Promise<string> {
-  if (!dummyHash) {
-    const pending = derivePasswordHash(randomBytes(32).toString('base64url'));
-    dummyHash = pending;
-    // A failed derivation is not kept, so the next sign-in tries again.
-    pending.catch(() => {
-      if (dummyHash === pending) {
-        dummyHash = undefined;
-      }
-    });
-  }
-  return dummyHash;
-}
+/**
+ * Stand-ins for a check with no stored hash: they cost one check at their
+ * cost and match no password (an all-zero digest), and need no derivation,
+ * so the first sign-in after start-up costs the same as the others.
+ */
+const DUMMY_DIGEST = Buffer.alloc(PASSWORD_HASH_KEY_LENGTH).toString('base64url');
+const DUMMY_CURRENT_HASH = [PASSWORD_HASH_ALGO, '32768', '8', '3', 'authfn-dummy-salt', DUMMY_DIGEST].join('$');
+const DUMMY_LEGACY_HASH = [PASSWORD_HASH_ALGO, '16384', '8', '1', 'authfn-dummy-salt', DUMMY_DIGEST].join('$');
 
 function isLegacyHash(storedHash: string): boolean {
   const parts = storedHash.split('$');
   return parts.length === 6 && `${parts[1]}:${parts[2]}:${parts[3]}` === LEGACY_PARAMETER_SET;
-}
-
-/** The password as verifyPassword treats it, for deriving the upgrade hash. */
-function boundedPassword(password: unknown): string {
-  return typeof password === 'string' && password.length <= MAX_VERIFIED_PASSWORD_LENGTH ? password : '';
 }
 
 /**
@@ -522,7 +533,8 @@ function boundedPassword(password: unknown): string {
 async function upgradePasswordHash(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   credential: AuthFnPasswordCredentialRecord,
-  upgradedHash: string
+  upgradedHash: string,
+  password: string
 ): Promise<void> {
   let written: number;
   try {
@@ -544,7 +556,9 @@ async function upgradePasswordHash(
       where: [{ field: 'id', operator: 'eq', value: credential.id }],
       namespace: namespace(config)
     });
-    if (!current || current.passwordHash !== credential.passwordHash) {
+    // Another sign-in upgraded it first (the password still matches), or a
+    // reset replaced it (it does not).
+    if (!current || (current.passwordHash !== credential.passwordHash && !(await verifyPassword(password, current.passwordHash)))) {
       throw new AuthFnInvalidCredentialsError('Invalid email or password');
     }
   }

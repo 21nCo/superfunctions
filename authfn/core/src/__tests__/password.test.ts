@@ -499,7 +499,7 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
   it('still accepts an existing password longer than the limit for new ones', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });
-    const long = 'test-password-'.padEnd(2000, 'x');
+    const long = 'test-password-'.padEnd(5000, 'x');
     await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash(long) });
     await expect(signInWithPassword(config, { email: 'ada@example.com', password: long })).resolves.toBeTruthy();
   });
@@ -512,6 +512,49 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     await createPasswordCredential(config, { userId: user.id, passwordHash: expensive });
     await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-strong' }))
       .rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+  });
+
+  it('accepts both of two simultaneous sign-ins to an account still on the older cost', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    const results = await Promise.allSettled([1, 2].map(() =>
+      signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' })));
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+  });
+
+  it('refuses a sign-in whose password was reset while it was being checked', async () => {
+    const base = memoryAdapter({ debug: false });
+    let reads = 0;
+    let resetNow: (() => Promise<void>) | undefined;
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'findOne' && typeof value === 'function') {
+          return async (params: { model: string }) => {
+            // The second credential read is the re-check after the hash: the
+            // reset lands just before it.
+            if (params.model === 'password_credentials' && (reads += 1) === 2 && resetNow) {
+              await resetNow();
+            }
+            return value.call(target, params);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await updatePasswordCredential(config, { userId: user.id, password: 'test-password-current' });
+    reads = 0;
+    resetNow = () => updatePasswordCredential(config, { userId: user.id, password: 'test-password-after-reset' }).then(() => undefined);
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-current' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  });
+
+  it('refuses a stored hash whose digest is not the full length', async () => {
+    const empty = ['scrypt', '32768', '8', '3', 'test-salt', ''].join('$');
+    await expect(verifyPassword('test-password-anything', empty)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
   });
 
   it('refuses a sign-in whose old password was replaced while its hash was being upgraded', async () => {

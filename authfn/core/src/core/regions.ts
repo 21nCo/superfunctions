@@ -274,9 +274,10 @@ export async function buildLookupResult(
   const currentAuthority = normalizeAuthority(input.environment.baseUrl);
   const targetAuthority = resolveLookupAuthorityForRequest(pluginConfig, lookup, input.request, input.environment);
   const continueLocally = lookup.regionId === currentRegionId || currentAuthority === targetAuthority;
-  if (continueLocally) {
+  if (continueLocally && lookup.regionId === currentRegionId) {
     // An account in this region gets the same answer as an unknown
-    // identifier, so the lookup does not tell callers it exists.
+    // identifier, so the lookup does not tell callers it exists. (An account
+    // of another region served from the same authority keeps its region.)
     return {
       identifier,
       regionId: input.environment.regionId ?? pluginConfig.defaultRegionId ?? 'unknown',
@@ -294,7 +295,7 @@ export async function buildLookupResult(
     authority: targetAuthority,
     domain: lookup.domain,
     continueLocally,
-    redirectTo: targetAuthority
+    redirectTo: continueLocally ? undefined : targetAuthority
   };
 }
 
