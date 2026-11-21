@@ -85,7 +85,11 @@ export function createAuthFnRegionalClient(
     return region?.regionId ?? options.defaultRegionId;
   };
 
-  const lookupCurrentRegion = async (identifierInput: string) => {
+  const lookupCurrentRegion = async (identifierInput: string) =>
+    (await lookupCurrentRegionFrom(identifierInput)).lookup;
+
+  /** Looks an identifier up, and reports which region gave the answer. */
+  const lookupCurrentRegionFrom = async (identifierInput: string) => {
     const identifier = normalizeIdentifier(identifierInput);
     const lookupRegionId = currentRegionId;
     const lookup = await clientFor(lookupRegionId).lookupRegion({ identifier });
@@ -105,11 +109,11 @@ export function createAuthFnRegionalClient(
             expiresAt: Date.now() + cacheTtlMs
           }, lookupRegionId);
         }
-        return retry;
+        return { lookup: retry, answeredBy: mismatch.regionId };
       } else {
         await storage.delete(identifier);
       }
-      return lookup;
+      return { lookup, answeredBy: lookupRegionId };
     }
 
     const regionId = concreteRegionId(lookup.data, lookupRegionId);
@@ -117,7 +121,7 @@ export function createAuthFnRegionalClient(
       // No region named ('unknown', or a gateway answer): nothing to cache,
       // and a route cached earlier is dropped.
       await storage.delete(identifier);
-      return lookup;
+      return { lookup, answeredBy: lookupRegionId };
     }
     await saveRegion(storage, cacheTtlMs, options, {
       identifier,
@@ -127,7 +131,7 @@ export function createAuthFnRegionalClient(
       cachedAt: Date.now(),
       expiresAt: Date.now() + cacheTtlMs
     }, lookupRegionId);
-    return lookup;
+    return { lookup, answeredBy: lookupRegionId };
   };
 
   const prepareEmailAuth = async (input: {
@@ -141,7 +145,7 @@ export function createAuthFnRegionalClient(
 
     const selectedRegionId = currentRegionId;
     const identifier = normalizeIdentifier(input.email);
-    const lookup = await lookupCurrentRegion(identifier);
+    const { lookup, answeredBy } = await lookupCurrentRegionFrom(identifier);
     if (!lookup.ok) {
       return lookup;
     }
@@ -157,7 +161,7 @@ export function createAuthFnRegionalClient(
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
-    const answeredRegionId = concreteRegionId(lookup.data, selectedRegionId);
+    const answeredRegionId = concreteRegionId(lookup.data, answeredBy);
     if (input.flow !== 'sign-up' && answeredRegionId) {
       currentRegionId = answeredRegionId;
     }
@@ -344,6 +348,7 @@ function concreteRegionId(lookup: {
   regionId?: string;
   continueLocally?: boolean;
   ownedElsewhere?: boolean;
+  userId?: string;
 }, queriedRegionId?: string): string | undefined {
   const regionId = lookup.regionId;
   if (typeof regionId !== 'string' || regionId === '') {
@@ -352,7 +357,10 @@ function concreteRegionId(lookup: {
   if (regionId === queriedRegionId) {
     return regionId;
   }
-  if (regionId === 'unknown' && lookup.continueLocally !== false && lookup.ownedElsewhere !== true) {
+  // Earlier servers name the user only for a known account, whose region is
+  // then a real one.
+  const namesUser = typeof lookup.userId === 'string' && lookup.userId !== '';
+  if (regionId === 'unknown' && lookup.continueLocally !== false && lookup.ownedElsewhere !== true && !namesUser) {
     return undefined;
   }
   return regionId;
