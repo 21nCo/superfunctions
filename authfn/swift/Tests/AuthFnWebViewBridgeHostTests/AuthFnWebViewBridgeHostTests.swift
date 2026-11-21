@@ -178,6 +178,13 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertTrue(singleSlash.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "app:/index.html"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("about:blank"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("https:/portal.example"))
+        // An entry typed without its scheme is refused (and warned about),
+        // not read as a custom scheme.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("localhost:8080"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("portal.example.com:8443"))
+        // A `://` or '@' in the query is not an authority.
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("app:/index.html?returnTo=https://portal.example&email=user@example.com"), "app://")
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("https://portal.example/?next=https://other.example@x"), "https://portal.example")
     }
 
     func testOriginPolicyWithoutOriginsTrustsNothing() {

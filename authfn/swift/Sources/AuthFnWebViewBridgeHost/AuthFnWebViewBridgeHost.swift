@@ -72,20 +72,20 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     /// normalized as WebKit does (percent escapes decoded, IPv4 and IPv6
     /// literals in canonical form); for other schemes it is kept as given.
     static func parse(_ string: String) -> String? {
-        // An origin has no userinfo. An entry with '@' or a backslash (raw or
-        // escaped) in its authority is refused: Foundation and WebKit can
-        // split such a URL at different places and so read different hosts.
-        if let separator = string.range(of: "://") {
-            let rest = string[separator.upperBound...]
-            let authority = rest[..<(rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex)]
-            if authority.contains("@") || authority.contains("\\") {
-                return nil
-            }
+        // An origin has no userinfo. An entry with '@' or a backslash in its
+        // authority is refused: Foundation and WebKit can split such a URL at
+        // different places and so read different hosts.
+        if let authority = authoritySection(string),
+           authority.contains("@") || authority.contains("\\") {
+            return nil
         }
         guard let parts = splitOrigin(string) else {
             // A custom-scheme URL without an authority (`app:/index.html`)
             // stands for the scheme's hostless origin, as with `app:///`.
-            if let scheme = hostlessURLScheme(string), !isSpecial(scheme), !hostlessSchemes.contains(scheme) {
+            // Only `scheme:/...` counts, so an entry typed without its
+            // scheme (`localhost:8080`) is still refused with the warning.
+            if let scheme = hostlessURLScheme(string), !isSpecial(scheme), !hostlessSchemes.contains(scheme),
+               string.dropFirst(scheme.count + 1).hasPrefix("/") {
                 return key(scheme: scheme, host: "", port: nil)
             }
             return nil
@@ -337,16 +337,26 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return scheme
     }
 
+    /// The text between `scheme://` and the first `/`, `?` or `#`, or nil when
+    /// the URL has no authority. The scheme is the text before the first ':',
+    /// so a `://` later in the path or query is not taken for one.
+    private static func authoritySection(_ string: String) -> Substring? {
+        guard let colon = string.firstIndex(of: ":") else { return nil }
+        let afterColon = string[string.index(after: colon)...]
+        guard afterColon.hasPrefix("//") else { return nil }
+        let rest = afterColon.dropFirst(2)
+        return rest[..<(rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex)]
+    }
+
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
-        guard let separator = string.range(of: "://") else { return nil }
-        let scheme = String(string[..<separator.lowerBound]).lowercased()
+        guard let colon = string.firstIndex(of: ":"), var authority = authoritySection(string) else { return nil }
+        let scheme = String(string[..<colon]).lowercased()
         // A scheme is a letter then letters, digits, '+', '-' or '.', so a
         // nested URL (`blob:https://...`) is not read as an origin.
         guard let first = scheme.first, first.isASCII, first.isLetter,
               scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }) else {
             return nil
         }
-        var authority = string[separator.upperBound...]
         if let end = authority.firstIndex(where: { "/?#".contains($0) }) {
             authority = authority[..<end]
         }
