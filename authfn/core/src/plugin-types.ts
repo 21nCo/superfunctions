@@ -42,6 +42,17 @@ export interface EmailOtpPluginRuntimeConfig {
 }
 export interface ApiKeyPluginConfig extends AuthFnBundledPluginConfig {
   secretPrefix?: string;
+  /**
+   * When set, creating a key needs a cookie session that was signed in within
+   * this many seconds. Sessions issued by a handoff from another session do
+   * not count as a fresh sign-in. Otherwise the request fails with
+   * `AUTHFN_REAUTHENTICATION_REQUIRED` (403).
+   */
+  recentAuthenticationSeconds?: number;
+  /** Expiry applied, in seconds from creation, when a create request omits `expiresAt`. */
+  defaultExpiresInSeconds?: number;
+  /** Longest allowed lifetime in seconds; later `expiresAt` values are rejected. */
+  maxExpiresInSeconds?: number;
 }
 export interface ApiKeyPluginRuntimeConfig {
   /** Clock source used for API key timestamps and expiry checks; primarily useful for tests. */
@@ -72,6 +83,19 @@ export interface TwoFactorPluginRuntimeConfig {
 
 export interface NativeHandoffPluginConfig extends AuthFnBundledPluginConfig {
   codeTtlSeconds?: number;
+  /**
+   * Registers the native-to-web routes (`/handoff/web/start` and
+   * `/handoff/web/consume`). Defaults to true; turn off when no app opens web
+   * pages signed in as the native user.
+   */
+  webHandoff?: boolean;
+  /**
+   * Requires every web handoff to be bound to the app that started it:
+   * `/handoff/web/start` must send `verifierChallenge`, and consume refuses any
+   * code without one. Without this, the caller of `/handoff/web/start` (who
+   * may be an attacker using their own session) decides whether a code is bound.
+   */
+  requireWebHandoffVerifier?: boolean;
 }
 export interface NativeHandoffPluginRuntimeConfig {
   /** Clock source used for native handoff code timestamps and expiry checks; primarily useful for tests. */

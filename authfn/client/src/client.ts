@@ -2,10 +2,13 @@ import { createAuthFnHttpClient } from './http-client.js';
 import { createAuthFnSessionTransportAuth } from './transport-auth-internal.js';
 import type {
   AuthFnClient,
-  AuthFnClientOptions
+  AuthFnClientOptions,
+  AuthFnSocialHandoffClient
 } from './types.js';
 
-export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnClient {
+export function createAuthFnClient(
+  options: AuthFnClientOptions = {}
+): AuthFnClient & AuthFnSocialHandoffClient {
   const http = createAuthFnHttpClient(options);
 
   return {
@@ -98,6 +101,12 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
         method: 'POST',
         path: `/social/disconnect/${encodeURIComponent(input.provider)}`,
         csrf: true
+      }),
+    exchangeSocialHandoff: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/social/handoff/exchange',
+        body: input
       }),
     startNativeHandoff: () =>
       http.requestJson({

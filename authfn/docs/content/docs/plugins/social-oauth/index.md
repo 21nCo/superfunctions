@@ -51,6 +51,10 @@ authApp.createServer({
 ```ts
 interface SocialOAuthPluginConfig {
   defaultHandoffMode?: 'none' | 'session-token';
+  bindBrowserState?: boolean;
+  allowWebSessionTokenHandoff?: boolean;
+  requireHandoffChallenge?: boolean;
+  handoffCodeTtlSeconds?: number;
 }
 
 interface SocialOAuthPluginRuntimeConfig {
@@ -77,6 +81,10 @@ interface AuthFnSocialProviderConfig {
 | Option | Stage | Default | Notes |
 | --- | --- | --- | --- |
 | `defaultHandoffMode` | factory | `'none'` | `'session-token'` lets the callback embed a one-time handoff for native apps. |
+| `bindBrowserState` | factory | `false` | Every sign-in whose callback can set session cookies (redirect or JSON, either handoff mode) sets a short-lived HttpOnly binding cookie at start, one per pending state (`__Host-` on https); the callback refuses a state whose cookie is missing or different (`AUTHFN_OAUTH_STATE_INVALID`). Only code-and-verifier handoffs, whose callback sets no cookies, are unbound, so native flows must send `handoffChallenge` when this is on. |
+| `allowWebSessionTokenHandoff` | factory | `true` | Set `false` so only native (non-http) `returnTo` targets can use `handoffMode: 'session-token'`; a web target then fails with `AUTHFN_VALIDATION_ERROR`. |
+| `requireHandoffChallenge` | factory | `false` | Native session-token handoffs must send `handoffChallenge`; see [Handoff code exchange](#handoff-code-exchange). |
+| `handoffCodeTtlSeconds` | factory | `60` | Lifetime of a one-time social handoff code, in whole seconds from 1 to 3600. |
 | `providers` | `pluginRuntime.socialOAuth` | required | Map of provider id → config. |
 | `fetcher` | `pluginRuntime.socialOAuth` | global `fetch` | Inject a custom fetcher (proxy, instrumentation). |
 | `tokenHttpClient` | `pluginRuntime.socialOAuth` | default | Override the token endpoint client. |
@@ -99,6 +107,7 @@ The plugin mounts the following routes (paths shown relative to the kernel's bas
 | `POST` | `/auth/social/start` | `startSocialOAuth` | Begin a flow. Body: `{ provider, returnTo, callbackMode? }`. |
 | `GET` | `/auth/social/callback/:provider` | `callbackSocialOAuth` | Provider's `redirect_uri` lands here. |
 | `POST` | `/auth/social/callback/:provider` | `callbackSocialOAuthForm` | For Apple's `form_post` response_mode. |
+| `POST` | `/auth/social/handoff/exchange` | `exchangeSocialHandoff` | Exchange a one-time handoff code and its verifier for a bearer session. Body: `{ code, verifier }`. |
 | `POST` | `/auth/social/native/apple/start` | `startNativeAppleSignIn` | Native Apple flow start. |
 | `POST` | `/auth/social/native/apple/complete` | `completeNativeAppleSignIn` | Native Apple flow complete. |
 | `POST` | `/auth/social/disconnect/:provider` | `disconnectSocialOAuth` | Remove a provider's identity from the current user. |
@@ -114,6 +123,10 @@ When the callback fires *and* the response is destined for a native app (because
 The native app then exchanges the code for a session through `POST /auth/handoff/native/exchange`. This avoids cookie storage in browsers that the native wrapper can't share.
 
 See [Plugins → Native handoff](../native-handoff) for the full flow.
+
+## Handoff code exchange
+
+A session token in a redirect URL can be read by any app that registers the same URL scheme. To avoid that, the client keeps a random verifier (43-128 characters) and sends `handoffChallenge`, the base64url SHA-256 of the verifier, to `/social/start` together with `handoffMode: 'session-token'` and a native `returnTo`. The callback then issues no session. It redirects to `returnTo#token=<one-time code>&handoff=code&regionId=...`, and the client exchanges the code with `POST /social/handoff/exchange` (`client.exchangeSocialHandoff({ code, verifier })`). The code is single use, expires after `handoffCodeTtlSeconds`, is stored hashed, and is refused without the matching verifier. The code travels in the `token` fragment parameter so native shells that already forward `token` keep working. Set `requireHandoffChallenge: true` once every client sends a challenge.
 
 ## Schema
 

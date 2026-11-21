@@ -22,6 +22,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OTP_EXPIRED` | 401 | yes | OTP has aged past TTL. |
 | `AUTHFN_OTP_REPLAYED` | 401 | no | OTP was already consumed. |
 | `AUTHFN_API_KEY_REVOKED` | 401 | no | API key has been revoked. |
+| `AUTHFN_REAUTHENTICATION_REQUIRED` | 403 | no | A sensitive action (such as creating an API key with `recentAuthenticationSeconds` set) needs a session signed in more recently; sign in again, then retry. `details.recentAuthenticationSeconds`. |
 | `AUTHFN_SESSION_EXPIRED` | 401 | no | Session past its `expiresAt`. |
 | `AUTHFN_SESSION_REVOKED` | 401 | no | Session was revoked (sign-out, sign-out-everywhere). |
 | `AUTHFN_EMAIL_NOT_VERIFIED` | 403 | yes | Sign-in is gated behind verification; user must verify first. |

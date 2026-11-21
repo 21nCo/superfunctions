@@ -24,6 +24,7 @@ import {
   AuthFnTwoFactorInvalidCodeError,
   AuthFnTwoFactorRequiredError
 } from './errors.js';
+import { CANONICAL_CHALLENGE_ID } from './challenge-id.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
@@ -278,6 +279,11 @@ export async function satisfyTwoFactorChallenge(
   code: string,
   pluginConfig: TwoFactorPluginRuntimeConfig = {}
 ): Promise<SatisfiedTwoFactorChallenge> {
+  if (!CANONICAL_CHALLENGE_ID.test(challengeId)) {
+    throw new AuthFnTwoFactorInvalidCodeError('Two-factor challenge is invalid or expired', {
+      challengeId
+    });
+  }
   const challenge = await config.database.findOne<AuthFnTwoFactorChallengeRecord>({
     model: 'two_factor_challenges',
     where: [{ field: 'id', operator: 'eq', value: challengeId }],
