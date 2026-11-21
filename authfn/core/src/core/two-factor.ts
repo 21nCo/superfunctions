@@ -672,7 +672,6 @@ async function reserveSecondFactorAttempt(
   pluginConfig: TwoFactorPluginRuntimeConfig,
   limits: TwoFactorAttemptLimits
 ): Promise<number> {
-  let now = resolveNow(pluginConfig);
   for (let round = 0; round < ATTEMPT_RESERVATION_ROUNDS; round += 1) {
     const current = await config.database.findOne<AuthFnTwoFactorEnrollmentRecord>({
       model: 'two_factor_enrollments',
@@ -684,7 +683,7 @@ async function reserveSecondFactorAttempt(
     }
     // Read the clock on every round, next to the write, so a lock written
     // after a slow round does not start out already expired.
-    now = resolveNow(pluginConfig);
+    const now = resolveNow(pluginConfig);
     const lockedUntil = current.lockedUntil ? new Date(current.lockedUntil) : null;
     if (lockedUntil && lockedUntil.getTime() > now.getTime()) {
       throw twoFactorLockedError(lockedUntil);

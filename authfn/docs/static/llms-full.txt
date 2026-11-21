@@ -10223,7 +10223,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OAUTH_CALLBACK_INVALID` | 400 | no | OAuth callback parameters are wrong (missing code, error from provider, …). |
 | `AUTHFN_OAUTH_PROVIDER_UNSUPPORTED` | 400 | no | The configured plugin doesn't recognize the provider id. |
 | `AUTHFN_REDIRECT_URI_DISALLOWED` | 400 | no | `returnTo` (or `state.returnTo`) wasn't on the allowlist. |
-| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor enrollment lock (`details.reason: 'enrollment-locked'`). `details.resetAt` is when to try again. |
+| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor enrollment lock (`details.reason: 'enrollment-locked'`). `details.resetAt`, when present, is when to try again; some refusals (for example a compromised-password provider that is rate limiting) carry none. |
 | `AUTHFN_REGION_MISMATCH` | 409 | yes | Request landed on the wrong region. `details.redirectTo`. |
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | Identifier isn't registered to any region (anti-enumeration friendly: usually 200 with a fake answer is preferred — see plugin config). |
 | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | 503 | yes | Canonical identity placement could not be read or atomically updated. Gateway mode fails closed. |
@@ -10268,7 +10268,7 @@ The exhaustive type lives in `authfn/core/src/core/errors.ts`. The full error cl
 | `AUTHFN_INVALID_CREDENTIALS` | Generic "Invalid email or password" — never "user not found". |
 | `AUTHFN_2FA_REQUIRED` | Render the 2FA code input. |
 | `AUTHFN_OTP_INVALID` / `OTP_EXPIRED` / `OTP_REPLAYED` | "That code didn't work. Send a new one." |
-| `AUTHFN_RATE_LIMITED` | Disable the submit button until `details.resetAt`; show a countdown. For the two-factor enrollment lock (`details.reason: 'enrollment-locked'`), keep recovery-code entry available: recovery codes still work during it. When the HTTP rate limiter refuses a two-factor route (`details.scope: 'two-factor'` with a `dimension`), recovery codes are refused too until `resetAt`. |
+| `AUTHFN_RATE_LIMITED` | If `details.resetAt` is present, disable the submit button until then and show a countdown; otherwise show a generic "try again shortly". For the two-factor enrollment lock (`details.reason: 'enrollment-locked'`), keep recovery-code entry available: recovery codes still work during it. When the HTTP rate limiter refuses a two-factor route (`details.scope: 'two-factor'` with a `dimension`), recovery codes are refused too until `resetAt`. |
 | `AUTHFN_REGION_MISMATCH` | The regional client follows `details.redirectTo` automatically — usually invisible. |
 | `AUTHFN_VALIDATION_ERROR` | Render per-field errors from `details.fields`. |
 | `AUTHFN_INTERNAL_ERROR` | Generic apology; log the request id from the response. |
@@ -11364,7 +11364,7 @@ The output is byte-for-byte equivalent to the Node kernel's `auth.openApi()` for
 
 ## Cross-language deployments
 
-A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), sessions are interchangeable: the session cookie / bearer token works against either. The sign-in routes are not all equivalent: the Python kernel does not enforce the TypeScript kernel's two-factor failed-attempt limit or its lock, nor the per-email OTP budget. On a shared database, serve 2FA and OTP verification from the TypeScript kernel, or throttle those Python routes yourself.
+A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), sessions are interchangeable: the session cookie / bearer token works against either. The sign-in routes are not all equivalent: the Python kernel does not enforce the TypeScript kernel's two-factor failed-attempt limit or its lock, nor the per-email OTP budget. On a database shared with the TypeScript kernel, serve 2FA and OTP verification from the TypeScript kernel only: throttling the Python routes does not honour a lock the TypeScript kernel set. A Python-only deployment must throttle those routes itself.
 
 If you go this route, lock the kernel versions on both sides to versions that share the same wire contract. The [changelog](../reference/changelog) documents wire-contract bumps.
 
