@@ -593,7 +593,7 @@ const OTP_EMAIL_SCAN_FLOOR = 100;
  * defaults apply.
  */
 function resolveOtpEmailBudget(
-  config: Pick<AuthFnRuntimeConfig, 'pluginRuntime'>,
+  config: OtpBudgetConfig,
   options: OtpRuntimeOptions
 ): OtpEmailBudget {
   const sources: OtpRuntimeOptions[] = [];
@@ -611,12 +611,14 @@ function resolveOtpEmailBudget(
     sources.push({});
   }
 
-  // Limits the caller passes (a direct call to sendOtpChallenge or
-  // verifyOtpChallenge, or the deprecated factory options) can only tighten
-  // the shared budget: a count is lowered and the window lengthened, never
-  // the reverse, so a caller cannot loosen what the other routes enforce.
-  const fromCaller = (field: OtpEmailBudgetField): number[] =>
-    options[field] === undefined ? [] : [readPositiveInteger(options[field], 0, field)];
+  // Limits set outside pluginRuntime can only tighten the budget: a count is
+  // lowered and the window lengthened, never the reverse. The deprecated
+  // authFnPasswordPlugin({ otp }) limits apply on every route; limits passed
+  // to a direct sendOtpChallenge/verifyOtpChallenge call apply to that call.
+  const tighteners = [readDeprecatedPasswordOtpLimits(config), options];
+  const fromCaller = (field: OtpEmailBudgetField): number[] => tighteners
+    .filter((source) => source[field] !== undefined)
+    .map((source) => readPositiveInteger(source[field], 0, field));
   const configured = (field: OtpEmailBudgetField, fallback: number): number[] =>
     sources.map((source) => readPositiveInteger(source[field], fallback, field));
   const strictest = (field: 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail', fallback: number) =>
@@ -644,18 +646,30 @@ function resolveOtpEmailBudget(
   };
 }
 
+/** Callers narrow the config type; the object they pass is the full config. */
+type OtpBudgetConfig = Pick<AuthFnRuntimeConfig, 'pluginRuntime'> & { plugins?: AuthFnRuntimeConfig['plugins'] };
+
 type OtpEmailBudgetField = 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail' | 'emailAttemptWindowSeconds';
 
 /**
- * Checks the per-email OTP limits when the server is set up, so a bad value
- * fails at startup instead of on every send and verify. `extra` is the
- * deprecated password factory's `otp` options.
+ * The per-email limits from the deprecated `authFnPasswordPlugin({ otp })`
+ * options, which the password plugin publishes as `otpEmailLimits` so that
+ * every OTP route, not only the password ones, applies them.
  */
-export function assertOtpEmailBudgetConfig(
-  config: Pick<AuthFnRuntimeConfig, 'pluginRuntime'>,
-  extra: OtpRuntimeOptions = {}
-): void {
-  resolveOtpEmailBudget(config, extra);
+function readDeprecatedPasswordOtpLimits(config: OtpBudgetConfig): OtpRuntimeOptions {
+  const plugin = config.plugins?.find((entry) => entry.name === 'password') as
+    | { otpEmailLimits?: unknown }
+    | undefined;
+  const limits = plugin?.otpEmailLimits;
+  return limits && typeof limits === 'object' ? limits as OtpRuntimeOptions : {};
+}
+
+/**
+ * Checks the per-email OTP limits when the server is set up, so a bad value
+ * fails at startup instead of on every send and verify.
+ */
+export function assertOtpEmailBudgetConfig(config: OtpBudgetConfig): void {
+  resolveOtpEmailBudget(config, {});
 }
 
 function readPositiveInteger(value: number | undefined, fallback: number, field: string): number {

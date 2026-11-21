@@ -1416,6 +1416,32 @@ describe('authfn otp plugin', () => {
       expect(() => createTestServer(config)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
     });
 
+    it.each([
+      [{ maxFailedAttemptsPerEmail: 2 }, 3],
+      [{ maxFailedAttemptsPerEmail: 1000 }, 4]
+    ])('applies the deprecated password factory limits %j on the email OTP routes too, only to tighten', async (otp, refusedAt) => {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { maxFailedAttemptsPerEmail: 3 });
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { maxFailedAttemptsPerEmail: 3 });
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp })];
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'reset-password', email: 'ada@example.com' });
+      let refused: number | null = null;
+      for (let guess = 1; guess <= 5 && refused === null; guess += 1) {
+        const response = await post('/otp/verify', { purpose: 'reset-password', email: 'ada@example.com', code: '100000' });
+        if (response.status === 429) {
+          refused = guess;
+        }
+      }
+      expect(refused).toBe(refusedAt);
+    });
+
     it('lets a direct caller tighten the per-email limits but not loosen them', async () => {
       const { config } = setup({ maxFailedAttemptsPerEmail: 3 });
       await createUser(config, { primaryEmail: 'ada@example.com' });

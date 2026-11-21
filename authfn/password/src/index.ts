@@ -32,13 +32,26 @@ export type {
 
 export function authFnPasswordPlugin(
   config: PasswordPluginConfig = {}
-): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> {
+): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> & { readonly otpEmailLimits: PasswordOtpEmailLimits } {
   return {
     name: 'password',
+    // Read by core so every OTP route applies these deprecated limits.
+    otpEmailLimits: {
+      maxFailedAttemptsPerEmail: config.otp?.maxFailedAttemptsPerEmail,
+      maxChallengesPerEmail: config.otp?.maxChallengesPerEmail,
+      emailAttemptWindowSeconds: config.otp?.emailAttemptWindowSeconds
+    },
     schema: () => config.schema ?? createPasswordSchema(),
-    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime, config.otp),
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime),
     routes: (ctx) => createPasswordRoutes(ctx, config)
   };
+}
+
+/** Per-email limits from the deprecated `otp` factory options. */
+export interface PasswordOtpEmailLimits {
+  maxFailedAttemptsPerEmail?: number;
+  maxChallengesPerEmail?: number;
+  emailAttemptWindowSeconds?: number;
 }
 
 function createPasswordSchema(): AuthFnSchemaDefinition['schemas'] {
