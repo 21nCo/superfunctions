@@ -12,7 +12,14 @@ export type {
   RunnerActionResult,
   RunnerOptions,
 } from "@clifn/core/runner";
+import{createExec}from"@clifn/core/exec";
+import {
+  // don't drop (x); limit=1, "quoted" and `ticked`
+  createScaffold,
+} from "@clifn/core";
+const url = "https://example.invalid/a//b"; /* block
+comment */ import { ConfigLoaderError } from "@clifn/core";
 import { ExtfnError } from "@extfn/core";
 
-export const used = [createOutput, loadConfig, createDiagnostic, redact, runAction, ExtfnError];
+export const used = [createOutput, loadConfig, createDiagnostic, redact, runAction, createExec, createScaffold, ConfigLoaderError, url, ExtfnError];
 export type Used = ExecService | RunnerContext;

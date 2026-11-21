@@ -47,7 +47,19 @@ describe("@clifn/core consumer contract types", () => {
     expectTypeOf<{ exitCode: number }>().toExtend<RunnerActionResult>();
     expectTypeOf<{ data: unknown }>().toExtend<RunnerActionResult>();
     expectTypeOf<{ exitCode: 1; data: { ok: false }; diagnostics: [] }>().toExtend<RunnerActionResult>();
+    expectTypeOf<RequiredKeys<Exclude<RunnerActionResult, void>>>().toEqualTypeOf<never>();
     expectTypeOf<Exclude<RunnerActionResult, void>["exitCode"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<Exclude<RunnerActionResult, void>["data"]>().toEqualTypeOf<unknown>();
+    expectTypeOf<Exclude<RunnerActionResult, void>["diagnostics"]>().toEqualTypeOf<
+      readonly ReturnType<typeof createDiagnostic>[] | undefined
+    >();
+
+    // extfn's build action returns diagnostics it made with createDiagnostic, in a mutable array.
+    const diagnostics = [createDiagnostic({ code: "EXAMPLE_CODE", severity: "error", message: "example" })];
+    expectTypeOf({ exitCode: 1, diagnostics }).toExtend<RunnerActionResult>();
+    expectTypeOf({ data: { ok: true }, diagnostics: diagnostics as readonly (typeof diagnostics)[number][] }).toExtend<
+      RunnerActionResult
+    >();
   });
 
   it("keeps runAction callable as the extfn and mailfn CLIs call it", () => {

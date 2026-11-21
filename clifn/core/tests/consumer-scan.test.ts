@@ -7,6 +7,11 @@ import { findContractViolations, scanDirectory, scanSource, type ScannedImport }
 
 // Non-goal: dynamic `import()` and `require()` of @clifn/core are not scanned; no consumer uses them at the
 // reference commit.
+//
+// Known limitation (deferred to CLI-3): clifn/core/turbo.json declares the consumer trees as inputs of
+// @clifn/core#test, so a consumer change invalidates its cache, but the root CI planner (ci-plan) schedules
+// @clifn/core#test only when clifn/core or one of its dependencies changes. A consumer-only PR therefore
+// does not run this scan in CI; the next PR that touches @clifn/core does.
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const fixturesDir = fileURLToPath(new URL("./fixtures/consumer-scan", import.meta.url));
@@ -82,6 +87,24 @@ describe("@clifn/core consumer import scan", () => {
           { symbol: "RunnerOptions", typeOnly: true },
         ],
       },
+      {
+        line: 15,
+        statement: "import",
+        specifier: "@clifn/core/exec",
+        symbols: [{ symbol: "createExec", typeOnly: false }],
+      },
+      {
+        line: 16,
+        statement: "import",
+        specifier: "@clifn/core",
+        symbols: [{ symbol: "createScaffold", typeOnly: false }],
+      },
+      {
+        line: 21,
+        statement: "import",
+        specifier: "@clifn/core",
+        symbols: [{ symbol: "ConfigLoaderError", typeOnly: false }],
+      },
     ]);
     expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([]);
   });
@@ -103,10 +126,36 @@ describe("@clifn/core consumer import scan", () => {
     }
   });
 
+  it("fails closed on compact, commented, empty and side-effect forms", () => {
+    const violations = findContractViolations(scanFixture("fail-closed-forms.ts"), CONSUMER_CONTRACT_KEYS);
+
+    expect(violations).toEqual([
+      startingWith('fail-closed-forms.ts:2: "readIntEnv" from "@clifn/core" is not in'),
+      startingWith('fail-closed-forms.ts:3: "createPrompt" from "@clifn/core/prompt" is not in'),
+      startingWith('fail-closed-forms.ts:7: "readNumberEnv" from "@clifn/core/env" is not in'),
+      startingWith('fail-closed-forms.ts:11: `import {} from "@clifn/core/scaffold"` is not a named import'),
+      startingWith('fail-closed-forms.ts:12: `import "@clifn/core/runner";` names "@clifn/core/runner" in a form the consumer scan does not parse'),
+      startingWith('fail-closed-forms.ts:13: "formatDiagnosticsText" from "@clifn/core/diagnostics" is not in'),
+    ]);
+    expect(violations[3]).toContain('"@clifn/core/scaffold" is also not a subpath in');
+  });
+
+  it("reports a specifier the statement expression did not consume", () => {
+    // A listed symbol after a block on the same line is valid at module scope but does not start a line or
+    // follow `;`, so only the fail-closed pass sees it.
+    const imports = scanSource('const ok = 1;\n{} import { createOutput } from "@clifn/core/output";\n', "inline.ts");
+
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('inline.ts:2: `{} import { createOutput } from "@clifn/core/output";` names "@clifn/core/output"'),
+    ]);
+  });
+
   it("fails when a fixture consumer directory holds an unlisted import", () => {
     const imports = scanDirectory(fixturesDir, fixturesDir);
 
-    expect(imports.map((scanned) => scanned.file)).toContain("unlisted-imports.ts");
-    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(5);
+    expect(imports.map((scanned) => scanned.file)).toEqual(
+      expect.arrayContaining(["fail-closed-forms.ts", "unlisted-imports.ts"]),
+    );
+    expect(findContractViolations(imports, CONSUMER_CONTRACT_KEYS)).toHaveLength(11);
   });
 });
