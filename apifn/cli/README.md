@@ -123,7 +123,7 @@ apifn check --write   # rewrite a stale spec instead of failing
 - `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`). The spec is looked up under every path it may be tracked as: the path as given relative to the repository root (a symlinked directory on the way not followed), its canonical spelling and the file a write to it lands on (symlinks followed, dangling ones included), and, when the repository sets `core.ignorecase`, any tracked path equal to one of them under case folding and Unicode normalization. No entry for any of them means a new contract, so the diff is skipped and reported, not failed; several different matching files, a match that is not a regular file, a spec outside the repository or any other git error exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
 - `--allow-breaking` — report breaking changes without failing
-- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes
+- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes. The spec is rewritten only after validation and the base diff, so a run that exits `2` (a base that cannot be loaded or diffed, a report that cannot be written) leaves it as it was
 - `--format <type>` — `text` (default), `json` or `markdown`
 - `--report <path>` — also write the report to a file
 

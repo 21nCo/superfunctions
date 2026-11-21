@@ -767,6 +767,58 @@ describe("apifn check: usage and load errors", () => {
     expect(result.code).toBe(2);
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
+
+  it.each([
+    ["a stale committed spec", "openapi: 3.1.0\n"],
+    ["a missing committed spec", null],
+  ])(
+    "a base spec the differ cannot read exits 2 with --write and leaves %s untouched",
+    async (_label, committed) => {
+      const root = await fixtures();
+      // The base loads (its openapi version is valid) but has `security: [null]` on GET
+      // /users/{id}, an operation the valid head shares, so the differ throws on it.
+      const baseSpec = path.join(await tempDir("apifn-check-base-"), "openapi.yml");
+      expect((await run(["generate", "--output", baseSpec], path.join(root, "invalid-diff"))).code).toBe(0);
+      const dir = path.join(root, "base");
+      if (committed !== null) {
+        await mkdir(path.join(dir, ".apifn"), { recursive: true });
+        await writeFile(path.join(dir, SPEC), committed);
+      }
+
+      const result = await run(["check", "--write", "--base-spec", baseSpec, "--format", "json"], dir);
+      expect(result.code).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Failed to diff against the base spec");
+      if (committed === null) {
+        expect(existsSync(path.join(dir, SPEC))).toBe(false);
+      } else {
+        expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(committed);
+      }
+    }
+  );
+
+  it.each([
+    ["a stale committed spec", "openapi: 3.1.0\n"],
+    ["a missing committed spec", null],
+  ])("a report that cannot be written exits 2 with --write and leaves %s untouched", async (_label, committed) => {
+    const root = await fixtures();
+    const dir = path.join(root, "compatible");
+    if (committed !== null) {
+      await mkdir(path.join(dir, ".apifn"), { recursive: true });
+      await writeFile(path.join(dir, SPEC), committed);
+    }
+    // The report's parent directory is a regular file, so the report write fails.
+    await writeFile(path.join(dir, "not-a-dir"), "x");
+
+    const result = await run(["check", "--write", "--report", path.join("not-a-dir", "report.md")], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("Failed to write report");
+    if (committed === null) {
+      expect(existsSync(path.join(dir, SPEC))).toBe(false);
+    } else {
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(committed);
+    }
+  });
 });
 
 describe("apifn check: report formats", () => {

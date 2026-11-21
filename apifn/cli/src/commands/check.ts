@@ -15,7 +15,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { lstat, mkdir, readFile, readlink, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml, parseDocument, visit, isAlias, isCollection, isPair, isScalar } from "yaml";
 import type { Alias, Node as YamlNode } from "yaml";
@@ -705,6 +705,41 @@ function serializeForPath(generated: OpenAPIDocument, specPath: string): string 
     : serializeSpec(generated);
 }
 
+/**
+ * Writes the --write repair and returns how to undo it: the previous bytes are written back,
+ * or the file the write created is removed (at the destination a symlinked spec points to).
+ */
+async function writeSpecRepair(specPath: string, text: string): Promise<() => Promise<void>> {
+  let previous: Buffer | null;
+  let destination: string;
+  try {
+    destination = await writeDestination(specPath);
+    try {
+      previous = await readFile(destination);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      previous = null;
+    }
+    await mkdir(path.dirname(specPath), { recursive: true });
+    await writeFile(specPath, text, "utf8");
+  } catch (error) {
+    throw new CheckUsageError(`Failed to write spec ${specPath}: ${errorMessage(error)}`);
+  }
+  return async () => {
+    try {
+      if (previous === null) {
+        await unlink(destination);
+      } else {
+        await writeFile(destination, previous);
+      }
+    } catch (error) {
+      throw new CheckUsageError(
+        `Failed to restore spec ${specPath} after an error; it holds the --write repair: ${errorMessage(error)}`
+      );
+    }
+  };
+}
+
 function isMissingPath(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ENOENT" || code === "ENOTDIR";
@@ -936,17 +971,9 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
       driftState = committed.state;
     }
     const drift = driftState !== "none";
-    let written = false;
-    if (drift && options.write) {
-      try {
-        await mkdir(path.dirname(specPath), { recursive: true });
-        await writeFile(specPath, serializeForPath(generated, specPath), "utf8");
-      } catch (error) {
-        throw new CheckUsageError(`Failed to write spec ${specPath}: ${errorMessage(error)}`);
-      }
-      written = true;
-      warnings.push(`Rewrote ${specLabel} from the router (--write).`);
-    } else if (drift) {
+    // The --write repair is published only after the base diff (step 4), once the run is known
+    // to end in a verdict: every exit-2 path leaves the committed spec byte-for-byte unchanged.
+    if (drift && !options.write) {
       const problem = DRIFT_PROBLEMS[driftState];
       failures.push(
         `Committed spec ${specLabel} ${problem}. Run \`apifn check --write\` or \`apifn generate\` and commit it.`
@@ -968,7 +995,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
       failures.push(`Generated spec is invalid (${plural(validationErrors.length, "error")}).`);
     }
 
-    // 4. Diff against the base (loaded before any write, so a load error changes nothing).
+    // 4. Diff against the base (loaded and diffed before any write, so an error changes nothing).
     const headVersion = infoVersion(head);
     const baseVersion = base.doc ? infoVersion(base.doc) : null;
     let diff: CheckReport["diff"] = null;
@@ -984,6 +1011,15 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
         failures.push(`Diff against the base skipped: the generated spec is invalid (${errorMessage(error)}).`);
       }
     }
+
+    // Publish the --write repair now that only a verdict (exit 0 or 1) can follow; a later
+    // exit-2 path (the report write) restores the spec.
+    let restoreSpec: (() => Promise<void>) | undefined;
+    if (drift && options.write) {
+      restoreSpec = await writeSpecRepair(specPath, serializeForPath(generated, specPath));
+      warnings.push(`Rewrote ${specLabel} from the router (--write).`);
+    }
+    const written = restoreSpec !== undefined;
 
     // 5. Version rule (D7).
     const breaking = diff?.breaking ?? [];
@@ -1018,13 +1054,24 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
 
     const rendered = renderReport(report, format);
     if (reportPath !== undefined) {
-      // --write may have just created the spec: check again now that both files can exist.
-      await assertNoWriteAliasing(runFiles, flags);
       try {
-        await mkdir(path.dirname(reportPath), { recursive: true });
-        await writeFile(reportPath, rendered, "utf8");
+        // --write may have just created the spec: check again now that both files can exist.
+        await assertNoWriteAliasing(runFiles, flags);
+        try {
+          await mkdir(path.dirname(reportPath), { recursive: true });
+          await writeFile(reportPath, rendered, "utf8");
+        } catch (error) {
+          throw new CheckUsageError(`Failed to write report ${reportPath}: ${errorMessage(error)}`);
+        }
       } catch (error) {
-        throw new CheckUsageError(`Failed to write report ${reportPath}: ${errorMessage(error)}`);
+        if (restoreSpec) {
+          try {
+            await restoreSpec();
+          } catch (restoreError) {
+            throw new CheckUsageError(`${errorMessage(error)} ${errorMessage(restoreError)}`);
+          }
+        }
+        throw error;
       }
     }
     write(rendered);
