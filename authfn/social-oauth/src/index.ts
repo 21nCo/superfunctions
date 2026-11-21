@@ -590,6 +590,8 @@ function createSocialRoutes(
               connectionId: callbackResult.connectionId
             }
           });
+          // The afterOAuthCallback hook may have changed the target.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
           return redirectWithCookies(
             request,
             appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
@@ -2098,11 +2100,12 @@ function isSameOriginPath(value: string): boolean {
   if (!value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
     return false;
   }
-  // The path must already be in the form a URL parser gives back: dot
-  // segments (`/.//host`, `/%2e//host`) would otherwise be collapsed when the
-  // target is edited and could leave a `//host` redirect.
+  // Dot segments (`/.//host`, `/%2e//host`) collapse when the target is
+  // parsed and edited, and could leave a `//host` redirect, so the parsed
+  // path must still start with a single `/` too.
   const resolved = new URL(value, RELATIVE_RETURN_TARGET_BASE);
-  return `${resolved.pathname}${resolved.search}${resolved.hash}` === value;
+  return resolved.origin === new URL(RELATIVE_RETURN_TARGET_BASE).origin
+    && !resolved.pathname.startsWith('//');
 }
 
 /**

@@ -521,6 +521,7 @@ describe('authfn apple social oauth', () => {
 
     it('accepts a relative path only when it is listed exactly and stays on the site', async () => {
       expect((await start('/post-auth', ['/post-auth'])).status).toBe(200);
+      expect((await start("/post-auth?label=O'Reilly", ["/post-auth?label=O'Reilly"])).status).toBe(200);
       expect((await start('/elsewhere', ['/post-auth'])).status).toBe(400);
       expect((await start('//evil.example/post-auth', ['//evil.example/post-auth'])).status).toBe(400);
       expect((await start('/\\evil.example', ['/\\evil.example'])).status).toBe(400);

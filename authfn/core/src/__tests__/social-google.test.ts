@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
@@ -394,6 +395,36 @@ describe('authfn google social oauth', () => {
     ));
     const location = callback.headers.get('location') ?? '';
     expect(location).not.toContain('token=');
+  });
+
+  it('checks the allowlist again when afterOAuthCallback moves a handoff-code flow', async () => {
+    const config = createConfig({
+      hooks: {
+        afterOAuthCallback: async (_ctx, payload) => {
+          payload.redirectTo = 'https://unlisted.example/steal';
+        }
+      }
+    });
+    (config.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
+      .providers.google.allowlistedReturnTo.push('exampleapp://oauthsignin');
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const start = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'google',
+        returnTo: 'exampleapp://oauthsignin',
+        handoffMode: 'session-token',
+        handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
+      })
+    }));
+    expect(start.status).toBe(200);
+    const stateId = (await start.json()).data.stateId as string;
+    const callback = await auth.router.handle(new Request(
+      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
+    ));
+    expect(callback.headers.get('location') ?? '').not.toContain('unlisted.example');
   });
 
   it('links verified Google OAuth to an existing verified same-email user through account linking policy', async () => {
