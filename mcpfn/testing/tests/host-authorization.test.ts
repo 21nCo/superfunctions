@@ -690,7 +690,7 @@ describe("unvetted-client authorization rejections", () => {
     }
 
     /** A target that sends every authorization error to the requested URI. */
-    function callbackTarget(redirectPolicy?: McpFnRedirectPolicy) {
+    function callbackTarget(redirectPolicy?: McpFnRedirectPolicy, error = "invalid_target") {
       return {
         issuer,
         redirectPolicy,
@@ -698,7 +698,7 @@ describe("unvetted-client authorization rejections", () => {
         request: async (request: Request) => {
           const params = new URL(request.url).searchParams;
           const callback = new URL(params.get("redirect_uri")!);
-          callback.searchParams.set("error", "invalid_target");
+          callback.searchParams.set("error", error);
           callback.searchParams.set("state", params.get("state")!);
           return new Response(null, { status: 302, headers: { location: callback.toString() } });
         },
@@ -858,23 +858,41 @@ describe("unvetted-client authorization rejections", () => {
             responseStatus: 400,
             errorCode: "invalid_client_metadata",
           });
-          const [redirected] = await runHostedAuthorizationRegression({
-            ...callbackTarget(),
-            request: async (request) => {
-              const params = new URL(request.url).searchParams;
-              const callback = new URL(params.get("redirect_uri")!);
-              callback.searchParams.set("error", "invalid_client_metadata");
-              callback.searchParams.set("state", params.get("state")!);
-              return new Response(null, { status: 302, headers: { location: callback.toString() } });
-            },
-          }, [fixture]);
-          expect(redirected).toMatchObject({
-            status: "failed",
-            error: "Invalid-client authorization failures must not redirect",
-          });
+          for (const error of ["invalid_client_metadata", "invalid_target"]) {
+            const [redirected] = await runHostedAuthorizationRegression(
+              callbackTarget(undefined, error),
+              [fixture],
+            );
+            expect(redirected).toMatchObject({
+              status: "failed",
+              error: "Rejected redirect URI must not receive a callback",
+            });
+          }
         }
+        const fixture = rejectionFixture(PRE_REGISTERED);
+        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+        Object.assign(fixture.registration.metadata, { [field]: "code" });
+        const [callback] = await runHostedAuthorizationRegression(callbackTarget(), [fixture]);
+        expect(callback).toMatchObject({
+          status: "failed",
+          error: "Rejected redirect URI must not receive a callback",
+        });
       },
     );
+
+    it("never accepts an invalid_client_metadata error callback", async () => {
+      const fixture = rejectionFixture(PRE_REGISTERED);
+      redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+      fixture.expected.errorCode = "invalid_client_metadata";
+      const [callback] = await runHostedAuthorizationRegression(
+        callbackTarget(undefined, "invalid_client_metadata"),
+        [fixture],
+      );
+      expect(callback).toMatchObject({
+        status: "failed",
+        error: "Invalid-client authorization failures must not redirect",
+      });
+    });
 
     it("never lets another client's registration match an unknown client's redirect", async () => {
       for (const requested of [LOOPBACK, RUNTIME_PORT]) {

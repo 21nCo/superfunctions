@@ -1,7 +1,7 @@
 import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
   matchMcpRedirectUri,
-  normalizeMcpRedirectUri,
+  normalizeMcpClientRegistration,
   type McpFnClientRegistrationSource,
   type McpFnRedirectMatch,
   type McpFnRedirectPolicy,
@@ -506,9 +506,9 @@ function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolea
  * with the authorization server's own matching rule (exact match after
  * normalization, plus RFC 8252 loopback runtime ports unless the policy
  * disables them). Like the server, it applies only to the client the request
- * names, and a registration whose redirect list holds any URI the MCP redirect
- * profile rejects registers nothing. A URI that does not match is never
- * registered.
+ * names, and a registration the server's validation rejects (any malformed
+ * field, including a redirect URI the MCP redirect profile rejects) registers
+ * nothing. A URI that does not match is never registered.
  */
 function registeredRedirectMatch(
   fixture: McpFnHostedAuthorizationCase,
@@ -516,13 +516,9 @@ function registeredRedirectMatch(
 ): McpFnRedirectMatch | undefined {
   const { registration, authorization } = fixture;
   if (authorization.clientId !== registration.clientId) return undefined;
-  const registered = registration.metadata.redirect_uris as unknown;
-  if (!Array.isArray(registered) || !registered.every((uri) => typeof uri === "string")) {
-    return undefined;
-  }
   try {
-    for (const uri of registered) normalizeMcpRedirectUri(uri, policy);
-    return matchMcpRedirectUri(authorization.redirectUri, registered, policy);
+    const client = normalizeMcpClientRegistration({ ...registration, redirectPolicy: policy });
+    return matchMcpRedirectUri(authorization.redirectUri, client.redirectUris, policy);
   } catch {
     // A mismatch or a malformed registration is not a registered redirect.
     return undefined;
