@@ -1,0 +1,25 @@
+datafn/server/src/execution/sync/__tests__/push-capabilities.test.ts
+  s_df6686278ce1d2::t_0eac8b5aa6bafb 2,358,368,391,579,589,1460,1470
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_df6686278ce1d2::t_0eac8b5aa6bafb 2047-2048,2132-2133,2228-2229
+datafn/server/__tests__/security-audit-identity.test.ts
+  s_df6686278ce1d2::t_0eac8b5aa6bafb 361-363
+datafn/server/src/execution/idempotency-db.ts
+  s_df6686278ce1d2::t_0eac8b5aa6bafb 156-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "339efb0e75969b7fb2f3acf35b84d22fc44572ae",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
