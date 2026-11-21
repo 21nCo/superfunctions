@@ -106,6 +106,16 @@ describe('authfn apple social oauth', () => {
       namespace: 'authfn'
     });
     expect(linked?.email).toBe('ada.apple@example.com');
+
+    // The token carries no `email_verified` claim, so the new account's email
+    // is not marked verified.
+    const user = await config.database.findOne({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: String(linked?.userId) }],
+      namespace: 'authfn'
+    });
+    expect(user?.primaryEmail).toBe('ada.apple@example.com');
+    expect(user?.emailVerifiedAt ?? null).toBeNull();
   });
 
   it('rejects callbacks that do not resolve required Apple claims', async () => {

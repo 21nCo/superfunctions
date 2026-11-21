@@ -6600,13 +6600,18 @@ sequenceDiagram
   Browser->>Apple: present sign-in
   User->>Apple: authenticate
   Apple-->>Browser: form_post to /social/callback/apple
-  Browser->>Kernel: POST /social/callback/apple { code, id_token, state }
-  Kernel->>Apple: token exchange
-  Apple-->>Kernel: identity token
+  Browser->>Kernel: POST /social/callback/apple { code, state, [id_token, user] }
+  alt no id_token posted
+    Kernel->>Apple: token exchange for the code
+    Apple-->>Kernel: identity token
+  else id_token posted
+    Kernel->>Apple: fetch signing keys (cached JWKS)
+    Note over Kernel: verify signature, issuer, audience, nonce
+  end
   Kernel-->>Browser: 302 to returnTo + cookies
 ```
 
-The kernel verifies the Apple identity token against `https://appleid.apple.com/auth/keys` (cached JWKS). The token's `sub` becomes `providerAccountId`.
+With the default `response_type=code`, Apple posts a `code` and the kernel exchanges it at Apple's token endpoint for the identity token. If the post also carries an `id_token`, the kernel uses that token instead of exchanging the code, and verifies it against `https://appleid.apple.com/auth/keys` (cached JWKS). Either way the token's `sub` becomes `providerAccountId`. See [Email and verification](#email-and-verification) for where the email comes from.
 
 ## Native iOS / macOS flow
 
@@ -6626,10 +6631,12 @@ sequenceDiagram
   Apple-->>System: identityToken, authorizationCode
   System-->>App: appleIDCredential
   App->>Kernel: POST /social/native/apple/complete { stateId, identityToken, authorizationCode }
-  Kernel->>Apple: token exchange (using clientSecretResolver)
-  Apple-->>Kernel: token set
+  Kernel->>Apple: fetch signing keys (cached JWKS)
+  Note over Kernel: verify signature, issuer, audience (nativeClientIds), nonce
   Kernel-->>App: 200 OK + bearer credential
 ```
+
+The kernel verifies the `identityToken` itself; it does not exchange the `authorizationCode`.
 
 `nativeClientIds` should include the bundle ids that your app may sign in from. Multiple bundle ids are supported (development vs production).
 
