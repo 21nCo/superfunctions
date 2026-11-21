@@ -374,6 +374,19 @@ export function assertNoReportedError(data: JsonRecord, provider: string): void 
 }
 
 /**
+ * Whether a response envelope reports a truncated turn: populated incomplete_details (not
+ * absent, null or `{}`). Any other non-object value is malformed. Shared by every judge of an
+ * envelope: a JSON response, a terminal stream event and a lifecycle frame.
+ */
+export function reportsIncompleteDetails(data: JsonRecord, provider: string): boolean {
+  const details = data.incomplete_details;
+  if (details !== undefined && details !== null && !isRecord(details)) {
+    throw new ProviderError("Responses incomplete_details must be an object", { provider });
+  }
+  return isRecord(details) && Object.keys(details).length > 0;
+}
+
+/**
  * The one terminal status rule for a JSON response and a terminal stream event: a null status
  * is no status, and populated incomplete_details (not absent, null or `{}`) report a truncated
  * turn. With no status the turn is incomplete; beside a completed status it is a contradiction
@@ -381,11 +394,7 @@ export function assertNoReportedError(data: JsonRecord, provider: string): void 
  * returned as it is, for the caller to judge.
  */
 export function terminalStatus(data: JsonRecord, provider: string): unknown {
-  const details = data.incomplete_details;
-  if (details !== undefined && details !== null && !isRecord(details)) {
-    throw new ProviderError("Responses incomplete_details must be an object", { provider });
-  }
-  const truncated = isRecord(details) && Object.keys(details).length > 0;
+  const truncated = reportsIncompleteDetails(data, provider);
   const status = data.status === null ? undefined : data.status;
   if (status === undefined) return truncated ? "incomplete" : undefined;
   if (status === "completed" && truncated) {

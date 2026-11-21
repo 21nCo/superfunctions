@@ -1,4 +1,4 @@
-import { ProviderError } from "../../core/errors.js";
+import { LangFnError, ProviderError } from "../../core/errors.js";
 import type { StreamEvent } from "../../core/types.js";
 import { type BodyErrorState, readStreamLines } from "../stream-lines.js";
 import {
@@ -9,6 +9,7 @@ import {
   parseFunctionCall,
   parseOutputItems,
   parseResponsesResponse,
+  reportsIncompleteDetails,
   responseId,
   responsesError,
   terminalStatus,
@@ -20,19 +21,47 @@ export interface ServerSentEvent {
   data: string;
 }
 
-/** Parse server-sent events: multi-line data, LF, CRLF or CR line endings and comment lines. */
+const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
+
+/** The UTF-8 byte length of a string, without encoding it. */
+function utf8Length(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length
+      && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/**
+ * Parse server-sent events: multi-line data, LF, CRLF or CR line endings and comment lines.
+ * The byte limit (`maxLineBytes`, 1 MiB by default) bounds each line and also each event's
+ * accumulated data (its data lines and the line feeds that join them), so a frame of many
+ * short data lines cannot grow without bound: crossing it is RESPONSE_TOO_LARGE and cancels the
+ * read. An event whose data is empty carries nothing to parse and is not dispatched.
+ */
 export async function* readServerSentEvents(
   body: ReadableStream<Uint8Array>,
   maxLineBytes?: number,
   options: { bodyError?: BodyErrorState } = {},
 ): AsyncIterable<ServerSentEvent> {
+  const maxFrameBytes = maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   let data: string[] = [];
+  let frameBytes = 0;
   let event: string | undefined;
   // Lines split incrementally on LF, CRLF or a bare CR, and the byte limit applies per line.
   for await (const line of readStreamLines(body, maxLineBytes, { crLineBreaks: true, bodyError: options.bodyError })) {
     if (line === "") {
-      if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
+      const joined = data.join("\n");
+      if (joined) yield { ...(event !== undefined ? { event } : {}), data: joined };
       data = [];
+      frameBytes = 0;
       event = undefined;
       continue;
     }
@@ -41,8 +70,14 @@ export async function* readServerSentEvents(
     const field = colon === -1 ? line : line.slice(0, colon);
     let value = colon === -1 ? "" : line.slice(colon + 1);
     if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "data") data.push(value);
-    else if (field === "event") event = value;
+    if (field === "data") {
+      // Leaving the loop by this throw cancels the read (readStreamLines releases the body).
+      frameBytes += utf8Length(value) + (data.length ? 1 : 0);
+      if (frameBytes > maxFrameBytes) {
+        throw new LangFnError("Provider stream event exceeds byte limit", { code: "RESPONSE_TOO_LARGE" });
+      }
+      data.push(value);
+    } else if (field === "event") event = value;
   }
   // An event without its terminating blank line is incomplete and is discarded, as WHATWG
   // server-sent events require.
@@ -60,6 +95,9 @@ interface ArgumentsDone {
 interface AnnouncedEntry {
   type: string;
   id?: string;
+  callId?: string;
+  /** A function call's name, when the announcement carries a non-empty one. */
+  name?: string;
   index?: number;
 }
 
@@ -215,39 +253,174 @@ function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-/** A stated output_index: absent or null is none, anything else a non-negative integer. */
-function outputIndex(value: unknown, event: string, fail: (message: string) => ProviderError): number | undefined {
+/** A stated output_index (or other index): absent or null is none, anything else a non-negative integer. */
+function outputIndex(
+  value: unknown,
+  event: string,
+  fail: (message: string) => ProviderError,
+  field = "output_index",
+): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw fail(`Responses ${event} output_index must be a non-negative integer`);
+    throw fail(`Responses ${event} ${field} must be a non-negative integer`);
   }
   return value;
 }
 
+/** Text a run of output_text deltas streamed, with the part they named. */
+interface StreamedText {
+  itemId?: string;
+  index?: number;
+  contentIndex?: number;
+  text: string;
+}
+
+/**
+ * The terminal answer text not already streamed as deltas, judged per part. Streamed text
+ * belongs to the output_text part its delta named: the output item by item_id and/or
+ * output_index (both must name the same item), and the part by content_index; a delta without
+ * a content_index names all the item's text, and one that names no item names the whole answer.
+ * The text streamed to a part (or run of parts) must be a prefix of that part's terminal text,
+ * else the terminal text contradicts the stream; the rest of each part, and every part never
+ * streamed, is delivered once, in answer order. Text streamed to two overlapping places (for
+ * example located and unlocated deltas) cannot be placed. Streamed text with no terminal
+ * counterpart is a contradiction only when a completed turn supplies its output; a truncated
+ * turn or an omitted output keeps the text already delivered.
+ */
+function undeliveredText(state: {
+  streamed: StreamedText[];
+  output: JsonRecord[];
+  done: DoneEntry[];
+  omitted: boolean;
+  completed: boolean;
+  type: string;
+  fail: (message: string) => ProviderError;
+}): string {
+  const { streamed, output, done, omitted, completed, type, fail } = state;
+  const parts: Array<{ position: number; contentIndex: number; text: string }> = [];
+  output.forEach((item, position) => {
+    if (item.type !== "message" || !Array.isArray(item.content)) return;
+    item.content.forEach((part: unknown, contentIndex: number) => {
+      if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") {
+        parts.push({ position, contentIndex, text: part.text });
+      }
+    });
+  });
+  // The output position a delta names: undefined when it names none, -1 when nothing matches.
+  const locate = ({ itemId, index }: StreamedText): number | undefined => {
+    let byId: number | undefined;
+    let byIndex: number | undefined;
+    if (itemId !== undefined) {
+      byId = output.findIndex((item) => item.id === itemId);
+      if (byId === -1 && !omitted) {
+        // A finished item may carry the id its terminal counterpart (matched by index) omits.
+        const finished = done.find((entry) => entry.item.id === itemId && entry.index !== undefined);
+        if (finished?.index !== undefined && finished.index < output.length) byId = finished.index;
+      }
+    }
+    if (index !== undefined) {
+      if (omitted) {
+        const finished = done.find((entry) => entry.index === index);
+        byIndex = finished ? output.indexOf(finished.item) : -1;
+      } else {
+        byIndex = index < output.length ? index : -1;
+      }
+    }
+    if (byId === -1 || byIndex === -1) return -1;
+    if (byId !== undefined && byIndex !== undefined && byId !== byIndex) {
+      throw fail(`Responses stream text delta item ${itemId} is not at output_index ${index}`);
+    }
+    return byId ?? byIndex;
+  };
+
+  // Each streamed run claims a run of parts; runs naming the same parts are one claim.
+  const claims = new Map<string, { parts: number[]; text: string }>();
+  const owner = new Map<number, string>();
+  for (const run of streamed) {
+    const position = locate(run);
+    let claimed: number[] = [];
+    if (position === undefined) claimed = parts.map((_, at) => at);
+    else if (position !== -1) {
+      parts.forEach((part, at) => {
+        if (part.position === position && (run.contentIndex === undefined || part.contentIndex === run.contentIndex)) claimed.push(at);
+      });
+    }
+    if (!claimed.length) {
+      if (completed && !omitted) throw fail(`Responses ${type} event has no text part for the streamed text`);
+      continue;
+    }
+    const key = claimed.join(",");
+    for (const at of claimed) {
+      if (owner.has(at) && owner.get(at) !== key) throw fail("Responses stream text deltas name one text part in two ways");
+      owner.set(at, key);
+    }
+    const claim = claims.get(key);
+    if (claim) claim.text += run.text;
+    else claims.set(key, { parts: claimed, text: run.text });
+  }
+
+  const delivered = new Array<number>(parts.length).fill(0);
+  for (const claim of claims.values()) {
+    if (!claim.parts.map((at) => parts[at].text).join("").startsWith(claim.text)) {
+      throw fail(`Responses ${type} event text differs from the streamed text`);
+    }
+    let remaining = claim.text.length;
+    for (const at of claim.parts) {
+      delivered[at] = Math.min(remaining, parts[at].text.length);
+      remaining -= delivered[at];
+    }
+  }
+  return parts.map((part, at) => part.text.slice(delivered[at])).join("");
+}
+
 /**
  * On a completed turn every item the stream announced (output_item.added) has finished
- * (output_item.done), matched by its stated output_index, else by its id; a finished item at
- * the same index carries the same id. A finished item is then reconciled with the terminal
- * output, so an announced item can be neither lost nor dropped from a supplied output. Only an
- * announced item with neither an index nor an id cannot be checked. An incomplete turn may stop
- * with items unfinished.
+ * (output_item.done) as the same item, one to one: a finished item answers at most one
+ * announcement. An announcement is located by its stated output_index, else by its id, else by
+ * its call_id; one that states an index finishes at that index, so the same item (by id or
+ * call_id) finished at another index fails. The finished item has the announced type, and the
+ * id, call_id and function name agree wherever both carry one. A finished item is then
+ * reconciled with the terminal output, so an announced item can be neither lost nor replaced.
+ * Only an announcement with no index, id or call_id cannot be checked. An incomplete turn may
+ * stop with items unfinished.
  */
 function assertAnnouncedItemsFinished(
   announced: AnnouncedEntry[],
   done: DoneEntry[],
   fail: (message: string) => ProviderError,
 ): void {
+  const doneIdentity = done.map(({ item }) => ({
+    id: typeof item.id === "string" ? item.id : undefined,
+    callId: item.type === "function_call" && typeof item.call_id === "string" ? item.call_id : undefined,
+  }));
+  const claimed = new Set<number>();
   for (const entry of announced) {
-    const label = entry.id ?? (entry.index !== undefined ? `at output_index ${entry.index}` : "");
-    let finished: DoneEntry | undefined;
-    if (entry.index !== undefined) finished = done.find((candidate) => candidate.index === entry.index);
-    if (!finished && entry.id !== undefined) finished = done.find((candidate) => candidate.item.id === entry.id);
-    if (!finished) {
-      if (entry.index === undefined && entry.id === undefined) continue;
-      throw fail(`Responses completed stream never finished the announced ${entry.type} item ${label}`);
+    const label = entry.callId ?? entry.id ?? (entry.index !== undefined ? `at output_index ${entry.index}` : "");
+    const sameItem = (at: number) => (entry.id !== undefined && doneIdentity[at].id === entry.id)
+      || (entry.callId !== undefined && doneIdentity[at].callId === entry.callId);
+    let at = -1;
+    if (entry.index !== undefined) {
+      at = done.findIndex((candidate) => candidate.index === entry.index);
+      const moved = done.some((candidate, position) => candidate.index !== undefined && candidate.index !== entry.index && sameItem(position));
+      if (moved) {
+        throw fail(`Responses stream finished the announced ${entry.type} item ${label} away from output_index ${entry.index}`);
+      }
+      // A finished item that states no index is located by its identity.
+      if (at === -1) at = done.findIndex((candidate, position) => candidate.index === undefined && sameItem(position));
+    } else if (entry.id !== undefined || entry.callId !== undefined) {
+      at = done.findIndex((_, position) => sameItem(position));
+    } else {
+      continue;
     }
-    const finishedId = typeof finished.item.id === "string" ? finished.item.id : undefined;
-    if (finished.item.type !== entry.type || (entry.id !== undefined && finishedId !== undefined && finishedId !== entry.id)) {
+    if (at === -1) throw fail(`Responses completed stream never finished the announced ${entry.type} item ${label}`);
+    if (claimed.has(at)) throw fail(`Responses stream finished one item for two announced items, including ${entry.type} item ${label}`);
+    claimed.add(at);
+    const finished = done[at].item;
+    const finishedName = typeof finished.name === "string" && finished.name ? finished.name : undefined;
+    if (finished.type !== entry.type
+      || (entry.id !== undefined && doneIdentity[at].id !== undefined && doneIdentity[at].id !== entry.id)
+      || (entry.callId !== undefined && doneIdentity[at].callId !== undefined && doneIdentity[at].callId !== entry.callId)
+      || (entry.type === "function_call" && entry.name !== undefined && finishedName !== undefined && finishedName !== entry.name)) {
       throw fail(`Responses stream finished a different item than the announced ${entry.type} item ${label}`);
     }
   }
@@ -283,11 +456,12 @@ function assertNoFrameError(payload: JsonRecord, flat: boolean, provider: string
  * disagrees with what the stream already reported as finished (see
  * {@link reconcileFinishedItems}), a malformed or different response id, or a returned call
  * reusing a call_id of the sent history (`options.sentCallIds`), a lifecycle frame stating a
- * response status other than queued or in_progress, or a completed turn that never finished an
- * item it announced (see {@link assertAnnouncedItemsFinished}). Terminal answer text not already
- * streamed as deltas is delivered as one `content` event before the tool calls, so a consumer
- * that accumulates `content` sees the whole answer; terminal text that does not extend the
- * streamed text fails. A reported error decides the
+ * response status other than queued or in_progress or reporting incomplete_details, or a
+ * completed turn that never finished, one to one, each item it announced (see
+ * {@link assertAnnouncedItemsFinished}). Terminal answer text not already streamed as deltas is
+ * delivered as one `content` event before the tool calls, so a consumer that accumulates
+ * `content` sees the whole answer; terminal text that does not extend the text streamed to its
+ * part fails (see {@link undeliveredText}). A reported error decides the
  * typed class before any other check. An empty SSE event name or `message` is the default event
  * type and defers to the JSON type. Once the
  * terminal response is validated, the events are released (the body is no longer read) before
@@ -304,8 +478,8 @@ export async function* mapResponsesStream(
   const argumentsDone: ArgumentsDone[] = [];
   const announced: AnnouncedEntry[] = [];
   const announcedIndexes = new Set<number>();
-  // The text already delivered as content deltas; the terminal text must extend it.
-  let streamedText = "";
+  // The text already delivered as content deltas, by the part each delta named.
+  const streamed: StreamedText[] = [];
   let startedId: string | undefined;
   let terminal: StreamEvent[] | undefined;
 
@@ -340,8 +514,24 @@ export async function* mapResponsesStream(
     switch (type) {
       case "response.output_text.delta": {
         if (typeof payload.delta !== "string") throw fail("Responses text delta must be a string");
+        const itemId = payload.item_id;
+        if (itemId !== undefined && itemId !== null && (typeof itemId !== "string" || !itemId)) {
+          throw fail("Responses output_text.delta item_id must be a non-empty string");
+        }
+        const index = outputIndex(payload.output_index, "output_text.delta", fail);
+        const contentIndex = outputIndex(payload.content_index, "output_text.delta", fail, "content_index");
         if (payload.delta) {
-          streamedText += payload.delta;
+          const last = streamed[streamed.length - 1];
+          const located = typeof itemId === "string" ? itemId : undefined;
+          if (last && last.itemId === located && last.index === index && last.contentIndex === contentIndex) last.text += payload.delta;
+          else {
+            streamed.push({
+              ...(located !== undefined ? { itemId: located } : {}),
+              ...(index !== undefined ? { index } : {}),
+              ...(contentIndex !== undefined ? { contentIndex } : {}),
+              text: payload.delta,
+            });
+          }
           yield { type: "content", content: payload.delta, delta: payload.delta };
         }
         break;
@@ -356,13 +546,21 @@ export async function* mapResponsesStream(
       case "response.created":
       case "response.queued":
       case "response.in_progress": {
-        // A lifecycle frame that states a response status states a running one: any other
-        // (failed, completed, incomplete, unknown) contradicts the success path that follows.
-        const lifecycleStatus = isRecord(payload.response) ? payload.response.status : undefined;
-        if (lifecycleStatus !== undefined && lifecycleStatus !== null && lifecycleStatus !== "queued" && lifecycleStatus !== "in_progress") {
-          // A populated error was raised above; a failure that names none is still a failure.
-          if (lifecycleStatus === "failed") throw responsesError(provider, { body: payload, error: {} });
-          throw fail(`Responses ${type} event reports response status ${describeWireValue(lifecycleStatus)}`);
+        // A lifecycle envelope is judged by the rule every envelope uses (terminalStatus): a
+        // stated status is a running one, and any other (failed, completed, incomplete,
+        // unknown, or none beside incomplete_details) contradicts the success path that
+        // follows. A running turn has not been truncated, so populated incomplete_details
+        // fail too; malformed ones fail in terminalStatus.
+        if (isRecord(payload.response)) {
+          const lifecycleStatus = terminalStatus(payload.response, provider);
+          if (lifecycleStatus !== undefined && lifecycleStatus !== "queued" && lifecycleStatus !== "in_progress") {
+            // A populated error was raised above; a failure that names none is still a failure.
+            if (lifecycleStatus === "failed") throw responsesError(provider, { body: payload, error: {} });
+            throw fail(`Responses ${type} event reports response status ${describeWireValue(lifecycleStatus)}`);
+          }
+          if (reportsIncompleteDetails(payload.response, provider)) {
+            throw fail(`Responses ${type} event reports incomplete_details on a running response`);
+          }
         }
         const id = isRecord(payload.response) ? responseId(payload.response, provider) : undefined;
         if (id !== undefined) {
@@ -397,9 +595,12 @@ export async function* mapResponsesStream(
           if (announcedIndexes.has(index)) throw fail(`Responses output_item.added repeats output_index ${index}`);
           announcedIndexes.add(index);
         }
+        const name = identity.type === "function_call" && typeof item.name === "string" && item.name ? item.name : undefined;
         announced.push({
           type: identity.type,
           ...(identity.id !== undefined ? { id: identity.id } : {}),
+          ...(identity.type === "function_call" && identity.callId !== undefined ? { callId: identity.callId } : {}),
+          ...(name !== undefined ? { name } : {}),
           ...(index !== undefined ? { index } : {}),
         });
         break;
@@ -454,13 +655,19 @@ export async function* mapResponsesStream(
         }
         const result = parseResponsesResponse({ ...response, status, output }, provider, options);
         // The answer text reaches the caller as content events whatever the server streamed:
-        // the terminal text not already delivered as deltas is delivered now, once. Terminal
-        // text that does not extend the streamed text is a contradiction.
-        if (!result.message.content.startsWith(streamedText)) {
-          throw fail(`Responses ${type} event text differs from the streamed text`);
-        }
+        // the terminal text not already delivered as deltas is delivered now, once, judged per
+        // text part (see undeliveredText).
+        const undelivered = undeliveredText({
+          streamed,
+          // parseResponsesResponse accepted it: an array of items.
+          output: output as JsonRecord[],
+          done,
+          omitted,
+          completed: status === "completed",
+          type,
+          fail,
+        });
         terminal = [];
-        const undelivered = result.message.content.slice(streamedText.length);
         if (undelivered) terminal.push({ type: "content", content: undelivered, delta: undelivered });
         for (const call of result.toolCalls ?? []) {
           terminal.push({ type: "tool_call", id: call.id, toolName: call.name, args: call.arguments });

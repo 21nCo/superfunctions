@@ -122,13 +122,45 @@ describe("server-sent event parsing", () => {
     expect(await collect(readServerSentEvents(chunked))).toEqual([{ data: "a\nb" }]);
   });
 
-  it("applies the line limit to each CR-separated line, not to the whole event", async () => {
-    const line = `data: ${"x".repeat(20)}\r`;
-    const events = await collect(readServerSentEvents(body(`${line.repeat(4)}\r`), 40));
-    expect(events).toEqual([{ data: Array(4).fill("x".repeat(20)).join("\n") }]);
+  it("applies the byte limit to each CR-separated line and to each event's accumulated data", async () => {
+    const line = `data: ${"x".repeat(15)}\r`;
+    // Two 21-byte lines fit a 40-byte line limit, and their 31 bytes of data (15 + LF + 15) fit
+    // the same event budget.
+    const events = await collect(readServerSentEvents(body(`${line.repeat(2)}\r`), 40));
+    expect(events).toEqual([{ data: Array(2).fill("x".repeat(15)).join("\n") }]);
     await expect(collect(readServerSentEvents(body(`data: ${"x".repeat(50)}\r\r`), 40))).rejects.toMatchObject({
       code: "RESPONSE_TOO_LARGE",
     });
+    // Each line fits, but an event of many data lines crosses the budget: 47 bytes > 40.
+    await expect(collect(readServerSentEvents(body(`${line.repeat(3)}\r`), 40))).rejects.toMatchObject({
+      code: "RESPONSE_TOO_LARGE",
+    });
+    // Multi-byte data counts its UTF-8 bytes: 14 three-byte characters are 42 bytes.
+    await expect(collect(readServerSentEvents(body(`data: ${"\u20ac".repeat(14)}\n\n`), 60))).resolves.toHaveLength(1);
+    await expect(collect(readServerSentEvents(body(`data: ${"\u20ac".repeat(7)}\ndata: ${"\u20ac".repeat(7)}\n\n`), 40)))
+      .rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+  });
+
+  it("stops and cancels an endless event of short data lines at the event budget", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new TextEncoder().encode("data: x\n".repeat(64)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(collect(readServerSentEvents(endless, 1024))).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+    expect(cancelled).toBe(true);
+    // About 1 KiB of "x" lines (2 bytes each with the LF) is read, not the whole body.
+    expect(pulls).toBeLessThan(20);
+  });
+
+  it("does not dispatch an event whose data is empty", async () => {
+    expect(await collect(readServerSentEvents(body("data:\n\nevent: ping\ndata:\n\ndata: real\n\n")))).toEqual([{ data: "real" }]);
   });
 
   it("uses the SSE event name when the JSON payload has no type", async () => {
@@ -818,6 +850,120 @@ describe("stream mapping", () => {
     expect(incomplete.error).toBeUndefined();
     expect(incomplete.seen.map((event) => event.type)).toEqual(["message", "end"]);
     expect(incomplete.seen.at(-1)).toEqual({ type: "end", finish_reason: "length" });
+  });
+
+  it("matches announced items to finished items one to one, by index, id or call_id", async () => {
+    const call = { id: "fc_fixture_1", type: "function_call", status: "completed", call_id: "call_fixture_1", name: "lookup", arguments: "{}" };
+    const second = { id: "fc_fixture_2", type: "function_call", status: "completed", call_id: "call_fixture_2", name: "lookup", arguments: "{}" };
+    const added = (item: Record<string, unknown>, index?: number) => frame({
+      type: "response.output_item.added", ...(index === undefined ? {} : { output_index: index }), item: { ...item, status: "in_progress", arguments: "" },
+    });
+    const done = (item: unknown, index?: number) => frame({ type: "response.output_item.done", ...(index === undefined ? {} : { output_index: index }), item });
+    const terminal = (output: unknown[]) => frame({ type: "response.completed", response: completed(output) });
+    const { id: _id, ...noId } = call;
+    const replacement = { ...noId, call_id: "call_fixture_replacement" };
+    for (const [text, message] of [
+      // The call finished at the announced index is another call (no item id to compare).
+      [added(noId, 0) + done(replacement, 0) + terminal([replacement]), "finished a different item than the announced function_call item"],
+      // Same call_id, different function name.
+      [added(call, 0) + done({ ...call, name: "other" }, 0) + terminal([{ ...call, name: "other" }]), "finished a different item"],
+      // One finished call cannot answer two announcements.
+      [added(call, 0) + added(call) + done(call, 0) + terminal([call]), "finished one item for two announced items"],
+      // A call announced at one index and finished at another.
+      [added(call, 0) + added(second, 1) + done(second, 0) + done(call, 1) + terminal([second, call]), "away from output_index 0"],
+      // Announced by call_id only and never finished.
+      [added({ type: "function_call", call_id: "call_fixture_1", name: "lookup" }) + done(second, 0) + terminal([second]), "never finished the announced function_call item call_fixture_1"],
+    ] as Array<[string, string]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(message);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Located by call_id (no index or id) or finished without a stated index, the call still runs.
+    for (const text of [
+      added({ type: "function_call", call_id: "call_fixture_1", name: "lookup" }) + done(call, 0) + terminal([call]),
+      added(call, 0) + done(call) + terminal([call]),
+      added(call, 0) + added(second, 1) + done(second, 1) + done(call, 0) + terminal([call, second]),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.filter((event) => event.type === "tool_call").length).toBeGreaterThan(0);
+    }
+  });
+
+  it("delivers streamed text per output item and content part", async () => {
+    const parts = (id: string, ...texts: string[]) => ({
+      type: "message", id, role: "assistant", status: "completed",
+      content: texts.map((text) => ({ type: "output_text", text, annotations: [] })),
+    });
+    const delta = (text: string, item_id: string, output_index: number, content_index = 0) =>
+      frame({ type: "response.output_text.delta", item_id, output_index, content_index, delta: text });
+    const contents = (seen: StreamEvent[]) => seen.filter((event) => event.type === "content").map((event) => (event as { delta: string }).delta);
+    const truncated = { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } };
+    for (const [text, expected, types] of [
+      // Streamed, then a completed turn that omits its output and finished no item: the streamed text stands.
+      [delta("hel", "msg_1", 0) + delta("lo", "msg_1", 0) + frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed" } }),
+        ["hel", "lo"], ["content", "content", "message", "end"]],
+      // A truncated turn that omits its output keeps the streamed text.
+      [delta("hel", "msg_1", 0) + frame({ type: "response.incomplete", response: { id: "resp_fixture_mapping", ...truncated } }),
+        ["hel"], ["content", "message", "end"]],
+      // Deltas interleaved across two messages: each is a prefix of its own item, nothing is repeated.
+      [delta("a", "msg_1", 0) + delta("b", "msg_2", 1) + delta("c", "msg_1", 0)
+        + frame({ type: "response.completed", response: completed([parts("msg_1", "ac"), parts("msg_2", "b")]) }),
+        ["a", "b", "c"], ["content", "content", "content", "message", "end"]],
+      // Only the second part streamed: the first, never streamed, is delivered whole.
+      [delta("world", "msg_1", 0, 1) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
+        ["world", "Hello "], ["content", "content", "message", "end"]],
+      // Part of each part streamed: the rest of each, in answer order, once.
+      [delta("He", "msg_1", 0, 0) + delta("wo", "msg_1", 0, 1) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
+        ["He", "wo", "llo rld"], ["content", "content", "content", "message", "end"]],
+    ] as Array<[string, string[], string[]]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(contents(outcome.seen)).toEqual(expected);
+      expect(outcome.seen.map((event) => event.type)).toEqual(types);
+    }
+    for (const [text, message] of [
+      // A part's streamed text must be a prefix of that part, not just of the whole answer.
+      [delta("world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "worl", "d")]) }),
+        "text differs from the streamed text"],
+      [delta("Hello world", "msg_1", 0, 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello ", "world")]) }),
+        "text differs from the streamed text"],
+      // A completed turn that supplies its output must have the streamed part.
+      [delta("gone", "msg_9", 3) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hello")]) }),
+        "has no text part for the streamed text"],
+      // item_id and output_index name different items.
+      [delta("Hi", "msg_2", 0) + frame({ type: "response.completed", response: completed([parts("msg_1", "Hi"), parts("msg_2", "There")]) }),
+        "item msg_2 is not at output_index 0"],
+    ] as Array<[string, string]>) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(message);
+      expect(outcome.seen.every((event) => event.type === "content")).toBe(true);
+    }
+    expect(String((await mapRaw(frame({ type: "response.output_text.delta", content_index: -1, delta: "x" }))).error))
+      .toContain("output_text.delta content_index must be a non-negative integer");
+  });
+
+  it("fails a lifecycle frame that reports incomplete_details, as every envelope judge does", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const terminal = frame({ type: "response.completed", response: completed([call]) });
+    for (const type of ["response.created", "response.queued", "response.in_progress"]) {
+      for (const status of ["in_progress", "queued", null, undefined]) {
+        const outcome = await mapRaw(frame({ type, response: { id: "resp_fixture_mapping", status, incomplete_details: { reason: "max_output_tokens" } } }) + terminal);
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toMatch(/incomplete_details on a running response|reports response status incomplete/);
+        expect(outcome.seen).toEqual([]);
+      }
+      const malformed = await mapRaw(frame({ type, response: { status: "in_progress", incomplete_details: "max_output_tokens" } }) + terminal);
+      expect(String(malformed.error)).toContain("incomplete_details must be an object");
+      expect(malformed.seen).toEqual([]);
+      for (const details of [null, {}]) {
+        const outcome = await mapRaw(frame({ type, response: { id: "resp_fixture_mapping", status: "in_progress", incomplete_details: details } }) + terminal);
+        expect(outcome.error).toBeUndefined();
+        expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+      }
+    }
   });
 
   it("fails a lifecycle frame whose response status is not a running one, before any tool call or end", async () => {
