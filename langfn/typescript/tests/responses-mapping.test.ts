@@ -355,8 +355,8 @@ describe("stream mapping", () => {
     const rejected: Array<[string, string, typeof ProviderError]> = [
       // An unindexed finished item of any type that has an id must be in the terminal output.
       [done(note) + terminal([call]), "does not have the finished message item msg_fixture", ProviderError],
-      // An unindexed call is found by its id first, so a changed id is not hidden by its call_id.
-      [done({ ...call, id: "fc_fixture_first" }) + terminal([call]), "does not have the finished function_call item call_fixture", ProviderError],
+      // An unindexed call found by its call_id keeps its id, so a changed id is not hidden.
+      [done({ ...call, id: "fc_fixture_first" }) + terminal([call]), "replaced the finished item fc_fixture_first", ProviderError],
       // An unindexed call without an id is found by call_id and must be unchanged.
       [done({ ...call, id: undefined }) + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call call_fixture", ProviderError],
       // A terminal output that names one item id, or one call_id, twice is ambiguous.
@@ -371,6 +371,17 @@ describe("stream mapping", () => {
       [done(call, 0) + terminal([call], { error: "upstream failed" }), "Responses request failed: upstream failed", ProviderError],
       [done(call, 0) + terminal([call], { error: { code: "rate_limit_exceeded", message: "slow down" } }), "", RateLimitError],
       [done(call, 0) + terminal([call], { error: { code: 429, message: "slow down" } }), "", RateLimitError],
+      // Finished items go through the same identity validator as the terminal output, with a
+      // present or omitted terminal output.
+      [done({ ...call, id: 7 }, 0) + terminal([call]), "item id must be a string", ProviderError],
+      [done({ ...call, id: 7 }) + terminal([call]), "item id must be a string", ProviderError],
+      [done({ ...call, id: 7 }, 0) + terminal([]), "item id must be a string", ProviderError],
+      [done({ ...note, id: "" }) + terminal([note]), "item id must not be empty", ProviderError],
+      [done({ ...call, call_id: 7 }, 0) + terminal([call]), "item call_id must be a string", ProviderError],
+      [done(call, 0) + terminal([{ ...call, id: 7 }]), "item id must be a string", ProviderError],
+      // No other terminal item may share an identity of a finished item.
+      [done(call, 1) + terminal([call, { ...call, id: undefined, call_id: "call_fixture_other" }]), "moved the finished function_call item call_fixture away from output_index 1", ProviderError],
+      [done(call) + terminal([{ ...call, call_id: "call_fixture_other" }, { ...call, id: undefined }]), "more than one item for the finished function_call item call_fixture", ProviderError],
     ];
     for (const [text, error, type] of rejected) {
       const outcome = await mapRaw(text);
@@ -386,6 +397,11 @@ describe("stream mapping", () => {
       // An unindexed call without an id matched by call_id; an item with neither is exempt.
       done({ ...call, id: undefined }) + terminal([call]),
       done({ ...note, id: undefined }) + done(call) + terminal([call]),
+      // An id only the finished item carries is accepted on a unique match, and an
+      // arguments.done item_id resolves through it.
+      done(call, 0) + argsDone({ item_id: "fc_fixture" }) + terminal([{ ...call, id: undefined }]),
+      done(call) + argsDone({ item_id: "fc_fixture" }) + terminal([{ ...call, id: undefined }]),
+      done({ ...call, id: undefined }, 0) + argsDone({ item_id: "fc_fixture" }) + terminal([call]),
       // Matching snapshots and the omitted or empty fallback.
       done(note, 0) + done(call, 1) + argsDone({ item_id: "fc_fixture", output_index: 1 }) + terminal([note, call], { error: null }),
       done(call, 1) + done(note, 0) + argsDone({ output_index: 1 }) + terminal([]),
@@ -441,6 +457,13 @@ describe("stream mapping", () => {
     }));
     expect(limited.error).toBeInstanceOf(RateLimitError);
     expect(limited.seen).toEqual([]);
+    // A reported error decides the outcome before a conflicting status is judged.
+    const conflictingError = await mapRaw(frame({
+      type: "response.completed",
+      response: { status: "incomplete", error: { code: "rate_limit_exceeded", message: "slow down" }, output: [call] },
+    }));
+    expect(conflictingError.error).toBeInstanceOf(RateLimitError);
+    expect(conflictingError.seen).toEqual([]);
     // Any other explicit status that disagrees with the event is not replaced.
     for (const [type, status] of [["response.incomplete", "completed"], ["response.completed", "incomplete"], ["response.completed", "in_progress"]]) {
       const outcome = await mapRaw(frame({ type, response: { status, output: [call] } }));
@@ -575,6 +598,14 @@ describe("response mapping", () => {
     expect(() => parseResponsesResponse(completed([call, { ...call, arguments: "{\"q\":1}" }]), "fixture")).toThrow(
       "repeats function_call call_id call_fixture",
     );
+    // Item ids are unique in a JSON response as in a stream; distinct parallel calls pass.
+    const second = { ...call, call_id: "call_fixture_second" };
+    expect(() => parseResponsesResponse(completed([{ ...call, id: "fc_fixture" }, { ...second, id: "fc_fixture" }]), "fixture"))
+      .toThrow("Responses output repeats item id fc_fixture");
+    const note = { id: "msg_fixture", type: "message", role: "assistant", content: [{ type: "output_text", text: "Hi." }] };
+    expect(() => parseResponsesResponse(completed([note, note]), "fixture")).toThrow("repeats item id msg_fixture");
+    expect(parseResponsesResponse(completed([{ ...call, id: "fc_fixture" }, { ...second, id: "fc_fixture_second" }]), "fixture").toolCalls)
+      .toHaveLength(2);
     for (const type of ["item_reference", "function_call_output"]) {
       expect(() => parseResponsesResponse(completed([{ type, id: "item_fixture", call_id: "call_fixture", output: "x" }]), "fixture"))
         .toThrow(`must not contain ${type} items`);
@@ -689,6 +720,11 @@ describe("request mapping", () => {
       const message = { role: "assistant", content: "", responsesOutput: [item] } as unknown as ResponsesMessage;
       expect(() => payload([{ role: "user", content: "go" }, message], reasoningProfile)).toThrow(ValidationError);
     }
+    // A replayed output that repeats an item id fails before sending, as it does on parse.
+    const repeated = text({}, { id: "msg_fixture" });
+    const twice = (second: unknown) => ({ role: "assistant", content: "Hi.Hi.", responsesOutput: [repeated, second] }) as unknown as ResponsesMessage;
+    expect(() => payload([{ role: "user", content: "go" }, twice(repeated)], reasoningProfile)).toThrow(ValidationError);
+    expect(() => payload([{ role: "user", content: "go" }, twice({ ...repeated, id: "msg_fixture_second" })], reasoningProfile)).not.toThrow();
   });
 
   it("validates the call ledger across the whole stateless history before sending", () => {

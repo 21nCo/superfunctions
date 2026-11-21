@@ -3,6 +3,7 @@ import type { StreamEvent } from "../../core/types.js";
 import { type BodyErrorState, readStreamLines } from "../stream-lines.js";
 import {
   assertNoReportedError,
+  outputItemIdentities,
   parseFunctionCall,
   parseResponsesResponse,
   responsesError,
@@ -56,10 +57,6 @@ interface DoneEntry {
   index?: number;
 }
 
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
 /**
  * The output a terminal event without one (absent or `[]`) stands for: the finished items, in
  * their stated output_index order when every item states one, otherwise in arrival order.
@@ -74,17 +71,22 @@ function rebuildOutput(done: DoneEntry[]): JsonRecord[] {
 /**
  * Reconcile what the stream already reported as finished with the terminal output, as one
  * ledger, before any tool call, message or end:
- * - A non-empty terminal output names each item id, and each function_call call_id, once;
- *   the finished items do too.
- * - Each finished output_item.done item maps to exactly one terminal item: by its stated
- *   output_index, else by its id, else by its call_id. Every identity both carry (type, id,
- *   call_id) agrees, and a function call keeps its name and arguments. A finished item with
- *   an id or a call_id that maps to nothing fails, whatever its type; only an unindexed item
- *   with neither is exempt. With an omitted output the finished items are the output.
+ * - The finished output_item.done items and a non-empty terminal output go through the same
+ *   identity validator as a JSON response ({@link outputItemIdentities}): ids and call_ids are
+ *   non-empty strings when present, and each item id, and each function_call call_id, is
+ *   named once on each side.
+ * - Each finished item maps to exactly one terminal item: by its stated output_index, else by
+ *   the one terminal item sharing its id or call_id. No other terminal item may share one of
+ *   its identities. Type agrees, every identity both carry (id, call_id) agrees, an identity
+ *   only one side carries is accepted on that unique match, and a function call keeps its name
+ *   and arguments. A finished item with an id or a call_id that maps to nothing fails,
+ *   whatever its type; only an unindexed item with neither is exempt. With an omitted output
+ *   the finished items are the output.
  * - In a completed stream a finished call must be executable, as the terminal output must be.
  * - Each function_call_arguments.done resolves to exactly one function call, whose arguments
- *   it repeats: item_id by id in the ledger, output_index by terminal position (or by stated
- *   index when the output is omitted), and both locators must name the same call.
+ *   it repeats: item_id by the reconciled ids (the terminal item's own and those of the
+ *   finished items mapped to it), output_index by terminal position (or by stated index when
+ *   the output is omitted), and both locators must name the same call.
  */
 function reconcileFinishedItems(state: {
   done: DoneEntry[];
@@ -99,88 +101,93 @@ function reconcileFinishedItems(state: {
   // A malformed terminal output fails in parseResponsesResponse.
   if (!Array.isArray(output)) return;
 
-  const uniqueIdentities = (items: JsonRecord[], what: string) => {
-    const ids = new Set<string>();
-    const callIds = new Set<string>();
-    for (const item of items) {
-      if (nonEmptyString(item.id)) {
-        if (ids.has(item.id)) throw fail(`Responses ${what} repeats item id ${item.id}`);
-        ids.add(item.id);
-      }
-      if (item.type === "function_call" && nonEmptyString(item.call_id)) {
-        if (callIds.has(item.call_id)) throw fail(`Responses ${what} repeats function_call call_id ${item.call_id}`);
-        callIds.add(item.call_id);
-      }
-    }
-  };
-  uniqueIdentities(done.map((entry) => entry.item), "output_item.done");
-  const terminal = output.filter(isRecord);
-  if (!omitted) uniqueIdentities(terminal, "terminal output");
+  const doneIdentities = outputItemIdentities(done.map((entry) => entry.item), provider, "output_item.done");
+  const terminalIdentities = omitted ? doneIdentities : outputItemIdentities(output, provider, "terminal output");
+  // The validator guarantees every item is an object.
+  const ledger = (omitted ? done.map((entry) => entry.item) : output) as JsonRecord[];
+  // The ids each ledger item answers to: its own and those of the finished items mapped to it.
+  const ledgerIds = terminalIdentities.map((identity) => new Set(identity.id !== undefined ? [identity.id] : []));
 
-  const claimed = new Set<JsonRecord>();
-  for (const { item, index } of done) {
-    const label = String(item.call_id ?? item.id ?? index ?? item.type);
-    if (item.type === "function_call" && completed) {
+  const claimed = new Set<number>();
+  done.forEach(({ item, index }, position) => {
+    const identity = doneIdentities[position];
+    const label = identity.callId ?? identity.id ?? (index !== undefined ? String(index) : identity.type);
+    if (identity.type === "function_call" && completed) {
       if (!(item.status === undefined || item.status === null || item.status === "completed")) {
         throw fail("Responses completed stream finished an unfinished function_call");
       }
       parseFunctionCall(item, provider);
     }
-    if (omitted) continue;
-    let match: JsonRecord | undefined;
-    let where = "";
+    if (omitted) return;
+    const where = index !== undefined ? ` at output_index ${index}` : "";
+    // Terminal items that share an identity with the finished item.
+    const sharing: number[] = [];
+    terminalIdentities.forEach((candidate, at) => {
+      if ((identity.id !== undefined && candidate.id === identity.id)
+        || (identity.callId !== undefined && candidate.callId === identity.callId)) sharing.push(at);
+    });
+    let at: number | undefined;
     if (index !== undefined) {
-      const candidate = output[index];
-      match = isRecord(candidate) ? candidate : undefined;
-      where = ` at output_index ${index}`;
-    } else if (nonEmptyString(item.id)) {
-      match = terminal.find((candidate) => candidate.id === item.id);
-    } else if (nonEmptyString(item.call_id)) {
-      match = terminal.find((candidate) => candidate.call_id === item.call_id);
-    } else {
+      if (index < ledger.length) at = index;
+      if (at !== undefined && sharing.some((other) => other !== at)) {
+        throw fail(`Responses terminal output moved the finished ${identity.type} item ${label} away from output_index ${index}`);
+      }
+    } else if (sharing.length > 1) {
+      throw fail(`Responses terminal output has more than one item for the finished ${identity.type} item ${label}`);
+    } else if (sharing.length === 1) {
+      at = sharing[0];
+    } else if (identity.id === undefined && identity.callId === undefined) {
       // Nothing identifies the item, so nothing can be checked against it.
-      continue;
+      return;
     }
-    if (!match || match.type !== item.type) {
-      throw fail(`Responses terminal output does not have the finished ${String(item.type)} item ${label}${where}`);
+    if (at === undefined || terminalIdentities[at].type !== identity.type) {
+      throw fail(`Responses terminal output does not have the finished ${identity.type} item ${label}${where}`);
     }
-    if (claimed.has(match)) throw fail(`Responses terminal output item for ${label} matches two finished items`);
-    claimed.add(match);
-    if (nonEmptyString(match.id) && nonEmptyString(item.id) && match.id !== item.id) {
-      throw fail(`Responses terminal output replaced the finished item ${item.id}${where}`);
+    if (claimed.has(at)) throw fail(`Responses terminal output item for ${label} matches two finished items`);
+    claimed.add(at);
+    const match = ledger[at];
+    const matchIdentity = terminalIdentities[at];
+    if (identity.id !== undefined && matchIdentity.id !== undefined && matchIdentity.id !== identity.id) {
+      throw fail(`Responses terminal output replaced the finished item ${identity.id}${where}`);
     }
-    if (item.type === "function_call"
-      ? match.call_id !== item.call_id || match.name !== item.name || match.arguments !== item.arguments
-      : item.call_id !== undefined && match.call_id !== undefined && match.call_id !== item.call_id) {
-      throw fail(`Responses terminal output changed the finished ${String(item.type)} ${label}`);
+    if ((identity.callId !== undefined && matchIdentity.callId !== undefined && matchIdentity.callId !== identity.callId)
+      || (identity.type === "function_call" && (match.name !== item.name || match.arguments !== item.arguments))) {
+      throw fail(`Responses terminal output changed the finished ${identity.type} ${label}`);
     }
-  }
+    if (identity.id !== undefined) ledgerIds[at].add(identity.id);
+  });
 
   // With an omitted output the finished items are the output; positions are the stated ones.
-  const ledger = omitted ? done.map((entry) => entry.item) : terminal;
-  const atIndex = (index: number): JsonRecord | undefined => {
-    if (!omitted) return isRecord(output[index]) ? output[index] as JsonRecord : undefined;
-    return done.find((entry) => entry.index === index)?.item;
+  const atIndex = (index: number): number => {
+    if (!omitted) return index < ledger.length ? index : -1;
+    return done.findIndex((entry) => entry.index === index);
   };
   for (const final of argumentsDone) {
     if (final.itemId === undefined && final.index === undefined) {
       throw fail("Responses function_call_arguments.done names no item");
     }
     const label = final.itemId ?? String(final.index);
-    let resolved: JsonRecord | undefined;
+    let resolved: number | undefined;
     if (final.itemId !== undefined) {
-      resolved = ledger.find((item) => item.id === final.itemId);
-      if (!resolved) throw fail(`Responses function_call_arguments.done names an unknown item ${final.itemId}`);
+      const itemId = final.itemId;
+      const named: number[] = [];
+      ledgerIds.forEach((ids, at) => {
+        if (ids.has(itemId)) named.push(at);
+      });
+      if (!named.length) throw fail(`Responses function_call_arguments.done names an unknown item ${itemId}`);
+      if (named.length > 1) throw fail(`Responses function_call_arguments.done item ${itemId} names more than one item`);
+      resolved = named[0];
     }
     if (final.index !== undefined) {
       const positioned = atIndex(final.index);
-      if (!positioned) throw fail(`Responses function_call_arguments.done names an unknown output_index ${final.index}`);
-      if (resolved && positioned !== resolved) {
+      if (positioned < 0) throw fail(`Responses function_call_arguments.done names an unknown output_index ${final.index}`);
+      if (resolved !== undefined && positioned !== resolved) {
         throw fail(`Responses function_call_arguments.done item ${final.itemId} is not at output_index ${final.index}`);
       }
       resolved = positioned;
     }
-    if (resolved?.type !== "function_call" || resolved.arguments !== final.arguments) {
+    const target = resolved === undefined ? undefined : ledger[resolved];
+    if (target?.type !== "function_call" || target.arguments !== final.arguments) {
       throw fail(`Responses function_call_arguments.done arguments differ from item ${label}`);
     }
   }
@@ -305,6 +312,10 @@ export async function* mapResponsesStream(
         // The event type fills only an absent status. An explicit failed status raises its typed
         // error in parseResponsesResponse; any other explicit status must match the event, so a
         // response.incomplete event never yields executable calls.
+        // A reported error, on the event or on its response, is the outcome, whatever the
+        // stream finished before it or the status claims.
+        assertNoReportedError(payload, provider);
+        assertNoReportedError(response, provider);
         const eventStatus = type === "response.incomplete" ? "incomplete" : "completed";
         const explicitStatus = response.status;
         if (explicitStatus !== undefined && explicitStatus !== null && explicitStatus !== "failed" && explicitStatus !== eventStatus) {
@@ -314,10 +325,6 @@ export async function* mapResponsesStream(
         if (startedId !== undefined && typeof response.id === "string" && response.id !== startedId) {
           throw fail(`Responses ${type} event is for response ${response.id}, not ${startedId}`);
         }
-        // A reported error, on the event or on its response, is the outcome, whatever the
-        // stream finished before it.
-        assertNoReportedError(payload, provider);
-        assertNoReportedError(response, provider);
         if (status !== "failed") {
           reconcileFinishedItems({ done, argumentsDone, output, omitted, completed: status === "completed", fail, provider });
         }

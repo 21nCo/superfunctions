@@ -64,6 +64,55 @@ const INPUT_ONLY_PART_TYPES = new Set(["input_text", "input_image", "input_file"
 
 const ITEM_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
 
+/** The identities of one Responses output item, validated. */
+export interface OutputItemIdentity {
+  type: string;
+  id?: string;
+  callId?: string;
+}
+
+/**
+ * The one identity validator for Responses output items, wherever they arrive: a JSON
+ * response, a terminal stream event, a finished stream item or a caller replay. An item is an
+ * object with a string type; its id and call_id, when present (not absent or null), are
+ * non-empty strings.
+ */
+export function outputItemIdentity(item: unknown, provider: string): OutputItemIdentity {
+  const fail = (message: string) => new ProviderError(message, { provider });
+  if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
+  const identity: OutputItemIdentity = { type: item.type };
+  for (const [field, key] of [["id", "id"], ["call_id", "callId"]] as const) {
+    const value = item[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string") throw fail(`Responses output item ${field} must be a string`);
+    if (!value) throw fail(`Responses output item ${field} must not be empty`);
+    identity[key] = value;
+  }
+  return identity;
+}
+
+/**
+ * Validate the identities of a list of output items: each item through
+ * {@link outputItemIdentity}, and each item id, and each function_call call_id, named once.
+ */
+export function outputItemIdentities(items: unknown[], provider: string, what = "output"): OutputItemIdentity[] {
+  const fail = (message: string) => new ProviderError(message, { provider });
+  const identities = items.map((item) => outputItemIdentity(item, provider));
+  const ids = new Set<string>();
+  const callIds = new Set<string>();
+  for (const identity of identities) {
+    if (identity.id !== undefined) {
+      if (ids.has(identity.id)) throw fail(`Responses ${what} repeats item id ${identity.id}`);
+      ids.add(identity.id);
+    }
+    if (identity.type === "function_call" && identity.callId !== undefined) {
+      if (callIds.has(identity.callId)) throw fail(`Responses ${what} repeats function_call call_id ${identity.callId}`);
+      callIds.add(identity.callId);
+    }
+  }
+  return identities;
+}
+
 /** Read the text, refusal, function calls and reasoning out of Responses output items. */
 export function parseOutputItems(
   output: unknown,
@@ -77,14 +126,13 @@ export function parseOutputItems(
   const toolCalls: ToolCall[] = [];
   const reasoning: ResponsesReasoningSummary[] = [];
   const replayable: ResponsesOutputItem[] = [];
-  const callIds = new Set<string>();
+  outputItemIdentities(output, provider);
   // Reasoning items at the end of `replayable` that precede the next output item.
   let trailingReasoning = 0;
 
   for (const item of output) {
     if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
     if (INPUT_ONLY_ITEM_TYPES.has(item.type)) throw fail(`Responses output must not contain ${item.type} items`);
-    if (item.id !== undefined && item.id !== null && typeof item.id !== "string") throw fail("Responses output item id must be a string");
     switch (item.type) {
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
@@ -116,10 +164,7 @@ export function parseOutputItems(
           // A completed turn whose call is still unfinished is contradictory: executing the
           // other calls alone, or reporting a normal stop, would hide the lost call.
           if (!isFinishedCall(item)) throw fail("Responses completed response contains an unfinished function_call");
-          const call = parseFunctionCall(item, provider);
-          if (callIds.has(call.id)) throw fail(`Responses output repeats function_call call_id ${call.id}`);
-          callIds.add(call.id);
-          toolCalls.push(call);
+          toolCalls.push(parseFunctionCall(item, provider));
           break;
         }
         // An unfinished call (truncated arguments) is neither executed nor replayed.
