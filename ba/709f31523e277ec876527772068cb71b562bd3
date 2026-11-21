@@ -1,0 +1,39 @@
+.github/workflows/ci.yml
+  s_499ce73c2366cb::t_1cb4049a13fc63 357-359
+.github/workflows/publish-python.yml
+  s_499ce73c2366cb::t_f2e96621e0ffb2 31-35,52-59
+.github/workflows/publish-tag.yml
+  s_499ce73c2366cb::t_5c60b38f47ca7e 31-35,72-83
+scripts/assert-release-ci.mjs
+  s_499ce73c2366cb::t_ea8d0c49bb341f 1-156
+scripts/assert-release-ci.test.mjs
+  s_499ce73c2366cb::t_93988ab8adea4f 1-210
+scripts/assert-release-owner.mjs
+  s_499ce73c2366cb::t_40da7052b645b7 1-141
+scripts/release-gate-workflows.test.mjs
+  s_499ce73c2366cb::t_bbde807a0d8003 1-123
+scripts/resolve-release-tag.mjs
+  s_499ce73c2366cb::t_b5cfcc7b687c49 89-90,94-98
+scripts/assert-release-owner.test.mjs
+  s_499ce73c2366cb::t_d9f4477654f2b3 1-143
+scripts/owners.mjs
+  s_499ce73c2366cb::t_53f12fd76d73e7 14-15,95-117,120-121,129,155
+scripts/owners.test.mjs
+  s_499ce73c2366cb::t_ab29c7c50cc6d2 125-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba709f31523e277ec876527772068cb71b562bd3",
+  "prompts": {},
+  "sessions": {
+    "s_499ce73c2366cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "758081b8-e694-4ebd-86ea-abf7881cf597",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
