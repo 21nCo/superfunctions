@@ -519,8 +519,9 @@ test("a package whose code references another package's files by relative path i
   try {
     const outputs = plan("filefn/core/src/index.ts");
     assert.equal(outputs.full_js, "false");
-    assert.equal(outputs.js_build_filters, "--filter=..../filefn/core --filter=..../otherfn/cli");
-    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../otherfn/cli ${EXCLUDE_DEVFN}`);
+    // otherfn/cli's own code did not change, so it runs alone (an exact filter), without its dependents.
+    assert.equal(outputs.js_build_filters, "--filter=..../filefn/core --filter=./otherfn/cli");
+    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=./otherfn/cli ${EXCLUDE_DEVFN}`);
     // devfn/core depends on clifn/core by manifest and also reads its files; the reference still makes it a seed, since the
     // manifest may pin a published version Turbo treats as external.
     assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/devfn\/core/);
@@ -535,7 +536,7 @@ test("a package whose turbo.json names inputs in another package is selected whe
   });
   try {
     const outputs = plan("devfn/proxy/src/index.ts");
-    assert.equal(outputs.js_build_filters, "--filter=..../devfn/proxy --filter=..../filefn/core");
+    assert.equal(outputs.js_build_filters, "--filter=..../devfn/proxy --filter=./filefn/core");
     // A negated input selects nothing.
     assert.equal(plan("clifn/core/src/index.ts").js_build_filters.includes("filefn/core"), false);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
@@ -548,6 +549,33 @@ test("a dependent that pins an older published version is still passed to Turbo"
   });
   try {
     assert.match(plan("filefn/core/src/index.ts").js_test_filters, /--filter=\.\.\.\.\/pinfn\/app/);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a product-level tsconfig or a referenced file outside every package selects the packages that use it", () => {
+  const { root, plan } = devfnFixture({
+    "filefn/tsconfig.json": "{}\n",
+    "shared/tsconfig.strict.json": "{}\n",
+    "otherfn/cli/tsconfig.json": JSON.stringify({ extends: "../../shared/tsconfig.strict.json" }),
+  });
+  try {
+    assert.equal(plan("filefn/tsconfig.json").js_build_filters, "--filter=..../filefn/core");
+    assert.equal(plan("shared/tsconfig.strict.json").js_build_filters, "--filter=./otherfn/cli");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("an McpFn-pattern change that also selects a package outside McpFn keeps the JavaScript jobs", () => {
+  const { root, plan } = devfnFixture({
+    "mcpfn/core/package.json": JSON.stringify({ name: "@mcpfn/core", scripts: { test: "vitest run" } }),
+    "datafn/server/package.json": JSON.stringify({ name: "@datafn/server", scripts: { test: "vitest run" } }),
+    "datafn/server/src/server.ts": "export {};\n",
+  });
+  try {
+    assert.equal(plan(({ put }) => put("mcpfn/core/src/index.ts", "export {};\n")).mcpfn_only, "true");
+    const outputs = plan("datafn/server/src/server.ts");
+    assert.equal(outputs.run_mcpfn, "true");
+    assert.equal(outputs.mcpfn_only, "false");
+    assert.match(outputs.js_test_filters, /--filter=\.\.\.\.\/datafn\/server/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
