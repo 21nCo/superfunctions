@@ -18,7 +18,7 @@ Every path has exactly one owner repository, and every npm package and Python pr
 - `superfunctions.owners.json` lists everything the public repository owns: top-level directories, root files, release slugs and Python projects. It exists in both repositories. On `dev`, a path or package it does not list is an error.
 - `superfunctions.owners.next.json` exists only on `next` and lists the `next`-owned entries. On `next`, a path it does not list is public-owned.
 - `package-lock.json` and `Package.resolved` are generated: each repository regenerates its own and they are never ported.
-- `node scripts/verify-owners.mjs` checks the manifests against the tree, and `node scripts/verify-public-boundary.mjs` fails when the public tree has a tracked top-level path, a release or workspace package, or a `*fn` import or dependency the public manifest does not allow. CI runs both. The boundary check covers only those rules: it does not look for other `next`-only content in files under allowed directories, or in the history a promotion imports, so review those yourself (see `scripts/promote.md`).
+- `node scripts/verify-owners.mjs` checks the manifests against the tree, and `node scripts/verify-public-boundary.mjs` fails when the public tree has a tracked top-level path or a release or workspace package that `superfunctions.owners.json` does not list, or a `*fn` import or dependency that is neither a public workspace package nor allowed in `scripts/public-boundary.allow.json`. CI runs both. The boundary check covers only those rules: it does not look for other `next`-only content in files under allowed directories, or in the history a promotion imports, so review those yourself (see `scripts/promote.md`).
 
 ### Find a path's owner
 

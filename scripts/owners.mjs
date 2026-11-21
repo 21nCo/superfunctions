@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
@@ -464,29 +464,30 @@ function realPathOr(file) {
   }
 }
 
-/** Whether Node keeps the entry path's symlinks (`--preserve-symlinks-main`, on the command line or in NODE_OPTIONS). */
-function preservesMainSymlinks() {
-  const options = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? "").split(/\s+/)];
-  return options.some((option) => option.replaceAll("_", "-") === "--preserve-symlinks-main");
-}
-
-// Run the command only when this instance is the entry module: never as a side effect of an import, and never from a
-// second instance of this file (a preload under a query or fragment, or a canonical preload of a symlinked entry).
-// Newer Node sets import.meta.main. Otherwise rebuild the entry URL the way Node does (the real path of argv[1],
-// or its absolute path under --preserve-symlinks-main) and compare it with this instance's URL exactly, so a
-// symlinked checkout and macOS's /var -> /private/var still run the command, and only the entry owns the exit status.
-function isMainModule() {
-  if (typeof import.meta.main === "boolean") return import.meta.main;
+// Run the command only from the entry module: never as a side effect of an import, and never from a second instance
+// of this file (a preload under a query or fragment, or a canonical preload of a symlinked entry). Newer Node sets
+// import.meta.main. Otherwise an instance whose real path is argv[1]'s (so a symlinked checkout, macOS's /var ->
+// /private/var and --preserve-symlinks-main all still count) is a candidate. Preloads evaluate before the entry, so the
+// last candidate to register is the entry; it runs once the event loop drains, after every preload, and owns the
+// output and the exit status.
+function isEntryCandidate() {
   if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return false;
-  if (!process.argv[1]) return false;
+  if (!process.argv[1] || /[?#]/.test(import.meta.url)) return false;
   try {
-    const entry = preservesMainSymlinks() ? path.resolve(process.argv[1]) : realpathSync(process.argv[1]);
-    return pathToFileURL(entry).href === import.meta.url;
+    return realpathSync(process.argv[1]) === REAL_MODULE_FILE;
   } catch {
     return false;
   }
 }
 
-if (isMainModule()) {
+const CLI_ENTRY = Symbol.for("superfunctions.owners.cli.entry");
+const runCli = () => {
   process.exitCode = runOwnersCli(process.argv.slice(2));
+};
+
+if (typeof import.meta.main === "boolean") {
+  if (import.meta.main) runCli();
+} else if (isEntryCandidate()) {
+  if (!globalThis[CLI_ENTRY]) process.once("beforeExit", () => globalThis[CLI_ENTRY]());
+  globalThis[CLI_ENTRY] = runCli;
 }

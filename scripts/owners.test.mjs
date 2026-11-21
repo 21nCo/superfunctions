@@ -391,6 +391,11 @@ test("a preload of scripts/owners.mjs under another URL stays inert and the entr
     { args: ["--import", `${url}#`, script] },
     { args: ["--preserve-symlinks-main", "--import", url, ...reset, linked] },
     { args: ["--import", url, ...reset, linked], env: { NODE_OPTIONS: "--preserve-symlinks-main" } },
+    { args: ["--import", url, ...reset, linked], env: { NODE_OPTIONS: '"--preserve-symlinks-main"' } },
+    // Direct runs whose effective symlink setting differs from what a flag scan would see.
+    { args: [linked], env: { NODE_OPTIONS: '"--preserve-symlinks-main"' } },
+    { args: ["--preserve-symlinks-main", "--no-preserve-symlinks-main", linked] },
+    { args: ["--title=--preserve-symlinks-main", linked] },
   ];
   for (const { args, env } of runs) {
     const options = { encoding: "utf8", env: { ...process.env, ...env } };
