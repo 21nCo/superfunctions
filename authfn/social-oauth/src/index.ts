@@ -576,6 +576,16 @@ function createSocialRoutes(
             buildHookContext(ctx.config, request, runtime, user.id),
             completion
           );
+          // The hook may have changed the target, so it is checked again with
+          // the policies /social/start applied, before the flow is reported
+          // complete. A refused code never leaves the server.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo as string | undefined,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            handoffChallenge
+          });
           await emitAuthEvent(ctx.config, {
             type: 'authfn.oauth.completed',
             requestId,
@@ -589,15 +599,6 @@ function createSocialRoutes(
               handoffMode: 'session-token',
               connectionId: callbackResult.connectionId
             }
-          });
-          // The afterOAuthCallback hook may have changed the target, so it is
-          // checked again with the policies /social/start applied.
-          assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
-          assertAllowedHandoff(config, {
-            returnTo: completion.redirectTo as string | undefined,
-            callbackMode: 'redirect',
-            handoffMode: 'session-token',
-            handoffChallenge
           });
           return redirectWithCookies(
             request,
@@ -636,6 +637,19 @@ function createSocialRoutes(
           buildHookContext(ctx.config, request, runtime, user.id, issued.session),
           completion as unknown as Record<string, unknown>
         );
+        if (completion.callbackMode === 'redirect') {
+          // The hook may have changed the target, so the allowlist and the
+          // handoff policy are checked again before the flow is reported
+          // complete. A refused session's token and cookies never leave the
+          // server.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo,
+            callbackMode: completion.callbackMode,
+            handoffMode: completion.handoffMode,
+            handoffChallenge
+          });
+        }
 
         await emitAuthEvent(ctx.config, {
           type: 'authfn.oauth.completed',
@@ -655,15 +669,6 @@ function createSocialRoutes(
         });
 
         if (completion.callbackMode === 'redirect') {
-          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
-          // The afterOAuthCallback hook may have changed the target, so the
-          // handoff policy is checked again against where the session goes.
-          assertAllowedHandoff(config, {
-            returnTo: completion.redirectTo,
-            callbackMode: completion.callbackMode,
-            handoffMode: completion.handoffMode,
-            handoffChallenge
-          });
           return redirectWithCookies(
             request,
             completion.handoffMode === 'session-token'
