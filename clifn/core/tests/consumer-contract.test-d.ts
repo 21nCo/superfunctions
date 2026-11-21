@@ -170,18 +170,20 @@ describe("@clifn/core consumer contract types", () => {
     createDiagnostic({ code: "EXTFN_BUILD", severity: "error", message: "failed", path: "src", details: { target: "chrome" } });
     expectTypeOf(readStringEnv("EXTFN_PACKAGE_OUT_DIR", { defaultValue: "artifacts", env: {} })).toEqualTypeOf<string>();
     expectTypeOf(createScaffold).returns.toEqualTypeOf<ScaffoldService>();
-    // devfn's init writes its config file (a user-chosen root .ts name) and fails when it already exists.
+    // devfn's init writes its config file (a user-chosen root .ts name, rendered content) under the
+    // caller's cwd and fails when it already exists; all three are general strings there, so they are here.
     const scaffold = {} as ScaffoldService;
     const configName: string = "devfn.config.ts";
+    const content: string = "export default {};";
+    const cwd: string = "/repo";
     expectTypeOf(
-      scaffold.apply([{ kind: "write-file", path: configName, content: "export default {};", ifExists: "error" }], {
-        cwd: "/repo",
-      }),
+      scaffold.apply([{ kind: "write-file", path: configName, content, ifExists: "error" }], { cwd }),
     ).resolves.toExtend<{ written: string[]; skipped: string[] }>();
     expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["ifExists"]>().toEqualTypeOf<
       "error" | "skip" | "overwrite" | undefined
     >();
     expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["path"]>().toEqualTypeOf<string>();
+    expectTypeOf<Extract<ScaffoldOperation, { kind: "write-file" }>["content"]>().toEqualTypeOf<string>();
   });
 
   it("adds no required member to the exported service interfaces (D2)", () => {

@@ -4,7 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CONSUMER_CONTRACT_KEYS, CONSUMER_PACKAGE_DIRS } from "./consumer-contract.table.js";
-import { compareSourcePaths, findContractViolations, scanDirectory, scanSource, type ScannedImport } from "./consumer-import-scanner.js";
+import {
+  CLIFN_IMPORT_STATEMENT,
+  compareSourcePaths,
+  findContractViolations,
+  scanDirectory,
+  scanSource,
+  type ScannedImport,
+} from "./consumer-import-scanner.js";
 
 // Non-goal: dynamic `import()` and `require()` of @clifn/core are not scanned; no consumer uses them at the
 // reference commit.
@@ -230,6 +237,20 @@ describe("@clifn/core consumer import scan", () => {
       startingWith('indexed.ts:2: "createCredentialStore" from "@clifn/core" is not in'),
     ]);
 
+    // A string, parenthesized or no-substitution template index names the same member, listed or not.
+    const indexForms = ['["NAME"]', '[("NAME")]', "[`NAME`]", "[(`NAME`)]"];
+    for (const index of indexForms) {
+      const listed = scanSource(`type T = (typeof import("@clifn/core/output"))${index.replace("NAME", "createOutput")};\n`, "index.ts");
+      expect(listed.map(({ specifier, symbols }) => ({ specifier, symbols: symbols.map((s) => s.symbol) }))).toEqual([
+        { specifier: "@clifn/core/output", symbols: ["createOutput"] },
+      ]);
+      expect(findContractViolations(listed, CONSUMER_CONTRACT_KEYS)).toEqual([]);
+      const unlisted = scanSource(`\ntype T = (typeof import("@clifn/core/output"))${index.replace("NAME", "OutputOptions")};\n`, "index.ts");
+      expect(findContractViolations(unlisted, CONSUMER_CONTRACT_KEYS)).toEqual([
+        startingWith('index.ts:2: "OutputOptions" from "@clifn/core/output" is not in'),
+      ]);
+    }
+
     const jsDoc = scanSource('/** @type {import("@clifn/core/output").OutputOptions} */\nlet options;\n', "doc.js");
     expect(findContractViolations(jsDoc, CONSUMER_CONTRACT_KEYS)).toEqual([
       startingWith('doc.js:1: "OutputOptions" from "@clifn/core/output" is not in'),
@@ -263,6 +284,31 @@ describe("@clifn/core consumer import scan", () => {
     ]);
   });
 
+  it("treats comment text before the end of the file as trivia and still checks a trailing @import tag", () => {
+    const prose = [
+      "export const example = 1;",
+      "/** @example",
+      ' * import { createOutput } from "@clifn/core/output"',
+      ' * export { readIntEnv } from "@clifn/core"',
+      " */",
+      '// import { createPrompt } from "@clifn/core/prompt"',
+    ].join("\n");
+    expect(scanSource(prose, "prose.ts")).toEqual([]);
+
+    const tag = (symbol: string): string => `export const example = 1;\n/** @import { ${symbol} } from "@clifn/core/runner" */\n`;
+    const listed = scanSource(tag("RunnerOptions"), "trailing.js");
+    expect(listed.map(({ line, specifier, symbols }) => ({ line, specifier, symbols }))).toEqual([
+      { line: 2, specifier: "@clifn/core/runner", symbols: [{ symbol: "RunnerOptions", typeOnly: true }] },
+    ]);
+    expect(findContractViolations(listed, CONSUMER_CONTRACT_KEYS)).toEqual([]);
+    expect(findContractViolations(scanSource(tag("OutputOptions"), "trailing.js"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('trailing.js:2: "OutputOptions" from "@clifn/core/runner" is not in'),
+    ]);
+
+    // A runtime dynamic import() stays a non-goal wherever it sits.
+    expect(scanSource('export const lazy = () => import("@clifn/core/prompt");\n/** trailing */\n', "lazy.ts")).toEqual([]);
+  });
+
   it("reports a statement match the parser does not read as a module reference", () => {
     const imports = scanSource('let o = { export { readIntEnv } from "@clifn/core" };\n', "malformed.ts");
 
@@ -271,20 +317,33 @@ describe("@clifn/core consumer import scan", () => {
     ]);
   });
 
-  it("scans pathological input in bounded time", () => {
-    const inputs = [
-      `import ${" ".repeat(200_000)}`,
-      `import {${"a,".repeat(100_000)}`,
-      "import { a } from '".repeat(20_000),
-      `export type${" ".repeat(200_000)}{`,
-      `import * ${" ".repeat(200_000)}fro`,
-    ];
-    for (const input of inputs) {
-      const started = performance.now();
+  // Each input gets its own test and its own budgets: the statement expression alone must stay linear (it is what
+  // could backtrack), and a whole scan, mostly parser time, must finish well inside the per-test timeout even when
+  // the six-workspace run loads the machine.
+  const pathologicalInputs: ReadonlyArray<readonly [name: string, input: string]> = [
+    ["an unterminated import", `import ${" ".repeat(200_000)}`],
+    ["an unterminated named list", `import {${"a,".repeat(100_000)}`],
+    ["repeated unterminated specifiers", "import { a } from '".repeat(20_000)],
+    ["an unterminated type export", `export type${" ".repeat(200_000)}{`],
+    ["an unterminated namespace import", `import * ${" ".repeat(200_000)}fro`],
+  ];
+  const STATEMENT_BUDGET_MS = 1_000;
+  const SCAN_BUDGET_MS = 5_000;
+
+  it.each(pathologicalInputs)(
+    "scans %s in bounded time",
+    (_name, input) => {
+      const pattern = new RegExp(CLIFN_IMPORT_STATEMENT.source, CLIFN_IMPORT_STATEMENT.flags);
+      let started = performance.now();
+      expect([...input.matchAll(pattern)]).toEqual([]);
+      expect(performance.now() - started).toBeLessThan(STATEMENT_BUDGET_MS);
+
+      started = performance.now();
       scanSource(input, "large.ts");
-      expect(performance.now() - started).toBeLessThan(5_000);
-    }
-  });
+      expect(performance.now() - started).toBeLessThan(SCAN_BUDGET_MS);
+    },
+    4 * (STATEMENT_BUDGET_MS + SCAN_BUDGET_MS),
+  );
 
   it("keeps each statement to its own symbols across export lists, comments and literals", () => {
     const violations = findContractViolations(scanFixture("statement-boundary-forms.ts"), CONSUMER_CONTRACT_KEYS);

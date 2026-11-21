@@ -135,9 +135,14 @@ interface ParsedFile {
   readonly literals: Array<readonly [number, number]>;
 }
 
+function unwrapParentheses(node: ts.TypeNode): ts.TypeNode {
+  return ts.isParenthesizedTypeNode(node) ? unwrapParentheses(node.type) : node;
+}
+
 /**
- * A qualifier-less inline module type names one export only through a string-literal index,
- * `(typeof import("..."))["A"]`, through any parentheses; every other use names the whole module.
+ * A qualifier-less inline module type names one export only through a string index, `(typeof import("..."))["A"]`.
+ * Parentheses around the object or the index and a no-substitution template index (`` [`A`] ``) are the same
+ * index; every other use names the whole module.
  */
 function indexedMember(node: ts.ImportTypeNode, sourceFile: ts.SourceFile): Partial<CollectedReference> {
   let object: ts.Node = node;
@@ -145,13 +150,11 @@ function indexedMember(node: ts.ImportTypeNode, sourceFile: ts.SourceFile): Part
     object = object.parent;
   }
   const access = object.parent;
-  if (
-    ts.isIndexedAccessTypeNode(access) &&
-    access.objectType === object &&
-    ts.isLiteralTypeNode(access.indexType) &&
-    ts.isStringLiteral(access.indexType.literal)
-  ) {
-    return { symbols: [{ symbol: access.indexType.literal.text, typeOnly: true }] };
+  if (ts.isIndexedAccessTypeNode(access) && access.objectType === object) {
+    const index = unwrapParentheses(access.indexType);
+    if (ts.isLiteralTypeNode(index) && ts.isStringLiteralLike(index.literal)) {
+      return { symbols: [{ symbol: index.literal.text, typeOnly: true }] };
+    }
   }
   return { unrecognized: normalized(node.getText(sourceFile)) };
 }
@@ -237,47 +240,40 @@ function insideLiteral(literals: ParsedFile["literals"], offset: number): boolea
 }
 
 /**
- * Replaces every comment the TypeScript parser sees with spaces, keeping newlines and all string,
- * template, regular expression and JSX text content, so a comment cannot hide or break a statement.
+ * Keeps only the text of the tokens the TypeScript parser reads and replaces everything between them (whitespace,
+ * every comment, JSDoc and the hashbang) with spaces, keeping newlines and offsets. String, template, regular
+ * expression and JSX text tokens keep their content, so a comment cannot hide or break a statement, and comment
+ * text, including the trivia before the end-of-file token, is never read as code.
  */
 export function blankComments(source: string, file = "source.ts"): string {
   return blankParsedComments(parse(source, file));
 }
 
+function isJsDocNode(node: ts.Node): boolean {
+  return node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode;
+}
+
 function blankParsedComments(sourceFile: ts.SourceFile): string {
   const text = sourceFile.text;
-  const out = text.split("");
-  const blank = (range: { readonly pos: number; readonly end: number }): void => {
-    for (let index = range.pos; index < range.end; index += 1) {
-      if (out[index] !== "\n" && out[index] !== "\r") {
-        out[index] = " ";
-      }
+  const out = Array.from({ length: text.length }, (_, index) => (text[index] === "\n" || text[index] === "\r" ? text[index] : " "));
+  const keep = (start: number, end: number): void => {
+    for (let index = start; index < end; index += 1) {
+      out[index] = text[index];
     }
   };
   const visit = (node: ts.Node): void => {
-    if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode) {
-      return;
-    }
-    const children = node.getChildren(sourceFile);
+    // A JSDoc comment is attached to the node it documents (the end-of-file token included) but is trivia.
+    const children = node.getChildren(sourceFile).filter((child) => !isJsDocNode(child));
     if (children.length > 0) {
       children.forEach(visit);
-      return;
+    } else if (node.kind === ts.SyntaxKind.JsxText || node.kind === ts.SyntaxKind.JsxTextAllWhiteSpaces) {
+      // JSX text is content from its first character: a `//` inside it is not a comment.
+      keep(node.pos, node.end);
+    } else {
+      keep(node.getStart(sourceFile), node.end);
     }
-    // JSX text is content, not trivia: a `//` inside it is not a comment.
-    if (node.kind === ts.SyntaxKind.JsxText || node.kind === ts.SyntaxKind.JsxTextAllWhiteSpaces) {
-      return;
-    }
-    // Comments before the first newline are trailing ranges and the rest leading ranges; together they
-    // are every comment in the trivia before this token.
-    ts.getTrailingCommentRanges(text, node.pos)?.forEach(blank);
-    ts.getLeadingCommentRanges(text, node.pos)?.forEach(blank);
   };
   visit(sourceFile);
-  // A hashbang line is trivia too; blank it so its text is never read as a statement.
-  const hashbang = ts.getShebang(text);
-  if (hashbang !== undefined) {
-    blank({ pos: 0, end: hashbang.length });
-  }
   return out.join("");
 }
 
