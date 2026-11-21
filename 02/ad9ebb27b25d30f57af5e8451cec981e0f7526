@@ -1,0 +1,31 @@
+datafn/server/__tests__/security-audit-read-policy.test.ts
+  s_df6686278ce1d2::t_fa2b9ec89ae903 381-402
+datafn/server/src/execution/read-policy-results.ts
+  s_df6686278ce1d2::t_c34efa469593c3 64-66,106-109,117-119,122-126,135
+datafn/server/src/execution/search/access.ts
+  s_df6686278ce1d2::t_f37d68e14d1a03 41-43,136,153
+datafn/server/src/routes/search.ts
+  s_df6686278ce1d2::t_5ccd1fe5efa727 399
+datafn/server/src/routes/transact.ts
+  s_df6686278ce1d2::t_3a73a1befd1255 229-234
+datafn/server/src/server.ts
+  s_df6686278ce1d2::t_36c977a4184727 1843
+datafn/server/src/validation/authz.ts
+  s_df6686278ce1d2::t_b3281e8e9c3753 526-531,1142-1144,1149,1234,1253-1255,1263-1264,1270,1307,1341,1346-1347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "02ad9ebb27b25d30f57af5e8451cec981e0f7526",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
