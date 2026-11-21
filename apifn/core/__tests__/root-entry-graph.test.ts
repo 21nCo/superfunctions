@@ -71,7 +71,7 @@ describe("root entry import graph", () => {
     },
   );
 
-  it.each(["testfn.js", "testfn.cjs", "testfn.d.ts"])("dist/%s imports @testfn/core", (entry) => {
+  it.each(["testfn.js", "testfn.cjs", "testfn.d.ts", "testfn.d.cts"])("dist/%s imports @testfn/core", (entry) => {
     expect(importsTestfn(walk(entry).external)).toEqual(["@testfn/core"]);
   });
 

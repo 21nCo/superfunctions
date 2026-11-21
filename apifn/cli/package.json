@@ -1,6 +1,6 @@
 {
   "name": "@apifn/cli",
-  "version": "0.0.3",
+  "version": "0.0.2",
   "description": "CLI tools for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",

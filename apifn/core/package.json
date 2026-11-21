@@ -18,9 +18,14 @@
       "require": "./dist/types.cjs"
     },
     "./testfn": {
-      "types": "./dist/testfn.d.ts",
-      "import": "./dist/testfn.js",
-      "require": "./dist/testfn.cjs"
+      "import": {
+        "types": "./dist/testfn.d.ts",
+        "default": "./dist/testfn.js"
+      },
+      "require": {
+        "types": "./dist/testfn.d.cts",
+        "default": "./dist/testfn.cjs"
+      }
     }
   },
   "scripts": {
