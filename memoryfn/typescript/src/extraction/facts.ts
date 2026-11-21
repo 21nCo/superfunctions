@@ -42,20 +42,39 @@ export class FactExtractor {
     const result = await this.llm.generateJSON<unknown>(prompt);
     if (!result || typeof result !== 'object' || Array.isArray(result) ||
         !('facts' in result) || !Array.isArray(result.facts)) throw new Error('MEMORY_EXTRACTION_INVALID');
-    if (limits && result.facts.length > limits.maxFacts) throw limits.tooMany();
+    const facts: unknown[] = result.facts;
+    const count = facts.length;
+    if (limits && count > limits.maxFacts) throw limits.tooMany();
     // Validate the whole batch before the pipeline embeds or persists any fact.
-    return result.facts.map((fact: unknown): Fact => {
-      if (!fact || typeof fact !== 'object' || Array.isArray(fact)) throw new Error('MEMORY_EXTRACTION_INVALID');
-      const value = fact as Record<string, unknown>;
-      if (typeof value.content !== 'string' || !value.content.trim() ||
-          typeof value.type !== 'string' || !['profile_static', 'profile_dynamic', 'conversational', 'derived'].includes(value.type) ||
-          typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1 ||
-          !Array.isArray(value.tags) || !value.tags.every(tag => typeof tag === 'string' && tag.trim().length > 0)) {
-        throw new Error('MEMORY_EXTRACTION_INVALID');
-      }
-      const normalized: Fact = { content: value.content.trim(), type: value.type as Fact['type'], confidence: value.confidence, tags: value.tags.map(tag => tag.trim()) };
-      limits?.accept?.(normalized);
-      return normalized;
-    });
+    // Read by index, so a hole in a sparse array is rejected, never skipped.
+    const normalized: Fact[] = [];
+    for (let index = 0; index < count; index++) {
+      const fact = normalizeFact(facts[index]);
+      limits?.accept?.(fact);
+      normalized.push(fact);
+    }
+    return normalized;
   }
+}
+
+const FACT_TYPES: readonly string[] = ['profile_static', 'profile_dynamic', 'conversational', 'derived'];
+
+/** One validated, trimmed fact; anything else, including a missing tag in a sparse tags array, is MEMORY_EXTRACTION_INVALID. */
+function normalizeFact(fact: unknown): Fact {
+  if (!fact || typeof fact !== 'object' || Array.isArray(fact)) throw new Error('MEMORY_EXTRACTION_INVALID');
+  const value = fact as Record<string, unknown>;
+  if (typeof value.content !== 'string' || !value.content.trim() ||
+      typeof value.type !== 'string' || !FACT_TYPES.includes(value.type) ||
+      typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1 ||
+      !Array.isArray(value.tags)) {
+    throw new Error('MEMORY_EXTRACTION_INVALID');
+  }
+  const given: unknown[] = value.tags;
+  const tags: string[] = [];
+  for (let index = 0; index < given.length; index++) {
+    const tag = given[index];
+    if (typeof tag !== 'string' || !tag.trim()) throw new Error('MEMORY_EXTRACTION_INVALID');
+    tags.push(tag.trim());
+  }
+  return { content: value.content.trim(), type: value.type as Fact['type'], confidence: value.confidence, tags };
 }

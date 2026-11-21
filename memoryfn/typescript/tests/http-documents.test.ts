@@ -157,6 +157,33 @@ describe('document routes', () => {
     }
   });
 
+  it('answers 400 for document text with a lone surrogate or NUL, before any provider call', async () => {
+    const embedder = { embed: vi.fn(), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
+    const storage = new MemoryStorageAdapter();
+    const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
+    for (const content of ['Install \uD800 now', `Install ${String.fromCharCode(0)} now`]) {
+      // JSON.stringify writes both as \u escapes, so the body itself is valid JSON.
+      const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'INVALID_INPUT', code: 'MEMORY_CONTENT_INVALID' });
+    }
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    const emoji = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'Smile \u{1F600}' }));
+    expect(emoji.status).toBe(200);
+    expect((await emoji.json()).memories[0].content).toBe('Smile \u{1F600}');
+  });
+
+  it('answers 501 when the storage cannot replace a source atomically, before any provider call', async () => {
+    const inner = new MemoryStorageAdapter();
+    const storage = Object.assign(Object.create(inner) as MemoryStorageAdapter, { replaceSourceIfChanged: undefined });
+    const embedder = { embed: vi.fn(), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
+    const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
+    const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x' }));
+    expect(response.status).toBe(501);
+    expect(await response.json()).toEqual({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+  });
+
   it('leaves other pipeline failures to the router error handler', async () => {
     const memory = new MemoryFn({ storage: { kind: 'memory' } }, new MemoryStorageAdapter());
     const router = createMemoryRouter(memory, { authorize: vi.fn().mockResolvedValue(trusted) });

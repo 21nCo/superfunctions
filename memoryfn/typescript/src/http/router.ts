@@ -7,10 +7,11 @@ import { MEMORY_TYPES } from '../core/types';
 
 /** Errors upsertDocument and forgetBySource raise for caller input the schema cannot see. */
 const DOCUMENT_INPUT_ERRORS = new Set(['MEMORY_SCOPE_REQUIRED', 'MEMORY_SOURCE_KEY_REQUIRED', 'MEMORY_SOURCE_HASH_REQUIRED',
-  'MEMORY_CONTENT_REQUIRED', 'MEMORY_CHUNKING_INVALID', 'MEMORY_SOURCE_CHUNK_INVALID', 'MEMORY_TYPE_INVALID']);
+  'MEMORY_CONTENT_REQUIRED', 'MEMORY_CONTENT_INVALID', 'MEMORY_CHUNKING_INVALID', 'MEMORY_SOURCE_CHUNK_INVALID', 'MEMORY_TYPE_INVALID']);
 
 /**
- * Runs a document call, answering 501 when the IMemoryFn has no such method,
+ * Runs a document call, answering 501 when the IMemoryFn has no such method
+ * or its storage cannot replace a source atomically (MEMORY_DOCUMENTS_UNSUPPORTED),
  * and maps a caller-input failure to 400 or 413; anything else reaches the
  * router's error handler.
  */
@@ -19,6 +20,7 @@ async function documentCall(call: (() => Promise<unknown>) | undefined): Promise
   try {
     return Response.json(await call());
   } catch (error) {
+    if (error instanceof Error && error.message === 'MEMORY_DOCUMENTS_UNSUPPORTED') return Response.json({ error: error.message }, { status: 501 });
     if (error instanceof MemorySourceLimitError) return Response.json({ error: error.code }, { status: 413 });
     if (error instanceof Error && DOCUMENT_INPUT_ERRORS.has(error.message)) return Response.json({ error: 'INVALID_INPUT', code: error.message }, { status: 400 });
     throw error;

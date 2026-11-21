@@ -5,13 +5,14 @@ import {
 } from './types';
 import {
   requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes, sourceTagsBytes,
+  sourceEmbeddingBytes, isStorableText,
   MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
   type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert,
 } from '../storage/adapter';
 import { markdownChunks, resolveChunkingOptions } from '../chunking/markdown';
 import { Embedder, LLMProvider } from '../providers/types';
 import { FactExtractor } from '../extraction/facts';
-import { Deduplicator } from '../extraction/dedup';
+import { Deduplicator, searchOrdinaryCandidates } from '../extraction/dedup';
 import { ConflictResolver } from '../extraction/resolver';
 
 export class MemoryFn implements IMemoryFn {
@@ -53,8 +54,7 @@ export class MemoryFn implements IMemoryFn {
       const embedding = embeddings[i] ?? null;
       if (embedding && await this.deduplicator.findDuplicate(tenantId, embedding, tags)) { deduplicated++; continue; }
       // Source chunks and facts are never superseded or linked: their source alone owns their lifecycle.
-      const related = embedding && this.resolver ? (await this.storage.searchVectors({ tenantId, containerTags: tags, embedding, threshold: 0.75, topK: 3, excludeSources: true }))
-        .filter(memory => memory.sourceKey == null) : [];
+      const related = embedding && this.resolver ? await searchOrdinaryCandidates(this.storage, { tenantId, containerTags: tags, embedding, threshold: 0.75 }, 3) : [];
       const resolutions = this.resolver ? await Promise.all(related.map(async memory => ({ memory, resolution: await this.resolver!.resolve(fact.content, memory) }))) : [];
       const persist = async (storage: StorageAdapter) => {
         const links: MemoryRelationship[] = [];
@@ -105,11 +105,15 @@ export class MemoryFn implements IMemoryFn {
     const scope = { ...given, containerTags: [...new Set(given.containerTags)] };
     const { content, contentHash: givenHash, metadata, type, extract, chunking } = input;
     if (typeof content !== 'string' || !content.trim()) throw new Error('MEMORY_CONTENT_REQUIRED');
+    // Hashed as UTF-8, a lone surrogate would alias U+FFFD, and PostgreSQL rejects NUL after embedding.
+    if (!isStorableText(content)) throw new Error('MEMORY_CONTENT_INVALID');
     if (givenHash !== undefined) requireSourceHash(givenHash);
     if (type !== undefined && !(MEMORY_TYPES as readonly unknown[]).includes(type)) throw new Error('MEMORY_TYPE_INVALID');
     if (extract !== undefined && typeof extract !== 'boolean') throw new Error('MEMORY_EXTRACT_INVALID');
     const options = resolveChunkingOptions(chunking);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
+    // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
+    if (typeof this.storage.replaceSourceIfChanged !== 'function') throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
     const metadataBytes = sourceMetadataBytes(metadata);
     const tagsBytes = sourceTagsBytes(scope.containerTags);
@@ -121,9 +125,10 @@ export class MemoryFn implements IMemoryFn {
     }
 
     // Every record costs its type, content and metadata bytes (as replaceSource
-    // counts them) plus its copy of the tag array. The count and these bytes are
-    // checked as each chunk or fact is produced, so an oversized source fails
-    // before the rest is split, extracted or copied, and before embedding.
+    // counts them), its copy of the tag array and its embedding. The count and
+    // the bytes known before embedding are checked as each chunk or fact is
+    // produced, so an oversized source fails before the rest is split, extracted
+    // or copied, and before embedding; the embeddings are added before the write.
     const overLimit = () => new MemorySourceLimitError();
     let bytes = 0;
     const charge = (recordType: string, text: string, recordMetadataBytes: number) => {
@@ -157,7 +162,11 @@ export class MemoryFn implements IMemoryFn {
     }
     const embeddings: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     requireEmbeddings(embeddings, records.length, this.storage.embeddingDimensions);
-    const written = await this.storage.replaceSourceIfChanged({
+    for (const embedding of embeddings) {
+      bytes += sourceEmbeddingBytes(embedding);
+      if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
+    }
+    const written = await this.storage.replaceSourceIfChanged!({
       ...scope, contentHash,
       chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
     });
@@ -216,12 +225,20 @@ export async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Largest finite float32, the component type of pgvector's vector. */
+const FLOAT32_MAX = 3.4028234663852886e38;
+/** Smallest normal float32: a vector with a larger component keeps a non-zero norm as float32 and in cosine arithmetic. */
+const FLOAT32_MIN_NORMAL = 1.1754943508222875e-38;
+
 /**
  * An embedding batch replaceSource may store: `count` non-empty vectors of
- * finite numbers with one shared length, equal to the storage's fixed
- * dimension when it has one. Anything else is rejected before the source is
- * touched (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so
- * the previous chunks stay live and searchable.
+ * finite numbers within the float32 range, each with a component of at least
+ * FLOAT32_MIN_NORMAL in magnitude, with one shared length, equal to the
+ * storage's fixed dimension when it has one. Such a vector keeps its value in
+ * PostgreSQL and a finite, non-zero norm in cosine similarity, so it can be
+ * found. Anything else is rejected before the source is touched
+ * (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so the
+ * previous chunks stay live and searchable.
  */
 function requireEmbeddings(value: unknown, count: number, dimensions: number | undefined): asserts value is number[][] {
   if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
@@ -231,9 +248,12 @@ function requireEmbeddings(value: unknown, count: number, dimensions: number | u
     const vector: unknown = value[index];
     if (!Array.isArray(vector) || vector.length === 0 || (size !== undefined && vector.length !== size)) throw new Error('MEMORY_EMBEDDING_INVALID');
     size = vector.length;
+    let nonZero = false;
     for (let at = 0; at < vector.length; at++) {
       const number: unknown = vector[at];
-      if (typeof number !== 'number' || !Number.isFinite(number)) throw new Error('MEMORY_EMBEDDING_INVALID');
+      if (typeof number !== 'number' || !(Math.abs(number) <= FLOAT32_MAX)) throw new Error('MEMORY_EMBEDDING_INVALID');
+      if (Math.abs(number) >= FLOAT32_MIN_NORMAL) nonZero = true;
     }
+    if (!nonZero) throw new Error('MEMORY_EMBEDDING_INVALID');
   }
 }

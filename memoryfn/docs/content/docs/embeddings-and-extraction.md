@@ -3,7 +3,7 @@ title: Embeddings and extraction
 description: Configure supported providers and understand ingestion and deduplication behavior.
 ---
 
-The `memoryfn()` factory currently supports OpenAI for `embedder.provider` and `llm.provider`. An embedder is required for semantic retrieval. The built-in embedder defaults to `text-embedding-3-small`, requests the storage dimension when known, batches inputs, and checks response count and order. The default batch size is 2048; configured values must be an integer from 1 through 2048.
+The `memoryfn()` factory currently supports OpenAI for `embedder.provider` and `llm.provider`. An embedder is required for semantic retrieval. The built-in embedder defaults to `text-embedding-3-small`, requests the storage dimension when known, batches inputs, and checks response count and order. The default batch size is 2048; configured values must be an integer from 1 through 2048. Each request also stays within OpenAI's 300,000-token limit for all its inputs, counting the UTF-8 bytes of each input as an upper bound of its tokens; a single larger input is sent alone. Embeddings come back in input order, and a failed request fails the whole call, so a document upsert leaves the previous source unchanged.
 
 ```ts
 const memory = memoryfn({

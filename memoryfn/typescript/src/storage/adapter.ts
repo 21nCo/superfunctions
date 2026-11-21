@@ -79,7 +79,11 @@ export interface StorageAdapter {
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
-    /** Leave out chunks and facts of sources (rows with a sourceKey). add() sets it for deduplication and conflict resolution. */
+    /**
+     * Leave out chunks and facts of sources (rows with a sourceKey). add() sets
+     * it for deduplication and conflict resolution. It only saves work: add()
+     * drops source rows itself and re-queries deeper when an adapter ignores it.
+     */
     excludeSources?: boolean;
   }): Promise<Memory[]>;
   getMemory(scope: MemoryScope & { id: string }): Promise<Memory | null>;
@@ -98,9 +102,11 @@ export interface StorageAdapter {
    * same per-source serialization: when the live chunks all carry `contentHash`
    * it writes nothing and returns that state. Of concurrent calls with one hash,
    * at most one writes; the others report unchanged. Input is validated, and
-   * rejected, exactly as by replaceSource.
+   * rejected, exactly as by replaceSource. Optional, so an adapter written
+   * before it still serves the memory operations; without it upsertDocument
+   * fails with MEMORY_DOCUMENTS_UNSUPPORTED before any provider call.
    */
-  replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult>;
+  replaceSourceIfChanged?(input: SourceReplace): Promise<SourceReplaceResult>;
   /** Soft-deletes every live chunk of the source and returns how many it deleted. */
   deleteSource(scope: SourceScope): Promise<number>;
 }
@@ -121,9 +127,14 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 /** PostgreSQL text rejects NUL while the memory adapter would store it. */
 const NUL = String.fromCharCode(0);
 
+/** True when every adapter stores and compares `value` unchanged: it holds no NUL and no unpaired surrogate. */
+export function isStorableText(value: string): boolean {
+  return !value.includes(NUL) && !LONE_SURROGATE.test(value);
+}
+
 /** A non-empty string that every adapter stores and compares unchanged. */
 function isSourceText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== '' && !value.includes(NUL) && !LONE_SURROGATE.test(value);
+  return typeof value === 'string' && value.trim() !== '' && isStorableText(value);
 }
 
 /**
@@ -223,6 +234,11 @@ export function sourceChunkBytesBeforeEmbedding(type: string, content: string, m
  */
 export function sourceTagsBytes(tags: string[]): number {
   return jsonBytes(tags);
+}
+
+/** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's embedding. */
+export function sourceEmbeddingBytes(embedding: number[]): number {
+  return jsonBytes(embedding);
 }
 
 /** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's metadata (undefined counts as {}). */
