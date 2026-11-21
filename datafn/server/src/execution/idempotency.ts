@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Idempotency store for mutation deduplication
  */
@@ -59,21 +61,11 @@ function scopeKey(scope: IdempotencyScope): string {
 }
 
 /**
- * Qualify a client id with the actor that sent it (null for an anonymous
- * caller). Always encoded, so no raw client id can equal another actor's key.
- * Exported for stores that keep the namespace in a column of its own.
- */
-export function actorQualifiedClientId(
-  clientId: string,
-  actorId: string | undefined,
-): string {
-  return JSON.stringify([actorId ?? null, clientId]);
-}
-
-/**
- * Primary key of a scoped idempotency record. Versioned so records written
- * by 0.2.x (keyed "namespace:clientId:mutationId" under the fixed "datafn"
- * namespace) are never read back: they carry no tenant or actor.
+ * Primary key of a scoped idempotency record: a fixed-length SHA-256 digest of
+ * the namespace, actor (null when anonymous), client id and mutation id, so
+ * long namespaces or actor ids cannot exceed an index entry limit. Versioned
+ * ("v2:") so records written by 0.2.x (keyed "namespace:clientId:mutationId"
+ * under the fixed "datafn" namespace, with no tenant or actor) never match.
  */
 export function idempotencyRecordId(
   namespace: string,
@@ -81,7 +73,10 @@ export function idempotencyRecordId(
   clientId: string,
   mutationId: string,
 ): string {
-  return JSON.stringify(["datafn-idempotency/2", namespace, actorId ?? null, clientId, mutationId]);
+  const digest = createHash("sha256")
+    .update(JSON.stringify([namespace, actorId ?? null, clientId, mutationId]))
+    .digest("hex");
+  return `v2:${digest}`;
 }
 
 /** The scope a store is bound to, if any (see `scopeIdempotencyStore`). */

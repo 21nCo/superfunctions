@@ -1814,10 +1814,14 @@ export async function createDatafnServer<TContext = any>(
     }
     const limit = Math.min(params.limit ?? 50, 10_000);
     const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
+    // Without a context argument, use a static configured context like the
+    // executor does; with no context at all the search runs as anonymous.
+    const searchCtx =
+      _ctx ?? (typeof config.context === "function" ? undefined : config.context);
     const namespace =
       params.namespace && params.namespace.trim() !== ""
         ? params.namespace
-        : await extractNamespace(_ctx as TContext);
+        : await extractNamespace((searchCtx ?? {}) as TContext);
     if (multiRegionRuntime?.placement) {
       await validateDatafnPlacement({
         namespace,
@@ -1826,7 +1830,8 @@ export async function createDatafnServer<TContext = any>(
         trustedInternal: true,
       });
     }
-    const actorId = await extractActorId(_ctx as TContext);
+    const actorId =
+      searchCtx === undefined ? undefined : await extractActorId(searchCtx as TContext);
 
     const searchParams = {
       ...params,

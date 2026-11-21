@@ -5,7 +5,6 @@
 
 import type { Adapter } from "@superfunctions/db";
 import {
-  actorQualifiedClientId,
   carryIdempotencyScope,
   idempotencyRecordId,
   markIdempotencyScope,
@@ -53,10 +52,6 @@ export class DbIdempotencyStore implements IdempotencyStore {
     return markIdempotencyScope(this, scope, () =>
       new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.ensured, scope.actorId),
     );
-  }
-
-  private clientKey(clientId: string): string {
-    return actorQualifiedClientId(clientId, this.actorId);
   }
 
   private recordId(clientId: string, mutationId: string): string {
@@ -158,7 +153,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
       await this.db.internal.create("__datafn_idempotency", {
         id: this.recordId(clientId, mutationId),
         namespace: this.namespace,
-        client_id: this.clientKey(clientId),
+        client_id: clientId,
         mutation_id: mutationId,
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),

@@ -522,3 +522,43 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     await server.close();
   });
 });
+
+describe("Idempotency record ids and in-process search context", () => {
+  it("record ids have a fixed length regardless of namespace and actor length", () => {
+    const short = idempotencyRecordId("a", "b", "c", "d");
+    const long = idempotencyRecordId("n".repeat(5000), "a".repeat(5000), "c", "d");
+    expect(long).toMatch(/^v2:[0-9a-f]{64}$/);
+    expect(long.length).toBe(short.length);
+    expect(idempotencyRecordId("a", undefined, "c", "d")).not.toBe(idempotencyRecordId("a", "null", "c", "d"));
+  });
+
+  it("server.search() without ctx uses a static configured context, and runs anonymous without one", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const searchProvider = {
+      name: "fake",
+      async searchAll() { return []; },
+      async search() { return []; },
+      async updateIndices() {},
+    };
+    const staticServer = await createDatafnServer<Ctx & { userId?: string }>({
+      schema,
+      database: db,
+      searchProvider,
+      context: { ns: "tenant:a", userId: "alice" },
+      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId: (ctx) => ctx.userId },
+    });
+    await expect(staticServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
+    await staticServer.close();
+
+    const fnServer = await createDatafnServer<Ctx & { userId?: string }>({
+      schema,
+      database: db,
+      searchProvider,
+      context: (request: Request) => ({ ns: "tenant:a", userId: request.headers.get("x-actor") ?? undefined }),
+      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId: (ctx) => ctx.userId },
+    });
+    await expect(fnServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
+    await fnServer.close();
+  });
+});
