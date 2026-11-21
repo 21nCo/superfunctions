@@ -1,0 +1,21 @@
+datafn/docs/content/docs/documentation/security/production-checklist.mdx
+  s_df6686278ce1d2::t_66ea0fdc3f803d 98
+datafn/python/pyproject.toml
+  s_df6686278ce1d2::t_65472f73d8807a 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8250f0eff49e0c2063b2167563047cf39b6608d6",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

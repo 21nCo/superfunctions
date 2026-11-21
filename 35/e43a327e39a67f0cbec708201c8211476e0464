@@ -1,0 +1,43 @@
+authfn/core/src/__tests__/placement-context.test.ts
+  s_e5ac07859c1bc9::t_cd240dda165556 638-651
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_8e450f6df87a86 5195,5859,6466,6474-6480
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_2d534b8e6db3b8 9-11,112-242,340-348
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_d2d3e91b77a7e9 128,136-142
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_b46bdb69f8dfe1 153
+authfn/core/src/core/placement-context.ts
+  s_e5ac07859c1bc9::t_41ae304ac194d5 34,530-532
+authfn/core/src/core/users.ts
+  s_e5ac07859c1bc9::t_6f46cc4317b863 132-135
+authfn/core/src/core/sessions.ts
+  s_e5ac07859c1bc9::t_b9cb5bfc9d392d 300-301
+  s_e5ac07859c1bc9::t_1169647dadf6b0 196-238
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_76075433639661 26-27,29,349-353,464,468-485,517-530
+authfn/password/src/index.ts
+  s_e5ac07859c1bc9::t_1aa7fa3ed1cb5c 13,95-97
+authfn/docs/content/docs/plugins/api-keys.md
+  s_e5ac07859c1bc9::t_5b119d80ffc90b 59
+authfn/core/src/core/account-claim.ts
+  s_e5ac07859c1bc9::t_d22c24a34cfa1c 101-104
+  s_e5ac07859c1bc9::t_b1f410d21c9ded 1-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35e43a327e39a67f0cbec708201c8211476e0464",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

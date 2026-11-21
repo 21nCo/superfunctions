@@ -1,0 +1,19 @@
+datafn/server/src/execution/sync/pull.ts
+  s_c3b9972e768f42::t_558b21ec37ad40 267-268,275,279,299-311,503,506,530,542,551,563-564
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "02858fd193fc1cb74822b5a3e0f79ec7b473bfa8",
+  "prompts": {},
+  "sessions": {
+    "s_c3b9972e768f42": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fef9-5932-7510-b0f2-604daeddda08",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

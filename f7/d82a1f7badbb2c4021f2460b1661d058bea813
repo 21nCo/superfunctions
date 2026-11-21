@@ -1,0 +1,37 @@
+authfn/client/src/__tests__/regional-client.test.ts
+  s_e5ac07859c1bc9::t_5d45127e91a092 328-360
+authfn/client/src/regional-client.ts
+  s_e5ac07859c1bc9::t_7652c3cc7b7771 62-67,70,94-95,98,112-116,119,155-157,164,331-338
+authfn/core/src/__tests__/password-scrypt-order.test.ts
+  s_e5ac07859c1bc9::t_6a3641f09f2a67 6-8,16-26,36,68-92
+authfn/core/src/__tests__/password.test.ts
+  s_e5ac07859c1bc9::t_3d0aab4cc6c19f 673-683
+authfn/core/src/core/passwords.ts
+  s_e5ac07859c1bc9::t_bea8a2d28444a7 326-329,334-337,356,598-617,621
+authfn/docs/content/docs/plugins/multi-region.md
+  s_e5ac07859c1bc9::t_cc8fafb30349a0 116
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_f0f0ac1b2c511f 78
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_b8e9af92b34257 6125,6414
+authfn/python/authfn/plugins/multi_region.py
+  s_e5ac07859c1bc9::t_f88bf14f2555c6 208-213,233
+authfn/python/tests/test_multi_region.py
+  s_e5ac07859c1bc9::t_323b68260e2062 951-977
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f7d82a1f7badbb2c4021f2460b1661d058bea813",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

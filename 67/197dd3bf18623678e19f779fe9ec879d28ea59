@@ -1,0 +1,37 @@
+datafn/server/__tests__/security-audit-relations.test.ts
+  s_df6686278ce1d2::t_0b85f30d29f358 1-234
+datafn/docs/content/docs/documentation/capabilities.mdx
+  s_df6686278ce1d2::t_31bd977fe423ba 150-152
+datafn/server/package.json
+  s_df6686278ce1d2::t_d71c208b435f3a 3
+datafn/server/src/execution/mutation/__tests__/relation-inheritance-spv2.test.ts
+  s_df6686278ce1d2::t_2986c62d6777b4 230-247,259,303-304,315
+datafn/server/src/execution/mutation/execute.ts
+  s_df6686278ce1d2::t_b8f3745c62019f 925
+datafn/server/src/execution/mutation/relations.ts
+  s_df6686278ce1d2::t_185f49dbe00962 18,25-26,99-146,1182-1192,1441-1451,1962,1982-2002
+datafn/server/src/execution/relations/inheritance.ts
+  s_df6686278ce1d2::t_eaa57a5864eaed 140-152
+datafn/server/src/execution/sync/pull.ts
+  s_df6686278ce1d2::t_03a6cb301ddb35 9-14,148-204,868,875-882,1074,1081
+datafn/server/src/execution/sync/push.ts
+  s_df6686278ce1d2::t_8239a89a053e94 997
+package-lock.json
+  s_df6686278ce1d2::t_7f950646471646 11002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67197dd3bf18623678e19f779fe9ec879d28ea59",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

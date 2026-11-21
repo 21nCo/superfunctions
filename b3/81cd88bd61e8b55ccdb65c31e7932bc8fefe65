@@ -1,0 +1,19 @@
+datafn/server/src/execution/sync/pull.ts
+  s_87ac86d4e2f9af::t_7288ce0b98f3fa 267-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b381cd88bd61e8b55ccdb65c31e7932bc8fefe65",
+  "prompts": {},
+  "sessions": {
+    "s_87ac86d4e2f9af": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ff0b-1955-7042-9a76-79d55510f9f7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
