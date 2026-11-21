@@ -1,0 +1,39 @@
+authfn/core/src/__tests__/two-factor.test.ts
+  s_a941fa5a2a6cc9::t_cd67a164ccc443 1119-1136
+authfn/core/src/core/two-factor.ts
+  s_e5ac07859c1bc9::t_e1f9fdec527499 368-372
+authfn/docs/content/docs/plugins/two-factor.md
+  s_e5ac07859c1bc9::t_cf03dcfcc38318 107
+authfn/docs/static/llms-full.txt
+  s_a941fa5a2a6cc9::t_09c50fd51cfc0b 7209
+authfn/python/authfn/plugins/two_factor.py
+  s_e5ac07859c1bc9::t_eea14d15520e4d 539-543
+authfn/python/authfn/schema.py
+  s_e5ac07859c1bc9::t_ed2a8f890995ff 12
+authfn/python/tests/test_schema.py
+  s_e5ac07859c1bc9::t_dde081c23931c6 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a76c3f56b40dd134941cee70194cf9651d903828",
+  "prompts": {},
+  "sessions": {
+    "s_a941fa5a2a6cc9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc39-ce2f-7a43-bfce-0870dd87370b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
