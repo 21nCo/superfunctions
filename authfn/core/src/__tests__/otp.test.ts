@@ -1302,25 +1302,36 @@ describe('authfn otp plugin', () => {
     });
 
     it.each([
-      ['the consume write throws after committing', 'throw'],
+      ['the consume write throws after committing', 'throw-after-commit'],
+      ['the consume write throws without committing', 'throw-before-commit'],
       ['the consume write cannot be confirmed', 'unconfirmed']
-    ] as const)('keeps the attempt counted when %s', async (_label, mode) => {
+    ] as const)('keeps every attempt counted when %s', async (_label, mode) => {
       const base = memoryAdapter({ debug: false });
+      let consumeAttempted = false;
+      // Writes to attemptCount after the consume: a release or a hand-back.
+      const countWritesAfterConsume: Array<Record<string, unknown>> = [];
       const database = new Proxy(base, {
         get(target, property) {
           const value = Reflect.get(target, property, target);
-          if (property !== 'update' || typeof value !== 'function') {
+          if ((property !== 'update' && property !== 'updateMany') || typeof value !== 'function') {
             return typeof value === 'function' ? value.bind(target) : value;
           }
           return async (params: { model: string; data: Record<string, unknown> }) => {
-            const row = await value.call(target, params);
-            if (params.model === 'otp_challenges' && params.data.consumedAt) {
-              if (mode === 'throw') {
-                throw new Error('test consume write timed out');
-              }
-              return { id: 'test-other-row' };
+            if (params.model === 'otp_challenges' && consumeAttempted && 'attemptCount' in params.data) {
+              countWritesAfterConsume.push(params.data);
             }
-            return row;
+            if (property !== 'update' || params.model !== 'otp_challenges' || !params.data.consumedAt) {
+              return value.call(target, params);
+            }
+            consumeAttempted = true;
+            if (mode === 'throw-before-commit') {
+              throw new Error('test consume write failed');
+            }
+            await value.call(target, params);
+            if (mode === 'throw-after-commit') {
+              throw new Error('test consume write timed out');
+            }
+            return { id: 'test-other-row' };
           };
         }
       }) as AuthFnDatabase;
@@ -1328,20 +1339,26 @@ describe('authfn otp plugin', () => {
         __delivery: ReturnType<typeof createDeliveryRecorder>;
       };
       const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
       await createUser(config, { primaryEmail: 'ada@example.com' });
-      await auth.router.handle(new Request('https://account.example.com/auth/otp/send', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ purpose: 'sign-in', email: 'ada@example.com' })
-      }));
-      const response = await auth.router.handle(new Request('https://account.example.com/auth/otp/verify', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ purpose: 'sign-in', email: 'ada@example.com', code: '731942' })
-      }));
-      expect(response.status).toBe(mode === 'throw' ? 500 : 400);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      // An earlier wrong code on the same challenge must stay counted.
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(response.status).toBe(mode === 'unconfirmed' ? 400 : 500);
+      expect(consumeAttempted).toBe(true);
+      // Neither the matching attempt nor the earlier wrong one is released or
+      // handed back when the consume outcome is not a confirmed no-op.
+      expect(countWritesAfterConsume).toEqual([]);
       const stored = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
-      expect(stored?.attemptCount).toBe(1);
+      expect(stored?.attemptCount).toBe(2);
+      if (mode === 'throw-before-commit') {
+        expect(stored?.consumedAt ?? null).toBeNull();
+      }
     });
 
     it('applies the strictest limit configured for either OTP plugin', async () => {
