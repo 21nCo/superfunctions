@@ -647,12 +647,13 @@ export function resolveOtpEmailBudget(
   // factory options.
   // A factory lifetime counts only where the password route uses it: its
   // runtime `otp.challengeTtlSeconds` takes precedence, as on that route.
-  const passwordRuntimeTtl = password.otp && typeof password.otp === 'object'
-    ? password.otp.challengeTtlSeconds
-    : undefined;
-  const factoryTtls = passwordRuntimeTtl === undefined
-    ? published.filter((source) => source.challengeTtlSeconds !== undefined)
-    : [];
+  // The route merges `{ ...factory otp, ...runtime otp }`, so a runtime key
+  // that is present, even set to undefined, replaces the factory value.
+  const runtimeSetsTtl = Boolean(password.otp && typeof password.otp === 'object'
+    && Object.prototype.hasOwnProperty.call(password.otp, 'challengeTtlSeconds'));
+  const factoryTtls = runtimeSetsTtl
+    ? []
+    : published.filter((source) => source.challengeTtlSeconds !== undefined);
   const longestTtlMs = Math.max(
     resolveTtlMs(options),
     ...sources.map((source) => resolveTtlMs(source)),

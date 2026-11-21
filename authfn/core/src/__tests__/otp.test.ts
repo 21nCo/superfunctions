@@ -1469,6 +1469,9 @@ describe('authfn otp plugin', () => {
       Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: 600 });
       expect(() => createTestServer(config)).not.toThrow();
       expect(Number.isFinite(resolveOtpEmailBudget(config, {}).scanLimit)).toBe(true);
+      // A runtime key set to undefined also replaces the factory value.
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: undefined });
+      expect(() => createTestServer(config)).not.toThrow();
 
       const invalid = createConfig() as LimitConfig;
       Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
