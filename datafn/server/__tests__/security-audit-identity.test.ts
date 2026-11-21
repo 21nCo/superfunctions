@@ -358,7 +358,8 @@ describe("DFN-01 follow-ups", () => {
     const row = await db.internal.findOne("__datafn_idempotency", [
       { field: "id", op: "eq", value: idempotencyRecordId("datafn", undefined, "c", "m") },
     ]);
-    expect(row).toBeTruthy();
+    // A 0.2.x worker matches on the raw client id, so it cannot see this row.
+    expect(row?.client_id).toBe("v2:c");
   });
 
   it("a scoped store keeps its scope guard after withDb()", async () => {
@@ -560,5 +561,20 @@ describe("Idempotency record ids and in-process search context", () => {
     });
     await expect(fnServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
     await fnServer.close();
+
+    // A resolver that throws on the fallback context still fails closed.
+    const throwingServer = await createDatafnServer<Ctx>({
+      schema,
+      database: db,
+      searchProvider,
+      namespaceProvider: {
+        getNamespace: () => "tenant:a",
+        getActorId: () => {
+          throw new Error("no request scope");
+        },
+      },
+    });
+    await expect(throwingServer.search({ query: "x" })).rejects.toThrow();
+    await throwingServer.close();
   });
 });

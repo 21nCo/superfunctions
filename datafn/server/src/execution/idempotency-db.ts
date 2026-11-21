@@ -153,7 +153,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
       await this.db.internal.create("__datafn_idempotency", {
         id: this.recordId(clientId, mutationId),
         namespace: this.namespace,
-        client_id: clientId,
+        // "v2:" keeps 0.2.x workers, which match on the raw client id, from
+        // reading or overwriting scoped records during a rolling upgrade.
+        client_id: `v2:${clientId}`,
         mutation_id: mutationId,
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),

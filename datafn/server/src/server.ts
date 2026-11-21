@@ -1815,7 +1815,7 @@ export async function createDatafnServer<TContext = any>(
     const limit = Math.min(params.limit ?? 50, 10_000);
     const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
     // Without a context argument, use a static configured context like the
-    // executor does; with no context at all the search runs as anonymous.
+    // executor does, or an empty one.
     const searchCtx =
       _ctx ?? (typeof config.context === "function" ? undefined : config.context);
     const namespace =
@@ -1830,8 +1830,9 @@ export async function createDatafnServer<TContext = any>(
         trustedInternal: true,
       });
     }
-    const actorId =
-      searchCtx === undefined ? undefined : await extractActorId(searchCtx as TContext);
+    // The resolver runs with the same fallback context as the namespace (it
+    // may read request-local state); returning undefined means anonymous.
+    const actorId = await extractActorId((searchCtx ?? {}) as TContext);
 
     const searchParams = {
       ...params,
