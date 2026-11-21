@@ -15,6 +15,7 @@ import { issueSessionCookies } from '../core/cookies.js';
 import { createPasswordCredential, hashPassword } from '../core/passwords.js';
 import { hashSecret, issueSession, revokeSessionById } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
+import { deleteAccountForUser } from '../core/account.js';
 
 function createConfig(): AuthFnRuntimeConfig {
   return {
@@ -634,5 +635,23 @@ describe('authfn sessions', () => {
     expect(sessionsBody.data.sessions.map((session: { id: string }) => session.id)).toEqual([
       current.session.id
     ]);
+  });
+});
+
+describe('account deletion counts', () => {
+  it('reports a count the adapter could not read as 0, never NaN', async () => {
+    const base = memoryAdapter({ debug: false });
+    const config: AuthFnRuntimeConfig = {
+      // Drizzle's SQLite proxy can report a delete's count as NaN.
+      database: { ...base, deleteMany: async (params) => { await base.deleteMany(params); return Number.NaN; } },
+      namespace: 'authfn',
+      plugins: [authFnPasswordPlugin()]
+    };
+    const user = await createUser(config, { primaryEmail: 'nan-delete@example.com' });
+    const result = await deleteAccountForUser(config, {}, { user });
+    for (const count of Object.values(result.counts)) {
+      expect(Number.isFinite(count)).toBe(true);
+    }
+    expect(JSON.parse(JSON.stringify(result.counts)).users).toBe(0);
   });
 });
