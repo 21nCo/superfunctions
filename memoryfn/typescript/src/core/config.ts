@@ -1,5 +1,5 @@
 import type { StorageAdapter } from '../storage/adapter';
-import { AddMemoryInput, AddMemoryResult, SearchMemoryInput, SearchMemoryResult } from './types';
+import { AddMemoryInput, AddMemoryResult, ForgetSourceInput, ForgetSourceResult, SearchMemoryInput, SearchMemoryResult, UpsertDocumentInput, UpsertDocumentResult } from './types';
 
 export interface MemoryFnConfig {
   storage: {
@@ -79,6 +79,12 @@ export interface MemoryFnConfig {
 export interface IMemoryFn {
   add(input: AddMemoryInput): Promise<AddMemoryResult>;
   search(input: SearchMemoryInput): Promise<SearchMemoryResult>;
+  /**
+   * Optional so an add/search-only implementation still satisfies IMemoryFn;
+   * MemoryFn implements both. Without them the document routes answer 501.
+   */
+  upsertDocument?(input: UpsertDocumentInput): Promise<UpsertDocumentResult>;
+  forgetBySource?(input: ForgetSourceInput): Promise<ForgetSourceResult>;
   // update, delete, getProfile, etc.
 }
 

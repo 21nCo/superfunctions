@@ -94,6 +94,22 @@ export function describeSourceContract(name: string, adapter: () => StorageAdapt
         .toEqual({ contentHash: winner === 0 ? 'hash-left' : 'hash-right', chunkCount: results[winner].length });
     });
 
+    it('replaceSourceIfChanged writes only when the stored hash differs, deciding under the source serialization', async () => {
+      expect(await adapter().replaceSourceIfChanged({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'a', 'b') }))
+        .toMatchObject({ unchanged: false, memories: [{ content: 'a' }, { content: 'b' }] });
+      expect(await adapter().replaceSourceIfChanged({ ...source, contentHash: 'hash-1', chunks: chunks(source, 'other') }))
+        .toEqual({ unchanged: true, state: { contentHash: 'hash-1', chunkCount: 2 } });
+      // Of concurrent calls with one hash, exactly one writes.
+      const results = await Promise.all([1, 2].map(() =>
+        adapter().replaceSourceIfChanged({ ...source, containerTags: ['docs', 'team', 'docs'], contentHash: 'hash-2', chunks: chunks(source, 'x') })));
+      const written = results.filter(result => !result.unchanged);
+      expect(written).toHaveLength(1);
+      expect(results.filter(result => result.unchanged)).toEqual([{ unchanged: true, state: { contentHash: 'hash-2', chunkCount: 1 } }]);
+      expect(await live(source, written[0].unchanged ? [] : written[0].memories)).toHaveLength(1);
+      expect(await adapter().getSourceState(source)).toEqual({ contentHash: 'hash-2', chunkCount: 1 });
+      await expect(adapter().replaceSourceIfChanged({ ...source, contentHash: 'h'.repeat(MAX_SOURCE_IDENTITY_BYTES + 1), chunks: [] })).rejects.toThrow(MemorySourceLimitError);
+    });
+
     it('serializes same-source writes made through one transaction', async () => {
       await adapter().replaceSource({ ...source, contentHash: 'hash-0', chunks: chunks(source, 'seed') });
       const [left, right] = await adapter().transaction!(tx => Promise.all([

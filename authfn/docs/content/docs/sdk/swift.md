@@ -114,16 +114,20 @@ let credential = try await client.exchangeNativeHandoff(
 )
 ```
 
-For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridge`:
+For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridgeHost` with the origins of your own web pages:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: client, accountBaseURL: configuration.baseURL)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: client,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
 
-The bridge listens for `postMessage` from the web side, exchanges the code, and updates `client.credentialStore`.
+The bridge listens for `postMessage` from the main frame of a trusted page, exchanges the code, and stores the credential. Messages from any other page are ignored; see [Native handoff](../plugins/native-handoff) for the origin rules.
 
 ## SwiftUI integration
 

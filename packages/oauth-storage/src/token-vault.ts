@@ -45,6 +45,9 @@ export class TokenVaultError extends Error {
   }
 }
 
+const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+
 export class AesGcmTokenCipher implements TokenCipher {
   private readonly resolveKey: TokenKeyResolver;
 
@@ -58,8 +61,8 @@ export class AesGcmTokenCipher implements TokenCipher {
     }
 
     const key = await this.getKey(keyRef);
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const iv = randomBytes(GCM_IV_BYTES);
+    const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: GCM_TAG_BYTES });
     const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
     const authTag = cipher.getAuthTag();
     return ["v1", iv.toString("base64url"), authTag.toString("base64url"), encrypted.toString("base64url")].join(":");
@@ -80,7 +83,13 @@ export class AesGcmTokenCipher implements TokenCipher {
       const iv = Buffer.from(ivPart, "base64url");
       const authTag = Buffer.from(authTagPart, "base64url");
       const payload = Buffer.from(payloadPart, "base64url");
-      const decipher = createDecipheriv("aes-256-gcm", key, iv);
+      // encrypt() always writes a 12-byte IV and a 16-byte tag. GCM would
+      // otherwise accept a tag cut down to as little as 4 bytes, which makes
+      // a forged payload far easier to get accepted.
+      if (iv.length !== GCM_IV_BYTES || authTag.length !== GCM_TAG_BYTES) {
+        throw new TokenVaultError("INTERNAL_ERROR", "Invalid encrypted payload format");
+      }
+      const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: GCM_TAG_BYTES });
       decipher.setAuthTag(authTag);
       const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
       return decrypted.toString("utf8");

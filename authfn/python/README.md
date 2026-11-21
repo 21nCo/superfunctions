@@ -25,6 +25,7 @@ from authfn import (
     authfn_two_factor_plugin,
     create_authfn,
 )
+from authfn.plugins.social_oauth import SocialOAuthPluginConfig, SocialProviderConfig
 
 auth = create_authfn(
     AuthFnConfig(
@@ -38,17 +39,18 @@ auth = create_authfn(
                 }
             ),
             authfn_social_oauth_plugin(
-                {
-                    "providers": {
-                        "google": {
-                            "client_id": "google-client-id",
-                            "client_secret": "google-client-secret",
-                            "allowlisted_return_to": [
-                                "https://app.example.com/post-auth",
-                            ],
-                        }
-                    }
-                }
+                SocialOAuthPluginConfig(
+                    providers={
+                        "google": SocialProviderConfig(
+                            client_id="google-client-id",
+                            client_secret="google-client-secret",
+                            allowlisted_return_to=["https://app.example.com/post-auth"],
+                        )
+                    },
+                    # Secret key (at least 32 bytes) that encrypts stored
+                    # provider tokens; required.
+                    encryption_key_resolver=lambda key_ref: load_secret(key_ref),
+                )
             ),
             authfn_two_factor_plugin(),
             authfn_multi_region_plugin(),
@@ -56,6 +58,8 @@ auth = create_authfn(
     )
 )
 ```
+
+After upgrading from a release that stored social OAuth tokens without a configured key, re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()` (when your resolver only knows a new key reference, set the plugin's `encryption_key_ref` to it and pass the same value as `destination_key_ref=`).
 
 Mount the emitted routes through the shared adapters:
 

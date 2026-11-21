@@ -26,8 +26,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "authfn": "0.3.0",
-    "@superfunctions/db": "0.2.0"
+    "authfn": "0.8.0",
+    "@superfunctions/db": "0.3.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

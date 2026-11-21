@@ -1,6 +1,26 @@
 import OpenAI from 'openai';
 import { Embedder } from '../types';
 
+/**
+ * OpenAI's limit on the tokens of all inputs of one embeddings request. A
+ * token of the byte-level BPE encodings is at least one UTF-8 byte, so the
+ * UTF-8 length of the inputs bounds their tokens from above.
+ */
+export const OPENAI_EMBEDDING_REQUEST_TOKENS = 300_000;
+
+/** UTF-8 length of `text` (an unpaired surrogate counts as the 3 bytes of U+FFFD). */
+function utf8Length(text: string): number {
+  let bytes = text.length;
+  for (let index = 0; index < text.length; index++) {
+    const unit = text.charCodeAt(index);
+    if (unit < 0x80) continue;
+    if (unit < 0x800) { bytes += 1; continue; }
+    if (unit >= 0xD800 && unit <= 0xDBFF && (text.charCodeAt(index + 1) & 0xFC00) === 0xDC00) index++;
+    bytes += 2;
+  }
+  return bytes;
+}
+
 export class OpenAIEmbedder implements Embedder {
   private client: OpenAI;
   private model: string;
@@ -26,10 +46,25 @@ export class OpenAIEmbedder implements Embedder {
     return response.data[0].embedding;
   }
 
+  /**
+   * Embeds `texts` in order, in requests of at most batchSize inputs whose
+   * UTF-8 bytes (an upper bound of their tokens) stay within
+   * OPENAI_EMBEDDING_REQUEST_TOKENS; a longer single input goes alone. A failed
+   * request rejects the whole call.
+   */
   async embedBatch(texts: string[]): Promise<number[][]> {
     const embeddings: number[][] = [];
-    for (let offset = 0; offset < texts.length; offset += this.batchSize) {
-      const batch = texts.slice(offset, offset + this.batchSize);
+    for (let offset = 0; offset < texts.length;) {
+      let end = offset + 1;
+      let tokens = utf8Length(texts[offset]);
+      while (end < texts.length && end - offset < this.batchSize) {
+        const next = utf8Length(texts[end]);
+        if (tokens + next > OPENAI_EMBEDDING_REQUEST_TOKENS) break;
+        tokens += next;
+        end++;
+      }
+      const batch = texts.slice(offset, end);
+      offset = end;
       const response = await this.client.embeddings.create({
         model: this.model,
         input: batch,

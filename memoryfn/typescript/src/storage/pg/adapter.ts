@@ -1,7 +1,7 @@
 import {
   requireScope, requireSourceReplace, requireSourceScope,
   type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert,
-  type SourceReplace, type SourceScope, type SourceState,
+  type SourceReplace, type SourceReplaceResult, type SourceReplaceSnapshot, type SourceScope, type SourceState,
 } from '../adapter';
 import { Memory, MemoryRelationship } from '../../core/types';
 import { memories, memoryRelationships } from './schema';
@@ -25,13 +25,19 @@ const UUID = /^(?:\{(?:[0-9a-f]{4}-?){7}[0-9a-f]{4}\}|(?:[0-9a-f]{4}-?){7}[0-9a-
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
   private db: PostgresJsDatabase<any>;
+  /** Fixed at construction: only the exact built-in class with its built-in search declares; a subclass opts in through the getter. */
+  private declared = Object.getPrototypeOf(this) === PostgresAdapter.prototype && this.searchVectors === builtInPostgresSearch;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
     this.db = db;
   }
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
-    return this.db.transaction(tx => operation(new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>)));
+    return this.db.transaction(async tx => {
+      const scoped = new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>);
+      scoped.declared = scoped.declared && this.excludesSources === true;
+      return operation(scoped);
+    });
   }
 
   async close(): Promise<void> { await this.dispose?.(); }
@@ -113,6 +119,17 @@ export class PostgresAdapter implements StorageAdapter {
     }));
   }
 
+  /**
+   * Fixed for the adapter's lifetime: declared only by the built-in class
+   * whose searchVectors was the built-in one at construction. A subclass is
+   * undeclared and opts in by overriding this getter (and must then honour
+   * excludeSources). A transaction's adapter is declared only when its own
+   * search is the built-in one and its parent is declared when it opens.
+   */
+  get excludesSources(): boolean {
+    return this.declared;
+  }
+
   async searchVectors(params: {
     tenantId: string;
     embedding: number[];
@@ -120,6 +137,7 @@ export class PostgresAdapter implements StorageAdapter {
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
+    excludeSources?: boolean;
   }): Promise<Memory[]> {
     requireScope(params.tenantId, params.containerTags);
     const { tenantId, embedding, containerTags, topK, threshold } = params;
@@ -139,6 +157,7 @@ export class PostgresAdapter implements StorageAdapter {
 
     // Build Where Clauses
     const conditions = [eq(memories.tenantId, tenantId), isNull(memories.deletedAt), eq(memories.isLatest, true)];
+    if (params.excludeSources) conditions.push(isNull(memories.sourceKey));
 
     // All supplied tags constrain retrieval within the explicit tenant.
     if (containerTags && containerTags.length > 0) {
@@ -313,8 +332,11 @@ export class PostgresAdapter implements StorageAdapter {
    * otherwise publish state that never commits.
    */
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
-    const { scope } = requireSourceScope(input);
-    const rows = await this.db.with(this.sourceTags(this.db, scope)).select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
+    return this.sourceState(this.db, requireSourceScope(input).scope);
+  }
+
+  private async sourceState(db: PostgresJsDatabase<any>, scope: SourceScope): Promise<SourceState | null> {
+    const rows = await db.with(this.sourceTags(db, scope)).select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
       .from(memories).where(this.liveSource(scope)).groupBy(memories.contentHash).$withCache(false);
     if (!rows.length) return null;
     return {
@@ -324,17 +346,41 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    const { scope, contentHash, chunks } = requireSourceReplace(input);
+    const replacement = this.replacement(input);
+    return this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement));
+  }
+
+  /**
+   * The state is read after withSourceLock's advisory and row locks, so a
+   * replacement committed by another connection while this call waited is
+   * seen. Two calls made concurrently through one transaction can both find
+   * the source changed and both write; each write is still one statement, so
+   * exactly one chunk set stays live.
+   */
+  async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
+    const replacement = this.replacement(input);
+    return this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
+      const state = await this.sourceState(tx, replacement.scope);
+      if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
+      return { unchanged: false, memories: await this.writeSource(tx, replacement) };
+    });
+  }
+
+  /** Validates a replacement and builds its rows before any statement. */
+  private replacement(input: SourceReplace) {
+    const { scope, contentHash, chunks }: SourceReplaceSnapshot = requireSourceReplace(input);
     // The id column is a uuid, so the row JSON carries only fixed-size ids.
     if (chunks.some(chunk => chunk.id !== undefined && !UUID.test(chunk.id))) throw new Error('MEMORY_SOURCE_CHUNK_INVALID');
     const now = new Date();
-    const values = chunks.map(chunk => this.toRow(chunk, now));
-    return this.withSourceLock(scope, async tx => {
-      if (!values.length) { await this.clearSource(tx, scope, now); return []; }
-      const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
-      const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
-      return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
-    });
+    return { scope, contentHash, now, values: chunks.map(chunk => this.toRow(chunk, now)) };
+  }
+
+  /** The replacement's one write statement; the caller holds withSourceLock. */
+  private async writeSource(tx: PostgresJsDatabase<any>, { scope, contentHash, now, values }: ReturnType<PostgresAdapter['replacement']>): Promise<Memory[]> {
+    if (!values.length) { await this.clearSource(tx, scope, now); return []; }
+    const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
+    const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
+    return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
   }
 
   /**
@@ -400,3 +446,6 @@ export class PostgresAdapter implements StorageAdapter {
     };
   }
 }
+
+/** The built-in search, captured once at module load; adapters compare against it when constructed. */
+const builtInPostgresSearch = PostgresAdapter.prototype.searchVectors;

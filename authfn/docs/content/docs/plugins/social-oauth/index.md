@@ -168,7 +168,16 @@ By default, OAuth identities for an existing email are *not* automatically linke
 
 ## Allowlists
 
-Both `allowlistedRedirectUris` and `allowlistedReturnTo` are *exact-match* allowlists with no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+Both `allowlistedRedirectUris` and `allowlistedReturnTo` have no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+
+`allowlistedRedirectUris` is exact-match. An `allowlistedReturnTo` entry matches a `returnTo` that is the same string, or, when the entry is a bare origin with no path, query or fragment:
+
+- `https://app.example.com` (or `http:`) matches any target with the same origin.
+- A custom scheme such as `myapp://oauthsignin` matches targets with the same scheme, host and port (`myapp://oauthsignin/done` matches; `otherapp://oauthsignin` and `myapp://other` don't). Custom-scheme URLs have no web origin, so they are never compared by origin.
+- An entry without a host, such as `myapp:callback`, matches only itself.
+- A relative path such as `/post-auth` matches only itself, and only when it is a plain path (one leading `/`, no `//`, backslash or control characters). The browser resolves it against the origin that serves the authfn callback, so use it only when the app and authfn share that origin. It counts as a web target: session tokens are never put in its fragment when `allowWebSessionTokenHandoff` is `false`.
+
+`javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:` and `filesystem:` targets are refused even if listed.
 
 ## Errors
 
