@@ -366,3 +366,39 @@ async def test_before_send_hook_cannot_replace_purpose_with_non_string() -> None
         await without_hook.send_challenge(42, "ada@example.com")  # type: ignore[arg-type]
 
     assert db.storage["otp_challenges"] == []
+
+
+@pytest.mark.asyncio
+async def test_skips_a_newer_challenge_the_typescript_kernel_never_admitted() -> None:
+    db = MockDatabaseAdapter()
+    delivery = DeliveryRecorder()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+    await db.create(
+        model="users",
+        data={"id": "user_1", "primaryEmail": "ada@example.com", "createdAt": clock.now(), "updatedAt": clock.now()},
+        namespace="authfn",
+    )
+    service = EmailOtpService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        EmailOtpPluginConfig(delivery=delivery, code_generator=lambda: "731942", now=clock.now),
+    )
+    await service.send_challenge("verify-email", "ada@example.com")
+    clock.advance(timedelta(seconds=1))
+    # A send the TypeScript kernel refused: created expiring as it was created.
+    await db.create(
+        model="otp_challenges",
+        data={
+            "id": "otp_test_refused",
+            "purpose": "verify-email",
+            "email": "ada@example.com",
+            "codeHash": "test-refused-code-hash",
+            "attemptCount": 0,
+            "expiresAt": clock.now(),
+            "consumedAt": None,
+            "createdAt": clock.now(),
+            "updatedAt": clock.now(),
+        },
+        namespace="authfn",
+    )
+    verified = await service.verify_challenge("verify-email", "ada@example.com", "731942")
+    assert verified["verified"] is True

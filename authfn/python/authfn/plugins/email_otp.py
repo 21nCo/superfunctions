@@ -459,7 +459,13 @@ class EmailOtpService:
             order_by=[{"field": "createdAt", "direction": "desc"}],
             namespace=self.config.namespace,
         )
-        return rows[0] if rows else None
+        # The TypeScript kernel creates a challenge expiring as it is created
+        # and only extends it once the email's budget admits it; a row that
+        # was never admitted (a refused send) is skipped, as it is there.
+        for row in rows:
+            if _is_admitted(row):
+                return row
+        return None
 
     async def _touch_attempt(self, challenge_id: str, attempt_count: int, updated_at: datetime) -> None:
         await self.config.database.update(
@@ -475,6 +481,22 @@ class EmailOtpService:
             where=[{"field": "primaryEmail", "operator": "eq", "value": email}],
             namespace=self.config.namespace,
         )
+
+
+def _is_admitted(row: Dict[str, Any]) -> bool:
+    expires_at = row.get("expiresAt")
+    created_at = row.get("createdAt")
+    if expires_at is None or created_at is None:
+        return True
+    return _as_utc(expires_at) > _as_utc(created_at)
+
+
+def _as_utc(value: Any) -> datetime:
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> AuthFnPlugin:
