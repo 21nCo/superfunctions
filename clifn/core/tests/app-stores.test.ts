@@ -15,6 +15,16 @@ const POSIX = process.platform !== "win32";
 const FOREIGN_PLATFORM: NodeJS.Platform = POSIX ? "win32" : "linux";
 const HOME = POSIX ? "/home/ada" : "C:\\Users\\ada";
 
+/** An options object whose `own` keys are own enumerable properties and whose `inherited` keys come from its prototype. */
+function withPrototype(inherited: object, own: object): object {
+  return Object.assign(Object.create(inherited) as object, own);
+}
+
+/** Adds an own non-enumerable property, which Object.keys and object spread do not see. */
+function withHidden(target: object, key: string, value: unknown): object {
+  return Object.defineProperty(target, key, { value, enumerable: false });
+}
+
 let tempRoot: string;
 
 beforeEach(() => {
@@ -107,6 +117,32 @@ describe("createCredentialStore", () => {
   it("ignores an inherited selector beside an own one", () => {
     const options = Object.assign(Object.create({ path: "/tmp/inherited" }) as object, { path: "/tmp/own" });
     expect(createCredentialStore(options as never).path).toBe("/tmp/own");
+  });
+
+  it.each([
+    ["appName set to undefined beside a path", () => withHidden({ path: "/expected" }, "appName", undefined)],
+    ["appName beside a path", () => withHidden({ path: "/expected" }, "appName", "my-cli")],
+    ["cwd beside appName", () => withHidden({ appName: "my-cli" }, "cwd", "/tmp")],
+    ["an unknown key", () => withHidden({ appName: "my-cli" }, "homeDir", "/home/ada")],
+  ])("rejects a non-enumerable own %s", (_label, build) => {
+    expect(() => createCredentialStore(build() as never)).toThrow(InvalidStoreOptionsError);
+  });
+
+  it("selects the appName form from a non-enumerable own appName", () => {
+    const options = withHidden({ env: { XDG_CONFIG_HOME: tempRoot } }, "appName", "my-cli");
+    expect(createCredentialStore(options as never).path).toBe(join(tempRoot, "my-cli", "credentials"));
+  });
+
+  it.runIf(POSIX)("ignores inherited env, homedir and platform, so each takes its default", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", tempRoot);
+    const inheritedEnv = withPrototype({ env: { XDG_CONFIG_HOME: "/unexpected" } }, { appName: "my-cli" });
+    expect(createCredentialStore(inheritedEnv as never).path).toBe(join(tempRoot, "my-cli", "credentials"));
+
+    const inheritedHome = withPrototype({ homedir: "/proto" }, { appName: "my-cli", env: {} });
+    expect(createCredentialStore(inheritedHome as never).path).toBe(join(homedir(), ".config", "my-cli", "credentials"));
+
+    const inheritedPlatform = withPrototype({ platform: FOREIGN_PLATFORM }, { appName: "my-cli" });
+    expect(createCredentialStore(inheritedPlatform as never).path).toBe(join(tempRoot, "my-cli", "credentials"));
   });
 
   it.runIf(POSIX)("treats env and homedir set to undefined as absent in the appName form", () => {
@@ -204,9 +240,10 @@ describe("createProjectConfig", () => {
     ["a non-string path", { path: 42 }],
     ["appName set to undefined beside the Conduct file name", { appName: undefined, fileName: "conduct.config.json" }],
     ["path set to undefined beside a fileName", { path: undefined, fileName: "a.json" }],
-    ["fileName set to undefined beside appName", { appName: "my-cli", fileName: undefined }],
     ["fileName set to undefined", { fileName: undefined }],
-    ["cwd set to undefined", { cwd: undefined, fileName: "a.json" }],
+    ["fileName set to undefined beside cwd", { cwd: "/x", fileName: undefined }],
+    ["an empty appName form fileName", { appName: "my-cli", fileName: "" }],
+    ["a non-string cwd", { cwd: 42, fileName: "a.json" }],
     ["a non-string appName", { appName: 42 }],
     ["a non-string fileName", { fileName: 42 }],
     ["env with a project-local file", { fileName: "a.json", env: {} }],
@@ -220,5 +257,56 @@ describe("createProjectConfig", () => {
 
   it("rejects an invalid app name", () => {
     expect(() => createProjectConfig({ appName: "My-CLI" })).toThrow(InvalidAppNameError);
+  });
+
+  it("treats an optional fileName or cwd set to undefined as absent", () => {
+    const options = { appName: "my-cli", env: { XDG_CONFIG_HOME: tempRoot } };
+    expect(createProjectConfig({ ...options, fileName: undefined }).path).toBe(join(tempRoot, "my-cli", "config.json"));
+
+    const spy = vi.spyOn(process, "cwd").mockReturnValue(tempRoot);
+    try {
+      expect(createProjectConfig({ cwd: undefined, fileName: "a.json" }).path).toBe(join(tempRoot, "a.json"));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["appName set to undefined beside the Conduct file name", () => withHidden({ fileName: "conduct.config.json" }, "appName", undefined)],
+    ["appName set to undefined beside a path", () => withHidden({ path: "/expected" }, "appName", undefined)],
+    ["cwd beside appName", () => withHidden({ appName: "my-cli" }, "cwd", "/tmp")],
+    ["fileName beside a path", () => withHidden({ path: "/expected" }, "fileName", "a.json")],
+  ])("rejects a non-enumerable own %s", (_label, build) => {
+    expect(() => createProjectConfig(build() as never)).toThrow(InvalidStoreOptionsError);
+  });
+
+  it("reads a non-enumerable own cwd", () => {
+    const options = withHidden({ fileName: "settings.json" }, "cwd", tempRoot);
+    expect(createProjectConfig(options as never).path).toBe(join(tempRoot, "settings.json"));
+  });
+
+  it("ignores an inherited cwd, so the file resolves against the working directory", () => {
+    const spy = vi.spyOn(process, "cwd").mockReturnValue(tempRoot);
+    try {
+      const options = withPrototype({ cwd: "/unexpected" }, { fileName: "settings.json" });
+      expect(createProjectConfig(options as never).path).toBe(join(tempRoot, "settings.json"));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.runIf(POSIX)("ignores inherited env, homedir, platform and fileName, so each takes its default", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", tempRoot);
+    const inheritedEnv = withPrototype({ env: { XDG_CONFIG_HOME: "/unexpected" } }, { appName: "my-cli" });
+    expect(createProjectConfig(inheritedEnv as never).path).toBe(join(tempRoot, "my-cli", "config.json"));
+
+    const inheritedHome = withPrototype({ homedir: "/proto" }, { appName: "my-cli", env: {} });
+    expect(createProjectConfig(inheritedHome as never).path).toBe(join(homedir(), ".config", "my-cli", "config.json"));
+
+    const inheritedPlatform = withPrototype({ platform: FOREIGN_PLATFORM }, { appName: "my-cli" });
+    expect(createProjectConfig(inheritedPlatform as never).path).toBe(join(tempRoot, "my-cli", "config.json"));
+
+    const inheritedFileName = withPrototype({ fileName: "../escape.json" }, { appName: "my-cli" });
+    expect(createProjectConfig(inheritedFileName as never).path).toBe(join(tempRoot, "my-cli", "config.json"));
   });
 });

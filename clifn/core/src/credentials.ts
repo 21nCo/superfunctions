@@ -93,8 +93,9 @@ function mutateProfiles(path: string, change: (profiles: Record<string, Credenti
 
 /**
  * `{ appName }` stores credentials at `<config>/credentials` from `resolveAppPaths(appName)` on the current platform,
- * passing `env` and `homedir` through. `{ path }` is the same as passing the path string. Keys are read as own
- * properties; a selector set to `undefined`, a key of another form or an unknown key throws `InvalidStoreOptionsError`.
+ * passing `env` and `homedir` through. `{ path }` is the same as passing the path string. Only own properties are
+ * read (enumerable or not), once. `appName` or `path` must be a string; `env` or `homedir` set to `undefined` takes its
+ * default. A key of another form or an unknown key throws `InvalidStoreOptionsError`.
  */
 export type CredentialStoreOptions =
   | ({ appName: string; path?: never } & StoreAppPathsOptions)

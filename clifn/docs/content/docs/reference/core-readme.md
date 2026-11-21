@@ -220,7 +220,7 @@ Consumer ownership stays explicit:
 
 - `createProjectConfig(path?)` -> JSON project config store.
 - `createProjectConfig({ appName, fileName? })` -> `<config>/<fileName>` (default `config.json`); `{ cwd?, fileName }` -> a project-local file; `{ path }` equals the string form. Without an argument the Conduct default `conduct.config.json` stays.
-- `{ appName }` stores resolve only the config directory for the current platform (`env` and `homedir` may be passed through, a different `platform` throws); `fileName` must stay inside its directory. Options are read as own keys: a selector set to `undefined` or a non-string, a key from another form, or an unknown key throws `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`) instead of falling back to another form or the Conduct default.
+- `{ appName }` stores resolve only the config directory for the current platform (`env` and `homedir` may be passed through, a different `platform` throws); `fileName` must stay inside its directory. Only own properties of the options object are read (enumerable or not; inherited keys are ignored). The selector of the form (`appName`, `path`, or `fileName` for a project-local file) must be a string, and an optional key set to `undefined` (`fileName` beside `appName`, `cwd`, `env`, `homedir`) takes its default. A selector set to `undefined` or a non-string, a key from another form, or an unknown key throws `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`) instead of falling back to another form or the Conduct default.
 - `InvalidConfigError` -> typed error for invalid JSON/object shapes.
 
 ### `@clifn/core/client`

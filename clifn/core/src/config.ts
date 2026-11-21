@@ -63,8 +63,10 @@ function parseConfig<TConfig extends Record<string, unknown>>(path: string): TCo
  * - `{ cwd?, fileName }`: a project-local file, `fileName` resolved against `cwd` (default `process.cwd()` at call time).
  * - `{ path }`: the same as passing the path string.
  *
- * `fileName` is relative and stays inside its directory (subdirectories allowed, no `..` escape). Keys are read as own
- * properties; a selector set to `undefined`, a key of another form or an unknown key throws `InvalidStoreOptionsError`.
+ * `fileName` is relative and stays inside its directory (subdirectories allowed, no `..` escape). Only own properties
+ * are read (enumerable or not), once. The selector of the form (`appName`, `path`, or `fileName` for a project-local
+ * file) must be a string; an optional key set to `undefined` (`fileName` with `appName`, `cwd`, `env`, `homedir`)
+ * takes its default. A key of another form or an unknown key throws `InvalidStoreOptionsError`.
  */
 export type ProjectConfigOptions =
   | ({ appName: string; fileName?: string; path?: never; cwd?: never } & StoreAppPathsOptions)
@@ -98,7 +100,7 @@ function resolveConfigTarget(pathOrOptions: string | ProjectConfigOptions | unde
   if (form === "local") {
     return { path: projectLocalFile(options) };
   }
-  const fileName = Object.keys(options).includes("fileName") ? options.fileName : "config.json";
+  const fileName = options.fileName === undefined ? "config.json" : options.fileName;
   return { path: appConfigFile(options, fileName), dirMode: 0o700 };
 }
 
