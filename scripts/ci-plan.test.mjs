@@ -594,14 +594,24 @@ test("a package whose source reads another package's files changes with it, depe
     "genfn/wrapper/package.json": JSON.stringify({ name: "@genfn/wrapper", scripts: { build: "tsup" } }),
     "genfn/wrapper/turbo.json": JSON.stringify({ extends: ["//"], tasks: { generate: { inputs: ["$TURBO_ROOT$/devfn/proxy/schema/**"] }, test: { inputs: ["$TURBO_ROOT$/devfn/proxy/docs/**"] } } }),
     "genfn/app/package.json": JSON.stringify({ name: "@genfn/app", scripts: { test: "vitest run" }, dependencies: { "@genfn/wrapper": "*" } }),
+    // A check-named task that build depends on feeds the build.
+    "declfn/wrapper/package.json": JSON.stringify({ name: "@declfn/wrapper", scripts: { build: "tsup" } }),
+    "declfn/wrapper/turbo.json": JSON.stringify({ extends: ["//"], tasks: { build: { dependsOn: ["^build", "typecheck:declarations"] }, "typecheck:declarations": { inputs: ["$TURBO_ROOT$/devfn/proxy/types/**"] } } }),
+    "declfn/app/package.json": JSON.stringify({ name: "@declfn/app", scripts: { test: "vitest run" }, dependencies: { "@declfn/wrapper": "*" } }),
+    // A stylesheet importing another package's CSS is a build reference.
+    "cssfn/workbench/package.json": JSON.stringify({ name: "@cssfn/workbench", scripts: { build: "vite build" } }),
+    "cssfn/workbench/src/styles.css": '@import "../../../filefn/core/src/catalog.css";\n.logo { background: url(../../../otherfn/cli/src/logo.svg); }\n',
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
-    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_test_filters, `--filter=..../cssfn/workbench --filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.has_js_test, "true");
     assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/bundlefn\/app --filter=\.\.\.\.\/bundlefn\/wrapper/);
     assert.match(plan(({ put }) => put("devfn/proxy/schema/a.json", "{}\n")).js_build_filters, /--filter=\.\.\.\.\/genfn\/app --filter=\.\.\.\.\/genfn\/wrapper/);
     assert.match(plan(({ put }) => put("devfn/proxy/docs/a.md", "x\n")).js_build_filters, /--filter=\.\/genfn\/wrapper/);
+    assert.match(plan(({ put }) => put("devfn/proxy/types/a.d.ts", "export {};\n")).js_build_filters, /--filter=\.\.\.\.\/declfn\/app --filter=\.\.\.\.\/declfn\/wrapper/);
+    assert.match(outputs.js_build_filters, /--filter=\.\.\.\.\/cssfn\/workbench/);
+    assert.match(plan("otherfn/cli/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/cssfn\/workbench/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 

@@ -421,8 +421,12 @@ function readDependencyNames(manifest) {
 // The packages turbo's `..../<dir>` filter selects: each seed and every package that depends on it, transitively.
 // Code files whose relative paths can reach into another package: a test importing a sibling package's source, a
 // vitest or tsconfig file pointing at shared fixtures, a probe loading another package's build.
-const SOURCE_REFERENCE_FILES = ["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro"];
-const RELATIVE_PARENT_PATH = /["'`](\.\.\/[^"'`\n$]*)["'`]/g;
+const SOURCE_REFERENCE_FILES = [
+  "*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro",
+  "*.css", "*.scss", "*.sass", "*.less", "*.pcss",
+];
+// A "../" path in quotes, or in an unquoted CSS url(...).
+const RELATIVE_PARENT_PATH = /["'`(](\.\.\/[^"'`()\s$]*)["'`)]/g;
 
 // Test files and test configuration: a reference from one of these affects only the referencing package's tests. Any
 // other file (fixtures included, which a build may bundle) counts as a build input.
@@ -531,12 +535,40 @@ function collectJsDependents(seedDirs, manifests) {
   return selected;
 }
 
+// The tasks `start` runs first in the same package, following dependsOn entries without `^` (which name tasks of
+// dependencies) or another package's `pkg#task`.
+function tasksReachableFrom(start, tasks) {
+  const reached = new Set();
+  const queue = [start];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (reached.has(name)) {
+      continue;
+    }
+    reached.add(name);
+    const dependsOn = tasks[name]?.dependsOn;
+    for (const dependency of Array.isArray(dependsOn) ? dependsOn : []) {
+      if (typeof dependency === "string" && !dependency.startsWith("^") && !dependency.includes("#")) {
+        queue.push(dependency);
+      }
+    }
+  }
+  return reached;
+}
+
 // Package turbo.json files can name inputs in other packages ("$TURBO_ROOT$/extfn/cli/**/*.ts" in clifn/core, whose
 // contract test scans those CLIs). Returns [owner package dir, path prefix, kind] entries: a changed file under a prefix
-// selects the owner, with its dependents unless the task only checks the package (test, lint, typecheck). The prefix is
-// the glob's literal part, so it can only over-select.
+// selects the owner, with its dependents unless the task only checks the package (test, lint or typecheck by name, and
+// not something its build depends on). The prefix is the glob's literal part, so it can only over-select.
 function collectTurboRootInputs(packageDirs) {
   const inputs = [];
+  let rootTasks = {};
+  try {
+    const rootConfig = JSON.parse(readFileSync(path.join(repoRoot, "turbo.json"), "utf8"));
+    rootTasks = rootConfig?.tasks || rootConfig?.pipeline || {};
+  } catch {
+    rootTasks = {};
+  }
   let files = [];
   try {
     files = git(["ls-files", "-z", "--format=|%(path)", "--", "*/turbo.json"])
@@ -558,14 +590,18 @@ function collectTurboRootInputs(packageDirs) {
     } catch {
       continue;
     }
+    const tasks = { ...rootTasks, ...(config?.tasks || config?.pipeline || {}) };
+    const feedsBuild = tasksReachableFrom("build", tasks);
     for (const [taskName, task] of Object.entries(config?.tasks || config?.pipeline || {})) {
+      const name = taskName.replace(/^.*#/, "");
+      const checkOnly = CHECK_TASK.test(name) && !feedsBuild.has(name);
       for (const input of Array.isArray(task?.inputs) ? task.inputs : []) {
         if (typeof input !== "string" || !input.startsWith("$TURBO_ROOT$/")) {
           continue;
         }
         const glob = input.slice("$TURBO_ROOT$/".length);
         const literal = glob.split(/[*?{[!]/, 1)[0];
-        inputs.push([owner, literal, CHECK_TASK.test(taskName.replace(/^.*#/, "")) ? "test" : "build"]);
+        inputs.push([owner, literal, checkOnly ? "test" : "build"]);
       }
     }
   }
