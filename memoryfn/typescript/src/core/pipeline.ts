@@ -149,6 +149,8 @@ export class MemoryFn implements IMemoryFn {
           maxFacts: MAX_SOURCE_CHUNKS - records.length,
           tooMany: overLimit,
           accept: fact => {
+            // Stored as text and JSON on every adapter, so a NUL or lone surrogate fails here, before embedding.
+            if (!isStorableText(fact.content) || !fact.tags.every(isStorableText)) throw new Error('MEMORY_EXTRACTION_INVALID');
             // Model-generated tags are descriptive metadata, never authority or scope.
             const record = { content: fact.content, type: fact.type,
               metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } };
@@ -160,8 +162,9 @@ export class MemoryFn implements IMemoryFn {
     } else {
       for (const chunk of chunks) records.push({ content: chunk, type: chunkType, metadata: { ...metadata } });
     }
-    const embeddings: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
-    requireEmbeddings(embeddings, records.length, this.storage.embeddingDimensions);
+    const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
+    // Plain unit-length copies: what is charged here is exactly what storage receives.
+    const embeddings = unitEmbeddings(batch, records.length, this.storage.embeddingDimensions);
     for (const embedding of embeddings) {
       bytes += sourceEmbeddingBytes(embedding);
       if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
@@ -225,35 +228,41 @@ export async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** Largest finite float32, the component type of pgvector's vector. */
-const FLOAT32_MAX = 3.4028234663852886e38;
-/** Smallest normal float32: a vector with a larger component keeps a non-zero norm as float32 and in cosine arithmetic. */
-const FLOAT32_MIN_NORMAL = 1.1754943508222875e-38;
-
 /**
- * An embedding batch replaceSource may store: `count` non-empty vectors of
- * finite numbers within the float32 range, each with a component of at least
- * FLOAT32_MIN_NORMAL in magnitude, with one shared length, equal to the
- * storage's fixed dimension when it has one. Such a vector keeps its value in
- * PostgreSQL and a finite, non-zero norm in cosine similarity, so it can be
- * found. Anything else is rejected before the source is touched
- * (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so the
- * previous chunks stay live and searchable.
+ * Unit-length plain copies of an embedding batch: `count` non-empty vectors of
+ * finite numbers, not all zero, with one shared length, equal to the storage's
+ * fixed dimension when it has one. Both adapters rank by cosine similarity,
+ * which ignores length, so scaling keeps every ranking, while each stored
+ * component lies within [-1, 1] and the norm is 1: no vector overflows or
+ * vanishes, either in the memory adapter's float64 arithmetic or in pgvector's
+ * float32 values and accumulators. Anything else is rejected before the source
+ * is touched (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so
+ * the previous chunks stay live and searchable.
  */
-function requireEmbeddings(value: unknown, count: number, dimensions: number | undefined): asserts value is number[][] {
+function unitEmbeddings(value: unknown, count: number, dimensions: number | undefined): number[][] {
   if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
   let size = dimensions;
+  const units: number[][] = [];
   // Read by index, so a hole in a sparse array is seen as a missing vector or number.
   for (let index = 0; index < count; index++) {
     const vector: unknown = value[index];
     if (!Array.isArray(vector) || vector.length === 0 || (size !== undefined && vector.length !== size)) throw new Error('MEMORY_EMBEDDING_INVALID');
     size = vector.length;
-    let nonZero = false;
-    for (let at = 0; at < vector.length; at++) {
+    const copy: number[] = [];
+    let largest = 0;
+    for (let at = 0; at < size; at++) {
       const number: unknown = vector[at];
-      if (typeof number !== 'number' || !(Math.abs(number) <= FLOAT32_MAX)) throw new Error('MEMORY_EMBEDDING_INVALID');
-      if (Math.abs(number) >= FLOAT32_MIN_NORMAL) nonZero = true;
+      if (typeof number !== 'number' || !Number.isFinite(number)) throw new Error('MEMORY_EMBEDDING_INVALID');
+      copy.push(number);
+      largest = Math.max(largest, Math.abs(number));
     }
-    if (!nonZero) throw new Error('MEMORY_EMBEDDING_INVALID');
+    if (largest === 0) throw new Error('MEMORY_EMBEDDING_INVALID');
+    // Divided by the largest component first, so squaring neither overflows nor underflows.
+    let squares = 0;
+    for (let at = 0; at < size; at++) { copy[at] /= largest; squares += copy[at] * copy[at]; }
+    const norm = Math.sqrt(squares);
+    for (let at = 0; at < size; at++) copy[at] /= norm;
+    units.push(copy);
   }
+  return units;
 }

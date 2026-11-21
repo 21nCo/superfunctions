@@ -345,10 +345,7 @@ describe('upsertDocument embedding validation', () => {
     ['a sparse batch', sparse],
     ['a hole in a vector', [[1, 2, 3], holed]],
     ['a non-number', [[1, 2], [1, '2']]],
-    ['a component above the float32 range', [[1, 2], [1, 1e308]]],
-    ['a component below the float32 range', [[1, 2], [-3.5e38, 1]]],
     ['a zero vector', [[1, 2], [0, 0]]],
-    ['a vector that is zero as float32', [[1, 2], [1e-300, -1e-40]]],
   ])('rejects %s and keeps the previous chunks searchable', async (_name, batch) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockResolvedValueOnce(batch as number[][]);
@@ -356,6 +353,16 @@ describe('upsertDocument embedding validation', () => {
     expect((await searchAll()).map(chunk => chunk.id).sort()).toEqual(first.memories.map(chunk => chunk.id).sort());
     // The new hash was not stored, so a retry embeds again.
     expect(await memory.upsertDocument({ ...scope, content: docV2 })).toMatchObject({ unchanged: false, chunks: 2 });
+  });
+
+  it('stores each vector at unit length, so vectors of any finite scale stay searchable', async () => {
+    const scaled = { embed: vi.fn(async () => [1, 1]), embedBatch: vi.fn(async (texts: string[]) => texts.map((_, index) => (index ? [1e-40, 1e-40] : [1e308, 0]))) };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, scaled);
+    const result = await memory.upsertDocument({ ...scope, content: docV2 });
+    expect(result.memories[0].embedding).toEqual([1, 0]);
+    for (const component of result.memories[1].embedding!) expect(component).toBeCloseTo(Math.SQRT1_2, 15);
+    const found = await memory.search({ q: 'any', tenantId: scope.tenantId, containerTags: scope.containerTags, threshold: 0.99 });
+    expect(found.results.map(chunk => chunk.id)).toEqual([result.memories[1].id]);
   });
 
   it('rejects vectors of another dimension than the storage keeps', async () => {
@@ -435,6 +442,8 @@ describe('upsertDocument extraction output', () => {
   it.each([
     ['a hole in the facts', { facts: sparseFacts }],
     ['a hole in the tags', { facts: [{ ...fact, tags: sparseTags }] }],
+    ['NUL in a fact', { facts: [{ ...fact, content: `A ${String.fromCharCode(0)} fact.` }] }],
+    ['a lone surrogate in a tag', { facts: [{ ...fact, tags: ['doc \uD800'] }] }],
   ])('rejects %s and keeps the previous source searchable', async (_name, response) => {
     const llm = fakeLLM();
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
@@ -456,9 +465,10 @@ describe('upsertDocument extraction output', () => {
 describe('upsertDocument combined byte budget', () => {
   it('charges the returned vectors with the tags and content, rejecting the write and keeping the source', async () => {
     // Per record: about 63 KB of tag JSON (pre-embedding total about 189 MB for 3,000 records) and about
-    // 68 KB of vector JSON (storage total about 204 MB): each is under 256 MiB, together they are not.
+    // 84 KB of unit-vector JSON (storage total about 252 MB): each is under 256 MiB, together they are not.
+    // The vector's toJSON would shrink it to 3 bytes; the copy that storage writes is what is charged.
     const containerTags = Array.from({ length: 1_000 }, (_, index) => `${index}`.padEnd(60, 't'));
-    const wide = new Array<number>(4_000).fill(1_000_000_000_000_001);
+    const wide = Object.assign(new Array<number>(4_000).fill(1), { toJSON: () => [1] });
     const wideEmbedder = { embed: vi.fn(async () => wide), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => wide)) };
     memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, wideEmbedder);
     const source = { tenantId: scope.tenantId, containerTags, sourceKey: 'wide.md' };
