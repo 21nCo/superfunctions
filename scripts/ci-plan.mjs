@@ -481,9 +481,10 @@ function collectSourceReferences(packageDirs) {
       }
       if (interpolated) {
         // Only the literal part is known: the package holding it and every package directory that starts with it
-        // (`../devfn/${name}` names every devfn package).
-        const holder = findNearestManifestDir(target.endsWith("/") ? `${target}-` : `${path.posix.dirname(target)}/-`, packageDirs);
-        for (const dir of [holder, ...[...packageDirs].filter((candidate) => candidate.startsWith(target))]) {
+        // (`../devfn/${name}` names every devfn package; a prefix at the repository root names every package).
+        const prefix = target === "./" || target === "." ? "" : target;
+        const holder = prefix === "" ? "" : findNearestManifestDir(prefix.endsWith("/") ? `${prefix}-` : `${path.posix.dirname(prefix)}/-`, packageDirs);
+        for (const dir of [holder, ...[...packageDirs].filter((candidate) => candidate.startsWith(prefix))]) {
           if (dir && dir !== owner) {
             addReference(references.packages[kind], dir, owner);
           }

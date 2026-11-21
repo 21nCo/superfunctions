@@ -607,6 +607,9 @@ test("a package whose source reads another package's files changes with it, depe
     // A template literal: a directory prefix, and a prefix that stops inside a name.
     "tplfn/core/package.json": JSON.stringify({ name: "@tplfn/core", scripts: { test: "vitest run" } }),
     "tplfn/core/tests/docs.test.ts": 'const url = new URL(`../../../filefn/core/docs/${page}`, import.meta.url);\nconst pin = `../../../devfn/${name}/package.json`;\nconst cli = `../../../other${fn}/cli`;\n',
+    // A template prefix at the repository root names every package.
+    "rootfn/wrapper/package.json": JSON.stringify({ name: "@rootfn/wrapper", scripts: { build: "node build.mjs" } }),
+    "rootfn/wrapper/build.mjs": 'const schema = `../../${packageDir}/schema.json`;\n',
     // A root task's dependsOn survives a package override that sets only inputs, and the inherited inputs count.
     "turbo.json": JSON.stringify({ tasks: { build: { dependsOn: ["^build", "typecheck:declarations"] }, "typecheck:declarations": { inputs: ["$TURBO_ROOT$/shared-types/**"] } } }),
     "inheritfn/wrapper/package.json": JSON.stringify({ name: "@inheritfn/wrapper", scripts: { build: "tsup" } }),
@@ -614,7 +617,7 @@ test("a package whose source reads another package's files changes with it, depe
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
-    assert.equal(outputs.js_test_filters, `--filter=..../cssfn/workbench --filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper --filter=./tplfn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.js_test_filters, `--filter=..../cssfn/workbench --filter=..../filefn/core --filter=..../rootfn/wrapper --filter=..../wrapfn/app --filter=..../wrapfn/wrapper --filter=./tplfn/core ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.has_js_test, "true");
     assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/bundlefn\/app --filter=\.\.\.\.\/bundlefn\/wrapper/);
     assert.match(plan(({ put }) => put("devfn/proxy/schema/a.json", "{}\n")).js_build_filters, /--filter=\.\.\.\.\/genfn\/app --filter=\.\.\.\.\/genfn\/wrapper/);
@@ -628,6 +631,7 @@ test("a package whose source reads another package's files changes with it, depe
     assert.match(plan(({ put }) => put("filefn/core/docs/guide.md", "x\n")).js_build_filters, /--filter=\.\/tplfn\/core/);
     assert.match(plan("otherfn/cli/src/index.ts").js_build_filters, /--filter=\.\/tplfn\/core/);
     assert.match(plan("devfn/proxy/src/index.ts").js_build_filters, /--filter=\.\/tplfn\/core/);
+    assert.match(plan("devfn/proxy/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/rootfn\/wrapper/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
