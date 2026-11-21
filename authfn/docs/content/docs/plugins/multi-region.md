@@ -113,7 +113,7 @@ If you don't supply a lookup store, the plugin falls back to reading `authfn_use
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/regions/lookup` | `lookupRegion` | Look up the right region for an identifier. Used by the client SDK for pre-routing. |
+| `POST` | `/auth/regions/lookup` | `lookupRegion` | Look up the right region for an identifier. Used by the client SDK for pre-routing. The answer never includes a user id; in non-gateway mode, a region other than the current one does show that the identifier is registered there, so use gateway routing where that must not be visible. Region-mismatch errors don't name the user either. |
 | `GET` | `/auth/environment` | `getEnvironment` | Returns the resolved request environment: `{ regionId, issuer, baseUrl, … }`. |
 
 ## Schema

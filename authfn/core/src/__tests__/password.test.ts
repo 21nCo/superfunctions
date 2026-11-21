@@ -5,11 +5,13 @@ import { authFnPasswordPlugin } from '@authfn/password';
 import type { AuthFnEvent, AuthFnRuntimeConfig } from '../index.js';
 import { issueSession } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
+import { randomBytes, scryptSync } from 'node:crypto';
 import {
   createPasswordCredential,
   getPasswordCredentialByUserId,
   signInWithPassword,
-  updatePasswordCredential
+  updatePasswordCredential,
+  verifyPassword
 } from '../core/passwords.js';
 
 function createConfig(): AuthFnRuntimeConfig {
@@ -428,5 +430,76 @@ describe('authfn password plugin', () => {
     });
     expect(events.some((event) => event.type === 'authfn.account_linked')).toBe(true);
     expect(events.some((event) => event.type === 'authfn.account_linking.conflict')).toBe(true);
+  });
+});
+
+describe('password storage and sign-in answers (AF-13, AF-10)', () => {
+  const post = (auth: ReturnType<typeof createTestServer>, path: string, body: unknown) => auth.router.handle(
+    new Request(`https://account.example.com/auth${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+  );
+
+  function legacyHash(password: string): string {
+    // The format written before AUTH-32: scrypt N = 2^14, r = 8, p = 1.
+    const salt = randomBytes(16).toString('base64url');
+    const digest = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString('base64url');
+    return ['scrypt', '16384', '8', '1', salt, digest].join('$');
+  }
+
+  it('hashes new passwords with scrypt N = 2^15, r = 8, p = 3', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await updatePasswordCredential(config, { userId: user.id, password: 'test-password-strong' });
+    const stored = await getPasswordCredentialByUserId(config, user.id);
+    expect(stored!.passwordHash.split('$').slice(0, 4)).toEqual(['scrypt', '32768', '8', '3']);
+  });
+
+  it('accepts a hash stored with the old cost and upgrades it on sign-in', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    await signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' });
+    const stored = await getPasswordCredentialByUserId(config, user.id);
+    expect(stored!.passwordHash.split('$').slice(0, 4)).toEqual(['scrypt', '32768', '8', '3']);
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' })).resolves.toBeTruthy();
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-wrong' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  });
+
+  it('refuses passwords longer than 1024 characters', async () => {
+    const auth = createTestServer(createConfig());
+    const long = 'x'.repeat(1025);
+    const signUp = await post(auth, '/sign-up/password', { email: 'ada@example.com', password: long });
+    expect(signUp.status).toBe(400);
+    expect((await signUp.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+  });
+
+  it('does not evaluate a stored hash that asks for too much memory', async () => {
+    const huge = ['scrypt', String(1 << 22), '8', '1', 'test-salt', 'test-digest'].join('$');
+    await expect(verifyPassword('test-password-strong', huge)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+    const notPowerOfTwo = ['scrypt', '30000', '8', '1', 'test-salt', 'test-digest'].join('$');
+    await expect(verifyPassword('test-password-strong', notPowerOfTwo)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+  });
+
+  it('says an email is unverified only to someone who knows the password, and names no user', async () => {
+    const auth = createTestServer({
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      plugins: [authFnPasswordPlugin({ requireEmailVerifiedForSignIn: true })]
+    });
+    await post(auth, '/sign-up/password', { email: 'bea@example.com', password: 'test-password-strong' });
+    const wrong = await post(auth, '/sign-in/password', { email: 'bea@example.com', password: 'test-password-wrong' });
+    expect(wrong.status).toBe(401);
+    expect((await wrong.json()).error.code).toBe('AUTHFN_INVALID_CREDENTIALS');
+    const unknown = await post(auth, '/sign-in/password', { email: 'nobody@example.com', password: 'test-password-wrong' });
+    expect(unknown.status).toBe(401);
+    const right = await post(auth, '/sign-in/password', { email: 'bea@example.com', password: 'test-password-strong' });
+    expect(right.status).toBe(403);
+    const body = await right.json();
+    expect(body.error.code).toBe('AUTHFN_EMAIL_NOT_VERIFIED');
+    expect(body.error.details?.userId).toBeUndefined();
   });
 });

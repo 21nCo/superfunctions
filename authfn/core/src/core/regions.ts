@@ -318,7 +318,6 @@ export async function ensureRegionAlignmentForUser(
   const targetAuthority = resolveLookupAuthorityForRequest(pluginConfig, lookup, input.request, input.environment);
   if (lookup.regionId !== input.environment.regionId && currentAuthority !== targetAuthority) {
     throw new AuthFnRegionMismatchError('Request must continue on a different region authority', {
-      userId: user.id,
       regionId: lookup.regionId,
       authority: targetAuthority,
       redirectTo: targetAuthority,
@@ -358,7 +357,6 @@ export async function ensureRegionAlignmentForIdentifier(
   if (lookup.regionId !== input.environment.regionId && currentAuthority !== targetAuthority) {
     throw new AuthFnRegionMismatchError('Request must continue on a different region authority', {
       identifier,
-      userId: lookup.userId,
       regionId: lookup.regionId,
       authority: targetAuthority,
       redirectTo: targetAuthority,
@@ -469,7 +467,6 @@ export async function registerUserRegion(
         });
         throw new AuthFnRegionMismatchError('Identifier is already registered in another region authority', {
           identifier,
-          userId: existing.userId,
           regionId: existing.regionId,
           authority: existing.authority,
           redirectTo: existing.authority,

@@ -129,6 +129,8 @@ export function createAuthFnRegionalClient(
       return lookup;
     }
 
+    // The lookup no longer names the user, so only an account in another
+    // region is known here; a local one is reported by sign-up itself.
     const existingAccount = Boolean(lookup.data.userId) || lookup.data.continueLocally === false;
     if (input.flow === 'sign-up' && existingAccount) {
       return accountExistsError(identifier, lookup.data, lookup.requestId);

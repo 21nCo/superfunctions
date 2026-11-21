@@ -38,21 +38,26 @@ import {
 
 const PASSWORD_HASH_ALGO = 'scrypt';
 /**
- * scrypt cost for new hashes: N = 2^15, r = 8, p = 1 (32 MiB per hash). Hashes
- * stored with a lower N are upgraded the next time their password is used to
- * sign in.
+ * scrypt cost for new hashes: N = 2^15, r = 8, p = 3, one of OWASP's
+ * recommended settings (32 MiB of memory per hash; the same strength as
+ * N = 2^17, p = 1 at a quarter of the memory, which matters on Workers).
+ * Hashes stored with other parameters are re-hashed the next time their
+ * password is used to sign in.
  */
 const PASSWORD_HASH_N = 32768;
 const PASSWORD_HASH_R = 8;
-const PASSWORD_HASH_P = 1;
+const PASSWORD_HASH_P = 3;
 const PASSWORD_HASH_KEY_LENGTH = 64;
 /** Room for N = 2^15 with r = 8 (32 MiB) plus scrypt's own overhead. */
 const PASSWORD_HASH_MAXMEM = 64 * 1024 * 1024;
-/** Largest stored N that will be evaluated; above it a stored hash is treated as corrupt. */
-const PASSWORD_HASH_MAX_N = 1 << 20;
+/**
+ * Most memory a stored hash may ask for (128 * N * r bytes); above it the
+ * hash is treated as corrupt rather than evaluated.
+ */
+const PASSWORD_HASH_MAX_MEMORY = 256 * 1024 * 1024;
 const MIN_PASSWORD_LENGTH = 12;
 /** Longest password accepted, so one request cannot make hashing expensive. */
-const MAX_PASSWORD_LENGTH = 256;
+const MAX_PASSWORD_LENGTH = 1024;
 
 export interface PasswordSignUpInput {
   email: string;
@@ -432,14 +437,19 @@ function parseStoredHash(storedHash: string): { salt: string; expected: Buffer; 
   const n = Number(nRaw);
   const r = Number(rRaw);
   const p = Number(pRaw);
-  if (!Number.isSafeInteger(n) || n < 2 || n > PASSWORD_HASH_MAX_N || !Number.isSafeInteger(r) || r < 1 || r > 32
-    || !Number.isSafeInteger(p) || p < 1 || p > 16) {
+  if (
+    !Number.isSafeInteger(n) || n < 2 || (n & (n - 1)) !== 0
+    || !Number.isSafeInteger(r) || r < 1 || r > 32
+    || !Number.isSafeInteger(p) || p < 1 || p > 16
+    || 128 * n * r > PASSWORD_HASH_MAX_MEMORY
+  ) {
     throw new AuthFnInternalError('Stored password hash format is invalid');
   }
   return {
     salt: salt!,
     expected: Buffer.from(digest!, 'base64url'),
-    options: { N: n, r, p, maxmem: Math.max(PASSWORD_HASH_MAXMEM, 256 * n * r) },
+    // Room for 128 * N * r bytes plus scrypt's own overhead.
+    options: { N: n, r, p, maxmem: Math.max(PASSWORD_HASH_MAXMEM, 2 * 128 * n * r) },
     n
   };
 }
@@ -478,7 +488,7 @@ async function upgradePasswordHashIfNeeded(
   try {
     const stored = parseStoredHash(credential.passwordHash);
     const options = stored.options;
-    if (stored.n >= PASSWORD_HASH_N && options.r === PASSWORD_HASH_R && options.p === PASSWORD_HASH_P) {
+    if (stored.n === PASSWORD_HASH_N && options.r === PASSWORD_HASH_R && options.p === PASSWORD_HASH_P) {
       return;
     }
     const upgraded = await derivePasswordHash(password);

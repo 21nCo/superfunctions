@@ -67,7 +67,12 @@ All routes return the standard envelope. See [API reference](../api) for full sc
 
 ## Hashing
 
-Passwords are hashed with **argon2id** with vetted parameters (the kernel uses a default cost suitable for modern hardware; you can override via the plugin's `passwordHashing` config if needed).
+Passwords are hashed with **scrypt** at N = 2^15, r = 8, p = 3 (32 MiB per hash), one of the settings OWASP recommends, and stored as `scrypt$N$r$p$salt$hash`. The hash runs asynchronously, so it does not block the event loop.
+
+- **Upgrades:** a hash stored with other parameters (before AUTH-32: N = 2^14, p = 1) still verifies, and is re-hashed with the current ones the next time its password is used to sign in. The re-hash only replaces the hash it read, so it cannot undo a concurrent password change.
+- **Length:** passwords are 12 to 1024 characters.
+- **Stored parameters are bounded:** a stored hash whose N is not a power of two or that would need more than 256 MiB is treated as corrupt rather than evaluated.
+- **Same answer for every email:** sign-in costs one hash whether or not the email has an account or a password, and with `requireEmailVerifiedForSignIn` the `AUTHFN_EMAIL_NOT_VERIFIED` answer is only given after the password has been checked, and does not name the user.
 
 ## Sign-up flow
 
