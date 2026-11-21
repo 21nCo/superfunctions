@@ -16,7 +16,14 @@ export interface ResponsesChatModelConfig {
   baseUrl: string;
   /** What the endpoint and model accept; requests needing anything else fail before sending. */
   profile: CapabilityProfile;
-  /** Provider name on the model and its errors; defaults to the profile id. */
+  /**
+   * Provider name on the model and its errors. LangFn's completion cache and cost meter key on
+   * it, so the default is unique to this endpoint: `<profile id>-responses:<baseUrl><path>`,
+   * such as `openai-responses:https://api.openai.com/v1/responses`. It never equals another
+   * model class's name (such as OpenAIChatModel's `openai`), and two endpoints never share
+   * cache entries by default. An explicit value is the caller's chosen scope: models given the
+   * same provider and model share cache entries and cost rates.
+   */
   provider?: string;
   /** Sent as `Authorization: Bearer <key>`. Omit for endpoints authenticated by `headers`. */
   apiKey?: string;
@@ -77,12 +84,15 @@ export class ResponsesChatModel extends ChatModel {
     if (typeof config.model !== "string" || !config.model.trim()) throw new ValidationError("ResponsesChatModel requires a model");
     this.profile = defineCapabilityProfile(config.profile);
     this.model = config.model;
-    this.provider = config.provider ?? this.profile.id;
     this.baseUrl = validateBaseUrl(config.baseUrl);
     this.path = config.path ?? "/responses";
     if (typeof this.path !== "string" || !this.path.startsWith("/") || this.path.startsWith("//")) {
       throw new ValidationError("ResponsesChatModel path must start with a single /");
     }
+    if (config.provider !== undefined && (typeof config.provider !== "string" || !config.provider.trim())) {
+      throw new ValidationError("ResponsesChatModel provider must be a non-empty string");
+    }
+    this.provider = config.provider ?? `${this.profile.id}-responses:${this.baseUrl}${this.path}`;
     this.headers = validateHeaders(config.headers);
     const hasAuthHeader = Object.keys(this.headers).some((name) => name.toLowerCase() === "authorization");
     if (hasAuthHeader && (config.apiKey !== undefined || config.apiKeyRef !== undefined)) {

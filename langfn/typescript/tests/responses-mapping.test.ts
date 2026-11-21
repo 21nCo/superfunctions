@@ -17,6 +17,9 @@ import {
   UnsupportedCapabilityError,
   type CapabilityProfile,
 } from "../src/models/profiles/index.js";
+import { LangFn } from "../src/client.js";
+import type { CompletionResponse } from "../src/core/types.js";
+import { OpenAIChatModel } from "../src/models/openai.js";
 import {
   buildResponsesPayload,
   mapResponsesStream,
@@ -242,9 +245,9 @@ describe("stream mapping", () => {
 
     const rejected: Array<[string, string]> = [
       // The finished call vanished: the turn would end with stop and the call would be lost.
-      [done() + terminal([message]), "missing the finished function_call call_fixture"],
+      [done() + terminal([message]), "does not have the finished function_call item call_fixture at output_index 0"],
       // The call changed its call_id, name or arguments.
-      [done() + terminal([{ ...call, call_id: "call_fixture_other" }]), "missing the finished function_call call_fixture"],
+      [done() + terminal([{ ...call, call_id: "call_fixture_other" }]), "changed the finished function_call call_fixture"],
       [done() + terminal([{ ...call, name: "delete_everything" }]), "changed the finished function_call call_fixture"],
       [done() + terminal([{ ...call, arguments: "{\"q\":2}" }]), "changed the finished function_call call_fixture"],
       // Final arguments that differ from the item's, with an explicit or an omitted terminal output.
@@ -252,7 +255,7 @@ describe("stream mapping", () => {
       [argsDone("{\"q\":2}") + done() + terminal([]), "arguments differ from item fc_fixture"],
       [argsDone("{\"q\":2}") + terminal([call]), "arguments differ from item fc_fixture"],
       // Final arguments for an item that is not a call, or for no item at all.
-      [argsDone("{}") + terminal([message]), "arguments differ from item fc_fixture"],
+      [argsDone("{}") + terminal([message]), "unknown item fc_fixture"],
       [argsDone("{}") + terminal([]), "unknown item fc_fixture"],
       // A terminal response for another response id.
       [created("resp_fixture_other") + terminal([call]), "is for response resp_fixture_mapping, not resp_fixture_other"],
@@ -272,6 +275,65 @@ describe("stream mapping", () => {
       created("resp_fixture_mapping") + argsDone(call.arguments) + done() + terminal([call]),
       argsDone(call.arguments) + done() + terminal([]),
       argsDone(call.arguments) + done() + frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed" } }),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+  });
+
+  it("checks every finished item and every arguments locator against the terminal output", async () => {
+    const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
+    const note = { id: "msg_fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Done.", annotations: [] }] };
+    const done = (item: unknown, index?: number) => frame({ type: "response.output_item.done", ...(index === undefined ? {} : { output_index: index }), item });
+    const argsDone = (locator: Record<string, unknown>, args = call.arguments) => frame({ type: "response.function_call_arguments.done", ...locator, arguments: args });
+    const terminal = (output: unknown[], extra: Record<string, unknown> = {}) => frame({ type: "response.completed", response: completed(output, extra) });
+
+    const rejected: Array<[string, string]> = [
+      // A finished item of any type is replaced at its index, by another type or another id.
+      [done(note, 0) + terminal([call]), "does not have the finished message item msg_fixture at output_index 0"],
+      [done({ ...call, id: "fc_fixture_first" }, 0) + terminal([call]), "replaced the finished item fc_fixture_first at output_index 0"],
+      [done({ ...note, id: "msg_fixture_first" }, 0) + done(call, 1) + terminal([note, call]), "replaced the finished item msg_fixture_first"],
+      // A finished item whose index the terminal output does not reach.
+      [done(note, 0) + done(call, 1) + terminal([note]), "does not have the finished function_call item call_fixture at output_index 1"],
+      // An item_id that matches nothing does not fall back to the output_index.
+      [done(call, 0) + argsDone({ item_id: "fc_fixture_missing", output_index: 0 }) + terminal([call]), "unknown item fc_fixture_missing"],
+      // An output_index that is malformed or names nothing, and locators naming different items.
+      [done(call, 0) + argsDone({ item_id: "fc_fixture", output_index: -1 }) + terminal([call]), "output_index must be a non-negative integer"],
+      [done(call, 0) + argsDone({ item_id: "fc_fixture", output_index: "0" }) + terminal([call]), "output_index must be a non-negative integer"],
+      [done(call, 0) + argsDone({ output_index: 5 }) + terminal([call]), "unknown output_index 5"],
+      [done(call, 0) + argsDone({ item_id: 7 }) + terminal([call]), "item_id must be a string"],
+      [done(note, 0) + done(call, 1) + argsDone({ item_id: "fc_fixture", output_index: 0 }) + terminal([note, call]), "item fc_fixture is not at output_index 0"],
+      [done(call, 0) + argsDone({}) + terminal([call]), "names no item"],
+      // Any populated error beside a success status is a failure, including a bare string.
+      [done(call, 0) + terminal([call], { error: "upstream failed" }), "Responses request failed: upstream failed"],
+      [done(call, 0) + terminal([call], { error: ["upstream failed"] }), "Responses request failed"],
+    ];
+    for (const [text, error] of rejected) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+    // An error object keeps its typed error on the stream as well.
+    const limited = await mapRaw(done(call, 0) + terminal([call], { error: { code: "rate_limit_exceeded", message: "slow down" } }));
+    expect(limited.error).toBeInstanceOf(RateLimitError);
+    expect(limited.seen).toEqual([]);
+
+    // The JSON path applies the same error rule.
+    expect(() => parseResponsesResponse(completed([call], { error: "upstream failed" }), "fixture")).toThrow("upstream failed");
+    expect(() => parseResponsesResponse(completed([call], { error: 0 }), "fixture")).toThrow(ProviderError);
+    for (const error of [null, {}]) {
+      expect(parseResponsesResponse(completed([call], { error }), "fixture").toolCalls).toHaveLength(1);
+    }
+
+    // Matching snapshots, unindexed items and the omitted or empty fallback still work.
+    for (const text of [
+      done(note, 0) + done(call, 1) + argsDone({ item_id: "fc_fixture", output_index: 1 }) + terminal([note, call], { error: null }),
+      done({ ...note, id: undefined }, 0) + done(call, 1) + terminal([note, call], { error: {} }),
+      done(note) + done(call) + argsDone({ item_id: "fc_fixture" }) + terminal([call, note]),
+      done(note, 0) + done(call, 1) + argsDone({ output_index: 1 }) + terminal([]),
+      done(note, 0) + done(call, 1) + frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed" } }),
     ]) {
       const outcome = await mapRaw(text);
       expect(outcome.error).toBeUndefined();
@@ -534,6 +596,34 @@ describe("request mapping", () => {
     expect(parseResponsesResponse(completed(replayed.responsesOutput), "fixture").message.responsesOutput).toEqual(replayed.responsesOutput);
   });
 
+  it("normalizes null annotations and rejects malformed output shapes on parse and on replay", () => {
+    const text = (part: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+      type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Hi.", ...part }], ...extra,
+    });
+    expect(parseResponsesResponse(completed([text({ annotations: null })]), "fixture").message.responsesOutput)
+      .toEqual([text({ annotations: [] })]);
+    // A null id is no id and is not sent back as null.
+    expect(parseResponsesResponse(completed([text({}, { id: null })]), "fixture").message.responsesOutput?.[0]).not.toHaveProperty("id");
+    const reasoning = (summary: unknown[]) => ({ id: "rs_fixture", type: "reasoning", summary, encrypted_content: "fixture-encrypted-reasoning" });
+    expect(parseResponsesResponse(completed([reasoning([{ text: "think" }]), text({})]), "fixture").message.responsesOutput?.[0])
+      .toEqual(reasoning([{ text: "think", type: "summary_text" }]));
+
+    const malformed: Array<[unknown, string]> = [
+      [text({ annotations: "none" }), "annotations must be an array"],
+      [text({}, { id: 7 }), "item id must be a string"],
+      [text({}, { status: "done" }), "unexpected status done"],
+      [reasoning([{ type: "reasoning_text", text: "think" }]), "unexpected type reasoning_text"],
+      [{ type: "message", role: "assistant", content: [{ type: "input_text", text: "Hi." }] }, "must not contain input_text parts"],
+      [{ type: "message", role: "assistant", content: [{ type: "input_image", image_url: "https://example.test/a.png" }] }, "input_image"],
+    ];
+    const reasoningProfile = defineCapabilityProfile({ ...customProfile, reasoning: true });
+    for (const [item, error] of malformed) {
+      expect(() => parseResponsesResponse(completed([item]), "fixture")).toThrow(error);
+      const message = { role: "assistant", content: "", responsesOutput: [item] } as unknown as ResponsesMessage;
+      expect(() => payload([{ role: "user", content: "go" }, message], reasoningProfile)).toThrow(ValidationError);
+    }
+  });
+
   it("validates the call ledger across the whole stateless history before sending", () => {
     const call = (id: string) => ({ id, name: "lookup", arguments: {} });
     const result = (id: string) => ({ role: "tool" as const, content: "ok", tool_call_id: id });
@@ -556,6 +646,10 @@ describe("request mapping", () => {
       .toThrow("has no earlier matching tool call");
     // Tool calls on a message that is not from the assistant are refused, not dropped.
     expect(() => payload([{ ...user, toolCalls: [call("call_a")] }])).toThrow("only accepted on assistant messages");
+    // So is a tool_call_id on a message that is not a tool result.
+    for (const role of ["system", "user", "assistant"] as const) {
+      expect(() => payload([{ role, content: "go", tool_call_id: "call_a" }])).toThrow("tool_call_id is only accepted on tool messages");
+    }
   });
 
   it("rejects item_reference history, which needs server-side state", () => {
@@ -667,6 +761,38 @@ describe("ResponsesChatModel configuration", () => {
     };
   }
 
+  it("keeps a default cache identity per endpoint, apart from OpenAIChatModel", async () => {
+    const entries = new Map<string, CompletionResponse>();
+    const cache = {
+      get: async (prompt: string, model: string, provider: string) => entries.get(JSON.stringify([prompt, model, provider])),
+      set: async (prompt: string, model: string, provider: string, response: CompletionResponse) => {
+        entries.set(JSON.stringify([prompt, model, provider]), response);
+      },
+    };
+    const answer = (text: string): typeof fetch => async () => new Response(
+      JSON.stringify(text.startsWith("chat:")
+        ? { choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }] }
+        : completed([{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }])),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const responses = (baseUrl: string, text: string, extra: Record<string, unknown> = {}) => new ResponsesChatModel({
+      model: "gpt-fixture", baseUrl, profile: openAIProfile(), apiKey: "test-api-key", fetchImpl: answer(text), ...extra,
+    });
+    const run = async (model: OpenAIChatModel | ResponsesChatModel) => (await new LangFn({ model, cache }).complete("hi")).content;
+
+    // OpenAIChatModel answers first; a Responses model on the same profile does not reuse it.
+    expect(await run(new OpenAIChatModel({ model: "gpt-fixture", apiKey: "test-api-key", fetchImpl: answer("chat:openai") }))).toBe("chat:openai");
+    expect(await run(responses("https://api.openai.com/v1", "responses:openai"))).toBe("responses:openai");
+    // Two endpoints, or two paths on one host, do not share entries; the same endpoint does.
+    expect(await run(responses("https://gateway-a.example.test/v1", "endpoint:a"))).toBe("endpoint:a");
+    expect(await run(responses("https://gateway-b.example.test/v1", "endpoint:b"))).toBe("endpoint:b");
+    expect(await run(responses("https://gateway-a.example.test/v1", "endpoint:a2", { path: "/alt/responses" }))).toBe("endpoint:a2");
+    expect(await run(responses("https://gateway-a.example.test/v1", "endpoint:again"))).toBe("endpoint:a");
+    // An explicit provider is the caller's chosen scope.
+    expect(await run(responses("https://gateway-c.example.test/v1", "explicit", { provider: "openai" }))).toBe("chat:openai");
+    expect(() => responses("https://gateway-c.example.test/v1", "x", { provider: " " })).toThrow(ValidationError);
+  });
+
   it("talks to a custom endpoint authenticated by headers on its own path", async () => {
     const seen: Headers[] = [];
     const urls: string[] = [];
@@ -687,7 +813,7 @@ describe("ResponsesChatModel configuration", () => {
     expect(urls).toEqual(["https://gateway.example.test/v2/openai/responses"]);
     expect(seen[0].get("x-gateway-key")).toBe("test-gateway-key");
     expect(seen[0].has("authorization")).toBe(false);
-    expect(model.provider).toBe("custom-gateway");
+    expect(model.provider).toBe("custom-gateway-responses:https://gateway.example.test/v2/openai/responses");
   });
 
   it("applies the token estimator against the context window before sending", async () => {

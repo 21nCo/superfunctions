@@ -377,7 +377,7 @@ describe.each(profiles)("ResponsesChatModel conformance: $name profile", (target
     expect(error).toBeInstanceOf(RateLimitError);
     expect(error).toMatchObject({
       code: "PROVIDER_RATE_LIMIT",
-      provider: target.name,
+      provider: `${target.name}-responses:${target.baseUrl}/responses`,
       retryAfter: target.name === "openai" ? 2 : 3,
       metadata: expect.objectContaining({ status: 429 }),
     });
@@ -394,7 +394,7 @@ describe.each(profiles)("ResponsesChatModel conformance: $name profile", (target
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ErrorType);
-    expect(error).toMatchObject({ code, provider: target.name, metadata: expect.objectContaining({ status }) });
+    expect(error).toMatchObject({ code, provider: `${target.name}-responses:${target.baseUrl}/responses`, metadata: expect.objectContaining({ status }) });
   });
 
   it("surfaces a failure reported inside the stream as a typed error", async () => {

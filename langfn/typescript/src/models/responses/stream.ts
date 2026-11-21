@@ -1,7 +1,7 @@
 import { ProviderError } from "../../core/errors.js";
 import type { StreamEvent } from "../../core/types.js";
 import { readStreamLines } from "../stream-lines.js";
-import { parseFunctionCall, parseResponsesResponse, responsesError } from "./response.js";
+import { assertNoReportedError, parseFunctionCall, parseResponsesResponse, responsesError } from "./response.js";
 
 export interface ServerSentEvent {
   event?: string;
@@ -44,13 +44,17 @@ interface ArgumentsDone {
 }
 
 /**
- * Check that what the stream already reported as finished agrees with the terminal output:
- * every finished function call (output_item.done) is in it unchanged, and the final arguments
- * of every function_call_arguments.done match their item. In a completed stream a finished
- * call must also be executable, as parseResponsesResponse requires of the terminal output.
+ * Check that what the stream already reported as finished agrees with the terminal output.
+ * An item finished at an explicit output_index has an item of the same type, and the same id
+ * when both carry one, at that terminal index; a finished function call is in the terminal
+ * output unchanged (call_id, name and arguments). Every locator of a
+ * function_call_arguments.done resolves, both name the same function call, and its final
+ * arguments match that call. In a completed stream a finished call must also be executable,
+ * as parseResponsesResponse requires of the terminal output.
  */
 function checkFinishedEvidence(state: {
   doneItems: Map<number, unknown>;
+  explicitIndexes: Set<number>;
   argumentsDone: ArgumentsDone[];
   output: unknown;
   omitted: boolean;
@@ -58,40 +62,59 @@ function checkFinishedEvidence(state: {
   fail: (message: string) => ProviderError;
   provider: string;
 }): void {
-  const { doneItems, argumentsDone, output, omitted, completed, fail, provider } = state;
+  const { doneItems, explicitIndexes, argumentsDone, output, omitted, completed, fail, provider } = state;
   // A malformed terminal output fails in parseResponsesResponse.
   if (!Array.isArray(output)) return;
   const terminal = output.filter(isRecord);
   for (const [index, item] of doneItems) {
-    if (!isRecord(item) || item.type !== "function_call") continue;
-    if (completed) {
+    if (!isRecord(item)) continue;
+    const label = String(item.call_id ?? item.id ?? index);
+    if (item.type === "function_call" && completed) {
       if (!(item.status === undefined || item.status === null || item.status === "completed")) {
         throw fail("Responses completed stream finished an unfinished function_call");
       }
       parseFunctionCall(item, provider);
     }
     if (omitted) continue;
-    const match = typeof item.call_id === "string"
-      ? terminal.find((candidate) => candidate.type === "function_call" && candidate.call_id === item.call_id)
-      : typeof item.id === "string"
-        ? terminal.find((candidate) => candidate.type === "function_call" && candidate.id === item.id)
-        : (isRecord(output[index]) ? output[index] as JsonRecord : undefined);
-    if (!match || match.type !== "function_call") {
-      throw fail(`Responses terminal output is missing the finished function_call ${String(item.call_id ?? item.id ?? index)}`);
+    let match: JsonRecord | undefined;
+    if (explicitIndexes.has(index)) {
+      const candidate = output[index];
+      match = isRecord(candidate) ? candidate : undefined;
+      if (!match || match.type !== item.type) {
+        throw fail(`Responses terminal output does not have the finished ${String(item.type)} item ${label} at output_index ${index}`);
+      }
+      if (typeof match.id === "string" && typeof item.id === "string" && match.id !== item.id) {
+        throw fail(`Responses terminal output replaced the finished item ${item.id} at output_index ${index}`);
+      }
+    } else if (item.type === "function_call") {
+      match = typeof item.call_id === "string"
+        ? terminal.find((candidate) => candidate.type === "function_call" && candidate.call_id === item.call_id)
+        : typeof item.id === "string"
+          ? terminal.find((candidate) => candidate.type === "function_call" && candidate.id === item.id)
+          : undefined;
+      if (!match) throw fail(`Responses terminal output is missing the finished function_call ${label}`);
     }
-    if (match.call_id !== item.call_id || match.name !== item.name || match.arguments !== item.arguments) {
-      throw fail(`Responses terminal output changed the finished function_call ${String(item.call_id ?? item.id ?? index)}`);
+    if (item.type === "function_call" && match
+      && (match.call_id !== item.call_id || match.name !== item.name || match.arguments !== item.arguments)) {
+      throw fail(`Responses terminal output changed the finished function_call ${label}`);
     }
   }
+  const finished = [...doneItems.values(), ...(omitted ? [] : terminal)].filter(isRecord);
   for (const done of argumentsDone) {
-    const finished = [...doneItems.values(), ...(omitted ? [] : terminal)].filter(isRecord);
-    let candidates = done.itemId !== undefined ? finished.filter((item) => item.id === done.itemId) : [];
-    if (!candidates.length && done.index !== undefined) {
-      candidates = [doneItems.get(done.index), omitted ? undefined : output[done.index]].filter(isRecord);
-    }
     const label = done.itemId ?? String(done.index ?? "");
-    if (!candidates.length) throw fail(`Responses function_call_arguments.done names an unknown item ${label}`);
-    for (const item of candidates) {
+    if (done.itemId === undefined && done.index === undefined) {
+      throw fail("Responses function_call_arguments.done names no item");
+    }
+    const byId = done.itemId !== undefined ? finished.filter((item) => item.id === done.itemId) : [];
+    if (done.itemId !== undefined && !byId.length) throw fail(`Responses function_call_arguments.done names an unknown item ${done.itemId}`);
+    const byIndex = done.index !== undefined
+      ? [doneItems.get(done.index), omitted ? undefined : output[done.index]].filter(isRecord)
+      : [];
+    if (done.index !== undefined && !byIndex.length) throw fail(`Responses function_call_arguments.done names an unknown output_index ${done.index}`);
+    if (done.itemId !== undefined && byIndex.some((item) => item.id !== done.itemId)) {
+      throw fail(`Responses function_call_arguments.done item ${done.itemId} is not at output_index ${String(done.index)}`);
+    }
+    for (const item of [...byId, ...byIndex]) {
       if (item.type !== "function_call" || item.arguments !== done.arguments) {
         throw fail(`Responses function_call_arguments.done arguments differ from item ${label}`);
       }
@@ -113,11 +136,12 @@ function isRecord(value: unknown): value is JsonRecord {
  * call is only executable once the response completes: an incomplete response (for example
  * `max_output_tokens`) yields no tool calls and ends with `length`. A stream that ends without
  * a terminal event, reports a failure, or whose terminal outcome is ambiguous (an event name
- * that conflicts with the JSON type, an error object beside a success status, two finished
+ * that conflicts with the JSON type, any populated error beside a success status, two finished
  * items on one output index) throws a typed error before any tool call or end. So does a
  * terminal response that disagrees with what the stream already reported as finished: a
- * finished function call missing from it or changed in it, final call arguments that differ,
- * or a different response id.
+ * finished item missing from its output index or replaced there, a finished function call
+ * missing or changed, final call arguments that differ or name no known call, or a
+ * different response id.
  */
 export async function* mapResponsesStream(
   events: AsyncIterable<ServerSentEvent>,
@@ -125,6 +149,8 @@ export async function* mapResponsesStream(
 ): AsyncIterable<StreamEvent> {
   const fail = (message: string) => new ProviderError(message, { provider });
   const doneItems = new Map<number, unknown>();
+  // Indexes the provider stated, as opposed to ones assigned in arrival order.
+  const explicitIndexes = new Set<number>();
   const argumentsDone: ArgumentsDone[] = [];
   let startedId: string | undefined;
 
@@ -170,9 +196,17 @@ export async function* mapResponsesStream(
       }
       case "response.function_call_arguments.done": {
         if (typeof payload.arguments !== "string") throw fail("Responses function_call_arguments.done requires arguments");
+        const itemId = payload.item_id;
+        const index = payload.output_index;
+        if (itemId !== undefined && itemId !== null && typeof itemId !== "string") {
+          throw fail("Responses function_call_arguments.done item_id must be a string");
+        }
+        if (index !== undefined && index !== null && (typeof index !== "number" || !Number.isInteger(index) || index < 0)) {
+          throw fail("Responses function_call_arguments.done output_index must be a non-negative integer");
+        }
         argumentsDone.push({
-          ...(typeof payload.item_id === "string" ? { itemId: payload.item_id } : {}),
-          ...(typeof payload.output_index === "number" ? { index: payload.output_index } : {}),
+          ...(typeof itemId === "string" ? { itemId } : {}),
+          ...(typeof index === "number" ? { index } : {}),
           arguments: payload.arguments,
         });
         break;
@@ -180,13 +214,15 @@ export async function* mapResponsesStream(
       case "response.output_item.done": {
         const item = payload.item;
         if (!isRecord(item)) throw fail("Responses output_item.done requires an item");
-        const index = payload.output_index === undefined || payload.output_index === null ? doneItems.size : payload.output_index;
+        const explicit = payload.output_index !== undefined && payload.output_index !== null;
+        const index = explicit ? payload.output_index : doneItems.size;
         if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
           throw fail("Responses output_item.done output_index must be a non-negative integer");
         }
         // A repeated index would silently replace a finished item, and with it maybe a call.
         if (doneItems.has(index)) throw fail(`Responses output_item.done repeats output_index ${index}`);
         doneItems.set(index, item);
+        if (explicit) explicitIndexes.add(index);
         break;
       }
       case "response.completed":
@@ -214,8 +250,12 @@ export async function* mapResponsesStream(
         if (startedId !== undefined && typeof response.id === "string" && response.id !== startedId) {
           throw fail(`Responses ${type} event is for response ${response.id}, not ${startedId}`);
         }
+        // A reported error is the outcome, whatever the stream finished before it.
+        assertNoReportedError(response, provider);
         if (status !== "failed") {
-          checkFinishedEvidence({ doneItems, argumentsDone, output, omitted, completed: status === "completed", fail, provider });
+          checkFinishedEvidence({
+            doneItems, explicitIndexes, argumentsDone, output, omitted, completed: status === "completed", fail, provider,
+          });
         }
         const result = parseResponsesResponse({ ...response, status, output }, provider);
         for (const call of result.toolCalls ?? []) {

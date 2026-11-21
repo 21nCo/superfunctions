@@ -122,6 +122,9 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
     if (message.role !== "assistant" && (hasItems(message.toolCalls) || hasItems(message.tool_calls))) {
       throw new ValidationError(`Message ${index}: tool calls are only accepted on assistant messages`);
     }
+    if (message.role !== "tool" && message.tool_call_id !== undefined && message.tool_call_id !== null) {
+      throw new ValidationError(`Message ${index}: tool_call_id is only accepted on tool messages`);
+    }
     switch (message.role) {
       case "system":
         input.push({ type: "message", role: "system", content: message.content });

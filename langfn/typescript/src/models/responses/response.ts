@@ -59,6 +59,11 @@ const INPUT_ONLY_ITEM_TYPES = new Set([
   "mcp_approval_response",
 ]);
 
+/** Content part types that only exist in request input messages. */
+const INPUT_ONLY_PART_TYPES = new Set(["input_text", "input_image", "input_file", "input_audio"]);
+
+const MESSAGE_STATUSES = new Set(["in_progress", "completed", "incomplete"]);
+
 /** Read the text, refusal, function calls and reasoning out of Responses output items. */
 export function parseOutputItems(
   output: unknown,
@@ -79,14 +84,22 @@ export function parseOutputItems(
   for (const item of output) {
     if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
     if (INPUT_ONLY_ITEM_TYPES.has(item.type)) throw fail(`Responses output must not contain ${item.type} items`);
+    if (item.id !== undefined && item.id !== null && typeof item.id !== "string") throw fail("Responses output item id must be a string");
     switch (item.type) {
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
+        if (item.status !== undefined && item.status !== null && !MESSAGE_STATUSES.has(item.status as string)) {
+          throw fail(`Responses output message has unexpected status ${String(item.status)}`);
+        }
         if (!Array.isArray(item.content)) throw fail("Responses output message content must be an array");
         for (const part of item.content) {
           if (!isRecord(part) || typeof part.type !== "string") throw fail("Responses output content part is malformed");
+          if (INPUT_ONLY_PART_TYPES.has(part.type)) throw fail(`Responses output message must not contain ${part.type} parts`);
           if (part.type === "output_text") {
             if (typeof part.text !== "string") throw fail("Responses output_text part requires text");
+            if (part.annotations !== undefined && part.annotations !== null && !Array.isArray(part.annotations)) {
+              throw fail("Responses output_text annotations must be an array");
+            }
             text.push(part.text);
           } else if (part.type === "refusal") {
             if (typeof part.refusal !== "string") throw fail("Responses refusal part requires refusal text");
@@ -136,24 +149,33 @@ export function parseOutputItems(
 /**
  * Fill the fields the Responses input schema requires on a replayed item when a compatible
  * server left them out and their value is known: an output message is from the assistant and
- * finished, its text parts have annotations, a reasoning item has a summary, and a function
- * call with a null status is finished. Fields that are present stay as they are, so a complete
+ * finished, its text parts have annotations, a reasoning item has a summary of summary_text
+ * parts, a function call with a null status is finished, and a null id is dropped. Fields that are present stay as they are, so a complete
  * item comes back unchanged; ids are never invented.
  */
 export function normalizeOutputItem(item: JsonRecord): ResponsesOutputItem {
   const normalized = structuredClone(item) as ResponsesOutputItem;
+  // A null id is no id; sending it back as null would be rejected.
+  if (normalized.id === null) delete normalized.id;
   switch (normalized.type) {
     case "message":
       if (normalized.role === undefined) normalized.role = "assistant";
       if (normalized.status === undefined || normalized.status === null) normalized.status = "completed";
       if (Array.isArray(normalized.content)) {
         for (const part of normalized.content) {
-          if (isRecord(part) && part.type === "output_text" && part.annotations === undefined) part.annotations = [];
+          if (isRecord(part) && part.type === "output_text" && (part.annotations === undefined || part.annotations === null)) {
+            part.annotations = [];
+          }
         }
       }
       break;
     case "reasoning":
       if (normalized.summary === undefined || normalized.summary === null) normalized.summary = [];
+      if (Array.isArray(normalized.summary)) {
+        for (const part of normalized.summary) {
+          if (isRecord(part) && part.type === undefined) part.type = "summary_text";
+        }
+      }
       break;
     case "function_call":
       if (normalized.status === null) normalized.status = "completed";
@@ -192,6 +214,9 @@ function parseReasoning(item: JsonRecord, provider: string): ResponsesReasoningS
     if (!Array.isArray(value)) throw fail(`Responses reasoning ${field} must be an array`);
     return value.map((part) => {
       if (!isRecord(part) || typeof part.text !== "string") throw fail(`Responses reasoning ${field} part requires text`);
+      if (field === "summary" && part.type !== undefined && part.type !== "summary_text") {
+        throw fail(`Responses reasoning summary part has unexpected type ${String(part.type)}`);
+      }
       return part.text;
     });
   };
@@ -221,14 +246,25 @@ export function sameToolCalls(left: ToolCall[], right: ToolCall[]): boolean {
   return canonical(left) === canonical(right);
 }
 
+/**
+ * A populated error wins over any status: a result that reports an error is never a success.
+ * Only an absent error, null or `{}` count as no error. An error object raises its typed error;
+ * any other value (such as a bare string) a ProviderError.
+ */
+export function assertNoReportedError(data: JsonRecord, provider: string): void {
+  const error = data.error;
+  if (error === undefined || error === null || (isRecord(error) && Object.keys(error).length === 0)) return;
+  if (isRecord(error)) throw responsesError(provider, { status: 200, body: data, error });
+  const detail = typeof error === "string" && error ? `: ${error}` : "";
+  throw new ProviderError(`${provider} Responses request failed${detail}`, { provider, metadata: { status: 200, body: data } });
+}
+
 /** Map a complete Responses API response object (non-streaming or the terminal stream event). */
 export function parseResponsesResponse(data: unknown, provider: string): ResponsesChatResponse {
   if (!isRecord(data)) throw new ProviderError("Responses body must be a JSON object", { provider });
   const status = data.status;
-  // A populated error wins over any status: a result that reports an error is never a success.
-  if (status === "failed" || (isRecord(data.error) && Object.keys(data.error).length > 0)) {
-    throw responsesError(provider, { status: 200, body: data, error: data.error });
-  }
+  assertNoReportedError(data, provider);
+  if (status === "failed") throw responsesError(provider, { status: 200, body: data, error: data.error });
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
     throw new ProviderError(`Responses returned unexpected status ${String(status)}`, { provider, metadata: { status } });
   }
