@@ -81,6 +81,14 @@ describe('document routes', () => {
     const failed = await router.handle(json(method, '/v1/documents', { sourceKey: 'k', ...(method === 'PUT' ? { content: 'x' } : {}) }));
     errors.mockRestore();
     expect(failed.status).toBe(500);
+    // A body stream that fails while being read, even with a SyntaxError, is a server error, not caller input.
+    const broken = new Request('https://test/v1/documents', { method, headers: { 'content-type': 'application/json' },
+      body: new ReadableStream({ pull(controller) { controller.error(new SyntaxError('stream failed')); } }), duplex: 'half' } as RequestInit);
+    const readErrors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const interrupted = await router.handle(broken);
+    readErrors.mockRestore();
+    expect(interrupted.status).toBe(500);
+    expect(memory[call]).toHaveBeenCalledTimes(1);
     authorize.mockResolvedValue(null);
     expect((await router.handle(raw('{'))).status).toBe(401);
   });

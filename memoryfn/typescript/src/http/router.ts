@@ -42,19 +42,19 @@ export function createMemoryRouter(memory: IMemoryFn, options: {
     chunking: z.object({ targetChars: z.number().int().optional(), overlapChars: z.number().int().optional() }).strict().optional(),
   }).strict();
   const forget = z.object(source).strict();
-  /** Authorizes the request and parses its body exactly as the memory routes do. */
-  const scoped = async <T>(request: Request, json: () => Promise<unknown>, schema: z.ZodType<T, z.ZodTypeDef, unknown>):
+  /** Authorizes the request, then reads its body (within the body limit) and parses it as JSON. */
+  const scoped = async <T>(request: Request, text: () => Promise<string>, schema: z.ZodType<T, z.ZodTypeDef, unknown>):
     Promise<{ response: Response } | { scope: MemoryScope; data: T }> => {
     const scope = await options.authorize(request);
     if (!scope) return { response: Response.json({ error: 'UNAUTHORIZED' }, { status: 401 }) };
     requireScope(scope.tenantId, scope.containerTags);
+    // A failed read, including an oversized body (413), reaches the router's error handler; only malformed JSON is 400.
+    const raw = await text();
     let body: unknown;
     try {
-      body = await json();
-    } catch (error) {
-      // Malformed JSON is the caller's input error; an oversized body still reaches the router's 413.
-      if (error instanceof SyntaxError) return { response: Response.json({ error: 'INVALID_INPUT' }, { status: 400 }) };
-      throw error;
+      body = JSON.parse(raw);
+    } catch {
+      return { response: Response.json({ error: 'INVALID_INPUT' }, { status: 400 }) };
     }
     const input = schema.safeParse(body);
     if (!input.success) return { response: Response.json({ error: 'INVALID_INPUT' }, { status: 400 }) };
@@ -79,13 +79,13 @@ export function createMemoryRouter(memory: IMemoryFn, options: {
     } },
     // A source is its exact tag set: the trusted host tags plus the body tags, so DELETE must repeat the PUT's tags.
     { method: 'PUT', path: '/v1/documents', handler: async (request, ctx) => {
-      const parsed = await scoped(request, () => ctx.json(), upsert);
+      const parsed = await scoped(request, () => ctx.text(), upsert);
       if ('response' in parsed) return parsed.response;
       const { scope, data } = parsed;
       return documentCall(memory.upsertDocument && (() => memory.upsertDocument!({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] })));
     } },
     { method: 'DELETE', path: '/v1/documents', handler: async (request, ctx) => {
-      const parsed = await scoped(request, () => ctx.json(), forget);
+      const parsed = await scoped(request, () => ctx.text(), forget);
       if ('response' in parsed) return parsed.response;
       const { scope, data } = parsed;
       return documentCall(memory.forgetBySource && (() => memory.forgetBySource!({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] })));
