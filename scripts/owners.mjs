@@ -392,11 +392,6 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
   let status = 0;
   for (const target of targets) {
     try {
-      // One record per path: a line break or other control character would let one argument print a second,
-      // forged `<path>: <owner>` line.
-      if (hasControlCharacter(target)) {
-        throw new OwnersError("invalid-path", `path ${quoteForLine(target)} contains a control character or line break`, { path: target });
-      }
       if (guessesNext && !isPublicListed(owners, target)) {
         report(
           `error (next-manifest-needed): ${quoteForLine(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
@@ -405,7 +400,7 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
         status = 1;
         continue;
       }
-      stdout(`${normalizePath(target)}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
+      stdout(`${displayPath(normalizePath(target))}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
     } catch (error) {
       if (!(error instanceof OwnersError)) throw error;
       report(`error (${error.code}): ${error.message}`);
@@ -438,6 +433,15 @@ function quoteForLine(value) {
   return escapeControlCharacters(JSON.stringify(value));
 }
 
+/**
+ * A path as printed in a `<path>: <owner>` record. A Git path may hold a tab, a line break or another control
+ * character; printed raw, one argument could print a second, forged record. Such a path, and one that starts with
+ * a double quote (so it cannot be mistaken for a quoted one), is printed quoted as quoteForLine does instead.
+ */
+function displayPath(normalized) {
+  return hasControlCharacter(normalized) || normalized.startsWith('"') ? quoteForLine(normalized) : normalized;
+}
+
 /** Whether the public manifest lists `target` (as a top-level path or a root file); invalid paths throw. */
 function isPublicListed(owners, target) {
   try {
@@ -467,6 +471,8 @@ function isMainModule() {
   if (typeof import.meta.main === "boolean") return import.meta.main;
   if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return false;
   if (!process.argv[1]) return false;
+  const url = new URL(import.meta.url);
+  if (url.search || url.hash) return false;
   try {
     return realpathSync(process.argv[1]) === REAL_MODULE_FILE;
   } catch {
@@ -474,6 +480,12 @@ function isMainModule() {
   }
 }
 
-if (isMainModule()) {
+// One run per process: a second instance of this file (a preload under another URL, or a canonical preload of a
+// symlinked entry under --preserve-symlinks-main) can also pass the real-path check, and must not print the records
+// again or overwrite the exit status. An instance loaded under a query or fragment is never the entry module.
+const CLI_RAN = Symbol.for("superfunctions.owners.cli.ran");
+
+if (!globalThis[CLI_RAN] && isMainModule()) {
+  globalThis[CLI_RAN] = true;
   process.exitCode = runOwnersCli(process.argv.slice(2));
 }

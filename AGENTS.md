@@ -7,7 +7,7 @@ Two repositories share this tree (SFNS-121):
 - `21nCo/superfunctions`, base branch `dev`: the public repository. Every shared path and every public-owned function is developed here.
 - `21nCo/super-functions.next`, base branch `next`: private. It holds the `next`-owned functions, plus a copy of everything public that the sync keeps up to date.
 
-The ownership manifests below decide where a path or package lives, not whether it has been published. The target is that a function moves to the public repository when it is ready to publish, but a function already published from `next` stays `next`-owned, and keeps publishing from `next`, until it is promoted.
+The ownership manifests below decide where a path or package lives, not whether it has been published. The target is that a function moves to the public repository when it is ready to publish. A function already published from `next` stays `next`-owned until it is promoted, and only `next` may publish it; for now the release gate (`scripts/assert-release-ci.mjs`) refuses every CI-gated `next` release until SFNS-160 proves `next`'s CI.
 
 **If this checkout is `21nCo/super-functions.next`, also read `NEXT.md`.** It holds the `next`-only instructions; this file states the model both repositories share. `git remote get-url origin` tells you which checkout you are in.
 
@@ -18,7 +18,7 @@ Every path has exactly one owner repository, and every npm package and Python pr
 - `superfunctions.owners.json` lists everything the public repository owns: top-level directories, root files, release slugs and Python projects. It exists in both repositories. On `dev`, a path or package it does not list is an error.
 - `superfunctions.owners.next.json` exists only on `next` and lists the `next`-owned entries. On `next`, a path it does not list is public-owned.
 - `package-lock.json` and `Package.resolved` are generated: each repository regenerates its own and they are never ported.
-- `node scripts/verify-owners.mjs` checks the manifests against the tree, and `node scripts/verify-public-boundary.mjs` fails when the public tree holds a path, package or dependency the public manifest does not allow, so `next`-only content stays out of the public repository. CI runs both.
+- `node scripts/verify-owners.mjs` checks the manifests against the tree, and `node scripts/verify-public-boundary.mjs` fails when the public tree has a tracked top-level path, a release or workspace package, or a `*fn` import or dependency the public manifest does not allow. CI runs both. The boundary check covers only those rules: it does not look for other `next`-only content in files under allowed directories, or in the history a promotion imports, so review those yourself (see `scripts/promote.md`).
 
 ### Find a path's owner
 
@@ -50,7 +50,7 @@ Every Linear issue for either repository starts with a line naming the repositor
 Repository: <repo>, base branch <branch>
 ```
 
-For example `Repository: 21nCo/superfunctions, base branch dev` or `Repository: 21nCo/super-functions.next, base branch next`. Work in the checkout and branch it names; if the issue would change a path the other repository owns, stop and say so instead of editing it.
+For example `Repository: 21nCo/superfunctions, base branch dev` or `Repository: 21nCo/super-functions.next, base branch next`. Work in the checkout and branch it names. An issue that creates a new `next`-owned entry registers it in `superfunctions.owners.next.json` on `next`, because an unregistered path there is public-owned. A change to an existing public-owned path lands on `dev` first, never on `next`. If the issue would change a path the other repository owns in any other way, stop and say so instead of editing it.
 
 ## Codex hooks (Entire)
 

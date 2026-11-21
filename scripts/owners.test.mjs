@@ -275,14 +275,29 @@ test("the owners command rejects bad arguments and unreadable manifests", (t) =>
 
 const hasControl = (value) => [...value].some((char) => /[\p{Cc}\u2028\u2029]/u.test(char));
 
-test("the owners command prints one record per path argument and rejects control characters", () => {
-  for (const target of ["catchfn/a\nNEXT.md", "catchfn/a\rNEXT.md", "catchfn/a\u2028NEXT.md", "catchfn/\u0000a"]) {
+test("the owners command resolves a path with a control character and prints it as one quoted record", (t) => {
+  const cases = [
+    ["catchfn/a\tb", '"catchfn/a\\tb": public'],
+    ["catchfn/a\nNEXT.md: next", '"catchfn/a\\nNEXT.md: next": public'],
+    ["catchfn/a\u2028NEXT.md", '"catchfn/a\\u2028NEXT.md": public'],
+  ];
+  for (const [target, record] of cases) {
     const result = cli(["AGENTS.md", target]);
-    assert.equal(result.status, 1, JSON.stringify(target));
-    assert.deepEqual(result.out, ["AGENTS.md: public"]);
-    assert.match(result.err, /invalid-path.*control character/);
-    assert.ok(!hasControl(result.err), "the error message escapes the control character");
+    assert.deepEqual(result, { status: 0, out: ["AGENTS.md: public", record], err: "" }, JSON.stringify(target));
+    assert.ok(!result.out.some(hasControl), "each record stays on one line");
   }
+  // A path that itself starts with a double quote is quoted too, so it cannot pass for a quoted path.
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, PUBLIC_MANIFEST), JSON.stringify(publicData()));
+  writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
+  assert.deepEqual(cli(["--root", dir, '"x/y"']), { status: 0, out: ['"\\"x/y\\"": public'], err: "" });
+  // Invalid paths are still rejected, with the control character escaped in the one diagnostic line.
+  const outside = cli(["AGENTS.md", "../a\nAGENTS.md: public"]);
+  assert.equal(outside.status, 1);
+  assert.deepEqual(outside.out, ["AGENTS.md: public"]);
+  assert.match(outside.err, /invalid-path/);
+  assert.ok(!hasControl(outside.err));
 });
 
 // Each stderr line is a diagnostic or the usage line: an argument's line break never starts a line of its own.
@@ -355,5 +370,27 @@ test("importing scripts/owners.mjs from an eval entry neither prints nor sets th
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "");
     assert.doesNotMatch(result.stdout, /AGENTS\.md/);
+  }
+});
+
+test("a preload of scripts/owners.mjs under another URL does not run the command a second time", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, "scripts");
+  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const url = pathToFileURL(script).href;
+  const runs = [
+    ["--import", `${url}?preload`, script],
+    ["--preserve-symlinks-main", "--import", url, path.join(link, "owners.mjs")],
+  ];
+  for (const args of runs) {
+    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], { encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "AGENTS.md: public\n", args.join(" "));
+    assert.equal(result.stderr.match(/invalid-path/g)?.length, 1, result.stderr);
+    const clean = spawnSync(process.execPath, [...args, "AGENTS.md"], { encoding: "utf8" });
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(clean.stdout, "AGENTS.md: public\n");
   }
 });
