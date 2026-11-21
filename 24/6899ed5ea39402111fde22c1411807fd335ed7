@@ -1,0 +1,19 @@
+authfn/social-oauth/src/index.ts
+  s_e5ac07859c1bc9::t_466751e1f64f9f 482-493,524,527
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "246899ed5ea39402111fde22c1411807fd335ed7",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

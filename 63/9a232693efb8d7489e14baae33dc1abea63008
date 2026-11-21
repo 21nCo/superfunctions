@@ -1,0 +1,47 @@
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_c5f815aa0e0533::t_26d321efe65111 28,32,65,69
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_c5f815aa0e0533::t_636ab99e3eee6a 6
+memoryfn/docs/content/docs/storage.md
+  s_c5f815aa0e0533::t_f3afcfd4dc7f75 31
+memoryfn/docs/static/llms-full.txt
+  s_c5f815aa0e0533::t_fb6ed6455f5c0d 38,42,75,79,89,509
+memoryfn/typescript/README.md
+  s_c5f815aa0e0533::t_25bb4f7c803677 36
+memoryfn/typescript/src/core/pipeline.ts
+  s_c5f815aa0e0533::t_6408eee9820e83 8,15,57,108-109,115-116,128-131,165-169,228-232,235-241,251,254-255,257
+memoryfn/typescript/src/extraction/dedup.ts
+  s_c5f815aa0e0533::t_ee76105583a988 4-29,39,41-42
+memoryfn/typescript/src/extraction/facts.ts
+  s_c5f815aa0e0533::t_ebf8f361b8892e 45-47,49-56,59-80
+memoryfn/typescript/src/http/router.ts
+  s_c5f815aa0e0533::t_92eb64dc34ce48 10,13-14,23
+memoryfn/typescript/src/providers/embed/openai.ts
+  s_c5f815aa0e0533::t_96c9ea13466891 4-23,49-54,57-67
+memoryfn/typescript/src/storage/adapter.ts
+  s_c5f815aa0e0533::t_18d1fd10e2ad6d 82-86,105-107,109,130-134,137,239-243
+memoryfn/typescript/tests/documents.test.ts
+  s_c5f815aa0e0533::t_57ed48977bf603 2,348-351,371-532
+memoryfn/typescript/tests/http-documents.test.ts
+  s_c5f815aa0e0533::t_04103218adf7dc 160-186
+memoryfn/typescript/tests/openai-provider.test.ts
+  s_c5f815aa0e0533::t_d15cd3175e672e 16-17,66-108
+memoryfn/typescript/tests/types/legacy-consumers.ts
+  s_c5f815aa0e0533::t_1cf79986b8d37e 3-4,6-7,21-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "639a232693efb8d7489e14baae33dc1abea63008",
+  "prompts": {},
+  "sessions": {
+    "s_c5f815aa0e0533": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "889999c5-5a12-4ddc-b216-3e39ccf030c4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
