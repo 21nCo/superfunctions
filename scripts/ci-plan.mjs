@@ -85,13 +85,15 @@ const MCPFN_SUPPORT_PATTERNS = [
   /^release-packages\.json$/,
 ];
 
-function git(args, options = {}) {
-  return execFileSync("git", args, {
+// Git's stdout, trimmed unless `raw` is set (structured output such as file contents or NUL-separated lists).
+function git(args, { raw = false, ...options } = {}) {
+  const output = execFileSync("git", args, {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
-  }).trim();
+  });
+  return raw ? output : output.trim();
 }
 
 function gitOk(args) {
@@ -279,7 +281,7 @@ function canonicalJson(value) {
 
 function readLockfileAt(commitish) {
   try {
-    return JSON.parse(git(["show", `${commitish}:${LOCKFILE}`], { maxBuffer: 256 * 1024 * 1024 }));
+    return JSON.parse(git(["show", `${commitish}:${LOCKFILE}`], { raw: true, maxBuffer: 256 * 1024 * 1024 }));
   } catch {
     return null;
   }
@@ -414,7 +416,7 @@ function collectSourceReferences(packageDirs) {
   const references = new Map();
   let files = [];
   try {
-    files = git(["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], { maxBuffer: 256 * 1024 * 1024 })
+    files = git(["ls-files", "-z", "--", ...SOURCE_REFERENCE_FILES], { raw: true, maxBuffer: 256 * 1024 * 1024 })
       .split("\0")
       .filter(Boolean);
   } catch {
