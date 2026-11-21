@@ -244,3 +244,41 @@ The database adapter expects the following models to be present in your database
 ## License
 
 MIT
+
+### Owning a single SES delivery attempt
+
+Server applications that manage durable notification attempts can use the focused
+`sendfn/adapters/aws-ses` entry point without loading push providers:
+
+```ts
+import { AwsSesAdapter } from 'sendfn/adapters/aws-ses';
+const provider = new AwsSesAdapter({
+  region: 'us-east-1', accessKeyId, secretAccessKey,
+  timeoutMs: 30_000, maxResponseBytes: 1024 * 1024,
+});
+try {
+  const receipt = await provider.sendEmail({
+    from: 'alerts@example.com', to: ['operator@example.com'],
+    subject: 'Service alert', text: 'The service needs attention.',
+  }, { signal: controller.signal });
+  // Only success with a nonempty providerMessageId acknowledges acceptance.
+} finally {
+  await provider.close();
+}
+```
+
+The SES adapter makes one SDK attempt (`maxAttempts: 1`). The existing higher-level
+EmailService retry policy remains unchanged. SES does not provide idempotent send:
+a timeout, cancellation, connection loss, or missing receipt can mean the message
+was accepted. Durable callers must retain that uncertainty rather than automatically
+replay it. A raw MIME idempotency header does not provide SES deduplication.
+
+`timeoutMs` defaults to 30 seconds and covers sending and reading the response.
+`maxResponseBytes` defaults to 1 MiB and bounds the body before XML deserialization.
+Both accept positive safe integers up to 2,147,483,647. Cancellation aborts the SDK
+request and destroys an unfinished response stream. JavaScript event-loop stalls
+can delay timer delivery; this is not a real-time wall-clock guarantee. `close()`
+closes admission, aborts active attempts, waits for their settlement, then destroys
+the client. A closed adapter cannot be reused. The optional HTTP(S) `endpoint` is
+trusted server configuration for SES-compatible endpoints or local tests; never
+accept it from an untrusted notification request.
