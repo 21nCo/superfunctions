@@ -7,6 +7,7 @@ import { runValidateCommand } from "./commands/validate.js";
 import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
+import { runCheckCommand } from "./commands/check.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
@@ -295,6 +296,79 @@ export async function runCli(
     );
 
   cli
+    .command(
+      "check [routerPath]",
+      "Regenerate the spec, fail on drift, validate it and block unversioned breaking changes"
+    )
+    .option("--spec <path>", "Committed spec (default: <config.output or .apifn>/openapi.yml)")
+    .option("--base <ref>", "Git ref whose committed spec is the base")
+    .option("--base-spec <pathOrUrl>", "Base spec file path or HTTP(S) URL")
+    .option("--allow-breaking", "Report breaking changes without failing")
+    .option("--write", "Rewrite a drifted spec instead of failing")
+    .option("--format <type>", "Report format: text | json | markdown (default: text)")
+    .option("--report <path>", "Also write the report to this file")
+    .action(
+      async (
+        routerPath: string | undefined,
+        options: {
+          spec?: unknown;
+          base?: unknown;
+          baseSpec?: unknown;
+          allowBreaking?: boolean;
+          write?: boolean;
+          format?: unknown;
+          report?: unknown;
+        }
+      ) => {
+        const globals = getGlobals();
+        const output = createOutput({
+          quiet: globals.quiet,
+          verbose: globals.verbose,
+          color: globals.color !== false,
+          writeStdout: runOptions.stdout,
+          writeStderr: runOptions.stderr,
+        });
+
+        const single = (name: string, value: unknown): string | undefined => {
+          if (value === undefined) return undefined;
+          if (Array.isArray(value) || typeof value === "boolean" || value === "") {
+            throw new Error(`--${name} takes one value`);
+          }
+          return String(value);
+        };
+
+        let config;
+        let args;
+        try {
+          args = {
+            specPath: single("spec", options.spec),
+            base: single("base", options.base),
+            baseSpec: single("base-spec", options.baseSpec),
+            format: single("format", options.format),
+            reportPath: single("report", options.report),
+          };
+          ({ config } = await loadConfig({ cwd: runOptions.cwd, configPath: globals.config }));
+        } catch (error) {
+          output.error(error instanceof Error ? error.message : String(error));
+          exitCode = 2;
+          return;
+        }
+
+        const result = await runCheckCommand({
+          routerPath: routerPath === undefined ? undefined : String(routerPath),
+          ...args,
+          allowBreaking: options.allowBreaking === true,
+          write: options.write === true,
+          cwd: runOptions.cwd,
+          config,
+          output,
+          writeStdout: runOptions.stdout,
+        });
+        if (result !== 0) exitCode = result;
+      }
+    );
+
+  cli
     .command("serve [specPath]", "Serve interactive API explorer")
     .option("--port <port>", "Port to bind (default: 4100)")
     .option("--open", "Open browser automatically")
@@ -445,7 +519,7 @@ export async function runCli(
     });
 
   cli.help();
-  cli.version("0.0.2");
+  cli.version("0.1.0");
 
   try {
     cli.parse(["node", "apifn", ...argv], { run: false });

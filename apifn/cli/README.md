@@ -16,6 +16,7 @@ npx @apifn/cli --help
 |---------|-------------|
 | `init [dir]` | Scaffold a new OpenCollection directory |
 | `generate [router]` | Generate an OpenAPI document from a router |
+| `check [router]` | Regenerate the spec, fail on drift, validate it and block unversioned breaking changes |
 | `export [format] [output]` | Export a generated spec as YAML or JSON |
 | `import <kind> <source>` | Import an OpenAPI document as an OpenCollection |
 | `test [collectionDir]` | Run a collection's tests |
@@ -105,6 +106,42 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 | `--reporter <type>` | `console` (default), `json`, `junit`, `silent` |
 
 Exit codes: `0` all passed · `1` failures/errors · `2` load/run error.
+
+## check
+
+The one command a developer or CI runs: it regenerates the spec from the router in memory (the
+`generate` code path), fails when the committed spec is stale, validates it, diffs it against a
+base and fails a breaking change unless the contract version (`info.version`) was bumped.
+
+```bash
+apifn check --base origin/dev --format markdown --report apifn-check.md
+apifn check --write   # rewrite a stale spec instead of failing
+```
+
+- `[router]` — router module (default `config.router`)
+- `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
+- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`); no spec at the ref means a new contract, so the diff is skipped and reported, not failed
+- `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
+- `--allow-breaking` — report breaking changes without failing
+- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing
+- `--format <type>` — `text` (default), `json` or `markdown`
+- `--report <path>` — also write the report to a file
+
+Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
+canonical JSON (key order and formatting do not count).
+
+Version rule: versions are semver 2.0 `MAJOR.MINOR.PATCH` with optional pre-release and build;
+anything else is unversioned and never covers a breaking change. A breaking change passes when the
+head major is greater than the base major, or both majors are `0` and the head minor is greater.
+A non-breaking change with an unchanged version is a warning. `diff: { failOnBreaking: false }` in
+`apifn.config.ts` reports breaking changes without failing.
+
+Reports: JSON is `{ drift, valid, breaking, versions: { base, head }, verdict, diff, ... }` with
+`verdict` `pass`, `warn` or `fail`; Markdown starts with `<!-- apifn-ci-report -->`, the marker the
+API check workflow updates in place.
+
+Exit codes: `0` pass (warnings allowed) · `1` drift, invalid spec, or a breaking change the version
+rule does not cover · `2` usage or load error (message on stderr, no report).
 
 ## diff
 

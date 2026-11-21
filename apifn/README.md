@@ -34,9 +34,9 @@ so consumers share the same `AdminClient` type.
 
 `@apifn/contracts` **0.1.0** also pins core to exactly 0.1.0 and publishes after
 core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either. `@apifn/cli` keeps version **0.0.2**:
+contracts and is not published yet either. `@apifn/cli` **0.1.0** adds `apifn check`;
 its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
-which npm does not serve, so the next CLI release publishes after contracts and
+which npm does not serve, so the CLI release publishes after contracts and
 then sdk. Do not republish the already-used CLI 0.0.2.
 
 ## Python SDK
