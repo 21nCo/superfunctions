@@ -8,7 +8,7 @@ import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { issueSession } from 'authfn/core/sessions';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
-import { sendOtpChallenge, verifyOtpChallenge } from 'authfn/core/verifications';
+import { assertOtpEmailBudgetConfig, sendOtpChallenge, verifyOtpChallenge } from 'authfn/core/verifications';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { emitAccountLinkedEvent } from 'authfn/core/account-linking';
 import { buildSessionResponse, type AuthFnSessionResponseMode } from 'authfn/core/session-responses';
@@ -30,6 +30,7 @@ export function authFnEmailOtpPlugin(
   return {
     name: 'emailOtp',
     schema: () => config.schema ?? createOtpSchema(),
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime),
     routes: (ctx) => createOtpRoutes(ctx)
   };
 }

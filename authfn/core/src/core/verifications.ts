@@ -40,6 +40,8 @@ const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 const DEFAULT_OTP_MAX_FAILED_ATTEMPTS_PER_EMAIL = 10;
 const DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL = 20;
 const DEFAULT_OTP_EMAIL_WINDOW_SECONDS = 60 * 60;
+/** Upper bound for every per-email limit: one year in seconds keeps dates valid. */
+const OTP_EMAIL_LIMIT_MAX = 365 * 24 * 60 * 60;
 
 export interface OtpRuntimeOptions {
   delivery?: AuthFnDeliveryProvider;
@@ -609,18 +611,25 @@ function resolveOtpEmailBudget(
     sources.push({});
   }
 
+  // Limits the caller passes (a direct call to sendOtpChallenge or
+  // verifyOtpChallenge, or the deprecated factory options) can only tighten
+  // the shared budget: a count is lowered and the window lengthened, never
+  // the reverse, so a caller cannot loosen what the other routes enforce.
+  const fromCaller = (field: OtpEmailBudgetField): number[] =>
+    options[field] === undefined ? [] : [readPositiveInteger(options[field], 0, field)];
+  const configured = (field: OtpEmailBudgetField, fallback: number): number[] =>
+    sources.map((source) => readPositiveInteger(source[field], fallback, field));
   const strictest = (field: 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail', fallback: number) =>
-    Math.min(...sources.map((source) => readPositiveInteger(source[field], fallback, field)));
-  const windowMs = Math.max(...sources.map((source) => readPositiveInteger(
-    source.emailAttemptWindowSeconds,
-    DEFAULT_OTP_EMAIL_WINDOW_SECONDS,
-    'emailAttemptWindowSeconds'
-  ))) * 1000;
-  const maxChallenges = Math.max(...sources.map((source) => readPositiveInteger(
-    source.maxChallengesPerEmail,
-    DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL,
-    'maxChallengesPerEmail'
-  )));
+    Math.min(...configured(field, fallback), ...fromCaller(field));
+  const windowMs = Math.max(
+    ...configured('emailAttemptWindowSeconds', DEFAULT_OTP_EMAIL_WINDOW_SECONDS),
+    ...fromCaller('emailAttemptWindowSeconds')
+  ) * 1000;
+  // The scan must reach every challenge any route may have admitted.
+  const maxChallenges = Math.max(
+    ...configured('maxChallengesPerEmail', DEFAULT_OTP_MAX_CHALLENGES_PER_EMAIL),
+    ...fromCaller('maxChallengesPerEmail')
+  );
   // The calling route's lifetime counts too: it may come from the deprecated
   // factory options.
   const longestTtlMs = Math.max(resolveTtlMs(options), ...sources.map((source) => resolveTtlMs(source)));
@@ -635,12 +644,26 @@ function resolveOtpEmailBudget(
   };
 }
 
+type OtpEmailBudgetField = 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail' | 'emailAttemptWindowSeconds';
+
+/**
+ * Checks the per-email OTP limits when the server is set up, so a bad value
+ * fails at startup instead of on every send and verify. `extra` is the
+ * deprecated password factory's `otp` options.
+ */
+export function assertOtpEmailBudgetConfig(
+  config: Pick<AuthFnRuntimeConfig, 'pluginRuntime'>,
+  extra: OtpRuntimeOptions = {}
+): void {
+  resolveOtpEmailBudget(config, extra);
+}
+
 function readPositiveInteger(value: number | undefined, fallback: number, field: string): number {
   if (value === undefined) {
     return fallback;
   }
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new AuthFnConfigError(`OTP ${field} must be a positive integer`, { field });
+  if (!Number.isSafeInteger(value) || value < 1 || value > OTP_EMAIL_LIMIT_MAX) {
+    throw new AuthFnConfigError(`OTP ${field} must be a whole number from 1 to ${OTP_EMAIL_LIMIT_MAX}`, { field });
   }
   return value;
 }

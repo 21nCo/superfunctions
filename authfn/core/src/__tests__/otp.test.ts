@@ -15,7 +15,7 @@ import type {
 } from '../index.js';
 import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
-import { getLatestOtpChallenge } from '../core/verifications.js';
+import { getLatestOtpChallenge, sendOtpChallenge, verifyOtpChallenge } from '../core/verifications.js';
 import { getSchema } from '../schema.js';
 import { AuthFnOtpReplayedError } from '../core/errors.js';
 
@@ -1396,10 +1396,49 @@ describe('authfn otp plugin', () => {
       expect((await refused.json()).error.details.resetAt).toBe('2026-03-22T02:00:00.000Z');
     });
 
-    it.each([0, -1, 1.5, Number.NaN])('rejects %s as a limit', async (value) => {
-      const { post } = setup({ maxFailedAttemptsPerEmail: value });
-      const response = await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
-      expect((await response.json()).error.code).toBe('AUTHFN_CONFIG_INVALID');
+    it.each([
+      ['maxFailedAttemptsPerEmail', 0],
+      ['maxFailedAttemptsPerEmail', -1],
+      ['maxFailedAttemptsPerEmail', 1.5],
+      ['maxFailedAttemptsPerEmail', Number.NaN],
+      ['maxChallengesPerEmail', 0],
+      ['emailAttemptWindowSeconds', 1e12]
+    ])('refuses %s = %s when the server is set up', (field, value) => {
+      expect(() => setup({ [field]: value })).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
+    it('refuses a bad limit in the deprecated password factory options when the server is set up', () => {
+      const config = createConfig();
+      config.plugins = [
+        authFnEmailOtpPlugin(),
+        authFnPasswordPlugin({ otp: { maxChallengesPerEmail: 0 } })
+      ];
+      expect(() => createTestServer(config)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
+    it('lets a direct caller tighten the per-email limits but not loosen them', async () => {
+      const { config } = setup({ maxFailedAttemptsPerEmail: 3 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await createUser(config, { primaryEmail: 'grace@example.com' });
+      const base = config.pluginRuntime!.emailOtp as Record<string, unknown>;
+      const guessUntilRefused = async (email: string, options: Record<string, unknown>) => {
+        await sendOtpChallenge(config, {}, { ...base, ...options }, { purpose: 'sign-in', email });
+        for (let guess = 1; guess <= 5; guess += 1) {
+          try {
+            await verifyOtpChallenge(config, {}, { ...base, ...options }, { purpose: 'sign-in', email, code: '100000' });
+          } catch (error) {
+            if ((error as { code?: string }).code === 'AUTHFN_RATE_LIMITED') {
+              return guess;
+            }
+            expect((error as { code?: string }).code).toBe('AUTHFN_OTP_INVALID');
+          }
+        }
+        return null;
+      };
+      // Tighter than the plugin's 3: the third wrong code is refused.
+      expect(await guessUntilRefused('ada@example.com', { maxFailedAttemptsPerEmail: 2 })).toBe(3);
+      // Looser than the plugin's 3: the plugin's limit still applies.
+      expect(await guessUntilRefused('grace@example.com', { maxFailedAttemptsPerEmail: 1000 })).toBe(4);
     });
   });
 });

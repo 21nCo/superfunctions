@@ -14,7 +14,7 @@ import { authenticateRequest, issueSession } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
 import { jsonSuccess } from 'authfn/http/envelopes';
-import { completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
+import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
 import { emitAccountLinkedEvent } from 'authfn/core/account-linking';
 import { buildSessionResponse, type AuthFnSessionResponseMode } from 'authfn/core/session-responses';
@@ -36,6 +36,7 @@ export function authFnPasswordPlugin(
   return {
     name: 'password',
     schema: () => config.schema ?? createPasswordSchema(),
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime, config.otp),
     routes: (ctx) => createPasswordRoutes(ctx, config)
   };
 }
