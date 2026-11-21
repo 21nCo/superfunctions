@@ -424,8 +424,12 @@ function readDependencyNames(manifest) {
 const SOURCE_REFERENCE_FILES = ["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro"];
 const RELATIVE_PARENT_PATH = /["'`](\.\.\/[^"'`\n$]*)["'`]/g;
 
-// Test files and test configuration: a reference from one of these affects only the referencing package's tests.
-const TEST_FILE = /(?:^|\/)(?:__tests__|tests?|e2e|__fixtures__|fixtures)\/|\.(?:test|spec)\.[^/]+$|(?:^|\/)vitest(?:\.[^/]+)?\.config\.[^/]+$/;
+// Test files and test configuration: a reference from one of these affects only the referencing package's tests. Any
+// other file (fixtures included, which a build may bundle) counts as a build input.
+const TEST_FILE = /(?:^|\/)(?:__tests__|tests?|e2e)\/|\.(?:test|spec)\.[^/]+$|(?:^|\/)vitest(?:\.[^/]+)?\.config\.[^/]+$/;
+
+// Turbo tasks that only check a package; inputs of any other task (build, generate, ...) can feed its build.
+const CHECK_TASK = /^(?:test|lint|typecheck)(?::|$)/;
 
 // Edges Turbo's package graph cannot see: package A's tracked code names a "../" path inside package B, so a change
 // to B can break A without A depending on B. A reference from A's test files ("test") affects only A's tests; any
@@ -529,8 +533,8 @@ function collectJsDependents(seedDirs, manifests) {
 
 // Package turbo.json files can name inputs in other packages ("$TURBO_ROOT$/extfn/cli/**/*.ts" in clifn/core, whose
 // contract test scans those CLIs). Returns [owner package dir, path prefix, kind] entries: a changed file under a prefix
-// selects the owner, with its dependents when the input feeds its build. The prefix is the glob's literal part, so it
-// can only over-select.
+// selects the owner, with its dependents unless the task only checks the package (test, lint, typecheck). The prefix is
+// the glob's literal part, so it can only over-select.
 function collectTurboRootInputs(packageDirs) {
   const inputs = [];
   let files = [];
@@ -561,7 +565,7 @@ function collectTurboRootInputs(packageDirs) {
         }
         const glob = input.slice("$TURBO_ROOT$/".length);
         const literal = glob.split(/[*?{[!]/, 1)[0];
-        inputs.push([owner, literal, taskName === "build" ? "build" : "test"]);
+        inputs.push([owner, literal, CHECK_TASK.test(taskName.replace(/^.*#/, "")) ? "test" : "build"]);
       }
     }
   }

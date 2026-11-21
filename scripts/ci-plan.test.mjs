@@ -586,11 +586,22 @@ test("a package whose source reads another package's files changes with it, depe
     "wrapfn/wrapper/package.json": JSON.stringify({ name: "@wrapfn/wrapper", scripts: { build: "tsup" } }),
     "wrapfn/wrapper/src/index.ts": 'export { value } from "../../../filefn/core/src/index.ts";\n',
     "wrapfn/app/package.json": JSON.stringify({ name: "@wrapfn/app", scripts: { test: "vitest run" }, dependencies: { "@wrapfn/wrapper": "*" } }),
+    // A fixture can be bundled too, so it counts as a build input.
+    "bundlefn/wrapper/package.json": JSON.stringify({ name: "@bundlefn/wrapper", scripts: { build: "tsup" } }),
+    "bundlefn/wrapper/fixtures/value.ts": 'export { value } from "../../../clifn/core/src/index.ts";\n',
+    "bundlefn/app/package.json": JSON.stringify({ name: "@bundlefn/app", scripts: { test: "vitest run" }, dependencies: { "@bundlefn/wrapper": "*" } }),
+    // A generate task's input feeds the build; a test task's input does not.
+    "genfn/wrapper/package.json": JSON.stringify({ name: "@genfn/wrapper", scripts: { build: "tsup" } }),
+    "genfn/wrapper/turbo.json": JSON.stringify({ extends: ["//"], tasks: { generate: { inputs: ["$TURBO_ROOT$/devfn/proxy/schema/**"] }, test: { inputs: ["$TURBO_ROOT$/devfn/proxy/docs/**"] } } }),
+    "genfn/app/package.json": JSON.stringify({ name: "@genfn/app", scripts: { test: "vitest run" }, dependencies: { "@genfn/wrapper": "*" } }),
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
     assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../wrapfn/app --filter=..../wrapfn/wrapper ${EXCLUDE_DEVFN}`);
     assert.equal(outputs.has_js_test, "true");
+    assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/bundlefn\/app --filter=\.\.\.\.\/bundlefn\/wrapper/);
+    assert.match(plan(({ put }) => put("devfn/proxy/schema/a.json", "{}\n")).js_build_filters, /--filter=\.\.\.\.\/genfn\/app --filter=\.\.\.\.\/genfn\/wrapper/);
+    assert.match(plan(({ put }) => put("devfn/proxy/docs/a.md", "x\n")).js_build_filters, /--filter=\.\/genfn\/wrapper/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
