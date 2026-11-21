@@ -6600,7 +6600,7 @@ sequenceDiagram
   Browser->>Apple: present sign-in
   User->>Apple: authenticate
   Apple-->>Browser: form_post to /social/callback/apple
-  Browser->>Kernel: POST /social/callback/apple { code, state, [id_token, user] }
+  Browser->>Kernel: POST /social/callback/apple { state, code and/or id_token, [user] }
   alt no id_token posted
     Kernel->>Apple: token exchange for the code
     Apple-->>Kernel: identity token
@@ -6611,7 +6611,7 @@ sequenceDiagram
   Kernel-->>Browser: 302 to returnTo + cookies
 ```
 
-With the default `response_type=code`, Apple posts a `code` and the kernel exchanges it at Apple's token endpoint for the identity token. If the post also carries an `id_token`, the kernel uses that token instead of exchanging the code, and verifies it against `https://appleid.apple.com/auth/keys` (cached JWKS). Either way the token's `sub` becomes `providerAccountId`. See [Email and verification](#email-and-verification) for where the email comes from.
+With the default `response_type=code`, Apple posts a `code` and the kernel exchanges it at Apple's token endpoint for the identity token. If the post carries an `id_token` (with or without a `code`), the kernel uses that token and does not exchange any code, and verifies it against `https://appleid.apple.com/auth/keys` (cached JWKS). Either way the token's `sub` becomes `providerAccountId`. See [Email and verification](#email-and-verification) for where the email comes from.
 
 ## Native iOS / macOS flow
 
@@ -6632,7 +6632,7 @@ sequenceDiagram
   System-->>App: appleIDCredential
   App->>Kernel: POST /social/native/apple/complete { stateId, identityToken, authorizationCode }
   Kernel->>Apple: fetch signing keys (cached JWKS)
-  Note over Kernel: verify signature, issuer, audience (nativeClientIds), nonce
+  Note over Kernel: verify signature, issuer, audience (clientId or nativeClientIds), nonce
   Kernel-->>App: 200 OK + bearer credential
 ```
 
