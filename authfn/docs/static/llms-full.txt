@@ -8857,13 +8857,17 @@ if (account.ok) {
 
 ## Gating routes by verification
 
-Use a hook to gate sign-in:
+Gate your application routes from your own code (below), so an unverified user can still sign in with their password and then submit the code with `requireAccountHolder`.
+
+You can also refuse password sign-in until the email is verified:
 
 ```ts
 authFnPasswordPlugin({ requireEmailVerifiedForSignIn: true })
 ```
 
-…or check yourself from your application code:
+With that setting, a user whose session expires before they verify cannot sign in with their password to get a new session for the guarded request. Their way back is an email-code sign-in (or a password reset). That is a first proof of the mailbox, so it claims the account: it removes the password and anything else set up before, and they set a new password afterwards.
+
+To gate in your application code:
 
 ```ts
 const session = await auth.provider.authenticate(request);
