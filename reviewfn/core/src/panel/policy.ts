@@ -48,6 +48,15 @@ export function applyRepositoryPanelPolicy(trustedInput: PanelPolicy, repository
   if (effectiveMaxConcurrentSlots(repository) > effectiveMaxConcurrentSlots(trusted)) reasons.push(`raises maxConcurrentSlots from ${effectiveMaxConcurrentSlots(trusted)} to ${effectiveMaxConcurrentSlots(repository)}`);
   if (repository.incremental !== trusted.incremental) reasons.push(`changes incremental from ${trusted.incremental} to ${repository.incremental}`);
   if (repository.requirementsSlot !== trusted.requirementsSlot) reasons.push(`changes requirementsSlot from ${String(trusted.requirementsSlot)} to ${String(repository.requirementsSlot)}`);
+  // Harness profiles decide what runs on the host (argv, environment, model and sandbox reporting), so they come only
+  // from trusted configuration: a repository copy may drop an unused one, but never add or change one.
+  const trustedProfiles = trusted.profiles ?? {};
+  for (const [name, profile] of Object.entries(repository.profiles ?? {})) {
+    // An entry set to undefined declares no profile, in either copy, as the validator reads it.
+    if (profile === undefined) continue;
+    if (!Object.hasOwn(trustedProfiles, name) || trustedProfiles[name] === undefined) reasons.push(`adds harness profile ${name}`);
+    else if (stableStringify(profile) !== stableStringify(trustedProfiles[name])) reasons.push(`changes harness profile ${name}`);
+  }
   const repositoryIds = new Set(repository.slots.map(slot => slot.id));
   trusted.slots.forEach((slot, index) => {
     const candidate = repository.slots[index];

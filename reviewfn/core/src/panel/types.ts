@@ -13,12 +13,39 @@ export interface PanelSlot {
   /** Matches `^[a-z0-9][a-z0-9-]{0,62}$` and is unique within the panel. */
   id: string;
   stage: PanelSlotStage;
-  /** `version` is the exact harness-reported version a run must report to complete or collapse. */
-  harness: { adapter: string; version: string };
+  /**
+   * `version` is the exact harness-reported version a run must report to complete or collapse. `executable` and
+   * `profile` are only for the profile-driven `cli` harness: `profile` names an entry of the policy's `profiles`, and
+   * `executable` is required with it.
+   */
+  harness: { adapter: string; version: string; executable?: string; profile?: string };
   /** `model: "configured"` defers to the harness default, as in 0.1, and is never a model mismatch. */
   inference: { provider: string; model: string; auth: string; credentialEnv?: string };
   lens: string;
   budget: { timeoutMs: number; maxOutputBytes: number };
+}
+
+/** Whole-argument placeholders of a harness profile's `argv`; the closed set. */
+export const HARNESS_PROFILE_PLACEHOLDERS = Object.freeze(["{promptFile}", "{schemaFile}", "{outputFile}", "{workspace}", "{model}"] as const);
+export type HarnessProfilePlaceholder = (typeof HARNESS_PROFILE_PLACEHOLDERS)[number];
+
+/**
+ * How a profile-driven harness (the generic `cli` adapter) runs an agent CLI. Profiles come only from the trusted panel
+ * policy: a repository copy that adds or changes one is `REVIEWFN_PANEL_POLICY_WEAKENED`.
+ */
+export interface HarnessProfile {
+  /** Arguments after the executable. An element equal to a placeholder is replaced by its value as one argument; no shell is used. */
+  argv: string[];
+  promptVia: "stdin" | "file";
+  /** `stdout-last-json`: the last stdout line that parses as a JSON object. */
+  outputVia: "file" | "stdout-last-json";
+  /** The only environment variable names the CLI receives (with the slot's `credentialEnv`). */
+  envAllowlist: string[];
+  /** `none`, `json-path:<dotted path>` in the output, or `stderr-regex:<regex with one capture group>`. */
+  modelReport: string;
+  capabilities: { structuredOutput: boolean; sandbox: "enforced-read-only" | "tree-verified-only" };
+  /** Arguments that print the CLI's version (no placeholders); `["--version"]` when absent. */
+  versionArgv?: string[];
 }
 
 /** Panel policy v1 (`.reviewfn/panel.json`). Loading and repository tightening belong to the panel orchestrator. */
@@ -32,6 +59,8 @@ export interface PanelPolicy {
   /** 1–8; `PANEL_DEFAULT_MAX_CONCURRENT_SLOTS` when absent. */
   maxConcurrentSlots?: number;
   incremental: "full" | "delta";
+  /** Harness profiles by name, for slots whose `harness.profile` names one. */
+  profiles?: Record<string, HarnessProfile>;
 }
 
 export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
@@ -55,6 +84,21 @@ export interface SlotIdentity {
   auth: string;
   /** First 16 hex characters of the SHA-256 of the credential value or the harness-reported account identity; absent when neither was observed. */
   credentialFingerprint?: string;
+  /** The slot's `harness.executable` and `harness.profile`, for a profile-driven harness. */
+  harnessExecutable?: string;
+  harnessProfile?: string;
+  /**
+   * `false` when the harness profile reports no model (`modelReport: "none"`): `model` is then the configured model,
+   * unconfirmed, and the identity is only (adapter, version, executable, profile), so such runs of one executable and
+   * profile never count as distinct.
+   */
+  modelVerified?: false;
+  /**
+   * `true` when the harness found, comparing raw values, that the served model differs from the configured one, even
+   * though `model` (redacted and cut to length) reads the same. The run is then void with `model_mismatch`. Never set on
+   * an unverified model or with the configured model `configured`.
+   */
+  modelMismatch?: true;
 }
 
 /**
@@ -68,6 +112,12 @@ export type SlotRunTerminal = "completed" | "failed" | "canceled" | "quota_exhau
  * `disallowed_tool_use`: the harness reported a forbidden tool.
  */
 export type SlotVoidReason = "model_mismatch" | "workspace_mutated" | "disallowed_tool_use";
+/**
+ * What a run could not establish, without voiding it. `model_unverified`: the harness reported no model, so the
+ * configured model is unconfirmed. `sandbox_tree_verified_only`: the harness enforces no tool restriction; only the
+ * unchanged checkout was verified.
+ */
+export type SlotRunLimitation = "model_unverified" | "sandbox_tree_verified_only";
 
 export interface SlotRun {
   slotId: string;
@@ -81,6 +131,8 @@ export interface SlotRun {
   outputDigest?: string;
   /** Recorded only when the harness observed the value; never estimated. */
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** Absent when the run has none. */
+  limitations?: SlotRunLimitation[];
 }
 
 export interface PanelFindingOrigin {

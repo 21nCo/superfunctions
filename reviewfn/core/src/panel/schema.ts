@@ -7,6 +7,12 @@ export const PANEL_SLOT_ID_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
 export const PANEL_NONBLANK_PATTERN = "\\S";
 export const PANEL_CREDENTIAL_FINGERPRINT_PATTERN = "^[0-9a-f]{16}$";
 export const PANEL_DIGEST_PATTERN = "^[0-9a-f]{64}$";
+/** Harness profile names, as slot IDs. */
+export const PANEL_PROFILE_NAME_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
+/** Environment variable names a harness profile may allow. */
+export const PANEL_ENV_NAME_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*$";
+/** `none`, `json-path:<dotted path>` or `stderr-regex:<regex>`; the regex's single capture group is checked by the validator. */
+export const PANEL_MODEL_REPORT_PATTERN = String.raw`^(?:none|json-path:[A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*|stderr-regex:.+)$`;
 /**
  * RFC 3339 UTC timestamps as produced by `Date.prototype.toISOString`, with optional fractional seconds and in-range
  * fields. The validator also rejects calendar dates that do not exist, such as February 30.
@@ -17,6 +23,7 @@ const base = harnessOutputSchema.$defs;
 const nonblank = { type: "string", pattern: PANEL_NONBLANK_PATTERN } as const;
 const strings = { type: "array", items: { type: "string" } } as const;
 const slotId = { type: "string", pattern: PANEL_SLOT_ID_PATTERN } as const;
+const profileName = { type: "string", pattern: PANEL_PROFILE_NAME_PATTERN } as const;
 const timestamp = { type: "string", pattern: PANEL_TIMESTAMP_PATTERN } as const;
 const count = { type: "integer", minimum: 0 } as const;
 const positive = { type: "integer", minimum: 1 } as const;
@@ -74,7 +81,7 @@ export const panelSchemaDefs = {
     type: "object", additionalProperties: false, required: ["id", "stage", "harness", "inference", "lens", "budget"],
     properties: {
       id: slotId, stage: { enum: [1, 2, "verifier"] },
-      harness: { type: "object", additionalProperties: false, required: ["adapter", "version"], properties: { adapter: nonblank, version: nonblank } },
+      harness: { type: "object", additionalProperties: false, required: ["adapter", "version"], properties: { adapter: nonblank, version: nonblank, executable: nonblank, profile: profileName } },
       inference: { type: "object", additionalProperties: false, required: ["provider", "model", "auth"], properties: { provider: nonblank, model: nonblank, auth: nonblank, credentialEnv: nonblank } },
       lens: nonblank,
       budget: { type: "object", additionalProperties: false, required: ["timeoutMs", "maxOutputBytes"], properties: { timeoutMs: positive, maxOutputBytes: positive } },
@@ -86,11 +93,25 @@ export const panelSchemaDefs = {
       version: { const: 1 }, slots: { type: "array", minItems: 1, items: { $ref: "#/$defs/panelSlot" } },
       quorum: { type: "object", additionalProperties: false, required: ["stage1", "stage2"], properties: { stage1: count, stage2: count } },
       requirementsSlot: { anyOf: [slotId, { type: "null" }] }, maxConcurrentSlots: { type: "integer", minimum: 1, maximum: 8 }, incremental: { enum: ["full", "delta"] },
+      profiles: { type: "object", propertyNames: profileName, additionalProperties: { $ref: "#/$defs/harnessProfile" } },
+    },
+  },
+  harnessProfile: {
+    type: "object", additionalProperties: false, required: ["argv", "promptVia", "outputVia", "envAllowlist", "modelReport", "capabilities"],
+    properties: {
+      argv: strings, promptVia: { enum: ["stdin", "file"] }, outputVia: { enum: ["file", "stdout-last-json"] },
+      envAllowlist: { type: "array", uniqueItems: true, items: { type: "string", pattern: PANEL_ENV_NAME_PATTERN } },
+      modelReport: { type: "string", pattern: PANEL_MODEL_REPORT_PATTERN },
+      capabilities: { type: "object", additionalProperties: false, required: ["structuredOutput", "sandbox"], properties: { structuredOutput: { type: "boolean" }, sandbox: { enum: ["enforced-read-only", "tree-verified-only"] } } },
+      versionArgv: strings,
     },
   },
   slotIdentity: {
     type: "object", additionalProperties: false, required: ["harnessAdapter", "harnessVersion", "provider", "model", "auth"],
-    properties: { harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: { type: "string", pattern: PANEL_CREDENTIAL_FINGERPRINT_PATTERN } },
+    properties: {
+      harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: { type: "string", pattern: PANEL_CREDENTIAL_FINGERPRINT_PATTERN },
+      harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: { const: false }, modelMismatch: { const: true },
+    },
   },
   slotRun: {
     type: "object", additionalProperties: false, required: ["slotId", "identity", "terminal", "voidReasons", "startedAt", "finishedAt"],
@@ -100,6 +121,7 @@ export const panelSchemaDefs = {
       voidReasons: { type: "array", uniqueItems: true, items: { enum: ["model_mismatch", "workspace_mutated", "disallowed_tool_use"] } },
       startedAt: timestamp, finishedAt: timestamp, outputArtifact: nonblank, outputDigest: { type: "string", pattern: PANEL_DIGEST_PATTERN },
       usage: { type: "object", additionalProperties: false, properties: { inputTokens: count, outputTokens: count, costUsd: { type: "number", minimum: 0 } } },
+      limitations: { type: "array", uniqueItems: true, items: { enum: ["model_unverified", "sandbox_tree_verified_only"] } },
     },
     // Void runs carry their reasons; no other terminal may.
     if: { properties: { terminal: { const: "void" } } },
