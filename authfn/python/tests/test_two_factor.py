@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -469,3 +469,39 @@ async def test_keeps_the_challenge_used_when_the_spend_count_is_unknown() -> Non
             code=enrolled["recoveryCodes"][1],
             primary_email="ada@example.com",
         )
+
+
+@pytest.mark.asyncio
+async def test_does_not_finish_a_challenge_that_expires_before_it_is_claimed() -> None:
+    db = MockDatabaseAdapter()
+    clock = {"now": TEST_NOW}
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: clock["now"],
+            recovery_code_count=1,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], TEST_NOW))
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    original_find_one = db.find_one
+
+    async def slow_find_one(**kwargs: Any) -> Optional[Dict[str, Any]]:
+        row = await original_find_one(**kwargs)
+        if kwargs.get("model") == "two_factor_enrollments":
+            # The challenge expires while the request reads the enrollment.
+            clock["now"] = TEST_NOW + timedelta(hours=1)
+        return row
+
+    db.find_one = slow_find_one  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )
+    unused = [row for row in db.storage["two_factor_recovery_codes"] if row.get("usedAt") is None]
+    assert len(unused) == 1

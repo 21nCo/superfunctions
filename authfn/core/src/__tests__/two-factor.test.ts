@@ -624,10 +624,11 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
       const gated = await post('/sign-in/password', { email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' });
       return (await gated.json()).error.details.challengeId as string;
     };
-    // A code that no accepted time step (the current one and one on either
-    // side) produces.
+    // A code that no time step from 30 seconds before to 3 minutes after
+    // `now` produces, so it stays wrong even when a test moves the clock on.
     const wrongCode = (now: Date) => {
-      const accepted = [-30, 0, 30].map((offset) => generateTotp(secret, new Date(now.getTime() + offset * 1000)));
+      const accepted = [-30, 0, 30, 60, 90, 120, 150, 180]
+        .map((offset) => generateTotp(secret, new Date(now.getTime() + offset * 1000)));
       return ['000000', '111111', '222222', '333333'].find((candidate) => !accepted.includes(candidate))!;
     };
     const enrollment = await config.database.findOne<{ id: string; userId: string }>({
@@ -802,6 +803,89 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     // three and lock the enrollment; the late reset must not lift that lock.
     setup.clock.advanceSeconds(30);
     expect(await verify(setup.config, generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
+  });
+
+  it('starts a fresh run when the limit is lowered after a success', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 10 });
+    // The confirm ended a run under a limit of 10; the server now allows 3.
+    Object.assign(setup.pluginConfig, { maxFailedAttempts: 3 });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(verifyTwoFactorCode(setup.config, setup.userId, setup.wrongCode(setup.clock.now()), setup.pluginConfig))
+        .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    }
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .resolves.toEqual({ usedRecoveryCode: false });
+  });
+
+  it('does not count an attempt when the secret cannot be read', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 1 });
+    const resolver = setup.pluginConfig.encryptionKeyResolver;
+    Object.assign(setup.pluginConfig, {
+      encryptionKeyResolver: () => {
+        throw new Error('test key service unavailable');
+      }
+    });
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toThrow(/Key material unavailable|test key service unavailable/);
+    Object.assign(setup.pluginConfig, { encryptionKeyResolver: resolver });
+    // With a limit of 1, a counted attempt would have locked the enrollment.
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .resolves.toEqual({ usedRecoveryCode: false });
+  });
+
+  it('does not finish a challenge that expires before it is claimed', async () => {
+    const setup = await enrolledUser();
+    const challengeId = await setup.challenge();
+    // The request is slow after reading the challenge: it expires meanwhile.
+    const slow: Adapter = {
+      ...setup.config.database,
+      async findOne(params) {
+        const row = await setup.config.database.findOne(params);
+        if (params.model === 'two_factor_enrollments') {
+          setup.clock.advanceSeconds(3600);
+        }
+        return row;
+      }
+    } as Adapter;
+    await expect(satisfyTwoFactorChallenge({ ...setup.config, database: slow }, challengeId, setup.recoveryCodes[0], setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    // The recovery code was not spent on the expired challenge.
+    expect((await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: setup.recoveryCodes[0]
+    })).status).toBe(200);
+  });
+
+  it('keeps the challenge used when the TOTP step write may have applied', async () => {
+    const setup = await enrolledUser();
+    let failStep = true;
+    const lost = (params: { model: string; data: Record<string, unknown> }) =>
+      failStep && params.model === 'two_factor_enrollments' && 'lastUsedCounter' in params.data;
+    const failing: Adapter = {
+      ...setup.config.database,
+      async update(params) {
+        const row = await setup.config.database.update(params);
+        if (lost(params)) {
+          failStep = false;
+          throw new Error('test step write response lost');
+        }
+        return row;
+      },
+      async updateMany(params) {
+        const count = await setup.config.database.updateMany(params);
+        if (lost(params)) {
+          failStep = false;
+          throw new Error('test step write response lost');
+        }
+        return count;
+      }
+    } as Adapter;
+    const challengeId = await setup.challenge();
+    await expect(satisfyTwoFactorChallenge({ ...setup.config, database: failing }, challengeId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toThrow('test step write response lost');
+    // The step may have been used, so the challenge is not given back: a
+    // recovery code cannot finish it.
+    expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[0] })).status).toBe(400);
   });
 
   it('dates a lock from when it is written, not from when the request started', async () => {

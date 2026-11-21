@@ -168,6 +168,8 @@ def _matches(row: Dict[str, Any], where: List[Dict[str, Any]]) -> bool:
             return False
         if operator == "lt" and not (candidate < value):
             return False
+        if operator == "gt" and not (candidate is not None and candidate > value):
+            return False
         if operator == "contains":
             if not isinstance(candidate, list) or value not in candidate:
                 return False

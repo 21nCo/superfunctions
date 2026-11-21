@@ -336,11 +336,17 @@ class TwoFactorService:
         # Only one request finishes a challenge, and a recovery code is spent
         # only once this request holds it; if the spend fails, the challenge is
         # given back.
+        # The claim is also conditional on the challenge not having expired
+        # by now (the reads above take time), with a fresh clock reading.
+        claimed_at = self.plugin_config.now()
         claimed = await self._update_if_matches(
             "two_factor_challenges",
             challenge_id,
-            [{"field": "consumedAt", "operator": "eq", "value": None}],
-            {"consumedAt": now, "updatedAt": now},
+            [
+                {"field": "consumedAt", "operator": "eq", "value": None},
+                {"field": "expiresAt", "operator": "gt", "value": claimed_at},
+            ],
+            {"consumedAt": claimed_at, "updatedAt": claimed_at},
         )
         if not claimed:
             raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")

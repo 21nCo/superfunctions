@@ -190,7 +190,7 @@ The output is byte-for-byte equivalent to the Node kernel's `auth.openApi()` for
 
 ## Cross-language deployments
 
-A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), they're interchangeable. The session cookie / bearer token works against either.
+A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), sessions are interchangeable: the session cookie / bearer token works against either. The sign-in routes are not all equivalent: the Python kernel does not enforce the TypeScript kernel's two-factor failed-attempt limit or its lock, nor the per-email OTP budget. On a shared database, serve 2FA and OTP verification from the TypeScript kernel, or throttle those Python routes yourself.
 
 If you go this route, lock the kernel versions on both sides to versions that share the same wire contract. The [changelog](../reference/changelog) documents wire-contract bumps.
 

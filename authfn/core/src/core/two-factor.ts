@@ -52,6 +52,14 @@ const MAX_LOCKOUT_SECONDS = 365 * 24 * 60 * 60;
 const MIN_LOCKOUT_SECONDS = 60;
 /** Compare-and-set rounds for one attempt reservation before giving up. */
 const ATTEMPT_RESERVATION_ROUNDS = 16;
+/**
+ * The count of checks moves in runs of this size: a success, or the check
+ * that sets a lock, moves it to the next multiple, and a run's position is
+ * the count past the last multiple. It is the largest allowed
+ * `maxFailedAttempts`, so the position does not depend on the configured
+ * limit and changing that limit does not misread an earlier run.
+ */
+const ATTEMPT_RUN_SPAN = MAX_FAILED_ATTEMPTS_LIMIT;
 /** Random bytes per recovery code: 80 bits, shown as four groups of five. */
 const RECOVERY_CODE_BYTES = 10;
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -214,8 +222,11 @@ export async function confirmTwoFactorEnrollment(
     return enrollment;
   }
 
+  // The secret is read before the attempt is counted, so a key that cannot
+  // be resolved does not use up the owner's attempts.
+  const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
   const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
-  await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+  await verifyTwoFactorTotp(config, enrollment, code, pluginConfig, secret);
   await attempt.succeeded();
   const now = resolveNow(pluginConfig);
   return config.database.update<AuthFnTwoFactorEnrollmentRecord>({
@@ -333,13 +344,21 @@ export async function satisfyTwoFactorChallenge(
 
   // Only one request can finish a challenge: the write is conditional on the
   // challenge still being open.
-  const claimChallenge = () => updateRowIfMatches(
-    config,
-    'two_factor_challenges',
-    challenge.id,
-    [{ field: 'consumedAt', operator: 'eq', value: null }],
-    { consumedAt: now, updatedAt: now }
-  );
+  // It is also conditional on the challenge not having expired by the time
+  // of the claim (not just when it was read).
+  const claimChallenge = () => {
+    const claimedAt = resolveNow(pluginConfig);
+    return updateRowIfMatches(
+      config,
+      'two_factor_challenges',
+      challenge.id,
+      [
+        { field: 'consumedAt', operator: 'eq', value: null },
+        { field: 'expiresAt', operator: 'gt', value: claimedAt }
+      ],
+      { consumedAt: claimedAt, updatedAt: claimedAt }
+    );
+  };
   const challengeGone = () => new AuthFnTwoFactorInvalidCodeError('Two-factor challenge is invalid or expired', {
     challengeId
   });
@@ -362,8 +381,9 @@ export async function satisfyTwoFactorChallenge(
   let usedRecoveryCode = false;
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
+    const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
-    const step = await assertTotpMatches(config, enrollment, code, pluginConfig);
+    const step = await assertTotpMatches(config, enrollment, code, pluginConfig, secret);
     if (!(await claimChallenge())) {
       // Another request finished this challenge first (typically the same
       // sign-in submitted twice). This attempt stays counted: only the
@@ -372,11 +392,15 @@ export async function satisfyTwoFactorChallenge(
       // snapshot, and ending the run could clear failures counted meanwhile.
       throw challengeGone();
     }
-    try {
-      await recordTotpStep(config, enrollment, step, pluginConfig);
-    } catch (error) {
+    // If the step write throws or its outcome is unknown, the step may have
+    // been used, so the challenge stays used (as for recovery codes). It is
+    // given back only when the step was certainly not recorded.
+    const recorded = await recordTotpStep(config, enrollment, step, pluginConfig);
+    if (recorded === 'refused') {
       await reopenChallenge();
-      throw error;
+    }
+    if (recorded !== 'recorded') {
+      throw invalidSecondFactorCode(enrollment.userId);
     }
     // Only a code that finished the challenge ends the run of attempts.
     await attempt.succeeded();
@@ -569,8 +593,9 @@ async function checkSecondFactor(
 ): Promise<{ usedRecoveryCode: boolean }> {
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
+    const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
-    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig, secret);
     await attempt.succeeded();
     return { usedRecoveryCode: false };
   }
@@ -620,7 +645,7 @@ async function reserveTotpCheck(
           enrollmentId,
           [{ field: 'failedAttemptCount', operator: 'eq', value: reserved }],
           {
-            failedAttemptCount: Math.ceil(reserved / limits.maxFailedAttempts) * limits.maxFailedAttempts,
+            failedAttemptCount: Math.ceil(reserved / ATTEMPT_RUN_SPAN) * ATTEMPT_RUN_SPAN,
             lockedUntil: null,
             updatedAt: resolveNow(pluginConfig)
           }
@@ -658,10 +683,14 @@ async function reserveSecondFactorAttempt(
       throw twoFactorLockedError(lockedUntil);
     }
 
-    const next = readAttemptCount(current.failedAttemptCount) + 1;
+    const count = readAttemptCount(current.failedAttemptCount);
+    const runBase = Math.floor(count / ATTEMPT_RUN_SPAN) * ATTEMPT_RUN_SPAN;
+    const position = count - runBase + 1;
     // The check that completes a run is still made; the lock applies to the
-    // ones after it.
-    const data: Record<string, unknown> = next % limits.maxFailedAttempts === 0
+    // ones after it, and the count moves to the next run.
+    const completesRun = position >= limits.maxFailedAttempts;
+    const next = completesRun ? runBase + ATTEMPT_RUN_SPAN : count + 1;
+    const data: Record<string, unknown> = completesRun
       ? { failedAttemptCount: next, lockedUntil: new Date(now.getTime() + limits.lockoutMs), updatedAt: now }
       : { failedAttemptCount: next, updatedAt: now };
     const reserved = await updateRowOutcome(
@@ -784,9 +813,10 @@ async function assertTotpMatches(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   enrollment: AuthFnTwoFactorEnrollmentRecord,
   code: string,
-  pluginConfig: TwoFactorPluginRuntimeConfig
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  decrypted?: string
 ): Promise<number> {
-  const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
+  const secret = decrypted ?? await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
   const matched = verifyTotpCode(
     secret,
     normalizeTwoFactorCode(code),
@@ -811,14 +841,14 @@ async function recordTotpStep(
   enrollment: AuthFnTwoFactorEnrollmentRecord,
   step: number,
   pluginConfig: TwoFactorPluginRuntimeConfig
-): Promise<void> {
+): Promise<'recorded' | 'refused' | 'unknown'> {
   let current: AuthFnTwoFactorEnrollmentRecord = enrollment;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const lastUsed = current.lastUsedCounter ?? null;
     if (lastUsed !== null && step <= lastUsed) {
-      break;
+      return 'refused';
     }
-    const recorded = await updateRowIfMatches(
+    const recorded = await updateRowOutcome(
       config,
       'two_factor_enrollments',
       current.id,
@@ -830,16 +860,19 @@ async function recordTotpStep(
       ],
       { lastUsedCounter: step, updatedAt: resolveNow(pluginConfig) }
     );
-    if (recorded) {
-      return;
+    if (recorded === 'applied') {
+      return 'recorded';
+    }
+    if (recorded === 'unknown') {
+      return 'unknown';
     }
     const reloaded = await reloadSameEnrollment(config, enrollment);
     if (!reloaded) {
-      break;
+      return 'refused';
     }
     current = reloaded;
   }
-  throw invalidSecondFactorCode(enrollment.userId);
+  return 'refused';
 }
 
 /**
@@ -869,10 +902,11 @@ async function verifyTwoFactorTotp(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   enrollment: AuthFnTwoFactorEnrollmentRecord,
   code: string,
-  pluginConfig: TwoFactorPluginRuntimeConfig
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  decrypted?: string
 ): Promise<void> {
   const now = resolveNow(pluginConfig);
-  const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
+  const secret = decrypted ?? await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
   const normalizedCode = normalizeTwoFactorCode(code);
   let currentEnrollment: AuthFnTwoFactorEnrollmentRecord = enrollment;
 
