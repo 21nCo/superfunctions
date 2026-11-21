@@ -363,12 +363,12 @@ export async function satisfyTwoFactorChallenge(
   const submitted = await resolveSubmittedCode(config, enrollment.id, code, pluginConfig);
   if (submitted.kind === 'totp') {
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
-    await assertTotpMatches(config, enrollment, code, pluginConfig);
+    const step = await assertTotpMatches(config, enrollment, code, pluginConfig);
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
     try {
-      await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+      await recordTotpStep(config, enrollment, step, pluginConfig);
     } catch (error) {
       await reopenChallenge();
       throw error;
@@ -659,14 +659,19 @@ async function reserveSecondFactorAttempt(
     const data: Record<string, unknown> = next % limits.maxFailedAttempts === 0
       ? { failedAttemptCount: next, lockedUntil: new Date(now.getTime() + limits.lockoutMs), updatedAt: now }
       : { failedAttemptCount: next, updatedAt: now };
-    const reserved = await updateRowIfMatches(
+    const reserved = await updateRowOutcome(
       config,
       'two_factor_enrollments',
       enrollmentId,
       [{ field: 'failedAttemptCount', operator: 'eq', value: current.failedAttemptCount ?? null }],
       data
     );
-    if (reserved) {
+    if (reserved === 'unknown') {
+      // The attempt may have been counted. Another round could count it
+      // again, so this request stops here without checking its code.
+      throw twoFactorLockedError(new Date(now.getTime() + 1000));
+    }
+    if (reserved === 'applied') {
       return next;
     }
   }
@@ -775,7 +780,7 @@ async function assertTotpMatches(
   enrollment: AuthFnTwoFactorEnrollmentRecord,
   code: string,
   pluginConfig: TwoFactorPluginRuntimeConfig
-): Promise<void> {
+): Promise<number> {
   const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
   const matched = verifyTotpCode(
     secret,
@@ -787,6 +792,40 @@ async function assertTotpMatches(
   if (matched === null) {
     throw invalidSecondFactorCode(enrollment.userId);
   }
+  return matched;
+}
+
+/**
+ * Records a TOTP step matched earlier as used, unless that step (or a later
+ * one) was used meanwhile: the replay check is made against the step that
+ * was verified, not recomputed, so a step boundary crossed in between does
+ * not reject a valid code.
+ */
+async function recordTotpStep(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollment: AuthFnTwoFactorEnrollmentRecord,
+  step: number,
+  pluginConfig: TwoFactorPluginRuntimeConfig
+): Promise<void> {
+  let current: AuthFnTwoFactorEnrollmentRecord = enrollment;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const lastUsed = current.lastUsedCounter ?? null;
+    if (lastUsed !== null && step <= lastUsed) {
+      break;
+    }
+    const recorded = await updateRowIfMatches(
+      config,
+      'two_factor_enrollments',
+      current.id,
+      [{ field: 'lastUsedCounter', operator: 'eq', value: lastUsed }],
+      { lastUsedCounter: step, updatedAt: resolveNow(pluginConfig) }
+    );
+    if (recorded) {
+      return;
+    }
+    current = await requireTwoFactorEnrollment(config, enrollment.userId);
+  }
+  throw invalidSecondFactorCode(enrollment.userId);
 }
 
 async function verifyTwoFactorTotp(

@@ -1046,6 +1046,47 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[1] })).status).toBe(400);
   });
 
+  it('counts at most one attempt when the adapter cannot report whether the attempt was counted', async () => {
+    const setup = await enrolledUser();
+    const unreported: Adapter = {
+      ...setup.config.database,
+      capabilities: {
+        ...setup.config.database.capabilities,
+        operations: { ...setup.config.database.capabilities.operations, returning: false }
+      },
+      async updateMany(params) {
+        const count = await setup.config.database.updateMany(params);
+        return params.model === 'two_factor_enrollments' && 'failedAttemptCount' in params.data ? Number.NaN : count;
+      }
+    } as Adapter;
+    const readCount = async () => (await setup.config.database.findOne<{ failedAttemptCount: number | null }>({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'id', operator: 'eq', value: setup.enrollmentId }],
+      namespace: 'authfn'
+    }))?.failedAttemptCount ?? 0;
+    const before = await readCount();
+    setup.clock.advanceSeconds(30);
+    await expect(verifyTwoFactorCode({ ...setup.config, database: unreported }, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+    expect(await readCount()).toBe(before + 1);
+  });
+
+  it('accepts a TOTP code whose time step ends while its challenge is being claimed', async () => {
+    const setup = await enrolledUser({ window: 0 });
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    setup.clock.advanceSeconds(30);
+    const challengeId = await setup.challenge();
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_challenges' && params.data.consumedAt instanceof Date);
+    const finishing = satisfyTwoFactorChallenge(config, challengeId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig)
+      .then(() => 'ok', (error) => error.code);
+    await reached;
+    setup.clock.advanceSeconds(30);
+    paused.release();
+    expect(await finishing).toBe('ok');
+  });
+
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;
