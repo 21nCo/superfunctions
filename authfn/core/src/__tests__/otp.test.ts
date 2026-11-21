@@ -1423,7 +1423,8 @@ describe('authfn otp plugin', () => {
       const config = createConfig() as LimitConfig;
       Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { maxFailedAttemptsPerEmail: 3 });
       Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { maxFailedAttemptsPerEmail: 3 });
-      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp })];
+      // A hook-only plugin with the same name, listed first, must not hide them.
+      config.plugins = [{ name: 'password', hooks: {} }, authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp })];
       const auth = createTestServer(config);
       const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
         method: 'POST',

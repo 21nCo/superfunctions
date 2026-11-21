@@ -615,7 +615,7 @@ function resolveOtpEmailBudget(
   // lowered and the window lengthened, never the reverse. The deprecated
   // authFnPasswordPlugin({ otp }) limits apply on every route; limits passed
   // to a direct sendOtpChallenge/verifyOtpChallenge call apply to that call.
-  const tighteners = [readDeprecatedPasswordOtpLimits(config), options];
+  const tighteners = [...readDeprecatedPasswordOtpLimits(config), options];
   const fromCaller = (field: OtpEmailBudgetField): number[] => tighteners
     .filter((source) => source[field] !== undefined)
     .map((source) => readPositiveInteger(source[field], 0, field));
@@ -654,14 +654,14 @@ type OtpEmailBudgetField = 'maxFailedAttemptsPerEmail' | 'maxChallengesPerEmail'
 /**
  * The per-email limits from the deprecated `authFnPasswordPlugin({ otp })`
  * options, which the password plugin publishes as `otpEmailLimits` so that
- * every OTP route, not only the password ones, applies them.
+ * every OTP route, not only the password ones, applies them. Every plugin
+ * that publishes limits counts (they only tighten), so another plugin with
+ * the same name cannot hide them.
  */
-function readDeprecatedPasswordOtpLimits(config: OtpBudgetConfig): OtpRuntimeOptions {
-  const plugin = config.plugins?.find((entry) => entry.name === 'password') as
-    | { otpEmailLimits?: unknown }
-    | undefined;
-  const limits = plugin?.otpEmailLimits;
-  return limits && typeof limits === 'object' ? limits as OtpRuntimeOptions : {};
+function readDeprecatedPasswordOtpLimits(config: OtpBudgetConfig): OtpRuntimeOptions[] {
+  return (config.plugins ?? [])
+    .map((plugin) => (plugin as { otpEmailLimits?: unknown }).otpEmailLimits)
+    .filter((limits): limits is OtpRuntimeOptions => Boolean(limits) && typeof limits === 'object');
 }
 
 /**
