@@ -1,0 +1,53 @@
+mcpfn/auth/tests/bundled-sdk-version.test.ts
+  s_6b9cbb480c9c93::t_a896c4c6681bd8 39-41,62-76
+mcpfn/core/tests/bundled-sdk-version.test.ts
+  s_6b9cbb480c9c93::t_d32c6d8219c7d6 1,7,21-23,26-27,35,42-43,45,79-81,85-100,102,107,112-132,136,142-150,154,160-161
+langfn/typescript/package.json
+  s_6b9cbb480c9c93::t_cbf514ef2a3ecc 104
+mcpfn/auth/package.json
+  s_6b9cbb480c9c93::t_213000cc76ed8c 37
+mcpfn/auth/tsup.config.ts
+  s_6b9cbb480c9c93::t_11c24e1de841ed 1-2,4,19-21
+mcpfn/cli/package.json
+  s_6b9cbb480c9c93::t_4ef1b0d96fb577 35
+mcpfn/client/package.json
+  s_6b9cbb480c9c93::t_8a8d49ba0d1db0 28
+mcpfn/core/package.json
+  s_6b9cbb480c9c93::t_51ec4069fe85fb 31
+mcpfn/core/tsup.config.ts
+  s_6b9cbb480c9c93::t_d1c33e0270ed2c 3,5,29-31
+mcpfn/inspector/package.json
+  s_6b9cbb480c9c93::t_194604806ce360 30
+mcpfn/testing/package.json
+  s_6b9cbb480c9c93::t_4aad6023df6afa 49
+memoryfn/typescript/package.json
+  s_6b9cbb480c9c93::t_c38eae716912dc 45
+package-lock.json
+  s_6b9cbb480c9c93::t_cdefa97fcdf3ca 15108,16926,16946-16957,17408,17418-17429,17859,17870-17881,18326,18337-18348,19251,19262-19273,19719,19738-19749,24351,29494-29496,29499,29502,58466,64227,64505,64647
+packages/admin/package.json
+  s_6b9cbb480c9c93::t_dcd75befa6dcb2 31
+scripts/gate-mcpfn-release.mjs
+  s_6b9cbb480c9c93::t_0b41259f0fefc0 151-154,167-168,170-173,177-178,232-254,260,265
+scripts/verify-mcpfn-bundled-sdk.d.mts
+  s_6b9cbb480c9c93::t_08c3532e40e938 13,20-23
+scripts/verify-mcpfn-bundled-sdk.mjs
+  s_6b9cbb480c9c93::t_62c67a57c7a4f8 6-13,18,25,43-66,69,71-74,79-80,101-102,109-126,156-157,164,173-182
+superconsole/package.json
+  s_6b9cbb480c9c93::t_a78abb46099707 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "902e7fd5750e1b4e80c790ff00a2f1ba1876bc06",
+  "prompts": {},
+  "sessions": {
+    "s_6b9cbb480c9c93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c46674d7-57d5-40ad-b173-ef8f14c8b1f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
