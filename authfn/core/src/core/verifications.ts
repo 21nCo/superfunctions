@@ -23,9 +23,13 @@ import {
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
 import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
-import { hashSecret } from './sessions.js';
-import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
-import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { hashSecret, revokeSessionsForUser } from './sessions.js';
+import { createUser, findUserByPrimaryEmail, markUserEmailVerified, readSignUpProfile } from './users.js';
+import {
+  type PasswordPolicyOptions,
+  removePasswordCredentialsForUser,
+  updatePasswordCredential
+} from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -348,9 +352,9 @@ export async function verifyOtpChallenge(
     if (user) {
       user = await markUserEmailVerified(config, user.id, now);
     }
-  } else if (input.purpose === 'sign-up' && linkedExistingUser && user) {
+  } else if ((input.purpose === 'sign-in' || (input.purpose === 'sign-up' && linkedExistingUser)) && user) {
     if (!user.emailVerifiedAt) {
-      user = await markUserEmailVerified(config, user.id, now);
+      user = await claimUnverifiedAccount(config, user, now);
     }
   } else if (input.purpose === 'sign-up' && pendingSignUp && !user) {
     user = await createUser(config, {
@@ -442,6 +446,25 @@ async function consumeOtpChallenge(
   return consumed ?? { ...challenge, consumedAt, updatedAt: consumedAt };
 }
 
+/**
+ * The first time someone proves control of an unverified account's mailbox by
+ * signing in or up with an email code, whatever was set up on the account
+ * before that proof may belong to someone else: anyone can sign up with a
+ * password for an address they do not own and keep the session it returns.
+ * So the account's password is removed and its sessions are revoked before
+ * the email is marked verified and the caller's session is issued. The owner
+ * can set a password again afterwards.
+ */
+async function claimUnverifiedAccount(
+  config: AuthFnRuntimeConfig,
+  user: AuthFnUserRecord,
+  now: Date
+): Promise<AuthFnUserRecord> {
+  await removePasswordCredentialsForUser(config, user.id);
+  await revokeSessionsForUser(config, user.id);
+  return markUserEmailVerified(config, user.id, now);
+}
+
 export async function completeResetPassword(
   config: AuthFnRuntimeConfig,
   runtimeOptions: OtpRuntimeOptions,
@@ -473,6 +496,10 @@ export async function completeResetPassword(
     email,
     purpose: 'reset-password'
   });
+  // Whoever reset the password proved control of the mailbox; sessions
+  // issued before the reset (possibly to someone who knew the old password)
+  // stop working.
+  await revokeSessionsForUser(config, user.id);
 
   return {
     passwordUpdated: true
@@ -822,15 +849,16 @@ async function resolveOtpSignUpUserInput(
   verifiedAt: Date
 ): Promise<OtpSignUpUserInput> {
   const hookContext = await buildChallengeHookContext(config, input.request);
+  const profile = readSignUpProfile(input.profile);
   const beforeUserInput = await runBeforeUserCreateHook(hooks, hookContext, {
     primaryEmail: normalizeEmail(input.email),
     emailVerifiedAt: verifiedAt,
-    metadata: input.profile ?? {}
+    metadata: profile
   });
 
   return {
     primaryEmail: normalizeEmail(readString(beforeUserInput.primaryEmail) ?? input.email),
-    metadata: readRecord(beforeUserInput.metadata) ?? input.profile,
+    metadata: readRecord(beforeUserInput.metadata) ?? profile,
     environment: hookContext.environment
   };
 }

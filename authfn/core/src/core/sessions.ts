@@ -33,7 +33,7 @@ import {
 } from './cookies.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { AUTHFN_ALL_SCOPES } from './scopes.js';
-import { findUserById } from './users.js';
+import { findUserById, isAuthFnUserDisabled } from './users.js';
 
 export interface IssueSessionInput {
   request?: Request;
@@ -251,6 +251,15 @@ export async function getCookieSessionState(
       ...state,
       sessionRecord: record,
       failureReason: 'missing'
+    };
+  }
+  if (isAuthFnUserDisabled(user)) {
+    // Refused like a revoked session; the record is kept so that clearing
+    // the flag restores it.
+    return {
+      ...state,
+      sessionRecord: record,
+      failureReason: 'revoked'
     };
   }
 
@@ -478,7 +487,7 @@ export async function authenticateSessionToken(
   }
 
   const user = await findUserById(config, record.userId);
-  if (!user) {
+  if (!user || isAuthFnUserDisabled(user)) {
     return null;
   }
 

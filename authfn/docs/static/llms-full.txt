@@ -1507,7 +1507,7 @@ This is the policy you almost certainly want for OTP-first apps where users may 
 Allow a logged-in user to add a password credential through the password sign-up endpoint, when they don't already have one.
 
 - `false` (default): password sign-up always tries to create a new user.
-- `true`: when authenticated and no password credential exists, treat the request as "add password to my account".
+- `true`: when authenticated and no password credential exists, treat the request as "add password to my account". A session cookie counts only with a valid `x-authfn-csrf` header.
 - Object form: require the user's email to be verified before allowing the upgrade.
 
 This is how you wire "set a password" inside an OTP-only or OAuth-only sign-up flow.
@@ -5192,7 +5192,7 @@ When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn`
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used. Session cookies and bearer session tokens of a disabled user are refused the same way while the flag is set; clearing it restores them.
 5. Updates `lastUsedAt`.
 6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, `scopes` set to the key's stored scopes that the registry can grant (`[]` when it has none), and `credential: { type: 'api-key', id: <keyId> }`.
 
@@ -5856,6 +5856,8 @@ sequenceDiagram
 
 Set `accountLinking.otpSignUpExistingUser: true` to make OTP sign-up for an existing email succeed as a sign-in. The OTP itself is proof of email control, so this is safe for almost all consumer apps. See [Concepts → Account linking](../core-concepts/account-linking).
 
+A successful `sign-in` (or `sign-up` linked to an existing user) on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes the account's password credential, revokes its existing sessions and marks the email verified, so a password or session set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts).
+
 ## Email anti-enumeration
 
 `POST /otp/send` returns `200 OK { sent: true }` regardless of whether the email exists. The OTP is sent and recorded as a challenge. If the email doesn't correspond to a real user, verification will still happen — but no session will be issued; the kernel returns the appropriate `AUTHFN_*` error.
@@ -6388,10 +6390,10 @@ authApp.createServer({
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. |
+| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. `profile` must be a JSON object of at most 4 KB; it becomes the user's `metadata` (see [Sign-up profile](#sign-up-profile)). |
 | `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. |
 | `POST` | `/auth/password/reset/start` | `startPasswordReset` | Send a password-reset OTP. Always returns `200 OK` regardless of email existence (anti-enumeration). |
-| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP and set a new password. |
+| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP, set a new password and revoke every existing session of the user. |
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
 
@@ -6461,9 +6463,19 @@ sequenceDiagram
   Kernel-->>Client: 200 OK { ok, data: { reset: true } }
 ```
 
+A completed reset revokes all of the user's sessions (cookie and bearer), including any held by someone who knew the old password. API keys are not revoked.
+
 ## Account-linking interactions
 
-When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. See [Concepts → Account linking](../core-concepts/account-linking).
+When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. A session cookie counts as authentication here only together with a valid `x-authfn-csrf` header (`@authfn/client` sends it); without it the request is treated as unauthenticated and returns `AUTHFN_CONFLICT`. A bearer session token works as before. See [Concepts → Account linking](../core-concepts/account-linking).
+
+## Unverified accounts
+
+Password sign-up does not verify the email, so anyone can sign up with an address they don't own. When someone later proves control of that mailbox by signing in (or up, with `otpSignUpExistingUser`) with an email code, and the account's email is still unverified, AuthFn removes the account's password, revokes its sessions and marks the email verified before issuing the new session. The owner can then set a password of their own. An account whose email is already verified is not affected.
+
+## Sign-up profile
+
+The `profile` sent to `/sign-up/password` (and to `/otp/verify` with purpose `sign-up`) becomes the new user's `metadata` unless a `beforeUserCreate` hook replaces it. It is data the caller chose: it must be a JSON object of at most 4 KB, and the `disabled` key, which AuthFn itself reads, is dropped. Don't read roles, plans, tenants or other authorization state from user metadata that came from a sign-up profile; set those from a `beforeUserCreate` hook or your own server code.
 
 ## Errors
 

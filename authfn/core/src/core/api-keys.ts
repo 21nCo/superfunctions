@@ -13,7 +13,7 @@ import {
 } from './limits.js';
 import { assertRegisteredScopes, readStoredScopeGrant } from './scopes.js';
 import { hashSecret } from './sessions.js';
-import { findUserById } from './users.js';
+import { findUserById, isAuthFnUserDisabled } from './users.js';
 
 export interface CreateApiKeyInput {
   /** Explicit null creates an unowned key for a trusted service principal. */
@@ -241,15 +241,7 @@ export async function authenticateApiKey(
   };
 }
 
-/**
- * AuthFn has no user status column; a host disables a user by setting
- * `metadata.disabled` to `true` on the user record. Every API-key path
- * (`authenticateApiKey` and the placement-context issuer) checks it through
- * `findActiveApiKeyOwner`; interactive sessions do not check it today.
- */
-export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
-  return user.metadata?.disabled === true;
-}
+export { isAuthFnUserDisabled } from './users.js';
 
 /**
  * Loads the owner an API key acts as. Returns `null` when the owner was

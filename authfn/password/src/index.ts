@@ -10,7 +10,12 @@ import {
   type AuthFnSchemaDefinition
 } from 'authfn';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
-import { authenticateRequest, issueSession } from 'authfn/core/sessions';
+import {
+  assertValidCsrf,
+  authenticateRequest,
+  getCookieSessionState,
+  issueSession
+} from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
 import { jsonSuccess } from 'authfn/http/envelopes';
@@ -92,7 +97,7 @@ function createPasswordRoutes(
           sessionMode?: AuthFnSessionResponseMode;
         }>(request);
         const runtime = await resolveEnvironment(ctx.config, request);
-        const authenticatedSession = await authenticateRequest(ctx.config, request);
+        const authenticatedSession = await authenticateForPasswordLink(ctx.config, request);
         const result = await signUpWithPassword(ctx.config, ctx.hooks, {
           email: body.email ?? '',
           password: body.password ?? '',
@@ -243,4 +248,33 @@ function createPasswordRoutes(
       }
     }
   ];
+}
+
+/**
+ * The session that may add a password to its own account through
+ * `/sign-up/password` (`accountLinking.passwordForAuthenticatedUser`). A
+ * session cookie counts only with a valid CSRF token, as for every other
+ * state-changing cookie route; otherwise a page on a sibling site could plant
+ * a password on the signed-in account. Without the token the request is
+ * treated as unauthenticated (signing up a new email still works). A bearer
+ * session token counts as before; it is never sent automatically.
+ */
+async function authenticateForPasswordLink(
+  config: AuthFnPluginRuntimeContext['config'],
+  request: Request
+) {
+  const cookieState = await getCookieSessionState(config, request, { touch: false });
+  if (cookieState.session) {
+    try {
+      assertValidCsrf(request, cookieState);
+    } catch {
+      return null;
+    }
+    return cookieState.session;
+  }
+  if (cookieState.sessionToken) {
+    // A cookie that no longer authenticates does not fall back to a bearer.
+    return null;
+  }
+  return authenticateRequest(config, request);
 }

@@ -150,6 +150,8 @@ sequenceDiagram
 
 Set `accountLinking.otpSignUpExistingUser: true` to make OTP sign-up for an existing email succeed as a sign-in. The OTP itself is proof of email control, so this is safe for almost all consumer apps. See [Concepts → Account linking](../core-concepts/account-linking).
 
+A successful `sign-in` (or `sign-up` linked to an existing user) on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes the account's password credential, revokes its existing sessions and marks the email verified, so a password or session set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts).
+
 ## Email anti-enumeration
 
 `POST /otp/send` returns `200 OK { sent: true }` regardless of whether the email exists. The OTP is sent and recorded as a challenge. If the email doesn't correspond to a real user, verification will still happen — but no session will be issued; the kernel returns the appropriate `AUTHFN_*` error.

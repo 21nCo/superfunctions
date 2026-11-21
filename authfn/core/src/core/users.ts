@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Adapter } from '@superfunctions/db';
 import type { AuthFnRuntimeConfig, AuthFnUserRecord } from '../types.js';
-import { AuthFnConflictError } from './errors.js';
+import { AuthFnConflictError, AuthFnValidationError } from './errors.js';
 import { assertAuthFnDatabaseKeyLength } from './limits.js';
 
 export interface CreateUserInput {
@@ -123,4 +123,54 @@ function createIdentifier(prefix: string): string {
 function normalizeEmail(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized || undefined;
+}
+
+/**
+ * AuthFn has no user status column; a host disables a user by setting
+ * `metadata.disabled` to `true` on the user record. Every API-key path
+ * (`authenticateApiKey` and the placement-context issuer) checks it through
+ * `findActiveApiKeyOwner`, and session cookies and bearer session tokens stop
+ * authenticating while it is set (the session is not revoked, so clearing the
+ * flag restores it).
+ */
+export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
+  return user.metadata?.disabled === true;
+}
+
+/** Largest sign-up `profile` accepted, measured as JSON in UTF-8 bytes. */
+export const AUTHFN_MAX_SIGN_UP_PROFILE_BYTES = 4096;
+
+/**
+ * Keys of `users.metadata` that AuthFn itself reads. A caller cannot set them
+ * through a sign-up `profile`; a host can still set them from a
+ * `beforeUserCreate` hook or its own code.
+ */
+const SERVER_OWNED_METADATA_KEYS = new Set(['disabled']);
+
+/**
+ * Reads the `profile` a caller sends with a sign-up. It becomes the new
+ * user's `metadata` unless a `beforeUserCreate` hook replaces it, so it is
+ * caller-controlled data: it must be a plain JSON object of at most
+ * AUTHFN_MAX_SIGN_UP_PROFILE_BYTES, and keys AuthFn reads (`disabled`) are
+ * dropped. Hosts must not trust it for roles, plans or other authorization
+ * state; set those from a hook or server-side code instead.
+ */
+export function readSignUpProfile(profile: unknown): Record<string, unknown> {
+  if (profile === undefined || profile === null) {
+    return {};
+  }
+  if (typeof profile !== 'object' || Array.isArray(profile)
+    || Object.getPrototypeOf(profile) !== Object.prototype) {
+    throw new AuthFnValidationError('profile must be an object', { field: 'profile' });
+  }
+  const size = new TextEncoder().encode(JSON.stringify(profile)).length;
+  if (size > AUTHFN_MAX_SIGN_UP_PROFILE_BYTES) {
+    throw new AuthFnValidationError('profile is too large', {
+      field: 'profile',
+      maxBytes: AUTHFN_MAX_SIGN_UP_PROFILE_BYTES
+    });
+  }
+  return Object.fromEntries(
+    Object.entries(profile).filter(([key]) => !SERVER_OWNED_METADATA_KEYS.has(key))
+  );
 }

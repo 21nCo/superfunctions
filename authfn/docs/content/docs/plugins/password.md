@@ -52,10 +52,10 @@ authApp.createServer({
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. |
+| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. `profile` must be a JSON object of at most 4 KB; it becomes the user's `metadata` (see [Sign-up profile](#sign-up-profile)). |
 | `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. |
 | `POST` | `/auth/password/reset/start` | `startPasswordReset` | Send a password-reset OTP. Always returns `200 OK` regardless of email existence (anti-enumeration). |
-| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP and set a new password. |
+| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP, set a new password and revoke every existing session of the user. |
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
 
@@ -125,9 +125,19 @@ sequenceDiagram
   Kernel-->>Client: 200 OK { ok, data: { reset: true } }
 ```
 
+A completed reset revokes all of the user's sessions (cookie and bearer), including any held by someone who knew the old password. API keys are not revoked.
+
 ## Account-linking interactions
 
-When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. See [Concepts → Account linking](../core-concepts/account-linking).
+When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. A session cookie counts as authentication here only together with a valid `x-authfn-csrf` header (`@authfn/client` sends it); without it the request is treated as unauthenticated and returns `AUTHFN_CONFLICT`. A bearer session token works as before. See [Concepts → Account linking](../core-concepts/account-linking).
+
+## Unverified accounts
+
+Password sign-up does not verify the email, so anyone can sign up with an address they don't own. When someone later proves control of that mailbox by signing in (or up, with `otpSignUpExistingUser`) with an email code, and the account's email is still unverified, AuthFn removes the account's password, revokes its sessions and marks the email verified before issuing the new session. The owner can then set a password of their own. An account whose email is already verified is not affected.
+
+## Sign-up profile
+
+The `profile` sent to `/sign-up/password` (and to `/otp/verify` with purpose `sign-up`) becomes the new user's `metadata` unless a `beforeUserCreate` hook replaces it. It is data the caller chose: it must be a JSON object of at most 4 KB, and the `disabled` key, which AuthFn itself reads, is dropped. Don't read roles, plans, tenants or other authorization state from user metadata that came from a sign-up profile; set those from a `beforeUserCreate` hook or your own server code.
 
 ## Errors
 

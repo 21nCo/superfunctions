@@ -40,7 +40,9 @@ export function createAuthFnClient(
       http.requestJson({
         method: 'POST',
         path: '/sign-up/password',
-        body: input
+        body: input,
+        // Adding a password to the signed-in account needs the CSRF token.
+        csrf: true
       }),
     signInWithPassword: (input) =>
       http.requestJson({

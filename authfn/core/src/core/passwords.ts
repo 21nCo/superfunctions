@@ -20,7 +20,7 @@ import {
   AuthFnRateLimitedError,
   AuthFnValidationError
 } from './errors.js';
-import { createUser, findUserById, findUserByPrimaryEmail } from './users.js';
+import { createUser, findUserById, findUserByPrimaryEmail, readSignUpProfile } from './users.js';
 import {
   allowsPasswordForAuthenticatedUser,
   emitAccountLinkingConflictEvent
@@ -94,16 +94,17 @@ export async function signUpWithPassword(
   const email = normalizeEmail(input.email);
   assertPasswordLength(input.password);
 
+  const profile = readSignUpProfile(input.profile);
   const beforeUserInput = await runBeforeUserCreateHook(hooks, {
     config,
     request: context.request,
     environment: context.environment
   }, {
     primaryEmail: email,
-    metadata: input.profile ?? {}
+    metadata: profile
   });
   const resolvedEmail = normalizeEmail(readString(beforeUserInput.primaryEmail) ?? email);
-  const resolvedMetadata = readRecord(beforeUserInput.metadata) ?? input.profile;
+  const resolvedMetadata = readRecord(beforeUserInput.metadata) ?? profile;
   await assertValidPassword(input.password, {
     ...context.policy,
     request: context.request,
@@ -319,6 +320,26 @@ export async function getPasswordCredentialByUserId(
   userId: string
 ): Promise<AuthFnPasswordCredentialRecord | null> {
   return config.database.findOne<AuthFnPasswordCredentialRecord>({
+    model: 'password_credentials',
+    where: [{ field: 'userId', operator: 'eq', value: userId }],
+    namespace: namespace(config)
+  });
+}
+
+/**
+ * Deletes the user's password credential, if the password plugin is in use.
+ * Used when someone first proves control of the account's mailbox by another
+ * method: a password set before that proof may belong to whoever signed up
+ * with an address they did not own.
+ */
+export async function removePasswordCredentialsForUser(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'plugins'>,
+  userId: string
+): Promise<void> {
+  if (!config.plugins?.some((plugin) => plugin.name === 'password')) {
+    return;
+  }
+  await config.database.deleteMany({
     model: 'password_credentials',
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     namespace: namespace(config)
