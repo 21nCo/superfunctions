@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -28,82 +28,18 @@ from authfn.plugins.two_factor import (
     TwoFactorService,
     authfn_two_factor_plugin,
 )
-from authfn.types import ValidationError
+from authfn.types import ConfigError, ValidationError
+
+from .support import InMemoryDatabaseAdapter
 
 TEST_2FA_KEY = b"authfn-python-two-factor-test-key"
 
 
-class MockDatabaseAdapter:
+class MockDatabaseAdapter(InMemoryDatabaseAdapter):
     def __init__(self) -> None:
-        self.storage: Dict[str, List[Dict[str, Any]]] = {
-            "two_factor_enrollments": [],
-            "two_factor_recovery_codes": [],
-            "two_factor_challenges": [],
-        }
-
-    async def find_one(
-        self,
-        model: str,
-        where: List[Dict[str, Any]],
-        namespace: str,
-    ) -> Optional[Dict[str, Any]]:
-        for row in self.storage.get(model, []):
-            if _matches(row, where):
-                return row
-        return None
-
-    async def find_many(
-        self,
-        model: str,
-        where: List[Dict[str, Any]],
-        order_by: Optional[List[Dict[str, Any]]] = None,
-        namespace: str = "authfn",
-    ) -> List[Dict[str, Any]]:
-        rows = [row for row in self.storage.get(model, []) if _matches(row, where)]
-        if order_by:
-            for entry in reversed(order_by):
-                reverse = entry["direction"] == "desc"
-                rows.sort(key=lambda item: item.get(entry["field"]), reverse=reverse)
-        return rows
-
-    async def create(self, model: str, data: Dict[str, Any], namespace: str) -> Dict[str, Any]:
-        self.storage.setdefault(model, []).append(dict(data))
-        return self.storage[model][-1]
-
-    async def update(
-        self,
-        model: str,
-        where: List[Dict[str, Any]],
-        data: Dict[str, Any],
-        namespace: str,
-    ) -> Dict[str, Any]:
-        for row in self.storage.get(model, []):
-            if _matches(row, where):
-                row.update(data)
-                return row
-        raise AssertionError(f"row not found in {model}")
-
-    async def delete_many(
-        self,
-        model: str,
-        where: List[Dict[str, Any]],
-        namespace: str,
-    ) -> int:
-        rows = self.storage.get(model, [])
-        kept = [row for row in rows if not _matches(row, where)]
-        deleted = len(rows) - len(kept)
-        self.storage[model] = kept
-        return deleted
-
-
-def _matches(row: Dict[str, Any], clauses: List[Dict[str, Any]]) -> bool:
-    for clause in clauses:
-        operator = clause["operator"]
-        field = clause["field"]
-        value = clause["value"]
-        if operator == "eq" and row.get(field) != value:
-            return False
-    return True
+        super().__init__()
+        for model in ("two_factor_enrollments", "two_factor_recovery_codes", "two_factor_challenges"):
+            self.storage[model] = []
 
 
 def _decode_base32(secret: str) -> bytes:
@@ -307,3 +243,265 @@ async def test_two_factor_requires_explicit_encryption_key_resolver() -> None:
         await service.enroll(user_id="user_1", primary_email="ada@example.com")
 
     assert "encryption_key_resolver" in str(error.value)
+
+
+TEST_NOW = datetime(2026, 3, 22, 0, 0, 0)
+
+
+def _two_factor_service(db: MockDatabaseAdapter, *, recovery_code_count: int) -> TwoFactorService:
+    return TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: TEST_NOW,
+            recovery_code_count=recovery_code_count,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+
+
+async def _enrolled_service(
+    db: MockDatabaseAdapter, *, recovery_code_count: int
+) -> "tuple[TwoFactorService, Dict[str, Any]]":
+    """A service with user_1 enrolled and confirmed at TEST_NOW."""
+    service = _two_factor_service(db, recovery_code_count=recovery_code_count)
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], TEST_NOW))
+    return service, enrolled
+
+
+async def _assert_code_refused_and_one_unused(
+    service: TwoFactorService, db: MockDatabaseAdapter, challenge_id: str, code: str
+) -> None:
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge_id,
+            code=code,
+            primary_email="ada@example.com",
+        )
+    unused = [row for row in db.storage["two_factor_recovery_codes"] if row.get("usedAt") is None]
+    assert len(unused) == 1
+
+
+@pytest.mark.asyncio
+async def test_accepts_recovery_codes_hashed_by_the_typescript_kernel() -> None:
+    db = MockDatabaseAdapter()
+    now = TEST_NOW
+    service, enrolled = await _enrolled_service(db, recovery_code_count=1)
+    enrollment_id = db.storage["two_factor_enrollments"][0]["id"]
+    # Shapes the TypeScript kernel stores: salted with the enrollment id since
+    # AUTH-32, and the code alone before it.
+    salted_code = "TEST0-TEST0-TEST0-TEST1"
+    legacy_code = "TEST0-TEST2"
+    for row_id, stored in (
+        ("recovery_test_salted", f"authfn-recovery:{enrollment_id}:TEST0TEST0TEST0TEST1"),
+        ("recovery_test_legacy", "TEST0TEST2"),
+    ):
+        db.storage["two_factor_recovery_codes"].append(
+            {
+                "id": row_id,
+                "enrollmentId": enrollment_id,
+                "codeHash": hashlib.sha256(stored.encode("utf-8")).hexdigest(),
+                "usedAt": None,
+                "createdAt": now,
+            }
+        )
+
+    for code in (salted_code, legacy_code):
+        challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+        result = await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=code.lower(),
+            primary_email="ada@example.com",
+        )
+        assert result["usedRecoveryCode"] is True
+
+    # A salted hash only matches its own enrollment.
+    db.storage["two_factor_recovery_codes"].append(
+        {
+            "id": "recovery_test_other",
+            "enrollmentId": enrollment_id,
+            "codeHash": hashlib.sha256(b"authfn-recovery:other-enrollment:TEST0TEST0TEST0TEST3").hexdigest(),
+            "usedAt": None,
+            "createdAt": now,
+        }
+    )
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code="TEST0-TEST0-TEST0-TEST3",
+            primary_email="ada@example.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_spends_a_recovery_code_only_while_it_is_unused() -> None:
+    db = MockDatabaseAdapter()
+    now = TEST_NOW
+    service, enrolled = await _enrolled_service(db, recovery_code_count=1)
+    enrollment_id = db.storage["two_factor_enrollments"][0]["id"]
+    recovery = enrolled["recoveryCodes"][0]
+
+    # Another request spent the code after this one read it as unused.
+    stale_rows = [dict(row) for row in db.storage["two_factor_recovery_codes"]]
+    db.storage["two_factor_recovery_codes"][0]["usedAt"] = now
+    original_find_many = db.find_many
+
+    async def stale_find_many(**kwargs: Any) -> List[Dict[str, Any]]:
+        if kwargs.get("model") == "two_factor_recovery_codes":
+            return stale_rows
+        return await original_find_many(**kwargs)
+
+    db.find_many = stale_find_many  # type: ignore[method-assign]
+    assert await service._consume_recovery_code(enrollment_id, recovery) is False
+
+
+@pytest.mark.asyncio
+async def test_finishes_a_challenge_once_and_keeps_the_losing_recovery_code() -> None:
+    db = MockDatabaseAdapter()
+    service, enrolled = await _enrolled_service(db, recovery_code_count=2)
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    stale_challenge = dict(challenge)
+
+    first = await service.complete_sign_in_challenge(
+        challenge_id=challenge["id"],
+        code=enrolled["recoveryCodes"][0],
+        primary_email="ada@example.com",
+    )
+    assert first["usedRecoveryCode"] is True
+
+    # A second request that read the challenge before the first finished it.
+    original_find_one = db.find_one
+
+    async def stale_find_one(**kwargs: Any) -> Optional[Dict[str, Any]]:
+        if kwargs.get("model") == "two_factor_challenges":
+            return stale_challenge
+        return await original_find_one(**kwargs)
+
+    db.find_one = stale_find_one  # type: ignore[method-assign]
+    await _assert_code_refused_and_one_unused(service, db, challenge["id"], enrolled["recoveryCodes"][1])
+
+
+@pytest.mark.asyncio
+async def test_refuses_an_adapter_without_conditional_writes() -> None:
+    class NoUpdateMany(MockDatabaseAdapter):
+        update_many = None  # type: ignore[assignment]
+
+    db = NoUpdateMany()
+    service = _two_factor_service(db, recovery_code_count=1)
+    # Refused before anything is stored, so no enrollment is left that could
+    # never finish a sign-in.
+    with pytest.raises(ConfigError):
+        await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    assert db.storage["two_factor_enrollments"] == []
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_challenge_used_when_a_failed_spend_may_have_applied() -> None:
+    db = MockDatabaseAdapter()
+    service, enrolled = await _enrolled_service(db, recovery_code_count=2)
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+
+    original_update_many = db.update_many
+
+    async def lost_response(**kwargs: Any) -> int:
+        count = await original_update_many(**kwargs)
+        if kwargs.get("model") == "two_factor_recovery_codes":
+            raise RuntimeError("test response lost after the write")
+        return count
+
+    db.update_many = lost_response  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )
+    db.update_many = original_update_many  # type: ignore[method-assign]
+    # The code was spent, so the challenge stays used: another code cannot be
+    # spent on it.
+    await _assert_code_refused_and_one_unused(service, db, challenge["id"], enrolled["recoveryCodes"][1])
+
+
+def test_refuses_to_start_two_factor_on_an_adapter_without_conditional_writes() -> None:
+    from authfn import AuthFn
+
+    class NoUpdateMany(MockDatabaseAdapter):
+        update_many = None  # type: ignore[assignment]
+
+    with pytest.raises(ConfigError):
+        AuthFn(
+            AuthFnConfig(
+                database=NoUpdateMany(),
+                namespace="authfn",
+                plugins=[
+                    authfn_two_factor_plugin(
+                        TwoFactorPluginConfig(encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY)
+                    )
+                ],
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_challenge_used_when_the_spend_count_is_unknown() -> None:
+    db = MockDatabaseAdapter()
+    service, enrolled = await _enrolled_service(db, recovery_code_count=2)
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    original_update_many = db.update_many
+
+    async def unreported(**kwargs: Any) -> int:
+        count = await original_update_many(**kwargs)
+        return -1 if kwargs.get("model") == "two_factor_recovery_codes" else count
+
+    db.update_many = unreported  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )
+    db.update_many = original_update_many  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][1],
+            primary_email="ada@example.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_does_not_finish_a_challenge_that_expires_before_it_is_claimed() -> None:
+    db = MockDatabaseAdapter()
+    clock = {"now": TEST_NOW}
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: clock["now"],
+            recovery_code_count=1,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], TEST_NOW))
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    original_find_one = db.find_one
+
+    async def slow_find_one(**kwargs: Any) -> Optional[Dict[str, Any]]:
+        row = await original_find_one(**kwargs)
+        if kwargs.get("model") == "two_factor_enrollments":
+            # The challenge expires while the request reads the enrollment.
+            clock["now"] = TEST_NOW + timedelta(hours=1)
+        return row
+
+    db.find_one = slow_find_one  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )
+    unused = [row for row in db.storage["two_factor_recovery_codes"] if row.get("usedAt") is None]
+    assert len(unused) == 1
