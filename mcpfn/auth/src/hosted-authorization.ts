@@ -798,13 +798,13 @@ async function authorizationErrorResponse(
   request: Request,
   error: McpFnHostedAuthorizationError,
 ): Promise<Response> {
-  const redirectSources =
-    options.authorizationErrors?.redirectSources ?? DEFAULT_AUTHORIZATION_ERROR_REDIRECT_SOURCES;
+  const errors = options.authorizationErrors;
+  const redirectSources = errors?.redirectSources ?? DEFAULT_AUTHORIZATION_ERROR_REDIRECT_SOURCES;
   if (redirectSources.includes(client.source)) {
     return trustedAuthorizationErrorRedirect(redirectUri, authorizationUrl, error);
   }
-  const render = options.authorizationErrors?.render;
-  if (render) return render({ error, client, request });
+  // Call render as a method so a host object implementing it keeps its receiver.
+  if (errors?.render) return errors.render({ error, client, request });
   return renderMcpAuthorizationErrorPage(error);
 }
 

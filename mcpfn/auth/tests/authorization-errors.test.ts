@@ -224,6 +224,57 @@ describe("authorization endpoint error responses", () => {
     expect(input.request).toBe(request);
   });
 
+  it("calls a method-style render with its host object as the receiver", async () => {
+    const host = {
+      label: "host-page",
+      render(this: { label: string }, { error }: { error: McpFnHostedAuthorizationError }) {
+        return new Response(`${this.label}:${error.code}`, { status: 400 });
+      },
+    };
+    const { handle } = compatibilityHandler({ authorizationErrors: host });
+    const clientId = await registerDynamicClient(handle);
+    const url = validAuthorizationUrl(clientId);
+    url.searchParams.delete("state");
+    const response = await handle(new Request(url));
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toBe("host-page:invalid_request");
+  });
+
+  it("never falls back to a redirect when the custom render fails", async () => {
+    const { handle } = compatibilityHandler({
+      authorizationErrors: {
+        render: () => {
+          throw new Error("render failed");
+        },
+      },
+    });
+    const clientId = await registerDynamicClient(handle);
+    const url = validAuthorizationUrl(clientId);
+    url.searchParams.delete("code_challenge");
+    const response = await handle(new Request(url));
+    expect(response.status).toBe(500);
+    expect(response.headers.get("location")).toBeNull();
+    await expect(response.json()).resolves.toMatchObject({ error: "server_error" });
+  });
+
+  it("renders an error page for a fetched Client ID Metadata Document client", async () => {
+    const clientId = "https://evil.example/fetched-client.json";
+    const fetch = vi.fn(async () => Response.json({
+      client_id: clientId,
+      redirect_uris: [evilRedirect],
+      token_endpoint_auth_method: "none",
+    }));
+    const { handle, authorize } = compatibilityHandler({
+      clients: { resolve: async () => null },
+      clientMetadataDocuments: { enabled: true, allow: async () => true, fetch },
+    });
+    const url = validAuthorizationUrl(clientId);
+    url.searchParams.delete("code_challenge");
+    await expectRenderedError(await handle(new Request(url)), "invalid_request");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
   it("rejects unknown redirect sources at construction", () => {
     expect(() => compatibilityHandler({
       authorizationErrors: {
