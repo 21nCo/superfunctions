@@ -1,0 +1,41 @@
+memoryfn/docs/content/docs/storage.md
+  s_20609992b3fca5::t_ca4e96f7fd3e4c 31
+memoryfn/typescript/src/extraction/dedup.ts
+  s_20609992b3fca5::t_90adb30abbb5b7 5-11,18-19
+memoryfn/typescript/src/storage/adapter.ts
+  s_20609992b3fca5::t_c55dbe82ede738 83-88,110-111
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_20609992b3fca5::t_93e69f7b224313 32,65
+memoryfn/docs/static/llms-full.txt
+  s_20609992b3fca5::t_ec506c1c2a9ac2 42,75,509
+memoryfn/typescript/src/chunking/markdown.ts
+  s_20609992b3fca5::t_1374860b07cd07 220-221,224-225
+memoryfn/typescript/src/core/pipeline.ts
+  s_20609992b3fca5::t_fdd3738c2e326e 203,226-236,245-246,248-263,266-268,274-278,287-288,291-294,296,303,313-329,350-353,358
+memoryfn/typescript/src/extraction/facts.ts
+  s_20609992b3fca5::t_9225b44957b157 43,45-48,54,64-76,78-90,92-94
+memoryfn/typescript/src/http/router.ts
+  s_20609992b3fca5::t_dc1b5bea814499 51-59
+memoryfn/typescript/tests/chunking.test.ts
+  s_20609992b3fca5::t_83fbfe4e75e617 174-193
+memoryfn/typescript/tests/documents.test.ts
+  s_20609992b3fca5::t_7b172d4cb36d17 1,390-392,395-397,400-420,513-516,545-578,630-634,645-646,648,652-654,656-682,726-729,731-732,749-750,752-753,756-759,762-763,766,768,770,775-776,778,780-781,783-797,800-802,804-806,809,812-813
+memoryfn/typescript/tests/http-documents.test.ts
+  s_20609992b3fca5::t_59b3fe29e709e2 69-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "602e4456f9e234a2cdff84dd575f15453a0f4e73",
+  "prompts": {},
+  "sessions": {
+    "s_20609992b3fca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4fce3a1-9c12-4ca0-adfe-8997b42f23bb",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

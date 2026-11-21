@@ -1,0 +1,21 @@
+memoryfn/typescript/src/core/pipeline.ts
+  s_aad3da13d40b6e::t_f6ddb6a0e5b537 311-313,316-318,327-328
+memoryfn/typescript/tests/documents.test.ts
+  s_aad3da13d40b6e::t_219d721af59353 519-524
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b515d7d8fb2e66e9476b0009041fb7e62d92089",
+  "prompts": {},
+  "sessions": {
+    "s_aad3da13d40b6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e953412-56c2-471f-9f9c-49876f7b1782",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
