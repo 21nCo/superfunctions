@@ -251,6 +251,29 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect(credentials).toHaveLength(1);
   });
 
+  it.each(['sign-in', 'sign-up'] as const)('refuses an email-code %s to a disabled account without wiping it', async (purpose) => {
+    const ctx = createFullContext({
+      accountLinking: { otpSignUpExistingUser: true }
+    } as Partial<AuthFnRuntimeConfig>);
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const userId = (await signUp.clone().json()).data.session.actorId as string;
+    await ctx.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: userId }],
+      data: { metadata: { disabled: true } },
+      namespace: 'authfn'
+    });
+    const refused = await signInByOtp(ctx, purpose, OWNER);
+    expect(refused.status).toBe(401);
+    expect((await refused.json()).error.code).toBe('AUTHFN_SESSION_REVOKED');
+    const credentials = await ctx.config.database.findMany({
+      model: 'password_credentials',
+      where: [{ field: 'userId', operator: 'eq', value: userId }],
+      namespace: 'authfn'
+    });
+    expect(credentials).toHaveLength(1);
+  });
+
   it('treats a password reset on an unverified account as its claim, keeping the new password', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'attacker-test-password' }));

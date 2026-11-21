@@ -351,16 +351,21 @@ export async function verifyOtpChallenge(
           email
         });
       }
-    } else if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
-      // Decided before the code is used, so a refused request leaves it for
-      // a retry.
-      if (isAuthFnUserDisabled(user)) {
-        // A disabled account is neither verified nor claimed: its holder's
-        // own session no longer authenticates, so the request could not be
-        // told apart from someone else's, and a claim would wipe the
-        // holder's credentials.
-        throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
-      }
+    }
+
+    // Checked before the code is used, so a refused request leaves it unused.
+    // A disabled account is not signed in to, linked, verified or claimed by
+    // an email code: its holder's own session no longer authenticates, so
+    // their request could not be told apart from someone else's, and a claim
+    // would wipe their credentials for a session that is refused anyway.
+    if (
+      user
+      && isAuthFnUserDisabled(user)
+      && (input.purpose === 'sign-in' || input.purpose === 'verify-email' || (input.purpose === 'sign-up' && linkedExistingUser))
+    ) {
+      throw new AuthFnSessionRevokedError('User is disabled', { userId: user.id });
+    }
+    if (input.purpose === 'verify-email' && user && !user.emailVerifiedAt) {
       verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
     }
 
