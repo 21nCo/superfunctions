@@ -10,7 +10,7 @@ import * as schema from '../src/storage/pg/schema';
 function recorder(onQuery: (query: string) => void = () => {}, values: (query: string) => unknown[][] = () => []) {
   const statements: Array<{ query: string; params: unknown[] }> = [];
   /** Top-level transactions whose callback resolved, so postgres-js would commit them; a rejected one rolls back. */
-  const commits = { count: 0 };
+  const commits = { count: 0, beforeCommit: () => {} };
   const client: Record<string, unknown> = {
     options: { parsers: {}, serializers: {} },
     unsafe(query: string, params: unknown[] = []) {
@@ -19,7 +19,7 @@ function recorder(onQuery: (query: string) => void = () => {}, values: (query: s
       const rows = /transaction_isolation/.test(query) ? [{ isolation: 'read committed' }] : [];
       return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve(values(query)) });
     },
-    begin: async (operation: (tx: unknown) => unknown) => { const result = await operation(client); commits.count++; return result; },
+    begin: async (operation: (tx: unknown) => unknown) => { const result = await operation(client); commits.beforeCommit(); commits.count++; return result; },
     savepoint: (operation: (tx: unknown) => unknown) => operation(client),
   };
   const adapter = new PostgresAdapter(drizzle(client as unknown as postgres.Sql, { schema }));
@@ -118,15 +118,19 @@ describe('PostgresAdapter source statements', () => {
     // It declares that capability, which upsertDocument requires.
     expect(excluded.adapter.excludesSources).toBe(true);
     expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(true);
-    // A replaced built-in search withdraws it, for the adapter and for the one it opens for a transaction.
+    // An adapter constructed while the built-in search is replaced is undeclared, as is the one it opens for a
+    // transaction; the declaration is fixed at construction, so restoring the prototype changes neither adapter.
     const builtIn = PostgresAdapter.prototype.searchVectors;
+    let replaced!: ReturnType<typeof recorder>;
     PostgresAdapter.prototype.searchVectors = function (this: PostgresAdapter, params) { return builtIn.call(this, params); };
     try {
-      expect(excluded.adapter.excludesSources).toBe(false);
-      expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+      replaced = recorder();
+      expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
+      expect(await replaced.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
     } finally {
       PostgresAdapter.prototype.searchVectors = builtIn;
     }
+    expect([excluded.adapter.excludesSources, replaced.adapter.excludesSources]).toEqual([true, false]);
     excluded.statements.length = 0;
     await excluded.adapter.searchVectors({ ...search, excludeSources: true });
     expect(excluded.statements).toHaveLength(1);
@@ -136,66 +140,27 @@ describe('PostgresAdapter source statements', () => {
     expect(included.statements[0].query).not.toMatch(/"source_key" is null/);
   });
 
-  it('reads the parent declaration live and rolls back a source write staged before it is withdrawn', async () => {
-    const { adapter, statements, commits } = recorder();
-    const builtIn = PostgresAdapter.prototype.searchVectors;
-    const withdraw = () => { adapter.searchVectors = params => builtIn.call(adapter, params); };
-    const restore = () => { delete (adapter as Partial<PostgresAdapter>).searchVectors; };
-    expect(await adapter.transaction(outer => outer.transaction!(async inner => {
-      withdraw();
-      const withdrawn = [outer.excludesSources, inner.excludesSources];
-      restore();
-      return [...withdrawn, outer.excludesSources, inner.excludesSources];
-    }))).toEqual([false, false, true, true]);
-    commits.count = 0; statements.length = 0;
-    const write = (tx: StorageAdapter) => tx.replaceSourceIfChanged!({ ...scope, contentHash: 'hash-1', chunks: [chunk] });
-    // The check throws inside the transaction callback, so postgres-js rolls the written rows back.
-    await expect(adapter.transaction(async tx => { await write(tx); withdraw(); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-    restore();
-    expect(statements.some(({ query }) => /insert into "memories"/.test(query))).toBe(true);
-    expect(commits.count).toBe(0);
-    // A nested transaction's write is rechecked again when the outer one ends.
-    await expect(adapter.transaction(async outer => { await outer.transaction!(write); withdraw(); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-    restore();
-    expect(commits.count).toBe(0);
-    await adapter.transaction(outer => outer.transaction!(write));
-    expect(commits.count).toBe(1);
-  });
-
-  it('rolls back a source write whose declaration is withdrawn while it waits for the source locks, and only that write', async () => {
+  it('keeps the declaration and the commit when the search is replaced during the lock wait, in the callback or before COMMIT', async () => {
     let onQuery = (_query: string) => {};
     const { adapter, statements, commits } = recorder(query => onQuery(query));
-    const builtIn = PostgresAdapter.prototype.searchVectors;
-    const withdraw = () => { adapter.searchVectors = params => builtIn.call(adapter, params); };
-    const restore = () => { delete (adapter as Partial<PostgresAdapter>).searchVectors; };
-    const replacement = { ...scope, contentHash: 'hash-1', chunks: [chunk] };
-    const inserted = () => statements.some(({ query }) => /insert into "memories"/.test(query));
-    // A direct write: the check runs inside the write's own transaction, after the INSERT, so it rolls back.
-    onQuery = query => { if (/pg_advisory_xact_lock/.test(query)) withdraw(); };
-    await expect(adapter.replaceSourceIfChanged(replacement)).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-    restore();
-    expect([inserted(), commits.count]).toEqual([true, 0]);
-    // In a caller's transaction the write's savepoint rolls back; caught, it leaves the rest of the transaction free to commit.
-    await adapter.transaction(async tx => {
-      await expect(tx.replaceSource(replacement)).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-      onQuery = () => {};
-    });
-    restore();
-    expect(commits.count).toBe(1);
-    // So does a write that failed, and a clear, which adds no rows to hide.
-    onQuery = query => { if (/insert into "memories"/.test(query)) throw new Error('INSERT_FAILED'); };
-    await adapter.transaction(async tx => {
-      await expect(tx.replaceSource(replacement)).rejects.toMatchObject({ cause: { message: 'INSERT_FAILED' } });
-      onQuery = () => {};
-      await tx.replaceSource({ ...scope, contentHash: 'hash-1', chunks: [] });
-      withdraw();
-    });
-    restore();
-    expect(commits.count).toBe(2);
-    // An adapter that never held the declaration still writes through the base replaceSource.
-    withdraw();
-    await adapter.replaceSource(replacement);
-    restore();
-    expect(commits.count).toBe(3);
+    const replace = () => { adapter.searchVectors = params => PostgresAdapter.prototype.searchVectors.call(adapter, params); };
+    const write = (tx: StorageAdapter) => tx.replaceSourceIfChanged!({ ...scope, contentHash: 'hash-1', chunks: [chunk] });
+    const inserts = () => statements.filter(({ query }) => /insert into "memories"/.test(query)).length;
+    // A direct write whose search is replaced while it waits for the source locks commits once.
+    onQuery = query => { if (/pg_advisory_xact_lock/.test(query)) replace(); };
+    expect(await write(adapter)).toMatchObject({ unchanged: false });
+    onQuery = () => {};
+    expect([inserts(), commits.count, adapter.excludesSources]).toEqual([1, 1, true]);
+    // Inside a caller's transaction, nested or not, replaced in the callback or in the COMMIT window.
+    expect(await adapter.transaction(async tx => { await write(tx); replace(); return tx.excludesSources; })).toBe(true);
+    commits.beforeCommit = replace;
+    expect(await adapter.transaction(outer => outer.transaction!(async inner => { await write(inner); return [outer.excludesSources, inner.excludesSources]; }))).toEqual([true, true]);
+    commits.beforeCommit = () => {};
+    // A replacement then a deletion of the source commits with the rest of the transaction.
+    await adapter.transaction(async tx => { await write(tx); await tx.deleteSource(scope); replace(); });
+    expect([inserts(), commits.count]).toEqual([4, 4]);
+    // A callback that fails still rolls back.
+    await expect(adapter.transaction(async tx => { await write(tx); throw new Error('caller failure'); })).rejects.toThrow('caller failure');
+    expect([inserts(), commits.count]).toEqual([5, 4]);
   });
 });

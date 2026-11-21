@@ -25,10 +25,8 @@ const UUID = /^(?:\{(?:[0-9a-f]{4}-?){7}[0-9a-f]{4}\}|(?:[0-9a-f]{4}-?){7}[0-9a-
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
   private db: PostgresJsDatabase<any>;
-  /** A transaction's adapter reads its parent's declaration live, since the parent serves add() after the commit. */
-  private parent: PostgresAdapter | undefined;
-  /** Set when a source write that began under the declaration added rows; the enclosing commit rechecks it. */
-  private declaredSourceWrite = false;
+  /** Fixed at construction: a subclass override or a prototype replaced earlier is undeclared, a later replacement changes nothing. */
+  private declared = this.searchVectors === builtInPostgresSearch;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
     this.db = db;
@@ -37,12 +35,8 @@ export class PostgresAdapter implements StorageAdapter {
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
     return this.db.transaction(async tx => {
       const scoped = new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>);
-      scoped.parent = this;
-      const result = await operation(scoped);
-      // Thrown inside the callback, so source rows staged under a withdrawn declaration roll back.
-      if (scoped.declaredSourceWrite && this.excludesSources !== true) throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
-      if (scoped.declaredSourceWrite) this.declaredSourceWrite = true;
-      return result;
+      scoped.declared = this.excludesSources === true;
+      return operation(scoped);
     });
   }
 
@@ -126,12 +120,13 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   /**
-   * Declared only while searchVectors is the built-in one: an override or a
-   * replacement must declare excludesSources itself. A transaction's adapter
-   * also requires its parent's declaration, read live.
+   * Fixed for the adapter's lifetime: declared when searchVectors was the
+   * built-in one at construction. A subclass that overrides searchVectors
+   * declares excludesSources by overriding this getter. A transaction's
+   * adapter takes its parent's value when the transaction opens.
    */
   get excludesSources(): boolean {
-    return this.searchVectors === builtInPostgresSearch && (this.parent === undefined || this.parent.excludesSources === true);
+    return this.declared;
   }
 
   async searchVectors(params: {
@@ -277,7 +272,7 @@ export class PostgresAdapter implements StorageAdapter {
    * so the relationship delete inside the write's CTE would leave cached
    * relationship reads stale.
    */
-  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>, beforeCommit?: (result: T) => void): Promise<T> {
+  private withSourceLock<T>(scope: SourceScope, operation: (tx: PostgresJsDatabase<any>) => Promise<T>): Promise<T> {
     const locked = async (tx: PostgresJsDatabase<any>) => {
       const [setting] = await tx.execute<{ isolation: string }>(sql`SELECT current_setting('transaction_isolation') AS isolation`);
       if (setting?.isolation !== 'read committed') throw new Error('MEMORY_SOURCE_ISOLATION_UNSUPPORTED');
@@ -287,7 +282,6 @@ export class PostgresAdapter implements StorageAdapter {
         .orderBy(memories.id).for('update').$withCache(false);
       const result = await operation(tx);
       await tx.delete(memoryRelationships).where(sql`false`);
-      beforeCommit?.(result);
       return result;
     };
     return is(this.db, PgTransaction)
@@ -351,21 +345,8 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    const declared = this.excludesSources === true;
     const replacement = this.replacement(input);
-    const added = declared && replacement.values.length > 0;
-    const written = await this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement), () => this.keepDeclared(added));
-    if (added) this.declaredSourceWrite = true;
-    return written;
-  }
-
-  /**
-   * Rows a write added under the declaration are published only while it
-   * holds: checked after the locks and the write, before the write's own
-   * transaction or savepoint ends, so a withdrawal meanwhile rolls them back.
-   */
-  private keepDeclared(added: boolean): void {
-    if (added && this.excludesSources !== true) throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
+    return this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement));
   }
 
   /**
@@ -376,16 +357,12 @@ export class PostgresAdapter implements StorageAdapter {
    * exactly one chunk set stays live.
    */
   async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
-    const declared = this.excludesSources === true;
     const replacement = this.replacement(input);
-    const added = declared && replacement.values.length > 0;
-    const result = await this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
+    return this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
       const state = await this.sourceState(tx, replacement.scope);
       if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
       return { unchanged: false, memories: await this.writeSource(tx, replacement) };
-    }, written => this.keepDeclared(added && !written.unchanged));
-    if (added && !result.unchanged) this.declaredSourceWrite = true;
-    return result;
+    });
   }
 
   /** Validates a replacement and builds its rows before any statement. */
@@ -469,5 +446,5 @@ export class PostgresAdapter implements StorageAdapter {
   }
 }
 
-/** The built-in search, captured once, so replacing the prototype's method withdraws the declaration. */
+/** The built-in search, captured once at module load; adapters compare against it when constructed. */
 const builtInPostgresSearch = PostgresAdapter.prototype.searchVectors;

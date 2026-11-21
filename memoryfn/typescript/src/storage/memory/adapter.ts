@@ -87,24 +87,19 @@ export class MemoryStorageAdapter implements StorageAdapter {
   private relationships = new Map<string, MemoryRelationship>();
   private sequence = 0;
   private mutationVersion = 0;
-  /** A transaction's staged adapter reads its parent's declaration live, since the parent serves add() after the commit. */
-  private parent: MemoryStorageAdapter | undefined;
-  /** Set when a source write under the declaration added rows; the enclosing commit rechecks it. */
-  private declaredSourceWrite = false;
+  /** Fixed at construction: a subclass override or a prototype replaced earlier is undeclared, a later replacement changes nothing. */
+  private declared = this.searchVectors === builtInMemorySearch;
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
     const version = this.mutationVersion;
     const staged = new MemoryStorageAdapter();
-    staged.parent = this;
+    staged.declared = this.excludesSources === true;
     const memories = new StagedMap(this.memories);
     const relationships = new StagedMap(this.relationships);
     staged.memories = memories; staged.relationships = relationships;
     staged.sequence = this.sequence;
     const result = await operation(staged);
     if (this.mutationVersion !== version) throw new Error('MEMORY_REVISION_CONFLICT');
-    // Source rows staged under the declaration are not published once it is withdrawn.
-    if (staged.declaredSourceWrite && this.excludesSources !== true) throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
-    if (staged.declaredSourceWrite) this.declaredSourceWrite = true;
     memories.commit(); relationships.commit();
     this.sequence = staged.sequence;
     if (memories.writes.size || memories.removed.size || relationships.writes.size || relationships.removed.size) this.mutationVersion++;
@@ -186,12 +181,13 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   /**
-   * Declared only while searchVectors is the built-in one: an override or a
-   * replacement must declare excludesSources itself. A staged adapter also
-   * requires its parent's declaration, read live.
+   * Fixed for the adapter's lifetime: declared when searchVectors was the
+   * built-in one at construction. A subclass that overrides searchVectors
+   * declares excludesSources by overriding this getter. A staged adapter takes
+   * its parent's value when the transaction opens.
    */
   get excludesSources(): boolean {
-    return this.searchVectors === builtInMemorySearch && (this.parent === undefined || this.parent.excludesSources === true);
+    return this.declared;
   }
 
   async searchVectors(params: {
@@ -310,8 +306,6 @@ export class MemoryStorageAdapter implements StorageAdapter {
     this.requireNewIds(saved);
     if (!live.length && !saved.length) return [];
     this.mutationVersion++;
-    // Writes run to completion without an await, so the declaration at the write is the one at the call; a clear adds nothing to hide.
-    if (saved.length && this.excludesSources === true) this.declaredSourceWrite = true;
     this.tombstone(live, now);
     for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
     return saved.map(cloneMemory);
@@ -326,5 +320,5 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 }
 
-/** The built-in search, captured once, so replacing the prototype's method withdraws the declaration. */
+/** The built-in search, captured once at module load; adapters compare against it when constructed. */
 const builtInMemorySearch = MemoryStorageAdapter.prototype.searchVectors;

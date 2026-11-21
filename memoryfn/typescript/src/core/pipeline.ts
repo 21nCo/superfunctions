@@ -187,7 +187,7 @@ export class MemoryFn implements IMemoryFn {
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     // Plain copies of the embedder's values, each charged before the next is made: what is charged is exactly what storage receives.
     const embeddings = storableEmbeddings(batch, records.length, this.storage.embeddingDimensions, chargeBytes);
-    // Checked again after every await and before the write, so a declaration withdrawn meanwhile writes nothing.
+    // Checked again after every await and before the write, for an adapter that breaks the rule to keep its declaration constant.
     this.requireDocumentStorage();
     const written = await this.storage.replaceSourceIfChanged!({
       ...scope, contentHash,

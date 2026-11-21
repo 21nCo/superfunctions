@@ -906,7 +906,7 @@ describe('add() candidates and source rows', () => {
     expect(new MemoryStorageAdapter().excludesSources).toBe(true);
   });
 
-  it('keeps the parent adapter\'s declaration in a transaction, and withdraws it when the built-in search is replaced', async () => {
+  it('fixes the declaration at construction: a transaction adapter takes its parent\'s, and a prototype replaced earlier is undeclared', async () => {
     const llm = fakeLLM();
     const undeclared = new Capped(false);
     await expect(undeclared.transaction(tx => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder, llm).upsertDocument({ ...scope, content: docV1, extract: true })))
@@ -919,83 +919,77 @@ describe('add() candidates and source rows', () => {
     expect(await declared.getSourceState(scope)).toMatchObject({ chunkCount: 3 });
 
     embedder.embedBatch.mockClear();
-    const adapter = new MemoryStorageAdapter();
+    const before = new MemoryStorageAdapter();
     const builtIn = MemoryStorageAdapter.prototype.searchVectors;
+    let during!: MemoryStorageAdapter;
     // A delegating replacement that drops excludeSources must not inherit the declaration.
     MemoryStorageAdapter.prototype.searchVectors = function (this: MemoryStorageAdapter, params) {
       const { excludeSources: _ignored, ...rest } = params;
       return builtIn.call(this, rest);
     };
     try {
-      expect(adapter.excludesSources).toBe(false);
-      expect(await adapter.transaction(async tx => tx.excludesSources)).toBe(false);
-      await expect(new MemoryFn({ storage: { kind: 'memory' } }, adapter, embedder).upsertDocument({ ...scope, content: docV1 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+      during = new MemoryStorageAdapter();
+      expect([before.excludesSources, during.excludesSources]).toEqual([true, false]);
+      expect(await during.transaction(async tx => tx.excludesSources)).toBe(false);
+      await expect(new MemoryFn({ storage: { kind: 'memory' } }, during, embedder).upsertDocument({ ...scope, content: docV1 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
     } finally {
       MemoryStorageAdapter.prototype.searchVectors = builtIn;
     }
     expect(embedder.embedBatch).not.toHaveBeenCalled();
-    expect(await adapter.getSourceState(scope)).toBeNull();
-    expect(adapter.excludesSources).toBe(true);
-    expect(await adapter.transaction(async tx => tx.excludesSources)).toBe(true);
+    expect(await during.getSourceState(scope)).toBeNull();
+    // Restoring the prototype changes neither adapter's declaration.
+    expect([before.excludesSources, during.excludesSources]).toEqual([true, false]);
+    expect(await before.transaction(outer => outer.transaction!(async inner => [outer.excludesSources, inner.excludesSources]))).toEqual([true, true]);
   });
 
-  describe('a declaration withdrawn after upsertDocument starts', () => {
-    /** Replaces the instance's search with a delegating wrapper, as vi.spyOn or instrumentation would; returns a restore. */
-    const withdraw = (adapter: MemoryStorageAdapter) => {
+  describe('a searchVectors replaced after construction', () => {
+    /** Replaces the instance's search with a delegating wrapper, as instrumentation would. */
+    const wrap = (adapter: MemoryStorageAdapter) => {
       const builtIn = adapter.searchVectors;
       adapter.searchVectors = params => builtIn.call(adapter, params);
-      return () => { delete (adapter as Partial<MemoryStorageAdapter>).searchVectors; };
     };
     const live = async (adapter: StorageAdapter) => (await liveSourceRows(adapter)).map(row => row.content).sort();
+    const upsert = (tx: StorageAdapter, content = docV2) => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).upsertDocument({ ...scope, content });
 
-    it('rejects before the write when the embedder withdraws it, keeping the previous source', async () => {
+    it('keeps the declaration, so a spied or wrapped adapter still upserts, directly and in nested transactions', async () => {
+      vi.spyOn(storage, 'searchVectors');
       await memory.upsertDocument({ ...scope, content: docV1 });
-      const before = await live(storage);
-      embedder.embedBatch.mockImplementationOnce(async (texts: string[]) => { withdraw(storage); return texts.map(() => new Array(26).fill(1)); });
-      const write = vi.spyOn(storage, 'replaceSourceIfChanged');
-      await expect(memory.upsertDocument({ ...scope, content: docV2 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-      expect(write).not.toHaveBeenCalled();
-      expect(await live(storage)).toEqual(before);
-    });
-
-    it('reads the root declaration live through nested transactions', async () => {
-      const root = new MemoryStorageAdapter();
-      const seen = await root.transaction(outer => outer.transaction!(async inner => {
-        const declared = [outer.excludesSources, inner.excludesSources];
-        const restore = withdraw(root);
-        const withdrawn = [outer.excludesSources, inner.excludesSources];
-        restore();
-        return [declared, withdrawn, [outer.excludesSources, inner.excludesSources]];
-      }));
-      expect(seen).toEqual([[true, true], [false, false], [true, true]]);
-    });
-
-    it('rejects a transaction commit that staged a source replacement, at any nesting level, and keeps the previous source', async () => {
-      await memory.upsertDocument({ ...scope, content: docV1 });
-      const before = await live(storage);
-      const upsert = (tx: StorageAdapter) => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).upsertDocument({ ...scope, content: docV2 });
-      let restore = () => {};
-      await expect(storage.transaction(async tx => { await upsert(tx); restore = withdraw(storage); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-      restore();
-      expect(await live(storage)).toEqual(before);
-      // The inner commit passes; the outer one, which now holds the staged rows, rechecks after the withdrawal.
-      await expect(storage.transaction(async outer => { await outer.transaction!(upsert); restore = withdraw(storage); })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
-      restore();
-      expect(await live(storage)).toEqual(before);
-      // Declared throughout, the same transaction commits.
-      await storage.transaction(outer => outer.transaction!(upsert));
+      embedder.embedBatch.mockImplementationOnce(async (texts: string[]) => { wrap(storage); return texts.map(() => new Array(26).fill(1)); });
+      await memory.upsertDocument({ ...scope, content: docV2 });
+      expect(storage.excludesSources).toBe(true);
       expect(await storage.getSourceState(scope)).toMatchObject({ contentHash: await sha256Hex(docV2) });
+      const seen = await storage.transaction(outer => outer.transaction!(async inner => {
+        wrap(storage);
+        await upsert(inner, docV1);
+        return [outer.excludesSources, inner.excludesSources];
+      }));
+      expect(seen).toEqual([true, true]);
+      expect(await storage.getSourceState(scope)).toMatchObject({ contentHash: await sha256Hex(docV1) });
     });
 
-    it('still commits a base replaceSource of an adapter that never declared it, and a clear, which adds no rows', async () => {
-      const undeclared = new Capped(false);
-      await undeclared.transaction(tx => seedEighty(tx));
-      expect(await undeclared.getSourceState(scope)).toEqual({ contentHash: 'seeded', chunkCount: 80 });
+    it('commits a replacement, its deletion and an unrelated memory at any nesting level after the root search is replaced', async () => {
+      const unrelated = async (tx: StorageAdapter, content: string) => {
+        await upsert(tx);
+        await new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).forgetBySource(scope);
+        await new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).add({ tenantId: scope.tenantId, containerTags: scope.containerTags, content });
+        wrap(storage);
+      };
       await memory.upsertDocument({ ...scope, content: docV1 });
-      let restore = () => {};
-      await storage.transaction(async tx => { await tx.replaceSource({ ...scope, contentHash: 'cleared', chunks: [] }); restore = withdraw(storage); });
-      restore();
+      await storage.transaction(tx => unrelated(tx, 'unrelated note one'));
       expect(await storage.getSourceState(scope)).toBeNull();
+      await memory.upsertDocument({ ...scope, content: docV1 });
+      await storage.transaction(outer => outer.transaction!(inner => unrelated(inner, 'zebra quiz vow')));
+      expect(await storage.getSourceState(scope)).toBeNull();
+      const contents = (await MemoryStorageAdapter.prototype.searchVectors.call(storage, { tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: new Array(26).fill(1), topK: 100 }))
+        .map(row => row.content).sort();
+      expect(contents).toEqual(['unrelated note one', 'zebra quiz vow']);
+    });
+
+    it('still rolls back a transaction whose callback fails, keeping the previous source', async () => {
+      await memory.upsertDocument({ ...scope, content: docV1 });
+      const before = await live(storage);
+      await expect(storage.transaction(outer => outer.transaction!(async inner => { await upsert(inner); throw new Error('caller failure'); }))).rejects.toThrow('caller failure');
+      expect(await live(storage)).toEqual(before);
     });
   });
 
