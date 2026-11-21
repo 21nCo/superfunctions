@@ -1,0 +1,19 @@
+testfn/python/tests/test_fixtures_authfn.py
+  s_19fa676b25de44::t_d2d6835eb44746 515-516,518-520,527-530
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e4c1a96ea485607a751fb374116fba551ec91b0",
+  "prompts": {},
+  "sessions": {
+    "s_19fa676b25de44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_19fa676b25de44",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
