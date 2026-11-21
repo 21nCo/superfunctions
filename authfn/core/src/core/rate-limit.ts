@@ -37,13 +37,14 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
 };
 
 // Shared through globalThis, so separate copies of AuthFn loaded in one
-// process (or isolate) warn once between them; worker threads each warn.
+// JavaScript realm warn once between them. Each realm (a worker thread, a
+// Node vm context) has its own globals and warns on its own.
 const issuedRateLimitWarnings: Set<string> = ((globalThis as Record<symbol, unknown>)[
   Symbol.for('authfn.rateLimitWarnings')
 ] ??= new Set<string>()) as Set<string>;
 
 /**
- * Warns, once per process, when the HTTP rate limiter is off (the default),
+ * Warns, once per JavaScript realm, when the HTTP rate limiter is off (the default),
  * or on without `resolveClientIp`, in which case every client is counted as
  * the one IP 'unknown'. Returns the warnings issued now (for tests).
  */

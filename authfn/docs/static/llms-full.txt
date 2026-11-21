@@ -3190,7 +3190,9 @@ import { rateLimiter } from 'hono-rate-limiter';
 app.use('/auth/sign-in/*', rateLimiter({
   windowMs: 60 * 1000,
   limit: 10,
-  // The client IP as your platform or trusted proxy reports it (see above), never a raw client header.
+  // Use the same trusted source as your resolveClientIp (see above). This
+  // example assumes direct Cloudflare ingress; behind your own proxy, read
+  // the last x-forwarded-for entry instead. Never a raw client header.
   keyGenerator: (c) => `${c.req.header('cf-connecting-ip') ?? 'unknown'}:${c.req.path}`,
 }));
 
