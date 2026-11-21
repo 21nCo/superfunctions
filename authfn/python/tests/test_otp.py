@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -404,13 +404,26 @@ async def test_skips_a_newer_challenge_the_typescript_kernel_never_admitted() ->
     assert verified["verified"] is True
 
 
-def test_compares_challenge_times_as_instants_across_a_daylight_saving_fall_back() -> None:
-    from zoneinfo import ZoneInfo
+class _FallBackZone(tzinfo):
+    """A zone whose repeated hour depends on ``fold``, like a daylight-saving
+    fall-back: UTC-4 before it (fold 0), UTC-5 after (fold 1). Self-contained,
+    so the test needs no timezone database."""
 
+    def utcoffset(self, dt: Optional[datetime]) -> timedelta:
+        return timedelta(hours=-5) if dt is not None and dt.fold else timedelta(hours=-4)
+
+    def dst(self, dt: Optional[datetime]) -> timedelta:
+        return timedelta(0) if dt is not None and dt.fold else timedelta(hours=1)
+
+    def tzname(self, dt: Optional[datetime]) -> str:
+        return "TEST-STD" if dt is not None and dt.fold else "TEST-DST"
+
+
+def test_compares_challenge_times_as_instants_across_a_daylight_saving_fall_back() -> None:
     from authfn.plugins.email_otp import _is_admitted
 
-    new_york = ZoneInfo("America/New_York")
-    created = datetime(2026, 11, 1, 1, 55, tzinfo=new_york, fold=0)  # 01:55 EDT
-    expires = datetime(2026, 11, 1, 1, 5, tzinfo=new_york, fold=1)  # 01:05 EST, ten minutes later
+    zone = _FallBackZone()
+    created = datetime(2026, 11, 1, 1, 55, tzinfo=zone, fold=0)  # 05:55 UTC
+    expires = datetime(2026, 11, 1, 1, 5, tzinfo=zone, fold=1)  # 06:05 UTC, ten minutes later
     assert _is_admitted({"createdAt": created, "expiresAt": expires}) is True
     assert _is_admitted({"createdAt": created, "expiresAt": created}) is False
