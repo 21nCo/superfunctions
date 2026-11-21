@@ -372,9 +372,11 @@ describe('authfn google social oauth', () => {
   });
 
   it('checks the handoff policy again when afterOAuthCallback moves a session-token flow to a web target', async () => {
+    let hookRuns = 0;
     const base = createConfig({
       hooks: {
         afterOAuthCallback: async (_ctx, payload) => {
+          hookRuns += 1;
           payload.redirectTo = 'https://app.example.com/post-auth';
         }
       }
@@ -393,14 +395,16 @@ describe('authfn google social oauth', () => {
     const callback = await auth.router.handle(new Request(
       `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(startBody.data.stateId)}`
     ));
-    const location = callback.headers.get('location') ?? '';
-    expect(location).not.toContain('token=');
+    expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_VALIDATION_ERROR');
+    expect(callback.headers.get('location')).not.toContain('token=');
   });
 
   it('checks the allowlist again when afterOAuthCallback moves a handoff-code flow', async () => {
+    let hookRuns = 0;
     const config = createConfig({
       hooks: {
         afterOAuthCallback: async (_ctx, payload) => {
+          hookRuns += 1;
           payload.redirectTo = 'https://unlisted.example/steal';
         }
       }
@@ -424,13 +428,16 @@ describe('authfn google social oauth', () => {
     const callback = await auth.router.handle(new Request(
       `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
     ));
-    expect(callback.headers.get('location') ?? '').not.toContain('unlisted.example');
+    expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_REDIRECT_URI_DISALLOWED');
+    expect(callback.headers.get('location')).not.toContain('unlisted.example');
   });
 
   it('applies allowWebSessionTokenHandoff again when afterOAuthCallback moves a handoff-code flow to a web target', async () => {
+    let hookRuns = 0;
     const config = createConfig({
       hooks: {
         afterOAuthCallback: async (_ctx, payload) => {
+          hookRuns += 1;
           payload.redirectTo = 'https://app.example.com/post-auth';
         }
       }
@@ -455,7 +462,8 @@ describe('authfn google social oauth', () => {
     const callback = await auth.router.handle(new Request(
       `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
     ));
-    expect(callback.headers.get('location') ?? '').not.toContain('handoff=code');
+    expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_VALIDATION_ERROR');
+    expect(callback.headers.get('location')).not.toContain('handoff=code');
   });
 
   it('links verified Google OAuth to an existing verified same-email user through account linking policy', async () => {
@@ -607,4 +615,19 @@ function createResponse(input: { status: number; body: string; contentType?: str
       return input.body;
     }
   };
+}
+
+/**
+ * The callback reached afterOAuthCallback, then refused the hook's target:
+ * the browser goes back to the original target with the given error code and
+ * no session cookie.
+ */
+function expectRefusedAfterHook(callback: Response, hookRuns: number, errorCode: string): void {
+  expect(hookRuns).toBe(1);
+  expect(callback.status).toBe(303);
+  const location = new URL(callback.headers.get('location')!);
+  expect(`${location.protocol}//${location.host}`).toBe('exampleapp://oauthsignin');
+  expect(location.searchParams.get('auth_error')).toBe('oauth_callback_failed');
+  expect(location.searchParams.get('auth_error_code')).toBe(errorCode);
+  expect(callback.headers.getSetCookie().some((cookie) => cookie.includes('session'))).toBe(false);
 }

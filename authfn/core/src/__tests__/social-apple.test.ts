@@ -464,7 +464,7 @@ describe('authfn apple social oauth', () => {
   describe('return targets with custom schemes', () => {
     // Security audit AF-04: every non-http URL has the origin "null", so an
     // allowlisted custom-scheme entry used to accept any custom scheme.
-    async function start(returnTo: string, allowlistedReturnTo: string[]) {
+    async function start(returnTo: string, allowlistedReturnTo: string[], extraBody: Record<string, unknown> = {}) {
       const auth = createTestServer({
         database: memoryAdapter({ debug: false }),
         namespace: 'authfn',
@@ -486,7 +486,7 @@ describe('authfn apple social oauth', () => {
         new Request('https://account.example.com/auth/social/start', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ provider: 'apple', returnTo })
+          body: JSON.stringify({ provider: 'apple', returnTo, ...extraBody })
         })
       );
     }
@@ -589,9 +589,58 @@ describe('authfn apple social oauth', () => {
       expect(response.status).toBeGreaterThanOrEqual(400);
     });
 
-    it.each([42, ['/post-auth'], { path: '/post-auth' }])('refuses a non-string returnTo (%j) with a 400', async (returnTo) => {
+    it.each([42, false, 0, ['/post-auth'], { path: '/post-auth' }])('refuses a non-string returnTo (%j) with a 400', async (returnTo) => {
       const response = await start(returnTo as unknown as string, ['/post-auth']);
       expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+    });
+
+    it.each([42, false, ['/post-auth']])('refuses a non-string returnTo (%j) in JSON callback mode too', async (returnTo) => {
+      const response = await start(returnTo as unknown as string, ['/post-auth'], { callbackMode: 'json' });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+    });
+
+    it('percent-encodes an allowlisted non-ASCII path in a successful cookie-only redirect', async () => {
+      const auth = createTestServer({
+        database: memoryAdapter({ debug: false }),
+        namespace: 'authfn',
+        plugins: [authFnSocialOAuthPlugin()],
+        pluginRuntime: {
+          socialOAuth: {
+            providers: {
+              apple: {
+                clientId: 'apple-client-id',
+                clientSecretResolver: async () => ({ clientSecret: 'generated-apple-client-secret' }),
+                allowlistedReturnTo: ['/会員']
+              }
+            },
+            fetcher: async () => createResponse({
+              status: 200,
+              body: JSON.stringify({
+                access_token: 'apple-access-token',
+                token_type: 'Bearer',
+                id_token: createIdToken({ sub: 'apple-user-10', email: 'kaiin@example.com' })
+              })
+            })
+          }
+        }
+      });
+      const started = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'apple', returnTo: '/会員' })
+      }));
+      expect(started.status).toBe(200);
+      const stateId = (await started.json()).data.stateId as string;
+      const callback = await auth.router.handle(new Request('https://account.example.com/auth/social/callback/apple', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ code: 'apple_code', state: stateId })
+      }));
+      expect(callback.status).toBe(303);
+      expect(callback.headers.get('location')).toBe('/%E4%BC%9A%E5%93%A1');
+      expect(callback.headers.getSetCookie().length).toBeGreaterThan(0);
     });
 
     it('refuses a script scheme even when it is allowlisted exactly', async () => {

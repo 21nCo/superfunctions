@@ -239,6 +239,14 @@ function createSocialRoutes(
       handler: async (request) => {
         const runtime = await resolveEnvironment(ctx.config, request);
         const body = await request.json() as SocialStartBody;
+        // The body is caller JSON. A non-string returnTo would otherwise pick
+        // JSON mode by inference (`false`, `0`) or skip the allowlist check
+        // when JSON mode is asked for, and still be stored with the flow.
+        if (body.returnTo !== undefined && body.returnTo !== null && typeof body.returnTo !== 'string') {
+          throw new AuthFnValidationError('returnTo must be a string', {
+            returnToType: Array.isArray(body.returnTo) ? 'array' : typeof body.returnTo
+          });
+        }
         const providerId = normalizeProviderId(body.provider);
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, providerId);
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, providerId, callbackUri);
@@ -662,7 +670,7 @@ function createSocialRoutes(
           });
           redirectLocation = completion.handoffMode === 'session-token'
             ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
-            : completion.redirectTo!;
+            : serializeReturnTarget(completion.redirectTo!);
         }
 
         await emitAuthEvent(ctx.config, {
@@ -2103,6 +2111,15 @@ const RELATIVE_RETURN_TARGET_BASE = 'https://relative-return-target.invalid';
 /** Parses an allowlisted return target, which may be a same-site path. */
 function parseReturnTarget(returnTo: string): URL {
   return isSameOriginPath(returnTo) ? new URL(returnTo, RELATIVE_RETURN_TARGET_BASE) : new URL(returnTo);
+}
+
+/**
+ * Returns an allowlisted target in the form a Location header accepts:
+ * characters outside ASCII (`/会員`) are percent-encoded, and a relative
+ * target stays relative.
+ */
+function serializeReturnTarget(returnTo: string): string {
+  return formatReturnTarget(returnTo, parseReturnTarget(returnTo));
 }
 
 /** Formats a target edited after parseReturnTarget, keeping a relative one relative. */
