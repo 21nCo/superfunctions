@@ -374,11 +374,11 @@ describe('authfn multi-region plugin', () => {
       ok: true,
       data: {
         identifier: 'ada@example.com',
-        userId: expect.any(String),
         regionId: 'eu-west-1',
         authority: 'https://eu.account.example.com',
         domain: '.example.com',
         continueLocally: false,
+        ownedElsewhere: true,
         redirectTo: 'https://eu.account.example.com'
       },
       requestId: expect.any(String)
@@ -405,7 +405,6 @@ describe('authfn multi-region plugin', () => {
         retryable: false,
         details: {
           identifier: 'ada@example.com',
-          userId: expect.any(String),
           regionId: 'eu-west-1',
           authority: 'https://eu.account.example.com',
           redirectTo: 'https://eu.account.example.com',
@@ -452,7 +451,6 @@ describe('authfn multi-region plugin', () => {
         retryable: false,
         details: {
           identifier: 'ada@example.com',
-          userId: expect.any(String),
           regionId: 'eu-west-1',
           authority: 'https://eu.account.example.com',
           redirectTo: 'https://eu.account.example.com',
@@ -484,7 +482,6 @@ describe('authfn multi-region plugin', () => {
         message: 'Request must continue on a different region authority',
         retryable: false,
         details: {
-          userId: expect.any(String),
           regionId: 'eu-west-1',
           authority: 'https://eu.account.example.com',
           redirectTo: 'https://eu.account.example.com',
@@ -723,7 +720,6 @@ describe('authfn multi-region plugin', () => {
       code: 'AUTHFN_REGION_MISMATCH',
       details: {
         identifier: 'race@example.com',
-        userId: 'user_external',
         regionId: 'eu-west-1',
         authority: 'https://eu.account.example.com'
       }

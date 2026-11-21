@@ -137,6 +137,12 @@ export interface AuthFnRegionLookupResult {
   authority: string;
   domain?: string;
   continueLocally: boolean;
+  /**
+   * True when the identifier belongs to an account owned by another region
+   * than the one answering. An account in the answering region gets the same
+   * answer as an unknown identifier, so this is never set for one.
+   */
+  ownedElsewhere?: boolean;
   redirectTo?: string;
 }
 
@@ -338,6 +344,13 @@ export interface AuthFnRegionalClientOptions {
     authority: string;
   }): void;
   clientOptions?: Omit<AuthFnClientOptions, 'baseUrl'>;
+  /**
+   * Set to true when one of your regions is really named `unknown`. Servers
+   * without a configured region answer lookups with `regionId: 'unknown'`,
+   * which the client otherwise treats as "no region named" and routes to
+   * `defaultRegionId`.
+   */
+  unknownIsARegion?: boolean;
 }
 
 /** The built-in clients always provide the social handoff exchange. */

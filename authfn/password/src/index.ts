@@ -102,7 +102,8 @@ function createPasswordRoutes(
           environment: runtime,
           authenticatedSession,
           policy: {
-            compromisedPasswordChecker: config.compromisedPasswordChecker
+            compromisedPasswordChecker: config.compromisedPasswordChecker,
+            hashCost: config.passwordHashCost
           }
         });
         if (result.linkedExistingUser) {
@@ -175,7 +176,8 @@ function createPasswordRoutes(
         const result = await completeResetPassword(ctx.config, {
           ...otpConfig,
           passwordPolicy: {
-            compromisedPasswordChecker: config.compromisedPasswordChecker
+            compromisedPasswordChecker: config.compromisedPasswordChecker,
+            hashCost: config.passwordHashCost
           }
         }, {
           purpose: 'reset-password',
@@ -195,16 +197,15 @@ function createPasswordRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
-          email?: string;
-          password?: string;
-          sessionMode?: AuthFnSessionResponseMode;
-        };
+        // Only the three fields are kept, so a large request body is not held
+        // while the password hashes run.
+        const { email, password, sessionMode } = await readSignInBody(request);
         const result = await signInWithPassword(ctx.config, {
-          email: body.email ?? '',
-          password: body.password ?? ''
+          email,
+          password
         }, {
-          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn
+          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
+          hashCost: config.passwordHashCost
         });
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
         if (twoFactorConfig) {
@@ -235,7 +236,7 @@ function createPasswordRoutes(
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
-        const response = buildSessionResponse(issued, body.sessionMode);
+        const response = buildSessionResponse(issued, sessionMode);
 
         return jsonSuccess(request, response.data, {
           setCookies: response.setCookies
@@ -243,4 +244,27 @@ function createPasswordRoutes(
       }
     }
   ];
+}
+
+async function readSignInBody(request: Request): Promise<{
+  email: string;
+  password: string;
+  sessionMode?: AuthFnSessionResponseMode;
+}> {
+  const parsed = await request.json() as unknown;
+  // Anything but a JSON object reads as an empty one, and an email that is
+  // not a string as none: sign-in then refuses it as a validation error.
+  const body = (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}) as {
+    email?: unknown;
+    password?: string;
+    sessionMode?: AuthFnSessionResponseMode;
+  };
+  return {
+    email: typeof body.email === 'string' ? body.email : '',
+    password: body.password ?? '',
+    // Only a known mode is kept; anything else means the default (cookie).
+    sessionMode: body.sessionMode === 'cookie' || body.sessionMode === 'bearer' || body.sessionMode === 'hybrid'
+      ? body.sessionMode
+      : undefined
+  };
 }

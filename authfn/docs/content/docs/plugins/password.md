@@ -44,6 +44,7 @@ authApp.createServer({
 | --- | --- | --- | --- |
 | `compromisedPasswordChecker` | factory | `undefined` | A function that checks the password against breach data (e.g. HIBP). Called on sign-up and reset. Throws `AuthFnValidationError` if compromised. |
 | `requireEmailVerifiedForSignIn` | factory | `false` | If `true`, sign-in fails with `AUTHFN_EMAIL_NOT_VERIFIED` until the user verifies their email. |
+| `passwordHashCost` | factory | `'current'` | The scrypt cost new hashes are written at. `'legacy'` writes the pre-AUTH-32 cost and stops sign-in from upgrading older hashes; use it only during a rolling deploy (see [Hashing](#hashing)). |
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
@@ -67,7 +68,17 @@ All routes return the standard envelope. See [API reference](../api) for full sc
 
 ## Hashing
 
-Passwords are hashed with **argon2id** with vetted parameters (the kernel uses a default cost suitable for modern hardware; you can override via the plugin's `passwordHashing` config if needed).
+Passwords are hashed with **scrypt** at N = 2^15, r = 8, p = 3 (32 MiB per hash), one of the settings OWASP recommends, and stored as `scrypt$N$r$p$salt$hash`. On Node.js the hash runs on the libuv thread pool, so it does not block the event loop; in workerd it runs synchronously (see **Workers** below).
+
+- **Upgrades:** a hash stored with the parameters used before AUTH-32 (N = 2^14, r = 8, p = 1) still verifies, and is re-hashed with the current ones the next time its password is used to sign in. The re-hash only replaces the hash it read.
+- **A credential that changes during sign-in:** after the check, the stored credential is read again (a few times at most). If it changed (a reset, or another sign-in's upgrade), the submitted password must match the new hash, so a password reset during a sign-in with the old password refuses that sign-in. `AUTHFN_EMAIL_NOT_VERIFIED` is only given after this.
+- **Rolling deploys:** releases before this one cannot read the new hashes (their scrypt memory limit is too low). While servers on an earlier release share the database, deploy with `passwordHashCost: 'legacy'`: new hashes are then written at the older cost and sign-in does not upgrade any. Once every server runs this release, remove the option (or set `'current'`). Do not roll back to an earlier release once current-cost hashes exist.
+- **Length:** new passwords (sign-up, change, reset) are 12 to 1024 characters. Existing passwords up to 64 KiB (UTF-8) still sign in; a longer submitted password is refused with `AUTHFN_INVALID_CREDENTIALS` before any lookup or hashing. The request body itself is not limited here: set a body size limit in front of AuthFn.
+- **Reset order:** a reset counts its code attempt first. Only a matching code goes on to the new password's length and policy checks and its hash, before the code is used; a refused password hands the attempt back, so the user can retry with the same code. Handing it back is best effort: if that write fails, the attempt stays counted, and once none are left the user requests a new code. The code must still be the current, unexpired one when it is used after the password work; otherwise the reset is refused with `AUTHFN_OTP_INVALID` or `AUTHFN_OTP_EXPIRED`. A wrong code, or a code with no attempts left, gets the same answer whatever the new password.
+- **Bounded hashing:** each process runs at most 16 scrypt jobs at once and queues up to 1024 more; beyond that, sign-in returns `AUTHFN_RATE_LIMITED`. A sign-in's two jobs are admitted together, or the request is refused before either is queued. Sign-in hashes even for unknown emails, so enable the HTTP rate limiter as well.
+- **Stored parameters:** only the two parameter sets AuthFn has written are evaluated, with a full 64-byte digest; anything else is treated as corrupt, which bounds the work a stored hash can ask for.
+- **Same answer for every email:** every sign-in does the same work, one scrypt at the current cost and one at the older cost, queued in that order, whether or not the email has an account or a password and whichever cost its hash is stored at (for an older hash, the current-cost one becomes its upgrade when the password is right). No hash is derived at start-up. With `requireEmailVerifiedForSignIn`, `AUTHFN_EMAIL_NOT_VERIFIED` is only given after the password has been checked, and does not name the user.
+- **Workers:** in workerd, scrypt runs synchronously, so each sign-in spends roughly 120–150 ms of CPU on hashing, unknown emails included. A Worker whose CPU limit is lower ends those requests instead of answering 401. Check that your Workers plan's CPU limit allows it, or run password routes where it does.
 
 ## Sign-up flow
 

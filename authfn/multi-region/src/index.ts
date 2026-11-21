@@ -349,7 +349,10 @@ function createMultiRegionRoutes(ctx: AuthFnPluginRuntimeContext): Route[] {
           }
         });
 
-        return jsonSuccess(request, lookup);
+        // The user id stays on the server: the route needs no sign-in, so it
+        // must not tell callers which user an email belongs to.
+        const { userId: _userId, ...publicLookup } = lookup;
+        return jsonSuccess(request, publicLookup);
       }
     },
     {

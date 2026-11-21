@@ -25,7 +25,7 @@ import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { hashSecret } from './sessions.js';
 import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
-import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { preparePasswordHash, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -246,7 +246,15 @@ export async function verifyOtpChallenge(
   config: AuthFnRuntimeConfig,
   hooks: Partial<AuthFnHooks>,
   runtimeOptions: OtpRuntimeOptions,
-  input: VerifyOtpInput
+  input: VerifyOtpInput,
+  internal: {
+    /**
+     * Runs once the code matched (its attempt reserved) and right before the
+     * challenge is consumed. If it throws, the attempt is handed back and the
+     * code stays usable.
+     */
+    beforeConsume?: () => Promise<void>;
+  } = {}
 ): Promise<VerifyOtpResult> {
   const email = normalizeEmail(input.email);
   const challenge = await findLatestChallenge(config, input.purpose, email);
@@ -338,7 +346,26 @@ export async function verifyOtpChallenge(
       }
     }
 
-    consumed = await consumeOtpChallenge(config, challenge, now);
+    if (internal.beforeConsume) {
+      await internal.beforeConsume();
+      // That work (a password hash) can take a while: the code must still
+      // belong to the current challenge when it is used.
+      const current = await findLatestChallenge(config, input.purpose, email);
+      if (!current || current.id !== challenge.id) {
+        throw new AuthFnOtpInvalidError('OTP code is invalid', {
+          challengeId: challenge.id
+        });
+      }
+    }
+    // The challenge must not have expired by the time it is used, checked
+    // against the clock now rather than when the request started.
+    const consumeAt = resolveNow(runtimeOptions);
+    if (challenge.expiresAt.getTime() <= consumeAt.getTime()) {
+      throw new AuthFnOtpExpiredError('OTP code has expired', {
+        challengeId: challenge.id
+      });
+    }
+    consumed = await consumeOtpChallenge(config, challenge, consumeAt);
   } catch (error) {
     await releaseOtpAttempt(config, reserved, now);
     throw error;
@@ -449,11 +476,26 @@ export async function completeResetPassword(
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
+  // The new password is checked against the policy and hashed only once the
+  // code matched, with its attempt already counted, so a guess costs an
+  // attempt whatever the password. A refused password, or hashing that is
+  // busy, hands the attempt back and leaves the code for another try.
+  let preparedHash: string | undefined;
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
     email,
     code: input.code
+  }, {
+    beforeConsume: async () => {
+      preparedHash = await preparePasswordHash(input.newPassword, {
+        ...runtimeOptions.passwordPolicy,
+        request: input.request,
+        environment: runtime,
+        email,
+        purpose: 'reset-password'
+      });
+    }
   });
 
   const user = challenge.user ?? await findUserByPrimaryEmail(config, email);
@@ -465,7 +507,8 @@ export async function completeResetPassword(
 
   await updatePasswordCredential(config, {
     userId: user.id,
-    password: input.newPassword
+    password: input.newPassword,
+    preparedHash
   }, {
     ...runtimeOptions.passwordPolicy,
     request: input.request,

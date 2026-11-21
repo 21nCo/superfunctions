@@ -274,6 +274,21 @@ export async function buildLookupResult(
   const currentAuthority = normalizeAuthority(input.environment.baseUrl);
   const targetAuthority = resolveLookupAuthorityForRequest(pluginConfig, lookup, input.request, input.environment);
   const continueLocally = lookup.regionId === currentRegionId || currentAuthority === targetAuthority;
+  if (continueLocally && lookup.regionId === currentRegionId) {
+    // An account in this region gets the same answer as an unknown
+    // identifier, so the lookup does not tell callers it exists. (An account
+    // of another region served from the same authority keeps its region.)
+    return {
+      identifier,
+      // For the lookup event only: the route drops it from its answer.
+      userId: lookup.userId,
+      regionId: input.environment.regionId ?? pluginConfig.defaultRegionId ?? 'unknown',
+      authority: currentAuthority,
+      domain: undefined,
+      continueLocally: true,
+      redirectTo: undefined
+    };
+  }
 
   return {
     identifier,
@@ -282,6 +297,7 @@ export async function buildLookupResult(
     authority: targetAuthority,
     domain: lookup.domain,
     continueLocally,
+    ownedElsewhere: true,
     redirectTo: continueLocally ? undefined : targetAuthority
   };
 }
@@ -318,7 +334,6 @@ export async function ensureRegionAlignmentForUser(
   const targetAuthority = resolveLookupAuthorityForRequest(pluginConfig, lookup, input.request, input.environment);
   if (lookup.regionId !== input.environment.regionId && currentAuthority !== targetAuthority) {
     throw new AuthFnRegionMismatchError('Request must continue on a different region authority', {
-      userId: user.id,
       regionId: lookup.regionId,
       authority: targetAuthority,
       redirectTo: targetAuthority,
@@ -358,7 +373,6 @@ export async function ensureRegionAlignmentForIdentifier(
   if (lookup.regionId !== input.environment.regionId && currentAuthority !== targetAuthority) {
     throw new AuthFnRegionMismatchError('Request must continue on a different region authority', {
       identifier,
-      userId: lookup.userId,
       regionId: lookup.regionId,
       authority: targetAuthority,
       redirectTo: targetAuthority,
@@ -469,7 +483,6 @@ export async function registerUserRegion(
         });
         throw new AuthFnRegionMismatchError('Identifier is already registered in another region authority', {
           identifier,
-          userId: existing.userId,
           regionId: existing.regionId,
           authority: existing.authority,
           redirectTo: existing.authority,

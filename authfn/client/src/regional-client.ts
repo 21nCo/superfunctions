@@ -48,27 +48,12 @@ export function createAuthFnRegionalClient(
       }
     }
 
-    const lookup = await clientFor(currentRegionId).lookupRegion({ identifier });
-    if (!lookup.ok) {
-      const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
-      if (mismatch) {
-        await saveRegion(storage, cacheTtlMs, options, mismatch);
-        return mismatch;
-      }
-      await storage.delete(identifier);
-      return null;
-    }
-
-    const region = {
-      identifier,
-      regionId: lookup.data.regionId,
-      authority: lookup.data.authority,
-      domain: lookup.data.domain,
-      cachedAt: Date.now(),
-      expiresAt: Date.now() + cacheTtlMs
-    };
-    await saveRegion(storage, cacheTtlMs, options, region);
-    return region;
+    // The same lookup, mismatch retry and caching as preparation, so both
+    // route the identifier the same way. The route it decided on is used
+    // directly, so a storage that keeps nothing (no localStorage, a TTL of
+    // 0) does not change the answer; the cache serves later requests.
+    const { route } = await lookupCurrentRegionFrom(identifier);
+    return route;
   };
 
   const regionIdForIdentifier = async (identifier: string): Promise<string> => {
@@ -76,41 +61,78 @@ export function createAuthFnRegionalClient(
     return region?.regionId ?? options.defaultRegionId;
   };
 
-  const lookupCurrentRegion = async (identifierInput: string) => {
+  const lookupCurrentRegion = async (identifierInput: string) =>
+    (await lookupCurrentRegionFrom(identifierInput)).lookup;
+
+  /** Looks an identifier up, and reports which region gave the answer. */
+  const lookupCurrentRegionFrom = async (identifierInput: string) => {
     const identifier = normalizeIdentifier(identifierInput);
     const lookupRegionId = currentRegionId;
     const lookup = await clientFor(lookupRegionId).lookupRegion({ identifier });
     if (!lookup.ok) {
       const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
-        await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
-        const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
-        if (retry.ok) {
-          await saveRegion(storage, cacheTtlMs, options, {
+        // Only the route the retry settles on is cached, so an overlapping
+        // request cannot pick up the mismatch destination in between. A retry
+        // that fails to complete (even after its headers arrived) leaves the
+        // mismatch destination as the route.
+        let retry: Awaited<ReturnType<AuthFnClient['lookupRegion']>>;
+        try {
+          retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
+        } catch {
+          await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+          return { lookup, answeredBy: lookupRegionId, route: mismatch };
+        }
+        if (retry.ok && !isLookupAnswer(retry.data)) {
+          // A success envelope without a lookup answer (no data, or an empty
+          // body such as a 204) counts as a failed retry.
+          await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+          return { lookup, answeredBy: lookupRegionId, route: mismatch };
+        }
+        const retryRegionId = retry.ok ? concreteRegionId(retry.data, mismatch.regionId, options) : undefined;
+        if (retry.ok && retryRegionId) {
+          const route = {
             identifier,
-            regionId: retry.data.regionId,
+            regionId: retryRegionId,
             authority: retry.data.authority,
             domain: retry.data.domain,
             cachedAt: Date.now(),
             expiresAt: Date.now() + cacheTtlMs
-          }, lookupRegionId);
+          };
+          await saveRegion(storage, cacheTtlMs, options, route, lookupRegionId);
+          return { lookup: retry, answeredBy: mismatch.regionId, route };
         }
-        return retry;
-      } else {
-        await storage.delete(identifier);
+        if (retry.ok) {
+          // The retry named no region: the route cached from the mismatch
+          // is dropped, so later requests use the default region.
+          await storage.delete(identifier);
+          return { lookup: retry, answeredBy: mismatch.regionId, route: null };
+        }
+        // The retry failed: the mismatch destination stands.
+        await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+        return { lookup: retry, answeredBy: mismatch.regionId, route: mismatch };
       }
-      return lookup;
+      await storage.delete(identifier);
+      return { lookup, answeredBy: lookupRegionId, route: null };
     }
 
-    await saveRegion(storage, cacheTtlMs, options, {
+    const regionId = concreteRegionId(lookup.data, lookupRegionId, options);
+    if (!regionId) {
+      // No region named ('unknown', or a gateway answer): nothing to cache,
+      // and a route cached earlier is dropped.
+      await storage.delete(identifier);
+      return { lookup, answeredBy: lookupRegionId, route: null };
+    }
+    const route = {
       identifier,
-      regionId: lookup.data.regionId,
+      regionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       cachedAt: Date.now(),
       expiresAt: Date.now() + cacheTtlMs
-    }, lookupRegionId);
-    return lookup;
+    };
+    await saveRegion(storage, cacheTtlMs, options, route, lookupRegionId);
+    return { lookup, answeredBy: lookupRegionId, route };
   };
 
   const prepareEmailAuth = async (input: {
@@ -124,25 +146,37 @@ export function createAuthFnRegionalClient(
 
     const selectedRegionId = currentRegionId;
     const identifier = normalizeIdentifier(input.email);
-    const lookup = await lookupCurrentRegion(identifier);
+    const { lookup, answeredBy } = await lookupCurrentRegionFrom(identifier);
     if (!lookup.ok) {
       return lookup;
     }
 
-    const existingAccount = Boolean(lookup.data.userId) || lookup.data.continueLocally === false;
+    // Current servers answer a local account like an unknown one and flag an
+    // account owned by another region (`ownedElsewhere`, even when both
+    // regions share an authority); a local account is reported by sign-up
+    // itself. Earlier servers name the user instead.
+    const existingAccount = lookup.data.continueLocally === false
+      || lookup.data.ownedElsewhere === true
+      || (typeof lookup.data.userId === 'string' && lookup.data.userId !== '');
     if (input.flow === 'sign-up' && existingAccount) {
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
+    // An unresolved answer sends sign-in and reset to the default region,
+    // as the operations themselves do, so the preparation reports and
+    // selects that region; sign-up stays where it was asked.
+    const answeredRegionId = concreteRegionId(lookup.data, answeredBy, options);
+    const preparedRegionId = answeredRegionId
+      ?? (input.flow === 'sign-up' ? selectedRegionId : options.defaultRegionId);
     if (input.flow !== 'sign-up') {
-      currentRegionId = lookup.data.regionId;
+      currentRegionId = preparedRegionId;
     }
 
     return successEmailPreparation({
       identifier,
       flow: input.flow,
       selectedRegionId,
-      regionId: lookup.data.regionId,
+      regionId: preparedRegionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       userId: lookup.data.userId,
@@ -307,6 +341,46 @@ function writeStorageMap(value: Record<string, AuthFnCachedRegion>): void {
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
+}
+
+/**
+ * The region a lookup routes to, or undefined for none. Gateway answers carry
+ * no region, and a server without a configured region answers 'unknown' for
+ * its own region; an answer that sends the caller elsewhere (another region
+ * or authority) is honoured whatever the region is called, and so is the
+ * region that was asked (`queriedRegionId`), even one configured as 'unknown'.
+ */
+function concreteRegionId(lookup: {
+  regionId?: string;
+  continueLocally?: boolean;
+  ownedElsewhere?: boolean;
+  userId?: string;
+}, queriedRegionId: string | undefined, options: Pick<AuthFnRegionalClientOptions, 'unknownIsARegion'>): string | undefined {
+  const regionId = lookup.regionId;
+  if (typeof regionId !== 'string' || regionId === '') {
+    return undefined;
+  }
+  if (regionId === queriedRegionId || options.unknownIsARegion === true) {
+    return regionId;
+  }
+  // Earlier servers name the user only for a known account, whose region is
+  // then a real one.
+  const namesUser = typeof lookup.userId === 'string' && lookup.userId !== '';
+  if (regionId === 'unknown' && lookup.continueLocally !== false && lookup.ownedElsewhere !== true && !namesUser) {
+    return undefined;
+  }
+  return regionId;
+}
+
+/**
+ * Whether a lookup answer has the fields every server sends: `authority` and
+ * `continueLocally` (gateway answers carry no `regionId`).
+ */
+function isLookupAnswer(data: unknown): boolean {
+  return data !== null
+    && typeof data === 'object'
+    && typeof (data as { authority?: unknown }).authority === 'string'
+    && typeof (data as { continueLocally?: unknown }).continueLocally === 'boolean';
 }
 
 async function saveRegion(

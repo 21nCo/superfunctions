@@ -26,7 +26,6 @@ from authfn import (
     AuthFnConfig,
     AuthFnRuntimeResolution,
     RegionMismatchError,
-    RegionNotFoundError,
     ValidationError,
 )
 from authfn.plugins import gateway_routing
@@ -241,6 +240,7 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
         "authority": "https://eu.account.example.com",
         "domain": ".example.com",
         "continueLocally": False,
+        "ownedElsewhere": True,
         "redirectTo": "https://eu.account.example.com",
     }
 
@@ -252,12 +252,18 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     assert error.value.code == "AUTHFN_REGION_MISMATCH"
     assert error.value.details["redirectTo"] == "https://eu.account.example.com"
 
-    with pytest.raises(RegionNotFoundError) as missing:
-        await service.lookup(
-            identifier="unknown@example.com",
-            request=Request("https://us.account.example.com/auth/regions/lookup"),
-        )
-    assert missing.value.code == "AUTHFN_REGION_NOT_FOUND"
+    assert "userId" not in error.value.details
+
+    # An unknown identifier gets the same local answer as an account in this
+    # region, and no answer names a user.
+    missing = await service.lookup(
+        identifier="unknown@example.com",
+        request=Request("https://us.account.example.com/auth/regions/lookup"),
+    )
+    assert missing["continueLocally"] is True
+    assert missing["authority"] == "https://us.account.example.com"
+    assert missing.get("userId") is None
+    assert "ownedElsewhere" not in missing
 
 
 @pytest.mark.asyncio
@@ -942,3 +948,30 @@ async def test_move_keeps_placement_fenced_when_activation_cas_fails() -> None:
     assert placement is not None
     assert (placement.state, placement.epoch) == ("moving", 12)
     assert source_resumes == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_keeps_the_redirect_for_an_account_of_this_region_on_another_authority() -> None:
+    service = MultiRegionService(
+        AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn", runtime=RuntimeResolver()),
+        create_plugin_config(),
+    )
+
+    async def located(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        return {
+            "userId": "user_1",
+            "regionId": "eu-west-1",
+            "authority": "https://eu-alt.account.example.com",
+            "domain": ".example.com",
+        }
+
+    service._lookup_record = located  # type: ignore[method-assign]
+    lookup = await service.lookup(
+        identifier="ada@example.com",
+        request=Request("https://eu.account.example.com/auth/regions/lookup"),
+    )
+    # Sign-in here would refuse the other authority, so the answer sends the
+    # caller there instead of continuing locally.
+    assert lookup["continueLocally"] is False
+    assert lookup["redirectTo"] == "https://eu-alt.account.example.com"
+    assert lookup["ownedElsewhere"] is True

@@ -458,11 +458,11 @@ describe('authfn integration browser flows', () => {
       ok: true,
       data: {
         identifier: 'ada@example.com',
-        userId: expect.any(String),
         regionId: 'eu-west-1',
         authority: 'https://eu.account.example.com',
         domain: '.example.com',
         continueLocally: false,
+        ownedElsewhere: true,
         redirectTo: 'https://eu.account.example.com'
       },
       requestId: expect.any(String)

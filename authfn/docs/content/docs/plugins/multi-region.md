@@ -113,7 +113,7 @@ If you don't supply a lookup store, the plugin falls back to reading `authfn_use
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/regions/lookup` | `lookupRegion` | Look up the right region for an identifier. Used by the client SDK for pre-routing. |
+| `POST` | `/auth/regions/lookup` | `lookupRegion` | Look up the right region for an identifier. Used by the client SDK for pre-routing. The answer never includes a user id, and an account in the current region gets the same answer as an unknown identifier. In non-gateway mode, an answer pointing to another region does show that the identifier is registered there, so use gateway routing where that must not be visible. Region-mismatch errors don't name the user either. An account owned by another region carries `ownedElsewhere: true`, even when both regions share an authority. A lookup answer whose `regionId` is missing (gateway mode) or `unknown` (no region configured) leaves the identifier unresolved: the regional client neither caches it nor switches region. The regional client therefore only knows about accounts in other regions before sign-up; sign-up itself reports an existing local account. |
 | `GET` | `/auth/environment` | `getEnvironment` | Returns the resolved request environment: `{ regionId, issuer, baseUrl, … }`. |
 
 ## Schema

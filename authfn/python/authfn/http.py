@@ -1163,7 +1163,8 @@ async def _handle_region_lookup(config: AuthFnConfig, request: Any, _context: Ro
             },
         },
     )
-    return json_success(request, result)
+    # The route needs no sign-in, so the answer never names the user.
+    return json_success(request, {key: value for key, value in result.items() if key != "userId"})
 
 
 async def _handle_runtime(config: AuthFnConfig, request: Any, _context: RouteContext) -> Response:

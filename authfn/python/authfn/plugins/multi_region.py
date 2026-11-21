@@ -18,7 +18,6 @@ from ..types import (
     AuthFnPlugin,
     AuthFnRuntimeResolution,
     RegionMismatchError,
-    RegionNotFoundError,
     ValidationError,
 )
 from .gateway_routing import CanonicalRoutingConfig
@@ -204,17 +203,36 @@ class MultiRegionService:
         normalized = _normalize_identifier(identifier)
         runtime = self.resolve_runtime(request or _default_request())
         located = await self._lookup_record(normalized, request, runtime)
-        if located is None:
-            raise RegionNotFoundError("Region routing information not found")
-        continue_locally = _normalize_authority(runtime.base_url) == _normalize_authority(located["authority"])
+        current = _normalize_authority(runtime.base_url)
+        current_region = runtime.region_id or self.plugin_config.default_region_id
+        target = _normalize_authority(located["authority"]) if located else current
+        if located is None or (located["regionId"] == current_region and target == current):
+            # An unknown identifier and an account this server serves get the
+            # same answer, as in the TypeScript kernel: the route needs no
+            # sign-in. An account of this region on another authority keeps
+            # its redirect, because sign-in here compares authorities too.
+            return {
+                "identifier": normalized,
+                # Internal only (for the lookup event): the route drops it.
+                "userId": located.get("userId") if located else None,
+                "regionId": current_region or "unknown",
+                "authority": current,
+                "domain": None,
+                "continueLocally": True,
+                "redirectTo": None,
+            }
+        continue_locally = current == target
         return {
             "identifier": normalized,
+            # Internal only: the route drops it from the response.
             "userId": located.get("userId"),
             "regionId": located["regionId"],
-            "authority": _normalize_authority(located["authority"]),
+            "authority": target,
             "domain": located.get("domain"),
             "continueLocally": continue_locally,
-            "redirectTo": None if continue_locally else _normalize_authority(located["authority"]),
+            # Owned by another region or authority than this server.
+            "ownedElsewhere": True,
+            "redirectTo": None if continue_locally else target,
         }
 
     async def ensure_region_alignment(self, *, user_id: str, request: Optional[Any] = None) -> Dict[str, Any]:
@@ -238,7 +256,6 @@ class MultiRegionService:
             raise RegionMismatchError(
                 "Request must continue on a different region authority",
                 {
-                    "userId": user_id,
                     "regionId": located["regionId"],
                     "authority": target,
                     "redirectTo": target,
