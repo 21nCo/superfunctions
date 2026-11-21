@@ -144,14 +144,112 @@ function verifyMcpSdkSecurityPolicy() {
   }
 }
 
+// Semver order on major.minor.patch; a prerelease sorts below its release
+// (2.1.3-beta.1 < 2.1.3), so a prerelease of a fixed version still fails.
+function compareVersions(left, right) {
+  const [leftCore, leftPre] = left.split(/-(.*)/s);
+  const [rightCore, rightPre] = right.split(/-(.*)/s);
+  const a = leftCore.split(".").map(Number);
+  const b = rightCore.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  if (leftPre && !rightPre) return -1;
+  if (!leftPre && rightPre) return 1;
+  return 0;
+}
+
+// Version policy for the McpFn dependency graph in the workspace lockfile
+// (MCP-13). @hono/node-server 2.1.11 is the first release without
+// GHSA-rmxm-3fg6-px4f, GHSA-8wcc-wqxr-28qp and GHSA-qhm2-7mpr-ghjp. Each
+// SDK-dependent McpFn package declares it as a devDependency, so npm nests that
+// copy next to the package's SDK (D3: no root override). This covers the
+// workspace only: the SDK's own range (^1.19.9 || ^2.0.5) lets a consumer
+// resolve 1.19.x on Node 18 or keep an older 2.x from its lockfile; that
+// consumer gap and the Node engine floor are tracked in MCP-22.
+const MCPFN_DEPENDENCY_POLICIES = {
+  "@modelcontextprotocol/sdk": (version) => version === "1.32.2",
+  "fast-uri": (version) => version === "3.1.9",
+  "@hono/node-server": (version) => compareVersions(version, "2.1.11") >= 0,
+};
+
+// Resolves `name` from lockfile location `from` the way Node walks node_modules.
+function resolveLockEntry(packages, from, name) {
+  let base = from;
+  for (;;) {
+    const candidate = base ? `${base}/node_modules/${name}` : `node_modules/${name}`;
+    if (packages[candidate]) return candidate;
+    if (!base) return undefined;
+    const nested = base.lastIndexOf("/node_modules/");
+    if (nested >= 0) base = base.slice(0, nested);
+    else if (base.startsWith("node_modules/")) base = "";
+    else base = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
+  }
+}
+
 // Walks package-lock.json from every McpFn workspace (dependencies, dev and
-// peer dependencies, following workspace links) the way Node resolves
-// node_modules, and checks each reachable copy of the packages below (MCP-13).
-// @hono/node-server is checked against GHSA-rmxm-3fg6-px4f (>=1.19.10 <2.1.3).
-// The SDK range (^1.19.9 || ^2.0.5) allows a patched 2.x, so each McpFn package
-// that depends on the SDK declares @hono/node-server 2.1.11 as a devDependency;
-// npm then places that copy next to the package's SDK without moving the root
-// copy other workspaces resolve (D3: no root override needed).
+// peer dependencies, following workspace links) and checks each reachable copy
+// of the packages in MCPFN_DEPENDENCY_POLICIES.
+function walkMcpfnLockGraph(packages, workspaces) {
+  const resolved = {};
+  const violations = [];
+  const visited = new Set();
+  const queue = workspaces.map((location) => ({ location, root: true }));
+  while (queue.length > 0) {
+    const next = queue.shift();
+    const link = packages[next.location];
+    const { location, root } = link?.link ? { location: link.resolved, root: true } : next;
+    const entry = packages[location];
+    if (!entry || visited.has(location)) continue;
+    visited.add(location);
+    const names = new Set([
+      ...Object.keys(entry.dependencies ?? {}),
+      ...Object.keys(entry.optionalDependencies ?? {}),
+      ...Object.keys(entry.peerDependencies ?? {}),
+      ...(root ? Object.keys(entry.devDependencies ?? {}) : []),
+    ]);
+    for (const name of names) {
+      const target = resolveLockEntry(packages, location, name);
+      if (!target) continue;
+      const policy = MCPFN_DEPENDENCY_POLICIES[name];
+      if (policy) {
+        const version = packages[target].version;
+        resolved[name] ??= {};
+        resolved[name][target] = version;
+        if (!policy(version)) violations.push({ name, from: location, target, version });
+      }
+      queue.push({ location: target, root: false });
+    }
+  }
+  return { resolved, violations };
+}
+
+// Every workspace in the repository that depends directly on an McpFn
+// workspace package must link that workspace. An exact pin on an older version
+// (for example "@mcpfn/core": "0.0.6" after core moved to 0.0.7) silently
+// installs the published copy, with its older bundled SDK, instead.
+function unlinkedMcpfnDependents(packages) {
+  const isWorkspace = (location) => location && !location.includes("node_modules/");
+  const mcpfnWorkspaces = new Set(
+    Object.entries(packages)
+      .filter(([location, entry]) => isWorkspace(location) && entry.name?.startsWith("@mcpfn/"))
+      .map(([, entry]) => entry.name),
+  );
+  const unlinked = [];
+  for (const [location, entry] of Object.entries(packages).filter(([location]) => isWorkspace(location))) {
+    const ranges = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]
+      .flatMap((field) => Object.entries(entry[field] ?? {}))
+      .filter(([name]) => mcpfnWorkspaces.has(name));
+    for (const [name, range] of ranges) {
+      const target = resolveLockEntry(packages, location, name);
+      if (!target || !packages[target].link) {
+        unlinked.push({ from: location, name, range, target, version: target ? packages[target].version : undefined });
+      }
+    }
+  }
+  return unlinked;
+}
+
 function verifyMcpfnLockfileResolution() {
   const workspaces = [
     "mcpfn/core",
@@ -164,93 +262,9 @@ function verifyMcpfnLockfileResolution() {
   ];
   const lock = JSON.parse(readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"));
   const packages = lock.packages ?? {};
-  // Semver order on major.minor.patch; a prerelease sorts below its release
-  // (2.1.3-beta.1 < 2.1.3), so a prerelease of a fixed version still fails.
-  const compare = (left, right) => {
-    const [leftCore, leftPre] = left.split(/-(.*)/s);
-    const [rightCore, rightPre] = right.split(/-(.*)/s);
-    const a = leftCore.split(".").map(Number);
-    const b = rightCore.split(".").map(Number);
-    for (let index = 0; index < 3; index += 1) {
-      if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    if (leftPre && !rightPre) return -1;
-    if (!leftPre && rightPre) return 1;
-    return 0;
-  };
-  const policies = {
-    "@modelcontextprotocol/sdk": (version) => version === "1.32.2",
-    "fast-uri": (version) => version === "3.1.9",
-    "@hono/node-server": (version) =>
-      compare(version, "1.19.10") < 0 || compare(version, "2.1.3") >= 0,
-  };
-  const resolve = (from, name) => {
-    let base = from;
-    for (;;) {
-      const candidate = base ? `${base}/node_modules/${name}` : `node_modules/${name}`;
-      if (packages[candidate]) return candidate;
-      if (!base) return undefined;
-      const nested = base.lastIndexOf("/node_modules/");
-      if (nested >= 0) base = base.slice(0, nested);
-      else if (base.startsWith("node_modules/")) base = "";
-      else base = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
-    }
-  };
-  const resolved = {};
-  const violations = [];
-  const visited = new Set();
-  const queue = workspaces.map((workspace) => ({ location: workspace, root: true }));
-  while (queue.length > 0) {
-    let { location, root } = queue.shift();
-    let entry = packages[location];
-    if (entry?.link) {
-      location = entry.resolved;
-      entry = packages[location];
-      root = true;
-    }
-    if (!entry || visited.has(location)) continue;
-    visited.add(location);
-    const names = new Set([
-      ...Object.keys(entry.dependencies ?? {}),
-      ...Object.keys(entry.optionalDependencies ?? {}),
-      ...Object.keys(entry.peerDependencies ?? {}),
-      ...(root ? Object.keys(entry.devDependencies ?? {}) : []),
-    ]);
-    for (const name of names) {
-      const target = resolve(location, name);
-      if (!target) continue;
-      const policy = policies[name];
-      if (policy) {
-        const version = packages[target].version;
-        (resolved[name] ??= {})[target] = version;
-        if (!policy(version)) violations.push({ name, from: location, target, version });
-      }
-      queue.push({ location: target, root: false });
-    }
-  }
-  const missing = Object.keys(policies).filter((name) => !resolved[name]);
-  // Every workspace in the repository that depends directly on an McpFn
-  // workspace package must link that workspace. An exact pin on an older
-  // version (for example "@mcpfn/core": "0.0.6" after core moved to 0.0.7)
-  // silently installs the published copy, with its older bundled SDK, instead.
-  const mcpfnWorkspaces = new Set(
-    Object.entries(packages)
-      .filter(([location, entry]) => !location.includes("node_modules/") && entry.name?.startsWith("@mcpfn/"))
-      .map(([, entry]) => entry.name),
-  );
-  const unlinked = [];
-  for (const [location, entry] of Object.entries(packages)) {
-    if (!location || location.includes("node_modules/")) continue;
-    for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
-      for (const [name, range] of Object.entries(entry[field] ?? {})) {
-        if (!mcpfnWorkspaces.has(name)) continue;
-        const target = resolve(location, name);
-        if (!target || !packages[target].link) {
-          unlinked.push({ from: location, name, range, target, version: target ? packages[target].version : undefined });
-        }
-      }
-    }
-  }
+  const { resolved, violations } = walkMcpfnLockGraph(packages, workspaces);
+  const missing = Object.keys(MCPFN_DEPENDENCY_POLICIES).filter((name) => !resolved[name]);
+  const unlinked = unlinkedMcpfnDependents(packages);
   const ok = violations.length === 0 && missing.length === 0 && unlinked.length === 0;
   results.push({
     name: "dependencies:mcpfn-lockfile-resolution",

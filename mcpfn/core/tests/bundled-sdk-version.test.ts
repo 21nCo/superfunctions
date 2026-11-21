@@ -98,6 +98,50 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     expect(() => verifyBundledSdk(dir)).toThrow(`dist/index.js bundles @modelcontextprotocol/sdk 1.29.0 but package.json pins ${pinned}`);
   });
 
+  // MCP-13: the import scan reads tokens, not lines, on the real ESM and CJS bundles.
+  const executableLoads = [
+    "\nawait import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
+    "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
+    "\nvar types = __require(\n  `@modelcontextprotocol/sdk/types.js`);\n",
+    "\n/*\n * note */ import(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = require(\"@modelcontextprotocol\\x2fsdk\");\n",
+    "\nvar sdk = \\u0072equire(\"@modelcontextprotocol/sdk\\u{2f}types.js\");\n",
+  ];
+  const inertText = [
+    "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
+    "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
+    "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\nvar SDK = /from \"@modelcontextprotocol\\/sdk\"/;\n",
+    "\n// import(\"@modelcontextprotocol/sdk/types.js\")\n/* require(\n\"@modelcontextprotocol/sdk\") */\n",
+  ];
+  function appendToBuiltBundle(file: string, code: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "mcpfn-core-bundled-sdk-"));
+    fixtures.push(dir);
+    cpSync(join(packageRoot, "dist"), join(dir, "dist"), { recursive: true });
+    for (const map of ["index.js.map", "index.cjs.map"]) {
+      const path = join(dir, "dist", map);
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), sourceRoot: join(packageRoot, "dist") }));
+    }
+    writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+    writeFileSync(join(dir, "dist", file), readFileSync(join(dir, "dist", file), "utf8") + code);
+    return dir;
+  }
+
+  it.runIf(built || Boolean(process.env.CI)).each(["index.js", "index.cjs"])("rejects SDK imports split across lines or comments, or with escaped specifiers, in the built %s", (file) => {
+    for (const code of executableLoads) {
+      expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).toThrow(`dist/${file} imports @modelcontextprotocol/sdk instead of bundling it`);
+    }
+  });
+
+  it.runIf(built || Boolean(process.env.CI)).each(["index.js", "index.cjs"])("accepts valid code and SDK import text in strings, templates, regexes and comments of the built %s", (file) => {
+    for (const code of inertText) expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).not.toThrow();
+  });
+
+  it("fails closed on a bundle it cannot scan", () => {
+    expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(
+      "cannot scan the bundle for @modelcontextprotocol/sdk imports: unterminated string",
+    );
+  });
+
   it("accepts a bundle whose SDK sources come from the pinned version", () => {
     const report = verifyBundledSdk(fixture({ pin: "1.32.2", installedVersion: "1.32.2" }));
     expect(report.bundles.every(({ versions }) => versions.join() === "1.32.2")).toBe(true);

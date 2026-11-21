@@ -74,4 +74,32 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
     expect(() => verifyBundledSdk(dir)).toThrow(`dist/index.js bundles @modelcontextprotocol/sdk 1.29.0 but package.json pins ${pinned}`);
   });
+  // MCP-13: the import scan reads tokens, not lines, on the real ESM and CJS bundles.
+  it.runIf(built || Boolean(process.env.CI)).each(["index.js", "index.cjs"])("rejects split SDK imports and accepts inert SDK text in the built %s", (file) => {
+    const appended = (code: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "mcpfn-auth-bundled-sdk-"));
+      temporary.push(dir);
+      cpSync(join(packageRoot, "dist"), join(dir, "dist"), { recursive: true });
+      for (const map of ["index.js.map", "index.cjs.map"]) {
+        const path = join(dir, "dist", map);
+        writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), sourceRoot: join(packageRoot, "dist") }));
+      }
+      writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+      writeFileSync(join(dir, "dist", file), readFileSync(join(dir, "dist", file), "utf8") + code);
+      return dir;
+    };
+    for (const code of [
+      "\nawait import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
+      "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
+      "\n/*\n * note */ require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    ]) {
+      expect(() => verifyBundledSdk(appended(code))).toThrow(`dist/${file} imports @modelcontextprotocol/sdk instead of bundling it`);
+    }
+    for (const code of [
+      "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
+      "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\n// import(\"@modelcontextprotocol/sdk\")\n",
+    ]) {
+      expect(() => verifyBundledSdk(appended(code))).not.toThrow();
+    }
+  });
 });
