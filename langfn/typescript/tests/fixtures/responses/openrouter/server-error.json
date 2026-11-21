@@ -1,0 +1,16 @@
+{
+  "status": 502,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "code": 502,
+      "message": "Provider returned error",
+      "metadata": {
+        "provider_name": "OpenAI",
+        "raw": "upstream error"
+      }
+    }
+  }
+}

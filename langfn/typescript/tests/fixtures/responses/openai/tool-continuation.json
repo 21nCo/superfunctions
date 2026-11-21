@@ -1,0 +1,43 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "resp_fixture_openai_tool_continuation",
+    "object": "response",
+    "created_at": 1763683200,
+    "status": "completed",
+    "model": "gpt-5.1-2025-11-13",
+    "output": [
+      {
+        "id": "msg_fixture_openai_tool_continuation",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "It is 18 C and sunny in Paris."
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 112,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 14,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 126
+    },
+    "store": false,
+    "error": null,
+    "incomplete_details": null
+  }
+}
