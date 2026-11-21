@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   NEXT_MANIFEST,
@@ -14,6 +16,7 @@ import {
   ownerOfRelease,
   parseManifest,
   readManifest,
+  runOwnersCli,
 } from "./owners.mjs";
 
 const publicData = () => ({
@@ -219,4 +222,51 @@ test("the dev manifest makes catchfn and reviewfn public and assigns every relea
   assert.equal(ownerOfPath("reviewfn/core/package.json", { repo: "public" }), "public");
   assert.equal(ownerOfPath("package-lock.json", { repo: "public" }), "generated");
   assert.equal(ownerOfRelease("hostfn", { repo: "public" }), "public");
+});
+
+const cli = (argv) => {
+  const out = [];
+  const err = [];
+  const status = runOwnersCli(argv, { stdout: (line) => out.push(line), stderr: (line) => err.push(line) });
+  return { status, out, err: err.join("\n") };
+};
+
+test("the owners command prints each path's owner and fails on an unlisted path (SFNS-128)", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, PUBLIC_MANIFEST), JSON.stringify(publicData()));
+
+  assert.deepEqual(cli(["--root", dir, "datafn/core/src/", "package-lock.json"]), {
+    status: 0,
+    out: ["datafn/core/src: public", "package-lock.json: generated"],
+    err: "",
+  });
+  const unlisted = cli(["--root", dir, "datafn", "docsfn/x"]);
+  assert.equal(unlisted.status, 1);
+  assert.deepEqual(unlisted.out, ["datafn: public"]);
+  assert.match(unlisted.err, /unlisted-path/);
+  assert.deepEqual(cli(["--root", dir, "--repo=next", "docsfn/x"]).out, ["docsfn/x: public"]);
+
+  writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
+  assert.deepEqual(cli(["--root", dir, "docsfn/x", "NEXT.md", "--", "--odd"]).out, ["docsfn/x: next", "NEXT.md: next", "--odd: public"]);
+});
+
+test("the owners command rejects bad arguments and unreadable manifests", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(cli([]).status, 2);
+  assert.equal(cli(["--repo", "elsewhere", "datafn"]).status, 2);
+  assert.equal(cli(["--root"]).status, 2);
+  assert.equal(cli(["--bogus", "datafn"]).status, 2);
+  const missing = cli(["--root", dir, "datafn"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.err, /manifest-not-found/);
+  assert.match(cli(["/etc/passwd"]).err, /invalid-path/);
+});
+
+test("node scripts/owners.mjs <path> runs as a command in this checkout", () => {
+  const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [script, "AGENTS.md", "catchfn/typescript"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "AGENTS.md: public\ncatchfn/typescript: public\n");
 });

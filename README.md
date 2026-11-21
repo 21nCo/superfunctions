@@ -278,6 +278,10 @@ There was no root semantic version tag in the inventory; choosing/pushing one
 and creating a Swift release are separate authorization steps, not part of the
 current workflow repair.
 
+## Repositories
+
+This repository, `21nCo/superfunctions` (branch `dev`), is where published functions and all shared code are developed. Functions that are not yet published live in a private repository, `21nCo/super-functions.next`, which receives everything public from `dev` through an automatic one-way sync. `superfunctions.owners.json` lists what this repository owns; `node scripts/owners.mjs <path>` prints a path's owner. A function moves here when it is ready to publish, through `scripts/promote.mjs`. [AGENTS.md](AGENTS.md) states the full model.
+
 ## Contributing
 
 Due to the current size of our team, we are not accepting external contributions at this time. We appreciate your interest and understanding.

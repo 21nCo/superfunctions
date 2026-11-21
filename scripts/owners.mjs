@@ -324,3 +324,73 @@ export function ownerOfRelease(slug, options) {
 export function ownerOfPython(project, options) {
   return defaultOwners().ownerOfPython(project, options);
 }
+
+const CLI_USAGE = "usage: node scripts/owners.mjs [--repo public|next] [--root <checkout>] <path>...";
+
+/**
+ * Command line lookup (SFNS-128): prints `<path>: <owner>` for each repository-relative path, where the owner is
+ * "public", "next" or "generated". Returns the exit status: 0 when every path has an owner, 1 when a manifest or
+ * a path is rejected (an unlisted path on public, for example), 2 for a usage error.
+ * @param {string[]} argv
+ * @param {{ stdout?: (line: string) => void, stderr?: (line: string) => void }} [io]
+ */
+export function runOwnersCli(argv, { stdout = console.log, stderr = console.error } = {}) {
+  const options = {};
+  const targets = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--") {
+      targets.push(...argv.slice(index + 1));
+      break;
+    }
+    if (arg === "-h" || arg === "--help") {
+      stdout(CLI_USAGE);
+      return 0;
+    }
+    if (arg.startsWith("-")) {
+      const [flag, inline] = arg.split(/=(.*)/s, 2);
+      if (flag !== "--repo" && flag !== "--root") {
+        stderr(`error: unknown option ${arg}\n${CLI_USAGE}`);
+        return 2;
+      }
+      const value = inline ?? argv[++index];
+      if (value === undefined || value === "") {
+        stderr(`error: ${flag} needs a value\n${CLI_USAGE}`);
+        return 2;
+      }
+      options[flag.slice(2)] = value;
+      continue;
+    }
+    targets.push(arg);
+  }
+  if (targets.length === 0) {
+    stderr(`error: name at least one path\n${CLI_USAGE}`);
+    return 2;
+  }
+  if (options.repo !== undefined && !REPOS.includes(options.repo)) {
+    stderr(`error: --repo must be "public" or "next", not ${JSON.stringify(options.repo)}\n${CLI_USAGE}`);
+    return 2;
+  }
+  let owners;
+  try {
+    owners = loadOwners({ root: options.root ? path.resolve(options.root) : REPO_ROOT });
+  } catch (error) {
+    stderr(error instanceof OwnersError ? `error (${error.code}): ${error.message}` : `error: ${error.message}`);
+    return 1;
+  }
+  let status = 0;
+  for (const target of targets) {
+    try {
+      stdout(`${normalizePath(target)}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
+    } catch (error) {
+      if (!(error instanceof OwnersError)) throw error;
+      stderr(`error (${error.code}): ${error.message}`);
+      status = 1;
+    }
+  }
+  return status;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = runOwnersCli(process.argv.slice(2));
+}
