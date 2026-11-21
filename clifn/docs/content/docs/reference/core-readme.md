@@ -25,6 +25,7 @@ New additive subpaths are exported for the generic CLI-builder surface:
 - `@clifn/core/diagnostics`
 - `@clifn/core/exec`
 - `@clifn/core/scaffold`
+- `@clifn/core/paths`
 
 ## Install
 
@@ -212,11 +213,14 @@ Consumer ownership stays explicit:
 ### `@clifn/core/credentials`
 
 - `createCredentialStore(path?)` -> INI profile store.
+- `createCredentialStore({ appName })` -> the same store at `<config>/credentials` from `resolveAppPaths(appName)`; `{ path }` equals the string form. Without an argument the Conduct default `~/.conduct/credentials` stays.
 - `MissingProfileError` -> typed error when profile is not found.
 
 ### `@clifn/core/config`
 
 - `createProjectConfig(path?)` -> JSON project config store.
+- `createProjectConfig({ appName, fileName? })` -> `<config>/<fileName>` (default `config.json`); `{ cwd?, fileName }` -> a project-local file; `{ path }` equals the string form. Without an argument the Conduct default `conduct.config.json` stays.
+- `fileName` must stay inside its directory; malformed options throw `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`).
 - `InvalidConfigError` -> typed error for invalid JSON/object shapes.
 
 ### `@clifn/core/client`
@@ -268,6 +272,12 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - subprocess execution contract for buffered capture, streaming, and timeout reporting
 - `@clifn/core/scaffold`
   - deterministic file and directory scaffolding contract with explicit overwrite policy
+- `@clifn/core/paths`
+  - `resolveAppPaths(appName, { platform?, env?, homedir? })` -> `{ config, state, cache }`: `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_CACHE_HOME` (else `~/.config`, `~/.local/state`, `~/.cache`) followed by `/<app>` on Linux, macOS and other POSIX platforms; `%APPDATA%\<app>` and `%LOCALAPPDATA%\<app>\State` / `\Cache` on Windows (else `<home>\AppData\Roaming` / `Local`)
+  - environment values count only when they are absolute paths; relative or empty values use the defaults
+  - app names match `^[a-z0-9][a-z0-9._-]{0,63}$`, else `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`)
+  - `ensureAppDir(dir)` creates a missing directory with mode `0o700` on POSIX and resolves to `dir`; concurrent calls on one path both resolve
+  - symlinks or directories that another program plants under these paths are not defended against yet
 
 ## Adoption boundary
 
@@ -393,7 +403,7 @@ Use these public subpaths directly; do not import from internal `dist/*` paths.
 
 ## Application credentials and safe retry defaults
 
-Pass an explicit path to `createCredentialStore` for each product (for example its own config directory); the legacy default remains Conduct-specific. Writes hold an exclusive sibling `.lock`, write and fsync a unique mode-0600 temporary file, then rename it atomically. Concurrent writes fail with `CLIFN_CREDENTIAL_STORE_BUSY` rather than losing updates. After a process crash, stop all writers and inspect/remove only its stale lock before retrying. Symlink credential files are rejected. Filesystem permissions are a fallback, not encryption or an OS keychain.
+Pass `{ appName }` (or an explicit path) to `createCredentialStore` for each product so it stores credentials in its own config directory; the legacy no-argument default remains Conduct-specific. Writes hold an exclusive sibling `.lock`, write and fsync a unique mode-0600 temporary file, then rename it atomically. Concurrent writes fail with `CLIFN_CREDENTIAL_STORE_BUSY` rather than losing updates. After a process crash, stop all writers and inspect/remove only its stale lock before retrying. Symlink credential files are rejected. Filesystem permissions are a fallback, not encryption or an OS keychain.
 
 The synchronous `CredentialStore` interface is injectable into `createApiClient`. A consumer keychain adapter should use a product-specific service name and profile account, store each complete `{backend,key}` value atomically, and expose only profile names in diagnostics. An asynchronous OS keychain can be loaded at CLI startup into a short-lived in-memory implementation; persist changes through the keychain before reporting success. Never serialize keychain values to a config file as an implicit fallback.
 

@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import ini from "ini";
+import type { AppPathsOptions } from "./paths.js";
+import { appConfigFile, exclusiveKey, InvalidStoreOptionsError } from "./store-options.js";
+
+export { InvalidStoreOptionsError };
 
 export interface CredentialProfile {
   backend: string;
@@ -88,7 +92,38 @@ function mutateProfiles(path: string, change: (profiles: Record<string, Credenti
   finally { closeSync(fd); unlinkSync(`${path}.lock`); }
 }
 
-export function createCredentialStore(path = DEFAULT_CREDENTIALS_PATH): CredentialStore {
+/**
+ * `{ appName }` stores credentials at `<config>/credentials` from `resolveAppPaths(appName)`, passing `platform`,
+ * `env` and `homedir` through. `{ path }` is the same as passing the path string.
+ */
+export type CredentialStoreOptions =
+  | ({ appName: string; path?: never } & AppPathsOptions)
+  | { path: string; appName?: never };
+
+function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions | undefined): string {
+  if (pathOrOptions === undefined) {
+    return DEFAULT_CREDENTIALS_PATH;
+  }
+  if (typeof pathOrOptions !== "object" || pathOrOptions === null) {
+    // A string, and any other non-object a JavaScript caller passes, is used as the path exactly as before 0.3.0.
+    return pathOrOptions as string;
+  }
+  const options = pathOrOptions as Record<string, unknown>;
+  if (exclusiveKey(options, ["appName", "path"]) === "path") {
+    if (typeof options.path !== "string") {
+      throw new InvalidStoreOptionsError("path must be a string");
+    }
+    return options.path;
+  }
+  return appConfigFile(options.appName as string, "credentials", options as AppPathsOptions);
+}
+
+/**
+ * A path string, `{ path }`, or `{ appName }` (see `CredentialStoreOptions`). Without an argument the store keeps
+ * the Conduct default `~/.conduct/credentials` (D2).
+ */
+export function createCredentialStore(pathOrOptions?: string | CredentialStoreOptions): CredentialStore {
+  const path = resolveCredentialsPath(pathOrOptions);
   return {
     path,
     getProfile(name: string): CredentialProfile {
