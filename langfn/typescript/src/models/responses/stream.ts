@@ -117,8 +117,15 @@ export async function* mapResponsesStream(
         const output = omitted
           ? [...doneItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item)
           : response.output;
-        // The event type is authoritative: a response.incomplete event never yields executable calls.
-        const status = type === "response.incomplete" ? "incomplete" : response.status;
+        // The event type fills only an absent status. An explicit failed status raises its typed
+        // error in parseResponsesResponse; any other explicit status must match the event, so a
+        // response.incomplete event never yields executable calls.
+        const eventStatus = type === "response.incomplete" ? "incomplete" : "completed";
+        const explicitStatus = response.status;
+        if (explicitStatus !== undefined && explicitStatus !== null && explicitStatus !== "failed" && explicitStatus !== eventStatus) {
+          throw fail(`Responses ${type} event conflicts with its response status ${String(explicitStatus)}`);
+        }
+        const status = explicitStatus === undefined || explicitStatus === null ? eventStatus : explicitStatus;
         const result = parseResponsesResponse({ ...response, status, output }, provider);
         for (const call of result.toolCalls ?? []) {
           yield { type: "tool_call", id: call.id, toolName: call.name, args: call.arguments };

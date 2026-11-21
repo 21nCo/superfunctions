@@ -47,6 +47,30 @@ it("keeps the byte-limit error when cancelling the reader also fails", async () 
   await expect(read()).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
   expect(body.locked).toBe(false);
 });
+it("does not wait for a reader cancel that never settles", async () => {
+  const hanging = (text: string) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(text));
+      },
+      cancel: () => new Promise<void>(() => {}),
+    });
+  const tooLong = hanging("x".repeat(32));
+  const read = async () => {
+    for await (const _line of readStreamLines(tooLong, 8)) {
+      // drain
+    }
+  };
+  await expect(read()).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+  expect(tooLong.locked).toBe(false);
+
+  const open = hanging("first\nsecond\n");
+  for await (const line of readStreamLines(open)) {
+    expect(line).toBe("first");
+    break;
+  }
+  expect(open.locked).toBe(false);
+});
 it("splits on bare CR and CRLF across chunks only when asked", async () => {
   const chunks = ["a\r", "\nb\rc", "\r", "\n"];
   const stream = () =>

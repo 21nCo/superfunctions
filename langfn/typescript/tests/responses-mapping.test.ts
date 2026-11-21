@@ -228,6 +228,63 @@ describe("stream mapping", () => {
     expect(unframed.seen).toEqual([]);
   });
 
+  it("rejects empty or whitespace arguments on an executable call on the JSON and SSE paths", async () => {
+    for (const args of ["", "  \n"]) {
+      for (const status of [{ status: "completed" }, {}, { status: null }]) {
+        const call = { type: "function_call", ...status, call_id: "call_fixture", name: "lookup", arguments: args };
+        expect(() => parseResponsesResponse(completed([call]), "fixture")).toThrow("not empty");
+        // With the terminal output present, and omitted so it is rebuilt from the finished items.
+        for (const response of [completed([call]), { id: "resp_fixture_mapping", status: "completed" }]) {
+          const outcome = await mapRaw(
+            frame({ type: "response.output_item.done", output_index: 0, item: call }) + frame({ type: "response.completed", response }),
+          );
+          expect(outcome.error).toBeInstanceOf(ProviderError);
+          expect(String(outcome.error)).toContain("not empty");
+          expect(outcome.seen).toEqual([]);
+        }
+      }
+    }
+    // "{}" is the zero-argument form.
+    const zero = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    expect(parseResponsesResponse(completed([zero]), "fixture").toolCalls).toEqual([{ id: "call_fixture", name: "lookup", arguments: {} }]);
+    // An explicitly unfinished call in an incomplete response stays non-executable and is not replayed.
+    const cut = parseResponsesResponse({ status: "incomplete", output: [{ ...zero, status: "incomplete", arguments: "" }] }, "fixture");
+    expect(cut.toolCalls).toBeUndefined();
+    expect(cut.message.responsesOutput).toEqual([]);
+  });
+
+  it("lets the terminal event fill only an absent status", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    // An explicit failed status raises the typed error whatever the event says.
+    for (const type of ["response.incomplete", "response.completed"]) {
+      const failed = await mapRaw(frame({ type, response: { id: "resp_fixture_mapping", status: "failed", error: null, output: [call] } }));
+      expect(failed.error).toBeInstanceOf(ProviderError);
+      expect(String(failed.error)).toContain("Responses request failed");
+      expect(failed.seen).toEqual([]);
+    }
+    const limited = await mapRaw(frame({
+      type: "response.incomplete",
+      response: { status: "failed", error: { code: "rate_limit_exceeded", message: "slow down" }, output: [] },
+    }));
+    expect(limited.error).toBeInstanceOf(RateLimitError);
+    expect(limited.seen).toEqual([]);
+    // Any other explicit status that disagrees with the event is not replaced.
+    for (const [type, status] of [["response.incomplete", "completed"], ["response.completed", "incomplete"], ["response.completed", "in_progress"]]) {
+      const outcome = await mapRaw(frame({ type, response: { status, output: [call] } }));
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(`${type} event conflicts with its response status ${status}`);
+      expect(outcome.seen).toEqual([]);
+    }
+    // An absent or null status is filled by the event.
+    for (const status of [{}, { status: null }]) {
+      const cut = await mapRaw(frame({ type: "response.incomplete", response: { ...status, output: [call] } }));
+      expect(cut.seen.map((event) => event.type)).toEqual(["message", "end"]);
+      expect(cut.seen.at(-1)).toEqual({ type: "end", finish_reason: "incomplete" });
+      const finished = await mapRaw(frame({ type: "response.completed", response: { ...status, output: [call] } }));
+      expect(finished.seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+  });
+
   it("maps raw reasoning text deltas and an OpenAI-shaped error event", async () => {
     const events: StreamEvent[] = [];
     const error = await (async () => {
@@ -377,6 +434,14 @@ describe("request mapping", () => {
       { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":\"x\"}" },
     ],
   } satisfies ResponsesMessage;
+
+  it("rejects assistant tool calls that repeat an id before sending", () => {
+    const call = { id: "call_fixture", name: "lookup", arguments: {} };
+    expect(() => payload([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "", toolCalls: [call, { ...call, arguments: { city: "Paris" } }] },
+    ])).toThrow("repeat id call_fixture");
+  });
 
   it("replays provider items unchanged, with ids and statuses, and drops unreplayable reasoning", () => {
     const input = payload([{ role: "user", content: "go" }, replayed]).input as Record<string, unknown>[];
@@ -637,6 +702,41 @@ describe("ResponsesChatModel configuration", () => {
       }
     })().catch((caught: unknown) => caught);
     expect(aborted).toBe(reason);
+  });
+
+  it("delivers nothing more after the caller aborts, even when events are already buffered", async () => {
+    const calls = [1, 2].map((n) => ({ type: "function_call", status: "completed", call_id: `call_fixture_${n}`, name: "lookup", arguments: "{}" }));
+    // The whole body, a delta and a terminal response with two calls, arrives in one chunk.
+    const text = [
+      { type: "response.output_text.delta", delta: "partial" },
+      { type: "response.completed", response: completed(calls) },
+    ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
+    for (const abortOn of ["content", "tool_call"] as const) {
+      const controller = new AbortController();
+      const reason = new Error(`caller cancelled on ${abortOn}`);
+      const model = gateway(async () => new Response(text, { status: 200 }), { timeout: 0 });
+      const seen: StreamEvent[] = [];
+      const outcome = await (async () => {
+        for await (const event of model.streamChat({ messages: [{ role: "user", content: "x" }], signal: controller.signal })) {
+          seen.push(event);
+          if (event.type === abortOn) controller.abort(reason);
+        }
+      })().catch((caught: unknown) => caught);
+      expect(outcome).toBe(reason);
+      expect(seen.map((event) => event.type)).toEqual(abortOn === "content" ? ["content"] : ["content", "tool_call"]);
+    }
+  });
+
+  it("completes after the terminal event although the body stays open and its cancel never settles", async () => {
+    const terminal = { type: "response.completed", response: completed([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]) };
+    const open = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(terminal)}\n\ndata: [DONE]\n\n`));
+      },
+      cancel: () => new Promise<void>(() => {}),
+    }), { status: 200 });
+    const events = await collect(gateway(async () => open(), { timeout: 0 }).streamChat({ messages: [{ role: "user", content: "x" }] }));
+    expect(events.at(-1)).toEqual({ type: "end", finish_reason: "stop" });
   });
 
   it("reads a terminal event longer than 1 MiB by default and honours maxStreamLineBytes", async () => {

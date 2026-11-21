@@ -166,6 +166,12 @@ function toAssistantItems(message: ResponsesMessage, index: number, profile: Cap
     throw new ValidationError(`Message ${index}: invalid assistant tool calls`, { cause: error });
   }
   if (toolCalls?.length) requireCapability(profile, "tools", "the history contains assistant tool calls");
+  // Tool results are matched to calls by id, so two calls with one id would be ambiguous.
+  const callIds = new Set<string>();
+  for (const call of toolCalls ?? []) {
+    if (callIds.has(call.id)) throw new ValidationError(`Message ${index}: assistant tool calls repeat id ${call.id}`);
+    callIds.add(call.id);
+  }
 
   if (message.responsesOutput !== undefined) {
     return replayOutputItems(message, toolCalls ?? [], index, profile);

@@ -137,7 +137,15 @@ export class ResponsesChatModel extends ChatModel {
     const payload = this.payload(request, true);
     const response = await this.send(payload, request.signal, "text/event-stream");
     if (!response.body) throw new ProviderError("Responses stream body was empty", { provider: this.provider });
-    yield* mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider);
+    const signal = request.signal;
+    // Events may already be buffered when the caller aborts, so the signal is checked before
+    // every yield: after an abort nothing more is delivered and the stream rejects with the
+    // abort reason instead of finishing normally.
+    for await (const event of mapResponsesStream(readServerSentEvents(response.body, this.maxStreamLineBytes), this.provider)) {
+      throwIfAborted(signal);
+      yield event;
+    }
+    throwIfAborted(signal);
   }
 
   private payload(request: ResponsesChatRequest, stream: boolean): Record<string, unknown> {
@@ -198,6 +206,10 @@ export class ResponsesChatModel extends ChatModel {
     await raiseForResponsesStatus(this.provider, response, signal);
     return response;
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason;
 }
 
 function discardBody(response: Response): void {

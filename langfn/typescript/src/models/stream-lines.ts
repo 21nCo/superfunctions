@@ -67,12 +67,13 @@ export async function* readStreamLines(
     buffer += decoder.decode();
     if (buffer) yield buffer;
   } finally {
+    // Cancel without waiting: a cancel that never settles must not withhold the error, the
+    // completion or the early return that ended the read, and its rejection must not replace them.
     try {
-      await reader.cancel();
+      reader.cancel().catch(() => undefined);
     } catch {
-      // Cleanup must not replace the error (or result) that ended the read.
-    } finally {
-      reader.releaseLock();
+      // A reader that cannot be cancelled is still released.
     }
+    reader.releaseLock();
   }
 }

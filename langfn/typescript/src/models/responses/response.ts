@@ -142,9 +142,12 @@ export function parseFunctionCall(item: JsonRecord, provider: string): ToolCall 
   if (typeof item.call_id !== "string" || !item.call_id) throw fail("Responses function_call requires call_id");
   if (typeof item.name !== "string" || !item.name) throw fail("Responses function_call requires name");
   if (typeof item.arguments !== "string") throw fail("Responses function_call arguments must be a JSON string");
+  // An executable call always carries a JSON object string ("{}" when it takes no arguments);
+  // empty arguments mean the call was cut off, not that it has none.
+  if (!item.arguments.trim()) throw fail("Responses function_call arguments must be a JSON object string, not empty");
   let args: unknown;
   try {
-    args = item.arguments.trim() ? JSON.parse(item.arguments) : {};
+    args = JSON.parse(item.arguments);
   } catch (error) {
     throw new ProviderError("Responses function_call arguments are not valid JSON", { provider, cause: error });
   }
