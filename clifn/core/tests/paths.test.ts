@@ -86,6 +86,11 @@ const winRows: Row[] = [
     { ...winDefaults, config: "\\\\srv\\share\\roam\\my-cli" },
   ],
   [
+    "win32: a UNC value without a share falls back",
+    { platform: "win32", homedir: WIN_HOME, env: { APPDATA: "\\\\srv", LOCALAPPDATA: "\\\\srv\\" } },
+    winDefaults,
+  ],
+  [
     "win32: XDG variables are ignored",
     { platform: "win32", homedir: WIN_HOME, env: { XDG_CONFIG_HOME: "C:\\xdg", XDG_STATE_HOME: "C:\\xdg", XDG_CACHE_HOME: "C:\\xdg" } },
     winDefaults,
@@ -116,6 +121,18 @@ describe("resolveAppPaths", () => {
     ["win32", "\\Users\\ada"],
   ] as const)("rejects a non-absolute home directory on %s (%j)", (platform, homedir) => {
     expect(() => resolveAppPaths("my-cli", { platform, homedir, env: {} })).toThrow(InvalidHomeDirectoryError);
+  });
+
+  it.each([
+    ["linux", { XDG_CONFIG_HOME: "/xdg/config", XDG_STATE_HOME: "/xdg/state", XDG_CACHE_HOME: "/xdg/cache" }],
+    ["win32", { APPDATA: "D:\\Roam", LOCALAPPDATA: "D:\\Loc" }],
+  ] as const)("does not need the home directory on %s when every variable is absolute", (platform, env) => {
+    expect(() => resolveAppPaths("my-cli", { platform, homedir: "relative-home", env })).not.toThrow();
+  });
+
+  it("still rejects a non-absolute home directory when one default needs it", () => {
+    const env = { XDG_CONFIG_HOME: "/xdg/config", XDG_STATE_HOME: "/xdg/state" };
+    expect(() => resolveAppPaths("my-cli", { platform: "linux", homedir: "relative-home", env })).toThrow(InvalidHomeDirectoryError);
   });
 });
 

@@ -48,9 +48,12 @@ function assertAppName(appName: unknown): asserts appName is string {
   }
 }
 
-/** A drive-qualified (`C:\`) or UNC (`\\server\share`) path; rooted-but-driveless paths such as `\dir` are relative to the current drive. */
+/**
+ * A drive-qualified (`C:\`) or UNC (`\\server\share`) path. Rooted-but-driveless paths such as `\dir` are relative
+ * to the current drive, and a UNC prefix without both a server and a share (`\\server`) is not a usable root.
+ */
 function isAbsoluteWin32(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]/.test(value);
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/]+[^\\/]+/.test(value);
 }
 
 /** XDG rule: an environment value counts only when it is a non-empty absolute path. */
@@ -75,14 +78,24 @@ export function resolveAppPaths(appName: string, options: AppPathsOptions = {}):
   assertAppName(appName);
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
-  const home = options.homedir ?? osHomedir();
+  const isAbsolute = platform === "win32" ? isAbsoluteWin32 : posix.isAbsolute;
+  // The home directory is read and validated only when a default is needed, so absolute environment values for
+  // every directory resolve even when the home directory is unavailable or not absolute.
+  let home: string | undefined;
+  const homeDir = (): string => {
+    if (home === undefined) {
+      const candidate = options.homedir ?? osHomedir();
+      if (!isAbsolute(candidate)) {
+        throw new InvalidHomeDirectoryError(candidate);
+      }
+      home = candidate;
+    }
+    return home;
+  };
 
   if (platform === "win32") {
-    if (!isAbsoluteWin32(home)) {
-      throw new InvalidHomeDirectoryError(home);
-    }
-    const roaming = absoluteEnv(env, "APPDATA", isAbsoluteWin32) ?? win32.join(home, "AppData", "Roaming");
-    const local = absoluteEnv(env, "LOCALAPPDATA", isAbsoluteWin32) ?? win32.join(home, "AppData", "Local");
+    const roaming = absoluteEnv(env, "APPDATA", isAbsolute) ?? win32.join(homeDir(), "AppData", "Roaming");
+    const local = absoluteEnv(env, "LOCALAPPDATA", isAbsolute) ?? win32.join(homeDir(), "AppData", "Local");
     return {
       config: win32.join(roaming, appName),
       state: win32.join(local, appName, "State"),
@@ -90,12 +103,9 @@ export function resolveAppPaths(appName: string, options: AppPathsOptions = {}):
     };
   }
 
-  if (!posix.isAbsolute(home)) {
-    throw new InvalidHomeDirectoryError(home);
-  }
-  const configHome = absoluteEnv(env, "XDG_CONFIG_HOME", posix.isAbsolute) ?? posix.join(home, ".config");
-  const stateHome = absoluteEnv(env, "XDG_STATE_HOME", posix.isAbsolute) ?? posix.join(home, ".local", "state");
-  const cacheHome = absoluteEnv(env, "XDG_CACHE_HOME", posix.isAbsolute) ?? posix.join(home, ".cache");
+  const configHome = absoluteEnv(env, "XDG_CONFIG_HOME", isAbsolute) ?? posix.join(homeDir(), ".config");
+  const stateHome = absoluteEnv(env, "XDG_STATE_HOME", isAbsolute) ?? posix.join(homeDir(), ".local", "state");
+  const cacheHome = absoluteEnv(env, "XDG_CACHE_HOME", isAbsolute) ?? posix.join(homeDir(), ".cache");
   return {
     config: posix.join(configHome, appName),
     state: posix.join(stateHome, appName),

@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { AppPathsOptions } from "./paths.js";
-import { appConfigFile, InvalidStoreOptionsError, joinStoreFile, pathModuleFor } from "./store-options.js";
+import {
+  appConfigFile,
+  InvalidStoreOptionsError,
+  joinStoreFile,
+  pathModuleFor,
+  type StoreAppPathsOptions,
+} from "./store-options.js";
 
 export { InvalidStoreOptionsError };
 
@@ -52,15 +57,15 @@ function parseConfig<TConfig extends Record<string, unknown>>(path: string): TCo
 }
 
 /**
- * - `{ appName, fileName? }`: `<config>/<fileName>` from `resolveAppPaths(appName)` (default `config.json`), passing
- *   `platform`, `env` and `homedir` through; directories it creates get mode `0o700` on POSIX.
+ * - `{ appName, fileName? }`: `<config>/<fileName>` from `resolveAppPaths(appName)` on the current platform (default
+ *   `config.json`), passing `env` and `homedir` through; directories it creates get mode `0o700` on POSIX.
  * - `{ cwd?, fileName }`: a project-local file, `fileName` resolved against `cwd` (default `process.cwd()` at call time).
  * - `{ path }`: the same as passing the path string.
  *
  * `fileName` is relative and stays inside its directory (subdirectories allowed, no `..` escape).
  */
 export type ProjectConfigOptions =
-  | ({ appName: string; fileName?: string; path?: never; cwd?: never } & AppPathsOptions)
+  | ({ appName: string; fileName?: string; path?: never; cwd?: never } & StoreAppPathsOptions)
   | { cwd?: string; fileName: string; appName?: never; path?: never }
   | { path: string; appName?: never; cwd?: never; fileName?: never };
 
@@ -87,7 +92,7 @@ function resolveConfigTarget(pathOrOptions: string | ProjectConfigOptions | unde
   }
   if (has("appName")) {
     const fileName = has("fileName") ? options.fileName : "config.json";
-    return { path: appConfigFile(options.appName as string, fileName, options as AppPathsOptions), dirMode: 0o700 };
+    return { path: appConfigFile(options.appName as string, fileName, options), dirMode: 0o700 };
   }
   if (has("path")) {
     if (has("fileName")) {

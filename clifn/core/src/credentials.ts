@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import ini from "ini";
-import type { AppPathsOptions } from "./paths.js";
-import { appConfigFile, exclusiveKey, InvalidStoreOptionsError } from "./store-options.js";
+import { appConfigFile, exclusiveKey, InvalidStoreOptionsError, type StoreAppPathsOptions } from "./store-options.js";
 
 export { InvalidStoreOptionsError };
 
@@ -93,11 +92,11 @@ function mutateProfiles(path: string, change: (profiles: Record<string, Credenti
 }
 
 /**
- * `{ appName }` stores credentials at `<config>/credentials` from `resolveAppPaths(appName)`, passing `platform`,
- * `env` and `homedir` through. `{ path }` is the same as passing the path string.
+ * `{ appName }` stores credentials at `<config>/credentials` from `resolveAppPaths(appName)` on the current platform,
+ * passing `env` and `homedir` through. `{ path }` is the same as passing the path string.
  */
 export type CredentialStoreOptions =
-  | ({ appName: string; path?: never } & AppPathsOptions)
+  | ({ appName: string; path?: never } & StoreAppPathsOptions)
   | { path: string; appName?: never };
 
 function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions | undefined): string {
@@ -115,7 +114,7 @@ function resolveCredentialsPath(pathOrOptions: string | CredentialStoreOptions |
     }
     return options.path;
   }
-  return appConfigFile(options.appName as string, "credentials", options as AppPathsOptions);
+  return appConfigFile(options.appName as string, "credentials", options);
 }
 
 /**

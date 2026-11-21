@@ -1,9 +1,10 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { createCredentialStore, InvalidStoreOptionsError } from "../src/credentials.js";
 import { createProjectConfig } from "../src/config.js";
 import { InvalidAppNameError } from "../src/paths.js";
+import { joinStoreFile } from "../src/store-options.js";
 
 // The defaults as they are defined at the reference commit (D2): these must never move.
 const CONDUCT_CREDENTIALS_PATH = join(homedir(), ".conduct", "credentials");
@@ -11,6 +12,8 @@ const CONDUCT_CONFIG_PATH = join(process.cwd(), "conduct.config.json");
 
 const PROFILE = { backend: "https://api.example.test", key: "test-api-key" };
 const POSIX = process.platform !== "win32";
+const FOREIGN_PLATFORM: NodeJS.Platform = POSIX ? "win32" : "linux";
+const HOME = POSIX ? "/home/ada" : "C:\\Users\\ada";
 
 let tempRoot: string;
 
@@ -51,13 +54,28 @@ describe("createCredentialStore", () => {
     expect(store.path).not.toContain(".conduct");
   });
 
-  it("{ appName } passes platform, env and homedir through to resolveAppPaths", () => {
-    expect(createCredentialStore({ appName: "my-cli", platform: "linux", homedir: "/home/ada", env: {} }).path).toBe(
+  it.runIf(POSIX)("{ appName } passes env and homedir through to resolveAppPaths", () => {
+    expect(createCredentialStore({ appName: "my-cli", homedir: "/home/ada", env: {} }).path).toBe(
       "/home/ada/.config/my-cli/credentials",
     );
-    expect(
-      createCredentialStore({ appName: "my-cli", platform: "win32", homedir: "C:\\Users\\ada", env: { APPDATA: "D:\\Roam" } }).path,
-    ).toBe("D:\\Roam\\my-cli\\credentials");
+    expect(createCredentialStore({ appName: "my-cli", homedir: "/home/ada", env: { XDG_CONFIG_HOME: "/xdg" } }).path).toBe(
+      "/xdg/my-cli/credentials",
+    );
+  });
+
+  it("accepts the current platform passed explicitly", () => {
+    const options = { appName: "my-cli", homedir: HOME, env: {} };
+    expect(createCredentialStore({ ...options, platform: process.platform } as never).path).toBe(
+      createCredentialStore(options).path,
+    );
+  });
+
+  it("rejects a foreign platform before any filesystem call", () => {
+    const cwdMode = statSync(process.cwd()).mode;
+    const options = { appName: "my-cli", platform: FOREIGN_PLATFORM, homedir: "C:\\Users\\ada", env: { APPDATA: "D:\\Roam" } };
+    expect(() => createCredentialStore(options as never)).toThrow(InvalidStoreOptionsError);
+    expect(() => createProjectConfig(options as never)).toThrow(InvalidStoreOptionsError);
+    expect(statSync(process.cwd()).mode).toBe(cwdMode);
   });
 
   it("rejects an invalid app name", () => {
@@ -101,15 +119,12 @@ describe("createProjectConfig", () => {
     }
   });
 
-  it("{ appName, fileName } uses the file name under the config directory", () => {
-    const options = { appName: "my-cli", platform: "linux", homedir: "/home/ada", env: {} } as const;
+  it.runIf(POSIX)("{ appName, fileName } uses the file name under the config directory", () => {
+    const options = { appName: "my-cli", homedir: "/home/ada", env: {} } as const;
     expect(createProjectConfig({ ...options, fileName: "settings.json" }).path).toBe("/home/ada/.config/my-cli/settings.json");
     expect(createProjectConfig({ ...options, fileName: "profiles/dev.json" }).path).toBe(
       "/home/ada/.config/my-cli/profiles/dev.json",
     );
-    expect(
-      createProjectConfig({ appName: "my-cli", platform: "win32", homedir: "C:\\Users\\ada", env: {}, fileName: "a/b.json" }).path,
-    ).toBe("C:\\Users\\ada\\AppData\\Roaming\\my-cli\\a\\b.json");
   });
 
   it("{ cwd, fileName } resolves a project-local file", () => {
@@ -141,10 +156,11 @@ describe("createProjectConfig", () => {
     expect(() => createProjectConfig({ cwd: tempRoot, fileName })).toThrow(InvalidStoreOptionsError);
   });
 
-  it("rejects a Windows parent escape when paths resolve for win32", () => {
-    expect(() =>
-      createProjectConfig({ appName: "my-cli", platform: "win32", homedir: "C:\\Users\\ada", env: {}, fileName: "..\\outside.json" }),
-    ).toThrow(InvalidStoreOptionsError);
+  it("joins and contains Windows file names with Windows separators", () => {
+    const base = "C:\\Users\\ada\\AppData\\Roaming\\my-cli";
+    expect(joinStoreFile(base, "a/b.json", win32)).toBe(`${base}\\a\\b.json`);
+    expect(() => joinStoreFile(base, "..\\outside.json", win32)).toThrow(InvalidStoreOptionsError);
+    expect(() => joinStoreFile(base, "D:\\outside.json", win32)).toThrow(InvalidStoreOptionsError);
   });
 
   it.each([

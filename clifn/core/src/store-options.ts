@@ -31,11 +31,26 @@ export function joinStoreFile(base: string, fileName: unknown, path: typeof posi
   return path.join(base, normalized);
 }
 
-/** `<config>/<fileName>` for `appName`, joined with the separator of the platform the paths were resolved for. */
-export function appConfigFile(appName: string, fileName: unknown, options: AppPathsOptions): string {
-  const { platform, env, homedir } = options;
-  const { config } = resolveAppPaths(appName, { platform, env, homedir });
-  return joinStoreFile(config, fileName, pathModuleFor(platform));
+/**
+ * Store files are read and written with native filesystem calls, so they resolve for the current platform only:
+ * `env` and `homedir` may be injected, `platform` may not (use `resolveAppPaths` for another platform's paths).
+ */
+export type StoreAppPathsOptions = Pick<AppPathsOptions, "env" | "homedir">;
+
+/**
+ * `<config>/<fileName>` for `appName` on the current platform. A JavaScript caller that passes a `platform` other
+ * than `process.platform` is rejected before any filesystem call, because that path is not valid for native I/O.
+ */
+export function appConfigFile(appName: string, fileName: unknown, options: Record<string, unknown>): string {
+  const { platform, env, homedir } = options as AppPathsOptions;
+  if (platform !== undefined && platform !== process.platform) {
+    throw new InvalidStoreOptionsError(
+      `platform ${JSON.stringify(platform)} differs from the current platform ${JSON.stringify(process.platform)}; ` +
+        "stores only use paths for the current platform",
+    );
+  }
+  const { config } = resolveAppPaths(appName, { env, homedir });
+  return joinStoreFile(config, fileName, pathModuleFor(undefined));
 }
 
 /** Exactly one of the listed keys must be present (not `undefined`). Returns the key that is. */

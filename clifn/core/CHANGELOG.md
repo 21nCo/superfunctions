@@ -2,8 +2,8 @@
 
 ## 0.3.0
 
-- Added `@clifn/core/paths` (CLI-13, D7), also exported from the root: `resolveAppPaths(appName, { platform?, env?, homedir? })` returns the config, state and cache directories (XDG on Linux and macOS, `%APPDATA%` / `%LOCALAPPDATA%` on Windows; relative or empty environment values fall back to the defaults), and `ensureAppDir(dir)` creates a missing directory with mode `0o700`. App names follow `^[a-z0-9][a-z0-9._-]{0,63}$`; anything else throws `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`). A non-absolute home directory throws `InvalidHomeDirectoryError`.
-- `createCredentialStore` accepts `{ appName }` (`<config>/credentials`) or `{ path }`; `createProjectConfig` accepts `{ appName, fileName? }` (`<config>/config.json` by default), `{ cwd?, fileName }` or `{ path }`. Malformed options throw `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`).
+- Added `@clifn/core/paths` (CLI-13, D7), also exported from the root: `resolveAppPaths(appName, { platform?, env?, homedir? })` returns the config, state and cache directories (XDG on Linux and macOS, `%APPDATA%` / `%LOCALAPPDATA%` on Windows; relative or empty environment values fall back to the defaults), and `ensureAppDir(dir)` creates a missing directory with mode `0o700`. App names follow `^[a-z0-9][a-z0-9._-]{0,63}$`; anything else throws `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`). A non-absolute home directory throws `InvalidHomeDirectoryError` when a default directory needs it.
+- `createCredentialStore` accepts `{ appName }` (`<config>/credentials`) or `{ path }`; `createProjectConfig` accepts `{ appName, fileName? }` (`<config>/config.json` by default), `{ cwd?, fileName }` or `{ path }`; `{ appName }` stores resolve for the current platform (`env` and `homedir` may be passed through). Malformed options, including a `platform` other than the current one, throw `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`).
 - No existing export, default or output changed: the string and no-argument forms keep their paths, including the Conduct defaults.
 
 ## 0.2.0
