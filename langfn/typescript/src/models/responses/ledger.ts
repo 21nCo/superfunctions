@@ -30,6 +30,11 @@ interface TextRecord {
   snapshots: Map<number, string>;
   /** Snapshot text that names no content_index: the item's whole text. */
   whole?: string;
+  /**
+   * The longest output_text a running form of the item (an announcement or a running response's
+   * output) stated, by content_index: the text so far, which a later form or the final item extends.
+   */
+  running?: Map<number, string>;
 }
 
 interface Entry extends ItemFacts, TextRecord {
@@ -62,7 +67,13 @@ function hasLocator(facts: ItemFacts): boolean {
 }
 
 function holdsText(record: TextRecord): boolean {
-  return record.text.length > 0 || record.snapshots.size > 0 || record.whole !== undefined;
+  return record.text.length > 0 || record.snapshots.size > 0 || record.whole !== undefined || !!record.running?.size;
+}
+
+/** The longer of two texts when one extends the other; undefined when they contradict. */
+function extended(left: string, right: string): string | undefined {
+  if (right.startsWith(left)) return right;
+  return left.startsWith(right) ? left : undefined;
 }
 
 /**
@@ -187,6 +198,7 @@ export class OutputLedger {
     if (entry.announced) throw this.fail(`Responses output_item.added announces ${this.describe(entry)} twice`);
     entry.announced = item;
     if (!hasLocator(entry)) this.enqueueAnonymous(entry);
+    this.run(entry, item, "output_item.added");
     this.settle(entry, item, "output_item.added");
   }
 
@@ -197,7 +209,32 @@ export class OutputLedger {
    * and must agree. An item it shows with a terminal status is settled ({@link settle}).
    */
   snapshot(item: JsonRecord, index: number, what: string): void {
-    this.settle(this.locate(itemFacts(item, this.provider, index), what), item, what);
+    const entry = this.locate(itemFacts(item, this.provider, index), what);
+    this.run(entry, item, what);
+    this.settle(entry, item, what);
+  }
+
+  /**
+   * The output_text a running form of a message states is text the stream holds for it, whatever
+   * the item's status: it is kept (and delivered) like streamed text, so a turn cut short never
+   * drops it. Each running form extends what the item held so far, and contradicting it is a
+   * ProviderError.
+   */
+  private run(entry: Entry, item: JsonRecord, what: string): void {
+    if (item.type !== "message" || !Array.isArray(item.content)) return;
+    item.content.forEach((part, contentIndex) => {
+      if (isRecord(part) && part.type === "output_text" && typeof part.text === "string" && part.text) {
+        this.extendRunning(entry, contentIndex, part.text, what);
+      }
+    });
+  }
+
+  private extendRunning(entry: Entry, contentIndex: number, text: string, what: string): void {
+    const running = entry.running ??= new Map();
+    const known = running.get(contentIndex);
+    const longest = known === undefined ? text : extended(known, text);
+    if (longest === undefined) throw this.fail(`Responses ${what} states different text for one text part`);
+    running.set(contentIndex, longest);
   }
 
   /**
@@ -532,6 +569,7 @@ export class OutputLedger {
       if (entry.whole !== undefined && entry.whole !== other.whole) throw this.fail(`Responses ${what} states different text for one text part`);
       entry.whole = other.whole;
     }
+    for (const [contentIndex, text] of other.running ?? []) this.extendRunning(entry, contentIndex, text, what);
     this.entries.delete(other);
   }
 
@@ -543,7 +581,8 @@ export class OutputLedger {
    * by arrival when none states one; a mix is ambiguous and a ProviderError. Text that names no
    * item, when no item holds text, becomes a message after them. On an incomplete turn an
    * interrupted item ({@link interrupted}) is not a finished item: its form is never rebuilt, so it
-   * is neither run nor replayed, and only text streamed to it is kept, as a message of that text.
+   * is neither run nor replayed, and only the text the stream stated for it (deltas, text done
+   * events and the output_text of its running forms) is kept, as a message of that text.
    */
   private rebuild(completed: boolean, final: Map<Entry, JsonRecord>, forms: Map<Entry, JsonRecord>, type: string): JsonRecord[] {
     const status = completed ? "completed" : "incomplete";
@@ -563,7 +602,7 @@ export class OutputLedger {
     this.synthesized.clear();
     for (const entry of this.entries) {
       // On an incomplete turn an interrupted item's form is not a finished one: it is neither run
-      // nor replayed, and only the text the caller already received from it is kept.
+      // nor replayed, and only the text the stream stated for it is kept.
       const form = !completed && this.interrupted(entry) ? undefined : forms.get(entry);
       if (form) items.push({ entry, item: this.withIdentity(entry, form) });
       else if (holdsText(entry)) {
@@ -593,27 +632,30 @@ export class OutputLedger {
 
   /**
    * The text parts of a message rebuilt from what the stream stated, in content order: each
-   * named part holds its snapshot, else its streamed text, and a snapshot must extend the text
-   * streamed to its part. Text that names no part is one part. Naming a part in some events and
-   * not in others is ambiguous and a ProviderError.
+   * named part holds its snapshot, else the longer of its streamed text and its running forms'
+   * text (one must extend the other), and a snapshot must extend both. Text that names no part
+   * is one part. Naming a part in some events and not in others is ambiguous and a ProviderError.
    */
   private parts(record: TextRecord, type: string): string[] {
     const loose = record.text.filter((chunk) => chunk.contentIndex === undefined);
     const located = byContentIndex(record.text);
-    const named = located.size > 0 || record.snapshots.size > 0;
+    const running = record.running ?? new Map<number, string>();
+    const named = located.size > 0 || record.snapshots.size > 0 || running.size > 0;
     if (named && (loose.length || record.whole !== undefined)) {
       throw this.fail("Responses stream text events name one text part in two ways");
     }
-    const part = (streamed: string, snapshot: string | undefined) => {
-      if (snapshot !== undefined && !snapshot.startsWith(streamed)) {
+    const part = (deltas: string, snapshot: string | undefined, runningText = "") => {
+      // Streamed deltas and a running form's text are both the part's text so far.
+      const streamed = extended(deltas, runningText);
+      if (streamed === undefined || (snapshot !== undefined && !snapshot.startsWith(streamed))) {
         throw this.fail(`Responses ${type} event: a text done event differs from the streamed text`);
       }
       return snapshot ?? streamed;
     };
     if (!named) return [part(joined(loose), record.whole)];
-    const indexes = [...new Set([...located.keys(), ...record.snapshots.keys()])]
+    const indexes = [...new Set([...located.keys(), ...record.snapshots.keys(), ...running.keys()])]
       .sort((left, right) => left - right);
-    return indexes.map((contentIndex) => part(joined(located.get(contentIndex) ?? []), record.snapshots.get(contentIndex)));
+    return indexes.map((contentIndex) => part(joined(located.get(contentIndex) ?? []), record.snapshots.get(contentIndex), running.get(contentIndex)));
   }
 
   /**
@@ -640,6 +682,8 @@ export class OutputLedger {
     }
     for (const [contentIndex, snapshot] of entry.snapshots) if (textAt(contentIndex) !== snapshot) throw fail();
     if (entry.whole !== undefined && whole !== entry.whole) throw fail();
+    // A running form's text is the text so far of the part at its position.
+    for (const [contentIndex, text] of entry.running ?? []) if (!textAt(contentIndex)?.startsWith(text)) throw fail();
   }
 
   /**

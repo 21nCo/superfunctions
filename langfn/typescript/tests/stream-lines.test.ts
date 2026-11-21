@@ -47,6 +47,31 @@ it("keeps the byte-limit error when cancelling the reader also fails", async () 
   await expect(read()).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
   expect(body.locked).toBe(false);
 });
+it("keeps the byte-limit error and releases the reader when cancel throws synchronously", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("x".repeat(32)));
+    },
+  });
+  const getReader = body.getReader.bind(body);
+  let cancelCalls = 0;
+  body.getReader = (() => {
+    const reader = getReader();
+    reader.cancel = () => {
+      cancelCalls += 1;
+      throw new Error("cancel failed synchronously");
+    };
+    return reader;
+  }) as typeof body.getReader;
+  const read = async () => {
+    for await (const _line of readStreamLines(body, 8)) {
+      // drain
+    }
+  };
+  await expect(read()).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+  expect(cancelCalls).toBe(1);
+  expect(body.locked).toBe(false);
+});
 it("does not wait for a reader cancel that never settles", async () => {
   const hanging = (text: string) =>
     new ReadableStream<Uint8Array>({

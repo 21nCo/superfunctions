@@ -110,11 +110,7 @@ export async function* readStreamLines(
  * A reader whose cancel throws is still released by the caller.
  */
 function cancelWithoutWaiting(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  let cancelling: Promise<void>;
-  try {
-    cancelling = reader.cancel();
-  } catch {
-    return;
-  }
-  cancelling.catch(() => undefined);
+  // The executor runs now, before the caller releases the lock, and turns a synchronous throw
+  // into a rejection, which is dropped like any other.
+  new Promise<void>((resolve) => resolve(reader.cancel())).catch(() => undefined);
 }

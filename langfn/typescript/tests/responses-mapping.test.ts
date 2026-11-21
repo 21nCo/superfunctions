@@ -1500,6 +1500,73 @@ describe("stream mapping", () => {
     expect(shifted.seen.map((event) => event.type)).toEqual(["content"]);
   });
 
+  it("keeps the text a running form of a message states when a turn is cut short", async () => {
+    const cut = (text: string, status = "in_progress") => ({ type: "message", id: "msg_cut", role: "assistant", status, content: [{ type: "output_text", text, annotations: [] }] });
+    const running = (output: unknown[]) => frame({ type: "response.in_progress", response: { id: "resp_fixture_mapping", status: "in_progress", output } });
+    const added = (item: unknown, index: number) => frame({ type: "response.output_item.added", output_index: index, item });
+    const delta = (text: string, item_id = "msg_cut", output_index = 0) => frame({ type: "response.output_text.delta", item_id, output_index, content_index: 0, delta: text });
+    const truncated = { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } };
+    const incomplete = (output?: unknown[]) => frame({ type: "response.incomplete", response: { ...truncated, ...(output ? { output } : {}) } });
+    const outcome = async (text: string, content: string, ids: string[]) => {
+      const result = await mapRaw(text);
+      expect(result.error).toBeUndefined();
+      const types = result.seen.map((event) => event.type);
+      expect(types.slice(-2)).toEqual(["message", "end"]);
+      expect(types.slice(0, -2).length).toBeGreaterThan(0);
+      expect(types.slice(0, -2).every((type) => type === "content")).toBe(true);
+      expect(result.seen.at(-1)).toMatchObject({ finish_reason: "length" });
+      const message = (result.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+      expect(message.content).toBe(content);
+      expect(result.seen.filter((event) => event.type === "content").map((event) => (event as { content: string }).content).join("")).toBe(content);
+      expect(message.responsesOutput?.map((item) => (item as { id?: string }).id)).toEqual(ids);
+      return message;
+    };
+
+    // (a) Snapshot-only text with an omitted output is delivered, kept and replayed; so is the
+    // text of a running form that already shows the item incomplete.
+    for (const status of ["in_progress", "incomplete"]) {
+      const message = await outcome(running([cut("Hi", status)]) + incomplete(), "Hi", ["msg_cut"]);
+      expect(message.responsesOutput?.[0]).toMatchObject({ type: "message", status: "incomplete", content: [{ type: "output_text", text: "Hi" }] });
+      const next = payload([{ role: "user", content: "q" }, message, { role: "user", content: "more" }]);
+      expect(JSON.stringify(next.input)).toContain("\"text\":\"Hi\"");
+    }
+    // (b) An announcement before the snapshot does not change that.
+    await outcome(added({ ...cut(""), content: [] }, 0) + running([cut("Hi")]) + incomplete(), "Hi", ["msg_cut"]);
+    // (c) A supplied output with the message is unchanged.
+    await outcome(running([cut("Hi")]) + incomplete([cut("Hi", "incomplete")]), "Hi", ["msg_cut"]);
+    // (d) A matching delta is delivered once, whichever comes first.
+    await outcome(added({ ...cut(""), content: [] }, 0) + delta("Hi") + running([cut("Hi")]) + incomplete(), "Hi", ["msg_cut"]);
+    // (e) Text that extends the streamed text (or that a later delta extends) adds only the rest.
+    await outcome(added({ ...cut(""), content: [] }, 0) + delta("He") + running([cut("Hello")]) + incomplete(), "Hello", ["msg_cut"]);
+    await outcome(running([cut("He")]) + delta("Hel") + incomplete(), "Hel", ["msg_cut"]);
+    // A later running form extends an earlier one.
+    await outcome(running([cut("H")]) + running([cut("Hi")]) + incomplete(), "Hi", ["msg_cut"]);
+    // (f) Contradicting text fails closed before any message or end.
+    for (const text of [
+      added({ ...cut(""), content: [] }, 0) + delta("Ho") + running([cut("Hi")]) + incomplete(),
+      running([cut("Hi")]) + running([cut("Ho")]) + incomplete(),
+      running([cut("Hi")]) + incomplete([cut("Ho", "incomplete")]),
+      running([cut("Hi")]) + frame({ type: "response.completed", response: completed([{ ...said("Ho"), id: "msg_cut" }]) }),
+    ]) {
+      const result = await mapRaw(text);
+      expect(result.error, text).toBeInstanceOf(ProviderError);
+      expect(result.seen.filter((event) => event.type === "message" || event.type === "end")).toEqual([]);
+    }
+    // (g) A finished message, a snapshot-only interrupted message and an interrupted call: both
+    // texts are kept in output_index order, and the call is neither run nor replayed.
+    const done = { ...said("One. "), id: "msg_done" };
+    const cutCall = { type: "function_call", id: "fc_cut", call_id: "call_cut", name: "lookup", arguments: "{", status: "incomplete" };
+    const mixed = await outcome(
+      added({ ...done, status: "in_progress", content: [] }, 0) + delta("One. ", "msg_done", 0)
+        + frame({ type: "response.output_item.done", output_index: 0, item: done })
+        + running([done, cut("Two"), cutCall]) + incomplete(),
+      "One. Two",
+      ["msg_done", "msg_cut"],
+    );
+    expect(mixed.toolCalls ?? []).toEqual([]);
+    expect(JSON.stringify(mixed.responsesOutput)).not.toContain("call_cut");
+  });
+
   it("processes many located items in time linear in their number, from the first frame", async () => {
     const message = (index: number) => ({ ...said("x"), id: `msg_${index}` });
     const call = (index: number) => ({ type: "function_call", id: `fc_${index}`, call_id: `call_${index}`, name: "lookup", arguments: "{\"a\":1}", status: "completed" });
