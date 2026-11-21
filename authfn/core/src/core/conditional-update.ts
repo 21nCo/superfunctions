@@ -19,6 +19,21 @@ export async function updateRowIfMatches(
   guards: WhereClause[],
   data: Record<string, unknown>
 ): Promise<boolean> {
+  return (await updateRowOutcome(config, model, id, guards, data)) === 'applied';
+}
+
+/**
+ * Like updateRowIfMatches, but tells a confirmed no-op (`'not-applied'`: no
+ * row matched) from a write whose outcome the adapter could not report
+ * (`'unknown'`, for example a count of NaN), which may have applied.
+ */
+export async function updateRowOutcome(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  model: string,
+  id: string,
+  guards: WhereClause[],
+  data: Record<string, unknown>
+): Promise<'applied' | 'not-applied' | 'unknown'> {
   const where: WhereClause[] = [
     { field: 'id', operator: 'eq', value: id },
     ...guards.map((guard) => ({ ...guard, connector: 'AND' as const }))
@@ -33,17 +48,20 @@ export async function updateRowIfMatches(
         select: ['id'],
         namespace
       });
-      return row?.id === id;
+      return row?.id === id ? 'applied' : 'unknown';
     } catch (error) {
       if (isNotFoundError(error)) {
-        return false;
+        return 'not-applied';
       }
       throw error;
     }
   }
 
   const affected = await config.database.updateMany({ model, where, data, namespace });
-  return Number.isFinite(affected) && affected > 0;
+  if (affected === 0) {
+    return 'not-applied';
+  }
+  return Number.isFinite(affected) && affected > 0 ? 'applied' : 'unknown';
 }
 
 function isNotFoundError(error: unknown): boolean {

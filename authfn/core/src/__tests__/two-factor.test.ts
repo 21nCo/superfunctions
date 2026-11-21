@@ -1027,6 +1027,25 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(unused.filter((code) => code.usedAt).length).toBe(1);
   });
 
+  it('keeps the challenge used when the adapter cannot report whether a recovery code was spent', async () => {
+    const setup = await enrolledUser();
+    const unreported: Adapter = {
+      ...setup.config.database,
+      capabilities: {
+        ...setup.config.database.capabilities,
+        operations: { ...setup.config.database.capabilities.operations, returning: false }
+      },
+      async updateMany(params) {
+        const count = await setup.config.database.updateMany(params);
+        return params.model === 'two_factor_recovery_codes' ? Number.NaN : count;
+      }
+    } as Adapter;
+    const challengeId = await setup.challenge();
+    await expect(satisfyTwoFactorChallenge({ ...setup.config, database: unreported }, challengeId, setup.recoveryCodes[0], setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[1] })).status).toBe(400);
+  });
+
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;

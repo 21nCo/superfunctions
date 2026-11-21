@@ -345,14 +345,13 @@ class TwoFactorService:
         if not claimed:
             raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")
         if recovery_row is not None:
-            try:
-                spent = await self._spend_recovery_code(recovery_row["id"])
-            except Exception:
-                # The write may still commit, so the challenge stays used and
-                # no second code can be spent on it; the user signs in again.
-                raise
-            if not spent:
+            # If the write throws or its count is unknown it may have applied,
+            # so the challenge stays used and no second code can be spent on
+            # it; it is given back only after a confirmed no-op.
+            spent = await self._spend_recovery_code(recovery_row["id"])
+            if spent == "not-applied":
                 await self._reopen_challenge(challenge_id)
+            if spent != "applied":
                 raise TwoFactorInvalidCodeError("Two-factor authentication code is invalid")
         used_recovery = recovery_row is not None
         session = AuthFnSession.model_validate(
@@ -421,7 +420,7 @@ class TwoFactorService:
 
     async def _consume_recovery_code(self, enrollment_id: str, code: str) -> bool:
         row = await self._find_unused_recovery_code(enrollment_id, code)
-        return row is not None and await self._spend_recovery_code(row["id"])
+        return row is not None and await self._spend_recovery_code(row["id"]) == "applied"
 
     async def _find_unused_recovery_code(self, enrollment_id: str, code: str) -> Optional[Dict[str, Any]]:
         rows = await self.config.database.find_many(
@@ -435,10 +434,11 @@ class TwoFactorService:
                 return row
         return None
 
-    async def _spend_recovery_code(self, row_id: str) -> bool:
+    async def _spend_recovery_code(self, row_id: str) -> str:
         """Marks a recovery code used only while it is still unused, so two
-        requests (in this kernel or the TypeScript one) cannot both spend it."""
-        return await self._update_if_matches(
+        requests (in this kernel or the TypeScript one) cannot both spend it.
+        Returns "applied", "not-applied" (confirmed no-op) or "unknown"."""
+        return await self._update_outcome(
             "two_factor_recovery_codes",
             row_id,
             [{"field": "usedAt", "operator": "eq", "value": None}],
@@ -464,8 +464,19 @@ class TwoFactorService:
         data: Dict[str, Any],
     ) -> bool:
         """Updates one row by id while ``guards`` still match, and reports
-        whether it was written: only an affected-row count of 1 counts, so the
-        adapter must provide ``update_many``."""
+        whether this call wrote it."""
+        return await self._update_outcome(model, row_id, guards, data) == "applied"
+
+    async def _update_outcome(
+        self,
+        model: str,
+        row_id: str,
+        guards: List[Dict[str, Any]],
+        data: Dict[str, Any],
+    ) -> str:
+        """Conditional update through ``update_many``: "applied" for a count of
+        1, "not-applied" for 0 (no row matched), "unknown" for anything else
+        (a count the driver could not report), which may have applied."""
         self._require_conditional_writes()
         count = await self.config.database.update_many(
             model=model,
@@ -473,7 +484,11 @@ class TwoFactorService:
             data=data,
             namespace=self.config.namespace,
         )
-        return isinstance(count, int) and not isinstance(count, bool) and count == 1
+        if isinstance(count, bool) or not isinstance(count, int):
+            return "unknown"
+        if count == 0:
+            return "not-applied"
+        return "applied" if count == 1 else "unknown"
 
     def _verify_totp(self, secret: str, code: str) -> bool:
         now = self.plugin_config.now()

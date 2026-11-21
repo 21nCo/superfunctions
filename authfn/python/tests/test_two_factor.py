@@ -547,3 +547,41 @@ def test_refuses_to_start_two_factor_on_an_adapter_without_conditional_writes() 
                 ],
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_challenge_used_when_the_spend_count_is_unknown() -> None:
+    db = MockDatabaseAdapter()
+    now = datetime(2026, 3, 22, 0, 0, 0)
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: now,
+            recovery_code_count=2,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], now))
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    original_update_many = db.update_many
+
+    async def unreported(**kwargs: Any) -> int:
+        count = await original_update_many(**kwargs)
+        return -1 if kwargs.get("model") == "two_factor_recovery_codes" else count
+
+    db.update_many = unreported  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][0],
+            primary_email="ada@example.com",
+        )
+    db.update_many = original_update_many  # type: ignore[method-assign]
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=enrolled["recoveryCodes"][1],
+            primary_email="ada@example.com",
+        )

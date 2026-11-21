@@ -23,7 +23,7 @@ import {
   AuthFnTwoFactorRequiredError
 } from './errors.js';
 import { CANONICAL_CHALLENGE_ID } from './challenge-id.js';
-import { updateRowIfMatches } from './conditional-update.js';
+import { updateRowIfMatches, updateRowOutcome } from './conditional-update.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
@@ -382,17 +382,14 @@ export async function satisfyTwoFactorChallenge(
     if (!(await claimChallenge())) {
       throw challengeGone();
     }
-    let spent: boolean;
-    try {
-      spent = await spendRecoveryCode(config, submitted.recoveryCode.id, now);
-    } catch (error) {
-      // The write's outcome is unknown and it may still commit, so the
-      // challenge stays used: no second code can be spent on it, and the
-      // user signs in again. It is given back only after a confirmed no-op.
-      throw error;
-    }
-    if (!spent) {
+    // If the write throws or its outcome is unknown, it may have applied, so
+    // the challenge stays used: no second code can be spent on it, and the
+    // user signs in again. It is given back only after a confirmed no-op.
+    const spent = await spendRecoveryCode(config, submitted.recoveryCode.id, now);
+    if (spent === 'not-applied') {
       await reopenChallenge();
+    }
+    if (spent !== 'applied') {
       throw invalidSecondFactorCode(enrollment.userId);
     }
     usedRecoveryCode = true;
@@ -573,7 +570,7 @@ async function checkSecondFactor(
     return { usedRecoveryCode: false };
   }
 
-  if (!submitted.recoveryCode || !(await spendRecoveryCode(config, submitted.recoveryCode.id, resolveNow(pluginConfig)))) {
+  if (!submitted.recoveryCode || (await spendRecoveryCode(config, submitted.recoveryCode.id, resolveNow(pluginConfig))) !== 'applied') {
     throw invalidSecondFactorCode(enrollment.userId);
   }
   return { usedRecoveryCode: true };
@@ -755,8 +752,8 @@ function spendRecoveryCode(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   recoveryCodeId: string,
   now: Date
-): Promise<boolean> {
-  return updateRowIfMatches(
+): Promise<'applied' | 'not-applied' | 'unknown'> {
+  return updateRowOutcome(
     config,
     'two_factor_recovery_codes',
     recoveryCodeId,
