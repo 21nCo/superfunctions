@@ -4,7 +4,7 @@ import {
   UpsertDocumentInput, UpsertDocumentResult, ForgetSourceInput, ForgetSourceResult, MEMORY_TYPES,
 } from './types';
 import {
-  requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes,
+  requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes, sourceTagsBytes,
   MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
   type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert,
 } from '../storage/adapter';
@@ -90,7 +90,9 @@ export class MemoryFn implements IMemoryFn {
   /**
    * Stores `content` as embedded chunks of the source (tenantId, exact
    * containerTags set, sourceKey), atomically replacing its previous chunks.
-   * When the stored hash equals the incoming one nothing is embedded or written.
+   * When the stored hash equals the incoming one nothing is embedded or written;
+   * the hash is compared again inside the storage write, so of concurrent
+   * identical calls at most one writes and the others report unchanged.
    * With `extract: true` the facts extracted from each chunk are stored in place
    * of the chunks, under the same source; they are not deduplicated against or
    * linked to other memories, so forgetBySource removes everything it wrote.
@@ -98,7 +100,9 @@ export class MemoryFn implements IMemoryFn {
    * would waste, and a rejected call leaves the source unchanged.
    */
   async upsertDocument(input: UpsertDocumentInput): Promise<UpsertDocumentResult> {
-    const { scope } = requireSourceScope(input);
+    const { scope: given } = requireSourceScope(input);
+    // A source ignores tag order and repeats, so its records store the distinct tags once each.
+    const scope = { ...given, containerTags: [...new Set(given.containerTags)] };
     const { content, contentHash: givenHash, metadata, type, extract, chunking } = input;
     if (typeof content !== 'string' || !content.trim()) throw new Error('MEMORY_CONTENT_REQUIRED');
     if (givenHash !== undefined) requireSourceHash(givenHash);
@@ -108,6 +112,7 @@ export class MemoryFn implements IMemoryFn {
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
     const metadataBytes = sourceMetadataBytes(metadata);
+    const tagsBytes = sourceTagsBytes(scope.containerTags);
     const contentHash = givenHash ?? await sha256Hex(content);
 
     const state = await this.storage.getSourceState(scope);
@@ -115,40 +120,51 @@ export class MemoryFn implements IMemoryFn {
       return { sourceKey: scope.sourceKey, contentHash, unchanged: true, chunks: state.chunkCount, memories: [] };
     }
 
-    // The chunk count and the bytes replaceSource counts (all but the embeddings)
-    // are checked as each chunk or fact is produced, so an oversized source fails
-    // before the rest is split or metadata is copied, and before embedding.
+    // Every record costs its type, content and metadata bytes (as replaceSource
+    // counts them) plus its copy of the tag array. The count and these bytes are
+    // checked as each chunk or fact is produced, so an oversized source fails
+    // before the rest is split, extracted or copied, and before embedding.
     const overLimit = () => new MemorySourceLimitError();
+    let bytes = 0;
+    const charge = (recordType: string, text: string, recordMetadataBytes: number) => {
+      bytes += sourceChunkBytesBeforeEmbedding(recordType, text, recordMetadataBytes) + tagsBytes;
+      if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
+    };
     const chunkType = type ?? 'document';
     const chunks: string[] = [];
-    let bytes = 0;
     for (const chunk of markdownChunks(content, options)) {
       if (chunks.length === MAX_SOURCE_CHUNKS) throw overLimit();
-      if (!extract && (bytes += sourceChunkBytesBeforeEmbedding(chunkType, chunk, metadataBytes)) > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
+      if (!extract) charge(chunkType, chunk, metadataBytes);
       chunks.push(chunk);
     }
     const records: Array<Pick<MemoryInsert, 'content' | 'type' | 'metadata'>> = [];
     if (extract) {
       for (let index = 0; index < chunks.length; index++) {
-        // Model-generated tags are descriptive metadata, never authority or scope.
-        for (const fact of await this.extractor!.extract(chunks[index])) {
-          if (records.length === MAX_SOURCE_CHUNKS) throw overLimit();
-          const record = { content: fact.content, type: fact.type,
-            metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } };
-          if ((bytes += sourceChunkBytesBeforeEmbedding(record.type, record.content, sourceMetadataBytes(record.metadata))) > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
-          records.push(record);
-        }
+        await this.extractor!.extract(chunks[index], {
+          maxFacts: MAX_SOURCE_CHUNKS - records.length,
+          tooMany: overLimit,
+          accept: fact => {
+            // Model-generated tags are descriptive metadata, never authority or scope.
+            const record = { content: fact.content, type: fact.type,
+              metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } };
+            charge(record.type, record.content, sourceMetadataBytes(record.metadata));
+            records.push(record);
+          },
+        });
       }
     } else {
       for (const chunk of chunks) records.push({ content: chunk, type: chunkType, metadata: { ...metadata } });
     }
-    const embeddings = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
-    if (embeddings.length !== records.length) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
-    const memories = await this.storage.replaceSource({
+    const embeddings: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
+    requireEmbeddings(embeddings, records.length, this.storage.embeddingDimensions);
+    const written = await this.storage.replaceSourceIfChanged({
       ...scope, contentHash,
       chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
     });
-    return { sourceKey: scope.sourceKey, contentHash, unchanged: false, chunks: memories.length, memories };
+    if (written.unchanged) {
+      return { sourceKey: scope.sourceKey, contentHash, unchanged: true, chunks: written.state.chunkCount, memories: [] };
+    }
+    return { sourceKey: scope.sourceKey, contentHash, unchanged: false, chunks: written.memories.length, memories: written.memories };
   }
 
   /** Soft-deletes every live chunk and fact of the source (tenantId, exact containerTags set, sourceKey). */
@@ -198,4 +214,26 @@ export async function sha256Hex(text: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle ?? (await import('node:crypto')).webcrypto.subtle;
   const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * An embedding batch replaceSource may store: `count` non-empty vectors of
+ * finite numbers with one shared length, equal to the storage's fixed
+ * dimension when it has one. Anything else is rejected before the source is
+ * touched (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so
+ * the previous chunks stay live and searchable.
+ */
+function requireEmbeddings(value: unknown, count: number, dimensions: number | undefined): asserts value is number[][] {
+  if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
+  let size = dimensions;
+  // Read by index, so a hole in a sparse array is seen as a missing vector or number.
+  for (let index = 0; index < count; index++) {
+    const vector: unknown = value[index];
+    if (!Array.isArray(vector) || vector.length === 0 || (size !== undefined && vector.length !== size)) throw new Error('MEMORY_EMBEDDING_INVALID');
+    size = vector.length;
+    for (let at = 0; at < vector.length; at++) {
+      const number: unknown = vector[at];
+      if (typeof number !== 'number' || !Number.isFinite(number)) throw new Error('MEMORY_EMBEDDING_INVALID');
+    }
+  }
 }

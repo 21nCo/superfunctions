@@ -17,6 +17,7 @@ export const MIN_CHUNK_TARGET_CHARS = 64;
 const PARAGRAPH_SEPARATOR = '\n\n';
 const HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const SPACES_OR_TABS = /^[ \t]*$/;
 
 /** One piece of a section: a paragraph, or part of a paragraph that was hard split. */
 interface Atom { text: string; continues: boolean }
@@ -38,7 +39,7 @@ export function resolveChunkingOptions(options: ChunkingOptions = {}): Required<
 /**
  * Splits Markdown into chunks: first into sections at ATX headings (`#` to
  * `######`, outside fenced code), then each section into paragraphs at blank
- * lines (a fenced code block stays one paragraph), packing whole paragraphs up
+ * lines (a fenced code block is one paragraph of its own), packing whole paragraphs up
  * to targetChars. Only a paragraph longer than targetChars is hard split,
  * preferring the last whitespace in the second half of the window. Each chunk
  * after the first of a section starts with up to overlapChars trailing
@@ -65,39 +66,62 @@ export function markdownChunks(markdown: string, options?: ChunkingOptions): Gen
 class FenceState {
   private open: string | null = null;
   get inside(): boolean { return this.open !== null; }
-  /** Updates the state with `line`, after the caller has classified it. */
-  next(line: string): void {
+  /** Updates the state with `line` and returns 'open' or 'close' when the line opens or closes a fence. */
+  next(line: string): 'open' | 'close' | null {
     const match = FENCE.exec(line);
-    if (!match) return;
+    if (!match) return null;
     const marker = match[1];
     if (this.open === null) {
       // A backtick fence's info string cannot contain a backtick: such a line is inline code, not a fence.
-      if (marker[0] === '`' && line.indexOf('`', match[0].length) >= 0) return;
+      if (marker[0] === '`' && line.indexOf('`', match[0].length) >= 0) return null;
       this.open = marker;
-    } else if (marker[0] === this.open[0] && marker.length >= this.open.length && line.trim() === marker) {
-      this.open = null;
+      return 'open';
     }
+    // A closing fence is followed only by spaces or tabs.
+    if (marker[0] === this.open[0] && marker.length >= this.open.length && SPACES_OR_TABS.test(line.slice(match[0].length))) {
+      this.open = null;
+      return 'close';
+    }
+    return null;
   }
 }
 
-/** Paragraphs in document order, split at blank lines and headings outside fenced code. */
+/**
+ * Paragraphs in document order, split at blank lines, headings and fenced code
+ * blocks outside fenced code. Lines are read one at a time and a paragraph is
+ * one slice of the text, so stopping the generator stops the work and the
+ * allocation for the rest of the text.
+ */
 function* blocks(text: string): Generator<Block, void, undefined> {
   const fence = new FenceState();
-  let current: string[] = [];
+  // The current paragraph is text[start, end); start < 0 when it is empty.
+  let start = -1;
+  let end = 0;
   function* flush(heading = false): Generator<Block, void, undefined> {
-    // Lines never start with a blank line here, so trimming the end keeps indentation; trimEnd is linear.
-    const paragraph = current.join('\n').trimEnd();
-    current = [];
+    // A paragraph never starts with a blank line, so trimming its end keeps indentation; trimEnd is linear.
+    const paragraph = start < 0 ? '' : text.slice(start, end).trimEnd();
+    start = -1;
     if (paragraph) yield { text: paragraph, heading };
   }
-  for (const line of text.split('\n')) {
-    if (!fence.inside && !line.trim()) { yield* flush(); continue; }
-    if (!fence.inside && HEADING.test(line)) {
+  for (let lineStart = 0; lineStart <= text.length;) {
+    const newline = text.indexOf('\n', lineStart);
+    const lineEnd = newline < 0 ? text.length : newline;
+    const line = text.slice(lineStart, lineEnd);
+    const next = lineEnd + 1;
+    if (!fence.inside && !line.trim()) {
+      yield* flush();
+    } else if (!fence.inside && HEADING.test(line)) {
       // A heading is its own paragraph, so it can still be packed with the text after it.
-      yield* flush(); current.push(line); yield* flush(true); continue;
+      yield* flush(); start = lineStart; end = lineEnd; yield* flush(true);
+    } else {
+      const change = fence.next(line);
+      // A fenced code block is its own paragraph, even without blank lines around it.
+      if (change === 'open') yield* flush();
+      if (start < 0) start = lineStart;
+      end = lineEnd;
+      if (change === 'close') yield* flush();
     }
-    current.push(line);
-    fence.next(line);
+    lineStart = next;
   }
   yield* flush();
 }

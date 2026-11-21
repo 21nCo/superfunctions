@@ -2,7 +2,7 @@ import type { Memory, MemoryRelationship } from '../../core/types';
 import {
   requireScope, requireSourceReplace, requireSourceScope, sameTagSet,
   type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert,
-  type SourceReplace, type SourceScope, type SourceState,
+  type SourceReplace, type SourceReplaceResult, type SourceReplaceSnapshot, type SourceScope, type SourceState,
 } from '../adapter';
 
 /** Reads through to the parent and stages only changed keys. */
@@ -260,16 +260,31 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
-    const live = this.liveSourceChunks(requireSourceScope(input).scope);
+    return this.sourceState(requireSourceScope(input).scope);
+  }
+
+  private sourceState(scope: SourceScope): SourceState | null {
+    const live = this.liveSourceChunks(scope);
     if (!live.length) return null;
     const hashes = new Set(live.map(memory => memory.contentHash ?? null));
     return { contentHash: hashes.size === 1 ? [...hashes][0]! : null, chunkCount: live.length };
   }
 
-  // replaceSource and deleteSource never await between reading and writing, so
-  // each call runs to completion before another call for any source can start.
+  // replaceSource, replaceSourceIfChanged and deleteSource never await between
+  // reading and writing, so each call runs to completion before another call
+  // for any source can start.
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    const { scope, contentHash, chunks } = requireSourceReplace(input);
+    return this.writeSource(requireSourceReplace(input));
+  }
+
+  async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
+    const replacement = requireSourceReplace(input);
+    const state = this.sourceState(replacement.scope);
+    if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
+    return { unchanged: false, memories: this.writeSource(replacement) };
+  }
+
+  private writeSource({ scope, contentHash, chunks }: SourceReplaceSnapshot): Memory[] {
     const now = Date.now();
     const live = this.liveSourceChunks(scope);
     const saved = chunks.map((chunk, chunkIndex) => ({

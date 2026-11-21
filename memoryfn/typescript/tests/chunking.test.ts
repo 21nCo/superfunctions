@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { chunkMarkdown, markdownChunks, resolveChunkingOptions } from '../src/chunking/markdown';
 
 const words = (count: number, word = 'word') => Array.from({ length: count }, (_, index) => `${word}${index}`).join(' ');
@@ -104,6 +104,30 @@ describe('chunkMarkdown', () => {
     const first = [iterator.next().value, iterator.next().value];
     expect(first.every(chunk => typeof chunk === 'string' && chunk.length <= 64)).toBe(true);
     expect(() => markdownChunks('x', { targetChars: 1 })).toThrow('MEMORY_CHUNKING_INVALID');
+  });
+
+  it('reads lines one at a time, so stopping early leaves the rest of the text unsplit', () => {
+    const doc = Array.from({ length: 200_000 }, (_, index) => `para ${index}`).join('\n\n');
+    const split = vi.spyOn(String.prototype, 'split');
+    try {
+      const first = markdownChunks(doc, { targetChars: 64, overlapChars: 0 }).next().value;
+      expect(first).toBe(Array.from({ length: 8 }, (_, index) => `para ${index}`).join('\n\n'));
+      expect(split).not.toHaveBeenCalled();
+    } finally {
+      split.mockRestore();
+    }
+  });
+
+  it('keeps a fitting fenced block whole when prose touches it without blank lines', () => {
+    const before = 'p'.repeat(48);
+    const after = 'q'.repeat(48);
+    const fence = '```js\nconst a = 1;\n```';
+    expect(chunkMarkdown(`${before}\n${fence}\n${after}`, { targetChars: 64, overlapChars: 0 })).toEqual([before, fence, after]);
+  });
+
+  it('closes a fence only at a marker followed by nothing but spaces or tabs', () => {
+    const doc = '```\n# inside\n```\u00a0\n# still inside\n``` \t\n\n# After';
+    expect(chunkMarkdown(doc)).toEqual(['```\n# inside\n```\u00a0\n# still inside\n```', '# After']);
   });
 
   it('returns no chunks for blank input and rejects invalid options', () => {

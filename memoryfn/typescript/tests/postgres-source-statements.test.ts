@@ -7,7 +7,7 @@ import * as pgEntry from '../src/storage/pg/index';
 import * as schema from '../src/storage/pg/schema';
 
 /** A postgres-js stand-in that records each statement and answers it without a database. */
-function recorder(onQuery: (query: string) => void = () => {}) {
+function recorder(onQuery: (query: string) => void = () => {}, values: (query: string) => unknown[][] = () => []) {
   const statements: Array<{ query: string; params: unknown[] }> = [];
   const client: Record<string, unknown> = {
     options: { parsers: {}, serializers: {} },
@@ -15,7 +15,7 @@ function recorder(onQuery: (query: string) => void = () => {}) {
       onQuery(query);
       statements.push({ query, params });
       const rows = /transaction_isolation/.test(query) ? [{ isolation: 'read committed' }] : [];
-      return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve([]) });
+      return Object.assign(Promise.resolve(rows), { values: () => Promise.resolve(values(query)) });
     },
     begin: (operation: (tx: unknown) => unknown) => operation(client),
     savepoint: (operation: (tx: unknown) => unknown) => operation(client),
@@ -94,6 +94,20 @@ describe('PostgresAdapter source statements', () => {
     expect([new MemorySourceLimitError() instanceof AppLimit, foreign instanceof AppLimit, new AppLimit() instanceof AppLimit, new AppLimit() instanceof pgEntry.MemorySourceLimitError])
       .toEqual([false, false, true, true]);
     expect([new Renamed() instanceof MemorySourceLimitError, new Renamed() instanceof Renamed, new AppLimit() instanceof Renamed]).toEqual([true, true, false]);
+  });
+
+  it('reads the source state after the source locks and skips the write when the hash matches', async () => {
+    const kinds = (statements: Array<{ query: string }>) => statements.map(({ query }) =>
+      /pg_advisory_xact_lock/.test(query) ? 'lock' : /for update/.test(query) ? 'row-lock' : /count\(\*\)/.test(query) ? 'state'
+        : /^with .*insert into "memories"/s.test(query) ? 'write' : /^delete from "memory_relationships"/.test(query) ? 'invalidate' : 'other');
+    const stored = (hash: string) => (query: string) => /count\(\*\)/.test(query) ? [[hash, 2]] : [];
+    const same = recorder(undefined, stored('hash-1'));
+    expect(await same.adapter.replaceSourceIfChanged({ ...scope, contentHash: 'hash-1', chunks: [chunk] }))
+      .toEqual({ unchanged: true, state: { contentHash: 'hash-1', chunkCount: 2 } });
+    expect(kinds(same.statements)).toEqual(['other', 'other', 'lock', 'row-lock', 'state', 'invalidate']);
+    const changed = recorder(undefined, stored('hash-0'));
+    expect(await changed.adapter.replaceSourceIfChanged({ ...scope, contentHash: 'hash-1', chunks: [chunk] })).toMatchObject({ unchanged: false });
+    expect(kinds(changed.statements)).toEqual(['other', 'other', 'lock', 'row-lock', 'state', 'write', 'invalidate']);
   });
 
   it('leaves source rows out of a vector search only when excludeSources is set', async () => {

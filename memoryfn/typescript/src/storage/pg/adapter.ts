@@ -1,7 +1,7 @@
 import {
   requireScope, requireSourceReplace, requireSourceScope,
   type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert,
-  type SourceReplace, type SourceScope, type SourceState,
+  type SourceReplace, type SourceReplaceResult, type SourceReplaceSnapshot, type SourceScope, type SourceState,
 } from '../adapter';
 import { Memory, MemoryRelationship } from '../../core/types';
 import { memories, memoryRelationships } from './schema';
@@ -315,8 +315,11 @@ export class PostgresAdapter implements StorageAdapter {
    * otherwise publish state that never commits.
    */
   async getSourceState(input: SourceScope): Promise<SourceState | null> {
-    const { scope } = requireSourceScope(input);
-    const rows = await this.db.with(this.sourceTags(this.db, scope)).select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
+    return this.sourceState(this.db, requireSourceScope(input).scope);
+  }
+
+  private async sourceState(db: PostgresJsDatabase<any>, scope: SourceScope): Promise<SourceState | null> {
+    const rows = await db.with(this.sourceTags(db, scope)).select({ contentHash: memories.contentHash, chunkCount: sql<number>`count(*)::int` })
       .from(memories).where(this.liveSource(scope)).groupBy(memories.contentHash).$withCache(false);
     if (!rows.length) return null;
     return {
@@ -326,17 +329,41 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async replaceSource(input: SourceReplace): Promise<Memory[]> {
-    const { scope, contentHash, chunks } = requireSourceReplace(input);
+    const replacement = this.replacement(input);
+    return this.withSourceLock(replacement.scope, tx => this.writeSource(tx, replacement));
+  }
+
+  /**
+   * The state is read after withSourceLock's advisory and row locks, so a
+   * replacement committed by another connection while this call waited is
+   * seen. Two calls made concurrently through one transaction can both find
+   * the source changed and both write; each write is still one statement, so
+   * exactly one chunk set stays live.
+   */
+  async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
+    const replacement = this.replacement(input);
+    return this.withSourceLock(replacement.scope, async (tx): Promise<SourceReplaceResult> => {
+      const state = await this.sourceState(tx, replacement.scope);
+      if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
+      return { unchanged: false, memories: await this.writeSource(tx, replacement) };
+    });
+  }
+
+  /** Validates a replacement and builds its rows before any statement. */
+  private replacement(input: SourceReplace) {
+    const { scope, contentHash, chunks }: SourceReplaceSnapshot = requireSourceReplace(input);
     // The id column is a uuid, so the row JSON carries only fixed-size ids.
     if (chunks.some(chunk => chunk.id !== undefined && !UUID.test(chunk.id))) throw new Error('MEMORY_SOURCE_CHUNK_INVALID');
     const now = new Date();
-    const values = chunks.map(chunk => this.toRow(chunk, now));
-    return this.withSourceLock(scope, async tx => {
-      if (!values.length) { await this.clearSource(tx, scope, now); return []; }
-      const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
-      const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
-      return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
-    });
+    return { scope, contentHash, now, values: chunks.map(chunk => this.toRow(chunk, now)) };
+  }
+
+  /** The replacement's one write statement; the caller holds withSourceLock. */
+  private async writeSource(tx: PostgresJsDatabase<any>, { scope, contentHash, now, values }: ReturnType<PostgresAdapter['replacement']>): Promise<Memory[]> {
+    if (!values.length) { await this.clearSource(tx, scope, now); return []; }
+    const { tombstoned, unlinked } = this.tombstoneSource(tx, scope, now);
+    const rows = await tx.with(this.sourceTags(tx, scope), tombstoned, unlinked).insert(memories).select(this.replacementRows(scope, contentHash, values)).returning();
+    return rows.map(row => this.mapToDomain(row)).sort((left, right) => left.chunkIndex! - right.chunkIndex!);
   }
 
   /**

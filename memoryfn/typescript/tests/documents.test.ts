@@ -263,3 +263,104 @@ describe('forgetBySource', () => {
     await expect(noEmbedder.forgetBySource({ ...scope, containerTags: [''] })).rejects.toThrow('MEMORY_SCOPE_REQUIRED');
   });
 });
+
+describe('upsertDocument per-record budget', () => {
+  it('stores a repeated tag once per record, so repeats cost nothing per chunk', async () => {
+    const containerTags = Array.from({ length: 100_000 }, () => 't');
+    const content = Array.from({ length: 2_000 }, (_, index) => `# H${index}`).join('\n');
+    const result = await memory.upsertDocument({ tenantId: scope.tenantId, containerTags, sourceKey: 'tags.md', content });
+    expect(result.chunks).toBe(2_000);
+    expect(result.memories.every(chunk => chunk.containerTags.length === 1)).toBe(true);
+    expect(await storage.getSourceState({ tenantId: scope.tenantId, containerTags: ['t'], sourceKey: 'tags.md' })).toMatchObject({ chunkCount: 2_000 });
+  });
+
+  it('counts each record\'s copy of the distinct tags in the byte budget, before embedding', async () => {
+    // About 64 KB of distinct tags, under the 64 KiB tag limit, is about 76 KB of JSON per record: 3,600 records exceed 256 MiB.
+    const containerTags = Array.from({ length: 4_000 }, (_, index) => `${index}`.padEnd(16, 't'));
+    const source = { tenantId: scope.tenantId, containerTags, sourceKey: 'wide.md' };
+    const before = await memory.upsertDocument({ ...source, content: docV1 });
+    embedder.embedBatch.mockClear();
+    const content = Array.from({ length: 3_600 }, (_, index) => `# H${index}`).join('\n');
+    await expect(memory.upsertDocument({ ...source, content })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(source)).toEqual({ contentHash: before.contentHash, chunkCount: 3 });
+  });
+
+  it('rejects an extraction response over the remaining record budget before reading any fact', async () => {
+    let reads = 0;
+    const fact = { get content() { reads++; return 'A fact.'; }, type: 'derived', confidence: 1, tags: [] };
+    const llm: LLMProvider = { generate: vi.fn(), generateJSON: vi.fn(async () => ({ facts: Array.from({ length: 16_385 }, () => fact) })) as LLMProvider['generateJSON'] };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    await expect(memory.upsertDocument({ ...scope, content: '# One', extract: true })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(reads).toBe(0);
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+  });
+
+  it('stops reading an extraction response at the fact that exceeds the byte budget', async () => {
+    let reads = 0;
+    const big = 'f'.repeat(1024 * 1024);
+    const fact = { get content() { reads++; return big; }, type: 'derived', confidence: 1, tags: [] };
+    const llm: LLMProvider = { generate: vi.fn(), generateJSON: vi.fn(async () => ({ facts: Array.from({ length: 400 }, () => fact) })) as LLMProvider['generateJSON'] };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    await expect(memory.upsertDocument({ ...scope, content: '# One', extract: true })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    // Facts of just over 1 MiB pass 256 MiB at the 256th; validating a fact reads its content 3 times.
+    expect(reads).toBe(3 * 256);
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toBeNull();
+  });
+});
+
+describe('upsertDocument and concurrent identical calls', () => {
+  it('commits one batch; the other call reports unchanged and the returned chunks stay live', async () => {
+    const release: Array<() => void> = [];
+    embedder.embedBatch.mockImplementation(async (texts: string[]) => {
+      await new Promise<void>(resolve => release.push(resolve));
+      return texts.map(text => [text.length, 1]);
+    });
+    const calls = [memory.upsertDocument({ ...scope, content: docV1 }), memory.upsertDocument({ ...scope, content: docV1 })];
+    await vi.waitFor(() => expect(release).toHaveLength(2));
+    release.forEach(resolve => resolve());
+    const results = await Promise.all(calls);
+    expect(results.map(result => result.unchanged).sort()).toEqual([false, true]);
+    const [written, skipped] = results[0].unchanged ? [results[1], results[0]] : [results[0], results[1]];
+    expect(skipped).toEqual({ sourceKey: 'guide.md', contentHash: written.contentHash, unchanged: true, chunks: 3, memories: [] });
+    const live = await Promise.all(written.memories.map(chunk => storage.getMemory({ ...scope, id: chunk.id })));
+    expect(live.every(chunk => chunk !== null)).toBe(true);
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: written.contentHash, chunkCount: 3 });
+  });
+});
+
+describe('upsertDocument embedding validation', () => {
+  // docV2 has two chunks, so each batch holds two entries.
+  const sparse = [[1, 2, 3]];
+  sparse.length = 2;
+  const holed = [1, 2];
+  holed.length = 3;
+  it.each([
+    ['an empty vector', [[1, 2], []]],
+    ['NaN', [[1, 2], [1, Number.NaN]]],
+    ['Infinity', [[Number.POSITIVE_INFINITY, 2], [1, 2]]],
+    ['mixed dimensions', [[1, 2], [1, 2, 3]]],
+    ['a null vector', [null, [1, 2]]],
+    ['a sparse batch', sparse],
+    ['a hole in a vector', [[1, 2, 3], holed]],
+    ['a non-number', [[1, 2], [1, '2']]],
+  ])('rejects %s and keeps the previous chunks searchable', async (_name, batch) => {
+    const first = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embedBatch.mockResolvedValueOnce(batch as number[][]);
+    await expect(memory.upsertDocument({ ...scope, content: docV2 })).rejects.toThrow('MEMORY_EMBEDDING_INVALID');
+    expect((await searchAll()).map(chunk => chunk.id).sort()).toEqual(first.memories.map(chunk => chunk.id).sort());
+    // The new hash was not stored, so a retry embeds again.
+    expect(await memory.upsertDocument({ ...scope, content: docV2 })).toMatchObject({ unchanged: false, chunks: 2 });
+  });
+
+  it('rejects vectors of another dimension than the storage keeps', async () => {
+    const fixed = Object.assign(new MemoryStorageAdapter(), { embeddingDimensions: 3 });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, fixed, embedder);
+    embedder.embedBatch.mockResolvedValueOnce([[1, 2], [1, 2], [1, 2]]);
+    await expect(memory.upsertDocument({ ...scope, content: docV1 })).rejects.toThrow('MEMORY_EMBEDDING_INVALID');
+    expect(await fixed.getSourceState(scope)).toBeNull();
+    embedder.embedBatch.mockResolvedValueOnce([[1, 2, 3], [1, 2, 3], [1, 2, 3]]);
+    expect(await memory.upsertDocument({ ...scope, content: docV1 })).toMatchObject({ unchanged: false, chunks: 3 });
+  });
+});

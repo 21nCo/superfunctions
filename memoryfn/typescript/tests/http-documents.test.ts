@@ -116,6 +116,24 @@ describe('document routes', () => {
     expect(embedder.embedBatch).not.toHaveBeenCalled();
   });
 
+  it('answers 413 before embedding when the per-record tag copies exceed the byte budget, leaving the source unchanged', async () => {
+    const embedder = { embed: vi.fn(async () => [1]), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
+    const storage = new MemoryStorageAdapter();
+    const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
+    // About 64 KB of distinct tags, copied onto each of 3,600 chunks, exceeds 256 MiB inside a body of about 100 KB.
+    const containerTags = Array.from({ length: 4_000 }, (_, index) => `${index}`.padEnd(16, 't'));
+    const seeded = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', containerTags, content: '# Seed' }));
+    expect(seeded.status).toBe(200);
+    embedder.embedBatch.mockClear();
+    const content = Array.from({ length: 3_600 }, (_, index) => `# H${index}`).join('\n');
+    const response = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', containerTags, content }));
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState({ tenantId: trusted.tenantId, containerTags: [...trusted.containerTags, ...containerTags], sourceKey: 'k' }))
+      .toMatchObject({ chunkCount: 1 });
+  });
+
   it('rejects an oversized or unstorable contentHash before any provider call', async () => {
     const embedder = { embed: vi.fn(), embedBatch: vi.fn(async () => { throw new Error('provider down'); }) };
     const memory = new MemoryFn({ storage: { kind: 'memory' } }, new MemoryStorageAdapter(), embedder);

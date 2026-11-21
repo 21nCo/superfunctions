@@ -24,6 +24,10 @@ export interface SourceReplace extends SourceScope {
   /** Each chunk must carry the source's tenantId and tag set; chunkIndex is its array position. */
   chunks: MemoryInsert[];
 }
+/** Result of replaceSourceIfChanged: the state it found unchanged, or the chunks it wrote. */
+export type SourceReplaceResult =
+  | { unchanged: true; state: SourceState }
+  | { unchanged: false; memories: Memory[] };
 
 // Input limits shared by every adapter. A source call over a limit is rejected
 // with MemorySourceLimitError before any lock or write.
@@ -89,6 +93,14 @@ export interface StorageAdapter {
    * An empty `chunks` list leaves the source without live chunks.
    */
   replaceSource(input: SourceReplace): Promise<Memory[]>;
+  /**
+   * replaceSource, except that it first reads the source's state inside the
+   * same per-source serialization: when the live chunks all carry `contentHash`
+   * it writes nothing and returns that state. Of concurrent calls with one hash,
+   * at most one writes; the others report unchanged. Input is validated, and
+   * rejected, exactly as by replaceSource.
+   */
+  replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult>;
   /** Soft-deletes every live chunk of the source and returns how many it deleted. */
   deleteSource(scope: SourceScope): Promise<number>;
 }
@@ -202,6 +214,15 @@ function chunkBytes(chunk: MemoryInsert): number {
  */
 export function sourceChunkBytesBeforeEmbedding(type: string, content: string, metadataBytes: number): number {
   return utf8Bytes(type || 'conversational') + utf8Bytes(content) + metadataBytes;
+}
+
+/**
+ * UTF-8 bytes of the JSON array of `tags`. MAX_SOURCE_REPLACE_BYTES does not
+ * count a replacement's tags; upsertDocument adds this once per record to its
+ * own budget, because every record stores a copy of the tag array.
+ */
+export function sourceTagsBytes(tags: string[]): number {
+  return jsonBytes(tags);
 }
 
 /** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's metadata (undefined counts as {}). */
