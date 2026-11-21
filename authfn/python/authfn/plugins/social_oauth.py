@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
@@ -55,6 +57,7 @@ from ..types import (
     AuthFnHookContext,
     AuthFnPlugin,
     AuthFnRuntimeResolution,
+    ConfigError,
     OAuthCallbackInvalidError,
     OAuthProviderUnsupportedError,
     OAuthStateInvalidError,
@@ -100,6 +103,9 @@ class SocialOAuthPluginConfig:
     now: Callable[[], datetime] = _utcnow
     state_ttl_seconds: int = DEFAULT_STATE_TTL_SECONDS
     encryption_key_ref: str = "oauth-default"
+    # Returns the secret key (at least 32 bytes) for a key reference. Provider
+    # tokens are encrypted with it; required before any token is stored.
+    encryption_key_resolver: Optional[Callable[[str], bytes | str]] = None
 
 
 class DbOAuthStateStore:
@@ -173,10 +179,20 @@ class DbEncryptedTokenVault:
         *,
         default_key_ref: str,
         now: Callable[[], datetime],
+        key_resolver: Optional[Callable[[str], bytes | str]] = None,
+        _pin_keys: bool = False,
     ):
         self.config = config
-        self.default_key_ref = default_key_ref
+        # The shared flow stores under this reference when a record names none.
+        self.default_key_ref = default_key_ref or "oauth-default"
         self.now = now
+        self.key_resolver = key_resolver
+        # Only a per-request vault (for_request) keeps the ciphers it resolved,
+        # so a sign-in that checked its key up front writes with that same key
+        # even if the resolver fails later. The shared vault resolves keys
+        # afresh on every use, so it never holds an outdated secret.
+        self._pin_keys = _pin_keys
+        self._ciphers: Dict[str, Fernet] = {}
 
     async def put(self, record: TokenRecord) -> None:
         normalized = (
@@ -237,11 +253,16 @@ class DbEncryptedTokenVault:
         return _token_record_from_row(row)
 
     async def rotate_key(self, token_id: str, new_key_ref: str) -> None:
+        # The reference written is the one the payload is encrypted with: an
+        # empty one means this vault's default, stored as that name.
+        new_key_ref = new_key_ref or self.default_key_ref
         row = await self.get(token_id)
         if row is None:
             return
-        decrypted = self._cipher(row.key_ref).decrypt(row.encrypted_payload.encode("utf-8"))
-        rotated = self._cipher(new_key_ref).encrypt(decrypted).decode("utf-8")
+        # Both keys are resolved afresh: rotation follows the resolver's
+        # current secrets, not ones an earlier request pinned.
+        decrypted = self._cipher(row.key_ref, fresh=True).decrypt(row.encrypted_payload.encode("utf-8"))
+        rotated = self._cipher(new_key_ref, fresh=True).encrypt(decrypted).decode("utf-8")
         await self.config.database.update(
             model="oauth_tokens",
             where=[{"field": "token_id", "operator": "eq", "value": token_id}],
@@ -260,8 +281,106 @@ class DbEncryptedTokenVault:
             namespace=self.config.namespace,
         )
 
-    def _cipher(self, key_ref: str) -> Fernet:
-        return Fernet(_derive_fernet_key(self.config.namespace, key_ref))
+    def assert_configured(self) -> None:
+        """Raises ConfigError unless a valid key is configured for the default
+        key reference. Called when a sign-in starts and when its callback
+        arrives, before any side effect: it resolves the current key afresh.
+        A per-request vault (for_request) then writes with that key."""
+        self._ciphers.pop(self.default_key_ref, None)
+        self._cipher(self.default_key_ref)
+
+    def for_request(self, key_ref: Optional[str] = None) -> "DbEncryptedTokenVault":
+        """A vault for one request, holding the current key for `key_ref`
+        (this vault's default reference when not given), checked now
+        (ConfigError if missing or bad)."""
+        vault = DbEncryptedTokenVault(
+            self.config,
+            default_key_ref=key_ref or self.default_key_ref,
+            now=self.now,
+            key_resolver=self.key_resolver,
+            _pin_keys=True,
+        )
+        vault.assert_configured()
+        return vault
+
+    async def migrate_legacy_tokens(self, destination_key_ref: Optional[str] = None) -> int:
+        """Re-encrypts, with the configured key, every row still encrypted
+        with the key earlier releases derived from the namespace alone (which
+        anyone could compute). Run it once after upgrading; it returns how many
+        rows it re-encrypted. Rows the configured key opens are left alone.
+
+        The old key is used only here, and only for rows the configured key
+        cannot open. Someone who could write to the table could also plant a
+        row under the old key, so run it promptly after the upgrade."""
+        if not callable(getattr(self.config.database, "update_many", None)):
+            # Each write must be atomic and conditional on the row being
+            # unchanged; without update_many that cannot be guaranteed.
+            raise ConfigError("migrate_legacy_tokens needs a database adapter with update_many")
+        rows = await self.config.database.find_many(
+            model="oauth_tokens",
+            where=[],
+            namespace=self.config.namespace,
+        )
+        migrated = 0
+        for row in rows:
+            # Earlier releases derived the key from the stored reference as
+            # is, even an empty one.
+            stored_ref = str(row.get("key_ref") or "")
+            ciphertext = str(row.get("encrypted_payload") or "")
+            try:
+                # Rows the old key cannot open were written with a configured
+                # key (or are corrupt) and are left alone.
+                plaintext = Fernet(_legacy_fernet_key(self.config.namespace, stored_ref)).decrypt(
+                    ciphertext.encode("utf-8")
+                )
+            except InvalidToken:
+                continue
+            target_ref = destination_key_ref or stored_ref or self.default_key_ref
+            written = await self._replace_if_unchanged(
+                row,
+                ciphertext,
+                {
+                    "encrypted_payload": self._cipher(target_ref).encrypt(plaintext).decode("utf-8"),
+                    "key_ref": target_ref,
+                    "updated_at": self.now().isoformat(),
+                },
+            )
+            if written:
+                migrated += 1
+        return migrated
+
+    async def _replace_if_unchanged(self, row: Dict[str, Any], ciphertext: str, data: Dict[str, Any]) -> bool:
+        """Writes only while the row still holds the ciphertext that was read,
+        so a row changed or deleted meanwhile (a new token, a disconnect) is
+        skipped rather than overwritten or stopping the run."""
+        where = [
+            {"field": "token_id", "operator": "eq", "value": row["token_id"]},
+            {"field": "encrypted_payload", "operator": "eq", "value": ciphertext},
+        ]
+        count = await self.config.database.update_many(
+            model="oauth_tokens", where=where, data=data, namespace=self.config.namespace
+        )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            # Zero is a confirmed no-match; anything else (None from an
+            # inherited stub, a float, a negative) cannot tell whether the row
+            # was written, so the run stops rather than report it as skipped.
+            raise ConfigError(
+                "migrate_legacy_tokens needs update_many to return the number of rows it changed"
+            )
+        return count >= 1
+
+    def _cipher(self, key_ref: str, *, fresh: bool = False) -> Fernet:
+        """The cipher for a key reference, from the configured secret key."""
+        key_ref = key_ref or self.default_key_ref
+        cached = None if fresh else self._ciphers.get(key_ref)
+        if cached is not None:
+            return cached
+        if self.key_resolver is None:
+            raise ConfigError("Social OAuth encryption_key_resolver must be configured to store provider tokens")
+        cipher = Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
+        if self._pin_keys and not fresh:
+            self._ciphers[key_ref] = cipher
+        return cipher
 
 
 class FetchOAuthTokenHttpClient:
@@ -455,7 +574,14 @@ class SocialOAuthService:
             config,
             default_key_ref=self.plugin_config.encryption_key_ref,
             now=self.plugin_config.now,
+            key_resolver=self.plugin_config.encryption_key_resolver,
         )
+
+    def _effective_key_ref(self) -> str:
+        """The key reference tokens are stored under now: the configured one,
+        or "oauth-default" when it is empty, as the vault and flow both read
+        an empty one."""
+        return self.plugin_config.encryption_key_ref or "oauth-default"
 
     async def start(
         self,
@@ -465,6 +591,10 @@ class SocialOAuthService:
         callback_mode: Optional[str] = None,
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        # A missing or bad token key fails here, before the provider redirect
+        # or any user is created, not after the callback has written rows. The
+        # reference checked is the one configured now.
+        self.token_vault.for_request(self._effective_key_ref())
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         resolved = await self._run_before_start(
@@ -523,6 +653,14 @@ class SocialOAuthService:
         state: str,
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        # A missing or bad token key fails here, before the provider exchange
+        # or any user is created, not after the callback has written rows. This
+        # callback gets its own vault holding the key it checked, so its write
+        # uses that key whatever other calls on this service do meanwhile. The
+        # key reference is read once here and used for both the check and the
+        # write, even if the configuration changes during the callback.
+        key_ref = self._effective_key_ref()
+        vault = self.token_vault.for_request(key_ref)
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         settings = self._resolve_provider_settings(provider_id, runtime)
@@ -532,6 +670,8 @@ class SocialOAuthService:
             request=request,
             runtime=runtime,
             settings=settings,
+            token_vault=vault,
+            key_ref=key_ref,
         )
 
         try:
@@ -635,6 +775,8 @@ class SocialOAuthService:
         request: Optional[Any],
         runtime: Optional[AuthFnRuntimeResolution],
         settings: SocialProviderConfig,
+        token_vault: Optional["DbEncryptedTokenVault"] = None,
+        key_ref: Optional[str] = None,
     ) -> OAuthFlowService:
         resolved_runtime = runtime or resolve_runtime(self.config, request)
 
@@ -733,7 +875,7 @@ class SocialOAuthService:
                         )
                     },
                     "stateStore": self.state_store,
-                    "tokenVault": self.token_vault,
+                    "tokenVault": token_vault or self.token_vault,
                     "tokenHttpClient": FetchOAuthTokenHttpClient(self.plugin_config.fetcher),
                     "identityHooks": OAuthFlowIdentityHooks.model_validate(
                         {
@@ -742,7 +884,7 @@ class SocialOAuthService:
                             "onDisconnected": on_disconnected,
                         }
                     ),
-                    "keyRef": self.plugin_config.encryption_key_ref,
+                    "keyRef": key_ref or self.plugin_config.encryption_key_ref,
                     "stateTtlSeconds": self.plugin_config.state_ttl_seconds,
                     "now": self.plugin_config.now,
                     "emitEvent": emit_flow_event,
@@ -1161,6 +1303,12 @@ def authfn_social_oauth_plugin(
             {"method": "POST", "path": "/social/disconnect/:provider"},
         ],
     )
+    plugin.validate_config = lambda _config: DbEncryptedTokenVault(
+        _config,
+        default_key_ref=resolved.encryption_key_ref,
+        now=resolved.now,
+        key_resolver=resolved.encryption_key_resolver,
+    ).assert_configured()
     plugin._authfn_config = resolved
     return plugin
 
@@ -1539,9 +1687,39 @@ def _callback_user_id(result: Any) -> Optional[str]:
     return getattr(subject, "user_id", None) if subject is not None else None
 
 
-def _derive_fernet_key(namespace: str, key_ref: str) -> bytes:
+def _legacy_fernet_key(namespace: str, key_ref: str) -> bytes:
+    """The key earlier releases used: derived from public values only, so it
+    protected nothing. Kept only to read old rows during re-encryption."""
     digest = hashlib.sha256(f"{namespace}:{key_ref}:oauth".encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
+
+
+def _fernet_key_from_secret(secret: bytes | str) -> bytes:
+    if isinstance(secret, str):
+        raw = secret.encode("utf-8")
+    elif isinstance(secret, (bytes, bytearray)):
+        raw = bytes(secret)
+    else:
+        # bytes(32) would be 32 zero bytes: refuse anything but bytes or str.
+        raise ConfigError("Social OAuth encryption key must be bytes or str")
+    if len(raw) < 32:
+        raise ConfigError("Social OAuth encryption key must be at least 32 bytes")
+    # A urlsafe-base64 Fernet key is used as is; any other secret goes
+    # through HKDF-SHA256 to the 32 bytes Fernet needs.
+    if len(raw) == 44:
+        try:
+            if len(base64.urlsafe_b64decode(raw)) == 32:
+                return raw
+        except (ValueError, TypeError):
+            # Not base64 after all: derive a key from it below.
+            pass
+    derived = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"authfn-social-oauth-token-key",
+    ).derive(raw)
+    return base64.urlsafe_b64encode(derived)
 
 
 def _parse_json_object(value: Any) -> Optional[Dict[str, Any]]:
