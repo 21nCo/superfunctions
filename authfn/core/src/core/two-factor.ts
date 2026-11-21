@@ -365,16 +365,11 @@ export async function satisfyTwoFactorChallenge(
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
     const step = await assertTotpMatches(config, enrollment, code, pluginConfig);
     if (!(await claimChallenge())) {
-      // Another request finished this challenge first. If it is the same
-      // sign-in submitted twice (the challenge is finished and this very
-      // step was recorded on the same enrollment), this attempt was no guess
-      // and ends the run, so a double submission cannot leave TOTP locked
-      // after a successful sign-in. Losing a claim needs this challenge's id,
-      // which only the client signing in holds. Otherwise the attempt stays
-      // counted.
-      if (await isAcceptedDuplicate(config, challenge.id, enrollment, step)) {
-        await attempt.succeeded();
-      }
+      // Another request finished this challenge first (typically the same
+      // sign-in submitted twice). This attempt stays counted: only the
+      // request that records an accepted step ends the run, because nothing
+      // here can tell a duplicate from a request that matched a stale
+      // snapshot, and ending the run could clear failures counted meanwhile.
       throw challengeGone();
     }
     try {
@@ -845,32 +840,6 @@ async function recordTotpStep(
     current = reloaded;
   }
   throw invalidSecondFactorCode(enrollment.userId);
-}
-
-/**
- * True when a challenge this request lost was finished by a request that
- * recorded the same TOTP step on the same enrollment and secret.
- */
-async function isAcceptedDuplicate(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  challengeId: string,
-  enrollment: AuthFnTwoFactorEnrollmentRecord,
-  step: number
-): Promise<boolean> {
-  try {
-    const challenge = await config.database.findOne<AuthFnTwoFactorChallengeRecord>({
-      model: 'two_factor_challenges',
-      where: [{ field: 'id', operator: 'eq', value: challengeId }],
-      namespace: namespace(config)
-    });
-    if (!challenge?.consumedAt) {
-      return false;
-    }
-    const current = await reloadSameEnrollment(config, enrollment);
-    return current !== null && (current.lastUsedCounter ?? -1) >= step;
-  } catch {
-    return false;
-  }
 }
 
 /**

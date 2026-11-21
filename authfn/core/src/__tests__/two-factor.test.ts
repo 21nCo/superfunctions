@@ -1118,33 +1118,6 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(await finishing).toBe('AUTHFN_2FA_INVALID_CODE');
   });
 
-  it('ends the run for a duplicate of a sign-in whose code was recorded', async () => {
-    const setup = await enrolledUser({ maxFailedAttempts: 3 });
-    const verify = (code: string) =>
-      verifyTwoFactorCode(setup.config, setup.userId, code, setup.pluginConfig).then(() => 'ok', (error) => error.code);
-    setup.clock.advanceSeconds(30);
-    const challengeId = await setup.challenge();
-    const totp = generateTotp(setup.secret, setup.clock.now());
-    // The duplicate waits at its reservation while the first submission
-    // finishes the sign-in.
-    const paused = pausingAdapter(setup.config.database);
-    const reached = paused.pauseNext((params) =>
-      params.model === 'two_factor_enrollments' && 'failedAttemptCount' in params.data);
-    const duplicate = satisfyTwoFactorChallenge({ ...setup.config, database: paused.adapter }, challengeId, totp, setup.pluginConfig)
-      .then(() => 'ok', (error) => error.code);
-    await reached;
-    expect((await setup.post('/2fa/challenge', { challengeId, code: totp })).status).toBe(200);
-    paused.release();
-    expect(await duplicate).toBe('AUTHFN_2FA_INVALID_CODE');
-    // The run ended: three wrong codes are checked before the lock.
-    setup.clock.advanceSeconds(30);
-    const wrong = setup.wrongCode(setup.clock.now());
-    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
-    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
-    expect(await verify(wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
-    expect(await verify(generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
-  });
-
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;
