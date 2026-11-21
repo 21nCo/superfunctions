@@ -4,9 +4,6 @@ import { toAuthFnError } from '../core/errors.js';
 
 const requestIds = new WeakMap<Request, string>();
 
-/** Letters, digits and `._:-`, up to 128 characters. */
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-
 export function resolveRequestId(request: Request): string {
   const cached = requestIds.get(request);
   if (cached) {
@@ -14,10 +11,7 @@ export function resolveRequestId(request: Request): string {
   }
 
   const incoming = request.headers.get('x-request-id')?.trim();
-  // A caller's id is reused (for tracing across services) only when it is a
-  // short token; anything else (markup, very long values) is replaced, so it
-  // is never echoed into responses and logs.
-  if (incoming && REQUEST_ID_PATTERN.test(incoming)) {
+  if (incoming) {
     requestIds.set(request, incoming);
     return incoming;
   }
