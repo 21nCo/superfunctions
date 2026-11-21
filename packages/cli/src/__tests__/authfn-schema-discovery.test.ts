@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -159,7 +158,7 @@ describe('authfn modular schema discovery', () => {
 
     expect(schema.version).toBe(3);
     // Package discovery reads the manifest; it must report the same version.
-    const manifest = JSON.parse(readFileSync(new URL('../../../../authfn/core/package.json', import.meta.url), 'utf8'));
+    const manifest = JSON.parse(fs.readFileSync(new URL('../../../../authfn/core/package.json', import.meta.url), 'utf8'));
     expect(manifest.superfunctions.schemaVersion).toBe(schema.version);
     expect(schema.schemas.map((table) => table.modelName)).toEqual([
       'users',
