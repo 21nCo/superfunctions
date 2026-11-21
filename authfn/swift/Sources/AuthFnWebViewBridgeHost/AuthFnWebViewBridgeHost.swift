@@ -64,7 +64,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if hostlessSchemes.contains(scheme) {
             return true
         }
-        let isWeb = scheme == "http" || scheme == "https" || scheme == "ws" || scheme == "wss"
+        let isWeb = isSpecial(scheme)
         return isWeb && host.isEmpty
     }
 
@@ -127,6 +127,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         let host = canonicalHost(host, scheme: scheme)
         let defaultPort: Int? = switch scheme {
         case "https", "wss": 443
+        case "ftp": 21
         case "http", "ws": 80
         default: nil
         }
@@ -141,7 +142,7 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
 
     /// Schemes whose hosts WebKit parses as domains or IP addresses.
     static func isSpecial(_ scheme: String) -> Bool {
-        ["http", "https", "ws", "wss"].contains(scheme)
+        ["http", "https", "ws", "wss", "ftp"].contains(scheme)
     }
 
     /// A host as WebKit reports it: lower-cased; for http(s) and ws(s) also
@@ -303,8 +304,10 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if let end = authority.firstIndex(where: { "/?#".contains($0) }) {
             authority = authority[..<end]
         }
+        var hadUserinfo = false
         if let at = authority.lastIndex(of: "@") {
             authority = authority[authority.index(after: at)...]
+            hadUserinfo = true
         }
         if authority.hasPrefix("[") {
             guard let close = authority.firstIndex(of: "]") else { return nil }
@@ -314,10 +317,22 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
             guard rest.hasPrefix(":") else { return nil }
             return (scheme, host, String(rest.dropFirst()))
         }
+        let host: Substring
+        let port: String?
         if let colon = authority.lastIndex(of: ":") {
-            return (scheme, String(authority[..<colon]), String(authority[authority.index(after: colon)...]))
+            host = authority[..<colon]
+            port = String(authority[authority.index(after: colon)...])
+        } else {
+            host = authority
+            port = nil
         }
-        return (scheme, String(authority), nil)
+        // An entirely empty authority is allowed (custom schemes), but WebKit
+        // refuses userinfo or a port delimiter with no host (`app://user@/`,
+        // `app://:/`), which must not stand for the hostless origin.
+        if host.isEmpty && (hadUserinfo || port != nil) {
+            return nil
+        }
+        return (scheme, String(host), port)
     }
 }
 

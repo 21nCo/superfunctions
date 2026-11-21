@@ -131,6 +131,12 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[0:0:0:0:0:0:0:00001]"))
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.000.0.1]"))
         XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("http://[::ffff:127.0.0.1]"), "http://[::ffff:127.0.0.1]")
+        // Userinfo or a port delimiter with no host is not the hostless origin.
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://user@/index"))
+        XCTAssertNil(AuthFnBridgeOriginPolicy.parse("app://:/index"))
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("app:///index"), "app://")
+        // FTP's default port compares like no port.
+        XCTAssertEqual(AuthFnBridgeOriginPolicy.parse("ftp://portal.example:21"), "ftp://portal.example")
         // A nested URL is not read as the origin inside it.
         XCTAssertNil(AuthFnBridgeOriginPolicy.parse("blob:https://portal.example/0000-test"))
     }
