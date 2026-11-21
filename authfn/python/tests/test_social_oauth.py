@@ -1020,7 +1020,13 @@ async def test_migration_stops_when_update_many_reports_no_row_count() -> None:
     from authfn.types import ConfigError
 
     class StubCount(MockDatabaseAdapter):
-        async def update_many(self, **_kwargs: Any) -> Any:  # type: ignore[override]
+        async def update_many(
+            self,
+            model: str,
+            where: List[Dict[str, Any]],
+            data: Dict[str, Any],
+            namespace: str,
+        ) -> Any:
             # Like the inherited Adapter.update_many stub: no count at all.
             return None
 
@@ -1083,3 +1089,48 @@ async def test_callback_reads_the_key_reference_once_for_its_check_and_its_write
     completed = await service.handle_callback("google", code="abc123", state=second["stateId"])
     assert completed["status"] == 303
     assert [row["key_ref"] for row in db.storage["oauth_tokens"]] == ["oauth-default"]
+
+
+def test_authfn_refuses_to_start_social_oauth_without_a_token_key() -> None:
+    from authfn import AuthFn
+    from authfn.plugins.social_oauth import authfn_social_oauth_plugin
+    from authfn.types import ConfigError
+
+    with pytest.raises(ConfigError):
+        AuthFn(
+            AuthFnConfig(
+                database=MockDatabaseAdapter(),
+                namespace="authfn",
+                plugins=[authfn_social_oauth_plugin(SocialOAuthPluginConfig())],
+            )
+        )
+    # With a key it starts.
+    AuthFn(
+        AuthFnConfig(
+            database=MockDatabaseAdapter(),
+            namespace="authfn",
+            plugins=[authfn_social_oauth_plugin(SocialOAuthPluginConfig(encryption_key_resolver=_test_oauth_key))],
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_rotate_key_to_an_empty_reference_stores_the_default_name() -> None:
+    from cryptography.fernet import Fernet
+
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault, _fernet_key_from_secret
+
+    db = MockDatabaseAdapter()
+    vault = DbEncryptedTokenVault(
+        AuthFnConfig(database=db, namespace="authfn"), default_key_ref="oauth-default", now=datetime.utcnow,
+        key_resolver=_test_oauth_key,
+    )
+    record = _token_record()
+    record["keyRef"] = "oauth-other"
+    await vault.put(record)
+    await vault.rotate_key("tok_test_1", "")
+    row = db.storage["oauth_tokens"][0]
+    assert row["key_ref"] == "oauth-default"
+    assert Fernet(_fernet_key_from_secret(_test_oauth_key("oauth-default"))).decrypt(
+        row["encrypted_payload"].encode("utf-8")
+    ) == b"test-provider-token-payload"

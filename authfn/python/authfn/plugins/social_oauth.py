@@ -13,6 +13,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
@@ -251,6 +253,9 @@ class DbEncryptedTokenVault:
         return _token_record_from_row(row)
 
     async def rotate_key(self, token_id: str, new_key_ref: str) -> None:
+        # The reference written is the one the payload is encrypted with: an
+        # empty one means this vault's default, stored as that name.
+        new_key_ref = new_key_ref or self.default_key_ref
         row = await self.get(token_id)
         if row is None:
             return
@@ -1699,14 +1704,22 @@ def _fernet_key_from_secret(secret: bytes | str) -> bytes:
         raise ConfigError("Social OAuth encryption key must be bytes or str")
     if len(raw) < 32:
         raise ConfigError("Social OAuth encryption key must be at least 32 bytes")
-    # A urlsafe-base64 Fernet key is used as is; anything else is hashed.
+    # A urlsafe-base64 Fernet key is used as is; any other secret goes
+    # through HKDF-SHA256 to the 32 bytes Fernet needs.
     if len(raw) == 44:
         try:
             if len(base64.urlsafe_b64decode(raw)) == 32:
                 return raw
         except (ValueError, TypeError):
+            # Not base64 after all: derive a key from it below.
             pass
-    return base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+    derived = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"authfn-social-oauth-token-key",
+    ).derive(raw)
+    return base64.urlsafe_b64encode(derived)
 
 
 def _parse_json_object(value: Any) -> Optional[Dict[str, Any]]:
