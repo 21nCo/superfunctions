@@ -407,14 +407,21 @@ describe('rate limit startup warnings (AF-12)', () => {
     expect(warned).toHaveLength(1);
   });
 
-  it('warns when a server is created with rate limiting off', () => {
+  it('warns once when servers are created with rate limiting off', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const key = Symbol.for('authfn.rateLimitWarnings');
+    const saved = (globalThis as Record<symbol, unknown>)[key];
     try {
-      createAuthFnRateLimitMiddleware({ database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] } as AuthFnRuntimeConfig);
-      // Once per process: an earlier server in this run may already have warned.
-      const calls = warn.mock.calls.map((call) => String(call[0]));
-      expect(calls.every((message) => message.startsWith('[authfn] WARNING'))).toBe(true);
+      // A fresh module copy and an empty shared set, so earlier servers in this run do not count.
+      delete (globalThis as Record<symbol, unknown>)[key];
+      vi.resetModules();
+      const fresh = await import('../core/rate-limit.js');
+      const config = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [] } as AuthFnRuntimeConfig;
+      fresh.createAuthFnRateLimitMiddleware(config);
+      fresh.createAuthFnRateLimitMiddleware(config);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([expect.stringMatching(/rate limiting is OFF/)]);
     } finally {
+      (globalThis as Record<symbol, unknown>)[key] = saved;
       warn.mockRestore();
     }
   });

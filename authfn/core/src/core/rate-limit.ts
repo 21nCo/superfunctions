@@ -36,7 +36,11 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   account: { ipLimit: 120, windowSeconds: 60 },
 };
 
-const issuedRateLimitWarnings = new Set<string>();
+// Shared through globalThis, so separate copies of AuthFn loaded in one
+// process (or isolate) warn once between them; worker threads each warn.
+const issuedRateLimitWarnings: Set<string> = ((globalThis as Record<symbol, unknown>)[
+  Symbol.for('authfn.rateLimitWarnings')
+] ??= new Set<string>()) as Set<string>;
 
 /**
  * Warns, once per process, when the HTTP rate limiter is off (the default),
@@ -52,8 +56,9 @@ export function warnAboutRateLimitConfig(
   if (!config.rateLimit?.enabled) {
     messages.push(
       '[authfn] WARNING: rate limiting is OFF. Sign-in, OTP, password reset and 2FA routes are not throttled '
-        + 'per client. Enable it with createServer({ rateLimit: { enabled: true, resolveClientIp } }) or put '
-        + 'a limiter in front of AuthFn. See the AuthFn docs, Core concepts > Rate limiting.'
+        + 'per client. Enable it with createServer({ rateLimit: { enabled: true, resolveClientIp } }). A limiter '
+        + 'in front of AuthFn also helps, but this warning stays until rateLimit is enabled. See the AuthFn docs, '
+        + 'Core concepts > Rate limiting.'
     );
   } else if (!config.rateLimit.resolveClientIp) {
     messages.push(
