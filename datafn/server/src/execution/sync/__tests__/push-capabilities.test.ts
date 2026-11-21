@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { idempotencyRecordId } from "../../idempotency.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../../../server.js";
 import type { DatafnSchema } from "../../../core-types.js";
@@ -354,9 +355,7 @@ describe("sync push capability injection", () => {
     expect(conflict.body.error.code).toBe("CONFLICT");
 
     const stored = await db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: "ns:1" },
-      { field: "client_id", op: "eq", value: "v2:client:1" },
-      { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
+      { field: "id", op: "eq", value: idempotencyRecordId("ns:1", "user:alice", "client:1", "cached-insert-conflict") },
     ]);
     if (!stored) {
       throw new Error("expected cached insert conflict idempotency result");
@@ -366,9 +365,7 @@ describe("sync push capability injection", () => {
     await db.internal.update(
       "__datafn_idempotency",
       [
-        { field: "namespace", op: "eq", value: "ns:1" },
-        { field: "client_id", op: "eq", value: "v2:client:1" },
-        { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
+        { field: "id", op: "eq", value: idempotencyRecordId("ns:1", "user:alice", "client:1", "cached-insert-conflict") },
       ],
       {
         result: JSON.stringify(storedResult),
@@ -391,9 +388,7 @@ describe("sync push capability injection", () => {
     expect(retried.body.result.applied).toContain("cached-insert-conflict");
 
     const storedAfter = await db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: "ns:1" },
-      { field: "client_id", op: "eq", value: "v2:client:1" },
-      { field: "mutation_id", op: "eq", value: "cached-insert-conflict" },
+      { field: "id", op: "eq", value: idempotencyRecordId("ns:1", "user:alice", "client:1", "cached-insert-conflict") },
     ]);
     const storedAfterResult = JSON.parse(storedAfter.result as string);
     expect(storedAfterResult.ok).toBe(true);
@@ -581,9 +576,7 @@ describe("sync push capability injection", () => {
       expect(first.body.error.code).toBe("NOT_FOUND");
 
       const stored = await captureDb.internal.findOne("__datafn_idempotency", [
-        { field: "namespace", op: "eq", value: "ns:not-found-retry" },
-        { field: "client_id", op: "eq", value: "v2:client:not-found-retry" },
-        { field: "mutation_id", op: "eq", value: "merge-after-not-found" },
+        { field: "id", op: "eq", value: idempotencyRecordId("ns:not-found-retry", "user:alice", "client:not-found-retry", "merge-after-not-found") },
       ]);
       if (!stored) {
         throw new Error("expected cached not found idempotency result");
@@ -593,9 +586,7 @@ describe("sync push capability injection", () => {
       await captureDb.internal.update(
         "__datafn_idempotency",
         [
-          { field: "namespace", op: "eq", value: "ns:not-found-retry" },
-          { field: "client_id", op: "eq", value: "v2:client:not-found-retry" },
-          { field: "mutation_id", op: "eq", value: "merge-after-not-found" },
+          { field: "id", op: "eq", value: idempotencyRecordId("ns:not-found-retry", "user:alice", "client:not-found-retry", "merge-after-not-found") },
         ],
         {
           result: JSON.stringify(storedResult),
@@ -1466,9 +1457,7 @@ describe("sync push capability injection", () => {
       );
 
       const stored = await shareDb.internal.findOne("__datafn_idempotency", [
-        { field: "namespace", op: "eq", value: "user:owner" },
-        { field: "client_id", op: "eq", value: "v2:client:auth-change" },
-        { field: "mutation_id", op: "eq", value: "delete-after-auth-change" },
+        { field: "id", op: "eq", value: idempotencyRecordId("user:owner", "other", "client:auth-change", "delete-after-auth-change") },
       ]);
       if (!stored) {
         throw new Error("expected cached forbidden idempotency result");
@@ -1478,9 +1467,7 @@ describe("sync push capability injection", () => {
       await shareDb.internal.update(
         "__datafn_idempotency",
         [
-          { field: "namespace", op: "eq", value: "user:owner" },
-          { field: "client_id", op: "eq", value: "v2:client:auth-change" },
-          { field: "mutation_id", op: "eq", value: "delete-after-auth-change" },
+          { field: "id", op: "eq", value: idempotencyRecordId("user:owner", "other", "client:auth-change", "delete-after-auth-change") },
         ],
         {
           result: JSON.stringify(storedResult),

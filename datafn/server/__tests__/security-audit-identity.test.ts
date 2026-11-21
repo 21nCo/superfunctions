@@ -358,8 +358,9 @@ describe("DFN-01 follow-ups", () => {
     const row = await db.internal.findOne("__datafn_idempotency", [
       { field: "id", op: "eq", value: idempotencyRecordId("datafn", undefined, "c", "m") },
     ]);
-    // A 0.2.x worker matches on the raw client id, so it cannot see this row.
-    expect(row?.client_id).toBe("v2:c");
+    // 0.2.x workers match on client_id/mutation_id, which stay NULL here.
+    expect(row?.client_id ?? null).toBeNull();
+    expect(row?.mutation_id ?? null).toBeNull();
   });
 
   it("a scoped store keeps its scope guard after withDb()", async () => {

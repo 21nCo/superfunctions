@@ -153,10 +153,11 @@ export class DbIdempotencyStore implements IdempotencyStore {
       await this.db.internal.create("__datafn_idempotency", {
         id: this.recordId(clientId, mutationId),
         namespace: this.namespace,
-        // "v2:" keeps 0.2.x workers, which match on the raw client id, from
-        // reading or overwriting scoped records during a rolling upgrade.
-        client_id: `v2:${clientId}`,
-        mutation_id: mutationId,
+        // The legacy lookup columns stay NULL: 0.2.x workers sharing the
+        // database during a rolling upgrade match on them, so they can never
+        // read or overwrite scoped records, and the indexed bytes stay small.
+        client_id: null,
+        mutation_id: null,
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),
       });
