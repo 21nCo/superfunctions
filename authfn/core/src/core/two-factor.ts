@@ -365,6 +365,11 @@ export async function satisfyTwoFactorChallenge(
     const attempt = await reserveTotpCheck(config, enrollment.id, pluginConfig);
     const step = await assertTotpMatches(config, enrollment, code, pluginConfig);
     if (!(await claimChallenge())) {
+      // The code was right but another request (typically the same sign-in
+      // submitted twice) finished this challenge first. It was not a guess,
+      // so it ends the run like an accepted code; otherwise every double
+      // submission would leave attempts that move the account towards a lock.
+      await attempt.succeeded();
       throw challengeGone();
     }
     try {

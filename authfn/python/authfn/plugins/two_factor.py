@@ -536,6 +536,11 @@ def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> 
                         "required": True,
                         "fieldName": "secret_encrypted",
                     },
+                    # Same columns as the TypeScript kernel, so either kernel's
+                    # schema serves both on a shared database.
+                    "lastUsedCounter": {"type": "number", "required": False, "fieldName": "last_used_counter"},
+                    "failedAttemptCount": {"type": "number", "required": False, "fieldName": "failed_attempt_count"},
+                    "lockedUntil": {"type": "date", "required": False, "fieldName": "locked_until"},
                     "confirmedAt": {"type": "date", "required": False, "fieldName": "confirmed_at"},
                     "createdAt": {"type": "date", "required": True, "fieldName": "created_at"},
                     "updatedAt": {"type": "date", "required": True, "fieldName": "updated_at"},
