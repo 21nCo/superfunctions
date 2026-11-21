@@ -112,6 +112,26 @@ const LIFECYCLE_EVENTS = new Set(["response.created", "response.queued", "respon
 /** Events that end the turn: success (judged at the terminal) or failure. */
 const TERMINAL_EVENTS = new Set(["response.completed", "response.incomplete"]);
 const CANCELLED_EVENTS = new Set(["response.cancelled", "response.canceled"]);
+/** The item type an event about an output item implies; other events that name one imply none. */
+const ITEM_EVENT_TYPES: Record<string, string> = {
+  "response.output_text.done": "message",
+  "response.output_text.annotation.added": "message",
+  "response.refusal.delta": "message",
+  "response.refusal.done": "message",
+  "response.reasoning_summary_part.added": "reasoning",
+  "response.reasoning_summary_part.done": "reasoning",
+  "response.reasoning_summary_text.delta": "reasoning",
+  "response.reasoning_summary_text.done": "reasoning",
+  "response.reasoning_text.delta": "reasoning",
+  "response.reasoning_text.done": "reasoning",
+};
+/** The item type a content part implies, for response.content_part.added and .done. */
+const PART_ITEM_TYPES: Record<string, string> = {
+  output_text: "message",
+  refusal: "message",
+  summary_text: "reasoning",
+  reasoning_text: "reasoning",
+};
 
 /**
  * Raise the provider error a frame reports, if any, whatever its event type: the error on its
@@ -132,7 +152,7 @@ function assertNoFrameError(payload: JsonRecord, flat: boolean, provider: string
 /**
  * Judge a response envelope on any frame but the terminal one, by the rule every envelope uses
  * (terminalStatus): a lifecycle frame (created, queued, in_progress) must carry a response
- * object, and any envelope must describe a running response. A stated status other than queued
+ * object whose output, when present, is an array, and any envelope must describe a running response. A stated status other than queued
  * or in_progress (failed, completed, incomplete, cancelled, unknown, or none beside
  * incomplete_details) contradicts the success path that follows; a running turn has not been
  * truncated, so populated incomplete_details fail too, and malformed ones fail in
@@ -143,6 +163,10 @@ function runningEnvelopeId(payload: JsonRecord, type: string, provider: string):
   const response = payload.response;
   if (response === undefined && !LIFECYCLE_EVENTS.has(type)) return undefined;
   if (!isRecord(response)) throw fail(`Responses ${type} event requires a response object`);
+  // A running response's output so far is absent or an array, as a terminal one must be.
+  if (response.output !== undefined && !Array.isArray(response.output)) {
+    throw fail(`Responses ${type} event response output must be an array`);
+  }
   const status = terminalStatus(response, provider);
   if (status !== undefined && status !== "queued" && status !== "in_progress") {
     // A populated error was raised already; a failure that names none is still a failure.
@@ -232,15 +256,16 @@ export async function* mapResponsesStream(
         const item = itemId(payload.item_id, "output_text.delta", fail);
         const index = outputIndex(payload.output_index, "output_text.delta", fail);
         const contentIndex = outputIndex(payload.content_index, "output_text.delta", fail, "content_index");
-        if (payload.delta) {
-          ledger.text(item, index, contentIndex, payload.delta);
-          yield { type: "content", content: payload.delta, delta: payload.delta };
-        }
+        // An empty delta still states its item.
+        ledger.text(item, index, contentIndex, payload.delta);
+        if (payload.delta) yield { type: "content", content: payload.delta, delta: payload.delta };
         break;
       }
       case "response.reasoning_summary_text.delta":
       case "response.reasoning_text.delta": {
         if (typeof payload.delta !== "string") throw fail("Responses reasoning delta must be a string");
+        const what = type.slice("response.".length);
+        ledger.note("reasoning", itemId(payload.item_id, what, fail), outputIndex(payload.output_index, what, fail), what);
         const step = type === "response.reasoning_text.delta" ? "content" : "summary";
         if (payload.delta) yield { type: "reasoning", step, thinking: payload.delta };
         break;
@@ -252,7 +277,7 @@ export async function* mapResponsesStream(
         const index = outputIndex(payload.output_index, what, fail);
         if (type === "response.function_call_arguments.delta") {
           if (typeof payload.delta !== "string") throw fail("Responses function_call_arguments.delta requires a string delta");
-          if (payload.delta) ledger.argumentsDelta(item, index, payload.delta);
+          ledger.argumentsDelta(item, index, payload.delta);
         } else {
           if (typeof payload.arguments !== "string") throw fail("Responses function_call_arguments.done requires arguments");
           ledger.argumentsDone(item, index, payload.arguments);
@@ -323,11 +348,23 @@ export async function* mapResponsesStream(
       case "error":
         // A populated error was raised above; a failure that names none is still a failure.
         throw responsesError(provider, { body: payload, error: {} });
-      default:
+      default: {
         // A cancelled response is never a success, whatever its envelope says.
         if (CANCELLED_EVENTS.has(type)) throw fail(`Responses stream reports ${type}`);
-        // Other lifecycle and *.done events carry no new data for LangFn stream events.
+        if (LIFECYCLE_EVENTS.has(type)) break;
+        // Any other event that names an output item (a text or refusal done event, a content
+        // part, reasoning or built-in tool event) states that item, with the type it implies.
+        // It carries no new data for LangFn stream events.
+        const what = type.slice("response.".length) || "stream event";
+        const part = type === "response.content_part.added" || type === "response.content_part.done"
+          ? (isRecord(payload.part) && typeof payload.part.type === "string" && Object.hasOwn(PART_ITEM_TYPES, payload.part.type)
+            ? PART_ITEM_TYPES[payload.part.type]
+            : undefined)
+          : undefined;
+        const implied = Object.hasOwn(ITEM_EVENT_TYPES, type) ? ITEM_EVENT_TYPES[type] : part;
+        ledger.note(implied, itemId(payload.item_id, what, fail), outputIndex(payload.output_index, what, fail), what);
         break;
+      }
     }
   }
   if (!terminal) throw fail("Responses stream ended before a terminal response event");

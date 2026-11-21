@@ -47,6 +47,7 @@ export function buildResponsesPayload(
 
   if (request.tools !== undefined) {
     if (!Array.isArray(request.tools)) throw new ValidationError("tools must be an array");
+    assertDense(request.tools, (index) => `Tool ${index} requires a name`);
     if (request.tools.length) {
       requireCapability(profile, "tools", "the request declares tools");
       payload.tools = request.tools.map(toResponsesTool);
@@ -109,10 +110,7 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
   const input: Record<string, unknown>[] = [];
   const calls = new Set<string>();
   const results = new Set<string>();
-  // forEach skips the holes of a sparse array, which would silently drop those turns.
-  for (let index = 0; index < messages.length; index += 1) {
-    if (!(index in messages)) throw new ValidationError(`Message ${index} must be an object`);
-  }
+  assertDense(messages, (index) => `Message ${index} must be an object`);
   messages.forEach((message, index) => {
     if (!message || typeof message !== "object") throw new ValidationError(`Message ${index} must be an object`);
     if (!ROLES.has(message.role)) throw new ValidationError(`Message ${index} has an unsupported role`);
@@ -167,6 +165,13 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
   return input;
 }
 
+/** forEach and map skip the holes of a sparse array, which would silently drop entries. */
+function assertDense(values: unknown[], message: (index: number) => string): void {
+  for (let index = 0; index < values.length; index += 1) {
+    if (!(index in values)) throw new ValidationError(message(index));
+  }
+}
+
 function hasItems(value: unknown): boolean {
   return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null;
 }
@@ -196,6 +201,10 @@ function toImagePart(image: ResponsesImageInput, index: number): Record<string, 
 }
 
 function toAssistantItems(message: ResponsesMessage, index: number, profile: CapabilityProfile): Record<string, unknown>[] {
+  for (const field of ["toolCalls", "tool_calls"] as const) {
+    const calls = message[field] as unknown;
+    if (Array.isArray(calls)) assertDense(calls, (call) => `Message ${index}: assistant tool call ${call} must be an object`);
+  }
   let toolCalls: ToolCall[] | undefined;
   try {
     toolCalls = parseMessageToolCalls(message);
@@ -281,6 +290,9 @@ function toResponsesTool(tool: ToolSpec, index: number): Record<string, unknown>
   if (tool.input_schema !== undefined && (!tool.input_schema || typeof tool.input_schema !== "object" || Array.isArray(tool.input_schema))) {
     throw new ValidationError(`Tool ${tool.name} input_schema must be an object`);
   }
+  if (tool.description !== undefined && typeof tool.description !== "string") {
+    throw new ValidationError(`Tool ${tool.name} description must be a string`);
+  }
   return {
     type: "function",
     name: tool.name,
@@ -300,15 +312,26 @@ function toResponsesToolChoice(choice: string | Record<string, unknown>): string
   if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
     throw new ValidationError("tool_choice must be a string or an object");
   }
-  const nested = choice.function as Record<string, unknown> | undefined;
-  if (choice.type === "function" && typeof choice.name !== "string" && nested && typeof nested.name === "string") {
-    // Chat Completions shape: { type: "function", function: { name } }.
-    return { type: "function", name: nested.name };
+  if (typeof choice.type !== "string" || !choice.type) throw new ValidationError("tool_choice object requires a type");
+  if (choice.type !== "function") return { ...choice };
+  // A function choice names its function flat ({ type, name }) or in the Chat Completions shape
+  // ({ type, function: { name } }); a stated name is non-empty and both, when stated, agree.
+  const required = () => new ValidationError("tool_choice of type function requires a function name");
+  const flat = choice.name;
+  if (flat !== undefined && (typeof flat !== "string" || !flat)) throw required();
+  const { function: nested, ...rest } = choice;
+  let name = flat as string | undefined;
+  if (nested !== undefined) {
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) throw required();
+    const nestedName = (nested as Record<string, unknown>).name;
+    if (typeof nestedName !== "string" || !nestedName) throw required();
+    if (name !== undefined && name !== nestedName) {
+      throw new ValidationError("tool_choice names two different functions");
+    }
+    name = nestedName;
   }
-  if (choice.type === "function" && (typeof choice.name !== "string" || !choice.name)) {
-    throw new ValidationError("tool_choice of type function requires a function name");
-  }
-  return { ...choice };
+  if (name === undefined) throw required();
+  return { ...rest, name };
 }
 
 function toTextFormat(format: ResponsesTextFormat): Record<string, unknown> {
@@ -320,6 +343,9 @@ function toTextFormat(format: ResponsesTextFormat): Record<string, unknown> {
     }
     if (!format.schema || typeof format.schema !== "object" || Array.isArray(format.schema)) {
       throw new ValidationError("responseFormat schema must be an object");
+    }
+    if (format.description !== undefined && typeof format.description !== "string") {
+      throw new ValidationError("responseFormat description must be a string");
     }
     if (format.strict !== undefined && typeof format.strict !== "boolean") {
       throw new ValidationError("responseFormat strict must be a boolean");

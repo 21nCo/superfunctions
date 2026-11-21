@@ -212,11 +212,13 @@ export function parseOutputItems(
       }
       case "function_call":
         // A truncated call is never run or replayed, but its fields still have their wire types;
-        // only its arguments may be cut short.
+        // only its arguments may be cut short. A stated name is a non-empty string and stated
+        // arguments a string (null included); call_id follows the identity rule.
         for (const field of ["call_id", "name", "arguments"]) {
-          if (item[field] !== undefined && item[field] !== null && typeof item[field] !== "string") {
-            throw fail(`Responses function_call ${field} must be a string`);
-          }
+          const value = item[field];
+          if (value === undefined || (field === "call_id" && value === null)) continue;
+          if (typeof value !== "string") throw fail(`Responses function_call ${field} must be a string`);
+          if (field === "name" && !value) throw fail("Responses function_call name must not be empty");
         }
         if (item.status !== undefined && item.status !== null && !ITEM_STATUSES.has(item.status as string)) {
           throw fail(`Responses function_call has unexpected status ${describeWireValue(item.status)}`);
@@ -551,9 +553,12 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
   try {
     text = await response.text();
   } catch (error) {
-    // A timed-out, oversized or aborted body keeps its own error; any other unreadable error
-    // body still yields a typed status error.
-    if (error instanceof LangFnError || isAbort(error, signal)) throw error;
+    // A timed-out, oversized or aborted body keeps its own error, except that a status which
+    // names the error class (401, 429) still decides an oversized body; any other unreadable
+    // error body still yields a typed status error.
+    const classified = response.status === 401 || response.status === 429;
+    const oversized = error instanceof LangFnError && error.code === "RESPONSE_TOO_LARGE";
+    if (!(classified && oversized) && (error instanceof LangFnError || isAbort(error, signal))) throw error;
   }
   let body: unknown = text;
   try {

@@ -68,8 +68,9 @@ export interface ResolvedOutput {
 
 /**
  * One ledger of the output items a Responses stream reports. Every event that names an item
- * (output_item.added, output_text.delta, function_call_arguments.delta and .done,
- * output_item.done, and the terminal output) merges into one entry under one conflict rule:
+ * (output_item.added, text, refusal, reasoning, content part and function call argument
+ * events, empty deltas included, output_item.done, and the terminal output) merges into one
+ * entry under one conflict rule:
  * the entry is found by the stated output_index, else id, else call_id; a stated type, id,
  * call_id, function name or output_index that differs from a value already stated for that
  * entry is a ProviderError, and a missing one is filled and never lost. When one event names
@@ -81,9 +82,9 @@ export class OutputLedger {
   private readonly entries: Entry[] = [];
   /** Text deltas that name no item: they cover the whole answer. */
   private readonly unlocated: Chunk[] = [];
+  /** Every text delta already yielded as content, in arrival order. */
+  private streamed = "";
   private seq = 0;
-  /** Whether an omitted output was rebuilt with streamed text no finished item held. */
-  private synthesized = false;
 
   constructor(private readonly fail: Fail, private readonly provider: string) {}
 
@@ -111,20 +112,35 @@ export class OutputLedger {
     entry.finished = item;
   }
 
-  /** output_text.delta; one that names no item covers the whole answer. */
+  /**
+   * Any other event that names an item (a reasoning, refusal or content part event, a text
+   * done event, a built-in tool event): its locator and implied type, if any, merge into the
+   * entry like any other fact. An event that names no item states nothing.
+   */
+  note(type: string | undefined, itemId: string | undefined, index: number | undefined, what: string): void {
+    if (itemId === undefined && index === undefined) return;
+    this.locate({ ...(type !== undefined ? { type } : {}), ...(itemId !== undefined ? { id: itemId } : {}), ...(index !== undefined ? { index } : {}) }, what);
+  }
+
+  /**
+   * output_text.delta; one that names no item covers the whole answer. An empty delta still
+   * states its item; a non-empty one is content the caller has received.
+   */
   text(itemId: string | undefined, index: number | undefined, contentIndex: number | undefined, delta: string): void {
     const chunk: Chunk = { seq: this.seq++, ...(contentIndex !== undefined ? { contentIndex } : {}), text: delta };
     if (itemId === undefined && index === undefined) {
-      this.unlocated.push(chunk);
-      return;
+      if (delta) this.unlocated.push(chunk);
+    } else {
+      const entry = this.locate({ type: "message", ...(itemId !== undefined ? { id: itemId } : {}), ...(index !== undefined ? { index } : {}) }, "output_text.delta");
+      if (delta) entry.text.push(chunk);
     }
-    this.locate({ type: "message", ...(itemId !== undefined ? { id: itemId } : {}), ...(index !== undefined ? { index } : {}) }, "output_text.delta")
-      .text.push(chunk);
+    this.streamed += delta;
   }
 
-  /** function_call_arguments.delta */
+  /** function_call_arguments.delta; an empty delta still states its item. */
   argumentsDelta(itemId: string | undefined, index: number | undefined, delta: string): void {
-    this.callEntry(itemId, index, "function_call_arguments.delta").args.push({ seq: this.seq++, text: delta });
+    const entry = this.callEntry(itemId, index, "function_call_arguments.delta");
+    if (delta) entry.args.push({ seq: this.seq++, text: delta });
   }
 
   /** function_call_arguments.done */
@@ -138,20 +154,17 @@ export class OutputLedger {
    * Reconcile the ledger with the terminal response, before any tool call, message or end:
    * - A supplied output is validated like a JSON one and merges into the ledger item by item at
    *   its positions. Every finished item that names an index or identity must be in it, as the
-   *   same item: a function call keeps its name and arguments. An omitted output (absent or
-   *   `[]`) is rebuilt from the finished items, in stated output_index order when every item
-   *   states one, otherwise in arrival order.
+   *   same item: a function call keeps its name and arguments, and an item that held streamed
+   *   text is there too. An omitted output (absent or `[]`) is rebuilt from the finished items
+   *   (see {@link rebuild}). Each final item carries the id and call_id the ledger holds for it.
    * - On a completed turn every announced item has finished, and every finished call is
    *   executable. An incomplete turn may stop with items unfinished.
    * - Each function_call_arguments.done repeats the arguments of the call it names; on a
    *   completed turn the streamed argument deltas add up to them too.
-   * - Streamed text belongs to the part its delta named (content_index; a delta without one
-   *   covers all the item's text, and one that names no item the whole answer). It must be a
-   *   prefix of that part's text; the rest of each part, and every part never streamed, is
-   *   delivered once, in answer order. Streamed text with no terminal counterpart is a
-   *   contradiction on a completed turn, and whenever the terminal still has text to deliver
-   *   (it could be the same text twice). Otherwise a truncated turn keeps it, and an omitted
-   *   output keeps text that no finished item holds as a message, so the replayed turn has it.
+   * - One delivery rule for every turn: the content already yielded, in arrival order, must be
+   *   a prefix of the final answer (the output_text parts of the final output, in output then
+   *   content order, which is the message content), and exactly the rest is delivered.
+   *   Anything else is a ProviderError, since content already yielded cannot be recalled.
    */
   resolve(state: { output: unknown; omitted: boolean; completed: boolean; type: string }): ResolvedOutput {
     const { omitted, completed, type } = state;
@@ -165,10 +178,10 @@ export class OutputLedger {
         if (!(item.status === undefined || item.status === null || item.status === "completed")) {
           throw this.fail("Responses completed stream finished an unfinished function_call");
         }
-        parseFunctionCall(item, this.provider);
+        parseFunctionCall(this.withIdentity(entry, item), this.provider);
       }
     }
-    parseOutputItems(finished.map((entry) => entry.finished), this.provider, { incomplete: !completed });
+    parseOutputItems(finished.map((entry) => this.withIdentity(entry, entry.finished as JsonRecord)), this.provider, { incomplete: !completed });
 
     let output: JsonRecord[];
     // The final item of each entry: the supplied terminal item, or the finished (or rebuilt) one.
@@ -176,20 +189,24 @@ export class OutputLedger {
     if (!omitted) {
       // A malformed output fails in parseResponsesResponse, as it does for a JSON response.
       if (!Array.isArray(state.output)) return { output: state.output as JsonRecord[], undelivered: "" };
-      output = state.output as JsonRecord[];
-      outputItemIdentities(output, this.provider, "terminal output");
-      output.forEach((item, position) => {
-        const entry = this.locate(itemFacts(item, this.provider, position), "terminal output");
+      outputItemIdentities(state.output, this.provider, "terminal output");
+      output = (state.output as JsonRecord[]).map((supplied, position) => {
+        const entry = this.locate(itemFacts(supplied, this.provider, position), "terminal output");
+        const item = this.withIdentity(entry, supplied);
         entry.terminal = item;
         final.set(entry, item);
         if (entry.finished && entry.type === "function_call"
           && (entry.finished.name !== item.name || entry.finished.arguments !== item.arguments)) {
           throw this.fail(`Responses terminal output changed the finished ${this.describe(entry)}`);
         }
+        return item;
       });
       for (const entry of this.entries) {
         if (entry.finished && !entry.terminal && hasLocator(entry)) {
           throw this.fail(`Responses terminal output does not have the finished ${this.describe(entry)}`);
+        }
+        if (entry.text.length && !entry.terminal) {
+          throw this.fail(`Responses terminal output does not have the streamed ${this.describe(entry)}`);
         }
       }
     } else {
@@ -214,7 +231,15 @@ export class OutputLedger {
       }
     }
 
-    return { output, undelivered: this.undelivered(output, final, completed, type) };
+    return { output, undelivered: this.undelivered(output, type) };
+  }
+
+  /** The final item with the id, and a function call's call_id, that the ledger holds for it. */
+  private withIdentity(entry: Entry, item: JsonRecord): JsonRecord {
+    const missing = (value: unknown) => value === undefined || value === null;
+    const id = entry.id !== undefined && missing(item.id) ? { id: entry.id } : {};
+    const callId = entry.type === "function_call" && entry.callId !== undefined && missing(item.call_id) ? { call_id: entry.callId } : {};
+    return Object.keys(id).length || Object.keys(callId).length ? { ...item, ...id, ...callId } : item;
   }
 
   private callEntry(itemId: string | undefined, index: number | undefined, what: string): Entry {
@@ -277,15 +302,12 @@ export class OutputLedger {
     this.entries.splice(this.entries.indexOf(other), 1);
   }
 
-  private rebuildOrder<T extends { seq: number; index?: number }>(entries: T[]): T[] {
-    const stated = entries.every((entry) => entry.index !== undefined);
-    return [...entries].sort((left, right) => (stated ? (left.index as number) - (right.index as number) : left.seq - right.seq));
-  }
-
   /**
    * The output an omitted one stands for: the finished items, and streamed text that no finished
    * item holds as an assistant message of that text, so message content and the replayed turn
-   * keep what the caller already received.
+   * keep what the caller already received. Items are ordered by their stated output_index, or
+   * by arrival when none states one; a mix is ambiguous and a ProviderError. Text that names no
+   * item, when no item holds text, becomes a message after them.
    */
   private rebuild(completed: boolean, final: Map<Entry, JsonRecord>): JsonRecord[] {
     const status = completed ? "completed" : "incomplete";
@@ -300,23 +322,24 @@ export class OutputLedger {
         content: this.parts(chunks).map(({ text }) => ({ type: "output_text", text, annotations: [] })),
       };
     };
-    const items: Array<{ seq: number; index?: number; item: JsonRecord; entry?: Entry }> = [];
+    const items: Array<{ entry: Entry; item: JsonRecord }> = [];
     for (const entry of this.entries) {
-      if (entry.finished) items.push({ seq: entry.seq, ...(entry.index !== undefined ? { index: entry.index } : {}), item: entry.finished, entry });
-      else if (entry.text.length) {
-        this.synthesized = true;
-        items.push({ seq: entry.seq, ...(entry.index !== undefined ? { index: entry.index } : {}), item: message(entry, entry.text), entry });
-      }
+      if (entry.finished) items.push({ entry, item: this.withIdentity(entry, entry.finished) });
+      else if (entry.text.length) items.push({ entry, item: message(entry, entry.text) });
     }
-    const holdsText = items.some(({ item }) => item.type === "message" && Array.isArray(item.content)
+    const indexed = items.filter(({ entry }) => entry.index !== undefined).length;
+    if (indexed && indexed !== items.length) {
+      throw this.fail("Responses stream omitted its output, and its items state an output_index only in part");
+    }
+    const ordered = [...items].sort((left, right) => (indexed
+      ? (left.entry.index as number) - (right.entry.index as number)
+      : left.entry.seq - right.entry.seq));
+    for (const { entry, item } of ordered) final.set(entry, item);
+    const output = ordered.map(({ item }) => item);
+    const holdsText = output.some((item) => item.type === "message" && Array.isArray(item.content)
       && item.content.some((part) => isRecord(part) && part.type === "output_text"));
-    if (this.unlocated.length && !holdsText) {
-      this.synthesized = true;
-      items.push({ seq: this.unlocated[0].seq, item: message({}, this.unlocated.map(({ seq, text }) => ({ seq, text }))) });
-    }
-    const ordered = this.rebuildOrder(items);
-    for (const { entry, item } of ordered) if (entry) final.set(entry, item);
-    return ordered.map(({ item }) => item);
+    if (this.unlocated.length && !holdsText) output.push(message({}, this.unlocated.map(({ seq, text }) => ({ seq, text }))));
+    return output;
   }
 
   /** Streamed text grouped by the content part it names, in content order; one group when none is named. */
@@ -330,58 +353,20 @@ export class OutputLedger {
     return indexes.map((contentIndex) => ({ contentIndex, text: joined(located.filter((chunk) => chunk.contentIndex === contentIndex)) }));
   }
 
-  private undelivered(
-    output: JsonRecord[],
-    final: Map<Entry, JsonRecord>,
-    completed: boolean,
-    type: string,
-  ): string {
-    // Every output_text part of the answer, in answer order.
-    const parts: Array<{ item: JsonRecord; contentIndex: number; text: string; delivered: number; claimed?: boolean }> = [];
+  /** The answer text not yet delivered: the content yielded so far must be a prefix of the answer. */
+  private undelivered(output: JsonRecord[], type: string): string {
+    const answer: string[] = [];
     for (const item of output) {
       if (!isRecord(item) || item.type !== "message" || !Array.isArray(item.content)) continue;
-      item.content.forEach((part: unknown, contentIndex: number) => {
-        if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") {
-          parts.push({ item, contentIndex, text: part.text, delivered: 0 });
-        }
-      });
-    }
-    let unplaced = false;
-    const claim = (claimed: typeof parts, text: string): void => {
-      if (!claimed.length) {
-        unplaced = true;
-        return;
-      }
-      if (claimed.some((part) => part.claimed)) throw this.fail("Responses stream text deltas name one text part in two ways");
-      if (!claimed.map((part) => part.text).join("").startsWith(text)) {
-        throw this.fail(`Responses ${type} event text differs from the streamed text`);
-      }
-      let remaining = text.length;
-      for (const part of claimed) {
-        part.claimed = true;
-        part.delivered = Math.min(remaining, part.text.length);
-        remaining -= part.delivered;
-      }
-    };
-    for (const entry of this.entries) {
-      if (!entry.text.length) continue;
-      const item = final.get(entry);
-      const own = parts.filter((part) => part.item === item);
-      for (const group of this.parts(entry.text)) {
-        claim(group.contentIndex === undefined ? own : own.filter((part) => part.contentIndex === group.contentIndex), group.text);
+      for (const part of item.content) {
+        if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") answer.push(part.text);
       }
     }
-    if (this.unlocated.length) claim(parts, joined(this.unlocated));
-    const rest = parts.map((part) => part.text.slice(part.delivered)).join("");
-    // Text that is not where the terminal has it could be the undelivered text itself.
-    if ((unplaced || this.synthesized) && rest) {
-      throw this.fail(`Responses ${type} event streamed text that the terminal output does not place`);
+    const text = answer.join("");
+    if (!text.startsWith(this.streamed)) {
+      throw this.fail(`Responses ${type} event answer text differs from the streamed text`);
     }
-    // A completed turn's final items must hold what was streamed to them.
-    if (unplaced && completed) {
-      throw this.fail(`Responses ${type} event has no text part for the streamed text`);
-    }
-    return rest;
+    return text.slice(this.streamed.length);
   }
 
   private describe(entry: ItemFacts): string {
