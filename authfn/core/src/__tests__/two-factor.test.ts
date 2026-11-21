@@ -986,6 +986,41 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     })).status).toBe(200);
   });
 
+  it('keeps the challenge used when a failed recovery-code spend may have applied', async () => {
+    const setup = await enrolledUser();
+    let loseResponse = true;
+    const lossy: Adapter = {
+      ...setup.config.database,
+      async update(params) {
+        const row = await setup.config.database.update(params);
+        if (loseResponse && params.model === 'two_factor_recovery_codes') {
+          loseResponse = false;
+          throw new Error('test response lost after the write');
+        }
+        return row;
+      },
+      async updateMany(params) {
+        const count = await setup.config.database.updateMany(params);
+        if (loseResponse && params.model === 'two_factor_recovery_codes') {
+          loseResponse = false;
+          throw new Error('test response lost after the write');
+        }
+        return count;
+      }
+    } as Adapter;
+    const challengeId = await setup.challenge();
+    await expect(satisfyTwoFactorChallenge({ ...setup.config, database: lossy }, challengeId, setup.recoveryCodes[0], setup.pluginConfig))
+      .rejects.toThrow('test response lost after the write');
+    // The code was spent, so a second code cannot be spent on this challenge.
+    expect((await setup.post('/2fa/challenge', { challengeId, code: setup.recoveryCodes[1] })).status).toBe(400);
+    const unused = await setup.config.database.findMany<{ usedAt: Date | null }>({
+      model: 'two_factor_recovery_codes',
+      where: [{ field: 'enrollmentId', operator: 'eq', value: setup.enrollmentId }],
+      namespace: 'authfn'
+    });
+    expect(unused.filter((code) => code.usedAt).length).toBe(1);
+  });
+
   it('adds the attempt-limit columns to a schema override written for an earlier version', () => {
     const defaults = getSchema(createConfig()).schemas.find((table) => table.modelName === 'two_factor_enrollments')!;
     const { failedAttemptCount: _count, lockedUntil: _locked, ...older } = defaults.fields;

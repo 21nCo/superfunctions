@@ -163,6 +163,9 @@ class TwoFactorService:
         self.plugin_config = plugin_config or TwoFactorPluginConfig()
 
     async def enroll(self, *, user_id: str, primary_email: Optional[str] = None) -> Dict[str, Any]:
+        # Checked before anything is stored: without conditional writes a
+        # confirmed enrollment could never finish a sign-in.
+        self._require_conditional_writes()
         assert_database_key_length(
             user_id, "userId", AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
         )
@@ -249,6 +252,7 @@ class TwoFactorService:
         }
 
     async def confirm(self, *, user_id: str, code: str) -> Dict[str, Any]:
+        self._require_conditional_writes()
         enrollment = await self._require_enrollment(user_id, require_confirmed=False)
         secret = self._cipher().decrypt(enrollment["secretEncrypted"].encode("utf-8")).decode("utf-8")
         if not self._verify_totp(secret, code):
@@ -344,7 +348,10 @@ class TwoFactorService:
             try:
                 spent = await self._spend_recovery_code(recovery_row["id"])
             except Exception:
-                await self._reopen_challenge(challenge_id)
+                # Give the challenge back only when the code is certainly
+                # unspent, so a retry cannot spend a second code.
+                if await self._is_recovery_code_unused(recovery_row["id"]):
+                    await self._reopen_challenge(challenge_id)
                 raise
             if not spent:
                 await self._reopen_challenge(challenge_id)
@@ -440,6 +447,21 @@ class TwoFactorService:
             {"usedAt": self.plugin_config.now()},
         )
 
+    async def _is_recovery_code_unused(self, row_id: str) -> bool:
+        try:
+            row = await self.config.database.find_one(
+                model="two_factor_recovery_codes",
+                where=[{"field": "id", "operator": "eq", "value": row_id}],
+                namespace=self.config.namespace,
+            )
+        except Exception:
+            return False
+        return row is not None and row.get("usedAt") is None
+
+    def _require_conditional_writes(self) -> None:
+        if not callable(getattr(self.config.database, "update_many", None)):
+            raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
+
     async def _reopen_challenge(self, challenge_id: str) -> None:
         now = self.plugin_config.now()
         try:
@@ -458,10 +480,8 @@ class TwoFactorService:
         """Updates one row by id while ``guards`` still match, and reports
         whether it was written: only an affected-row count of 1 counts, so the
         adapter must provide ``update_many``."""
-        update_many = getattr(self.config.database, "update_many", None)
-        if not callable(update_many):
-            raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
-        count = await update_many(
+        self._require_conditional_writes()
+        count = await self.config.database.update_many(
             model=model,
             where=[{"field": "id", "operator": "eq", "value": row_id}, *guards],
             data=data,

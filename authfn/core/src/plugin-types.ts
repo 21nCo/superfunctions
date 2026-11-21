@@ -80,11 +80,15 @@ export interface TwoFactorPluginRuntimeConfig {
   /** Resolves the encryption key used for two-factor secret storage. */
   encryptionKeyResolver?: (keyRef: string) => Promise<Buffer> | Buffer;
   /**
-   * Wrong codes (TOTP or recovery) accepted in a row for one enrollment,
-   * across challenges and routes, before it is locked. Defaults to 10.
+   * TOTP checks in a run for one enrollment, across challenges and routes,
+   * before TOTP codes are locked; a correct code ends the run. Recovery codes
+   * are outside this limit. Whole number from 1 to 1000; defaults to 10.
    */
   maxFailedAttempts?: number;
-  /** How long, in seconds, a locked enrollment refuses every code. Defaults to 900. */
+  /**
+   * How long, in seconds, a locked enrollment refuses TOTP codes (recovery
+   * codes still work). Whole number from 60 to 31536000; defaults to 900.
+   */
   lockoutSeconds?: number;
 }
 
