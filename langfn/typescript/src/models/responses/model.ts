@@ -188,7 +188,8 @@ export class ResponsesChatModel extends ChatModel {
       redirect: "manual",
     });
     if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
-      await response.body?.cancel().catch(() => {});
+      // Release the body without waiting: a cancel that never settles must not outlive the error.
+      discardBody(response);
       throw new ProviderError(`${this.provider} Responses endpoint answered with a redirect, which is not followed`, {
         provider: this.provider,
         metadata: { status: response.status, redirect: true },
@@ -199,8 +200,17 @@ export class ResponsesChatModel extends ChatModel {
   }
 }
 
+function discardBody(response: Response): void {
+  try {
+    response.body?.cancel().catch(() => undefined);
+  } catch {
+    // A body that cannot be cancelled is left to the garbage collector.
+  }
+}
+
 function validateBaseUrl(value: unknown): string {
   if (typeof value !== "string" || !value) throw new ValidationError("ResponsesChatModel requires a baseUrl");
+  if (value !== value.trim()) throw new ValidationError("ResponsesChatModel baseUrl must not have leading or trailing whitespace");
   let url: URL;
   try {
     url = new URL(value);

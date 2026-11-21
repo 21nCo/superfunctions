@@ -31,10 +31,13 @@ export async function* readServerSentEvents(
     if (field === "data") data.push(value);
     else if (field === "event") event = value;
   }
-  if (data.length) yield { ...(event !== undefined ? { event } : {}), data: data.join("\n") };
+  // An event without its terminating blank line is incomplete and is discarded, as WHATWG
+  // server-sent events require.
 }
 
 type JsonRecord = Record<string, unknown>;
+
+const TERMINAL_EVENTS = new Set(["response.completed", "response.incomplete", "response.failed", "error"]);
 
 function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -47,7 +50,9 @@ function isRecord(value: unknown): value is JsonRecord {
  * replayable assistant `message` and `end`. Tool calls wait for the terminal event because a
  * call is only executable once the response completes: an incomplete response (for example
  * `max_output_tokens`) yields no tool calls and ends with `length`. A stream that ends without
- * a terminal event, or that reports a failure, throws a typed error.
+ * a terminal event, reports a failure, or whose terminal outcome is ambiguous (an event name
+ * that conflicts with the JSON type, an error object beside a success status, two finished
+ * items on one output index) throws a typed error before any tool call or end.
  */
 export async function* mapResponsesStream(
   events: AsyncIterable<ServerSentEvent>,
@@ -65,7 +70,14 @@ export async function* mapResponsesStream(
       throw new ProviderError("Responses stream event is not valid JSON", { provider, cause: error });
     }
     if (!isRecord(payload)) throw fail("Responses stream event must be a JSON object");
-    const type = typeof payload.type === "string" ? payload.type : frame.event;
+    // The discriminator may appear in the SSE event name, the JSON type or both; when both
+    // name a terminal event they must agree, or the outcome is ambiguous.
+    const jsonType = typeof payload.type === "string" ? payload.type : undefined;
+    if (jsonType !== undefined && frame.event !== undefined && frame.event !== jsonType
+      && (TERMINAL_EVENTS.has(jsonType) || TERMINAL_EVENTS.has(frame.event))) {
+      throw fail(`Responses stream event ${frame.event} conflicts with its type ${jsonType}`);
+    }
+    const type = jsonType ?? frame.event;
 
     switch (type) {
       case "response.output_text.delta": {
@@ -83,8 +95,13 @@ export async function* mapResponsesStream(
       case "response.output_item.done": {
         const item = payload.item;
         if (!isRecord(item)) throw fail("Responses output_item.done requires an item");
-        if (typeof payload.output_index === "number") doneItems.set(payload.output_index, item);
-        else doneItems.set(doneItems.size, item);
+        const index = payload.output_index === undefined || payload.output_index === null ? doneItems.size : payload.output_index;
+        if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+          throw fail("Responses output_item.done output_index must be a non-negative integer");
+        }
+        // A repeated index would silently replace a finished item, and with it maybe a call.
+        if (doneItems.has(index)) throw fail(`Responses output_item.done repeats output_index ${index}`);
+        doneItems.set(index, item);
         break;
       }
       case "response.completed":
@@ -92,9 +109,10 @@ export async function* mapResponsesStream(
         const response = payload.response;
         if (!isRecord(response)) throw fail(`Responses ${type} event requires a response`);
         // Some compatible servers omit the output (or send it empty) in the terminal event;
-        // only then is it rebuilt from the finished items. Any other non-array output is
-        // malformed and fails in parseResponsesResponse, as it does for a JSON response.
-        const omitted = response.output === undefined || response.output === null
+        // only then is it rebuilt from the finished items. Any other non-array output,
+        // including null, is malformed and fails in parseResponsesResponse, as it does for a
+        // JSON response.
+        const omitted = response.output === undefined
           || (Array.isArray(response.output) && response.output.length === 0);
         const output = omitted
           ? [...doneItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item)

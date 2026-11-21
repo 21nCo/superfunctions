@@ -69,14 +69,13 @@ afterEach(() => {
 });
 
 describe("server-sent event parsing", () => {
-  it("joins multi-line data, honours CRLF, skips comments and flushes an unterminated final event", async () => {
+  it("joins multi-line data, honours CRLF, skips comments and discards an unterminated final event", async () => {
     const events = await collect(
       readServerSentEvents(body(": keep-alive\r\nevent: first\r\ndata: {\"a\":\r\ndata: 1}\r\n\r\ndata:2\n\ndata: tail")),
     );
     expect(events).toEqual([
       { event: "first", data: "{\"a\":\n1}" },
       { data: "2" },
-      { data: "tail" },
     ]);
   });
 
@@ -154,7 +153,8 @@ describe("stream mapping", () => {
 
   it("rejects a malformed terminal output before any tool call, as the JSON path does", async () => {
     const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
-    for (const output of ["not-an-array", { 0: call }, 7]) {
+    // null is malformed too: only an absent or empty output falls back to the finished items.
+    for (const output of ["not-an-array", { 0: call }, 7, null]) {
       const terminal = { ...completed([]), output };
       expect(() => parseResponsesResponse(terminal, "fixture")).toThrow(ProviderError);
       const seen: StreamEvent[] = [];
@@ -167,6 +167,65 @@ describe("stream mapping", () => {
       })()).rejects.toThrow("Responses output must be an array");
       expect(seen).toEqual([]);
     }
+  });
+
+  /** Map raw SSE text, recording every event emitted before the outcome. */
+  async function mapRaw(text: string): Promise<{ seen: StreamEvent[]; error?: unknown }> {
+    const seen: StreamEvent[] = [];
+    try {
+      for await (const event of mapResponsesStream(readServerSentEvents(body(text)), "fixture")) seen.push(event);
+      return { seen };
+    } catch (error) {
+      return { seen, error };
+    }
+  }
+
+  const frame = (data: unknown, event?: string) => `${event ? `event: ${event}\n` : ""}data: ${JSON.stringify(data)}\n\n`;
+
+  it("exposes a terminal outcome only when it is unambiguous and matches the JSON path", async () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const done = (index?: number, item: unknown = call) => ({ type: "response.output_item.done", ...(index === undefined ? {} : { output_index: index }), item });
+
+    // An SSE event name that names a different terminal event than the JSON type.
+    for (const [event, type] of [["response.incomplete", "response.completed"], ["response.completed", "response.incomplete"], ["response.completed", "response.failed"]]) {
+      const outcome = await mapRaw(frame(done(0)) + frame({ type, response: completed([call]) }, event));
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(`event ${event} conflicts with its type ${type}`);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Agreeing names, or a discriminator in only one place, still work.
+    for (const text of [
+      frame({ type: "response.completed", response: completed([call]) }, "response.completed"),
+      frame({ response: completed([call]) }, "response.completed"),
+      frame({ type: "response.completed", response: completed([call]) }),
+    ]) {
+      expect((await mapRaw(text)).seen.map((event) => event.type)).toEqual(["tool_call", "message", "end"]);
+    }
+
+    // A populated error object is never a success, whatever the status says.
+    for (const status of ["completed", "incomplete"]) {
+      const terminal = completed([call], { status, error: { code: "server_error", message: "upstream failed" } });
+      expect(() => parseResponsesResponse(terminal, "fixture")).toThrow("upstream failed");
+      const outcome = await mapRaw(frame({ type: `response.${status}`, response: terminal }));
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain("upstream failed");
+      expect(outcome.seen).toEqual([]);
+    }
+    expect(parseResponsesResponse(completed([call], { error: null }), "fixture").toolCalls).toHaveLength(1);
+
+    // Two finished items on one output index would silently drop one of them.
+    const other = { ...call, call_id: "call_fixture_other" };
+    for (const frames of [[done(0), done(0, other)], [done(1), done(undefined, other)]]) {
+      const outcome = await mapRaw(frames.map((item) => frame(item)).join("") + frame({ type: "response.completed", response: completed([]) }));
+      expect(String(outcome.error)).toContain("repeats output_index");
+      expect(outcome.seen).toEqual([]);
+    }
+    expect(String((await mapRaw(frame(done(-1)))).error)).toContain("non-negative integer");
+
+    // A terminal event without its blank-line terminator is discarded at EOF.
+    const unframed = await mapRaw(frame(done(0)) + `data: ${JSON.stringify({ type: "response.completed", response: completed([call]) })}`);
+    expect(String(unframed.error)).toContain("ended before a terminal response event");
+    expect(unframed.seen).toEqual([]);
   });
 
   it("maps raw reasoning text deltas and an OpenAI-shaped error event", async () => {
@@ -267,16 +326,29 @@ describe("response mapping", () => {
     expect(incomplete).toMatchObject({ finishReason: "length", message: { content: "", responsesOutput: [] } });
     expect(incomplete.toolCalls).toBeUndefined();
 
-    // An unfinished call inside an otherwise completed response is not executable either.
-    const unfinished = parseResponsesResponse(completed([{ ...cut, status: "in_progress" }]), "fixture");
-    expect(unfinished).toMatchObject({ finishReason: "stop", message: { responsesOutput: [] } });
-    expect(unfinished.toolCalls).toBeUndefined();
+    // An unfinished call inside an otherwise completed response is contradictory: neither a
+    // normal stop nor a partial set of calls, but a typed provider error.
+    const done = { type: "function_call", status: "completed", call_id: "call_fixture_done", name: "lookup", arguments: "{}" };
+    for (const output of [[{ ...cut, status: "in_progress" }], [done, { ...cut, status: "in_progress" }]]) {
+      expect(() => parseResponsesResponse(completed(output), "fixture")).toThrow(/unfinished function_call/);
+    }
 
     // An incomplete response cut off while reasoning leaves the trailing reasoning out.
     const message = { id: "msg_fixture", type: "message", status: "incomplete", role: "assistant", content: [{ type: "output_text", text: "Part" }] };
     expect(
       parseResponsesResponse({ status: "incomplete", output: [message, reasoning] }, "fixture").message.responsesOutput,
     ).toEqual([message]);
+  });
+
+  it("rejects repeated call ids and input-only items in provider output", () => {
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    expect(() => parseResponsesResponse(completed([call, { ...call, arguments: "{\"q\":1}" }]), "fixture")).toThrow(
+      "repeats function_call call_id call_fixture",
+    );
+    for (const type of ["item_reference", "function_call_output"]) {
+      expect(() => parseResponsesResponse(completed([{ type, id: "item_fixture", call_id: "call_fixture", output: "x" }]), "fixture"))
+        .toThrow(`must not contain ${type} items`);
+    }
   });
 
   it("rejects malformed output items and invalid usage", () => {
@@ -327,6 +399,14 @@ describe("request mapping", () => {
     } as unknown as ResponsesMessage;
     expect(() => payload([{ role: "user", content: "go" }, message])).toThrow(ValidationError);
     expect(() => payload([{ role: "user", content: "go" }, message])).toThrow("item_reference");
+
+    // Input-only items are not provider output either, so they cannot ride along as replay.
+    const output = {
+      role: "assistant",
+      content: "",
+      responsesOutput: [{ type: "function_call_output", call_id: "call_fixture", output: "x" }],
+    } as unknown as ResponsesMessage;
+    expect(() => payload([{ role: "user", content: "go" }, output], customProfile)).toThrow(ValidationError);
   });
 
   it("rejects a default reasoning configuration on a profile without reasoning", () => {
@@ -465,6 +545,9 @@ describe("ResponsesChatModel configuration", () => {
       .toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, baseUrl: `https://${["test-user", "test-password"].join(":")}@gateway.example.test` })).toThrow(ValidationError);
     expect(() => new ResponsesChatModel({ ...base, baseUrl: "ftp://gateway.example.test" })).toThrow(ValidationError);
+    for (const baseUrl of [" https://gateway.example.test", "https://gateway.example.test/v1 ", "https://gateway.example.test\n"]) {
+      expect(() => new ResponsesChatModel({ ...base, baseUrl })).toThrow("whitespace");
+    }
     for (const baseUrl of ["https://gateway.example.test/v1?", "https://gateway.example.test/v1#", "https://gateway.example.test/v1?a=1"]) {
       expect(() => new ResponsesChatModel({ ...base, baseUrl })).toThrow("must not have a query or fragment");
     }
@@ -512,6 +595,10 @@ describe("ResponsesChatModel configuration", () => {
     const opaque = new Response(null, { status: 200 });
     Object.defineProperty(opaque, "type", { value: "opaqueredirect" });
     await expect(gateway(async () => opaque).chat({ messages: [{ role: "user", content: "x" }] })).rejects.toThrow("redirect");
+
+    // A redirect body whose cancel never settles does not hold the error back.
+    const hanging = () => new Response(new ReadableStream<Uint8Array>({ cancel: () => new Promise<void>(() => {}) }), { status: 308 });
+    await expect(gateway(async () => hanging()).chat({ messages: [{ role: "user", content: "x" }] })).rejects.toThrow("redirect");
   });
 
   it("keeps the transport timeout and size errors of a response body", async () => {

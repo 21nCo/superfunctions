@@ -28,8 +28,9 @@ export interface ParsedOutputItems {
   toolCalls: ToolCall[];
   reasoning: ResponsesReasoningSummary[];
   /**
-   * The items a stateless follow-up can send back, unchanged. Unfinished function calls (and
-   * the reasoning items that led into them) are left out: they are not executable, have no
+   * The items a stateless follow-up can send back, unchanged. Unfinished function calls (only
+   * accepted in an incomplete response; a completed one with an unfinished call is rejected),
+   * and the reasoning items that led into them, are left out: they are not executable, have no
    * function_call_output to pair with, and a reasoning item replayed without its following
    * item is rejected by the provider. For an incomplete response, reasoning at the end of the
    * output is left out for the same reason.
@@ -41,6 +42,21 @@ export interface ParseOutputItemsOptions {
   /** The items come from an incomplete response, so none of its function calls are finished. */
   incomplete?: boolean;
 }
+
+/**
+ * Item types that only exist as request input. A provider never returns them as output, and
+ * `item_reference` resolves against stored server state, which `store: false` never has.
+ */
+const INPUT_ONLY_ITEM_TYPES = new Set([
+  "item_reference",
+  "function_call_output",
+  "custom_tool_call_output",
+  "computer_call_output",
+  "local_shell_call_output",
+  "shell_call_output",
+  "apply_patch_call_output",
+  "mcp_approval_response",
+]);
 
 /** Read the text, refusal, function calls and reasoning out of Responses output items. */
 export function parseOutputItems(
@@ -55,11 +71,13 @@ export function parseOutputItems(
   const toolCalls: ToolCall[] = [];
   const reasoning: ResponsesReasoningSummary[] = [];
   const replayable: ResponsesOutputItem[] = [];
+  const callIds = new Set<string>();
   // Reasoning items at the end of `replayable` that precede the next output item.
   let trailingReasoning = 0;
 
   for (const item of output) {
     if (!isRecord(item) || typeof item.type !== "string") throw fail("Responses output item is malformed");
+    if (INPUT_ONLY_ITEM_TYPES.has(item.type)) throw fail(`Responses output must not contain ${item.type} items`);
     switch (item.type) {
       case "message": {
         if (item.role !== undefined && item.role !== "assistant") throw fail("Responses output message must be from the assistant");
@@ -77,8 +95,14 @@ export function parseOutputItems(
         break;
       }
       case "function_call":
-        if (!options.incomplete && isFinishedCall(item)) {
-          toolCalls.push(parseFunctionCall(item, provider));
+        if (!options.incomplete) {
+          // A completed turn whose call is still unfinished is contradictory: executing the
+          // other calls alone, or reporting a normal stop, would hide the lost call.
+          if (!isFinishedCall(item)) throw fail("Responses completed response contains an unfinished function_call");
+          const call = parseFunctionCall(item, provider);
+          if (callIds.has(call.id)) throw fail(`Responses output repeats function_call call_id ${call.id}`);
+          callIds.add(call.id);
+          toolCalls.push(call);
           break;
         }
         // An unfinished call (truncated arguments) is neither executed nor replayed.
@@ -168,7 +192,8 @@ export function sameToolCalls(left: ToolCall[], right: ToolCall[]): boolean {
 export function parseResponsesResponse(data: unknown, provider: string): ResponsesChatResponse {
   if (!isRecord(data)) throw new ProviderError("Responses body must be a JSON object", { provider });
   const status = data.status;
-  if (status === "failed" || (status === undefined && isRecord(data.error))) {
+  // A populated error wins over any status: a result that reports an error is never a success.
+  if (status === "failed" || (isRecord(data.error) && Object.keys(data.error).length > 0)) {
     throw responsesError(provider, { status: 200, body: data, error: data.error });
   }
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
