@@ -678,11 +678,12 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
  * no client resolution or a pre-client-resolution denial, whatever the
  * registration.
  */
-function assertClientResolved(evidence: McpFnHostedAuthorizationEvidence | undefined): void {
+function assertClientResolved(
+  evidence: McpFnHostedAuthorizationEvidence | undefined,
+  response = "A post-match authorization response",
+): void {
   if (evidence && (evidence.clientResolutions === 0 || evidence.preClientResolutionDenial)) {
-    throw new Error(
-      "A post-match authorization response requires a client resolution, but the response's evidence shows none",
-    );
+    throw new Error(`${response} requires a client resolution, but the response's evidence shows none`);
   }
 }
 
@@ -695,7 +696,8 @@ function assertClientResolved(evidence: McpFnHostedAuthorizationEvidence | undef
  * a target-wide declaration nor the fixture's expected code tells that apart
  * from later validation, so another code is accepted only when the target's
  * evidence for this exact response shows a pre-client-resolution denial that
- * made no client resolution.
+ * made no client resolution. A client-stage code comes from the client stage,
+ * so it also fails when that evidence shows no client resolution.
  */
 function assertClientStageRejection(
   decision: RedirectDecision,
@@ -704,7 +706,6 @@ function assertClientStageRejection(
 ): void {
   const permitted = decision.permittedClientCodes;
   if (decision.eligibility === "eligible" || !permitted) return;
-  if (permitted.has(errorCode)) return;
   if (
     evidence?.preClientResolutionDenial &&
     evidence.clientResolutions === 0 &&
@@ -712,6 +713,7 @@ function assertClientStageRejection(
   ) {
     return;
   }
+  if (permitted.has(errorCode)) return assertClientResolved(evidence, "A client-stage rejection");
   if (decision.eligibility === "indeterminate") throw new Error(INDETERMINATE_ELIGIBILITY);
   throw new Error(
     `An ineligible client registration must be rejected as a client error, not ${errorCode}`,

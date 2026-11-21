@@ -1287,6 +1287,26 @@ describe("unvetted-client authorization rejections", () => {
           const [result] = await runHostedAuthorizationRegression(rejectWith(error, ["none"]), [fixture]);
           expect(result).toMatchObject({ status });
         }
+        // A client-stage code needs the client stage: evidence of no resolution
+        // fails it unless that response is a pre-client-resolution denial.
+        for (const [reported, status] of [
+          [{ clientResolutions: 0, preClientResolutionDenial: false }, "failed"],
+          [{ clientResolutions: 1, preClientResolutionDenial: true }, "failed"],
+          [{ clientResolutions: 0, preClientResolutionDenial: true }, "passed"],
+          [{ clientResolutions: 1, preClientResolutionDenial: false }, "passed"],
+          [undefined, "passed"],
+        ] as const) {
+          for (const error of ["invalid_scope", "invalid_client", "invalid_client_metadata"]) {
+            const [result] = await runHostedAuthorizationRegression(
+              { ...rejectWith(error, ["none"]), authorizationEvidence: () => reported },
+              [fixture],
+            );
+            expect(result).toMatchObject(status === "passed" ? { status, errorCode: error } : {
+              status,
+              error: "A client-stage rejection requires a client resolution, but the response's evidence shows none",
+            });
+          }
+        }
       });
 
       it("never accepts a post-match response for an indeterminate metadata document", async () => {
