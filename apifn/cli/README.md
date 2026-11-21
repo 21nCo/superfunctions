@@ -120,12 +120,14 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`); no spec at the ref means a new contract, so the diff is skipped and reported, not failed
+- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`); no spec at the ref means a new contract, so the diff is skipped and reported, not failed; any other git error exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
 - `--allow-breaking` — report breaking changes without failing
-- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing
+- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes
 - `--format <type>` — `text` (default), `json` or `markdown`
-- `--report <path>` — also write the report to a file
+- `--report <path>` — also write the report to a file (never the spec itself)
+
+Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 
 Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
 canonical JSON (key order and formatting do not count).
@@ -141,7 +143,10 @@ Reports: JSON is `{ drift, valid, breaking, versions: { base, head }, verdict, d
 API check workflow updates in place.
 
 Exit codes: `0` pass (warnings allowed) · `1` drift, invalid spec, or a breaking change the version
-rule does not cover · `2` usage or load error (message on stderr, no report).
+rule does not cover · `2` usage or load error, including an unknown option or a missing option
+value (message on stderr, no report). When the generated spec is invalid and the differ cannot
+read it, the diff is skipped (`base.status: "skipped"`) and the check exits `1` with the
+validation errors.
 
 ## diff
 

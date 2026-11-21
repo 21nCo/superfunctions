@@ -14,8 +14,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { diffOpenAPI, parseOpenAPI, validateOpenAPI } from "@apifn/core";
@@ -68,8 +68,11 @@ export interface CheckReport {
   base: {
     source: "git" | "file" | "none";
     ref: string | null;
-    /** compared · new-contract (no spec at the git ref) · none (no base given) */
-    status: "compared" | "new-contract" | "none";
+    /**
+     * compared · new-contract (no spec at the git ref) · none (no base given) · skipped (the diff
+     * could not run on the invalid generated spec)
+     */
+    status: "compared" | "new-contract" | "none" | "skipped";
   };
   failures: string[];
   warnings: string[];
@@ -89,9 +92,10 @@ function verdictOf(failures: string[], warnings: string[]): CheckVerdict {
   return warnings.length > 0 ? "warn" : "pass";
 }
 
-function baseStatus(base: BaseSpec): CheckReport["base"]["status"] {
+function baseStatus(base: BaseSpec, diffed: boolean): CheckReport["base"]["status"] {
   if (base.source === "none") return "none";
-  return base.doc ? "compared" : "new-contract";
+  if (!base.doc) return "new-contract";
+  return diffed ? "compared" : "skipped";
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +108,8 @@ function canonicalize(value: unknown): unknown {
   }
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
+    // A null-prototype object keeps an own "__proto__" key as data instead of a prototype change.
+    const sorted: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(record).sort()) {
       sorted[key] = canonicalize(record[key]);
     }
@@ -187,10 +192,23 @@ function runGit(args: string[], cwd: string): Promise<GitResult> {
   });
 }
 
+function gitFailure(args: string[], result: GitResult): CheckUsageError {
+  const detail = result.stderr.trim() || `exit status ${result.code}`;
+  return new CheckUsageError(`git ${args.join(" ")} failed: ${detail}`);
+}
+
+async function gitOk(args: string[], cwd: string): Promise<string> {
+  const result = await runGit(args, cwd);
+  if (result.code !== 0) {
+    throw gitFailure(args, result);
+  }
+  return result.stdout;
+}
+
 /**
- * Reads the spec as committed at `ref`. Git resolves the ref and the path: the path is given
- * relative to the nearest existing directory holding the spec (`<ref>:./<path>`), which git maps
- * to the repository root itself. Returns null when the ref has no file at that path.
+ * Reads the spec as committed at `ref`. Git resolves the ref once to a commit; every later call
+ * uses that commit. Returns null only when git lists no entry for the spec path in that commit
+ * (a new contract); any other git failure is an error.
  */
 async function readSpecAtRef(ref: string, specPath: string): Promise<string | null> {
   if (ref.length === 0 || ref.startsWith("-")) {
@@ -201,29 +219,45 @@ async function readSpecAtRef(ref: string, specPath: string): Promise<string | nu
   while (!existsSync(dir) && path.dirname(dir) !== dir) {
     dir = path.dirname(dir);
   }
-  const relative = path.relative(dir, specPath).split(path.sep).join("/");
-  const object = `${ref}:./${relative}`;
 
-  const inside = await runGit(["rev-parse", "--is-inside-work-tree"], dir);
-  if (inside.code !== 0 || inside.stdout.trim() !== "true") {
-    throw new CheckUsageError(`--base needs a git work tree; ${dir} is not inside one`);
+  const toplevelResult = await runGit(["rev-parse", "--show-toplevel"], dir);
+  if (toplevelResult.code !== 0) {
+    throw new CheckUsageError(
+      `--base needs a git work tree; ${dir} is not inside one: ${toplevelResult.stderr.trim()}`
+    );
+  }
+  const root = realpathSync(toplevelResult.stdout.trim());
+  const relative = path
+    .relative(root, path.join(realpathSync(dir), path.relative(dir, specPath)))
+    .split(path.sep)
+    .join("/");
+  if (relative === "" || relative.startsWith("../") || relative === ".." || path.isAbsolute(relative)) {
+    throw new CheckUsageError(`Spec ${specPath} is outside the git repository at ${root}`);
   }
 
-  const commit = await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], dir);
-  if (commit.code !== 0) {
-    throw new CheckUsageError(`Unknown git ref '${ref}'`);
+  const resolved = await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root);
+  if (resolved.code !== 0) {
+    throw new CheckUsageError(
+      `Unknown git ref '${ref}'${resolved.stderr.trim() ? `: ${resolved.stderr.trim()}` : ""}`
+    );
   }
+  const commit = resolved.stdout.trim();
 
-  const exists = await runGit(["cat-file", "-e", object], dir);
-  if (exists.code !== 0) {
+  // --literal-pathspecs: the spec path is a path, never a pathspec pattern.
+  const listing = await gitOk(
+    ["--literal-pathspecs", "ls-tree", "-z", commit, "--", relative],
+    root
+  );
+  const entry = listing.split("\0").find((line) => line.endsWith(`\t${relative}`));
+  if (!entry) {
     return null;
   }
-
-  const shown = await runGit(["show", object], dir);
-  if (shown.code !== 0) {
-    throw new CheckUsageError(`git show ${object} failed: ${shown.stderr.trim()}`);
+  const type = entry.split(" ")[1];
+  if (type !== "blob") {
+    throw new CheckUsageError(`${relative} at ${ref} (${commit}) is a ${type}, not a spec file`);
   }
-  return shown.stdout;
+
+  return gitOk(["show", `${commit}:${relative}`], root);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,9 +288,10 @@ function baseLabel(report: CheckReport): string {
     return "none (diff skipped)";
   }
   const where = base.source === "git" ? `git ref ${base.ref}` : `${base.ref}`;
-  return base.status === "new-contract"
-    ? `${where}: no spec at this ref, new contract (diff skipped)`
-    : where;
+  if (base.status === "new-contract") {
+    return `${where}: no spec at this ref, new contract (diff skipped)`;
+  }
+  return base.status === "skipped" ? `${where}: diff skipped (generated spec is invalid)` : where;
 }
 
 function versionsLabel(report: CheckReport): string {
@@ -387,6 +422,29 @@ async function readCommittedSpec(specPath: string): Promise<CommittedSpec> {
   }
 }
 
+/**
+ * `--write` keeps the committed file's format: formatted JSON for a .json path, otherwise the
+ * YAML `apifn generate` writes.
+ */
+function serializeForPath(generated: OpenAPIDocument, specPath: string): string {
+  return /\.json$/i.test(specPath)
+    ? `${JSON.stringify(generated, null, 2)}\n`
+    : serializeSpec(generated);
+}
+
+/** True when both paths name the same file (same resolved path, or the same inode once both exist). */
+async function sameFile(a: string, b: string): Promise<boolean> {
+  if (path.resolve(a) === path.resolve(b)) {
+    return true;
+  }
+  try {
+    const [left, right] = await Promise.all([stat(a), stat(b)]);
+    return left.dev === right.dev && left.ino === right.ino;
+  } catch {
+    return false;
+  }
+}
+
 interface BaseSpec {
   source: CheckReport["base"]["source"];
   ref: string | null;
@@ -479,11 +537,17 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     } catch (error) {
       throw new CheckUsageError(`Failed to generate the spec from the router: ${errorMessage(error)}`);
     }
-    const serialized = serializeSpec(generated);
-    // The head document is what `apifn generate` would commit, read back.
-    const head = parseYaml(serialized) as OpenAPIDocument;
-
     const specPath = resolveSpecPath({ specPath: options.specPath, cwd, config: options.config });
+    const reportPath =
+      options.reportPath === undefined ? undefined : path.resolve(cwd, options.reportPath);
+    if (reportPath !== undefined && (await sameFile(reportPath, specPath))) {
+      throw new CheckUsageError(
+        `--report ${options.reportPath} is the spec itself; write the report to another file.`
+      );
+    }
+
+    // The head document is what `apifn generate` would commit, read back.
+    const head = parseYaml(serializeSpec(generated)) as OpenAPIDocument;
     const failures: string[] = [];
     const warnings: string[] = [];
     const specLabel = path.relative(cwd, specPath).split(path.sep).join("/") || specPath;
@@ -503,7 +567,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     if (drift && options.write) {
       try {
         await mkdir(path.dirname(specPath), { recursive: true });
-        await writeFile(specPath, serialized, "utf8");
+        await writeFile(specPath, serializeForPath(generated, specPath), "utf8");
       } catch (error) {
         throw new CheckUsageError(`Failed to write spec ${specPath}: ${errorMessage(error)}`);
       }
@@ -536,8 +600,16 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const baseVersion = base.doc ? infoVersion(base.doc) : null;
     let diff: CheckReport["diff"] = null;
     if (base.doc) {
-      const result = diffOpenAPI(base.doc, parseOpenAPI(structuredClone(head) as never));
-      diff = { summary: result.summary, breaking: result.breaking, nonBreaking: result.nonBreaking };
+      try {
+        const result = diffOpenAPI(base.doc, parseOpenAPI(structuredClone(head) as never));
+        diff = { summary: result.summary, breaking: result.breaking, nonBreaking: result.nonBreaking };
+      } catch (error) {
+        if (valid) {
+          throw new CheckUsageError(`Failed to diff against the base spec: ${errorMessage(error)}`);
+        }
+        // The invalid head is already a failure; report it instead of the diff crash.
+        failures.push(`Diff against the base skipped: the generated spec is invalid (${errorMessage(error)}).`);
+      }
     }
 
     // 5. Version rule (D7).
@@ -565,15 +637,14 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
       base: {
         source: base.source,
         ref: base.ref,
-        status: baseStatus(base),
+        status: baseStatus(base, diff !== null),
       },
       failures,
       warnings,
     };
 
     const rendered = renderReport(report, format);
-    if (options.reportPath) {
-      const reportPath = path.resolve(cwd, options.reportPath);
+    if (reportPath !== undefined) {
       try {
         await mkdir(path.dirname(reportPath), { recursive: true });
         await writeFile(reportPath, rendered, "utf8");

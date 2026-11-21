@@ -29,6 +29,32 @@ function toArray(value: string | string[] | undefined): string[] | undefined {
   return Array.isArray(value) ? value : [value];
 }
 
+/**
+ * The literal values given for a long option (`--name value` or `--name=value`), read from argv
+ * before `--`. cac/mri turn number-looking values into numbers (`1.10` -> 1.1, `0123` -> 123),
+ * which is wrong for paths and git refs.
+ */
+function literalOptionValues(argv: string[], name: string): string[] {
+  const camel = (value: string) => value.replace(/([a-z])-([a-z])/g, (_, a, b) => a + b.toUpperCase());
+  const wanted = camel(name);
+  const values: string[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--") break;
+    if (!token.startsWith("--")) continue;
+    const eq = token.indexOf("=");
+    const key = camel(eq === -1 ? token.slice(2) : token.slice(2, eq));
+    if (key !== wanted) continue;
+    if (eq !== -1) {
+      values.push(token.slice(eq + 1));
+    } else if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
+      values.push(argv[i + 1]);
+      i += 1;
+    }
+  }
+  return values;
+}
+
 export async function runCli(
   argv = process.argv.slice(2),
   runOptions: CliRunOptions = {}
@@ -331,10 +357,17 @@ export async function runCli(
 
         const single = (name: string, value: unknown): string | undefined => {
           if (value === undefined) return undefined;
-          if (Array.isArray(value) || typeof value === "boolean" || value === "") {
+          const literal = literalOptionValues(argv, name);
+          if (
+            Array.isArray(value) ||
+            typeof value === "boolean" ||
+            value === "" ||
+            literal.length !== 1 ||
+            literal[0] === ""
+          ) {
             throw new Error(`--${name} takes one value`);
           }
-          return String(value);
+          return literal[0];
         };
 
         let config;
@@ -525,6 +558,8 @@ export async function runCli(
     cli.parse(["node", "apifn", ...argv], { run: false });
     await cli.runMatchedCommand();
   } catch (error) {
+    // `apifn check` reserves exit 1 for a failed contract check: a usage error exits 2.
+    const usageExit = cli.matchedCommandName === "check" ? 2 : 1;
     const message = error instanceof Error ? error.message : String(error);
     const output = createOutput({
       writeStdout: runOptions.stdout,
@@ -532,7 +567,7 @@ export async function runCli(
       color: false,
     });
     output.error(message);
-    return 1;
+    return usageExit;
   }
 
   return exitCode;

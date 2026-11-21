@@ -3,12 +3,17 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/index.js";
-import { CHECK_REPORT_MARKER, parseSemver, versionCoversBreaking } from "../src/commands/check.js";
+import {
+  CHECK_REPORT_MARKER,
+  canonicalJson,
+  parseSemver,
+  versionCoversBreaking,
+} from "../src/commands/check.js";
 import type { CheckReport } from "../src/commands/check.js";
 import { tempDir } from "./temp-dirs.js";
 
@@ -263,6 +268,38 @@ describe("apifn check: drift and validation", () => {
     expect(report.driftState).toBe("stale");
   });
 
+  it("--write keeps a .json spec in JSON", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const generated = parseYaml(await readFile(path.join(dir, SPEC), "utf8"));
+
+    const written = await runJson(["check", "--spec", "openapi.json", "--write"], dir);
+    expect(written.code).toBe(0);
+    expect(written.report.written).toBe(true);
+    const raw = await readFile(path.join(dir, "openapi.json"), "utf8");
+    expect(JSON.parse(raw)).toEqual(generated);
+    expect(raw).toBe(`${JSON.stringify(JSON.parse(raw), null, 2)}\n`);
+
+    expect((await runJson(["check", "--spec", "openapi.json"], dir)).report.drift).toBe(false);
+  });
+
+  it("an own __proto__ key counts in canonical JSON and in drift", async () => {
+    const withProto = JSON.parse('{"a":1,"__proto__":{"x":1}}');
+    expect(canonicalJson(withProto)).toBe('{"__proto__":{"x":1},"a":1}');
+    expect(canonicalJson(withProto)).not.toBe(canonicalJson({ a: 1 }));
+
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const spec = await readFile(path.join(dir, SPEC), "utf8");
+    await writeFile(path.join(dir, SPEC), `${spec}__proto__:\n  x: 1\n`);
+
+    const { code, report } = await runJson(["check"], dir);
+    expect(code).toBe(1);
+    expect(report.driftState).toBe("stale");
+  });
+
   it("an invalid spec exits 1 with its validation errors", async () => {
     const root = await fixtures();
     const dir = path.join(root, "invalid");
@@ -274,6 +311,24 @@ describe("apifn check: drift and validation", () => {
     expect(report.valid).toBe(false);
     expect(report.validationErrors.length).toBeGreaterThan(0);
     expect(report.failures.join("\n")).toContain("Generated spec is invalid");
+  });
+
+  it("an invalid spec the differ cannot read still exits 1 with its validation errors", async () => {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "invalid-diff");
+    await commitSpec(dir);
+
+    const { code, report } = await runJson(
+      ["check", "--base-spec", path.join("..", "base", SPEC)],
+      dir
+    );
+    expect(code).toBe(1);
+    expect(report.valid).toBe(false);
+    expect(report.validationErrors.length).toBeGreaterThan(0);
+    expect(report.diff).toBeNull();
+    expect(report.base.status).toBe("skipped");
+    expect(report.failures.join("\n")).toContain("Diff against the base skipped");
   });
 });
 
@@ -317,6 +372,36 @@ describe("apifn check: --base <git-ref>", () => {
     expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "new-contract" });
     expect(report.diff).toBeNull();
     expect(report.versions).toEqual({ base: null, head: "1.1.0" });
+  });
+
+  it("a git failure reading the base spec exits 2 instead of reporting a new contract", async () => {
+    const { root, service } = await repo();
+    await mkdir(path.join(service, ".apifn"), { recursive: true });
+    await commitSpec(path.join(root, "base"));
+    await writeFile(path.join(service, SPEC), await readFile(path.join(root, "base", SPEC), "utf8"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract");
+    await commitSpec(service);
+    // The tree still lists the spec, but its blob is gone: git cannot read it.
+    const blob = git(root, "rev-parse", "HEAD:breaking/.apifn/openapi.yml").trim();
+    await rm(path.join(root, ".git", "objects", blob.slice(0, 2), blob.slice(2)), { force: true });
+
+    const result = await run(["check", "--base", "HEAD", "--format", "json"], service);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("git show");
+    expect(result.stdout).toBe("");
+  });
+
+  it("a ref that looks like a number is passed to git literally", async () => {
+    const { root, service } = await repo();
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "routers only");
+    git(root, "tag", "0123");
+    await commitSpec(service);
+
+    const { code, report } = await runJson(["check", "--base", "0123"], service);
+    expect(code).toBe(0);
+    expect(report.base).toEqual({ source: "git", ref: "0123", status: "new-contract" });
   });
 
   it("an unknown ref exits 2", async () => {
@@ -375,6 +460,51 @@ describe("apifn check: usage and load errors", () => {
     expect(badFormat.code).toBe(2);
     expect(badFormat.stderr).toContain("Unknown --format 'xml'");
   });
+
+  it.each([
+    [["--bogus"]],
+    [["--base"]],
+    [["--format"]],
+    [["--spec"]],
+  ])("a parse error (%j) exits 2 with no report", async (args) => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const result = await run(["check", ...args], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).not.toBe("");
+    expect(result.stdout).toBe("");
+  });
+
+  it("other commands keep exit 1 for a parse error", async () => {
+    const root = await fixtures();
+    expect((await run(["generate", "--bogus"], path.join(root, "base"))).code).toBe(1);
+  });
+
+  it("a --base-spec path that looks like a number is read literally", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await writeFile(path.join(dir, "1.10"), await readFile(path.join(dir, SPEC), "utf8"));
+
+    const { code, report } = await runJson(["check", "--base-spec", "1.10"], dir);
+    expect(code).toBe(0);
+    expect(report.base).toEqual({ source: "file", ref: "1.10", status: "compared" });
+  });
+
+  it.each([SPEC, `./.apifn/../${SPEC}`])(
+    "--report naming the spec (%s) exits 2 and writes nothing",
+    async (reportPath) => {
+      const root = await fixtures();
+      const dir = path.join(root, "compatible");
+      await mkdir(path.join(dir, ".apifn"), { recursive: true });
+      await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+      const result = await run(["check", "--write", "--report", reportPath], dir);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("is the spec itself");
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    }
+  );
 
   it("a load error with --write leaves the committed spec untouched", async () => {
     const root = await fixtures();
