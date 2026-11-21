@@ -511,12 +511,16 @@ test("a package whose code references another package's files by relative path i
     // otherfn/cli's test imports filefn/core's source without depending on it; filefn/core's own "../" paths stay inside it.
     "otherfn/cli/tests/integration.test.ts": 'import { x } from "../../../filefn/core/src/index.ts";\nconst outside = "../../../../elsewhere";\n',
     "filefn/core/tests/self.test.ts": 'import "../src/index.ts";\n',
+    "devfn/core/tests/reads-clifn.test.ts": 'import "../../../clifn/core/src/index.ts";\n',
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
     assert.equal(outputs.full_js, "false");
     assert.equal(outputs.js_build_filters, "--filter=..../filefn/core --filter=..../otherfn/cli");
     assert.equal(outputs.js_test_filters, `--filter=..../filefn/core --filter=..../otherfn/cli ${EXCLUDE_DEVFN}`);
+    // devfn/core reaches clifn/core through the manifest graph and also reads its files; the reference still makes it a seed, since the
+    // manifest may pin a published version Turbo treats as external.
+    assert.match(plan("clifn/core/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/devfn\/core/);
     // Nothing references otherfn/cli, so a change there selects only it.
     assert.equal(plan("otherfn/cli/src/index.ts").js_build_filters, "--filter=..../otherfn/cli");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }

@@ -462,7 +462,7 @@ function collectSourceReferences(packageDirs) {
 
 // The packages turbo's `..../<dir>` filter selects (each seed and every package that depends on it, transitively),
 // plus packages whose code references a selected package by relative path, and their dependents. `referencedOnly` holds
-// the packages reached through such a reference alone; Turbo's filters cannot reach them, so they become seeds too.
+// the packages reached through such a reference; Turbo's filters may not reach them, so they become seeds too.
 function collectJsDependents(seedDirs, manifests, sourceReferences = new Map()) {
   const dirsByName = new Map();
   for (const manifest of manifests) {
@@ -495,10 +495,14 @@ function collectJsDependents(seedDirs, manifests, sourceReferences = new Map()) 
         queue.push(dependent);
       }
     }
+    // A consumer is a seed even when a manifest edge also reaches it: the manifest may pin a published version, which
+    // Turbo treats as external, while the reference reads the workspace's files.
     for (const consumer of sourceReferences.get(dir) || []) {
+      if (!seedDirs.has(consumer)) {
+        referencedOnly.add(consumer);
+      }
       if (!selected.has(consumer)) {
         selected.add(consumer);
-        referencedOnly.add(consumer);
         queue.push(consumer);
       }
     }
