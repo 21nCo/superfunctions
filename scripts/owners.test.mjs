@@ -396,6 +396,9 @@ test("a preload of scripts/owners.mjs under another URL stays inert and the entr
     { args: [linked], env: { NODE_OPTIONS: '"--preserve-symlinks-main"' } },
     { args: ["--preserve-symlinks-main", "--no-preserve-symlinks-main", linked] },
     { args: ["--title=--preserve-symlinks-main", linked] },
+    // A preload that ends the process from a timer: the entry has already printed and set the exit status.
+    { args: ["--import", "data:text/javascript,setTimeout(()=>process.exit(process.exitCode),500)", script] },
+    { args: ["--preserve-symlinks-main", "--import", "data:text/javascript,setTimeout(()=>process.exit(process.exitCode),500)", linked] },
   ];
   for (const { args, env } of runs) {
     const options = { encoding: "utf8", env: { ...process.env, ...env } };

@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
@@ -466,28 +466,35 @@ function realPathOr(file) {
 
 // Run the command only from the entry module: never as a side effect of an import, and never from a second instance
 // of this file (a preload under a query or fragment, or a canonical preload of a symlinked entry). Newer Node sets
-// import.meta.main. Otherwise an instance whose real path is argv[1]'s (so a symlinked checkout, macOS's /var ->
-// /private/var and --preserve-symlinks-main all still count) is a candidate. Preloads evaluate before the entry, so the
-// last candidate to register is the entry; it runs once the event loop drains, after every preload, and owns the
-// output and the exit status.
-function isEntryCandidate() {
-  if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return false;
-  if (!process.argv[1] || /[?#]/.test(import.meta.url)) return false;
+// import.meta.main. Otherwise compare this instance's URL with the URLs Node can give the entry: the real path of
+// argv[1], or, under --preserve-symlinks-main, argv[1] as given. When argv[1] is not behind a symlink the two agree and
+// the match runs the command at once. When it is (a symlinked checkout, macOS's /var -> /private/var), the as-given
+// instance exists only as the --preserve-symlinks-main entry and runs at once; the real-path instance is the entry or
+// a preload of that entry, and preloads evaluate first, so it runs at beforeExit unless the entry already ran.
+function entryMatch() {
+  if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return "none";
+  if (!process.argv[1] || /[?#]/.test(import.meta.url)) return "none";
   try {
-    return realpathSync(process.argv[1]) === REAL_MODULE_FILE;
+    const given = pathToFileURL(path.resolve(process.argv[1])).href;
+    const real = pathToFileURL(realpathSync(process.argv[1])).href;
+    if (import.meta.url === given) return "now";
+    return import.meta.url === real ? "after-preloads" : "none";
   } catch {
-    return false;
+    return "none";
   }
 }
 
-const CLI_ENTRY = Symbol.for("superfunctions.owners.cli.entry");
+const CLI_RAN = Symbol.for("superfunctions.owners.cli.ran");
 const runCli = () => {
+  if (globalThis[CLI_RAN]) return;
+  globalThis[CLI_RAN] = true;
   process.exitCode = runOwnersCli(process.argv.slice(2));
 };
 
 if (typeof import.meta.main === "boolean") {
   if (import.meta.main) runCli();
-} else if (isEntryCandidate()) {
-  if (!globalThis[CLI_ENTRY]) process.once("beforeExit", () => globalThis[CLI_ENTRY]());
-  globalThis[CLI_ENTRY] = runCli;
+} else {
+  const match = entryMatch();
+  if (match === "now") runCli();
+  else if (match === "after-preloads") process.once("beforeExit", runCli);
 }
