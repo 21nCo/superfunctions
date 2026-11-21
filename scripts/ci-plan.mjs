@@ -295,9 +295,10 @@ function readLockfileAt(commitish) {
 const HOISTED_ENTRY = /^node_modules\/(?:@[^/]+\/)?[^/]+$/;
 
 // Which workspace packages a lockfile change touches, or global when it touches anything else. A workspace's own
-// entry is keyed by its directory, packages installed for it alone by <dir>/node_modules/..., and its hoisted link
-// entry (node_modules/<name>, link: true) resolves to that directory. Hoisted external packages are global.
-function classifyLockfileChange(before, after, workspaceDirs) {
+// entry is keyed by its directory, published copies of workspace packages installed for it alone by
+// <dir>/node_modules/<workspace package>, and its hoisted link entry (node_modules/<name>, link: true) resolves to that
+// directory. External packages, hoisted or nested, are global.
+function classifyLockfileChange(before, after, workspaceDirs, workspaceNames) {
   const dirs = new Set();
   const global = (reason) => ({ global: true, reason, dirs });
   const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -332,11 +333,15 @@ function classifyLockfileChange(before, after, workspaceDirs) {
       continue;
     }
 
-    // A package installed under a workspace's node_modules resolves for code inside that directory, which includes
-    // any workspace nested in it; dependents reach it through those workspaces, and the dependents filter selects them.
+    // A published copy of a workspace package installed under one workspace's node_modules (a pin to an older
+    // version) resolves for code inside that directory, which includes any workspace nested in it; dependents reach it
+    // through those workspaces. Every node_modules segment must name a workspace package: a third-party package there
+    // is global, because other packages can borrow it by a computed path (docs builds copy tools from a sibling's
+    // node_modules) that neither the package graph nor the reference scan sees.
     const nestedAt = key.indexOf("/node_modules/");
     const nestedIn = nestedAt > 0 && !key.startsWith("node_modules/") ? key.slice(0, nestedAt) : "";
-    if (nestedIn && workspaceDirs.has(nestedIn)) {
+    const nestedNames = nestedIn ? key.slice(nestedAt + "/node_modules/".length).split("/node_modules/") : [];
+    if (nestedIn && workspaceDirs.has(nestedIn) && nestedNames.every((name) => workspaceNames.has(name))) {
       for (const dir of workspaceDirs) {
         if (dir === nestedIn || dir.startsWith(`${nestedIn}/`)) {
           dirs.add(dir);
@@ -346,9 +351,11 @@ function classifyLockfileChange(before, after, workspaceDirs) {
     }
 
     // A new workspace's link selects it. A link that is removed or that changes target (a workspace renamed or moved)
-    // can leave consumers of the old name that HEAD's dependency graph no longer shows, so it is global.
+    // can leave consumers of the old name that HEAD's dependency graph no longer shows, so it is global, as is a new
+    // @types/ link, which TypeScript loads into every package without a dependency.
     if (
       HOISTED_ENTRY.test(key) &&
+      !key.startsWith("node_modules/@types/") &&
       previous === undefined &&
       next?.link === true &&
       workspaceDirs.has(next.resolved)
@@ -616,7 +623,12 @@ for (const entry of changedEntries) {
     if (changedPath === LOCKFILE) {
       // The diff compares HEAD with the merge base (base...HEAD), so the lockfile is read at the same two commits.
       const lockfileBase = mergeBaseWith(baseRef) || baseRef;
-      lockfile = classifyLockfileChange(readLockfileAt(lockfileBase), readLockfileAt("HEAD"), jsDirs);
+      lockfile = classifyLockfileChange(
+        readLockfileAt(lockfileBase),
+        readLockfileAt("HEAD"),
+        jsDirs,
+        new Set(jsPackages.map((manifest) => manifest.name))
+      );
       if (lockfile.global) {
         fullJs = true;
       }

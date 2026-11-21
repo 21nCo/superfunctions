@@ -438,12 +438,12 @@ test("a lockfile-only workspace version bump selects that package and its depend
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test("a package installed under one workspace's node_modules selects only that workspace", () => {
+test("a published copy of a workspace package installed under one workspace's node_modules selects only that workspace", () => {
   const { root, plan } = lockfileFixture();
   try {
     const outputs = plan(editLockfile((packages) => {
-      packages["filefn/core/node_modules/left-pad"] = { version: "1.0.0" };
-      packages["filefn/core/node_modules/left-pad/node_modules/pad-core"] = { version: "2.0.0" };
+      packages["filefn/core/node_modules/@clifn/core"] = { version: "0.0.9" };
+      packages["filefn/core/node_modules/@clifn/core/node_modules/@devfn/proxy"] = { version: "0.0.1" };
     }));
     assert.equal(outputs.full_js, "false");
     assert.equal(outputs.js_build_filters, "--filter=..../filefn/core");
@@ -456,7 +456,7 @@ test("a package under a workspace's node_modules also selects the workspaces nes
     "otherfn/cli/example/package.json": JSON.stringify({ name: "@otherfn/cli-example", scripts: { build: "vite build" } }),
   });
   try {
-    const outputs = plan(editLockfile((packages) => { packages["otherfn/cli/node_modules/vite"] = { version: "6.0.0" }; }));
+    const outputs = plan(editLockfile((packages) => { packages["otherfn/cli/node_modules/@clifn/core"] = { version: "0.0.9" }; }));
     assert.equal(outputs.full_js, "false");
     assert.equal(outputs.js_build_filters, "--filter=..../otherfn/cli --filter=..../otherfn/cli/example");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
@@ -550,6 +550,15 @@ test("lockfile changes outside workspace entries and root config force a full Ja
     for (const [name, change] of [
       ["external package", editLockfile((packages) => { packages["node_modules/left-pad"].version = "1.3.1"; })],
       ["added external package", editLockfile((packages) => { packages["node_modules/right-pad"] = { version: "1.0.0" }; })],
+      ["third-party package nested under a workspace", editLockfile((packages) => { packages["filefn/core/node_modules/left-pad"] = { version: "1.0.0" }; })],
+      ["third-party package nested under a workspace package copy", editLockfile((packages) => { packages["filefn/core/node_modules/@clifn/core/node_modules/left-pad"] = { version: "1.0.0" }; })],
+      ["new workspace in the @types namespace", ({ put, read }) => {
+        put("packages/ci-types/package.json", JSON.stringify({ name: "@types/ci-example" }));
+        editLockfile((packages) => {
+          packages["packages/ci-types"] = { name: "@types/ci-example", version: "0.0.1" };
+          packages["node_modules/@types/ci-example"] = { resolved: "packages/ci-types", link: true };
+        })({ put, read });
+      }],
       ["package nested outside any workspace", editLockfile((packages) => { packages["tools/node_modules/left-pad"] = { version: "1.0.0" }; })],
       ["root entry", editLockfile((packages) => { packages[""].devDependencies = { turbo: "2.0.0" }; })],
       ["top-level field", editLockfile((packages, lockfile) => { lockfile.lockfileVersion = 4; })],
