@@ -450,7 +450,7 @@ async function consumeOtpChallenge(
 ): Promise<AuthFnOtpChallengeRecord> {
   // attemptCount is not written here: the reservation already counted this
   // attempt, and an absolute write could undo concurrent reservations.
-  const applied = await updateOtpChallengeIfMatches(
+  const outcome = await updateOtpChallengeOutcome(
     config,
     challenge.id,
     [{ field: 'consumedAt', operator: 'eq', value: null }],
@@ -459,8 +459,15 @@ async function consumeOtpChallenge(
       updatedAt: consumedAt
     }
   );
-  if (!applied) {
+  if (outcome === 'not-applied') {
     throw new AuthFnOtpReplayedError('OTP code has already been used', {
+      challengeId: challenge.id
+    });
+  }
+  if (outcome === 'unknown') {
+    // This request's own write may have consumed the challenge. Not a replay,
+    // so its attempt is not handed back.
+    throw new AuthFnOtpInvalidError('OTP code could not be confirmed; request a new code', {
       challengeId: challenge.id
     });
   }
