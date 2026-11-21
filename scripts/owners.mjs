@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
@@ -464,28 +464,29 @@ function realPathOr(file) {
   }
 }
 
-// Run the command only when this file is the entry module: never as a side effect of an import. Newer Node sets
-// import.meta.main; otherwise compare real paths on both sides, so a symlinked checkout, macOS's /var ->
-// /private/var and --preserve-symlinks-main all still run the command instead of exiting 0 with no output.
+/** Whether Node keeps the entry path's symlinks (`--preserve-symlinks-main`, on the command line or in NODE_OPTIONS). */
+function preservesMainSymlinks() {
+  const options = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? "").split(/\s+/)];
+  return options.some((option) => option.replaceAll("_", "-") === "--preserve-symlinks-main");
+}
+
+// Run the command only when this instance is the entry module: never as a side effect of an import, and never from a
+// second instance of this file (a preload under a query or fragment, or a canonical preload of a symlinked entry).
+// Newer Node sets import.meta.main. Otherwise rebuild the entry URL the way Node does (the real path of argv[1],
+// or its absolute path under --preserve-symlinks-main) and compare it with this instance's URL exactly, so a
+// symlinked checkout and macOS's /var -> /private/var still run the command, and only the entry owns the exit status.
 function isMainModule() {
   if (typeof import.meta.main === "boolean") return import.meta.main;
   if (process.execArgv.some((arg) => EVAL_OPTION.test(arg))) return false;
   if (!process.argv[1]) return false;
-  const url = new URL(import.meta.url);
-  if (url.search || url.hash) return false;
   try {
-    return realpathSync(process.argv[1]) === REAL_MODULE_FILE;
+    const entry = preservesMainSymlinks() ? path.resolve(process.argv[1]) : realpathSync(process.argv[1]);
+    return pathToFileURL(entry).href === import.meta.url;
   } catch {
     return false;
   }
 }
 
-// One run per process: a second instance of this file (a preload under another URL, or a canonical preload of a
-// symlinked entry under --preserve-symlinks-main) can also pass the real-path check, and must not print the records
-// again or overwrite the exit status. An instance loaded under a query or fragment is never the entry module.
-const CLI_RAN = Symbol.for("superfunctions.owners.cli.ran");
-
-if (!globalThis[CLI_RAN] && isMainModule()) {
-  globalThis[CLI_RAN] = true;
+if (isMainModule()) {
   process.exitCode = runOwnersCli(process.argv.slice(2));
 }

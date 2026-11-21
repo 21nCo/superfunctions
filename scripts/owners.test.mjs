@@ -373,23 +373,32 @@ test("importing scripts/owners.mjs from an eval entry neither prints nor sets th
   }
 });
 
-test("a preload of scripts/owners.mjs under another URL does not run the command a second time", (t) => {
+test("a preload of scripts/owners.mjs under another URL stays inert and the entry owns output and exit status", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const link = path.join(dir, "scripts");
   symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
   const script = fileURLToPath(new URL("owners.mjs", import.meta.url));
+  const linked = path.join(link, "owners.mjs");
   const url = pathToFileURL(script).href;
+  // A later preload that resets the exit status: only the entry, which runs after every preload, may set it.
+  const reset = ["--import", "data:text/javascript,process.exitCode=0"];
   const runs = [
-    ["--import", `${url}?preload`, script],
-    ["--preserve-symlinks-main", "--import", url, path.join(link, "owners.mjs")],
+    { args: ["--import", `${url}?preload`, ...reset, script] },
+    // Node resolves an empty query or fragment to the entry's own URL: that preload is the entry instance,
+    // evaluated early (once), so it prints the records once and sets the exit status.
+    { args: ["--import", `${url}?`, script] },
+    { args: ["--import", `${url}#`, script] },
+    { args: ["--preserve-symlinks-main", "--import", url, ...reset, linked] },
+    { args: ["--import", url, ...reset, linked], env: { NODE_OPTIONS: "--preserve-symlinks-main" } },
   ];
-  for (const args of runs) {
-    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], { encoding: "utf8" });
-    assert.equal(result.status, 1, result.stderr);
+  for (const { args, env } of runs) {
+    const options = { encoding: "utf8", env: { ...process.env, ...env } };
+    const result = spawnSync(process.execPath, [...args, "AGENTS.md", "../outside"], options);
+    assert.equal(result.status, 1, `${args.join(" ")}: ${result.stderr}`);
     assert.equal(result.stdout, "AGENTS.md: public\n", args.join(" "));
     assert.equal(result.stderr.match(/invalid-path/g)?.length, 1, result.stderr);
-    const clean = spawnSync(process.execPath, [...args, "AGENTS.md"], { encoding: "utf8" });
+    const clean = spawnSync(process.execPath, [...args, "AGENTS.md"], options);
     assert.equal(clean.status, 0, clean.stderr);
     assert.equal(clean.stdout, "AGENTS.md: public\n");
   }
