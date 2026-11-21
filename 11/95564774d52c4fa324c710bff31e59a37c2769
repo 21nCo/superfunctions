@@ -1,0 +1,37 @@
+apifn/cli/README.md
+  s_b15184ae60b291::t_163e53730472a1 123,126,128-130,146-149
+apifn/cli/__tests__/check-command.test.ts
+  s_f058f999ab46b7::t_c7c825613ede9b 6,11-16,271-302,315-332,377-406,464-508
+apifn/cli/src/commands/check.ts
+  s_b15184ae60b291::t_df42a50322e62e 17-18,71-75,95,97-98,111-112,195-207,209-211,223-235,238-242,244,246-252,255-257,259-260,291-294,425-447,541-550,570,603-612,640,647
+apifn/cli/src/index.ts
+  s_b15184ae60b291::t_30e945d7c5798f 32-57,360-367,370,561-562,570
+apifn/cli/__tests__/fixtures/check/invalid-diff/apifn.config.ts
+  s_b15184ae60b291::t_b4535b22381262 1-4
+apifn/cli/__tests__/fixtures/check/invalid-diff/router.ts
+  s_b15184ae60b291::t_66001e3ea1ff2c 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1195564774d52c4fa324c710bff31e59a37c2769",
+  "prompts": {},
+  "sessions": {
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
