@@ -5,6 +5,8 @@ import { authFnPasswordPlugin } from '@authfn/password';
 import type { AuthFnEvent, AuthFnRuntimeConfig } from '../index.js';
 import { issueSession } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
+import { completeResetPassword, sendOtpChallenge } from '../core/verifications.js';
+import { buildLookupResult } from '../core/regions.js';
 import { randomBytes, scryptSync } from 'node:crypto';
 import {
   createPasswordCredential,
@@ -482,6 +484,103 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     await expect(verifyPassword('test-password-strong', huge)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
     const notPowerOfTwo = ['scrypt', '30000', '8', '1', 'test-salt', 'test-digest'].join('$');
     await expect(verifyPassword('test-password-strong', notPowerOfTwo)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+  });
+
+  it('refuses a legacy hash on a wrong password without upgrading it', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    const stored = legacyHash('test-password-legacy');
+    await createPasswordCredential(config, { userId: user.id, passwordHash: stored });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-wrong' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+    expect((await getPasswordCredentialByUserId(config, user.id))!.passwordHash).toBe(stored);
+  });
+
+  it('still accepts an existing password longer than the limit for new ones', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    const long = 'test-password-'.padEnd(2000, 'x');
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash(long) });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: long })).resolves.toBeTruthy();
+  });
+
+  it('only evaluates stored parameter sets AuthFn has written', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    const salt = randomBytes(16).toString('base64url');
+    const expensive = ['scrypt', '65536', '8', '16', salt, 'test-digest'].join('$');
+    await createPasswordCredential(config, { userId: user.id, passwordHash: expensive });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-strong' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+  });
+
+  it('refuses a sign-in whose old password was replaced while its hash was being upgraded', async () => {
+    const base = memoryAdapter({ debug: false });
+    let replaced = false;
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'updateMany' && typeof value === 'function') {
+          return async (params: { model: string; data: Record<string, unknown> }) => {
+            if (!replaced && params.model === 'password_credentials') {
+              replaced = true;
+              // A reset lands between the password check and the upgrade.
+              await value.call(target, { ...params, data: { passwordHash: legacyHash('test-password-new'), updatedAt: new Date() } });
+            }
+            return value.call(target, params);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  });
+
+  it('checks a reset\'s new password length before using its code', async () => {
+    const config = createConfig();
+    await createUser(config, { primaryEmail: 'ada@example.com' });
+    const options = {
+      delivery: { send: async () => ({ sent: true }) },
+      codeGenerator: () => '731942'
+    };
+    await sendOtpChallenge(config, {}, options, { purpose: 'reset-password', email: 'ada@example.com' });
+    const reset = (newPassword: string) => completeResetPassword(config, options, {
+      purpose: 'reset-password',
+      email: 'ada@example.com',
+      code: '731942',
+      newPassword
+    });
+    await expect(reset('x'.repeat(1025))).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
+    await expect(reset('short')).rejects.toMatchObject({ code: 'AUTHFN_VALIDATION_ERROR' });
+    await expect(reset('test-password-corrected')).resolves.toEqual({ passwordUpdated: true });
+  });
+
+  it('answers a region lookup for a local account like one for an unknown identifier', async () => {
+    const config = createConfig();
+    const record = {
+      identifier: 'ada@example.com',
+      userId: 'user_test_local',
+      regionId: 'us-east-1',
+      authority: 'https://us.account.example.com',
+      domain: '.example.com',
+      createdAt: '2026-11-21T00:00:00.000Z',
+      updatedAt: '2026-11-21T00:00:00.000Z'
+    };
+    const lookupStore = {
+      get: async (key: string) => (key.endsWith('ada@example.com') ? JSON.stringify(record) : null),
+      setIfAbsent: async () => ({ inserted: false }),
+      delete: async () => {}
+    };
+    const environment = { issuer: 'https://us.account.example.com', baseUrl: 'https://us.account.example.com', regionId: 'us-east-1' };
+    const pluginConfig = { lookupStore } as never;
+    const known = await buildLookupResult(config, pluginConfig, { identifier: 'ada@example.com', environment });
+    const unknown = await buildLookupResult(config, pluginConfig, { identifier: 'nobody@example.com', environment });
+    expect({ ...known, identifier: undefined }).toEqual({ ...unknown, identifier: undefined });
+    expect(known).not.toHaveProperty('userId');
   });
 
   it('says an email is unverified only to someone who knows the password, and names no user', async () => {

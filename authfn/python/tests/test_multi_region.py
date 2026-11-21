@@ -26,7 +26,6 @@ from authfn import (
     AuthFnConfig,
     AuthFnRuntimeResolution,
     RegionMismatchError,
-    RegionNotFoundError,
     ValidationError,
 )
 from authfn.plugins import gateway_routing
@@ -236,7 +235,6 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     )
     assert lookup == {
         "identifier": "ada@example.com",
-        "userId": "user_1",
         "regionId": "eu-west-1",
         "authority": "https://eu.account.example.com",
         "domain": ".example.com",
@@ -252,12 +250,17 @@ async def test_multi_region_plugin_schema_routes_and_service_behaviour() -> None
     assert error.value.code == "AUTHFN_REGION_MISMATCH"
     assert error.value.details["redirectTo"] == "https://eu.account.example.com"
 
-    with pytest.raises(RegionNotFoundError) as missing:
-        await service.lookup(
-            identifier="unknown@example.com",
-            request=Request("https://us.account.example.com/auth/regions/lookup"),
-        )
-    assert missing.value.code == "AUTHFN_REGION_NOT_FOUND"
+    assert "userId" not in error.value.details
+
+    # An unknown identifier gets the same local answer as an account in this
+    # region, and no answer names a user.
+    missing = await service.lookup(
+        identifier="unknown@example.com",
+        request=Request("https://us.account.example.com/auth/regions/lookup"),
+    )
+    assert missing["continueLocally"] is True
+    assert missing["authority"] == "https://us.account.example.com"
+    assert "userId" not in missing
 
 
 @pytest.mark.asyncio

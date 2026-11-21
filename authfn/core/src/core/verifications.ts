@@ -25,7 +25,7 @@ import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { hashSecret } from './sessions.js';
 import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
-import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { assertNewPasswordLength, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -448,6 +448,9 @@ export async function completeResetPassword(
   input: CompleteResetPasswordInput
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
+  // Checked before the code is used, so a password of the wrong length can be
+  // corrected and sent again with the same code.
+  assertNewPasswordLength(input.newPassword);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,

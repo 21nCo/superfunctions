@@ -18,7 +18,6 @@ from ..types import (
     AuthFnPlugin,
     AuthFnRuntimeResolution,
     RegionMismatchError,
-    RegionNotFoundError,
     ValidationError,
 )
 from .gateway_routing import CanonicalRoutingConfig
@@ -204,17 +203,26 @@ class MultiRegionService:
         normalized = _normalize_identifier(identifier)
         runtime = self.resolve_runtime(request or _default_request())
         located = await self._lookup_record(normalized, request, runtime)
-        if located is None:
-            raise RegionNotFoundError("Region routing information not found")
-        continue_locally = _normalize_authority(runtime.base_url) == _normalize_authority(located["authority"])
+        current = _normalize_authority(runtime.base_url)
+        if located is None or current == _normalize_authority(located["authority"]):
+            # An unknown identifier and an account in this region get the same
+            # answer, and no answer names the user, as in the TypeScript kernel:
+            # the route needs no sign-in.
+            return {
+                "identifier": normalized,
+                "regionId": runtime.region_id or self.plugin_config.default_region_id or "unknown",
+                "authority": current,
+                "domain": None,
+                "continueLocally": True,
+                "redirectTo": None,
+            }
         return {
             "identifier": normalized,
-            "userId": located.get("userId"),
             "regionId": located["regionId"],
             "authority": _normalize_authority(located["authority"]),
             "domain": located.get("domain"),
-            "continueLocally": continue_locally,
-            "redirectTo": None if continue_locally else _normalize_authority(located["authority"]),
+            "continueLocally": False,
+            "redirectTo": _normalize_authority(located["authority"]),
         }
 
     async def ensure_region_alignment(self, *, user_id: str, request: Optional[Any] = None) -> Dict[str, Any]:
@@ -238,7 +246,6 @@ class MultiRegionService:
             raise RegionMismatchError(
                 "Request must continue on a different region authority",
                 {
-                    "userId": user_id,
                     "regionId": located["regionId"],
                     "authority": target,
                     "redirectTo": target,
