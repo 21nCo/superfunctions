@@ -4,7 +4,7 @@ import { join, posix, win32 } from "node:path";
 import { createCredentialStore, InvalidStoreOptionsError } from "../src/credentials.js";
 import { createProjectConfig } from "../src/config.js";
 import { InvalidAppNameError } from "../src/paths.js";
-import { joinStoreFile } from "../src/store-options.js";
+import { joinStoreFile, storeFilePath } from "../src/store-options.js";
 
 // The defaults as they are defined at the reference commit (D2): these must never move.
 const CONDUCT_CREDENTIALS_PATH = join(homedir(), ".conduct", "credentials");
@@ -402,6 +402,32 @@ describe("store options shared by both factories", () => {
   ])("rejects the drive or stream name %j after normalization", (fileName, path) => {
     const base = path === win32 ? "C:\\base" : "/base";
     expect(() => joinStoreFile(base, fileName, path)).toThrow(InvalidStoreOptionsError);
+  });
+
+  it.each(["nul", "CON.json", "aux/x.json", "Lpt1", "com1 .log", "config.json.", "config.json ", "sub./x.json"])(
+    "rejects the Windows device or trailing dot or space name %j in a fileName under win32 only",
+    (fileName) => {
+      expect(() => joinStoreFile("C:\\base", fileName, win32)).toThrow(InvalidStoreOptionsError);
+      expect(joinStoreFile("/base", fileName, posix)).toBe(posix.join("/base", fileName));
+    },
+  );
+
+  it("accepts Windows names that only contain a device name", () => {
+    expect(joinStoreFile("C:\\base", "console.json", win32)).toBe("C:\\base\\console.json");
+    expect(joinStoreFile("C:\\base", "nul_x/my.nul", win32)).toBe("C:\\base\\nul_x\\my.nul");
+  });
+
+  it.each(["C:\\x\\nul", "C:\\x\\NUL.txt", "C:\\x\\...", "C:\\x\\cfg.", "C:\\x\\cfg ", "C:"])(
+    "rejects the Windows object-form target %j under win32 only",
+    (target) => {
+      expect(() => storeFilePath(target, win32)).toThrow(InvalidStoreOptionsError);
+    },
+  );
+
+  it("keeps ordinary targets, and POSIX names Windows reserves", () => {
+    expect(storeFilePath("C:\\x\\cfg.json", win32)).toBe("C:\\x\\cfg.json");
+    expect(storeFilePath("/x/nul", posix)).toBe("/x/nul");
+    expect(storeFilePath("/x/cfg.", posix)).toBe("/x/cfg.");
   });
 
   it("keeps a colon inside a POSIX subdirectory file name", () => {

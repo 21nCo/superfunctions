@@ -36,8 +36,20 @@ export class InvalidHomeDirectoryError extends Error {
   }
 }
 
-/** Win32 device names, reserved as a path segment alone or followed by an extension (`nul`, `nul.txt`). */
-const WIN32_DEVICE_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/;
+/** Win32 device names (any case), reserved as a path segment alone or before an extension (`nul`, `NUL.txt`). */
+const WIN32_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
+
+/**
+ * Whether Win32 opens something other than the segment as written: it drops trailing dots and spaces (`tool.` opens
+ * `tool`), and a device name, also before an extension or trailing spaces, opens the device. `.` and `..` are not
+ * judged here.
+ */
+export function isWin32AliasedSegment(segment: string): boolean {
+  if (segment === "." || segment === "..") {
+    return false;
+  }
+  return /[. ]$/.test(segment) || WIN32_DEVICE_NAME.test((segment.split(".")[0] ?? "").trimEnd());
+}
 
 /**
  * The closed grammar on every platform. On Windows two more rules keep one name one directory: Win32 drops trailing
@@ -48,7 +60,7 @@ function assertAppName(appName: unknown, platform: NodeJS.Platform): asserts app
   if (typeof appName !== "string" || !APP_NAME_PATTERN.test(appName)) {
     throw new InvalidAppNameError(appName);
   }
-  if (platform === "win32" && (appName.endsWith(".") || WIN32_DEVICE_NAME.test(appName))) {
+  if (platform === "win32" && isWin32AliasedSegment(appName)) {
     throw new InvalidAppNameError(
       appName,
       "on Windows it cannot end with a dot or be a device name (con, prn, aux, nul, com0-9, lpt0-9), with or without an extension",

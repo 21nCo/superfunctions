@@ -1,5 +1,5 @@
 import { posix, resolve, win32 } from "node:path";
-import { appDirResolver, type AppPathsOptions } from "./app-dirs.js";
+import { appDirResolver, isWin32AliasedSegment, type AppPathsOptions } from "./app-dirs.js";
 
 /** Thrown when a store options object is malformed: a missing, conflicting, unknown or mistyped key, or an unsafe file name. */
 export class InvalidStoreOptionsError extends Error {
@@ -27,13 +27,13 @@ function segmentsOf(value: string, path: typeof posix): string[] {
 
 /**
  * The target of an object-form store must name a file: a non-empty path without NUL characters whose last segment is
- * not empty (a trailing separator), `.`, `..` or a bare Windows drive. The legacy string form is not checked.
+ * not empty (a trailing separator), `.` or `..`, and on Windows not a bare drive, a device name or a name ending with a
+ * dot or space (see `isWin32AliasedSegment`). The legacy string form is not checked.
  */
-export function storeFilePath(value: string): string {
-  const native = pathModuleFor(undefined);
-  const last = segmentsOf(value, native).pop() ?? "";
-  const bareDrive = native.sep === "\\" && /^[A-Za-z]:$/.test(last);
-  if (value.includes("\0") || last === "" || last === "." || last === ".." || bareDrive) {
+export function storeFilePath(value: string, path: typeof posix = pathModuleFor(undefined)): string {
+  const last = segmentsOf(value, path).pop() ?? "";
+  const windowsAlias = path.sep === "\\" && (/^[A-Za-z]:$/.test(last) || isWin32AliasedSegment(last));
+  if (value.includes("\0") || last === "" || last === "." || last === ".." || windowsAlias) {
     throw new InvalidStoreOptionsError(`store path ${shown(value)} must name a file and contain no NUL character`);
   }
   return value;
@@ -42,7 +42,8 @@ export function storeFilePath(value: string): string {
 /**
  * A store file name relative to its base directory. It may contain subdirectories but must stay inside the base:
  * no absolute or drive-qualified path (before or after normalization, which may keep a leading `.` segment), no `..`
- * escape, not the base itself, and on Windows no `:` (a drive or an alternate data stream) in any segment.
+ * escape, not the base itself, and on Windows no `:` (a drive or an alternate data stream) and no device name or
+ * trailing dot or space (see `isWin32AliasedSegment`) in any segment.
  */
 export function joinStoreFile(base: string, fileName: unknown, path: typeof posix): string {
   if (typeof fileName !== "string" || fileName.length === 0) {
@@ -52,8 +53,10 @@ export function joinStoreFile(base: string, fileName: unknown, path: typeof posi
   const escapes = normalized === ".." || normalized.startsWith(`..${path.sep}`);
   const firstSegment = segmentsOf(normalized, path).find((segment) => segment !== ".") ?? "";
   const drive = /^[A-Za-z]:/;
-  const qualified = drive.test(fileName) || drive.test(firstSegment) || (path.sep === "\\" && normalized.includes(":"));
-  if (path.isAbsolute(fileName) || qualified || escapes || normalized === "." || normalized.endsWith(path.sep)) {
+  const windows = path.sep === "\\";
+  const qualified = drive.test(fileName) || drive.test(firstSegment) || (windows && normalized.includes(":"));
+  const aliased = windows && segmentsOf(normalized, path).some(isWin32AliasedSegment);
+  if (path.isAbsolute(fileName) || qualified || aliased || escapes || normalized === "." || normalized.endsWith(path.sep)) {
     throw new InvalidStoreOptionsError(`fileName ${JSON.stringify(fileName)} must be a relative file path inside its directory`);
   }
   return path.join(base, normalized);
