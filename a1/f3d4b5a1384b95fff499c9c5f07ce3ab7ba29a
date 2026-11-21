@@ -1,0 +1,25 @@
+clifn/core/tests/consumer-import-scanner.ts
+  s_6fe2177e03b08d::t_2444236a8ce8d3 21-22,231-235,237-243,246,256
+clifn/core/tests/consumer-scan.test.ts
+  s_6fe2177e03b08d::t_24842ee0dd06fb 163,167,175-176,196
+clifn/core/tests/fixtures/consumer-scan/boundary-listed-forms.ts
+  s_6fe2177e03b08d::t_1510be34bdb170 12-15,17
+clifn/core/tests/fixtures/consumer-scan/statement-boundary-forms.ts
+  s_6fe2177e03b08d::t_f2ba81a0bca287 13-14,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1f3d4b5a1384b95fff499c9c5f07ce3ab7ba29a",
+  "prompts": {},
+  "sessions": {
+    "s_6fe2177e03b08d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60ce439e-9aa0-45d5-a7df-f490753d4681",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

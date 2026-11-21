@@ -1,0 +1,39 @@
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_b996deaa3d01f1::t_125d76395a8b5f 28,32
+memoryfn/docs/content/docs/storage.md
+  s_b996deaa3d01f1::t_b658a0399fa8e6 31
+memoryfn/docs/static/llms-full.txt
+  s_b996deaa3d01f1::t_f479350c252fd8 38,42,509
+memoryfn/typescript/README.md
+  s_b996deaa3d01f1::t_5b59e6e21b39d8 36
+memoryfn/typescript/src/chunking/markdown.ts
+  s_b996deaa3d01f1::t_a5c2e516dc87b6 62,91-94,98,104,109-111,113
+memoryfn/typescript/src/core/pipeline.ts
+  s_b996deaa3d01f1::t_55ca7372cf041a 118,168-169,204-205,227-233,236,238-241,244-245,255-258,260-263,265-288,291,296-301,303
+memoryfn/typescript/src/extraction/dedup.ts
+  s_b996deaa3d01f1::t_76ae70ec99945e 8-12,19-20,23,26
+memoryfn/typescript/src/extraction/facts.ts
+  s_b996deaa3d01f1::t_e00fb6dd65bc82 43-46,66-71,75-76,80
+memoryfn/typescript/tests/chunking.test.ts
+  s_b996deaa3d01f1::t_dbc1ec7e73f386 75-88
+memoryfn/typescript/tests/documents.test.ts
+  s_b996deaa3d01f1::t_05a1a23036246f 2,307-308,350-353,357,359,365-395,462-463,482-514,545-573,585,588,664-698,700-701,704
+memoryfn/typescript/tests/openai-provider.test.ts
+  s_b996deaa3d01f1::t_6a0ebb90659469 106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "759246419d3a6e5489dc5a032f0f9aead912b77e",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
