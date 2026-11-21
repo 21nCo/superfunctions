@@ -100,18 +100,25 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
 
   // MCP-13: the import scan reads tokens, not lines, on the real ESM and CJS bundles.
   const executableLoads = [
-    "\nawait import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
+    "\nvoid import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
     "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
     "\nvar types = __require(\n  `@modelcontextprotocol/sdk/types.js`);\n",
     "\n/*\n * note */ import(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = require(\"@modelcontextprotocol\\x2fsdk\");\n",
     "\nvar sdk = \\u0072equire(\"@modelcontextprotocol/sdk\\u{2f}types.js\");\n",
+    // Every ECMAScript line terminator ends a line comment.
+    "\nvar x = 1; // note\rrequire(\"@modelcontextprotocol/sdk\");\n",
+    "\nvar x = 1; // note\u2028require(\"@modelcontextprotocol/sdk\");\n",
+    "\nvar x = 1; // note\u2029require(\"@modelcontextprotocol/sdk\");\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
     "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
     "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\nvar SDK = /from \"@modelcontextprotocol\\/sdk\"/;\n",
     "\n// import(\"@modelcontextprotocol/sdk/types.js\")\n/* require(\n\"@modelcontextprotocol/sdk\") */\n",
+    // Division after a function expression, a regex in a template substitution
+    // or after a class body, and an escaped CRLF line continuation in a string.
+    "\nvar n = function () {} / 2;\nvar s = `${/[\"]/.test(\"x\")}`;\nclass C {}\n/[\"]/.test(\"z\");\nvar c = \"a\\\r\nb\";\n",
   ];
   function appendToBuiltBundle(file: string, code: string): string {
     const dir = mkdtempSync(join(tmpdir(), "mcpfn-core-bundled-sdk-"));
@@ -138,7 +145,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
 
   it("fails closed on a bundle it cannot scan", () => {
     expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(
-      "cannot scan the bundle for @modelcontextprotocol/sdk imports: unterminated string",
+      "cannot scan the bundle for @modelcontextprotocol/sdk imports: Unterminated string literal.",
     );
   });
 

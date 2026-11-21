@@ -18,6 +18,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 export const SDK_NAME = "@modelcontextprotocol/sdk";
 const SDK_SEGMENT = `node_modules/${SDK_NAME}/`;
@@ -63,146 +64,44 @@ export function bundledSdkBanner(packageRoot) {
   return `/*! bundled ${SDK_NAME}@${resolveInstalledSdk(packageRoot).version} */`;
 }
 
-// Comments are skipped, string and no-substitution template literals keep
-// their text, and template substitutions and regular expression literals are
-// tracked, so only executable code is scanned (MCP-13). An unterminated literal
-// or comment throws: a bundle the scan cannot read fails instead of passing.
-const EXPRESSION_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
-const SDK_LOADERS = new Set(["import", "require", "__require"]);
-const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
-const BLOCK_KEYWORDS = new Set(["else", "try", "finally", "do"]);
-const ESCAPES = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", 0: "\0" };
+// Executable loads of the SDK: `import ... from "<sdk>"`, `export ... from
+// "<sdk>"`, `import "<sdk>"`, and `import(`, `require(` or esbuild's
+// `__require(` with an SDK specifier (MCP-13). The bundle is parsed with the
+// TypeScript parser, so comments, strings, template text and regular
+// expressions are never mistaken for code, every ECMAScript line terminator
+// and escape is handled, and specifiers and identifiers are compared decoded.
+// A bundle that does not parse fails instead of passing.
+const SDK_LOADERS = new Set(["require", "__require"]);
+const isSdkSpecifier = (node) =>
+  node !== undefined &&
+  (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+  (node.text === SDK_NAME || node.text.startsWith(`${SDK_NAME}/`));
 
-// The value of a string literal, template text or identifier: \xHH, \uHHHH,
-// \u{H...}, single-character escapes and line continuations are decoded.
-function decodeEscapes(raw) {
-  return raw.replaceAll(/\\(?:x([\da-fA-F]{2})|u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|(\r\n|[\s\S]))/g, (_, hex, point, unit, other) => {
-    const code = hex ?? point ?? unit;
-    if (code) return String.fromCodePoint(Number.parseInt(code, 16));
-    if (/^(?:\r\n|[\n\r\u2028\u2029])$/.test(other)) return "";
-    return ESCAPES[other] ?? other;
-  });
-}
-
-// Whether a token ends an operand, so a following `/` divides.
-function endsOperand(token) {
-  if (!token) return false;
-  if (token.type === "name") return !EXPRESSION_KEYWORDS.has(token.value);
-  if (token.type === "punct") return token.value === "]" || (token.value === ")" && !token.control) || (token.value === "}" && !token.block);
-  return true;
-}
-
-function tokenize(code) {
-  const tokens = [];
-  const templates = []; // brace depth at each open template `${`
-  const parens = []; // whether each open `(` follows if, while, for or with
-  const blocks = []; // whether each open `{` starts a block rather than an object
-  let braces = 0;
-  let index = code.startsWith("#!") ? code.indexOf("\n") : 0;
-  if (index < 0) index = code.length;
-  const fail = (what) => {
-    throw new BundledSdkError(`cannot scan the bundle for ${SDK_NAME} imports: unterminated ${what} at offset ${index}`);
-  };
-  // A `/` starts a regular expression unless it follows an operand, including
-  // a postfix ++ or -- (`i++ / 2`); after `if (...)` or a block it starts one.
-  const regexAllowed = () => {
-    const [before, previous, last] = tokens.slice(-3);
-    const postfix = last?.value === previous?.value && ["+", "-"].includes(last?.value) && endsOperand(before);
-    return !postfix && !endsOperand(last);
-  };
-  // A `{` opens a block after `)`, `=>`, a statement boundary or else, try,
-  // finally and do; otherwise it opens an object literal.
-  const opensBlock = () => {
-    const [previous, last] = tokens.slice(-2);
-    if (!last || (last.type === "punct" && "{};".includes(last.value))) return true;
-    if (last.type === "punct") return last.value === ")" || (last.value === ">" && previous?.value === "=");
-    return last.type === "name" && BLOCK_KEYWORDS.has(last.value);
-  };
-  // Reads template text from `start` to the closing backtick or the next `${`.
-  const readTemplate = (start) => {
-    for (let at = start; at < code.length; at += 1) {
-      if (code[at] === "\\") at += 1;
-      else if (code[at] === "`") return { end: at + 1, open: false, text: code.slice(start, at) };
-      else if (code[at] === "$" && code[at + 1] === "{") return { end: at + 2, open: true };
-    }
-    return fail("template literal");
-  };
-  const readUntil = (start, quote, what) => {
-    let inClass = false;
-    for (let at = start; at < code.length; at += 1) {
-      const char = code[at];
-      if (char === "\n" || char === "\r") break;
-      if (char === "\\") at += 1;
-      else if (quote === "/" && (char === "[" || char === "]")) inClass = char === "[";
-      else if (char === quote && !inClass) return at;
-    }
-    return fail(what);
-  };
-  const word = /(?:[\w$\u0080-\uffff]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/y;
-  while (index < code.length) {
-    const char = code[index];
-    const next = code[index + 1];
-    if (/\s/.test(char)) {
-      index += 1;
-    } else if (char === "/" && next === "/") {
-      const end = code.indexOf("\n", index);
-      index = end < 0 ? code.length : end;
-    } else if (char === "/" && next === "*") {
-      const end = code.indexOf("*/", index + 2);
-      if (end < 0) fail("comment");
-      index = end + 2;
-    } else if (char === "'" || char === "\"") {
-      const end = readUntil(index + 1, char, "string");
-      tokens.push({ type: "string", value: decodeEscapes(code.slice(index + 1, end)) });
-      index = end + 1;
-    } else if (char === "`" || (char === "}" && templates.at(-1) === braces)) {
-      if (char === "}") templates.pop();
-      const template = readTemplate(index + 1);
-      if (template.open) templates.push(braces);
-      const literal = char === "`" && !template.open;
-      tokens.push(literal ? { type: "string", value: decodeEscapes(template.text) } : { type: "template" });
-      index = template.end;
-    } else if (char === "/" && regexAllowed()) {
-      index = readUntil(index + 1, "/", "regular expression") + 1;
-      word.lastIndex = index;
-      if (word.test(code)) index = word.lastIndex; // flags
-      tokens.push({ type: "regex" });
-    } else {
-      word.lastIndex = index;
-      if (word.test(code)) {
-        tokens.push({ type: /^\d/.test(char) ? "number" : "name", value: decodeEscapes(code.slice(index, word.lastIndex)) });
-        index = word.lastIndex;
-      } else {
-        const token = { type: "punct", value: char };
-        if (char === "(") parens.push(tokens.at(-1)?.type === "name" && CONTROL_KEYWORDS.has(tokens.at(-1).value));
-        if (char === ")") token.control = parens.pop() ?? false;
-        if (char === "{") blocks.push(opensBlock());
-        if (char === "}") token.block = blocks.pop() ?? false;
-        if (char === "{") braces += 1;
-        if (char === "}") braces -= 1;
-        tokens.push(token);
-        index += 1;
-      }
-    }
+function sdkLoad(node) {
+  if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && isSdkSpecifier(node.moduleSpecifier)) {
+    return `${ts.isImportDeclaration(node) ? "import" : "export"} "${node.moduleSpecifier.text}"`;
   }
-  return tokens;
+  if (!ts.isCallExpression(node) || !isSdkSpecifier(node.arguments[0])) return undefined;
+  const callee = node.expression;
+  if (callee.kind === ts.SyntaxKind.ImportKeyword) return `import("${node.arguments[0].text}")`;
+  if (ts.isIdentifier(callee) && SDK_LOADERS.has(ts.idText(callee))) return `${ts.idText(callee)}("${node.arguments[0].text}")`;
+  return undefined;
 }
 
-// Executable loads of the SDK: `from "<sdk>"`, `import "<sdk>"` and
-// `import(`, `require(` or esbuild's `__require(` with an SDK specifier,
-// across any whitespace, line breaks or comments.
-function externalSdkImports(code) {
-  const tokens = tokenize(code);
+function externalSdkImports(file, code) {
+  const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
+  const [error] = source.parseDiagnostics ?? [{ start: 0, messageText: "parser reported no diagnostics" }];
+  if (error) {
+    const message = ts.flattenDiagnosticMessageText(error.messageText, " ");
+    throw new BundledSdkError(`cannot scan the bundle for ${SDK_NAME} imports: ${message} at offset ${error.start}`);
+  }
   const imports = [];
-  tokens.forEach((token, at) => {
-    if (token.type !== "string" || (token.value !== SDK_NAME && !token.value.startsWith(`${SDK_NAME}/`))) return;
-    const [before, call] = [tokens[at - 1], tokens[at - 2]];
-    if (before?.value === "(" && call?.type === "name" && SDK_LOADERS.has(call.value)) {
-      imports.push(`${call.value}("${token.value}")`);
-    } else if (before?.type === "name" && (before.value === "from" || before.value === "import")) {
-      imports.push(`${before.value} "${token.value}"`);
-    }
-  });
+  const visit = (node) => {
+    const load = sdkLoad(node);
+    if (load) imports.push(load);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
   return imports;
 }
 
@@ -220,7 +119,7 @@ function readPin(manifest) {
 // The bundle must inline the SDK (no executable SDK import) and carry the
 // build-time stamp of exactly the pinned version.
 function checkBundleCode(name, file, code, pinned) {
-  const imports = externalSdkImports(code);
+  const imports = externalSdkImports(file, code);
   if (imports.length > 0) {
     throw new BundledSdkError(`${name} dist/${file} imports ${SDK_NAME} instead of bundling it`, {
       bundle: file,

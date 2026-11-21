@@ -89,7 +89,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
       return dir;
     };
     for (const code of [
-      "\nawait import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
+      "\nvoid import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
       "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
       "\n/*\n * note */ require(\"@modelcontextprotocol/sdk/types.js\");\n",
     ]) {
