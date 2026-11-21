@@ -748,6 +748,27 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     }
   });
 
+  it('refuses, without a server error, a sign-in whose upgrade is replaced by a hash it cannot read', async () => {
+    const base = memoryAdapter({ debug: false });
+    const database = new Proxy(base, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'updateMany' && typeof value === 'function') {
+          return async (params: { model: string; where: unknown[] }) => {
+            const count = await value.call(target, params);
+            if (params.model === 'password_credentials') {
+              // Something else writes a hash AuthFn cannot evaluate right after the upgrade.
+              await value.call(target, { ...params, where: (params.where as unknown[]).slice(0, 1), data: { passwordHash: 'scrypt$1$1$1$test-salt$test-digest' } });
+            }
+            return count;
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+    await expectOldPasswordRefused(database);
+  });
+
   it('returns the upgraded credential after a sign-in rewrites an old-cost hash', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });

@@ -48,36 +48,11 @@ export function createAuthFnRegionalClient(
       }
     }
 
-    const queriedRegionId = currentRegionId;
-    const lookup = await clientFor(queriedRegionId).lookupRegion({ identifier });
-    if (!lookup.ok) {
-      const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
-      if (mismatch) {
-        await saveRegion(storage, cacheTtlMs, options, mismatch);
-        return mismatch;
-      }
-      await storage.delete(identifier);
-      return null;
-    }
-
-    const regionId = concreteRegionId(lookup.data, queriedRegionId, options);
-    if (!regionId) {
-      // A server that names no region (gateway mode, or none configured)
-      // leaves the identifier unresolved: the default region is used, and a
-      // route cached earlier is dropped.
-      await storage.delete(identifier);
-      return null;
-    }
-    const region = {
-      identifier,
-      regionId,
-      authority: lookup.data.authority,
-      domain: lookup.data.domain,
-      cachedAt: Date.now(),
-      expiresAt: Date.now() + cacheTtlMs
-    };
-    await saveRegion(storage, cacheTtlMs, options, region);
-    return region;
+    // The same lookup, mismatch retry and caching as preparation, so both
+    // route the identifier the same way; the cache holds the outcome.
+    await lookupCurrentRegionFrom(identifier);
+    const region = await storage.get(identifier);
+    return region && region.expiresAt > Date.now() ? region : null;
   };
 
   const regionIdForIdentifier = async (identifier: string): Promise<string> => {

@@ -425,7 +425,9 @@ async function confirmCurrentCredential(
     if (current.passwordHash === checked) {
       return current;
     }
-    if (!(await verifyPassword(password, current.passwordHash))) {
+    // A replacement hash AuthFn cannot evaluate is refused like a wrong
+    // password, as on the first read.
+    if (!isUsableStoredHash(current.passwordHash) || !(await verifyPassword(password, current.passwordHash))) {
       break;
     }
     checked = current.passwordHash;
