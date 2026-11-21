@@ -156,7 +156,10 @@ describe('authfn modular schema discovery', () => {
       }
     );
 
-    expect(schema.version).toBe(2);
+    expect(schema.version).toBe(3);
+    // Package discovery reads the manifest; it must report the same version.
+    const manifest = JSON.parse(fs.readFileSync(new URL('../../../../authfn/core/package.json', import.meta.url), 'utf8'));
+    expect(manifest.superfunctions.schemaVersion).toBe(schema.version);
     expect(schema.schemas.map((table) => table.modelName)).toEqual([
       'users',
       'sessions',

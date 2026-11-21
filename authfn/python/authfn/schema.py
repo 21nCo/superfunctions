@@ -9,7 +9,7 @@ from .types import AuthFnConfig, AuthFnPlugin, AuthFnSchemaConflictError, TableS
 
 SchemaDefinition = Dict[str, Any]
 
-AUTHFN_SCHEMA_VERSION = 2
+AUTHFN_SCHEMA_VERSION = 3
 
 
 def get_schema(config: Optional[AuthFnConfig | Dict[str, Any]] = None) -> SchemaDefinition:
