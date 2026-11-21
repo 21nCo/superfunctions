@@ -77,9 +77,10 @@ export interface StorageAdapter {
    * constant. The built-in adapters compute it once, at construction, as
    * whether their searchVectors is the built-in one, and an adapter they open
    * for a transaction takes its parent's value. A subclass that overrides
-   * searchVectors must declare it itself, by overriding their excludesSources
-   * getter. Replacing searchVectors after construction (a spy or a tracing
-   * wrapper) does not change it; a replacement that ignores excludeSources can
+   * searchVectors as a method must declare it itself, by overriding their
+   * excludesSources getter. Replacing searchVectors after construction (a spy,
+   * a tracing wrapper, or a subclass class field, which is assigned after the
+   * base constructor) does not change it; a replacement that ignores excludeSources can
    * only make add() miss an ordinary candidate, never change a source row.
    * Only true declares it. The guarantee covers exact search, the shipped default:
    * an approximate pgvector index filters source rows after its candidate scan,
