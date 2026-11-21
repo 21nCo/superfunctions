@@ -218,6 +218,33 @@ describe("@clifn/core consumer import scan", () => {
     ]);
   });
 
+  it("checks JSDoc @import tags and ignores declaration-like text in a hashbang", () => {
+    const source = [
+      '/** @import { OutputOptions } from "@clifn/core/output" */',
+      '/** @import { ExecService } from "@clifn/core/exec" */',
+      '/** @import * as prompt from "@clifn/core/prompt" */',
+    ].join("\n");
+    const imports = scanSource(source, "doc-import.js");
+
+    expect(imports.map(({ line, specifier, symbols }) => ({ line, specifier, symbols }))).toEqual([
+      { line: 1, specifier: "@clifn/core/output", symbols: [{ symbol: "OutputOptions", typeOnly: true }] },
+      { line: 2, specifier: "@clifn/core/exec", symbols: [{ symbol: "ExecService", typeOnly: true }] },
+      { line: 3, specifier: "@clifn/core/prompt", symbols: [] },
+    ]);
+    const violations = findContractViolations(imports, CONSUMER_CONTRACT_KEYS);
+    expect(violations).toEqual([
+      startingWith('doc-import.js:1: "OutputOptions" from "@clifn/core/output" is not in'),
+      startingWith('doc-import.js:3: `import * as prompt from "@clifn/core/prompt"` is not a named import or export'),
+    ]);
+    expect(violations[1]).toContain('"@clifn/core/prompt" is also not a subpath in');
+
+    const hashbang = "#!/usr/bin/env -S node --title='import { readIntEnv } from \"@clifn/core\"'\n";
+    expect(findContractViolations(scanSource(`${hashbang}export {};\n`, "bin.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([]);
+    expect(findContractViolations(scanSource(`${hashbang}import { readIntEnv } from "@clifn/core";\n`, "bin.ts"), CONSUMER_CONTRACT_KEYS)).toEqual([
+      startingWith('bin.ts:2: "readIntEnv" from "@clifn/core" is not in'),
+    ]);
+  });
+
   it("reports a statement match the parser does not read as a module reference", () => {
     const imports = scanSource('let o = { export { readIntEnv } from "@clifn/core" };\n', "malformed.ts");
 

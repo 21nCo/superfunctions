@@ -98,7 +98,7 @@ function namedSymbols(
 
 /** The clause of an import or export declaration: named symbols, or the clause text when it binds none by name. */
 function readClause(
-  statement: ts.ImportDeclaration | ts.ExportDeclaration,
+  statement: ts.ImportDeclaration | ts.JSDocImportTag | ts.ExportDeclaration,
   sourceFile: ts.SourceFile,
 ): { symbols: ScannedSymbol[] } | { unsupportedClause: string } {
   if (ts.isExportDeclaration(statement)) {
@@ -168,6 +168,10 @@ function collect(sourceFile: ts.SourceFile, file: string): ParsedFile {
           ...readClause(node, sourceFile),
         });
       }
+    } else if (ts.isJSDocImportTag(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      // `/** @import { A } from "..." */` binds types like `import type`; it sits in a comment, so it is never located.
+      const clause = readClause(node, sourceFile);
+      reference(node, node.moduleSpecifier, "symbols" in clause ? { symbols: clause.symbols.map((bound) => ({ ...bound, typeOnly: true })) } : clause);
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       const specifier = node.moduleReference.expression;
       if (ts.isStringLiteralLike(specifier)) {
@@ -222,7 +226,7 @@ export function blankComments(source: string, file = "source.ts"): string {
 function blankParsedComments(sourceFile: ts.SourceFile): string {
   const text = sourceFile.text;
   const out = text.split("");
-  const blank = (range: ts.CommentRange): void => {
+  const blank = (range: { readonly pos: number; readonly end: number }): void => {
     for (let index = range.pos; index < range.end; index += 1) {
       if (out[index] !== "\n" && out[index] !== "\r") {
         out[index] = " ";
@@ -248,6 +252,11 @@ function blankParsedComments(sourceFile: ts.SourceFile): string {
     ts.getLeadingCommentRanges(text, node.pos)?.forEach(blank);
   };
   visit(sourceFile);
+  // A hashbang line is trivia too; blank it so its text is never read as a statement.
+  const hashbang = ts.getShebang(text);
+  if (hashbang !== undefined) {
+    blank({ pos: 0, end: hashbang.length });
+  }
   return out.join("");
 }
 

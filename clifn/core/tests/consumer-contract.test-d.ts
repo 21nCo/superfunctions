@@ -128,6 +128,8 @@ describe("@clifn/core consumer contract types", () => {
     });
     expectTypeOf(exec.command).parameter(2).toEqualTypeOf<ExecOptions | undefined>();
     expectTypeOf<RequiredKeys<ExecOptions>>().toEqualTypeOf<never>();
+    // extfn passes its sanitized process environment, whose values may be undefined.
+    expectTypeOf<ExecOptions["env"]>().toEqualTypeOf<NodeJS.ProcessEnv | undefined>();
     expectTypeOf<ExecOptions["streamOutput"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<ExecOptions["stdout"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
     expectTypeOf<ExecOptions["stderr"]>().toEqualTypeOf<((chunk: string) => void) | undefined>();
