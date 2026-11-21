@@ -13,9 +13,16 @@ import {
 
 const repoRoot = process.cwd();
 
+// CI_PLAN_MODE=full plans every job whatever changed: ci.yml sets it for pushes, the nightly schedule and manual runs,
+// so only pull requests run the affected selection below.
+const PLAN_MODE = process.env.CI_PLAN_MODE === "full" ? "full" : "affected";
+
+// The root lockfile. A change that only touches workspace packages' own entries (a version bump or an internal pin)
+// selects those packages; any other change (an external package, the root entry, a top-level field) is global.
+const LOCKFILE = "package-lock.json";
+
 const JS_GLOBAL_PATTERNS = [
   /^package\.json$/,
-  /^package-lock\.json$/,
   /^turbo\.json$/,
   /^vitest\.config\.[cm]?[jt]s$/,
   /^tsconfig(?:\..+)?\.json$/,
@@ -256,6 +263,98 @@ function matchesAny(patterns, value) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+// JSON with object keys sorted, so a reordered entry compares equal.
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort(compareStrings)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function readLockfileAt(commitish) {
+  try {
+    const source = execFileSync("git", ["show", `${commitish}:${LOCKFILE}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return JSON.parse(source);
+  } catch {
+    return null;
+  }
+}
+
+const HOISTED_ENTRY = /^node_modules\/(?:@[^/]+\/)?[^/]+$/;
+
+// Which workspace packages a lockfile change touches, or global when it touches anything else. A workspace's own
+// entry is keyed by its directory, packages installed for it alone by <dir>/node_modules/..., and its hoisted link
+// entry (node_modules/<name>, link: true) resolves to that directory. Hoisted external packages are global.
+function classifyLockfileChange(before, after, workspaceDirs) {
+  const dirs = new Set();
+  const global = (reason) => ({ global: true, reason, dirs });
+  const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+  if (!isObject(before) || !isObject(after)) {
+    return global("the lockfile is missing or unreadable on one side");
+  }
+  if (!isObject(before.packages) || !isObject(after.packages)) {
+    return global("the lockfile has no packages map on one side");
+  }
+
+  const { packages: beforePackages, ...beforeTop } = before;
+  const { packages: afterPackages, ...afterTop } = after;
+  if (canonicalJson(beforeTop) !== canonicalJson(afterTop)) {
+    return global("a top-level lockfile field changed");
+  }
+
+  const keys = new Set([...Object.keys(beforePackages), ...Object.keys(afterPackages)]);
+  for (const key of [...keys].sort(compareStrings)) {
+    const previous = beforePackages[key];
+    const next = afterPackages[key];
+    if (canonicalJson(previous) === canonicalJson(next)) {
+      continue;
+    }
+
+    if (key === "") {
+      return global("the root package entry changed");
+    }
+
+    if (workspaceDirs.has(key)) {
+      dirs.add(key);
+      continue;
+    }
+
+    // A package installed under a workspace's own node_modules resolves only for code inside that workspace (its
+    // dependents reach it through the workspace, and the dependents filter selects them).
+    const nestedIn = key.startsWith("node_modules/") ? "" : key.slice(0, key.indexOf("/node_modules/"));
+    if (nestedIn && workspaceDirs.has(nestedIn)) {
+      dirs.add(nestedIn);
+      continue;
+    }
+
+    if (HOISTED_ENTRY.test(key)) {
+      const sides = [previous, next].filter((entry) => entry !== undefined);
+      if (sides.every((entry) => entry?.link === true && workspaceDirs.has(entry.resolved))) {
+        for (const entry of sides) {
+          dirs.add(entry.resolved);
+        }
+        continue;
+      }
+    }
+
+    return global(`${key} changed`);
+  }
+
+  return { global: false, reason: "", dirs };
+}
+
 function isJsGlobal(changedPath) {
   return (
     matchesAny(JS_GLOBAL_PATTERNS, changedPath) ||
@@ -347,6 +446,24 @@ function writeOutput(name, value) {
   appendFileSync(outputPath, `${name}<<__CI_EOF__\n${value}\n__CI_EOF__\n`);
 }
 
+// A short table of what this plan runs, for the run's summary page.
+function writeStepSummary(rows) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) {
+    return;
+  }
+
+  const lines = [
+    `### CI plan (${PLAN_MODE})`,
+    "",
+    "| Job | Runs | Scope |",
+    "| --- | --- | --- |",
+    ...rows.map(([job, runs, scope]) => `| ${job} | ${runs ? "yes" : "skipped"} | ${scope.replaceAll("|", "\\|")} |`),
+    "",
+  ];
+  appendFileSync(summaryPath, `${lines.join("\n")}\n`);
+}
+
 function collectPythonDependents(seedNames, manifestsByName) {
   const dependents = new Map();
 
@@ -416,11 +533,23 @@ let fullPython = false;
 
 const changedJsDirs = new Set();
 const changedPythonNames = new Set();
-const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
+const fullPlan = PLAN_MODE === "full";
+const runMcpfn = fullPlan || changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
+let lockfile = null;
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
-    if (isJsGlobal(changedPath)) {
+    if (changedPath === LOCKFILE) {
+      // The diff compares HEAD with the merge base (base...HEAD), so the lockfile is read at the same two commits.
+      const lockfileBase = mergeBaseWith(baseRef) || baseRef;
+      lockfile = classifyLockfileChange(readLockfileAt(lockfileBase), readLockfileAt("HEAD"), jsDirs);
+      if (lockfile.global) {
+        fullJs = true;
+      }
+      for (const dir of lockfile.dirs) {
+        changedJsDirs.add(dir);
+      }
+    } else if (isJsGlobal(changedPath)) {
       fullJs = true;
     }
 
@@ -464,7 +593,13 @@ for (const entry of changedEntries) {
   }
 }
 
+if (fullPlan) {
+  fullJs = true;
+  fullPython = true;
+}
+
 const mcpfnOnly =
+  !fullPlan &&
   runMcpfn &&
   changedPaths.every((changedPath) =>
     matchesAny(MCPFN_PATTERNS, changedPath) ||
@@ -512,9 +647,17 @@ const pythonMatrix = selectedPythonPackages
   .map((manifest) => ({ name: manifest.name, path: manifest.dir }))
   .sort((left, right) => left.path.localeCompare(right.path));
 
+const runJs = fullJs || selectedJsPackages.length > 0;
+
 const summary = {
+  mode: PLAN_MODE,
   baseRef,
   changedFiles: changedPaths,
+  lockfile: lockfile && {
+    global: lockfile.global,
+    reason: lockfile.reason || undefined,
+    workspaceDirs: [...lockfile.dirs].sort(compareStrings),
+  },
   fullJs,
   fullPython,
   runMcpfn,
@@ -526,9 +669,10 @@ const summary = {
 
 console.log(JSON.stringify(summary, null, 2));
 
+writeOutput("plan_mode", PLAN_MODE);
 writeOutput("base_ref", baseRef);
 writeOutput("changed_files_count", String(changedPaths.length));
-writeOutput("run_js", String(fullJs || selectedJsPackages.length > 0));
+writeOutput("run_js", String(runJs));
 writeOutput("full_js", String(fullJs));
 writeOutput("has_js_build", String(fullJs || jsBuildPackages.size > 0));
 writeOutput("has_js_test", String(hasJsTest));
@@ -545,3 +689,11 @@ writeOutput("full_python", String(fullPython));
 writeOutput("python_matrix", JSON.stringify(pythonMatrix));
 writeOutput("run_mcpfn", String(runMcpfn));
 writeOutput("mcpfn_only", String(mcpfnOnly));
+
+const scopeOf = (full, count, noun) => (full ? "everything" : `${count} ${noun}`);
+writeStepSummary([
+  ["JavaScript", runJs && !mcpfnOnly, scopeOf(fullJs, selectedJsPackages.length, "changed package(s) plus dependents")],
+  ["DevFn tests", devfnTestPackages.size > 0 && !mcpfnOnly, `${devfnTestPackages.size} package(s)`],
+  ["McpFn release gate, Node 18 and Node 20", runMcpfn, runMcpfn ? "McpFn" : "none"],
+  ["Python package checks", (fullPython || pythonMatrix.length > 0) && !mcpfnOnly, scopeOf(fullPython, pythonMatrix.length, "package(s)")],
+]);

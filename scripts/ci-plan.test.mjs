@@ -117,14 +117,17 @@ function devfnFixture(extraFiles = {}) {
   git("init", "--quiet", "--initial-branch=dev");
   git("add", "."); git("commit", "--quiet", "-m", "base");
   const base = git("rev-parse", "HEAD");
-  const plan = (file) => {
+  // `change` is a file to append a newline to, or a function that edits the tree through `put` and `read`.
+  const read = (file) => readFileSync(path.join(root, file), "utf8");
+  const plan = (change, extraEnv = {}) => {
     git("reset", "--quiet", "--hard", base);
-    put(file, `${readFileSync(path.join(root, file), "utf8")}\n`);
-    git("add", "."); git("commit", "--quiet", "-m", `change ${file}`);
+    if (typeof change === "function") change({ put, read });
+    else put(change, `${read(change)}\n`);
+    git("add", "."); git("commit", "--quiet", "-m", "change");
     put(".git/event.json", JSON.stringify({ before: base }));
     const outputFile = path.join(root, ".git/outputs");
     writeFileSync(outputFile, "");
-    execFileSync(process.execPath, ["scripts/ci-plan.mjs"], { cwd: root, env: { ...env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: path.join(root, ".git/event.json"), GITHUB_OUTPUT: outputFile }, stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync(process.execPath, ["scripts/ci-plan.mjs"], { cwd: root, env: { ...env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: path.join(root, ".git/event.json"), GITHUB_OUTPUT: outputFile, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
     const outputs = readFileSync(outputFile, "utf8");
     return Object.fromEntries([...outputs.matchAll(/^(\w+)<<__CI_EOF__\n([\s\S]*?)\n__CI_EOF__$/gm)].map(([, name, value]) => [name, value]));
   };
@@ -181,7 +184,8 @@ test("a change outside DevFn and everything it depends on selects no DevFn tests
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test("a lockfile-only change runs every DevFn package in the DevFn job and none in the JavaScript job", () => {
+// The fixture lockfile has no packages map, so the planner cannot tell which packages a change touches.
+test("a lockfile change the planner cannot classify runs every DevFn package in the DevFn job and none in the JavaScript job", () => {
   const { root, plan } = devfnFixture();
   try {
     const outputs = plan("package-lock.json");
@@ -365,4 +369,130 @@ test("a non-default target with no fetch and no base.sha uses its cached trackin
     assert.equal(outputs.run_python, "false");
     assert.equal(outputs.python_matrix, "[]");
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+// A lockfile shaped like npm's: each workspace's own entry keyed by its directory, a hoisted link entry per workspace,
+// and one external package.
+const WORKSPACES = {
+  "clifn/core": "@clifn/core",
+  "devfn/config": "@devfn/config",
+  "devfn/core": "@devfn/core",
+  "devfn/proxy": "@devfn/proxy",
+  "filefn/core": "@filefn/core",
+  "otherfn/cli": "@otherfn/cli",
+};
+function fixtureLockfile() {
+  const packages = { "": { name: "fixture", workspaces: ["clifn/*", "devfn/*", "filefn/*", "otherfn/*"] } };
+  for (const [dir, name] of Object.entries(WORKSPACES)) {
+    packages[dir] = { name, version: "0.1.0" };
+    packages[`node_modules/${name}`] = { resolved: dir, link: true };
+  }
+  packages["node_modules/left-pad"] = { version: "1.3.0", resolved: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz" };
+  return { name: "fixture", lockfileVersion: 3, requires: true, packages };
+}
+const lockfileFixture = () => devfnFixture({ "package-lock.json": `${JSON.stringify(fixtureLockfile(), null, 2)}\n` });
+const editLockfile = (edit) => ({ put, read }) => {
+  const lockfile = JSON.parse(read("package-lock.json"));
+  edit(lockfile.packages, lockfile);
+  put("package-lock.json", `${JSON.stringify(lockfile, null, 2)}\n`);
+};
+const bump = (dir) => editLockfile((packages) => { packages[dir].version = "0.2.0"; });
+
+test("a one-package change with its lockfile version bump selects only that package", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    const outputs = plan(({ put, read }) => {
+      put("filefn/core/src/index.ts", `${read("filefn/core/src/index.ts")}export const changed = true;\n`);
+      bump("filefn/core")({ put, read });
+    });
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.run_js, "true");
+    assert.equal(outputs.js_build_filters, "--filter=..../filefn/core");
+    assert.equal(outputs.js_typecheck_filters, "");
+    assert.equal(outputs.js_test_filters, `--filter=..../filefn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.run_devfn, "false");
+    assert.equal(outputs.run_python, "false");
+    assert.equal(outputs.run_mcpfn, "false");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a lockfile-only workspace version bump selects that package and its dependents", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    // clifn/core is shared: devfn/config depends on it, devfn/core on devfn/config, otherfn/cli on devfn/core.
+    const outputs = plan(bump("clifn/core"));
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.js_build_filters, "--filter=..../clifn/core");
+    assert.equal(outputs.js_test_filters, `--filter=..../clifn/core ${EXCLUDE_DEVFN}`);
+    assert.equal(outputs.devfn_test_filters, "--filter=./devfn/config --filter=./devfn/core");
+    assert.equal(outputs.has_js_test, "true");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a package installed under one workspace's node_modules selects only that workspace", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    const outputs = plan(editLockfile((packages) => {
+      packages["filefn/core/node_modules/left-pad"] = { version: "1.0.0" };
+      packages["filefn/core/node_modules/left-pad/node_modules/pad-core"] = { version: "2.0.0" };
+    }));
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.js_build_filters, "--filter=..../filefn/core");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a new workspace's lockfile entries select only that workspace", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    const outputs = plan(({ put, read }) => {
+      put("newfn/core/package.json", JSON.stringify({ name: "@newfn/core", scripts: { build: "tsc", test: "vitest run" } }));
+      editLockfile((packages) => {
+        packages["newfn/core"] = { name: "@newfn/core", version: "0.0.1" };
+        packages["node_modules/@newfn/core"] = { resolved: "newfn/core", link: true };
+      })({ put, read });
+    });
+    assert.equal(outputs.full_js, "false");
+    assert.equal(outputs.js_build_filters, "--filter=..../newfn/core");
+    assert.equal(outputs.run_devfn, "false");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("lockfile changes outside workspace entries and root config force a full JavaScript run", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    for (const [name, change] of [
+      ["external package", editLockfile((packages) => { packages["node_modules/left-pad"].version = "1.3.1"; })],
+      ["added external package", editLockfile((packages) => { packages["node_modules/right-pad"] = { version: "1.0.0" }; })],
+      ["package nested outside any workspace", editLockfile((packages) => { packages["tools/node_modules/left-pad"] = { version: "1.0.0" }; })],
+      ["root entry", editLockfile((packages) => { packages[""].devDependencies = { turbo: "2.0.0" }; })],
+      ["top-level field", editLockfile((packages, lockfile) => { lockfile.lockfileVersion = 4; })],
+      ["link to a missing directory", editLockfile((packages) => { packages["node_modules/@ghost/pkg"] = { resolved: "ghost/pkg", link: true }; })],
+      ["unparseable lockfile", ({ put }) => put("package-lock.json", "{ not json\n")],
+      ["root package.json", "package.json"],
+    ]) {
+      const outputs = plan(change);
+      assert.equal(outputs.full_js, "true", name);
+      assert.equal(outputs.js_build_filters, "", name);
+      assert.equal(outputs.run_devfn, "true", name);
+    }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("CI_PLAN_MODE=full plans every job whatever changed", () => {
+  const { root, plan } = lockfileFixture();
+  try {
+    const outputs = plan("filefn/core/src/index.ts", { CI_PLAN_MODE: "full" });
+    assert.equal(outputs.plan_mode, "full");
+    assert.equal(outputs.full_js, "true");
+    assert.equal(outputs.full_python, "true");
+    assert.equal(outputs.run_python, "true");
+    assert.equal(outputs.run_mcpfn, "true");
+    assert.equal(outputs.mcpfn_only, "false");
+    assert.equal(outputs.run_devfn, "true");
+    assert.equal(outputs.js_build_filters, "");
+    // Any other value plans the affected selection.
+    const affected = plan("filefn/core/src/index.ts", { CI_PLAN_MODE: "something-else" });
+    assert.equal(affected.plan_mode, "affected");
+    assert.equal(affected.full_js, "false");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
