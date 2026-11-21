@@ -1,0 +1,21 @@
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_b996deaa3d01f1::t_c85604e17b98ad 22-23,177-178,207,210-211,218-219,239,262
+cifn/typescript/runner/scripts/verify-remote-hostfn.mjs
+  s_b996deaa3d01f1::t_6a23a5b8a6701d 228-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6bac307648e193ba37ae00d3007f36f399c5ecb1",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
