@@ -16,6 +16,6 @@ This site describes the source on the `dev` branch, an unpublished candidate. A 
 
 ## Database and release operations
 
-The host applies `0001-initial.sql` and `0002-memory-lifecycle.sql` itself. There is no CLI schema discovery or `getSchema` contract. Use a disposable database for the real PostgreSQL test suite: `MEMORYFN_TEST_DATABASE_URL` enables integration tests that create tables and truncate memory data. A local PostgreSQL pass does not prove hosted Hyperdrive behavior.
+The host applies `0001-initial.sql`, `0002-memory-lifecycle.sql` and `0003-document-sources.sql` itself. There is no CLI schema discovery or `getSchema` contract. Use a disposable database for the real PostgreSQL test suite: `MEMORYFN_TEST_DATABASE_URL` enables integration tests that create tables and truncate memory data. A local PostgreSQL pass does not prove hosted Hyperdrive behavior.
 
 Application code owns the source-of-truth record, caller authorization, and the deletion deny path. MemoryFn owns scoped derived-store operations. Keep external replicas and indexes behind equivalent tombstone and cleanup controls. See the [storage and lifecycle source guide](/docs/reference/storage-lifecycle) for the detailed contract.

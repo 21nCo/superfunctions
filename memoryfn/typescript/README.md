@@ -4,7 +4,7 @@ This dev adoption is based on next `b21477fc9a32ae425c38a2de810b5a8705fc711f` wi
 
 ## PostgreSQL and ownership
 
-Apply `migrations/0001-initial.sql` and `0002-memory-lifecycle.sql` in order, using a migration role against the intended application schema. Existing installations apply 0002 after confirming their baseline matches 0001. Migrations are additive and repeatable. They do not provision a database, grants, or Hyperdrive. The vector dimension is 1536. An approximate vector index is an operational choice after data loading; exact search works without one.
+Apply `migrations/0001-initial.sql`, `0002-memory-lifecycle.sql` and `0003-document-sources.sql` in order, using a migration role against the intended application schema. Existing installations apply 0002 after confirming their baseline matches 0001, and apply 0003 before upgrading to a release that includes it: the PostgreSQL adapter reads its columns. Migrations are additive and repeatable. They do not provision a database, grants, or Hyperdrive. The vector dimension is 1536. An approximate vector index is an operational choice after data loading; exact search works without one.
 
 ```ts
 import postgres from 'postgres';
@@ -57,5 +57,5 @@ together. Both bundled adapters support this; custom adapters without transactio
 reject conflicts before writing. Memory storage uses optimistic conflict detection.
 
 CLI schema discovery is not supported. PostgreSQL hosts must apply the bundled
-`migrations/0001-initial.sql` and `0002-memory-lifecycle.sql`; in-memory storage
+`migrations/0001-initial.sql`, `0002-memory-lifecycle.sql` and `0003-document-sources.sql`; in-memory storage
 needs no migration. This package does not export the shared `getSchema` contract.

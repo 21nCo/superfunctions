@@ -19,6 +19,10 @@ export interface Memory {
   isLatest: boolean;                   // For update chains
   createdAt: number;                   // Unix timestamp
   updatedAt: number;                   // Unix timestamp
+  /** Set only on chunks written by StorageAdapter.replaceSource. */
+  sourceKey?: string;
+  contentHash?: string;
+  chunkIndex?: number;
 }
 
 export type RelationType = "updates" | "extends" | "contradicts" | "derives";

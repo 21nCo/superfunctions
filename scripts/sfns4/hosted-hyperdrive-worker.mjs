@@ -6,6 +6,7 @@ import { drizzleAdapter } from '@superfunctions/db/adapters/drizzle';
 import { PostgresAdapter, memories, memoryRelationships, ingestEvents } from '@memoryfn/core/storage/pg';
 import initial from '../../memoryfn/typescript/migrations/0001-initial.sql';
 import lifecycle from '../../memoryfn/typescript/migrations/0002-memory-lifecycle.sql';
+import documentSources from '../../memoryfn/typescript/migrations/0003-document-sources.sql';
 const app = new Hono();
 const assert = (condition, name) => { if (!condition) throw new Error(name); };
 const vector = index => Array.from({length:1536}, (_,i)=>i===index?1:0);
@@ -18,7 +19,7 @@ app.post('/run', async c => {
   let stage='migrations';
   try {
     // Each migration is transactionally applied using the actual distributed SQL files.
-    for (const migration of [initial,lifecycle]) await client.begin(tx=>tx.unsafe(migration));
+    for (const migration of [initial,lifecycle,documentSources]) await client.begin(tx=>tx.unsafe(migration));
     checks.push('packaged-migrations');
     const db=drizzle(client,{schema:{memories,memoryRelationships,ingestEvents}});
     const adapter=new PostgresAdapter(db);
