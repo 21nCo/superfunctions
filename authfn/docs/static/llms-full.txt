@@ -7144,6 +7144,8 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `window` | `1` | Skew tolerance — codes from the previous, current, and next window are accepted. |
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
+| `maxFailedAttempts` | `10` | Wrong codes (TOTP or recovery) in a row for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code resets the count. |
+| `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses every code with `AUTHFN_RATE_LIMITED`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
 
@@ -7162,7 +7164,7 @@ The TOTP secret is encrypted at rest using AES-256-GCM with the key returned by 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, confirmedAt, createdAt, updatedAt }`. |
+| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, failedAttemptCount, lockedUntil, confirmedAt, createdAt, updatedAt }`. `failedAttemptCount` and `lockedUntil` were added for the failed-attempt limit: generate and apply a migration before deploying this version. |
 | `authfn_two_factor_recovery_codes` | `{ id, enrollmentId, codeHash, usedAt, createdAt }` — one row per code. |
 | `authfn_two_factor_challenges` | `{ id, userId, primaryMethod, expiresAt, consumedAt, createdAt, updatedAt }` — one row per pending challenge. |
 
@@ -7196,7 +7198,9 @@ sequenceDiagram
   Kernel-->>Client: 200 OK + cookies
 ```
 
-Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use; a successful use marks the row as `usedAt: <now>`.
+Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use: a successful use marks the row as `usedAt: <now>` with a write that only applies while the code is unused, so two concurrent requests cannot both spend it, and a challenge can be finished only once. Recovery codes are 80 random bits (`XXXXX-XXXXX-XXXXX-XXXXX`), stored as a hash that includes the enrollment id; codes issued by earlier versions keep working.
+
+Every code check counts against the enrollment's `maxFailedAttempts`, whichever challenge or route it comes through, and with or without the HTTP rate limiter. After that many wrong codes in a row the enrollment is locked for `lockoutSeconds`; a correct code resets the count.
 
 ## Disabling 2FA
 
@@ -7223,6 +7227,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
+| `AUTHFN_RATE_LIMITED` | The enrollment is locked after too many wrong codes. `details.resetAt` is when the lock ends. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 
@@ -10612,6 +10617,8 @@ Tracking tables for consent records and (rare) provider revocation failures. Use
 | `userId` | text FK |  |
 | `secretEncrypted` | text | TOTP secret, encrypted at rest with `pluginRuntime.twoFactor.encryptionKeyResolver`. |
 | `lastUsedCounter` | number | Last accepted TOTP window; used for replay protection. |
+| `failedAttemptCount` | number, nullable | Wrong codes in a row since the last correct code or lock. |
+| `lockedUntil` | timestamp, nullable | While in the future, every code is refused. |
 | `confirmedAt` | timestamp | Set after successful `/2fa/confirm`. |
 | `createdAt` / `updatedAt` | timestamp |  |
 

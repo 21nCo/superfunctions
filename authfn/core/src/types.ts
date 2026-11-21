@@ -174,6 +174,10 @@ export interface AuthFnTwoFactorEnrollmentRecord {
   userId: string;
   secretEncrypted: string;
   lastUsedCounter?: number | null;
+  /** Wrong codes since the last correct one or the last lockout. */
+  failedAttemptCount?: number | null;
+  /** While in the future, no code is checked for this enrollment. */
+  lockedUntil?: Date | null;
   confirmedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;

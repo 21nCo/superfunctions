@@ -588,3 +588,136 @@ describe('authfn two factor plugin', () => {
     });
   });
 });
+
+describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
+  async function enrolledUser(extra: Record<string, unknown> = {}) {
+    const clock = createClock();
+    const config = createConfig(clock);
+    Object.assign(config.pluginRuntime!.twoFactor as Record<string, unknown>, extra);
+    const auth = createTestServer(config);
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) => auth.router.handle(
+      new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(body)
+      })
+    );
+    const signUp = await post('/sign-up/password', { email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' });
+    const cookies = signUp.headers.getSetCookie();
+    const cookie = cookieHeaderFromSetCookies(cookies);
+    const csrfCookie = cookies.find((value) => value.startsWith('authfn.csrf='))!;
+    const csrf = csrfCookie.slice('authfn.csrf='.length, csrfCookie.indexOf(';'));
+    const enroll = await (await post('/2fa/enroll', {}, { cookie, 'x-authfn-csrf': csrf })).json();
+    const secret = enroll.data.secret as string;
+    await post('/2fa/confirm', { code: generateTotp(secret, clock.now()) }, { cookie, 'x-authfn-csrf': csrf });
+    clock.advanceSeconds(30);
+    const challenge = async () => {
+      const gated = await post('/sign-in/password', { email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' });
+      return (await gated.json()).error.details.challengeId as string;
+    };
+    const wrongCode = (now: Date) => {
+      const right = generateTotp(secret, now);
+      return right === '000000' ? '111111' : '000000';
+    };
+    return { config, clock, post, secret, recoveryCodes: enroll.data.recoveryCodes as string[], challenge, wrongCode };
+  }
+
+  it('locks the enrollment after the limit of wrong codes, across new challenges', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 4, lockoutSeconds: 600 });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      // A new sign-in challenge each time: the count belongs to the enrollment.
+      const response = await setup.post('/2fa/challenge', {
+        challengeId: await setup.challenge(),
+        code: setup.wrongCode(setup.clock.now())
+      });
+      expect(response.status).toBe(400);
+    }
+    const locked = await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: generateTotp(setup.secret, setup.clock.now())
+    });
+    expect(locked.status).toBe(429);
+    const body = await locked.json();
+    expect(body.error.code).toBe('AUTHFN_RATE_LIMITED');
+    expect(body.error.details).toMatchObject({ scope: 'two-factor', resetAt: '2026-03-22T00:10:30.000Z' });
+
+    setup.clock.advanceSeconds(600);
+    const unlocked = await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: generateTotp(setup.secret, setup.clock.now())
+    });
+    expect(unlocked.status).toBe(200);
+  });
+
+  it('clears the count after a correct code', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 3 });
+    for (let round = 0; round < 3; round += 1) {
+      expect((await setup.post('/2fa/challenge', {
+        challengeId: await setup.challenge(),
+        code: setup.wrongCode(setup.clock.now())
+      })).status).toBe(400);
+      setup.clock.advanceSeconds(30);
+      expect((await setup.post('/2fa/challenge', {
+        challengeId: await setup.challenge(),
+        code: generateTotp(setup.secret, setup.clock.now())
+      })).status).toBe(200);
+    }
+  });
+
+  it('compares at most the limit of codes when wrong codes arrive concurrently', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 3 });
+    const challengeIds = await Promise.all(Array.from({ length: 10 }, () => setup.challenge()));
+    const responses = await Promise.all(challengeIds.map((challengeId) => setup.post('/2fa/challenge', {
+      challengeId,
+      code: setup.wrongCode(setup.clock.now())
+    })));
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 400).length).toBeLessThanOrEqual(3);
+    expect(statuses.every((status) => status === 400 || status === 429)).toBe(true);
+  });
+
+  it('lets one recovery code finish only one of two concurrent challenges', async () => {
+    const setup = await enrolledUser();
+    const [first, second] = await Promise.all([setup.challenge(), setup.challenge()]);
+    const responses = await Promise.all([first, second].map((challengeId) => setup.post('/2fa/challenge', {
+      challengeId,
+      code: setup.recoveryCodes[0]
+    })));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+  });
+
+  it('issues 80-bit recovery codes and still accepts codes stored before them', async () => {
+    const setup = await enrolledUser();
+    expect(setup.recoveryCodes[0]).toMatch(/^[0-9A-F]{5}-[0-9A-F]{5}-[0-9A-F]{5}-[0-9A-F]{5}$/);
+
+    const enrollment = await setup.config.database.findOne<{ id: string }>({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'confirmedAt', operator: 'ne', value: null }],
+      namespace: 'authfn'
+    });
+    const { createHash } = await import('node:crypto');
+    await setup.config.database.create({
+      model: 'two_factor_recovery_codes',
+      data: {
+        id: 'recovery_test_legacy',
+        enrollmentId: enrollment!.id,
+        codeHash: createHash('sha256').update('ABCDE12345').digest('hex'),
+        usedAt: null,
+        createdAt: new Date()
+      },
+      namespace: 'authfn'
+    });
+    const response = await setup.post('/2fa/challenge', { challengeId: await setup.challenge(), code: 'abcde-12345' });
+    expect(response.status).toBe(200);
+  });
+
+  it.each([0, -1, 2.5])('rejects %s as maxFailedAttempts', async (value) => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'limit@example.com' });
+    const pluginConfig = { ...config.pluginRuntime!.twoFactor as Record<string, unknown>, maxFailedAttempts: value };
+    await createTwoFactorEnrollment(config, user, pluginConfig);
+    await expect(confirmTwoFactorEnrollment(config, user.id, '000000', pluginConfig)).rejects.toMatchObject({
+      code: 'AUTHFN_CONFIG_INVALID'
+    });
+  });
+});

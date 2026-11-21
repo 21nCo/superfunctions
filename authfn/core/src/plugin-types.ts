@@ -79,6 +79,13 @@ export interface TwoFactorPluginRuntimeConfig {
   encryptionKeyRef?: string;
   /** Resolves the encryption key used for two-factor secret storage. */
   encryptionKeyResolver?: (keyRef: string) => Promise<Buffer> | Buffer;
+  /**
+   * Wrong codes (TOTP or recovery) accepted in a row for one enrollment,
+   * across challenges and routes, before it is locked. Defaults to 10.
+   */
+  maxFailedAttempts?: number;
+  /** How long, in seconds, a locked enrollment refuses every code. Defaults to 900. */
+  lockoutSeconds?: number;
 }
 
 export interface NativeHandoffPluginConfig extends AuthFnBundledPluginConfig {

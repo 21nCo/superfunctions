@@ -49,6 +49,8 @@ function createTwoFactorSchema(): AuthFnSchemaDefinition['schemas'] {
         },
         secretEncrypted: { type: 'string', required: true, fieldName: 'secret_encrypted' },
         lastUsedCounter: { type: 'number', required: false, fieldName: 'last_used_counter' },
+        failedAttemptCount: { type: 'number', required: false, fieldName: 'failed_attempt_count' },
+        lockedUntil: { type: 'date', required: false, fieldName: 'locked_until' },
         confirmedAt: { type: 'date', required: false, fieldName: 'confirmed_at' },
         createdAt: { type: 'date', required: true, fieldName: 'created_at' },
         updatedAt: { type: 'date', required: true, fieldName: 'updated_at' }

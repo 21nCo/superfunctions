@@ -21,6 +21,7 @@ import {
   AuthFnConfigError,
   AuthFnConflictError,
   AuthFnNotFoundError,
+  AuthFnRateLimitedError,
   AuthFnTwoFactorInvalidCodeError,
   AuthFnTwoFactorRequiredError
 } from './errors.js';
@@ -41,6 +42,12 @@ const DEFAULT_WINDOW = 1;
 const DEFAULT_RECOVERY_CODE_COUNT = 10;
 const DEFAULT_CHALLENGE_TTL_SECONDS = 300;
 const DEFAULT_ENCRYPTION_KEY_REF = 'authfn-2fa';
+const DEFAULT_MAX_FAILED_ATTEMPTS = 10;
+const DEFAULT_LOCKOUT_SECONDS = 15 * 60;
+/** Compare-and-set rounds for one attempt reservation before giving up. */
+const ATTEMPT_RESERVATION_ROUNDS = 16;
+/** Random bytes per recovery code: 80 bits, shown as four groups of five. */
+const RECOVERY_CODE_BYTES = 10;
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 export interface CreatedTwoFactorEnrollment {
@@ -174,7 +181,7 @@ export async function createTwoFactorEnrollment(
       data: {
         id: createIdentifier('recovery'),
         enrollmentId: enrollment.id,
-        codeHash: hashSecret(normalizeTwoFactorCode(recoveryCode)),
+        codeHash: hashRecoveryCode(enrollment.id, normalizeTwoFactorCode(recoveryCode)),
         usedAt: null,
         createdAt: now
       },
@@ -201,8 +208,10 @@ export async function confirmTwoFactorEnrollment(
     return enrollment;
   }
 
-  await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
   const now = resolveNow(pluginConfig);
+  await withAttemptReservation(config, enrollment, pluginConfig, now, async () => {
+    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+  });
   return config.database.update<AuthFnTwoFactorEnrollmentRecord>({
     model: 'two_factor_enrollments',
     where: [{ field: 'id', operator: 'eq', value: enrollment.id }],
@@ -316,20 +325,28 @@ export async function satisfyTwoFactorChallenge(
     });
   }
 
-  const usedRecoveryCode = await tryConsumeRecoveryCode(config, enrollment.id, code, now);
-  if (!usedRecoveryCode) {
-    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
-  }
+  const { usedRecoveryCode } = await checkSecondFactor(config, enrollment, code, pluginConfig, now);
 
-  const consumed = await config.database.update<AuthFnTwoFactorChallengeRecord>({
+  // Only one request can finish a challenge: the write is conditional on the
+  // challenge still being open.
+  const finished = await config.database.updateMany({
     model: 'two_factor_challenges',
-    where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+    where: [
+      { field: 'id', operator: 'eq', value: challenge.id },
+      { field: 'consumedAt', operator: 'eq', value: null, connector: 'AND' }
+    ],
     data: {
       consumedAt: now,
       updatedAt: now
     },
     namespace: namespace(config)
   });
+  if (finished !== 1) {
+    throw new AuthFnTwoFactorInvalidCodeError('Two-factor challenge is invalid or expired', {
+      challengeId
+    });
+  }
+  const consumed: AuthFnTwoFactorChallengeRecord = { ...challenge, consumedAt: now, updatedAt: now };
 
   return {
     challenge: consumed,
@@ -351,10 +368,7 @@ export async function disableTwoFactorEnrollment(
   }
 
   const now = resolveNow(pluginConfig);
-  const usedRecoveryCode = await tryConsumeRecoveryCode(config, enrollment.id, code, now);
-  if (!usedRecoveryCode) {
-    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
-  }
+  await checkSecondFactor(config, enrollment, code, pluginConfig, now);
 
   await config.database.delete({
     model: 'two_factor_enrollments',
@@ -385,10 +399,7 @@ export async function verifyTwoFactorCode(
   }
 
   const now = resolveNow(pluginConfig);
-  const usedRecoveryCode = await tryConsumeRecoveryCode(config, enrollment.id, code, now);
-  if (!usedRecoveryCode) {
-    await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
-  }
+  const { usedRecoveryCode } = await checkSecondFactor(config, enrollment, code, pluginConfig, now);
 
   return { usedRecoveryCode };
 }
@@ -466,6 +477,136 @@ async function requireConfirmedEnrollment(
   return enrollment;
 }
 
+/**
+ * Checks a second-factor code (a recovery code, else a TOTP code) under the
+ * enrollment's failed-attempt limit.
+ */
+async function checkSecondFactor(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollment: AuthFnTwoFactorEnrollmentRecord,
+  code: string,
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  now: Date
+): Promise<{ usedRecoveryCode: boolean }> {
+  return withAttemptReservation(config, enrollment, pluginConfig, now, async () => {
+    const usedRecoveryCode = await tryConsumeRecoveryCode(config, enrollment.id, code, now);
+    if (!usedRecoveryCode) {
+      await verifyTwoFactorTotp(config, enrollment, code, pluginConfig);
+    }
+    return { usedRecoveryCode };
+  });
+}
+
+/**
+ * Runs one code check against the enrollment's limit on wrong codes, which
+ * holds across challenges and routes and does not depend on the HTTP rate
+ * limiter.
+ *
+ * - While the enrollment is locked, no code is checked: `AUTHFN_RATE_LIMITED`
+ *   with the time the lock ends.
+ * - Otherwise one attempt is reserved first (a conditional increment of
+ *   `failedAttemptCount`), so concurrent requests cannot check more codes
+ *   than the limit allows. The attempt that reaches the limit locks the
+ *   enrollment for `lockoutSeconds` and restarts the count.
+ * - A correct code clears the count; a wrong one stays counted.
+ */
+async function withAttemptReservation<T>(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollment: AuthFnTwoFactorEnrollmentRecord,
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  now: Date,
+  check: () => Promise<T>
+): Promise<T> {
+  await reserveSecondFactorAttempt(config, enrollment.id, pluginConfig, now);
+  const result = await check();
+  try {
+    await config.database.updateMany({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'id', operator: 'eq', value: enrollment.id }],
+      // A correct code also lifts a lock that its own attempt set.
+      data: { failedAttemptCount: 0, lockedUntil: null, updatedAt: now },
+      namespace: namespace(config)
+    });
+  } catch {
+    // The code was right; a count that could not be cleared only makes a
+    // later lock come sooner.
+  }
+  return result;
+}
+
+async function reserveSecondFactorAttempt(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  enrollmentId: string,
+  pluginConfig: TwoFactorPluginRuntimeConfig,
+  now: Date
+): Promise<void> {
+  const maxFailedAttempts = readPositiveInteger(
+    pluginConfig.maxFailedAttempts,
+    DEFAULT_MAX_FAILED_ATTEMPTS,
+    'maxFailedAttempts'
+  );
+  const lockoutMs = readPositiveInteger(pluginConfig.lockoutSeconds, DEFAULT_LOCKOUT_SECONDS, 'lockoutSeconds') * 1000;
+
+  for (let round = 0; round < ATTEMPT_RESERVATION_ROUNDS; round += 1) {
+    const current = await config.database.findOne<AuthFnTwoFactorEnrollmentRecord>({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'id', operator: 'eq', value: enrollmentId }],
+      namespace: namespace(config)
+    });
+    if (!current) {
+      throw new AuthFnNotFoundError('Two-factor enrollment not found', { enrollmentId });
+    }
+    const lockedUntil = current.lockedUntil ? new Date(current.lockedUntil) : null;
+    if (lockedUntil && lockedUntil.getTime() > now.getTime()) {
+      throw twoFactorLockedError(lockedUntil);
+    }
+
+    const count = Number(current.failedAttemptCount) || 0;
+    const reachesLimit = count + 1 >= maxFailedAttempts;
+    // The attempt that reaches the limit is still checked; the lock applies
+    // to the ones after it.
+    const data: Record<string, unknown> = reachesLimit
+      ? { failedAttemptCount: 0, lockedUntil: new Date(now.getTime() + lockoutMs), updatedAt: now }
+      : { failedAttemptCount: count + 1, updatedAt: now };
+    const affected = await config.database.updateMany({
+      model: 'two_factor_enrollments',
+      where: [
+        { field: 'id', operator: 'eq', value: enrollmentId },
+        {
+          field: 'failedAttemptCount',
+          operator: 'eq',
+          value: current.failedAttemptCount ?? null,
+          connector: 'AND'
+        }
+      ],
+      data,
+      namespace: namespace(config)
+    });
+    if (affected === 1) {
+      return;
+    }
+  }
+  // Lost every round to concurrent requests: treat as over the limit.
+  throw twoFactorLockedError(new Date(now.getTime() + 1000));
+}
+
+function twoFactorLockedError(lockedUntil: Date): AuthFnRateLimitedError {
+  return new AuthFnRateLimitedError('Too many incorrect two-factor codes; try again later', {
+    scope: 'two-factor',
+    resetAt: lockedUntil.toISOString()
+  });
+}
+
+function readPositiveInteger(value: number | undefined, fallback: number, field: string): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new AuthFnConfigError(`Two-factor ${field} must be a positive integer`, { field });
+  }
+  return value;
+}
+
 async function tryConsumeRecoveryCode(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   enrollmentId: string,
@@ -478,22 +619,34 @@ async function tryConsumeRecoveryCode(
     namespace: namespace(config)
   });
   const normalized = normalizeTwoFactorCode(code);
+  // Codes created since AUTH-32 are hashed with their enrollment id; older
+  // ones with the code alone.
+  const candidates = [hashRecoveryCode(enrollmentId, normalized), hashSecret(normalized)];
   const matched = recoveryCodes.find((entry) =>
-    !entry.usedAt && safeCompareHex(entry.codeHash, hashSecret(normalized))
+    !entry.usedAt && candidates.some((candidate) => safeCompareHex(entry.codeHash, candidate))
   );
   if (!matched) {
     return false;
   }
 
-  await config.database.update<AuthFnTwoFactorRecoveryCodeRecord>({
+  // Conditional on the code still being unused, so concurrent requests with
+  // the same code cannot both spend it.
+  const affected = await config.database.updateMany({
     model: 'two_factor_recovery_codes',
-    where: [{ field: 'id', operator: 'eq', value: matched.id }],
+    where: [
+      { field: 'id', operator: 'eq', value: matched.id },
+      { field: 'usedAt', operator: 'eq', value: null, connector: 'AND' }
+    ],
     data: {
       usedAt: now
     },
     namespace: namespace(config)
   });
-  return true;
+  return affected === 1;
+}
+
+function hashRecoveryCode(enrollmentId: string, normalizedCode: string): string {
+  return hashSecret(`authfn-recovery:${enrollmentId}:${normalizedCode}`);
 }
 
 async function verifyTwoFactorTotp(
@@ -642,8 +795,8 @@ function generateBase32Secret(): string {
 
 function generateRecoveryCodes(count: number): string[] {
   return Array.from({ length: count }, () => {
-    const value = randomBytes(5).toString('hex').toUpperCase();
-    return `${value.slice(0, 5)}-${value.slice(5, 10)}`;
+    const value = randomBytes(RECOVERY_CODE_BYTES).toString('hex').toUpperCase();
+    return [0, 5, 10, 15].map((start) => value.slice(start, start + 5)).join('-');
   });
 }
 
