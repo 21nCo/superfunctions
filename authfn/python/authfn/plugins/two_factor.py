@@ -22,6 +22,7 @@ from ..types import (
     AuthFnConfig,
     AuthFnPlugin,
     AuthFnSession,
+    ConfigError,
     NotFoundError,
     TwoFactorInvalidCodeError,
     TwoFactorRequiredError,
@@ -51,7 +52,7 @@ def _hash_code(code: str) -> str:
     return "$".join(["pbkdf2-sha256", "200000", salt, digest.hex()])
 
 
-def _verify_code_hash(stored_hash: str, code: str) -> bool:
+def _verify_code_hash(stored_hash: str, code: str, enrollment_id: Optional[str] = None) -> bool:
     normalized = _normalize_code(code)
     parts = stored_hash.split("$")
     if len(parts) == 4 and parts[0] == "pbkdf2-sha256":
@@ -66,7 +67,17 @@ def _verify_code_hash(stored_hash: str, code: str) -> bool:
             dklen=32,
         ).hex()
         return hmac.compare_digest(digest, expected)
-    return hmac.compare_digest(stored_hash, hashlib.sha256(normalized.encode("utf-8")).hexdigest())
+    # Recovery codes written by the TypeScript kernel: since AUTH-32 the hash
+    # is salted with the enrollment id; older codes hash the code alone.
+    candidates = [hashlib.sha256(normalized.encode("utf-8")).hexdigest()]
+    if enrollment_id is not None:
+        candidates.append(
+            hashlib.sha256(f"authfn-recovery:{enrollment_id}:{normalized}".encode("utf-8")).hexdigest()
+        )
+    matched = False
+    for candidate in candidates:
+        matched = hmac.compare_digest(stored_hash, candidate) or matched
+    return matched
 
 
 def _normalize_code(code: str) -> str:
@@ -152,6 +163,9 @@ class TwoFactorService:
         self.plugin_config = plugin_config or TwoFactorPluginConfig()
 
     async def enroll(self, *, user_id: str, primary_email: Optional[str] = None) -> Dict[str, Any]:
+        # Checked before anything is stored: without conditional writes a
+        # confirmed enrollment could never finish a sign-in.
+        self._require_conditional_writes()
         assert_database_key_length(
             user_id, "userId", AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
         )
@@ -238,6 +252,7 @@ class TwoFactorService:
         }
 
     async def confirm(self, *, user_id: str, code: str) -> Dict[str, Any]:
+        self._require_conditional_writes()
         enrollment = await self._require_enrollment(user_id, require_confirmed=False)
         secret = self._cipher().decrypt(enrollment["secretEncrypted"].encode("utf-8")).decode("utf-8")
         if not self._verify_totp(secret, code):
@@ -312,18 +327,39 @@ class TwoFactorService:
             raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")
 
         enrollment = await self._require_enrollment(challenge["userId"])
-        used_recovery = await self._consume_recovery_code(enrollment["id"], code)
-        if not used_recovery:
+        recovery_row = await self._find_unused_recovery_code(enrollment["id"], code)
+        if recovery_row is None:
             secret = self._cipher().decrypt(enrollment["secretEncrypted"].encode("utf-8")).decode("utf-8")
             if not self._verify_totp(secret, code):
                 raise TwoFactorInvalidCodeError("Two-factor authentication code is invalid")
 
-        await self.config.database.update(
-            model="two_factor_challenges",
-            where=[{"field": "id", "operator": "eq", "value": challenge_id}],
-            data={"consumedAt": now, "updatedAt": now},
-            namespace=self.config.namespace,
+        # Only one request finishes a challenge, and a recovery code is spent
+        # only once this request holds it; if the spend fails, the challenge is
+        # given back.
+        # The claim is also conditional on the challenge not having expired
+        # by now (the reads above take time), with a fresh clock reading.
+        claimed_at = self.plugin_config.now()
+        claimed = await self._update_if_matches(
+            "two_factor_challenges",
+            challenge_id,
+            [
+                {"field": "consumedAt", "operator": "eq", "value": None},
+                {"field": "expiresAt", "operator": "gt", "value": claimed_at},
+            ],
+            {"consumedAt": claimed_at, "updatedAt": claimed_at},
         )
+        if not claimed:
+            raise TwoFactorInvalidCodeError("Two-factor challenge is invalid or expired")
+        if recovery_row is not None:
+            # If the write throws or its count is unknown it may have applied,
+            # so the challenge stays used and no second code can be spent on
+            # it; it is given back only after a confirmed no-op.
+            spent = await self._spend_recovery_code(recovery_row["id"])
+            if spent == "not-applied":
+                await self._reopen_challenge(challenge_id)
+            if spent != "applied":
+                raise TwoFactorInvalidCodeError("Two-factor authentication code is invalid")
+        used_recovery = recovery_row is not None
         session = AuthFnSession.model_validate(
             {
                 "id": _create_id("sess"),
@@ -389,6 +425,10 @@ class TwoFactorService:
         return enrollment
 
     async def _consume_recovery_code(self, enrollment_id: str, code: str) -> bool:
+        row = await self._find_unused_recovery_code(enrollment_id, code)
+        return row is not None and await self._spend_recovery_code(row["id"]) == "applied"
+
+    async def _find_unused_recovery_code(self, enrollment_id: str, code: str) -> Optional[Dict[str, Any]]:
         rows = await self.config.database.find_many(
             model="two_factor_recovery_codes",
             where=[{"field": "enrollmentId", "operator": "eq", "value": enrollment_id}],
@@ -396,15 +436,65 @@ class TwoFactorService:
             namespace=self.config.namespace,
         )
         for row in rows:
-            if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code):
-                await self.config.database.update(
-                    model="two_factor_recovery_codes",
-                    where=[{"field": "id", "operator": "eq", "value": row["id"]}],
-                    data={"usedAt": self.plugin_config.now()},
-                    namespace=self.config.namespace,
-                )
-                return True
-        return False
+            if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code, enrollment_id):
+                return row
+        return None
+
+    async def _spend_recovery_code(self, row_id: str) -> str:
+        """Marks a recovery code used only while it is still unused, so two
+        requests (in this kernel or the TypeScript one) cannot both spend it.
+        Returns "applied", "not-applied" (confirmed no-op) or "unknown"."""
+        return await self._update_outcome(
+            "two_factor_recovery_codes",
+            row_id,
+            [{"field": "usedAt", "operator": "eq", "value": None}],
+            {"usedAt": self.plugin_config.now()},
+        )
+
+    def _require_conditional_writes(self) -> None:
+        _require_conditional_writes(self.config)
+
+    async def _reopen_challenge(self, challenge_id: str) -> None:
+        now = self.plugin_config.now()
+        try:
+            await self._update_if_matches("two_factor_challenges", challenge_id, [], {"consumedAt": None, "updatedAt": now})
+        except Exception:
+            # The challenge stays used; the user signs in again.
+            pass
+
+    async def _update_if_matches(
+        self,
+        model: str,
+        row_id: str,
+        guards: List[Dict[str, Any]],
+        data: Dict[str, Any],
+    ) -> bool:
+        """Updates one row by id while ``guards`` still match, and reports
+        whether this call wrote it."""
+        return await self._update_outcome(model, row_id, guards, data) == "applied"
+
+    async def _update_outcome(
+        self,
+        model: str,
+        row_id: str,
+        guards: List[Dict[str, Any]],
+        data: Dict[str, Any],
+    ) -> str:
+        """Conditional update through ``update_many``: "applied" for a count of
+        1, "not-applied" for 0 (no row matched), "unknown" for anything else
+        (a count the driver could not report), which may have applied."""
+        self._require_conditional_writes()
+        count = await self.config.database.update_many(
+            model=model,
+            where=[{"field": "id", "operator": "eq", "value": row_id}, *guards],
+            data=data,
+            namespace=self.config.namespace,
+        )
+        if isinstance(count, bool) or not isinstance(count, int):
+            return "unknown"
+        if count == 0:
+            return "not-applied"
+        return "applied" if count == 1 else "unknown"
 
     def _verify_totp(self, secret: str, code: str) -> bool:
         now = self.plugin_config.now()
@@ -452,6 +542,11 @@ def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> 
                         "required": True,
                         "fieldName": "secret_encrypted",
                     },
+                    # Same columns as the TypeScript kernel, so either kernel's
+                    # schema serves both on a shared database.
+                    "lastUsedCounter": {"type": "number", "required": False, "fieldName": "last_used_counter"},
+                    "failedAttemptCount": {"type": "number", "required": False, "fieldName": "failed_attempt_count"},
+                    "lockedUntil": {"type": "date", "required": False, "fieldName": "locked_until"},
                     "confirmedAt": {"type": "date", "required": False, "fieldName": "confirmed_at"},
                     "createdAt": {"type": "date", "required": True, "fieldName": "created_at"},
                     "updatedAt": {"type": "date", "required": True, "fieldName": "updated_at"},
@@ -521,8 +616,16 @@ def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> 
             {"method": "POST", "path": "/2fa/disable"},
         ],
     )
+    plugin.validate_config = _require_conditional_writes
     plugin._authfn_config = resolved
     return plugin
+
+
+def _require_conditional_writes(config: AuthFnConfig) -> None:
+    """Two-factor sign-in needs conditional writes (``update_many`` with an
+    affected-row count); without them, confirmed users could not sign in."""
+    if not callable(getattr(config.database, "update_many", None)):
+        raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
 
 
 __all__ = [
