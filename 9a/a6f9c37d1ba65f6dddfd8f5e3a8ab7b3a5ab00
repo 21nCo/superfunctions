@@ -1,0 +1,37 @@
+langfn/typescript/src/models/responses/model.ts
+  s_166160924b2c23::t_e111cc83166c40 8,32-36,49,69,97-100,117,120,140,182-197
+langfn/typescript/src/models/responses/request.ts
+  s_166160924b2c23::t_1a073bdc82d3e5 73-76,185-189,198-199,214,220
+langfn/typescript/src/models/responses/response.ts
+  s_166160924b2c23::t_d6ee88c7c52a70 27,30-42,46-50,57-59,80-87,90-92,97-98,100-101,107,111-115,178,201,244-260,262,268-271
+langfn/typescript/src/models/responses/stream.ts
+  s_166160924b2c23::t_9796ed771b42e5 4,11,19-33,46-52,100-102
+langfn/typescript/tests/fixtures/responses/openai/stream-tool-call-incomplete.sse
+  s_166160924b2c23::t_386e0fb3c8c90b 1-15
+langfn/typescript/tests/fixtures/responses/openai/tool-call-incomplete.json
+  s_166160924b2c23::t_0acb76508dd1dd 1-69
+langfn/typescript/tests/fixtures/responses/openrouter/stream-tool-call-incomplete.sse
+  s_166160924b2c23::t_92a4ba6e16d63d 1-13
+langfn/typescript/tests/fixtures/responses/openrouter/tool-call-incomplete.json
+  s_166160924b2c23::t_b83cca175a9e10 1-69
+langfn/typescript/tests/responses-conformance.test.ts
+  s_166160924b2c23::t_46ffc60fdcb03c 68-93,214,218,223-230,233,310-370
+langfn/typescript/tests/responses-mapping.test.ts
+  s_166160924b2c23::t_10b0ea4cc0400e 5,9,68,83-87,138-139,143-144,148-169,197-230,258,260-270,406-514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9aa6f9c37d1ba65f6dddfd8f5e3a8ab7b3a5ab00",
+  "prompts": {},
+  "sessions": {
+    "s_166160924b2c23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_166160924b2c23",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
