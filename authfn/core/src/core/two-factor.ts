@@ -386,12 +386,9 @@ export async function satisfyTwoFactorChallenge(
     try {
       spent = await spendRecoveryCode(config, submitted.recoveryCode.id, now);
     } catch (error) {
-      // Give the challenge back only once it is certain the code was not
-      // spent; otherwise a retry with another code could spend a second one
-      // for the same sign-in.
-      if (await isRecoveryCodeUnused(config, submitted.recoveryCode.id)) {
-        await reopenChallenge();
-      }
+      // The write's outcome is unknown and it may still commit, so the
+      // challenge stays used: no second code can be spent on it, and the
+      // user signs in again. It is given back only after a confirmed no-op.
       throw error;
     }
     if (!spent) {
@@ -748,23 +745,6 @@ async function findUnusedRecoveryCode(
   return recoveryCodes.find((entry) =>
     !entry.usedAt && candidates.some((candidate) => safeCompareHex(entry.codeHash, candidate))
   ) ?? null;
-}
-
-/** True only when a read confirms the recovery code is still unused. */
-async function isRecoveryCodeUnused(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  recoveryCodeId: string
-): Promise<boolean> {
-  try {
-    const row = await config.database.findOne<AuthFnTwoFactorRecoveryCodeRecord>({
-      model: 'two_factor_recovery_codes',
-      where: [{ field: 'id', operator: 'eq', value: recoveryCodeId }],
-      namespace: namespace(config)
-    });
-    return Boolean(row) && !row!.usedAt;
-  } catch {
-    return false;
-  }
 }
 
 /**

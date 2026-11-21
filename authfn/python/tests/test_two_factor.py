@@ -527,3 +527,23 @@ async def test_keeps_the_challenge_used_when_a_failed_spend_may_have_applied() -
         )
     unused = [row for row in db.storage["two_factor_recovery_codes"] if row.get("usedAt") is None]
     assert len(unused) == 1
+
+
+def test_refuses_to_start_two_factor_on_an_adapter_without_conditional_writes() -> None:
+    from authfn import AuthFn
+
+    class NoUpdateMany(MockDatabaseAdapter):
+        update_many = None  # type: ignore[assignment]
+
+    with pytest.raises(ConfigError):
+        AuthFn(
+            AuthFnConfig(
+                database=NoUpdateMany(),
+                namespace="authfn",
+                plugins=[
+                    authfn_two_factor_plugin(
+                        TwoFactorPluginConfig(encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY)
+                    )
+                ],
+            )
+        )

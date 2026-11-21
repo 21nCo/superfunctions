@@ -94,6 +94,11 @@ class AuthFn:
     def __init__(self, config: AuthFnConfig):
         """Initialize AuthFn instance."""
         self.config = normalize_config(config)
+        # A plugin that cannot work with this configuration fails here, before
+        # any traffic is served.
+        for plugin in self.config.plugins:
+            if plugin.validate_config is not None:
+                plugin.validate_config(self.config)
         self.database = self.config.database
         self.namespace = self.config.namespace
         self._provider = AuthFnProvider(self.database, self.namespace, self.config)

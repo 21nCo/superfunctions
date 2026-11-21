@@ -348,10 +348,8 @@ class TwoFactorService:
             try:
                 spent = await self._spend_recovery_code(recovery_row["id"])
             except Exception:
-                # Give the challenge back only when the code is certainly
-                # unspent, so a retry cannot spend a second code.
-                if await self._is_recovery_code_unused(recovery_row["id"]):
-                    await self._reopen_challenge(challenge_id)
+                # The write may still commit, so the challenge stays used and
+                # no second code can be spent on it; the user signs in again.
                 raise
             if not spent:
                 await self._reopen_challenge(challenge_id)
@@ -447,20 +445,8 @@ class TwoFactorService:
             {"usedAt": self.plugin_config.now()},
         )
 
-    async def _is_recovery_code_unused(self, row_id: str) -> bool:
-        try:
-            row = await self.config.database.find_one(
-                model="two_factor_recovery_codes",
-                where=[{"field": "id", "operator": "eq", "value": row_id}],
-                namespace=self.config.namespace,
-            )
-        except Exception:
-            return False
-        return row is not None and row.get("usedAt") is None
-
     def _require_conditional_writes(self) -> None:
-        if not callable(getattr(self.config.database, "update_many", None)):
-            raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
+        _require_conditional_writes(self.config)
 
     async def _reopen_challenge(self, challenge_id: str) -> None:
         now = self.plugin_config.now()
@@ -604,8 +590,16 @@ def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> 
             {"method": "POST", "path": "/2fa/disable"},
         ],
     )
+    plugin.validate_config = _require_conditional_writes
     plugin._authfn_config = resolved
     return plugin
+
+
+def _require_conditional_writes(config: AuthFnConfig) -> None:
+    """Two-factor sign-in needs conditional writes (``update_many`` with an
+    affected-row count); without them, confirmed users could not sign in."""
+    if not callable(getattr(config.database, "update_many", None)):
+        raise ConfigError("Two-factor needs a database adapter with update_many for conditional writes")
 
 
 __all__ = [

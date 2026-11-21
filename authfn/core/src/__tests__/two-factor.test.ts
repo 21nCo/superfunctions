@@ -956,7 +956,7 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(await verify(generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
   });
 
-  it('gives the challenge back when spending a recovery code fails', async () => {
+  it('keeps the challenge used when spending a recovery code throws', async () => {
     const setup = await enrolledUser();
     let failSpend = true;
     const failing: Adapter = {
@@ -979,10 +979,16 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     const challengeId = await setup.challenge();
     await expect(satisfyTwoFactorChallenge({ ...setup.config, database: failing }, challengeId, setup.recoveryCodes[0], setup.pluginConfig))
       .rejects.toThrow('test recovery code write failed');
+    // The write's outcome was unknown, so the challenge is not given back;
+    // the user signs in again.
     setup.clock.advanceSeconds(30);
     expect((await setup.post('/2fa/challenge', {
       challengeId,
       code: generateTotp(setup.secret, setup.clock.now())
+    })).status).toBe(400);
+    expect((await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: setup.recoveryCodes[0]
     })).status).toBe(200);
   });
 
