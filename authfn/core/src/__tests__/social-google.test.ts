@@ -371,97 +371,75 @@ describe('authfn google social oauth', () => {
     expect(callback.headers.get('location')).toBe('https://app.example.com/alternate-post-auth');
   });
 
-  it('checks the handoff policy again when afterOAuthCallback moves a session-token flow to a web target', async () => {
+  /**
+   * Starts a session-token flow to exampleapp://oauthsignin whose
+   * afterOAuthCallback hook moves the target, and completes the callback.
+   */
+  async function callbackWithHookTarget(input: {
+    hookTarget: string;
+    allowWebSessionTokenHandoff?: boolean;
+    handoffChallenge?: boolean;
+  }) {
     let hookRuns = 0;
-    const base = createConfig({
+    const config = createConfig({
       hooks: {
         afterOAuthCallback: async (_ctx, payload) => {
           hookRuns += 1;
-          payload.redirectTo = 'https://app.example.com/post-auth';
+          payload.redirectTo = input.hookTarget;
         }
       }
     });
-    base.plugins = [authFnSocialOAuthPlugin({ allowWebSessionTokenHandoff: false })];
-    (base.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
+    if (input.allowWebSessionTokenHandoff !== undefined) {
+      config.plugins = [authFnSocialOAuthPlugin({ allowWebSessionTokenHandoff: input.allowWebSessionTokenHandoff })];
+    }
+    (config.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
       .providers.google.allowlistedReturnTo.push('exampleapp://oauthsignin');
-    const auth = createTestServer(base);
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
     const start = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider: 'google', returnTo: 'exampleapp://oauthsignin', handoffMode: 'session-token' })
+      body: JSON.stringify({
+        provider: 'google',
+        returnTo: 'exampleapp://oauthsignin',
+        handoffMode: 'session-token',
+        ...(input.handoffChallenge
+          ? { handoffChallenge: createHash('sha256').update(verifier).digest('base64url') }
+          : {})
+      })
     }));
     expect(start.status).toBe(200);
-    const startBody = await start.json();
+    const stateId = (await start.json()).data.stateId as string;
     const callback = await auth.router.handle(new Request(
-      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(startBody.data.stateId)}`
+      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
     ));
+    return { callback, hookRuns };
+  }
+
+  it('checks the handoff policy again when afterOAuthCallback moves a session-token flow to a web target', async () => {
+    const { callback, hookRuns } = await callbackWithHookTarget({
+      hookTarget: 'https://app.example.com/post-auth',
+      allowWebSessionTokenHandoff: false
+    });
     expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_VALIDATION_ERROR');
     expect(callback.headers.get('location')).not.toContain('token=');
   });
 
   it('checks the allowlist again when afterOAuthCallback moves a handoff-code flow', async () => {
-    let hookRuns = 0;
-    const config = createConfig({
-      hooks: {
-        afterOAuthCallback: async (_ctx, payload) => {
-          hookRuns += 1;
-          payload.redirectTo = 'https://unlisted.example/steal';
-        }
-      }
+    const { callback, hookRuns } = await callbackWithHookTarget({
+      hookTarget: 'https://unlisted.example/steal',
+      handoffChallenge: true
     });
-    (config.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
-      .providers.google.allowlistedReturnTo.push('exampleapp://oauthsignin');
-    const auth = createTestServer(config);
-    const verifier = 'test-verifier-'.padEnd(64, 'v');
-    const start = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        provider: 'google',
-        returnTo: 'exampleapp://oauthsignin',
-        handoffMode: 'session-token',
-        handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
-      })
-    }));
-    expect(start.status).toBe(200);
-    const stateId = (await start.json()).data.stateId as string;
-    const callback = await auth.router.handle(new Request(
-      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
-    ));
     expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_REDIRECT_URI_DISALLOWED');
     expect(callback.headers.get('location')).not.toContain('unlisted.example');
   });
 
   it('applies allowWebSessionTokenHandoff again when afterOAuthCallback moves a handoff-code flow to a web target', async () => {
-    let hookRuns = 0;
-    const config = createConfig({
-      hooks: {
-        afterOAuthCallback: async (_ctx, payload) => {
-          hookRuns += 1;
-          payload.redirectTo = 'https://app.example.com/post-auth';
-        }
-      }
+    const { callback, hookRuns } = await callbackWithHookTarget({
+      hookTarget: 'https://app.example.com/post-auth',
+      allowWebSessionTokenHandoff: false,
+      handoffChallenge: true
     });
-    config.plugins = [authFnSocialOAuthPlugin({ allowWebSessionTokenHandoff: false })];
-    (config.pluginRuntime!.socialOAuth as { providers: { google: { allowlistedReturnTo: string[] } } })
-      .providers.google.allowlistedReturnTo.push('exampleapp://oauthsignin');
-    const auth = createTestServer(config);
-    const verifier = 'test-verifier-'.padEnd(64, 'v');
-    const start = await auth.router.handle(new Request('https://account.example.com/auth/social/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        provider: 'google',
-        returnTo: 'exampleapp://oauthsignin',
-        handoffMode: 'session-token',
-        handoffChallenge: createHash('sha256').update(verifier).digest('base64url')
-      })
-    }));
-    expect(start.status).toBe(200);
-    const stateId = (await start.json()).data.stateId as string;
-    const callback = await auth.router.handle(new Request(
-      `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(stateId)}`
-    ));
     expectRefusedAfterHook(callback, hookRuns, 'AUTHFN_VALIDATION_ERROR');
     expect(callback.headers.get('location')).not.toContain('handoff=code');
   });
