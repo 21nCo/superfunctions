@@ -81,7 +81,8 @@ function packCollections(workdir, coreTarball) {
   buildManifest.dependencies["@apifn/core"] = `file:${coreTarball}`;
   delete buildManifest.devDependencies.vitest;
   writeFileSync(path.join(source, "package.json"), JSON.stringify(buildManifest, null, 2));
-  npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", "--no-package-lock"], source);
+  // tsup and the declaration toolchain are devDependencies; include them even if the caller omits dev.
+  npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", "--no-package-lock", "--include=dev"], source);
   const tsupManifest = JSON.parse(readFileSync(path.join(source, "node_modules/tsup/package.json"), "utf8"));
   const tsupBin = typeof tsupManifest.bin === "string" ? tsupManifest.bin : tsupManifest.bin.tsup;
   node([path.join(source, "node_modules/tsup", tsupBin)], source);
