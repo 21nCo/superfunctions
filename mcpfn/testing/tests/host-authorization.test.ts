@@ -9,6 +9,7 @@ import {
 import {
   createHostedAuthorizationFixtures,
   runHostedAuthorizationRegression,
+  type McpFnHostedAuthorizationCase,
 } from "../src/index.js";
 
 const TOKEN_RESPONSE_HEADERS = {
@@ -507,6 +508,7 @@ describe("unvetted-client authorization rejections", () => {
     authorizationErrors?: AuthorizationErrorOptions,
     adjust: (fixture: ReturnType<typeof rejectionFixture>) => void = () => {},
     redirectPolicy?: McpFnRedirectPolicy,
+    capabilities: { tokenEndpointAuthMethods?: string[]; supportedScopes?: string[] } = {},
   ) {
     const registrations = new Map<string, McpFnNormalizedClientRegistration>();
     const handler = createMcpAuthorizationCompatibilityHandler({
@@ -531,6 +533,7 @@ describe("unvetted-client authorization rejections", () => {
       redirectPolicy,
       tokenEndpointAuthMethods: ["none"],
       supportedScopes: ["mcp:read"],
+      ...capabilities,
       async prepareRegistration(fixture) {
         registrations.set(
           fixture.clientId,
@@ -916,15 +919,60 @@ describe("unvetted-client authorization rejections", () => {
           }
           const fixture = rejectionFixture(DYNAMIC);
           ineligible(fixture);
-          const [page] = await runHostedAuthorizationRegression({
+          for (const [body, expected] of [
+            ["<p><code>invalid_client</code></p>", { status: "passed", responseStatus: 400 }],
+            [`<a href="${requested}">Back</a>`, {
+              status: "failed",
+              error: "Authorization error response must not reflect the client redirect URI",
+            }],
+          ] as const) {
+            const [page] = await runHostedAuthorizationRegression({
+              issuer,
+              prepareRegistration: async () => {},
+              request: htmlPage(body),
+            }, [fixture]);
+            expect(page).toMatchObject(expected);
+          }
+        },
+      );
+
+      it.each(INELIGIBLE)(
+        "checks a JSON rejection for %s for redirect URI reflection",
+        async (_name, metadata) => {
+          // Raw, normalized and registered forms of the redirect URI differ.
+          const requested = "HTTP://127.0.0.1:49152/callback";
+          const ineligible = (fixture: ReturnType<typeof rejectionFixture>) => {
+            redirect(LOOPBACK, requested)(fixture);
+            Object.assign(fixture.registration.metadata, metadata);
+            delete fixture.expected.errorCode;
+          };
+          const [real] = await runAgainstMcpFn([DYNAMIC], undefined, ineligible);
+          expect(real).toMatchObject({ status: "passed", errorCode: "invalid_client" });
+          const fixture = rejectionFixture(DYNAMIC);
+          ineligible(fixture);
+          const rejectWith = (description: string) => ({
             issuer,
             prepareRegistration: async () => {},
-            request: htmlPage("<p><code>invalid_target</code></p>"),
-          }, [fixture]);
-          expect(page).toMatchObject({
-            status: "failed",
-            error: "Authorization request did not redirect (HTTP 400)",
+            request: async () => Response.json(
+              { error: "invalid_client", error_description: description },
+              { status: 400 },
+            ),
           });
+          for (const reflected of [requested, RUNTIME_PORT, LOOPBACK]) {
+            const [result] = await runHostedAuthorizationRegression(
+              rejectWith(`Client cannot use ${reflected}`),
+              [fixture],
+            );
+            expect(result).toMatchObject({
+              status: "failed",
+              error: "Authorization error response must not reflect the client redirect URI",
+            });
+          }
+          const [clean] = await runHostedAuthorizationRegression(
+            rejectWith("Client is not compatible"),
+            [fixture],
+          );
+          expect(clean).toMatchObject({ status: "passed", errorCode: "invalid_client" });
         },
       );
 
@@ -949,20 +997,28 @@ describe("unvetted-client authorization rejections", () => {
         expect(supported).toMatchObject({ status: "passed", errorCode: "invalid_target" });
       });
 
+      const INDETERMINATE = expect.stringContaining("Callback eligibility is indeterminate");
+
       it.each([
         ["omitted", undefined],
         ["null", null],
-      ])("accepts either server default for a metadata document whose method is %s", async (_name, method) => {
+      ])("decides a metadata document whose method is %s from the declared defaults", async (_name, method) => {
         const withoutMethod = (fixture: ReturnType<typeof rejectionFixture>) => {
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
           Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: method });
         };
         // Stored registration: the server defaults the method to none.
-        const [stored] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, withoutMethod);
-        expect(stored).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
-        // Fetched document: the server defaults the method to client_secret_basic.
+        for (const declared of [["none"], ["client_secret_basic"]]) {
+          const [stored] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, withoutMethod, undefined, {
+            tokenEndpointAuthMethods: declared,
+          });
+          expect(stored).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
+        }
+        // Fetched document: the server defaults the method to
+        // client_secret_basic, which this target does not support.
         const fixture = rejectionFixture(METADATA_DOCUMENT);
         withoutMethod(fixture);
+        fixture.expected.errorCode = "invalid_client_metadata";
         const handler = createMcpAuthorizationCompatibilityHandler({
           issuer,
           clients: { resolve: async () => null },
@@ -974,14 +1030,11 @@ describe("unvetted-client authorization rejections", () => {
               client_id: fixture.registration.clientId,
             }),
           },
-          capabilities: { tokenEndpointAuthMethods: ["client_secret_basic"] },
+          capabilities: { tokenEndpointAuthMethods: ["none"] },
           allowedResources: [resource],
           supportedScopes: ["mcp:read"],
           authorize: async () => new Response("unexpected authorize", { status: 500 }),
           tokenAuthority: {
-            authenticateClient: async () => {
-              throw new Error("unexpected client authentication");
-            },
             exchangeAuthorizationCode: async () => {
               throw new Error("unexpected token exchange");
             },
@@ -992,12 +1045,33 @@ describe("unvetted-client authorization rejections", () => {
         });
         const [fetched] = await runHostedAuthorizationRegression({
           issuer,
-          tokenEndpointAuthMethods: ["client_secret_basic"],
+          tokenEndpointAuthMethods: ["none"],
           supportedScopes: ["mcp:read"],
           prepareRegistration: async () => {},
           request: (request) => handler(request),
         }, [fixture]);
-        expect(fetched).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
+        expect(fetched).toMatchObject({
+          status: "passed",
+          responseStatus: 400,
+          errorCode: "invalid_client_metadata",
+        });
+        fixture.expected.errorCode = "invalid_target";
+        // Only one default is supported: a callback is indeterminate.
+        for (const declared of [["none"], ["client_secret_basic"]]) {
+          const [callback] = await runHostedAuthorizationRegression(
+            { ...callbackTarget(), tokenEndpointAuthMethods: declared },
+            [fixture],
+          );
+          expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
+        }
+        // Both defaults are supported, or no constraint is declared: eligible.
+        for (const declared of [["none", "client_secret_basic"], undefined]) {
+          const [callback] = await runHostedAuthorizationRegression(
+            { ...callbackTarget(), tokenEndpointAuthMethods: declared },
+            [fixture],
+          );
+          expect(callback).toMatchObject({ status: "passed", errorCode: "invalid_target" });
+        }
         // Neither default is supported: the registration is ineligible.
         const [neither] = await runHostedAuthorizationRegression(
           { ...callbackTarget(), tokenEndpointAuthMethods: ["client_secret_post"] },
@@ -1018,6 +1092,52 @@ describe("unvetted-client authorization rejections", () => {
           status: "failed",
           error: "Rejected redirect URI must not receive a callback",
         });
+      });
+
+      it("requires an eligible registration for a code callback", async () => {
+        const allowed = (id: string, adjust: (fixture: McpFnHostedAuthorizationCase) => void) => {
+          const fixture = createHostedAuthorizationFixtures({ issuer, resource })
+            .find((item) => item.id === id)!;
+          delete fixture.token;
+          redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+          adjust(fixture);
+          return fixture;
+        };
+        type Capabilities = { tokenEndpointAuthMethods?: string[]; supportedScopes?: string[] };
+        const codeTarget = (capabilities: Capabilities) => ({
+          issuer,
+          ...capabilities,
+          prepareRegistration: async () => {},
+          request: async (request: Request) => {
+            const params = new URL(request.url).searchParams;
+            const callback = new URL(params.get("redirect_uri")!);
+            callback.searchParams.set("code", "test-authorization-code");
+            callback.searchParams.set("state", params.get("state")!);
+            return new Response(null, { status: 302, headers: { location: callback.toString() } });
+          },
+        });
+        const REJECTED = "Rejected redirect URI must not receive a callback";
+        const cases: [McpFnHostedAuthorizationCase, Capabilities, unknown, Capabilities][] = [
+          [allowed(DYNAMIC, (fixture) => {
+            fixture.registration.metadata.scope = "mcp:admin";
+          }), { supportedScopes: ["mcp:read"] }, REJECTED, { supportedScopes: ["mcp:admin"] }],
+          [allowed(DYNAMIC, (fixture) => {
+            fixture.registration.metadata.token_endpoint_auth_method = "client_secret_post";
+          }), { tokenEndpointAuthMethods: ["none"] }, REJECTED, { tokenEndpointAuthMethods: ["client_secret_post"] }],
+          [allowed(METADATA_DOCUMENT, (fixture) => {
+            delete fixture.registration.metadata.token_endpoint_auth_method;
+          }), { tokenEndpointAuthMethods: ["none"] }, INDETERMINATE, {
+            tokenEndpointAuthMethods: ["none", "client_secret_basic"],
+          }],
+        ];
+        for (const [fixture, unsupported, error, supported] of cases) {
+          const [rejected] = await runHostedAuthorizationRegression(codeTarget(unsupported), [fixture]);
+          expect(rejected).toMatchObject({ status: "failed", error });
+          for (const capabilities of [supported, {}]) {
+            const [result] = await runHostedAuthorizationRegression(codeTarget(capabilities), [fixture]);
+            expect(result).toMatchObject({ status: "passed", phase: "authorization-request" });
+          }
+        }
       });
 
       it("checks registered scopes only when the target declares supported scopes", async () => {
