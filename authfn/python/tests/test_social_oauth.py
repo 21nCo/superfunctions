@@ -319,7 +319,7 @@ async def test_google_start_callback_replay_and_redirect_hook() -> None:
     service = SocialOAuthService(
         config,
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             now=clock.now,
             fetcher=build_google_fetcher(),
             providers={
@@ -376,7 +376,7 @@ async def test_custom_profile_resolver_normalizes_numeric_provider_account_id() 
     service = SocialOAuthService(
         AuthFnConfig(database=db, namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_google_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -425,7 +425,7 @@ async def test_callback_preserves_existing_legacy_provider_account_id() -> None:
     service = SocialOAuthService(
         AuthFnConfig(database=db, namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_google_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -461,7 +461,7 @@ async def test_custom_profile_resolver_rejects_null_provider_account_id() -> Non
     service = SocialOAuthService(
         AuthFnConfig(database=db, namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_google_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -500,7 +500,7 @@ async def test_before_user_create_rejects_non_string_id() -> None:
             hooks=AuthFnHooks(beforeUserCreate=replace_user_id),
         ),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_google_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -523,7 +523,7 @@ async def test_disallowed_redirect_and_unsupported_provider_raise_canonical_erro
     service = SocialOAuthService(
         AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_google_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -563,8 +563,7 @@ async def test_apple_runtime_secret_resolution_and_missing_claims() -> None:
     )
     service = SocialOAuthService(
         config,
-        SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,now=clock.now, fetcher=build_apple_fetcher(captured)),
+        SocialOAuthPluginConfig(encryption_key_resolver=_test_oauth_key, now=clock.now, fetcher=build_apple_fetcher(captured)),
     )
 
     started = await service.start("apple", return_to="https://app.example.com/apple-post-auth")
@@ -575,8 +574,7 @@ async def test_apple_runtime_secret_resolution_and_missing_claims() -> None:
 
     bad_service = SocialOAuthService(
         config,
-        SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,now=clock.now, fetcher=build_apple_fetcher({}, missing_claims=True)),
+        SocialOAuthPluginConfig(encryption_key_resolver=_test_oauth_key, now=clock.now, fetcher=build_apple_fetcher({}, missing_claims=True)),
     )
     bad_started = await bad_service.start("apple", return_to="https://app.example.com/apple-post-auth")
     with pytest.raises(OAuthCallbackInvalidError):
@@ -602,7 +600,7 @@ async def test_github_links_verified_user_json_mode_and_sanitizes_failures() -> 
     service = SocialOAuthService(
         AuthFnConfig(database=db, namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             now=clock.now,
             fetcher=build_github_fetcher(),
             providers={
@@ -634,7 +632,7 @@ async def test_github_links_verified_user_json_mode_and_sanitizes_failures() -> 
     failing = SocialOAuthService(
         AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             now=clock.now,
             fetcher=build_github_fetcher(fail_token_exchange=True),
             providers={
@@ -686,8 +684,7 @@ async def test_social_oauth_registers_region_and_emits_observability_events() ->
     )
     service = SocialOAuthService(
         config,
-        SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,now=clock.now, fetcher=build_google_fetcher()),
+        SocialOAuthPluginConfig(encryption_key_resolver=_test_oauth_key, now=clock.now, fetcher=build_google_fetcher()),
     )
 
     started = await service.start(
@@ -715,7 +712,7 @@ async def test_social_oauth_maps_provider_rate_limits_to_canonical_error() -> No
     service = SocialOAuthService(
         AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn"),
         SocialOAuthPluginConfig(
-        encryption_key_resolver=_test_oauth_key,
+            encryption_key_resolver=_test_oauth_key,
             fetcher=build_rate_limited_fetcher(),
             providers={
                 "google": SocialProviderConfig(
@@ -774,38 +771,71 @@ async def test_token_vault_needs_a_secret_key_and_does_not_use_one_derived_from_
         Fernet(_legacy_fernet_key("authfn", "oauth-default")).decrypt(stored)
 
 
-@pytest.mark.asyncio
-async def test_rotate_key_re_encrypts_a_row_written_with_the_old_derived_key() -> None:
+def _legacy_row(payload: bytes = b"test-provider-token-payload") -> Dict[str, Any]:
     from cryptography.fernet import Fernet
 
-    from authfn.plugins.social_oauth import (
-        DbEncryptedTokenVault,
-        _fernet_key_from_secret,
-        _legacy_fernet_key,
-    )
+    from authfn.plugins.social_oauth import _legacy_fernet_key
+
+    return {
+        "token_id": "tok_test_1",
+        "tenant_id": "tenant_test",
+        "user_id": "user_1",
+        "provider_id": "google",
+        "connection_id": "conn_test_1",
+        "encrypted_payload": Fernet(_legacy_fernet_key("authfn", "oauth-default")).encrypt(payload).decode("utf-8"),
+        "key_ref": "oauth-default",
+        "created_at": "2026-11-21T00:00:00.000Z",
+        "updated_at": "2026-11-21T00:00:00.000Z",
+        "expires_at": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_tokens_re_encrypts_rows_written_with_the_old_derived_key() -> None:
+    from cryptography.fernet import Fernet, InvalidToken
+
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault, _fernet_key_from_secret
 
     db = MockDatabaseAdapter()
     config = AuthFnConfig(database=db, namespace="authfn")
-    legacy = Fernet(_legacy_fernet_key("authfn", "oauth-default")).encrypt(b"test-provider-token-payload").decode("utf-8")
-    await db.create(
-        model="oauth_tokens",
-        data={
-            "token_id": "tok_test_1",
-            "tenant_id": "tenant_test",
-            "user_id": "user_1",
-            "provider_id": "google",
-            "connection_id": "conn_test_1",
-            "encrypted_payload": legacy,
-            "key_ref": "oauth-default",
-            "created_at": "2026-11-21T00:00:00.000Z",
-            "updated_at": "2026-11-21T00:00:00.000Z",
-            "expires_at": None,
-        },
-        namespace="authfn",
-    )
+    await db.create(model="oauth_tokens", data=_legacy_row(), namespace="authfn")
     vault = DbEncryptedTokenVault(
         config, default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=_test_oauth_key
     )
-    await vault.rotate_key("tok_test_1", "oauth-default")
-    rotated = db.storage["oauth_tokens"][0]["encrypted_payload"].encode("utf-8")
-    assert Fernet(_fernet_key_from_secret(_test_oauth_key("oauth-default"))).decrypt(rotated) == b"test-provider-token-payload"
+    # rotate_key only uses configured keys, so it cannot open a legacy row.
+    with pytest.raises(InvalidToken):
+        await vault.rotate_key("tok_test_1", "oauth-default")
+
+    assert await vault.migrate_legacy_tokens() == 1
+    migrated = db.storage["oauth_tokens"][0]["encrypted_payload"].encode("utf-8")
+    key = _fernet_key_from_secret(_test_oauth_key("oauth-default"))
+    assert Fernet(key).decrypt(migrated) == b"test-provider-token-payload"
+    # Already migrated rows are left alone.
+    assert await vault.migrate_legacy_tokens() == 0
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_non_bytes_key_and_checks_the_key_before_a_sign_in_starts() -> None:
+    from authfn.plugins.social_oauth import DbEncryptedTokenVault
+    from authfn.types import ConfigError
+
+    db = MockDatabaseAdapter()
+    config = AuthFnConfig(database=db, namespace="authfn")
+    integer_key = DbEncryptedTokenVault(
+        config, default_key_ref="oauth-default", now=datetime.utcnow, key_resolver=lambda _ref: 32  # type: ignore[arg-type, return-value]
+    )
+    with pytest.raises(ConfigError):
+        await integer_key.put(_token_record())
+
+    service = SocialOAuthService(
+        config,
+        SocialOAuthPluginConfig(
+            providers={"google": SocialProviderConfig(client_id="google-client-id", client_secret="test-google-secret")}
+        ),
+    )
+    with pytest.raises(ConfigError):
+        await service.start("google", return_to="https://app.example.com/post-auth")
+    with pytest.raises(ConfigError):
+        await service.handle_callback("google", code="test-code", state="test-state")
+    assert db.storage.get("users", []) == []
+    assert db.storage.get("oauth_states", []) == []

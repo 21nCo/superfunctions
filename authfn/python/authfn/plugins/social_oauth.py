@@ -246,7 +246,7 @@ class DbEncryptedTokenVault:
         row = await self.get(token_id)
         if row is None:
             return
-        decrypted = self._decrypt(row.key_ref, row.encrypted_payload.encode("utf-8"))
+        decrypted = self._cipher(row.key_ref).decrypt(row.encrypted_payload.encode("utf-8"))
         rotated = self._cipher(new_key_ref).encrypt(decrypted).decode("utf-8")
         await self.config.database.update(
             model="oauth_tokens",
@@ -266,20 +266,56 @@ class DbEncryptedTokenVault:
             namespace=self.config.namespace,
         )
 
+    def assert_configured(self) -> None:
+        """Raises ConfigError unless a valid key is configured for the default
+        key reference. Called before a sign-in has any side effect."""
+        self._cipher(self.default_key_ref)
+
+    async def migrate_legacy_tokens(self) -> int:
+        """Re-encrypts, with the configured key, every row still encrypted
+        with the key earlier releases derived from the namespace alone (which
+        anyone could compute). Run it once after upgrading; it returns how many
+        rows it re-encrypted. Rows the configured key opens are left alone.
+
+        The old key is used only here, and only for rows the configured key
+        cannot open. Someone who could write to the table could also plant a
+        row under the old key, so run it promptly after the upgrade."""
+        rows = await self.config.database.find_many(
+            model="oauth_tokens",
+            where=[],
+            namespace=self.config.namespace,
+        )
+        migrated = 0
+        for row in rows:
+            key_ref = row.get("key_ref") or self.default_key_ref
+            ciphertext = str(row.get("encrypted_payload") or "").encode("utf-8")
+            target = self._cipher(key_ref)
+            try:
+                target.decrypt(ciphertext)
+                continue
+            except InvalidToken:
+                pass
+            try:
+                plaintext = Fernet(_legacy_fernet_key(self.config.namespace, key_ref)).decrypt(ciphertext)
+            except InvalidToken:
+                continue
+            await self.config.database.update(
+                model="oauth_tokens",
+                where=[{"field": "token_id", "operator": "eq", "value": row["token_id"]}],
+                data={
+                    "encrypted_payload": target.encrypt(plaintext).decode("utf-8"),
+                    "updated_at": self.now().isoformat(),
+                },
+                namespace=self.config.namespace,
+            )
+            migrated += 1
+        return migrated
+
     def _cipher(self, key_ref: str) -> Fernet:
         """The cipher for a key reference, from the configured secret key."""
         if self.key_resolver is None:
             raise ConfigError("Social OAuth encryption_key_resolver must be configured to store provider tokens")
         return Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
-
-    def _decrypt(self, key_ref: str, ciphertext: bytes) -> bytes:
-        """Decrypts with the configured key; rows written before the key was
-        required used a key derived from the namespace alone, which is tried
-        next so they can be re-encrypted with rotate_key."""
-        try:
-            return self._cipher(key_ref).decrypt(ciphertext)
-        except InvalidToken:
-            return Fernet(_legacy_fernet_key(self.config.namespace, key_ref)).decrypt(ciphertext)
 
 
 class FetchOAuthTokenHttpClient:
@@ -484,6 +520,9 @@ class SocialOAuthService:
         callback_mode: Optional[str] = None,
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        # A missing or bad token key fails here, before the provider redirect
+        # or any user is created, not after the callback has written rows.
+        self.token_vault.assert_configured()
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         resolved = await self._run_before_start(
@@ -542,6 +581,9 @@ class SocialOAuthService:
         state: str,
         request: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        # A missing or bad token key fails here, before the provider redirect
+        # or any user is created, not after the callback has written rows.
+        self.token_vault.assert_configured()
         runtime = resolve_runtime(self.config, request)
         provider_id = self._normalize_provider(provider)
         settings = self._resolve_provider_settings(provider_id, runtime)
@@ -1180,6 +1222,12 @@ def authfn_social_oauth_plugin(
             {"method": "POST", "path": "/social/disconnect/:provider"},
         ],
     )
+    plugin.validate_config = lambda _config: DbEncryptedTokenVault(
+        _config,
+        default_key_ref=resolved.encryption_key_ref,
+        now=resolved.now,
+        key_resolver=resolved.encryption_key_resolver,
+    ).assert_configured()
     plugin._authfn_config = resolved
     return plugin
 
@@ -1566,7 +1614,13 @@ def _legacy_fernet_key(namespace: str, key_ref: str) -> bytes:
 
 
 def _fernet_key_from_secret(secret: bytes | str) -> bytes:
-    raw = secret.encode("utf-8") if isinstance(secret, str) else bytes(secret)
+    if isinstance(secret, str):
+        raw = secret.encode("utf-8")
+    elif isinstance(secret, (bytes, bytearray)):
+        raw = bytes(secret)
+    else:
+        # bytes(32) would be 32 zero bytes: refuse anything but bytes or str.
+        raise ConfigError("Social OAuth encryption key must be bytes or str")
     if len(raw) < 32:
         raise ConfigError("Social OAuth encryption key must be at least 32 bytes")
     # A urlsafe-base64 Fernet key is used as is; anything else is hashed.
