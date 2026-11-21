@@ -11,9 +11,12 @@
 // - the adapter's discover() fails with an error naming @apifn/collections until the consumer
 //   installs it; then, with the packed workspace @apifn/collections next to the core tarball,
 //   discover() and run() work in ESM and CJS against a flat collection served on localhost.
-// Run after building @apifn/core and @apifn/collections (the package's test script runs it after vitest).
+// Run after building @apifn/core (the package's test script runs it after vitest). Turbo builds
+// @apifn/collections first and its dist is packed as is; a checkout without that dist (the tag release
+// job installs only apifn/core) builds @apifn/collections from source in a scratch copy, so the adapter
+// stage always runs.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -53,6 +56,43 @@ function npm(args, cwd) {
 }
 
 const node = (args, cwd) => run(process.execPath, args, cwd);
+
+const collectionsDir = path.join(repoRoot, "apifn/collections");
+
+/**
+ * Packs the workspace @apifn/collections into workdir. Turbo's test task depends on its build, so its
+ * dist is packed as is. Without that dist, the source is copied to a scratch directory, built with its
+ * own tsup against the packed core tarball, and packed there with the original manifest.
+ */
+function packCollections(workdir, coreTarball) {
+  const builtEntries = ["dist/index.js", "dist/index.cjs", "dist/index.d.ts"];
+  if (builtEntries.every((entry) => existsSync(path.join(collectionsDir, entry)))) {
+    console.log("@apifn/collections: packing the built workspace dist");
+    return JSON.parse(npm(["pack", "--workspace", "@apifn/collections", "--pack-destination", workdir, "--json"], repoRoot));
+  }
+  const source = path.join(workdir, "collections-source");
+  console.log(`@apifn/collections: ${collectionsDir}/dist is not built; building it from source in ${source}`);
+  for (const entry of ["src", "package.json", "README.md", "tsconfig.json", "tsup.config.ts"]) {
+    cpSync(path.join(collectionsDir, entry), path.join(source, entry), { recursive: true });
+  }
+  const original = readFileSync(path.join(source, "package.json"), "utf8");
+  const buildManifest = JSON.parse(original);
+  // Core is not on npm at this version yet; the build resolves it (and its types) from the packed tarball.
+  buildManifest.dependencies["@apifn/core"] = `file:${coreTarball}`;
+  delete buildManifest.devDependencies.vitest;
+  writeFileSync(path.join(source, "package.json"), JSON.stringify(buildManifest, null, 2));
+  npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", "--no-package-lock"], source);
+  const tsupManifest = JSON.parse(readFileSync(path.join(source, "node_modules/tsup/package.json"), "utf8"));
+  const tsupBin = typeof tsupManifest.bin === "string" ? tsupManifest.bin : tsupManifest.bin.tsup;
+  node([path.join(source, "node_modules/tsup", tsupBin)], source);
+  writeFileSync(path.join(source, "package.json"), original);
+  const packed = JSON.parse(npm(["pack", "--pack-destination", workdir, "--json"], source));
+  const files = new Set(packed[0].files.map((file) => file.path));
+  for (const entry of builtEntries) {
+    if (!files.has(entry)) throw new Error(`@apifn/collections built from source is missing ${entry}`);
+  }
+  return packed;
+}
 
 /** Runs a script that must fail, and returns its stderr. */
 function runExpectingFailure(file, cwd) {
@@ -297,9 +337,7 @@ try {
   console.log(`discover() without @apifn/collections: ${node(["collections-missing.mjs"], consumer).trim()}`);
 
   // The registry @apifn/collections pins an older core, so install the workspace one built from this tree.
-  const collectionsPacked = JSON.parse(
-    npm(["pack", "--workspace", "@apifn/collections", "--pack-destination", workdir, "--json"], repoRoot),
-  );
+  const collectionsPacked = packCollections(workdir, tarball);
   npm(["install", "--no-audit", "--no-fund", "--ignore-scripts", path.join(workdir, collectionsPacked[0].filename)], consumer);
   if (existsSync(path.join(consumer, "node_modules/@apifn/collections/node_modules/@apifn/core"))) {
     throw new Error("@apifn/collections installed its own @apifn/core instead of the packed one");
