@@ -115,6 +115,17 @@ describe('PostgresAdapter source statements', () => {
     const excluded = recorder();
     // It declares that capability, which upsertDocument requires.
     expect(excluded.adapter.excludesSources).toBe(true);
+    expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(true);
+    // A replaced built-in search withdraws it, for the adapter and for the one it opens for a transaction.
+    const builtIn = PostgresAdapter.prototype.searchVectors;
+    PostgresAdapter.prototype.searchVectors = function (this: PostgresAdapter, params) { return builtIn.call(this, params); };
+    try {
+      expect(excluded.adapter.excludesSources).toBe(false);
+      expect(await excluded.adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+    } finally {
+      PostgresAdapter.prototype.searchVectors = builtIn;
+    }
+    excluded.statements.length = 0;
     await excluded.adapter.searchVectors({ ...search, excludeSources: true });
     expect(excluded.statements).toHaveLength(1);
     expect(excluded.statements[0].query).toMatch(/"source_key" is null/);

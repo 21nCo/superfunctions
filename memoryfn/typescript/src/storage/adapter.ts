@@ -73,10 +73,12 @@ export interface StorageAdapter {
    * with replaceSourceIfChanged, and otherwise fails with
    * MEMORY_DOCUMENTS_UNSUPPORTED before any provider call, so source rows it
    * writes never hide an ordinary candidate from add(). The built-in adapters
-   * declare it for their own searchVectors; a subclass that overrides
-   * searchVectors does not inherit the declaration and must make its own.
+   * declare it only while their searchVectors is the built-in one, and an
+   * adapter they open for a transaction declares what its parent declares; a
+   * subclass that overrides searchVectors must declare it itself. Only true
+   * declares it.
    */
-  readonly excludesSources?: true;
+  readonly excludesSources?: boolean;
   close?(): Promise<void>;
   /** Commit all callback writes together, or leave storage unchanged on failure. */
   transaction?<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T>;

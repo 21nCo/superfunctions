@@ -25,13 +25,19 @@ const UUID = /^(?:\{(?:[0-9a-f]{4}-?){7}[0-9a-f]{4}\}|(?:[0-9a-f]{4}-?){7}[0-9a-
 export class PostgresAdapter implements StorageAdapter {
   readonly embeddingDimensions = 1536;
   private db: PostgresJsDatabase<any>;
+  /** A transaction's adapter reports its parent's declaration, since the parent serves add() after the commit. */
+  private parentExcludesSources: boolean | undefined;
 
   constructor(db: PostgresJsDatabase<any>, private readonly dispose?: () => Promise<void>) {
     this.db = db;
   }
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
-    return this.db.transaction(tx => operation(new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>)));
+    return this.db.transaction(tx => {
+      const scoped = new PostgresAdapter(tx as unknown as PostgresJsDatabase<any>);
+      scoped.parentExcludesSources = this.excludesSources === true;
+      return operation(scoped);
+    });
   }
 
   async close(): Promise<void> { await this.dispose?.(); }
@@ -113,9 +119,9 @@ export class PostgresAdapter implements StorageAdapter {
     }));
   }
 
-  /** Declared for this class's searchVectors only: a subclass that overrides it must declare excludesSources itself. */
-  get excludesSources(): true | undefined {
-    return this.searchVectors === PostgresAdapter.prototype.searchVectors ? true : undefined;
+  /** Declared only while searchVectors is the built-in one: an override or a replacement must declare excludesSources itself. */
+  get excludesSources(): boolean {
+    return this.parentExcludesSources ?? this.searchVectors === builtInPostgresSearch;
   }
 
   async searchVectors(params: {
@@ -434,3 +440,6 @@ export class PostgresAdapter implements StorageAdapter {
     };
   }
 }
+
+/** The built-in search, captured once, so replacing the prototype's method withdraws the declaration. */
+const builtInPostgresSearch = PostgresAdapter.prototype.searchVectors;

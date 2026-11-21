@@ -846,7 +846,7 @@ describe('add() candidates and source rows', () => {
   /** A memory adapter that rejects topK above 100, honouring and declaring excludeSources, or ignoring it. */
   class Capped extends MemoryStorageAdapter {
     constructor(private readonly honours: boolean) { super(); }
-    override get excludesSources(): true | undefined { return this.honours ? true : undefined; }
+    override get excludesSources(): boolean { return this.honours; }
     override async searchVectors(params: Parameters<MemoryStorageAdapter['searchVectors']>[0]) {
       if (params.topK > 100) throw new Error('TOPK_LIMIT');
       if (this.honours) return super.searchVectors(params);
@@ -888,6 +888,39 @@ describe('add() candidates and source rows', () => {
     expect(embedder.embedBatch).not.toHaveBeenCalled();
     expect(llm.generateJSON).not.toHaveBeenCalled();
     expect(new MemoryStorageAdapter().excludesSources).toBe(true);
+  });
+
+  it('keeps the parent adapter\'s declaration in a transaction, and withdraws it when the built-in search is replaced', async () => {
+    const llm = fakeLLM();
+    const undeclared = new Capped(false);
+    await expect(undeclared.transaction(tx => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder, llm).upsertDocument({ ...scope, content: docV1, extract: true })))
+      .rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    expect(await undeclared.getSourceState(scope)).toBeNull();
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(llm.generateJSON).not.toHaveBeenCalled();
+    const declared = new Capped(true);
+    await declared.transaction(tx => new MemoryFn({ storage: { kind: 'memory' } }, tx, embedder).upsertDocument({ ...scope, content: docV1 }));
+    expect(await declared.getSourceState(scope)).toMatchObject({ chunkCount: 3 });
+
+    embedder.embedBatch.mockClear();
+    const adapter = new MemoryStorageAdapter();
+    const builtIn = MemoryStorageAdapter.prototype.searchVectors;
+    // A delegating replacement that drops excludeSources must not inherit the declaration.
+    MemoryStorageAdapter.prototype.searchVectors = function (this: MemoryStorageAdapter, params) {
+      const { excludeSources: _ignored, ...rest } = params;
+      return builtIn.call(this, rest);
+    };
+    try {
+      expect(adapter.excludesSources).toBe(false);
+      expect(await adapter.transaction(async tx => tx.excludesSources)).toBe(false);
+      await expect(new MemoryFn({ storage: { kind: 'memory' } }, adapter, embedder).upsertDocument({ ...scope, content: docV1 })).rejects.toThrow('MEMORY_DOCUMENTS_UNSUPPORTED');
+    } finally {
+      MemoryStorageAdapter.prototype.searchVectors = builtIn;
+    }
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await adapter.getSourceState(scope)).toBeNull();
+    expect(adapter.excludesSources).toBe(true);
+    expect(await adapter.transaction(async tx => tx.excludesSources)).toBe(true);
   });
 
   it('finds the ordinary duplicate and conflict behind 80 source rows written through replaceSource on a declared capped adapter', async () => {

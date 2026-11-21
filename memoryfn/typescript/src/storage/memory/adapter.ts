@@ -87,10 +87,13 @@ export class MemoryStorageAdapter implements StorageAdapter {
   private relationships = new Map<string, MemoryRelationship>();
   private sequence = 0;
   private mutationVersion = 0;
+  /** A transaction's staged adapter reports its parent's declaration, since the parent serves add() after the commit. */
+  private parentExcludesSources: boolean | undefined;
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
     const version = this.mutationVersion;
     const staged = new MemoryStorageAdapter();
+    staged.parentExcludesSources = this.excludesSources === true;
     const memories = new StagedMap(this.memories);
     const relationships = new StagedMap(this.relationships);
     staged.memories = memories; staged.relationships = relationships;
@@ -177,9 +180,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return saved.map(cloneRelationship);
   }
 
-  /** Declared for this class's searchVectors only: a subclass that overrides it must declare excludesSources itself. */
-  get excludesSources(): true | undefined {
-    return this.searchVectors === MemoryStorageAdapter.prototype.searchVectors ? true : undefined;
+  /** Declared only while searchVectors is the built-in one: an override or a replacement must declare excludesSources itself. */
+  get excludesSources(): boolean {
+    return this.parentExcludesSources ?? this.searchVectors === builtInMemorySearch;
   }
 
   async searchVectors(params: {
@@ -311,3 +314,6 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return live.length;
   }
 }
+
+/** The built-in search, captured once, so replacing the prototype's method withdraws the declaration. */
+const builtInMemorySearch = MemoryStorageAdapter.prototype.searchVectors;
