@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -245,10 +245,15 @@ test("the owners command prints each path's owner and fails on an unlisted path 
   assert.equal(unlisted.status, 1);
   assert.deepEqual(unlisted.out, ["datafn: public"]);
   assert.match(unlisted.err, /unlisted-path/);
-  assert.deepEqual(cli(["--root", dir, "--repo=next", "docsfn/x"]).out, ["docsfn/x: public"]);
+  // Without the next manifest, --repo next cannot tell whether an unlisted path is next-owned: it must not say "public".
+  const noNextManifest = cli(["--root", dir, "--repo=next", "datafn/x", "NEXT.md", "package-lock.json"]);
+  assert.equal(noNextManifest.status, 1);
+  assert.deepEqual(noNextManifest.out, ["datafn/x: public", "package-lock.json: generated"]);
+  assert.match(noNextManifest.err, /next-manifest-needed.*"NEXT\.md".*superfunctions\.owners\.next\.json/);
 
   writeFileSync(path.join(dir, NEXT_MANIFEST), JSON.stringify(nextData()));
   assert.deepEqual(cli(["--root", dir, "docsfn/x", "NEXT.md", "--", "--odd"]).out, ["docsfn/x: next", "NEXT.md: next", "--odd: public"]);
+  assert.deepEqual(cli(["--root", dir, "--repo", "public", "datafn"]), { status: 0, out: ["datafn: public"], err: "" });
 });
 
 test("the owners command rejects bad arguments and unreadable manifests", (t) => {
@@ -257,6 +262,10 @@ test("the owners command rejects bad arguments and unreadable manifests", (t) =>
   assert.equal(cli([]).status, 2);
   assert.equal(cli(["--repo", "elsewhere", "datafn"]).status, 2);
   assert.equal(cli(["--root"]).status, 2);
+  // A flag or `--` where a value belongs is a missing value, not a root named "--repo=public".
+  assert.equal(cli(["--root", "--repo=public", "AGENTS.md"]).status, 2);
+  assert.match(cli(["--root", "--repo=public", "AGENTS.md"]).err, /--root needs a value/);
+  assert.equal(cli(["--repo", "--", "AGENTS.md"]).status, 2);
   assert.equal(cli(["--bogus", "datafn"]).status, 2);
   const missing = cli(["--root", dir, "datafn"]);
   assert.equal(missing.status, 1);
@@ -269,4 +278,17 @@ test("node scripts/owners.mjs <path> runs as a command in this checkout", () => 
   const result = spawnSync(process.execPath, [script, "AGENTS.md", "catchfn/typescript"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "AGENTS.md: public\ncatchfn/typescript: public\n");
+});
+
+test("node scripts/owners.mjs runs through a symlinked checkout path and reports an invalid path", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "owners-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = path.join(dir, "scripts");
+  symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, "dir");
+  const script = path.join(link, "owners.mjs");
+  assert.notEqual(script, realpathSync(script));
+  const result = spawnSync(process.execPath, [script, "AGENTS.md", "../outside"], { encoding: "utf8" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, "AGENTS.md: public\n");
+  assert.match(result.stderr, /invalid-path.*\.\.\/outside/);
 });

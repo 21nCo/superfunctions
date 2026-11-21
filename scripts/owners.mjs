@@ -3,7 +3,7 @@
 // repositories; `superfunctions.owners.next.json` exists only on `next` and lists the next-owned entries.
 // On public an unlisted path or package is an error; on `next` an unlisted path is public-owned.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -330,7 +330,8 @@ const CLI_USAGE = "usage: node scripts/owners.mjs [--repo public|next] [--root <
 /**
  * Command line lookup (SFNS-128): prints `<path>: <owner>` for each repository-relative path, where the owner is
  * "public", "next" or "generated". Returns the exit status: 0 when every path has an owner, 1 when a manifest or
- * a path is rejected (an unlisted path on public, for example), 2 for a usage error.
+ * a path is rejected (an unlisted path on public, or a `--repo next` lookup of a path the public manifest does not
+ * list in a checkout without the next manifest), 2 for a usage error.
  * @param {string[]} argv
  * @param {{ stdout?: (line: string) => void, stderr?: (line: string) => void }} [io]
  */
@@ -354,7 +355,8 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
         return 2;
       }
       const value = inline ?? argv[++index];
-      if (value === undefined || value === "") {
+      // A separate value that is itself an option (`--root --repo=next`) or `--` means the value is missing.
+      if (value === undefined || value === "" || (inline === undefined && value.startsWith("-"))) {
         stderr(`error: ${flag} needs a value\n${CLI_USAGE}`);
         return 2;
       }
@@ -378,9 +380,20 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
     stderr(error instanceof OwnersError ? `error (${error.code}): ${error.message}` : `error: ${error.message}`);
     return 1;
   }
+  // Without the next manifest (a public checkout), a path the public manifest does not list cannot be classified
+  // under next's rules: it may be next-owned (NEXT.md, an unpublished function), so the command refuses to guess.
+  const guessesNext = (options.repo ?? owners.defaultRepo) === "next" && !owners.nextManifest;
   let status = 0;
   for (const target of targets) {
     try {
+      if (guessesNext && !isPublicListed(owners, target)) {
+        stderr(
+          `error (next-manifest-needed): ${JSON.stringify(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
+            "is not in this checkout; run the command in a next checkout to see whether next owns it",
+        );
+        status = 1;
+        continue;
+      }
       stdout(`${normalizePath(target)}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
     } catch (error) {
       if (!(error instanceof OwnersError)) throw error;
@@ -391,6 +404,28 @@ export function runOwnersCli(argv, { stdout = console.log, stderr = console.erro
   return status;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** Whether the public manifest lists `target` (as a top-level path or a root file); invalid paths throw. */
+function isPublicListed(owners, target) {
+  try {
+    owners.ownerOfPath(target, { repo: "public" });
+    return true;
+  } catch (error) {
+    if (error instanceof OwnersError && error.code === "unlisted-path") return false;
+    throw error;
+  }
+}
+
+// realpath: Node runs the main module from its real path, so a symlinked checkout (or macOS's /var -> /private/var)
+// must still match and run the command rather than exit 0 with no output.
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   process.exitCode = runOwnersCli(process.argv.slice(2));
 }

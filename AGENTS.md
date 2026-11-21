@@ -4,8 +4,10 @@
 
 Two repositories share this tree (SFNS-121):
 
-- `21nCo/superfunctions`, base branch `dev`: the public repository. Published functions and every shared path are developed here.
-- `21nCo/super-functions.next`, base branch `next`: private. It holds the functions that are not yet published, plus a copy of everything public that the sync keeps up to date.
+- `21nCo/superfunctions`, base branch `dev`: the public repository. Every shared path and every public-owned function is developed here.
+- `21nCo/super-functions.next`, base branch `next`: private. It holds the `next`-owned functions, plus a copy of everything public that the sync keeps up to date.
+
+The ownership manifests below decide where a path or package lives, not whether it has been published. The target is that a function moves to the public repository when it is ready to publish, but a function already published from `next` stays `next`-owned, and keeps publishing from `next`, until it is promoted.
 
 **If this checkout is `21nCo/super-functions.next`, also read `NEXT.md`.** It holds the `next`-only instructions; this file states the model both repositories share. `git remote get-url origin` tells you which checkout you are in.
 
@@ -24,7 +26,7 @@ Every path has exactly one owner repository, and every npm package and Python pr
 node scripts/owners.mjs <path>...     # prints "<path>: public", "next" or "generated"
 ```
 
-Paths are relative to the repository root. On `dev` an unlisted path is an error (exit status 1); `--repo public|next` selects the other repository's rules. Edit a path only in the repository that owns it. A change to a public-owned path made on `next` is overwritten or conflicts at the next sync.
+Paths are relative to the repository root. On `dev` an unlisted path is an error (exit status 1). `--repo public|next` selects which repository's rules apply; the default is `next` when `superfunctions.owners.next.json` is present and `public` otherwise. Only a `next` checkout has the `next` manifest, so on `dev` `--repo next` answers only for paths the public manifest lists and fails (exit status 1) for any other path, such as `NEXT.md`, instead of guessing: ask in a `next` checkout. Edit a path only in the repository that owns it. A change to a public-owned path made on `next` is overwritten or conflicts at the next sync.
 
 ### Where shared fixes land
 

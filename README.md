@@ -280,7 +280,7 @@ current workflow repair.
 
 ## Repositories
 
-This repository, `21nCo/superfunctions` (branch `dev`), is where published functions and all shared code are developed. Functions that are not yet published live in a private repository, `21nCo/super-functions.next`, which receives everything public from `dev` through an automatic one-way sync. `superfunctions.owners.json` lists what this repository owns; `node scripts/owners.mjs <path>` prints a path's owner. A function moves here when it is ready to publish, through `scripts/promote.mjs`. [AGENTS.md](AGENTS.md) states the full model.
+This repository, `21nCo/superfunctions` (branch `dev`), is where public-owned functions and all shared code are developed. Other functions are owned by a private repository, `21nCo/super-functions.next`, which receives everything public from `dev` through an automatic one-way sync. The ownership manifests decide where a function lives: `superfunctions.owners.json` lists what this repository owns, and `node scripts/owners.mjs <path>` prints a path's owner. A function moves here through `scripts/promote.mjs`, normally when it is ready to publish; one already published from the private repository stays there until it is promoted. [AGENTS.md](AGENTS.md) states the full model.
 
 ## Contributing
 
