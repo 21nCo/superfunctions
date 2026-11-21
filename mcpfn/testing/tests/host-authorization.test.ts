@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, it } from "vitest";
 import {
   createMcpAuthorizationCompatibilityHandler,
@@ -11,6 +12,7 @@ import {
   createHostedAuthorizationFixtures,
   runHostedAuthorizationRegression,
   type McpFnHostedAuthorizationCase,
+  type McpFnHostedAuthorizationEvidence,
 } from "../src/index.js";
 
 const TOKEN_RESPONSE_HEADERS = {
@@ -504,6 +506,44 @@ describe("unvetted-client authorization rejections", () => {
   const METADATA_DOCUMENT = "claude-client-metadata-extensible-grants";
   const PRE_REGISTERED = "chatgpt-pre-registered-code-pkce";
 
+  /**
+   * Records evidence per handler call and binds it to the Response that call
+   * returned, so a retrying adapter reports the attempt it returned.
+   */
+  function evidenceRecorder() {
+    const attempts = new AsyncLocalStorage<McpFnHostedAuthorizationEvidence>();
+    const recorded = new WeakMap<Response, McpFnHostedAuthorizationEvidence>();
+    const recorder = {
+      /** Client resolutions across every call, for assertions. */
+      total: 0,
+      resolved() {
+        recorder.total += 1;
+        const attempt = attempts.getStore();
+        if (attempt) attempt.clientResolutions += 1;
+      },
+      /** Wraps a policy hook so a rejection it raises is recorded as a denial. */
+      policy<T>(hook: (input: T) => unknown) {
+        return async (input: T) => {
+          try {
+            await hook(input);
+          } catch (error) {
+            const attempt = attempts.getStore();
+            if (attempt) attempt.preClientResolutionDenial = true;
+            throw error;
+          }
+        };
+      },
+      async call(handler: (request: Request) => Promise<Response>, request: Request) {
+        const attempt = { clientResolutions: 0, preClientResolutionDenial: false };
+        const response = await attempts.run(attempt, () => handler(request));
+        recorded.set(response, attempt);
+        return response;
+      },
+      authorizationEvidence: (response: Response) => recorded.get(response),
+    };
+    return recorder;
+  }
+
   function runAgainstMcpFn(
     ids: string[],
     authorizationErrors?: AuthorizationErrorOptions,
@@ -512,12 +552,12 @@ describe("unvetted-client authorization rejections", () => {
     capabilities: { tokenEndpointAuthMethods?: string[]; supportedScopes?: string[] } = {},
   ) {
     const registrations = new Map<string, McpFnNormalizedClientRegistration>();
-    let resolutions = 0;
+    const recorder = evidenceRecorder();
     const handler = createMcpAuthorizationCompatibilityHandler({
       issuer,
       clients: {
         resolve: async (clientId) => {
-          resolutions += 1;
+          recorder.resolved();
           return registrations.get(clientId) ?? null;
         },
       },
@@ -541,14 +581,14 @@ describe("unvetted-client authorization rejections", () => {
       tokenEndpointAuthMethods: ["none"],
       supportedScopes: ["mcp:read"],
       ...capabilities,
-      clientResolutionCount: () => resolutions,
+      authorizationEvidence: recorder.authorizationEvidence,
       async prepareRegistration(fixture) {
         registrations.set(
           fixture.clientId,
           normalizeMcpClientRegistration({ ...fixture, redirectPolicy }),
         );
       },
-      request: (request) => handler(request),
+      request: (request) => recorder.call(handler, request),
     }, ids.map((id) => {
       const fixture = rejectionFixture(id);
       adjust(fixture);
@@ -1317,134 +1357,183 @@ describe("unvetted-client authorization rejections", () => {
       }
       const URIS = ["https://other.example.com/cb", RUNTIME_PORT];
 
-      it.each(["access_denied", "invalid_target"])(
-        "accepts a %s policy rejection made before any client resolution",
-        async (policyError) => {
-          let resolutions = 0;
-          const handler = createMcpAuthorizationCompatibilityHandler({
-            issuer,
-            clients: {
-              resolve: async () => {
-                resolutions += 1;
-                return null;
-              },
+      const NO_RESOLUTION =
+        "A post-match authorization response requires a client resolution, but the response's evidence shows none";
+      const evidence = (clientResolutions: number, preClientResolutionDenial: boolean) =>
+        ({ clientResolutions, preClientResolutionDenial });
+
+      /**
+       * The real handler with a beforeClientResolution policy that denies the
+       * calls `denies` selects; stored lookups and metadata-document fetches
+       * and the denial are recorded per call and bound to its response.
+       */
+      function policyTarget(policyError: string, denies: (call: number) => boolean) {
+        const recorder = evidenceRecorder();
+        const registrations = new Map<string, McpFnNormalizedClientRegistration>();
+        let calls = 0;
+        const handler = createMcpAuthorizationCompatibilityHandler({
+          issuer,
+          clients: {
+            resolve: async (clientId) => {
+              recorder.resolved();
+              return registrations.get(clientId) ?? null;
             },
-            clientMetadataDocuments: {
-              enabled: true,
-              allow: async () => true,
-              fetch: async () => {
-                resolutions += 1;
-                return new Response(null, { status: 404 });
-              },
+          },
+          clientMetadataDocuments: {
+            enabled: true,
+            allow: async () => true,
+            fetch: async () => {
+              recorder.resolved();
+              return new Response(null, { status: 404 });
             },
-            beforeClientResolution: () => {
+          },
+          beforeClientResolution: recorder.policy(() => {
+            calls += 1;
+            if (denies(calls)) {
               throw new McpFnHostedAuthorizationError(policyError, "Client is blocked by policy");
+            }
+          }),
+          allowedResources: [resource],
+          supportedScopes: ["mcp:read"],
+          authorize: async () => new Response("unexpected authorize", { status: 500 }),
+          tokenAuthority: {
+            exchangeAuthorizationCode: async () => {
+              throw new Error("unexpected token exchange");
             },
-            allowedResources: [resource],
-            supportedScopes: ["mcp:read"],
-            authorize: async () => new Response("unexpected authorize", { status: 500 }),
-            tokenAuthority: {
-              exchangeAuthorizationCode: async () => {
-                throw new Error("unexpected token exchange");
-              },
-              refreshToken: async () => {
-                throw new Error("unexpected token refresh");
-              },
+            refreshToken: async () => {
+              throw new Error("unexpected token refresh");
             },
-          });
-          const target = {
-            issuer,
-            tokenEndpointAuthMethods: ["none"],
-            prepareRegistration: async () => {},
-            request: (request: Request) => handler(request),
-          };
+          },
+        });
+        const target = {
+          issuer,
+          tokenEndpointAuthMethods: ["none"],
+          async prepareRegistration(fixture: McpFnHostedAuthorizationCase["registration"]) {
+            registrations.set(fixture.clientId, normalizeMcpClientRegistration(fixture));
+          },
+          request: (request: Request) => recorder.call(handler, request),
+          authorizationEvidence: recorder.authorizationEvidence,
+        };
+        /** An adapter that retries once and returns the second attempt. */
+        const retrying = (second: (request: Request) => Promise<Response> = handler) => ({
+          ...target,
+          request: async (request: Request) => {
+            await recorder.call(handler, request.clone());
+            return recorder.call(second, request);
+          },
+        });
+        return { recorder, target, retrying };
+      }
+
+      it.each(["access_denied", "invalid_target"])(
+        "accepts a %s policy denial whose response evidence shows no client resolution",
+        async (policyError) => {
+          const { recorder, target } = policyTarget(policyError, () => true);
+          const { authorizationEvidence: _evidence, ...strict } = target;
           for (const requested of URIS) {
             for (const expected of [undefined, policyError]) {
               const fixtures = notEligible(requested, expected);
-              const results = await runHostedAuthorizationRegression(
-                { ...target, clientResolutionCount: () => resolutions },
-                [...fixtures],
-              );
+              const results = await runHostedAuthorizationRegression(target, [...fixtures]);
               for (const result of results) {
                 expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: policyError });
               }
-              // Without the count, the stage is unknown: client-stage codes only.
-              const [a, b] = await runHostedAuthorizationRegression(target, [...fixtures]);
+              // Without evidence, the stage is unknown: client-stage codes only.
+              const [a, b] = await runHostedAuthorizationRegression(strict, [...fixtures]);
               expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR(policyError) });
               expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
             }
           }
-          expect(resolutions).toBe(0);
+          expect(recorder.total).toBe(0);
         },
       );
 
-      it("rejects a non-client code from a request that resolved the client", async () => {
-        let resolutions = 0;
-        const resolvingTarget = {
+      it("rejects a non-client code that validation returned before any client resolution", async () => {
+        const recorder = evidenceRecorder();
+        const validating = {
           issuer,
           tokenEndpointAuthMethods: ["none"],
           prepareRegistration: async () => {},
-          request: async () => {
-            resolutions += 1;
-            return Response.json({ error: "invalid_target" }, { status: 400 });
-          },
+          request: (request: Request) => recorder.call(
+            async () => Response.json({ error: "invalid_request" }, { status: 400 }),
+            request,
+          ),
+          authorizationEvidence: recorder.authorizationEvidence,
         };
         for (const requested of URIS) {
-          for (const expected of [undefined, "invalid_target"]) {
-            const fixtures = [...notEligible(requested, expected)];
-            for (const target of [
-              { ...resolvingTarget, clientResolutionCount: () => resolutions },
-              resolvingTarget,
-            ]) {
-              const [a, b] = await runHostedAuthorizationRegression(target, fixtures);
-              expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
-              expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+          for (const expected of [undefined, "invalid_request"]) {
+            const [a, b] = await runHostedAuthorizationRegression(validating, [...notEligible(requested, expected)]);
+            expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_request") });
+            expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+          }
+        }
+        expect(recorder.total).toBe(0);
+      });
+
+      it("rejects a non-client code from a response whose evidence shows a client resolution", async () => {
+        for (const code of ["invalid_target", "invalid_request"]) {
+          for (const reported of [evidence(1, false), evidence(1, true), undefined]) {
+            const target = {
+              issuer,
+              tokenEndpointAuthMethods: ["none"],
+              prepareRegistration: async () => {},
+              request: async () => Response.json({ error: code }, { status: 400 }),
+              authorizationEvidence: () => reported,
+            };
+            for (const requested of URIS) {
+              for (const expected of [undefined, code]) {
+                const [a, b] = await runHostedAuthorizationRegression(target, [...notEligible(requested, expected)]);
+                expect(a).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR(code) });
+                expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+              }
             }
           }
         }
       });
 
-      it("never lets a request without client resolution permit a post-match response", async () => {
+      it("never lets a response without client resolution permit a post-match response", async () => {
         const fixtures = [...notEligible(RUNTIME_PORT)];
-        const unresolved = { tokenEndpointAuthMethods: ["none"], clientResolutionCount: () => 0 };
-        const page = {
-          issuer,
-          ...unresolved,
-          prepareRegistration: async () => {},
-          request: async () => htmlPage("<p><code>access_denied</code></p>")(),
-        };
-        const callback = { ...callbackTarget(undefined, "access_denied"), ...unresolved };
-        // An ineligible registration's page is not an unvetted error page at all.
-        for (const [target, ineligibleError] of [
-          [page, "Authorization request did not redirect (HTTP 400)"],
-          [callback, "Rejected redirect URI must not receive a callback"],
-        ] as const) {
-          const [a, b] = await runHostedAuthorizationRegression(target, fixtures);
-          expect(a).toMatchObject({ status: "failed", error: ineligibleError });
-          expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
-        }
-        // Zero resolutions never excuse a reflected redirect URI.
-        for (const requested of ["HTTP://127.0.0.1:49152/callback", RUNTIME_PORT, LOOPBACK]) {
-          const reflecting = notEligible("HTTP://127.0.0.1:49152/callback");
-          const results = await runHostedAuthorizationRegression({
+        for (const reported of [evidence(0, false), evidence(0, true)]) {
+          const unresolved = { tokenEndpointAuthMethods: ["none"], authorizationEvidence: () => reported };
+          const page = {
             issuer,
             ...unresolved,
             prepareRegistration: async () => {},
-            request: async () => Response.json(
-              { error: "access_denied", error_description: `Blocked ${requested}` },
-              { status: 400 },
-            ),
-          }, [...reflecting]);
-          for (const result of results) {
-            expect(result).toMatchObject({
-              status: "failed",
-              error: "Authorization error response must not reflect the client redirect URI",
-            });
+            request: async () => htmlPage("<p><code>access_denied</code></p>")(),
+          };
+          const callback = { ...callbackTarget(undefined, "access_denied"), ...unresolved };
+          // An ineligible registration's page is not an unvetted error page at all.
+          for (const [target, ineligibleError] of [
+            [page, "Authorization request did not redirect (HTTP 400)"],
+            [callback, "Rejected redirect URI must not receive a callback"],
+          ] as const) {
+            const [a, b] = await runHostedAuthorizationRegression(target, fixtures);
+            expect(a).toMatchObject({ status: "failed", error: ineligibleError });
+            expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+          }
+          // Neither zero resolutions nor a denial excuses a reflected redirect URI.
+          for (const requested of ["HTTP://127.0.0.1:49152/callback", RUNTIME_PORT, LOOPBACK]) {
+            const reflecting = notEligible("HTTP://127.0.0.1:49152/callback");
+            const results = await runHostedAuthorizationRegression({
+              issuer,
+              ...unresolved,
+              prepareRegistration: async () => {},
+              request: async () => Response.json(
+                { error: "access_denied", error_description: `Blocked ${requested}` },
+                { status: 400 },
+              ),
+            }, [...reflecting]);
+            for (const result of results) {
+              expect(result).toMatchObject({
+                status: "failed",
+                error: "Authorization error response must not reflect the client redirect URI",
+              });
+            }
           }
         }
       });
 
-      it("never accepts a post-match response from a request that resolved no client", async () => {
+      /** Post-match responders for an eligible registration with a runtime port. */
+      function postMatchResponders() {
         const eligible = rejectionFixture(DYNAMIC);
         redirect(LOOPBACK, RUNTIME_PORT)(eligible);
         const allowed = createHostedAuthorizationFixtures({ issuer, resource })
@@ -1458,38 +1547,66 @@ describe("unvetted-client authorization rejections", () => {
           callback.searchParams.set("state", params.get("state")!);
           return new Response(null, { status: 302, headers: { location: callback.toString() } });
         };
-        const responders: [McpFnHostedAuthorizationCase, (request: Request) => Promise<Response>][] = [
+        return [
           [eligible, async () => htmlPage("<p><code>invalid_target</code></p>")()],
           [eligible, callbackTarget().request],
           [allowed, codeCallback],
-        ];
-        for (const [fixture, respond] of responders) {
-          for (const lookups of [0, 1, undefined]) {
-            let resolutions = 0;
+        ] as [McpFnHostedAuthorizationCase, (request: Request) => Promise<Response>][];
+      }
+
+      it("never accepts a post-match response whose evidence shows no resolution or a denial", async () => {
+        for (const [fixture, respond] of postMatchResponders()) {
+          for (const reported of [evidence(0, false), evidence(0, true), evidence(1, true), evidence(1, false), undefined]) {
             const [result] = await runHostedAuthorizationRegression({
               issuer,
               prepareRegistration: async () => {},
-              request: async (request) => {
-                resolutions += lookups ?? 0;
-                return respond(request);
-              },
-              ...(lookups === undefined ? {} : { clientResolutionCount: () => resolutions }),
+              request: respond,
+              authorizationEvidence: () => reported,
             }, [fixture]);
-            expect(result).toMatchObject(lookups === 0 ? {
-              status: "failed",
-              error: "A post-match authorization response requires a client resolution, but the request made none",
-            } : { status: "passed", phase: "authorization-request" });
+            const permitted = !reported || (reported.clientResolutions > 0 && !reported.preClientResolutionDenial);
+            expect(result).toMatchObject(permitted
+              ? { status: "passed", phase: "authorization-request" }
+              : { status: "failed", error: NO_RESOLUTION });
           }
         }
-        // The zero-resolution exception still requires a valid OAuth error code.
+        // A denial with no resolution still requires a valid OAuth error code.
         const [ineligible] = notEligible(RUNTIME_PORT);
         const [malformed] = await runHostedAuthorizationRegression({
           issuer,
-          clientResolutionCount: () => 0,
+          authorizationEvidence: () => evidence(0, true),
           prepareRegistration: async () => {},
           request: async () => Response.json({ error: "\n" }, { status: 400 }),
         }, [ineligible]);
         expect(malformed).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("\n") });
+      });
+
+      it("binds evidence to the attempt whose response a retrying adapter returned", async () => {
+        // A discarded attempt that resolved the client, then a returned policy denial.
+        const denied = policyTarget("access_denied", (call) => call % 2 === 0);
+        for (const requested of URIS) {
+          const results = await runHostedAuthorizationRegression(
+            denied.retrying(),
+            [...notEligible(requested)],
+          );
+          for (const result of results) {
+            expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "access_denied" });
+          }
+        }
+        expect(denied.recorder.total).toBeGreaterThanOrEqual(2 * URIS.length);
+        // A discarded attempt that resolved the client, then a returned
+        // post-match response produced without any resolution.
+        for (const [fixture, respond] of postMatchResponders()) {
+          const resolving = policyTarget("access_denied", () => false);
+          const [result] = await runHostedAuthorizationRegression(resolving.retrying(respond), [fixture]);
+          expect(result).toMatchObject({ status: "failed", error: NO_RESOLUTION });
+          expect(resolving.recorder.total).toBe(1);
+        }
+        // A discarded policy denial, then a returned eligible page that resolved the client.
+        const [fixture] = postMatchResponders()[0]!;
+        const deniedFirst = policyTarget("access_denied", (call) => call % 2 === 1);
+        const [page] = await runHostedAuthorizationRegression(deniedFirst.retrying(), [fixture]);
+        expect(page).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
+        expect(deniedFirst.recorder.total).toBe(1);
       });
 
       it("checks registered scopes only when the target declares supported scopes", async () => {
