@@ -5,7 +5,7 @@ import {
 } from './types';
 import {
   requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes, sourceTagsBytes,
-  sourceEmbeddingBytes, isStorableText,
+  sourceEmbeddingBytes, storableMetadataBytes, isStorableText,
   MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
   type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert,
 } from '../storage/adapter';
@@ -103,7 +103,7 @@ export class MemoryFn implements IMemoryFn {
     const { scope: given } = requireSourceScope(input);
     // A source ignores tag order and repeats, so its records store the distinct tags once each.
     const scope = { ...given, containerTags: [...new Set(given.containerTags)] };
-    const { content, contentHash: givenHash, metadata, type, extract, chunking } = input;
+    const { content, contentHash: givenHash, type, extract, chunking } = input;
     if (typeof content !== 'string' || !content.trim()) throw new Error('MEMORY_CONTENT_REQUIRED');
     // Hashed as UTF-8, a lone surrogate would alias U+FFFD, and PostgreSQL rejects NUL after embedding.
     if (!isStorableText(content)) throw new Error('MEMORY_CONTENT_INVALID');
@@ -115,7 +115,9 @@ export class MemoryFn implements IMemoryFn {
     // Never emulated by a state read and replaceSource: that would race concurrent identical upserts.
     if (typeof this.storage.replaceSourceIfChanged !== 'function') throw new Error('MEMORY_DOCUMENTS_UNSUPPORTED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
-    const metadataBytes = sourceMetadataBytes(metadata);
+    // One copy of the caller's metadata is measured, checked and written, so changing it meanwhile changes nothing.
+    const metadata = metadataSnapshot(input.metadata);
+    const metadataBytes = storableMetadataBytes(metadata);
     const tagsBytes = sourceTagsBytes(scope.containerTags);
     const contentHash = givenHash ?? await sha256Hex(content);
 
@@ -163,12 +165,11 @@ export class MemoryFn implements IMemoryFn {
       for (const chunk of chunks) records.push({ content: chunk, type: chunkType, metadata: { ...metadata } });
     }
     const batch: unknown = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
-    // Plain unit-length copies: what is charged here is exactly what storage receives.
-    const embeddings = unitEmbeddings(batch, records.length, this.storage.embeddingDimensions);
-    for (const embedding of embeddings) {
+    // Plain unit-length copies, each charged before the next is made: what is charged is exactly what storage receives.
+    const embeddings = unitEmbeddings(batch, records.length, this.storage.embeddingDimensions, embedding => {
       bytes += sourceEmbeddingBytes(embedding);
       if (bytes > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
-    }
+    });
     const written = await this.storage.replaceSourceIfChanged!({
       ...scope, contentHash,
       chunks: records.map((record, index) => ({ ...record, tenantId: scope.tenantId, containerTags: scope.containerTags, embedding: embeddings[index], isLatest: true })),
@@ -221,6 +222,16 @@ export class MemoryFn implements IMemoryFn {
   }
 }
 
+/** A copy of caller metadata; metadata structuredClone cannot copy is MEMORY_METADATA_INVALID. */
+function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (metadata === undefined) return undefined;
+  try {
+    return structuredClone(metadata);
+  } catch {
+    throw new Error('MEMORY_METADATA_INVALID');
+  }
+}
+
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `text`. */
 export async function sha256Hex(text: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle ?? (await import('node:crypto')).webcrypto.subtle;
@@ -237,9 +248,10 @@ export async function sha256Hex(text: string): Promise<string> {
  * vanishes, either in the memory adapter's float64 arithmetic or in pgvector's
  * float32 values and accumulators. Anything else is rejected before the source
  * is touched (MEMORY_EMBEDDING_COUNT_MISMATCH or MEMORY_EMBEDDING_INVALID), so
- * the previous chunks stay live and searchable.
+ * the previous chunks stay live and searchable. `accept` sees each copy
+ * before the next vector is read, and may throw to stop.
  */
-function unitEmbeddings(value: unknown, count: number, dimensions: number | undefined): number[][] {
+function unitEmbeddings(value: unknown, count: number, dimensions: number | undefined, accept: (unit: number[]) => void): number[][] {
   if (!Array.isArray(value) || value.length !== count) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
   let size = dimensions;
   const units: number[][] = [];
@@ -262,6 +274,7 @@ function unitEmbeddings(value: unknown, count: number, dimensions: number | unde
     for (let at = 0; at < size; at++) { copy[at] /= largest; squares += copy[at] * copy[at]; }
     const norm = Math.sqrt(squares);
     for (let at = 0; at < size; at++) copy[at] /= norm;
+    accept(copy);
     units.push(copy);
   }
   return units;

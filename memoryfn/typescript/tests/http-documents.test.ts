@@ -157,7 +157,7 @@ describe('document routes', () => {
     }
   });
 
-  it('answers 400 for document text with a lone surrogate or NUL, before any provider call', async () => {
+  it('answers 400 for document text or metadata with a lone surrogate or NUL, before any provider call', async () => {
     const embedder = { embed: vi.fn(), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1])) };
     const storage = new MemoryStorageAdapter();
     const router = createMemoryRouter(new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder), { authorize: vi.fn().mockResolvedValue(trusted) });
@@ -167,6 +167,9 @@ describe('document routes', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: 'INVALID_INPUT', code: 'MEMORY_CONTENT_INVALID' });
     }
+    const metadata = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x', metadata: { note: 'a\uD800' } }));
+    expect(metadata.status).toBe(400);
+    expect(await metadata.json()).toEqual({ error: 'INVALID_INPUT', code: 'MEMORY_METADATA_INVALID' });
     expect(embedder.embedBatch).not.toHaveBeenCalled();
     const emoji = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'Smile \u{1F600}' }));
     expect(emoji.status).toBe(200);

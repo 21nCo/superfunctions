@@ -203,13 +203,23 @@ export function sameTagSet(left: string[], right: string[]): boolean {
  * runtime's string capacity (a RangeError) is far over MAX_SOURCE_REPLACE_BYTES.
  */
 function jsonBytes(value: unknown): number {
+  return utf8Bytes(jsonText(value));
+}
+
+function jsonText(value: unknown): string {
   try {
-    return utf8Bytes(JSON.stringify(value));
+    return JSON.stringify(value);
   } catch (error) {
     if (error instanceof RangeError) throw sourceLimitExceeded();
     throw error;
   }
 }
+
+/**
+ * The JSON escape of a NUL or of an unpaired surrogate (JSON.stringify writes
+ * a paired one as is), when its backslash is not itself escaped.
+ */
+const UNSTORABLE_JSON_ESCAPE = /(?:^|[^\\])(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/;
 
 /** Bytes a copied (normalized) chunk adds to a replacement, as MAX_SOURCE_REPLACE_BYTES counts them. */
 function chunkBytes(chunk: MemoryInsert): number {
@@ -244,6 +254,17 @@ export function sourceEmbeddingBytes(embedding: number[]): number {
 /** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's metadata (undefined counts as {}). */
 export function sourceMetadataBytes(metadata: unknown): number {
   return jsonBytes(metadata ?? {});
+}
+
+/**
+ * sourceMetadataBytes, after rejecting metadata whose JSON holds a NUL or an
+ * unpaired surrogate in a key or string (MEMORY_METADATA_INVALID): PostgreSQL
+ * jsonb rejects both, while the memory adapter would store them.
+ */
+export function storableMetadataBytes(metadata: unknown): number {
+  const text = jsonText(metadata ?? {});
+  if (UNSTORABLE_JSON_ESCAPE.test(text)) throw new Error('MEMORY_METADATA_INVALID');
+  return utf8Bytes(text);
 }
 
 /**

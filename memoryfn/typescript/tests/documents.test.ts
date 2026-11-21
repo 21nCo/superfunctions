@@ -424,6 +424,29 @@ describe('upsertDocument document text', () => {
     expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
   });
 
+  it.each([
+    ['NUL in a value', { note: `a${String.fromCharCode(0)}b` }],
+    ['a lone surrogate in a key', { ['k\uD800']: 1 }],
+    ['a lone surrogate in a nested value', { nested: [{ note: 'x\uDC00' }] }],
+    ['a value structuredClone cannot copy', { run: () => 1 }],
+  ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
+    const first = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embedBatch.mockClear();
+    await expect(memory.upsertDocument({ ...scope, content: docV2, metadata })).rejects.toThrow('MEMORY_METADATA_INVALID');
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
+  });
+
+  it('writes the metadata as it was when called, even if the caller changes it while embedding', async () => {
+    const metadata = { nested: { note: 'original' } };
+    embedder.embedBatch.mockImplementationOnce(async (texts: string[]) => {
+      metadata.nested.note = 'x'.repeat(10_000);
+      return texts.map(() => [1, 2]);
+    });
+    const result = await memory.upsertDocument({ ...scope, content: docV1, metadata });
+    expect(result.memories.map(chunk => chunk.metadata)).toEqual([0, 1, 2].map(() => ({ nested: { note: 'original' } })));
+  });
+
   it('stores valid supplementary characters unchanged and hashes their UTF-8 bytes', async () => {
     const content = '# Emoji \u{1F600}\n\nClef \u{1D11E} and \u{20BB7}.';
     const result = await memory.upsertDocument({ ...scope, content });
@@ -479,6 +502,19 @@ describe('upsertDocument combined byte budget', () => {
     expect(await storage.getSourceState(source)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
     const found = await memory.search({ q: 'install', tenantId: scope.tenantId, containerTags, limit: 10 });
     expect(found.results.map(entry => entry.id).sort()).toEqual(first.memories.map(entry => entry.id).sort());
+  });
+});
+
+describe('upsertDocument vector budget', () => {
+  it('charges each copied vector before copying the next, so one shared huge vector fails fast', async () => {
+    // Each 1,000,000-component unit vector is about 22 MB of JSON, so the 13th passes 256 MiB.
+    const huge = new Array<number>(1_000_000).fill(1);
+    const shared = { embed: vi.fn(async () => huge), embedBatch: vi.fn(async (texts: string[]) => texts.map(() => huge)) };
+    const first = await memory.upsertDocument({ ...scope, content: docV1 });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, shared);
+    const content = Array.from({ length: 2_000 }, (_, index) => `# H${index}`).join('\n');
+    await expect(memory.upsertDocument({ ...scope, content })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: first.contentHash, chunkCount: 3 });
   });
 });
 
