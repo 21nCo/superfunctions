@@ -39,7 +39,7 @@
     "test": "vitest run --config vitest.config.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json"
   },
   "dependencies": {
     "@mcpfn/core": "0.0.6",

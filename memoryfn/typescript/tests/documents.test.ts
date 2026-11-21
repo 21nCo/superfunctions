@@ -127,6 +127,42 @@ describe('upsertDocument', () => {
     expect(getSourceState).not.toHaveBeenCalled();
   });
 
+  it('validates contentHash and type like storage, before any storage or provider call', async () => {
+    const getSourceState = vi.spyOn(storage, 'getSourceState');
+    const failing = { embed: vi.fn(), embedBatch: vi.fn(async () => { throw new Error('provider down'); }) };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, failing);
+    await expect(memory.upsertDocument({ ...scope, content: docV1, contentHash: 'h'.repeat(1_025) })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    await expect(memory.upsertDocument({ ...scope, content: docV1, contentHash: `etag${String.fromCharCode(0)}1` })).rejects.toThrow('MEMORY_SOURCE_HASH_REQUIRED');
+    await expect(memory.upsertDocument({ ...scope, content: docV1, contentHash: 'etag\uD800' })).rejects.toThrow('MEMORY_SOURCE_HASH_REQUIRED');
+    await expect(memory.upsertDocument({ ...scope, content: docV1, type: '' as never })).rejects.toThrow('MEMORY_TYPE_INVALID');
+    await expect(memory.upsertDocument({ ...scope, content: docV1, type: 7 as never })).rejects.toThrow('MEMORY_TYPE_INVALID');
+    expect(getSourceState).not.toHaveBeenCalled();
+    expect(failing.embedBatch).not.toHaveBeenCalled();
+    // A 1 KiB hash is accepted.
+    await expect(memory.upsertDocument({ ...scope, content: docV1, contentHash: 'h'.repeat(1_024) })).rejects.toThrow('provider down');
+  });
+
+  it('rejects a source over the chunk limit with the typed error, without splitting the rest or embedding', async () => {
+    const before = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embedBatch.mockClear();
+    // The old chunker overflowed the call stack (a RangeError) on this input.
+    const huge = memory.upsertDocument({ ...scope, content: 'x '.repeat(2_100_000), chunking: { targetChars: 64, overlapChars: 32 } });
+    await expect(huge).rejects.toMatchObject({ name: 'MemorySourceLimitError', code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: before.contentHash, chunkCount: 3 });
+  });
+
+  it('rejects metadata that would exceed the replacement byte budget across all chunks before copying it or embedding', async () => {
+    const before = await memory.upsertDocument({ ...scope, content: docV1 });
+    embedder.embedBatch.mockClear();
+    const content = Array.from({ length: 14_000 }, (_, index) => `# H${index}`).join('\n');
+    // 14,000 chunks x 20 KB of metadata is over the 256 MiB budget, though each piece is small.
+    const result = memory.upsertDocument({ ...scope, content, metadata: { blob: 'm'.repeat(20_000) } });
+    await expect(result).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toEqual({ contentHash: before.contentHash, chunkCount: 3 });
+  });
+
   it('rejects content over the source chunk limit before embedding it', async () => {
     const content = Array.from({ length: 16_385 }, (_, index) => `# H${index}`).join('\n');
     await expect(memory.upsertDocument({ ...scope, content })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
@@ -159,6 +195,49 @@ describe('upsertDocument with extract: true', () => {
     expect(await memory.forgetBySource(scope)).toEqual({ sourceKey: 'guide.md', deleted: 3 });
     const remaining = await searchAll('fact');
     expect(remaining.map(entry => entry.id)).toEqual([plain.memories[0].id]);
+  });
+
+
+  it('stops extracting once the facts exceed the chunk limit, before embedding', async () => {
+    const fact = { content: 'A fact.', type: 'derived', confidence: 1, tags: [] };
+    const llm: LLMProvider = { generate: vi.fn(), generateJSON: vi.fn(async () => ({ facts: Array.from({ length: 9_000 }, () => fact) })) as LLMProvider['generateJSON'] };
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    await expect(memory.upsertDocument({ ...scope, content: docV1, extract: true })).rejects.toMatchObject({ code: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    // The second chunk's facts pass the 16,384 limit, so the third chunk is never extracted.
+    expect(llm.generateJSON).toHaveBeenCalledTimes(2);
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(await storage.getSourceState(scope)).toBeNull();
+  });
+});
+
+describe('add() next to sources', () => {
+  const memoryScope = { tenantId: scope.tenantId, containerTags: scope.containerTags };
+
+  it('does not deduplicate into a source chunk, so forgetBySource leaves the added memory', async () => {
+    await memory.upsertDocument({ ...scope, content: docV1 });
+    const added = await memory.add({ ...memoryScope, content: '# Install\n\nRun the installer.' });
+    // The old pipeline reported deduplicated: 1 and stored nothing.
+    expect(added.summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
+    await memory.forgetBySource(scope);
+    expect((await searchAll()).map(entry => entry.id)).toEqual([added.memories[0].id]);
+    // Ordinary memories still deduplicate against each other.
+    expect((await memory.add({ ...memoryScope, content: '# Install\n\nRun the installer.' })).summary.deduplicated).toBe(1);
+  });
+
+  it('never supersedes or links a source chunk, so a re-upsert of the same content stays searchable', async () => {
+    const llm: LLMProvider = {
+      generate: vi.fn(),
+      generateJSON: vi.fn(async (prompt: string) => (prompt.includes('"facts"')
+        ? { facts: [{ content: 'Run the installer now.', type: 'derived', confidence: 1, tags: [] }] }
+        : { type: 'updates', reasoning: 'newer' })) as LLMProvider['generateJSON'],
+    };
+    const doc = await new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder).upsertDocument({ ...scope, content: '# Install\n\nRun the installer.' });
+    memory = new MemoryFn({ storage: { kind: 'memory' } }, storage, embedder, llm);
+    const added = await memory.add({ ...memoryScope, content: 'note' });
+    expect(added.summary).toEqual({ created: 1, updated: 0, deduplicated: 0 });
+    expect(added.relationships).toEqual([]);
+    expect(await memory.upsertDocument({ ...scope, content: '# Install\n\nRun the installer.' })).toMatchObject({ unchanged: true, chunks: 1 });
+    expect((await searchAll()).map(entry => entry.id)).toContain(doc.memories[0].id);
   });
 });
 

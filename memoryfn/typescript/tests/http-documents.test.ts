@@ -116,6 +116,29 @@ describe('document routes', () => {
     expect(embedder.embedBatch).not.toHaveBeenCalled();
   });
 
+  it('rejects an oversized or unstorable contentHash before any provider call', async () => {
+    const embedder = { embed: vi.fn(), embedBatch: vi.fn(async () => { throw new Error('provider down'); }) };
+    const memory = new MemoryFn({ storage: { kind: 'memory' } }, new MemoryStorageAdapter(), embedder);
+    const router = createMemoryRouter(memory, { authorize: vi.fn().mockResolvedValue(trusted) });
+    const tooLong = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x', contentHash: 'h'.repeat(1_025) }));
+    expect(tooLong.status).toBe(413);
+    expect(await tooLong.json()).toEqual({ error: 'MEMORY_SOURCE_LIMIT_EXCEEDED' });
+    const nul = await router.handle(json('PUT', '/v1/documents', { sourceKey: 'k', content: 'x', contentHash: `etag${String.fromCharCode(0)}` }));
+    expect(nul.status).toBe(400);
+    expect(await nul.json()).toEqual({ error: 'INVALID_INPUT', code: 'MEMORY_SOURCE_HASH_REQUIRED' });
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+  });
+
+  it('answers 501 when the memory implementation has no document methods', async () => {
+    const legacy: IMemoryFn = { add: vi.fn(), search: vi.fn() };
+    const router = createMemoryRouter(legacy, { authorize: vi.fn().mockResolvedValue(trusted) });
+    for (const [method, body] of [['PUT', { sourceKey: 'k', content: 'x' }], ['DELETE', { sourceKey: 'k' }]] as const) {
+      const response = await router.handle(json(method, '/v1/documents', body));
+      expect(response.status).toBe(501);
+      expect(await response.json()).toEqual({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' });
+    }
+  });
+
   it('leaves other pipeline failures to the router error handler', async () => {
     const memory = new MemoryFn({ storage: { kind: 'memory' } }, new MemoryStorageAdapter());
     const router = createMemoryRouter(memory, { authorize: vi.fn().mockResolvedValue(trusted) });

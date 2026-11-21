@@ -1,10 +1,14 @@
 import { MemoryFnConfig, IMemoryFn, validateMemoryPolicies } from './config';
 import {
   AddMemoryInput, AddMemoryResult, SearchMemoryInput, SearchMemoryResult, Memory, MemoryRelationship,
-  UpsertDocumentInput, UpsertDocumentResult, ForgetSourceInput, ForgetSourceResult,
+  UpsertDocumentInput, UpsertDocumentResult, ForgetSourceInput, ForgetSourceResult, MEMORY_TYPES,
 } from './types';
-import { requireScope, requireSourceScope, MAX_SOURCE_CHUNKS, MemorySourceLimitError, type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert } from '../storage/adapter';
-import { chunkMarkdown, resolveChunkingOptions } from '../chunking/markdown';
+import {
+  requireScope, requireSourceScope, requireSourceHash, sourceChunkBytesBeforeEmbedding, sourceMetadataBytes,
+  MAX_SOURCE_CHUNKS, MAX_SOURCE_REPLACE_BYTES, MemorySourceLimitError,
+  type StorageAdapter, type MemoryScope, type MemoryDelete, type MemoryInsert,
+} from '../storage/adapter';
+import { markdownChunks, resolveChunkingOptions } from '../chunking/markdown';
 import { Embedder, LLMProvider } from '../providers/types';
 import { FactExtractor } from '../extraction/facts';
 import { Deduplicator } from '../extraction/dedup';
@@ -48,7 +52,9 @@ export class MemoryFn implements IMemoryFn {
       const tags = [...input.containerTags];
       const embedding = embeddings[i] ?? null;
       if (embedding && await this.deduplicator.findDuplicate(tenantId, embedding, tags)) { deduplicated++; continue; }
-      const related = embedding && this.resolver ? await this.storage.searchVectors({ tenantId, containerTags: tags, embedding, threshold: 0.75, topK: 3 }) : [];
+      // Source chunks and facts are never superseded or linked: their source alone owns their lifecycle.
+      const related = embedding && this.resolver ? (await this.storage.searchVectors({ tenantId, containerTags: tags, embedding, threshold: 0.75, topK: 3, excludeSources: true }))
+        .filter(memory => memory.sourceKey == null) : [];
       const resolutions = this.resolver ? await Promise.all(related.map(async memory => ({ memory, resolution: await this.resolver!.resolve(fact.content, memory) }))) : [];
       const persist = async (storage: StorageAdapter) => {
         const links: MemoryRelationship[] = [];
@@ -88,16 +94,20 @@ export class MemoryFn implements IMemoryFn {
    * With `extract: true` the facts extracted from each chunk are stored in place
    * of the chunks, under the same source; they are not deduplicated against or
    * linked to other memories, so forgetBySource removes everything it wrote.
+   * Input and the source limits are checked before the provider call they
+   * would waste, and a rejected call leaves the source unchanged.
    */
   async upsertDocument(input: UpsertDocumentInput): Promise<UpsertDocumentResult> {
     const { scope } = requireSourceScope(input);
     const { content, contentHash: givenHash, metadata, type, extract, chunking } = input;
     if (typeof content !== 'string' || !content.trim()) throw new Error('MEMORY_CONTENT_REQUIRED');
-    if (givenHash !== undefined && (typeof givenHash !== 'string' || !givenHash.trim())) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+    if (givenHash !== undefined) requireSourceHash(givenHash);
+    if (type !== undefined && !(MEMORY_TYPES as readonly unknown[]).includes(type)) throw new Error('MEMORY_TYPE_INVALID');
     if (extract !== undefined && typeof extract !== 'boolean') throw new Error('MEMORY_EXTRACT_INVALID');
     const options = resolveChunkingOptions(chunking);
     if (!this.embedder) throw new Error('MEMORY_EMBEDDER_REQUIRED');
     if (extract && !this.extractor) throw new Error('MEMORY_LLM_REQUIRED');
+    const metadataBytes = sourceMetadataBytes(metadata);
     const contentHash = givenHash ?? await sha256Hex(content);
 
     const state = await this.storage.getSourceState(scope);
@@ -105,22 +115,33 @@ export class MemoryFn implements IMemoryFn {
       return { sourceKey: scope.sourceKey, contentHash, unchanged: true, chunks: state.chunkCount, memories: [] };
     }
 
-    const chunks = chunkMarkdown(content, options);
-    // Rejected before any LLM or embedding call; replaceSource would reject the write anyway.
-    if (chunks.length > MAX_SOURCE_CHUNKS) throw new MemorySourceLimitError();
+    // The chunk count and the bytes replaceSource counts (all but the embeddings)
+    // are checked as each chunk or fact is produced, so an oversized source fails
+    // before the rest is split or metadata is copied, and before embedding.
+    const overLimit = () => new MemorySourceLimitError();
+    const chunkType = type ?? 'document';
+    const chunks: string[] = [];
+    let bytes = 0;
+    for (const chunk of markdownChunks(content, options)) {
+      if (chunks.length === MAX_SOURCE_CHUNKS) throw overLimit();
+      if (!extract && (bytes += sourceChunkBytesBeforeEmbedding(chunkType, chunk, metadataBytes)) > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
+      chunks.push(chunk);
+    }
     const records: Array<Pick<MemoryInsert, 'content' | 'type' | 'metadata'>> = [];
     if (extract) {
       for (let index = 0; index < chunks.length; index++) {
         // Model-generated tags are descriptive metadata, never authority or scope.
         for (const fact of await this.extractor!.extract(chunks[index])) {
-          records.push({ content: fact.content, type: fact.type,
-            metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } });
+          if (records.length === MAX_SOURCE_CHUNKS) throw overLimit();
+          const record = { content: fact.content, type: fact.type,
+            metadata: { ...metadata, extractedTags: fact.tags, confidence: fact.confidence, sourceChunk: index } };
+          if ((bytes += sourceChunkBytesBeforeEmbedding(record.type, record.content, sourceMetadataBytes(record.metadata))) > MAX_SOURCE_REPLACE_BYTES) throw overLimit();
+          records.push(record);
         }
       }
     } else {
-      for (const chunk of chunks) records.push({ content: chunk, type: type ?? 'document', metadata: { ...metadata } });
+      for (const chunk of chunks) records.push({ content: chunk, type: chunkType, metadata: { ...metadata } });
     }
-    if (records.length > MAX_SOURCE_CHUNKS) throw new MemorySourceLimitError();
     const embeddings = records.length ? await this.embedder.embedBatch(records.map(record => record.content!)) : [];
     if (embeddings.length !== records.length) throw new Error('MEMORY_EMBEDDING_COUNT_MISMATCH');
     const memories = await this.storage.replaceSource({

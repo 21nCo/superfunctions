@@ -3,14 +3,19 @@ import type { Route } from '../../../../packages/http/src/types.js';
 import { z } from 'zod';
 import type { IMemoryFn } from '../core/config';
 import { requireScope, MemorySourceLimitError, type MemoryScope } from '../storage/adapter';
+import { MEMORY_TYPES } from '../core/types';
 
-const MEMORY_TYPES = ['profile_static', 'profile_dynamic', 'conversational', 'procedural', 'document', 'derived'] as const;
 /** Errors upsertDocument and forgetBySource raise for caller input the schema cannot see. */
 const DOCUMENT_INPUT_ERRORS = new Set(['MEMORY_SCOPE_REQUIRED', 'MEMORY_SOURCE_KEY_REQUIRED', 'MEMORY_SOURCE_HASH_REQUIRED',
-  'MEMORY_CONTENT_REQUIRED', 'MEMORY_CHUNKING_INVALID', 'MEMORY_SOURCE_CHUNK_INVALID']);
+  'MEMORY_CONTENT_REQUIRED', 'MEMORY_CHUNKING_INVALID', 'MEMORY_SOURCE_CHUNK_INVALID', 'MEMORY_TYPE_INVALID']);
 
-/** Maps a caller-input failure of a document call to 400 or 413; anything else reaches the router's error handler. */
-async function documentCall(call: () => Promise<unknown>): Promise<Response> {
+/**
+ * Runs a document call, answering 501 when the IMemoryFn has no such method,
+ * and maps a caller-input failure to 400 or 413; anything else reaches the
+ * router's error handler.
+ */
+async function documentCall(call: (() => Promise<unknown>) | undefined): Promise<Response> {
+  if (!call) return Response.json({ error: 'MEMORY_DOCUMENTS_UNSUPPORTED' }, { status: 501 });
   try {
     return Response.json(await call());
   } catch (error) {
@@ -67,13 +72,13 @@ export function createMemoryRouter(memory: IMemoryFn, options: {
       const parsed = await scoped(request, () => ctx.json(), upsert);
       if ('response' in parsed) return parsed.response;
       const { scope, data } = parsed;
-      return documentCall(() => memory.upsertDocument({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] }));
+      return documentCall(memory.upsertDocument && (() => memory.upsertDocument!({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] })));
     } },
     { method: 'DELETE', path: '/v1/documents', handler: async (request, ctx) => {
       const parsed = await scoped(request, () => ctx.json(), forget);
       if ('response' in parsed) return parsed.response;
       const { scope, data } = parsed;
-      return documentCall(() => memory.forgetBySource({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] }));
+      return documentCall(memory.forgetBySource && (() => memory.forgetBySource!({ ...data, tenantId: scope.tenantId, containerTags: [...scope.containerTags, ...data.containerTags] })));
     } },
   ];
   return createRouter({ routes, maxBodyBytes: options.maxBodyBytes ?? 1024 * 1024 });

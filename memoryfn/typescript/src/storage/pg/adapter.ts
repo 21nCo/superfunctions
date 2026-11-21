@@ -120,6 +120,7 @@ export class PostgresAdapter implements StorageAdapter {
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
+    excludeSources?: boolean;
   }): Promise<Memory[]> {
     requireScope(params.tenantId, params.containerTags);
     const { tenantId, embedding, containerTags, topK, threshold } = params;
@@ -139,6 +140,7 @@ export class PostgresAdapter implements StorageAdapter {
 
     // Build Where Clauses
     const conditions = [eq(memories.tenantId, tenantId), isNull(memories.deletedAt), eq(memories.isLatest, true)];
+    if (params.excludeSources) conditions.push(isNull(memories.sourceKey));
 
     // All supplied tags constrain retrieval within the explicit tenant.
     if (containerTags && containerTags.length > 0) {

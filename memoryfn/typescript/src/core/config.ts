@@ -79,8 +79,12 @@ export interface MemoryFnConfig {
 export interface IMemoryFn {
   add(input: AddMemoryInput): Promise<AddMemoryResult>;
   search(input: SearchMemoryInput): Promise<SearchMemoryResult>;
-  upsertDocument(input: UpsertDocumentInput): Promise<UpsertDocumentResult>;
-  forgetBySource(input: ForgetSourceInput): Promise<ForgetSourceResult>;
+  /**
+   * Optional so an add/search-only implementation still satisfies IMemoryFn;
+   * MemoryFn implements both. Without them the document routes answer 501.
+   */
+  upsertDocument?(input: UpsertDocumentInput): Promise<UpsertDocumentResult>;
+  forgetBySource?(input: ForgetSourceInput): Promise<ForgetSourceResult>;
   // update, delete, getProfile, etc.
 }
 

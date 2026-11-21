@@ -184,6 +184,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
     filters?: Record<string, unknown>;
     topK: number;
     threshold?: number;
+    excludeSources?: boolean;
   }): Promise<Memory[]> {
     requireScope(params.tenantId, params.containerTags);
     const requestedTags = new Set(params.containerTags);
@@ -191,6 +192,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
       .filter((memory) => (
         memory.tenantId === params.tenantId
         && memory.deletedAt == null && memory.isLatest
+        && !(params.excludeSources && memory.sourceKey != null)
         && ([...requestedTags].every(tag => memory.containerTags.includes(tag)))
         && metadataMatches(memory.metadata, params.filters)
       ))

@@ -8,6 +8,9 @@ export type MemoryType =
   | "document"
   | "derived";
 
+/** Every MemoryType, for runtime validation. */
+export const MEMORY_TYPES = ['profile_static', 'profile_dynamic', 'conversational', 'procedural', 'document', 'derived'] as const satisfies readonly MemoryType[];
+
 export interface Memory {
   id: string;                          // UUID
   tenantId: string;                    // Primary tenant
@@ -101,11 +104,15 @@ export interface UpsertDocumentInput {
   containerTags: string[];
   sourceKey: string;
   content: string;
-  /** Compared with the stored hash to skip unchanged content. Defaults to the lowercase hex SHA-256 of content. */
+  /**
+   * Compared with the stored hash to skip unchanged content. Defaults to the
+   * lowercase hex SHA-256 of content. At most 1 KiB of UTF-8, without NUL or
+   * unpaired surrogates.
+   */
   contentHash?: string;
   /** Copied onto every stored chunk or fact. */
   metadata?: Record<string, any>;
-  /** Type of stored chunks; defaults to 'document'. Extracted facts keep their extracted type. */
+  /** Type of stored chunks (one of MEMORY_TYPES); defaults to 'document'. Extracted facts keep their extracted type. */
   type?: MemoryType;
   /** Run LLM fact extraction on each chunk and store the facts instead of the chunks. Defaults to false. */
   extract?: boolean;

@@ -75,6 +75,8 @@ export interface StorageAdapter {
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
+    /** Leave out chunks and facts of sources (rows with a sourceKey). add() sets it for deduplication and conflict resolution. */
+    excludeSources?: boolean;
   }): Promise<Memory[]>;
   getMemory(scope: MemoryScope & { id: string }): Promise<Memory | null>;
   updateMemory(input: MemoryUpdate): Promise<Memory>;
@@ -192,6 +194,31 @@ function chunkBytes(chunk: MemoryInsert): number {
     + (chunk.embedding ? jsonBytes(chunk.embedding) : 0);
 }
 
+/**
+ * Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk before it is embedded: its
+ * type (an empty one as 'conversational'), its content, and `metadataBytes`
+ * (from sourceMetadataBytes). Lets a caller reject a replacement before paying
+ * for embeddings.
+ */
+export function sourceChunkBytesBeforeEmbedding(type: string, content: string, metadataBytes: number): number {
+  return utf8Bytes(type || 'conversational') + utf8Bytes(content) + metadataBytes;
+}
+
+/** Bytes MAX_SOURCE_REPLACE_BYTES counts for a chunk's metadata (undefined counts as {}). */
+export function sourceMetadataBytes(metadata: unknown): number {
+  return jsonBytes(metadata ?? {});
+}
+
+/**
+ * Validates a replacement's contentHash as replaceSource does: a storable
+ * non-blank string (MEMORY_SOURCE_HASH_REQUIRED) of at most
+ * MAX_SOURCE_IDENTITY_BYTES (MemorySourceLimitError).
+ */
+export function requireSourceHash(contentHash: unknown): asserts contentHash is string {
+  if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
+  if (utf8Bytes(contentHash) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+}
+
 type ChunkFields = Pick<MemoryInsert, 'type' | 'content' | 'id' | 'isLatest'>;
 /**
  * A chunk's fields in the form every adapter writes: a missing or empty type
@@ -215,8 +242,7 @@ function chunkFields({ type, content, id, isLatest }: ChunkFields): ChunkFields 
 export function requireSourceReplace(input: SourceReplace): SourceReplaceSnapshot {
   const { scope } = requireSourceScope(input);
   const { contentHash, chunks } = input;
-  if (!isSourceText(contentHash)) throw new Error('MEMORY_SOURCE_HASH_REQUIRED');
-  if (utf8Bytes(contentHash) > MAX_SOURCE_IDENTITY_BYTES) throw sourceLimitExceeded();
+  requireSourceHash(contentHash);
   if (!Array.isArray(chunks)) throw new Error('MEMORY_SOURCE_CHUNKS_REQUIRED');
   // The length is checked before the array is read, and the copy is taken by index, not through its iterator.
   const count = chunks.length;

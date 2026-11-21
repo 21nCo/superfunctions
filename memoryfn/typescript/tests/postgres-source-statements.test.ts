@@ -95,4 +95,15 @@ describe('PostgresAdapter source statements', () => {
       .toEqual([false, false, true, true]);
     expect([new Renamed() instanceof MemorySourceLimitError, new Renamed() instanceof Renamed, new AppLimit() instanceof Renamed]).toEqual([true, true, false]);
   });
+
+  it('leaves source rows out of a vector search only when excludeSources is set', async () => {
+    const search = { tenantId: 'tenant-a', containerTags: ['docs'], embedding: [1, 0], topK: 1, threshold: 0.95 };
+    const excluded = recorder();
+    await excluded.adapter.searchVectors({ ...search, excludeSources: true });
+    expect(excluded.statements).toHaveLength(1);
+    expect(excluded.statements[0].query).toMatch(/"source_key" is null/);
+    const included = recorder();
+    await included.adapter.searchVectors(search);
+    expect(included.statements[0].query).not.toMatch(/"source_key" is null/);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkMarkdown, resolveChunkingOptions } from '../src/chunking/markdown';
+import { chunkMarkdown, markdownChunks, resolveChunkingOptions } from '../src/chunking/markdown';
 
 const words = (count: number, word = 'word') => Array.from({ length: count }, (_, index) => `${word}${index}`).join(' ');
 
@@ -70,6 +70,40 @@ describe('chunkMarkdown', () => {
     expect(chunkMarkdown(doc, { targetChars: 200, overlapChars: 40 })).toEqual(first);
     expect(chunkMarkdown(doc.replace(/\r\n/g, '\n'), { targetChars: 200, overlapChars: 40 })).toEqual(first);
     expect(first.some(chunk => chunk.includes('\r'))).toBe(false);
+  });
+
+  it('keeps a paragraph that fits a fresh chunk whole, shortening the overlap to make room', () => {
+    const first = 'aaaa bbb';
+    const second = `${'abcd '.repeat(10)}efghi`;
+    expect(second).toHaveLength(55);
+    const chunks = chunkMarkdown(`${first}\n\n${second}`, { targetChars: 64, overlapChars: 10 });
+    // The old chunker hard split the second paragraph across both chunks.
+    expect(chunks).toEqual([first, `bbb\n\n${second}`]);
+    expect(chunkMarkdown(`${first}\n\n${'z'.repeat(64)}`, { targetChars: 64, overlapChars: 10 })).toEqual([first, 'z'.repeat(64)]);
+  });
+
+  it('does not open a fence at a backtick line whose info string contains a backtick', () => {
+    const doc = '```inline`code```\n\n# Next\n\nText.\n\n~~~ a`b\n# fenced\n~~~\n\n# Last';
+    expect(chunkMarkdown(doc)).toEqual(['```inline`code```', '# Next\n\nText.\n\n~~~ a`b\n# fenced\n~~~', '# Last']);
+  });
+
+  it('splits a long whitespace run in linear time without blank chunks and keeps indentation', () => {
+    const doc = `  indented start${' '.repeat(1_000_000)}end\n\n    code line`;
+    const started = performance.now();
+    const chunks = chunkMarkdown(doc, { targetChars: 64, overlapChars: 16 });
+    // The old trailing-whitespace regex took minutes on a run this long.
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(chunks[0].startsWith('  indented start')).toBe(true);
+    // The indented paragraph after the run keeps its indentation.
+    expect(chunks[chunks.length - 1].endsWith('end\n\n    code line')).toBe(true);
+    expect(chunks.every(chunk => chunk.trim() !== '' && chunk.length <= 64)).toBe(true);
+  });
+
+  it('produces chunks lazily, so a caller can stop without splitting the rest', () => {
+    const iterator = markdownChunks('x '.repeat(2_100_000), { targetChars: 64, overlapChars: 32 });
+    const first = [iterator.next().value, iterator.next().value];
+    expect(first.every(chunk => typeof chunk === 'string' && chunk.length <= 64)).toBe(true);
+    expect(() => markdownChunks('x', { targetChars: 1 })).toThrow('MEMORY_CHUNKING_INVALID');
   });
 
   it('returns no chunks for blank input and rejects invalid options', () => {
