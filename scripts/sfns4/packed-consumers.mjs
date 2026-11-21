@@ -132,7 +132,7 @@ try {
     if (injectedPg.embeddingDimensions !== 1536) throw new Error('Postgres dimension capability missing');
     let rejectedDimensions = false;
     try { memory.memoryfn({ storage: { kind: 'adapter', adapter: injectedPg }, embedder: { provider: 'openai', apiKey: 'fixture', dims: 768 } }); }
-    catch (error) { rejectedDimensions = error.message === 'MEMORY_PG_EMBEDDING_DIMENSION_MUST_BE_1536'; }
+    catch (error) { rejectedDimensions = error.message === 'MEMORY_EMBEDDING_DIMENSION_MISMATCH: expected 1536'; }
     if (!rejectedDimensions) throw new Error('Bundled subpath adapter dimensions were not enforced');
     if (!plug.ExecutionCoordinator || !providers.googleDocsProvider.actions['documents.get'] || !lang.GoogleChatModel || !memory.MemoryStorageAdapter || !cli.createCredentialStore) throw new Error('Packed export missing');
     const store = new memory.MemoryStorageAdapter();
