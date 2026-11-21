@@ -364,7 +364,9 @@ export async function verifyOtpChallenge(
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
     const released = await releaseOtpAttempt(config, reserved, now);
-    if (!released && error instanceof AuthFnOtpReplayedError) {
+    // Only after a confirmed no-op: an unknown outcome may already have
+    // released the attempt, and a second decrement could erase a wrong code.
+    if (released === 'not-applied' && error instanceof AuthFnOtpReplayedError) {
       // Another request consumed the challenge with the same correct code;
       // this attempt matched too, so it is not a wrong guess. The challenge
       // is spent, so handing the attempt back allows no further comparison.
@@ -825,15 +827,13 @@ async function assertOtpGuessBudget(
   const usage = await readOtpEmailUsage(config, email, budget, now);
   const cap = reservation ? budget.maxFailedAttempts + 1 : budget.maxFailedAttempts;
   if (capResetAt(usage.counted, failedAttempts, cap) || usage.incomplete) {
-    // The caller hands this request's reservation back, so a new request
-    // passes once the count without it is under the cap.
-    const settled = reservation
-      ? usage.counted.map((row) => row.id === reservation.challengeId
-        ? { ...row, attemptCount: Math.max(0, row.attemptCount - 1) }
-        : row)
-      : usage.counted;
-    const resetAt = capResetAt(settled, failedAttempts, budget.maxFailedAttempts)
-      ?? new Date(now.getTime() + 1000);
+    // Refused after its own reservation, this request passed the first check,
+    // so it lost a race with concurrent requests whose reservations may also
+    // be handed back. A fresh request's first check gives the real answer,
+    // so it is told to retry shortly.
+    const resetAt = reservation
+      ? new Date(now.getTime() + 1000)
+      : capResetAt(usage.counted, failedAttempts, budget.maxFailedAttempts) ?? new Date(now.getTime() + 1000);
     throw otpEmailLimitError(
       'failed-attempts',
       usage.incomplete ? laterOf(resetAt, usage.incompleteUntil!) : resetAt
@@ -992,9 +992,9 @@ async function releaseOtpAttempt(
   config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
   reservation: OtpAttemptReservation,
   updatedAt: Date
-): Promise<boolean> {
+): Promise<'applied' | 'not-applied' | 'unknown'> {
   try {
-    return await updateOtpChallengeIfMatches(
+    const applied = await updateOtpChallengeIfMatches(
       config,
       reservation.challengeId,
       [
@@ -1006,10 +1006,11 @@ async function releaseOtpAttempt(
         updatedAt
       }
     );
+    return applied ? 'applied' : 'not-applied';
   } catch {
-    // Keeping the reservation is the safe outcome; the caller rethrows the
-    // error that ended the request.
-    return false;
+    // The write may or may not have applied. Keeping the reservation is the
+    // safe outcome; the caller rethrows the error that ended the request.
+    return 'unknown';
   }
 }
 
