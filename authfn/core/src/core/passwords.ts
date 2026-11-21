@@ -81,8 +81,16 @@ const NO_SUCH_USER_ID = 'authfn-no-such-user';
 const MAX_CONCURRENT_SCRYPT_JOBS = 16;
 const MAX_QUEUED_SCRYPT_JOBS = 1024;
 const LEGACY_PARAMETER_SET = '16384:8:1';
-/** Longer than any stored address can be (RFC 5321 allows 254). */
-const MAX_SIGN_IN_EMAIL_LENGTH = 320;
+/**
+ * Whether an email is longer than any account's can be: createUser allows
+ * AUTHFN_DATABASE_KEY_MAX_LENGTH code points. The cheap UTF-16 check comes
+ * first (a code point is at most two units), so a huge string is not
+ * expanded.
+ */
+function isLongerThanAnyStoredEmail(email: string): boolean {
+  return email.length > 2 * AUTHFN_DATABASE_KEY_MAX_LENGTH
+    || Array.from(email).length > AUTHFN_DATABASE_KEY_MAX_LENGTH;
+}
 const LEGACY_HASH_N = 16384;
 const LEGACY_HASH_R = 8;
 const LEGACY_HASH_P = 1;
@@ -313,7 +321,7 @@ export async function signInWithPassword(
   if (
     typeof input.password !== 'string'
     || Buffer.byteLength(input.password, 'utf8') > MAX_SUBMITTED_PASSWORD_BYTES
-    || email.length > MAX_SIGN_IN_EMAIL_LENGTH
+    || isLongerThanAnyStoredEmail(email)
   ) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }

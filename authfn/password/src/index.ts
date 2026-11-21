@@ -259,6 +259,9 @@ async function readSignInBody(request: Request): Promise<{
   return {
     email: body.email ?? '',
     password: body.password ?? '',
-    sessionMode: typeof body.sessionMode === 'string' ? body.sessionMode : undefined
+    // Only a known mode is kept; anything else means the default (cookie).
+    sessionMode: body.sessionMode === 'cookie' || body.sessionMode === 'bearer' || body.sessionMode === 'hybrid'
+      ? body.sessionMode
+      : undefined
   };
 }

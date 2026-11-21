@@ -681,6 +681,15 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     }
   });
 
+  it('signs in an account whose email has characters outside the BMP, up to the stored limit', async () => {
+    const config = createConfig();
+    // 182 code points, 352 UTF-16 units: within createUser's limit.
+    const email = `${'\u{1F600}'.repeat(170)}@example.com`;
+    const user = await createUser(config, { primaryEmail: email });
+    await updatePasswordCredential(config, { userId: user.id, password: 'test-password-strong' });
+    await expect(signInWithPassword(config, { email, password: 'test-password-strong' })).resolves.toBeTruthy();
+  });
+
   it('returns the upgraded credential after a sign-in rewrites an old-cost hash', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });
