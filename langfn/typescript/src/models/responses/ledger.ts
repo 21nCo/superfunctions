@@ -105,6 +105,18 @@ export function itemFacts(item: JsonRecord, provider: string, index?: number): I
   return facts;
 }
 
+/** The output_text parts of an output's messages, in output then content order. */
+function answerParts(output: JsonRecord[]): string[] {
+  const answer: string[] = [];
+  for (const item of output) {
+    if (!isRecord(item) || item.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") answer.push(part.text);
+    }
+  }
+  return answer;
+}
+
 export interface ResolvedOutput {
   /** The terminal output: the supplied one, or the one rebuilt from the ledger when it was omitted. */
   output: JsonRecord[];
@@ -130,7 +142,7 @@ export class OutputLedger {
   /** Text deltas and snapshots that name no item: they cover the whole answer. */
   private readonly unlocated: TextRecord = { text: [], snapshots: new Map() };
   /** Entries whose final item was rebuilt from their streamed text. */
-  private readonly synthesized = new Set<Entry>();
+  private readonly synthesized = new Set<Entry | JsonRecord>();
   /** Every text delta already yielded as content, in arrival order. */
   private streamed = "";
   private seq = 0;
@@ -232,7 +244,8 @@ export class OutputLedger {
   /**
    * Reconcile the ledger with the terminal response, before any tool call, message or end:
    * - A supplied output is validated like a JSON one and merges into the ledger item by item at
-   *   its positions. Every finished item that names an index or identity must be in it, as the
+   *   its positions. Every finished item (one output_item.done finished, or a running snapshot
+   *   showed completed) that names an index or identity must be in it, as the
    *   same item: the finished item (and a running snapshot that showed it completed) and the
    *   terminal item agree on every field both state, and the final item takes the fields it
    *   omits from them. An item that held streamed text is there too. An omitted output (absent or `[]`) is rebuilt from the finished items
@@ -248,12 +261,32 @@ export class OutputLedger {
    */
   resolve(state: { output: unknown; omitted: boolean; completed: boolean; type: string }): ResolvedOutput {
     const { omitted, completed, type } = state;
-    const finished = this.entries.filter((entry) => entry.finished);
+    // A supplied output merges into the ledger first, so entries it shows to be one item are one
+    // (with every finished form they hold) before any form is judged. A malformed output fails in
+    // parseResponsesResponse, as it does for a JSON response.
+    const supplied = !omitted && Array.isArray(state.output) ? (state.output as JsonRecord[]) : undefined;
+    let located: Entry[] = [];
+    if (supplied) {
+      outputItemIdentities(supplied, this.provider, "terminal output");
+      located = supplied.map((item, position) => {
+        const entry = this.locate(itemFacts(item, this.provider, position), "terminal output");
+        entry.terminal = item;
+        return entry;
+      });
+    }
+    // The finished form of each item: output_item.done, or a running snapshot that showed it
+    // completed, which stands equal to it (both, when stated, must agree).
+    const forms = new Map<Entry, JsonRecord>();
+    for (const entry of this.entries) {
+      const form = this.earlierForm(entry);
+      if (form) forms.set(entry, form);
+    }
+    const finished = [...forms.keys()];
     // Shape and identity rules of a JSON output apply to every finished item.
-    outputItemIdentities(finished.map((entry) => entry.finished), this.provider, "output_item.done");
+    outputItemIdentities([...forms.values()], this.provider, "output_item.done");
     if (completed) {
       for (const entry of finished) {
-        const item = entry.finished as JsonRecord;
+        const item = forms.get(entry) as JsonRecord;
         if (entry.type !== "function_call") continue;
         if (!(item.status === undefined || item.status === null || item.status === "completed")) {
           throw this.fail("Responses completed stream finished an unfinished function_call");
@@ -261,25 +294,23 @@ export class OutputLedger {
         parseFunctionCall(this.withIdentity(entry, item), this.provider);
       }
     }
-    parseOutputItems(finished.map((entry) => this.withIdentity(entry, entry.finished as JsonRecord)), this.provider, { incomplete: !completed });
+    parseOutputItems(finished.map((entry) => this.withIdentity(entry, forms.get(entry) as JsonRecord)), this.provider, { incomplete: !completed });
 
     let output: JsonRecord[];
     // The final item of each entry: the supplied terminal item, or the finished (or rebuilt) one.
     const final = new Map<Entry, JsonRecord>();
     if (!omitted) {
-      // A malformed output fails in parseResponsesResponse, as it does for a JSON response.
-      if (!Array.isArray(state.output)) return { output: state.output as JsonRecord[], undelivered: "" };
-      outputItemIdentities(state.output, this.provider, "terminal output");
-      output = (state.output as JsonRecord[]).map((supplied, position) => {
-        const entry = this.locate(itemFacts(supplied, this.provider, position), "terminal output");
-        const earlier = this.earlierForm(entry);
-        const item = this.withIdentity(entry, earlier ? this.agree(entry, earlier, supplied, "terminal output") : supplied);
+      if (!supplied) return { output: state.output as JsonRecord[], undelivered: "" };
+      output = supplied.map((item, position) => {
+        const entry = located[position];
+        const earlier = forms.get(entry);
+        item = this.withIdentity(entry, earlier ? this.agree(entry, earlier, item, "terminal output") : item);
         entry.terminal = item;
         final.set(entry, item);
         return item;
       });
       for (const entry of this.entries) {
-        if (entry.finished && !entry.terminal && hasLocator(entry)) {
+        if (forms.has(entry) && !entry.terminal && hasLocator(entry)) {
           throw this.fail(`Responses terminal output does not have the finished ${this.describe(entry)}`);
         }
         if (holdsText(entry) && !entry.terminal) {
@@ -287,11 +318,12 @@ export class OutputLedger {
         }
       }
     } else {
-      output = this.rebuild(completed, final, type);
+      output = this.rebuild(completed, final, forms, type);
     }
+    this.assertUnlocatedText(output, type);
 
     for (const entry of this.entries) {
-      if (completed && entry.announced && !entry.finished) {
+      if (completed && entry.announced && !forms.has(entry)) {
         throw this.fail(`Responses completed stream never finished the announced ${this.describe(entry)}`);
       }
       const item = final.get(entry);
@@ -409,6 +441,13 @@ export class OutputLedger {
       if (entry[key] !== undefined) throw this.fail(`Responses ${what} names two different items as ${this.describe(entry)}`);
       (entry as unknown as Record<string, unknown>)[key] = other[key];
     }
+    // A running response may show one item completed many times, so two completed snapshots
+    // of the merged item must agree, and the merged entry keeps both forms' fields.
+    if (other.completedSnapshot) {
+      entry.completedSnapshot = entry.completedSnapshot
+        ? this.agree(entry, other.completedSnapshot, entry.completedSnapshot, what)
+        : other.completedSnapshot;
+    }
     entry.text.push(...other.text);
     entry.args.push(...other.args);
     for (const [contentIndex, snapshot] of other.snapshots) {
@@ -424,13 +463,14 @@ export class OutputLedger {
   }
 
   /**
-   * The output an omitted one stands for: the finished items, and streamed text that no finished
+   * The output an omitted one stands for: the finished items (finished by output_item.done or
+   * shown completed by a running snapshot), and streamed text that no finished
    * item holds as an assistant message of that text, so message content and the replayed turn
    * keep what the caller already received. Items are ordered by their stated output_index, or
    * by arrival when none states one; a mix is ambiguous and a ProviderError. Text that names no
    * item, when no item holds text, becomes a message after them.
    */
-  private rebuild(completed: boolean, final: Map<Entry, JsonRecord>, type: string): JsonRecord[] {
+  private rebuild(completed: boolean, final: Map<Entry, JsonRecord>, forms: Map<Entry, JsonRecord>, type: string): JsonRecord[] {
     const status = completed ? "completed" : "incomplete";
     const message = (entry: TextRecord & { announced?: JsonRecord; id?: string }): JsonRecord => {
       const base = entry.announced?.type === "message" ? structuredClone(entry.announced) : {};
@@ -447,7 +487,8 @@ export class OutputLedger {
     // A message built from streamed text is consistent with it by construction (parts).
     this.synthesized.clear();
     for (const entry of this.entries) {
-      if (entry.finished) items.push({ entry, item: this.withIdentity(entry, this.earlierForm(entry) as JsonRecord) });
+      const form = forms.get(entry);
+      if (form) items.push({ entry, item: this.withIdentity(entry, form) });
       else if (holdsText(entry)) {
         const item = message(entry);
         this.synthesized.add(entry);
@@ -465,7 +506,11 @@ export class OutputLedger {
     const output = ordered.map(({ item }) => item);
     const hasAnswer = output.some((item) => item.type === "message" && Array.isArray(item.content)
       && item.content.some((part) => isRecord(part) && part.type === "output_text"));
-    if (holdsText(this.unlocated) && !hasAnswer) output.push(message(this.unlocated));
+    if (holdsText(this.unlocated) && !hasAnswer) {
+      const item = message(this.unlocated);
+      this.synthesized.add(item);
+      output.push(item);
+    }
     return output;
   }
 
@@ -527,16 +572,25 @@ export class OutputLedger {
     if (entry.whole !== undefined && whole !== entry.whole) throw fail();
   }
 
+  /**
+   * Text snapshots that name no item (output_text.done or content_part.done without an item_id
+   * or output_index) describe the answer, as unlocated deltas do: a snapshot of content_index i
+   * is the answer's i-th output_text part (output then content order), and one that names no
+   * part is the whole answer text. A message rebuilt from them agrees by construction.
+   */
+  private assertUnlocatedText(output: JsonRecord[], type: string): void {
+    const record = this.unlocated;
+    if (record.snapshots.size === 0 && record.whole === undefined) return;
+    if (output.some((item) => this.synthesized.has(item))) return;
+    const parts = answerParts(output);
+    const fail = () => this.fail(`Responses ${type} event answer text differs from a text done event that names no item`);
+    for (const [contentIndex, snapshot] of record.snapshots) if (parts[contentIndex] !== snapshot) throw fail();
+    if (record.whole !== undefined && parts.join("") !== record.whole) throw fail();
+  }
+
   /** The answer text not yet delivered: the content yielded so far must be a prefix of the answer. */
   private undelivered(output: JsonRecord[], type: string): string {
-    const answer: string[] = [];
-    for (const item of output) {
-      if (!isRecord(item) || item.type !== "message" || !Array.isArray(item.content)) continue;
-      for (const part of item.content) {
-        if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") answer.push(part.text);
-      }
-    }
-    const text = answer.join("");
+    const text = answerParts(output).join("");
     if (!text.startsWith(this.streamed)) {
       throw this.fail(`Responses ${type} event answer text differs from the streamed text`);
     }

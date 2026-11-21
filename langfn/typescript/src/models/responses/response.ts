@@ -505,43 +505,49 @@ const CONTEXT_PATTERN = /maximum context length|context[ _]length|context window
  */
 export function responsesError(
   provider: string,
-  details: { status?: number; body: unknown; error?: unknown; retryAfter?: number },
+  details: { status?: number; body: unknown; error?: unknown; retryAfter?: number; cause?: unknown },
 ): LangFnError {
   const error = isRecord(details.error) ? details.error : isRecord(details.body) && isRecord(details.body.error) ? details.body.error : undefined;
   const code = error?.code ?? error?.type;
   const message = typeof error?.message === "string" ? error.message : "";
   const metadata: JsonRecord = { body: details.body };
+  const cause = details.cause !== undefined ? { cause: details.cause } : {};
   if (details.status !== undefined) metadata.status = details.status;
   if (code !== undefined) metadata.providerCode = code;
 
   // An HTTP status that names the class wins; nested codes decide only when the status does
   // not (absent, a 200 stream or body error, or another status).
-  const authError = () => new ProviderAuthError(undefined, { provider, metadata });
-  const rateLimitError = () => new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata });
+  const authError = () => new ProviderAuthError(undefined, { provider, metadata, ...cause });
+  const rateLimitError = () => new RateLimitError(undefined, { provider, retryAfter: details.retryAfter, metadata, ...cause });
   if (details.status === 401) return authError();
   if (details.status === 429) return rateLimitError();
   if (code === "invalid_api_key" || code === 401) return authError();
   if (code === "rate_limit_exceeded" || code === 429) return rateLimitError();
   if (code === "context_length_exceeded" || ((details.status === undefined || details.status === 200 || details.status === 400 || details.status === 413 || code === 400) && CONTEXT_PATTERN.test(message))) {
-    return new ContextLengthError(undefined, { provider, metadata });
+    return new ContextLengthError(undefined, { provider, metadata, ...cause });
   }
   const label = details.status !== undefined && details.status !== 200 ? ` (${details.status})` : "";
-  return new ProviderError(`${provider} Responses request failed${label}${message ? `: ${message}` : ""}`, { provider, metadata });
+  return new ProviderError(`${provider} Responses request failed${label}${message ? `: ${message}` : ""}`, { provider, metadata, ...cause });
 }
 
-function isAbort(error: unknown, signal?: AbortSignal): boolean {
-  return !!signal?.aborted || (error instanceof Error && error.name === "AbortError");
+/**
+ * A caller cancellation: the caller's signal is aborted (or the error is its reason). An
+ * AbortError the caller did not cause (an upstream or transport abort) is a transport failure.
+ */
+function isCallerAbort(error: unknown, signal?: AbortSignal): boolean {
+  return !!signal && (signal.aborted || (signal.reason !== undefined && error === signal.reason));
 }
 
 /**
  * Read a response body as text. Transport errors (a body timeout, an oversized body) and
- * aborts keep their identity so callers and retry policies can tell them apart.
+ * caller aborts keep their identity so callers and retry policies can tell them apart; any
+ * other failure (an upstream abort included) is a ProviderError with that cause.
  */
 export async function readResponsesBody(provider: string, response: Response, signal?: AbortSignal): Promise<string> {
   try {
     return await response.text();
   } catch (error) {
-    if (error instanceof LangFnError || isAbort(error, signal)) throw error;
+    if (error instanceof LangFnError || isCallerAbort(error, signal)) throw error;
     throw new ProviderError("Responses body could not be read", { provider, cause: error });
   }
 }
@@ -551,6 +557,7 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
   if (response.ok) return;
   const retryAfter = parseRetryAfter(response.headers);
   let text = "";
+  let readError: unknown;
   try {
     text = await response.text();
   } catch (error) {
@@ -558,9 +565,11 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
     // decides whatever stopped the body read (a timeout, a transport error, an oversized body),
     // so retry policies still see the auth failure or the rate limit and its Retry-After; any
     // other status keeps a timed-out or oversized body's own error.
-    if (isAbort(error, signal)) throw error;
+    if (isCallerAbort(error, signal)) throw error;
     const classified = response.status === 401 || response.status === 429;
     if (!classified && error instanceof LangFnError) throw error;
+    // The status still classifies the failure; the transport error is kept as its cause.
+    readError = error;
   }
   let body: unknown = text;
   try {
@@ -568,7 +577,7 @@ export async function raiseForResponsesStatus(provider: string, response: Respon
   } catch {
     // Keep the text body.
   }
-  throw responsesError(provider, { status: response.status, body, retryAfter });
+  throw responsesError(provider, { status: response.status, body, retryAfter, ...(readError !== undefined ? { cause: readError } : {}) });
 }
 
 function parseRetryAfter(headers: Headers): number | undefined {

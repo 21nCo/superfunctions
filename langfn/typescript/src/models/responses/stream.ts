@@ -156,6 +156,7 @@ function impliedItemType(type: string): string | undefined {
 function partItemType(part: unknown, what: string, fail: (message: string) => ProviderError): string | undefined {
   if (!isRecord(part) || typeof part.type !== "string") return undefined;
   if (ITEM_TYPES.has(part.type)) throw fail(`Responses ${what} part has the item type ${part.type}`);
+  if (part.type.startsWith("input_")) throw fail(`Responses ${what} part has the input part type ${part.type}`);
   return Object.hasOwn(PART_ITEM_TYPES, part.type) ? PART_ITEM_TYPES[part.type] : undefined;
 }
 
@@ -419,6 +420,11 @@ export async function* mapResponsesStream(
         // part, reasoning or built-in tool event) states that item, with the type it implies.
         // It carries no new data for LangFn stream events.
         const what = type.slice("response.".length) || "stream event";
+        // A reasoning summary part is a reasoning part: one typed as an output item, an input
+        // part or a message part is a part at the wrong place.
+        if (type.startsWith("response.reasoning_summary_part.") && partItemType(payload.part, what, fail) === "message") {
+          throw fail(`Responses ${what} part is a message part`);
+        }
         const implied = type === "response.content_part.added" ? partItemType(payload.part, what, fail) : impliedItemType(type);
         ledger.note(implied, itemId(payload.item_id, what, fail), outputIndex(payload.output_index, what, fail), what);
         break;

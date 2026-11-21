@@ -1319,6 +1319,91 @@ describe("stream mapping", () => {
       .toEqual([search, lookup]);
   });
 
+  it("treats a running snapshot that shows an item completed as a finished form on every ledger path", async () => {
+    const call = (args: string, extra: Record<string, unknown> = {}) =>
+      ({ type: "function_call", call_id: "call_fixture", name: "lookup", arguments: args, status: "completed", ...extra });
+    const running = (output: unknown[]) => frame({ type: "response.in_progress", response: { id: "resp_fixture_mapping", status: "in_progress", output } });
+    const terminal = (output?: unknown[]) => frame({ type: "response.completed", response: { id: "resp_fixture_mapping", status: "completed", ...(output ? { output } : {}) } });
+    const incomplete = () => frame({ type: "response.incomplete", response: { id: "resp_fixture_mapping", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } } });
+    const hi = { ...said("Hi there"), id: "msg_fixture" };
+    const types = (seen: StreamEvent[]) => seen.map((event) => event.type);
+
+    // Entries merged by the terminal output keep the snapshot: an id-only argument delta and an
+    // id-less completed snapshot are one call, whose arguments the terminal output cannot change.
+    const merged = await mapRaw(frame({ type: "response.function_call_arguments.delta", item_id: "fc_fixture", delta: "" })
+      + running([call("{\"amount\":1}")]) + terminal([call("{\"amount\":2}", { id: "fc_fixture" })]));
+    expect(String(merged.error)).toContain("terminal output changes the arguments of function_call item call_fixture");
+    expect(merged.seen).toEqual([]);
+    // Its text is checked like a finished item's: streamed Hello, snapshot Goodbye, omitted output.
+    const differs = await mapRaw(frame({ type: "response.output_text.delta", item_id: "msg_fixture", output_index: 0, content_index: 0, delta: "Hello" })
+      + running([{ ...said("Goodbye"), id: "msg_fixture" }]) + terminal());
+    expect(differs.error).toBeInstanceOf(ProviderError);
+    expect(String(differs.error)).toContain("differs from the text the stream stated for it");
+    expect(types(differs.seen)).toEqual(["content"]);
+    // A supplied output must hold it, as it holds a finished item.
+    const dropped = await mapRaw(running([hi, call("{}")]) + terminal([hi]));
+    expect(String(dropped.error)).toContain("terminal output does not have the finished function_call item call_fixture");
+    expect(dropped.seen).toEqual([]);
+
+    // An omitted output is rebuilt from it, on a completed turn and on an incomplete one.
+    const rebuilt = await mapRaw(running([call("{}")]) + terminal());
+    expect(rebuilt.error).toBeUndefined();
+    expect(types(rebuilt.seen)).toEqual(["tool_call", "message", "end"]);
+    const cut = await mapRaw(running([hi]) + incomplete());
+    expect(cut.error).toBeUndefined();
+    expect(types(cut.seen)).toEqual(["content", "message", "end"]);
+    const message = (cut.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+    expect(message.content).toBe("Hi there");
+    expect(message.responsesOutput).toEqual([hi]);
+    expect(cut.seen.at(-1)).toMatchObject({ finish_reason: "length" });
+    // A call on an incomplete turn stays non-executable, however it finished.
+    const cutCall = await mapRaw(running([call("{}")]) + incomplete());
+    expect(cutCall.error).toBeUndefined();
+    expect(types(cutCall.seen)).toEqual(["message", "end"]);
+  });
+
+  it("holds text done events that name no item to the answer", async () => {
+    const terminal = (output: unknown[]) => frame({ type: "response.completed", response: completed(output) });
+    const textDone = (text: string, extra: Record<string, unknown> = {}) => frame({ type: "response.output_text.done", text, ...extra });
+    for (const text of [textDone("Goodbye") + terminal([said("Hello")]), textDone("Goodbye", { content_index: 0 }) + terminal([said("Hello")]),
+      frame({ type: "response.content_part.done", content_index: 1, part: { type: "output_text", text: "Hello" } }) + terminal([said("Hello")])]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain("differs from a text done event that names no item");
+      expect(outcome.seen).toEqual([]);
+    }
+    for (const text of [textDone("Hello") + terminal([said("Hello")]), textDone("Hello", { content_index: 0 }) + terminal([said("Hello")]),
+      frame({ type: "response.output_text.delta", delta: "Hel" }) + textDone("Hello") + frame({ type: "response.completed", response: { status: "completed" } })]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeUndefined();
+      expect((outcome.seen.find((event) => event.type === "message") as { message: ResponsesMessage }).message.content).toBe("Hello");
+    }
+  });
+
+  it("rejects input part types in content parts and message parts in reasoning summary parts", async () => {
+    const terminal = frame({ type: "response.completed", response: completed([{ ...said("Hi"), id: "msg_fixture" }]) });
+    const rejected: Array<[string, string]> = [
+      [frame({ type: "response.content_part.added", item_id: "msg_fixture", output_index: 0, content_index: 0, part: { type: "input_image", image_url: "https://example.test/x.png" } }),
+        "content_part.added part has the input part type input_image"],
+      [frame({ type: "response.content_part.done", item_id: "msg_fixture", output_index: 0, content_index: 0, part: { type: "input_text", text: "Hi" } }),
+        "content_part.done part has the input part type input_text"],
+      [frame({ type: "response.reasoning_summary_part.added", item_id: "rs_fixture", output_index: 0, summary_index: 0, part: { type: "function_call" } }),
+        "reasoning_summary_part.added part has the item type function_call"],
+      [frame({ type: "response.reasoning_summary_part.done", item_id: "rs_fixture", output_index: 0, summary_index: 0, part: { type: "output_text", text: "Hi" } }),
+        "reasoning_summary_part.done part is a message part"],
+    ];
+    for (const [text, error] of rejected) {
+      const outcome = await mapRaw(text + terminal);
+      expect(outcome.error, error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(error);
+      expect(outcome.seen).toEqual([]);
+    }
+    const summary = frame({ type: "response.reasoning_summary_part.done", item_id: "rs_fixture", output_index: 0, summary_index: 0, part: { type: "summary_text", text: "s" } });
+    const reasoning = { type: "reasoning", id: "rs_fixture", summary: [{ type: "summary_text", text: "s" }] };
+    const passes = await mapRaw(summary + frame({ type: "response.completed", response: completed([reasoning, said("Hi")]) }));
+    expect(passes.error).toBeUndefined();
+  });
+
   it("fails a lifecycle frame whose response status is not a running one, before any tool call or end", async () => {
     const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
     const terminal = frame({ type: "response.completed", response: completed([call]) });
@@ -2183,6 +2268,25 @@ describe("ResponsesChatModel configuration", () => {
         if (status === 429) expect(error).toMatchObject({ retryAfter: 7 });
       }
     }
+    // An AbortError the caller did not cause (an upstream abort of the body) is a transport
+    // failure: a 429 or 401 still classifies it, keeping it as the cause, and so does any status.
+    const upstream = () => new ReadableStream<Uint8Array>({ start(stream) { stream.error(new DOMException("upstream fixture abort", "AbortError")); } });
+    for (const [status, type] of [[429, RateLimitError], [401, ProviderAuthError], [503, ProviderError], [200, ProviderError]] as const) {
+      const failing = gateway(async () => new Response(upstream(), { status, headers: { "retry-after": "7" } }));
+      const chatError = await failing.chat({ messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught);
+      const errors = [chatError];
+      if (status !== 200) errors.push(await collect(failing.streamChat({ messages: [{ role: "user", content: "x" }] })).catch((caught: unknown) => caught));
+      for (const error of errors) {
+        expect(error, String(status)).toBeInstanceOf(type);
+        expect((error as Error).cause).toMatchObject({ name: "AbortError" });
+        if (status === 429) expect(error).toMatchObject({ retryAfter: 7 });
+      }
+    }
+    const transport = gateway(async () => new Response(new ReadableStream<Uint8Array>({ start(stream) { stream.error(new TypeError("fixture transport failure")); } }), { status: 503 }));
+    const transportError = await transport.chat({ messages: [{ role: "user", content: "x" }] }).catch((caught: unknown) => caught);
+    expect(transportError).toBeInstanceOf(ProviderError);
+    expect(String(transportError)).toContain("(503)");
+    expect((transportError as Error).cause).toBeInstanceOf(TypeError);
     // A caller abort while the body of a 429 stalls still wins.
     const controller = new AbortController();
     const aborted = gateway(async () => {
