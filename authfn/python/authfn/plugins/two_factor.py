@@ -20,9 +20,9 @@ from ..limits import (
 )
 from ..types import (
     AuthFnConfig,
-    ConfigError,
     AuthFnPlugin,
     AuthFnSession,
+    ConfigError,
     NotFoundError,
     TwoFactorInvalidCodeError,
     TwoFactorRequiredError,
