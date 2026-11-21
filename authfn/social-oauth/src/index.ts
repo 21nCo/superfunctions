@@ -631,20 +631,19 @@ function createSocialRoutes(
           providerSettings,
           profile
         );
+        // A token without an email says nothing about the email, so an
+        // already linked account is used as stored rather than rewritten:
+        // writing it back could erase the email it holds.
         const storedAccount = profile.email === undefined && resolved.existingAccountId
           ? await findOAuthAccountByProviderAccountId(ctx.config, 'apple', profile.providerAccountId)
           : null;
-        const account = await upsertOAuthAccount(ctx.config, {
+        const account = storedAccount ?? await upsertOAuthAccount(ctx.config, {
           userId: resolved.user.id,
           provider: 'apple',
           providerAccountId: profile.providerAccountId,
           connectionId: resolved.connectionId,
-          // A token without an email says nothing about the email, so an
-          // already linked account keeps the email and profile it has.
-          email: storedAccount ? storedAccount.email ?? undefined : profile.email,
-          profile: storedAccount
-            ? { ...(readRecord(storedAccount.profile) ?? {}), ...profile.profile }
-            : profile.profile
+          email: profile.email,
+          profile: profile.profile
         });
         const user = resolved.user;
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
