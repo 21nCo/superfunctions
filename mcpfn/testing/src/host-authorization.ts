@@ -576,6 +576,11 @@ interface RedirectDecision {
   uriMatch?: McpFnRedirectMatch;
   eligibility: RegistrationEligibility;
   /**
+   * The request names a client (a non-blank client_id), so the server
+   * resolves it before any client-stage rejection.
+   */
+  clientIdPresent: boolean;
+  /**
    * The client-stage error codes a correct server may return for a
    * registration that is not eligible, before it matches the redirect URI.
    * Undefined when the request has a blank client_id (a request-parsing
@@ -600,8 +605,9 @@ function redirectDecision(
   const { registration, authorization } = fixture;
   // A blank client_id fails request parsing before any client stage, and a
   // request naming another client says nothing about this registration.
-  if (!authorization.clientId.trim() || authorization.clientId !== registration.clientId) {
-    return { eligibility: "ineligible", postMatchPermitted: false };
+  const clientIdPresent = authorization.clientId.trim() !== "";
+  if (!clientIdPresent || authorization.clientId !== registration.clientId) {
+    return { eligibility: "ineligible", clientIdPresent, postMatchPermitted: false };
   }
   const policy = target.redirectPolicy;
   let client: McpFnNormalizedClientRegistration;
@@ -612,6 +618,7 @@ function redirectDecision(
     // invalid_client_metadata, or treats it as an unknown client.
     return {
       eligibility: "ineligible",
+      clientIdPresent,
       permittedClientCodes: CLIENT_REJECTION_CODES,
       postMatchPermitted: false,
     };
@@ -626,6 +633,7 @@ function redirectDecision(
   return {
     uriMatch,
     eligibility,
+    clientIdPresent,
     permittedClientCodes: clientStageCodes(client, scopeRejection),
     postMatchPermitted: uriMatch !== undefined && eligibility === "eligible",
   };
@@ -719,14 +727,27 @@ function assertClientResolved(
  * a target-wide declaration nor the fixture's expected code tells that apart
  * from later validation, so another code is accepted only when the target's
  * evidence for this exact response shows a pre-client-resolution denial that
- * made no client resolution. A client-stage code comes from the client stage,
- * so it also fails when that evidence shows no client resolution.
+ * made no client resolution. A permitted client-stage code comes from the
+ * client stage, so it also fails when that evidence shows no client resolution.
+ *
+ * Whatever the registration's eligibility, and whichever client the request
+ * names, the server resolves a named client before it rejects it as
+ * `invalid_client` or `invalid_client_metadata`, so such a code fails when the
+ * response's evidence shows no client resolution, unless that evidence shows
+ * a pre-client-resolution denial.
  */
 function assertClientStageRejection(
   decision: RedirectDecision,
   errorCode: string,
   evidence: McpFnHostedAuthorizationEvidence | undefined,
 ): void {
+  if (
+    decision.clientIdPresent &&
+    CLIENT_REJECTION_CODES.has(errorCode) &&
+    !(evidence?.preClientResolutionDenial && evidence.clientResolutions === 0)
+  ) {
+    assertClientResolved(evidence, "A client-stage rejection");
+  }
   const permitted = decision.permittedClientCodes;
   if (decision.eligibility === "eligible" || !permitted) return;
   if (

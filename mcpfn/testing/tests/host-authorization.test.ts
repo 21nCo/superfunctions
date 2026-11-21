@@ -1764,6 +1764,65 @@ describe("unvetted-client authorization rejections", () => {
       }
     });
 
+    it("requires a client resolution for a client-stage rejection of any named client", async () => {
+      const NO_CLIENT_RESOLUTION =
+        "A client-stage rejection requires a client resolution, but the response's evidence shows none";
+      const named = (id: string, code?: string, adjust: (fixture: ReturnType<typeof rejectionFixture>) => void = () => {}) => {
+        const fixture = rejectionFixture(id);
+        adjust(fixture);
+        if (code) fixture.expected.errorCode = code;
+        else delete fixture.expected.errorCode;
+        return fixture;
+      };
+      const unknownClient = (fixture: ReturnType<typeof rejectionFixture>) => {
+        fixture.authorization.clientId = "unknown-client";
+      };
+      const ineligible = (fixture: ReturnType<typeof rejectionFixture>) => {
+        fixture.registration.metadata.response_types = ["token"];
+      };
+      const json = (code: string, reported?: McpFnHostedAuthorizationEvidence) => ({
+        issuer,
+        prepareRegistration: async () => {},
+        request: async () => Response.json({ error: code }, { status: 400 }),
+        authorizationEvidence: () => reported,
+      });
+      const cases = [
+        ["an unknown client, expected", "invalid_client", named(DYNAMIC, "invalid_client", unknownClient)],
+        ["an unknown client, no expected code", "invalid_client", named(DYNAMIC, undefined, unknownClient)],
+        ["an eligible dynamic client", "invalid_client", named(DYNAMIC, "invalid_client")],
+        ["an eligible pre-registered client", "invalid_client", named(PRE_REGISTERED, "invalid_client")],
+        ["an eligible metadata document", "invalid_client_metadata", named(METADATA_DOCUMENT, "invalid_client_metadata")],
+      ] as const;
+      const resolved = { clientResolutions: 1, preClientResolutionDenial: false };
+      const denied = { clientResolutions: 0, preClientResolutionDenial: true };
+      for (const [name, code, fixture] of cases) {
+        const [unresolved] = await runHostedAuthorizationRegression(
+          json(code, { clientResolutions: 0, preClientResolutionDenial: false }),
+          [fixture],
+        );
+        expect(unresolved, name).toMatchObject({ status: "failed", error: NO_CLIENT_RESOLUTION });
+        for (const reported of [resolved, denied, undefined]) {
+          const [result] = await runHostedAuthorizationRegression(json(code, reported), [fixture]);
+          expect(result, name).toMatchObject({ status: "passed", responseStatus: 400, errorCode: code });
+        }
+      }
+      // A genuine policy denial may also use invalid_client for an ineligible client.
+      const [denial] = await runHostedAuthorizationRegression(
+        json("invalid_client", denied),
+        [named(DYNAMIC, "invalid_client", ineligible)],
+      );
+      expect(denial).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_client" });
+      // The real handler resolves an unknown client before rejecting it.
+      for (const expected of ["invalid_client", undefined]) {
+        const [real] = await runAgainstMcpFn([DYNAMIC], undefined, (fixture) => {
+          unknownClient(fixture);
+          if (expected) fixture.expected.errorCode = expected;
+          else delete fixture.expected.errorCode;
+        });
+        expect(real).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_client" });
+      }
+    });
+
     it.each([
       ["the requested runtime-port URI in HTML", () =>
         htmlPage(`<a href="${RUNTIME_PORT}">Back</a>`)()],
