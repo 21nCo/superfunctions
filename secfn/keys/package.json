@@ -1,6 +1,6 @@
 {
   "name": "@secfn/keys",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Worker-compatible ES256 signing key ring with staged rotation and JWKS export for SecFn",
   "type": "module",
   "main": "./dist/index.js",
