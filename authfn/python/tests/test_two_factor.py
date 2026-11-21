@@ -307,3 +307,65 @@ async def test_two_factor_requires_explicit_encryption_key_resolver() -> None:
         await service.enroll(user_id="user_1", primary_email="ada@example.com")
 
     assert "encryption_key_resolver" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_accepts_recovery_codes_hashed_by_the_typescript_kernel() -> None:
+    db = MockDatabaseAdapter()
+    now = datetime(2026, 3, 22, 0, 0, 0)
+    service = TwoFactorService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        TwoFactorPluginConfig(
+            issuer="authfn-tests",
+            now=lambda: now,
+            recovery_code_count=1,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
+        ),
+    )
+    enrolled = await service.enroll(user_id="user_1", primary_email="ada@example.com")
+    await service.confirm(user_id="user_1", code=_generate_totp(enrolled["secret"], now))
+    enrollment_id = db.storage["two_factor_enrollments"][0]["id"]
+    # Shapes the TypeScript kernel stores: salted with the enrollment id since
+    # AUTH-32, and the code alone before it.
+    salted_code = "TEST0-TEST0-TEST0-TEST1"
+    legacy_code = "TEST0-TEST2"
+    for row_id, stored in (
+        ("recovery_test_salted", f"authfn-recovery:{enrollment_id}:TEST0TEST0TEST0TEST1"),
+        ("recovery_test_legacy", "TEST0TEST2"),
+    ):
+        db.storage["two_factor_recovery_codes"].append(
+            {
+                "id": row_id,
+                "enrollmentId": enrollment_id,
+                "codeHash": hashlib.sha256(stored.encode("utf-8")).hexdigest(),
+                "usedAt": None,
+                "createdAt": now,
+            }
+        )
+
+    for code in (salted_code, legacy_code):
+        challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+        result = await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code=code.lower(),
+            primary_email="ada@example.com",
+        )
+        assert result["usedRecoveryCode"] is True
+
+    # A salted hash only matches its own enrollment.
+    db.storage["two_factor_recovery_codes"].append(
+        {
+            "id": "recovery_test_other",
+            "enrollmentId": enrollment_id,
+            "codeHash": hashlib.sha256(b"authfn-recovery:other-enrollment:TEST0TEST0TEST0TEST3").hexdigest(),
+            "usedAt": None,
+            "createdAt": now,
+        }
+    )
+    challenge = await service.begin_sign_in_challenge(user_id="user_1", primary_method="password")
+    with pytest.raises(TwoFactorInvalidCodeError):
+        await service.complete_sign_in_challenge(
+            challenge_id=challenge["id"],
+            code="TEST0-TEST0-TEST0-TEST3",
+            primary_email="ada@example.com",
+        )

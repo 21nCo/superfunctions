@@ -11,6 +11,8 @@ import {
   confirmTwoFactorEnrollment,
   createTwoFactorEnrollment,
   disableTwoFactorEnrollment,
+  getTwoFactorPluginConfig,
+  resolveTwoFactorAttemptLimits,
   satisfyTwoFactorChallenge
 } from 'authfn/core/two-factor';
 import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
@@ -31,6 +33,10 @@ export function authFnTwoFactorPlugin(
   return {
     name: 'twoFactor',
     schema: () => config.schema ?? createTwoFactorSchema(),
+    // A bad limit fails when the server is set up, not on every code check.
+    validateConfig: (runtime) => {
+      resolveTwoFactorAttemptLimits(getTwoFactorPluginConfig(runtime) ?? {});
+    },
     routes: (ctx) => createTwoFactorRoutes(ctx)
   };
 }

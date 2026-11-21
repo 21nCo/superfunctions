@@ -51,7 +51,7 @@ def _hash_code(code: str) -> str:
     return "$".join(["pbkdf2-sha256", "200000", salt, digest.hex()])
 
 
-def _verify_code_hash(stored_hash: str, code: str) -> bool:
+def _verify_code_hash(stored_hash: str, code: str, enrollment_id: Optional[str] = None) -> bool:
     normalized = _normalize_code(code)
     parts = stored_hash.split("$")
     if len(parts) == 4 and parts[0] == "pbkdf2-sha256":
@@ -66,7 +66,17 @@ def _verify_code_hash(stored_hash: str, code: str) -> bool:
             dklen=32,
         ).hex()
         return hmac.compare_digest(digest, expected)
-    return hmac.compare_digest(stored_hash, hashlib.sha256(normalized.encode("utf-8")).hexdigest())
+    # Recovery codes written by the TypeScript kernel: since AUTH-32 the hash
+    # is salted with the enrollment id; older codes hash the code alone.
+    candidates = [hashlib.sha256(normalized.encode("utf-8")).hexdigest()]
+    if enrollment_id is not None:
+        candidates.append(
+            hashlib.sha256(f"authfn-recovery:{enrollment_id}:{normalized}".encode("utf-8")).hexdigest()
+        )
+    matched = False
+    for candidate in candidates:
+        matched = hmac.compare_digest(stored_hash, candidate) or matched
+    return matched
 
 
 def _normalize_code(code: str) -> str:
@@ -396,7 +406,7 @@ class TwoFactorService:
             namespace=self.config.namespace,
         )
         for row in rows:
-            if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code):
+            if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code, enrollment_id):
                 await self.config.database.update(
                     model="two_factor_recovery_codes",
                     where=[{"field": "id", "operator": "eq", "value": row["id"]}],

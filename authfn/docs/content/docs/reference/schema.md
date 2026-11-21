@@ -131,7 +131,7 @@ Tracking tables for consent records and (rare) provider revocation failures. Use
 | `userId` | text FK |  |
 | `secretEncrypted` | text | TOTP secret, encrypted at rest with `pluginRuntime.twoFactor.encryptionKeyResolver`. |
 | `lastUsedCounter` | number | Last accepted TOTP window; used for replay protection. |
-| `failedAttemptCount` | number, nullable | Wrong codes in a row since the last correct code or lock. |
+| `failedAttemptCount` | number, nullable | TOTP checks counted against the failed-attempt limit. Only ever increases; every `maxFailedAttempts`-th check locks the enrollment. |
 | `lockedUntil` | timestamp, nullable | While in the future, every code is refused. |
 | `confirmedAt` | timestamp | Set after successful `/2fa/confirm`. |
 | `createdAt` / `updatedAt` | timestamp |  |

@@ -156,7 +156,7 @@ describe('authfn modular schema discovery', () => {
       }
     );
 
-    expect(schema.version).toBe(2);
+    expect(schema.version).toBe(3);
     expect(schema.schemas.map((table) => table.modelName)).toEqual([
       'users',
       'sessions',

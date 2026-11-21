@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createTestServer } from './test-server.js';
 import type { Adapter } from '@superfunctions/db';
+import type { TwoFactorPluginRuntimeConfig } from '../plugin-types.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import { authFnPasswordPlugin } from '@authfn/password';
 import { authFnTwoFactorPlugin } from '@authfn/two-factor';
@@ -165,6 +166,12 @@ function createTwoFactorPluginConfig(clock: ReturnType<typeof createClock>) {
 function createPrismaStyleUpdateWrapper(base: Adapter): Adapter {
   return {
     ...base,
+    // Like the Prisma adapter, it reports no RETURNING support, so conditional
+    // writes go through updateMany.
+    capabilities: {
+      ...base.capabilities,
+      operations: { ...base.capabilities.operations, returning: false }
+    },
     async update(params) {
       if (
         params.model === 'two_factor_enrollments'
@@ -615,11 +622,29 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
       const gated = await post('/sign-in/password', { email: 'ada@example.com', password: 'Sup3rSecurePassphrase!' });
       return (await gated.json()).error.details.challengeId as string;
     };
+    // A code that no accepted time step (the current one and one on either
+    // side) produces.
     const wrongCode = (now: Date) => {
-      const right = generateTotp(secret, now);
-      return right === '000000' ? '111111' : '000000';
+      const accepted = [-30, 0, 30].map((offset) => generateTotp(secret, new Date(now.getTime() + offset * 1000)));
+      return ['000000', '111111', '222222', '333333'].find((candidate) => !accepted.includes(candidate))!;
     };
-    return { config, clock, post, secret, recoveryCodes: enroll.data.recoveryCodes as string[], challenge, wrongCode };
+    const enrollment = await config.database.findOne<{ id: string; userId: string }>({
+      model: 'two_factor_enrollments',
+      where: [{ field: 'confirmedAt', operator: 'ne', value: null }],
+      namespace: 'authfn'
+    });
+    return {
+      config,
+      clock,
+      post,
+      secret,
+      recoveryCodes: enroll.data.recoveryCodes as string[],
+      challenge,
+      wrongCode,
+      userId: enrollment!.userId,
+      enrollmentId: enrollment!.id,
+      pluginConfig: config.pluginRuntime!.twoFactor as TwoFactorPluginRuntimeConfig
+    };
   }
 
   it('locks the enrollment after the limit of wrong codes, across new challenges', async () => {
@@ -684,6 +709,13 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
       code: setup.recoveryCodes[0]
     })));
     expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+    // The losing challenge was given back, so another valid code finishes it.
+    const loser = responses[0].status === 400 ? first : second;
+    setup.clock.advanceSeconds(30);
+    expect((await setup.post('/2fa/challenge', {
+      challengeId: loser,
+      code: generateTotp(setup.secret, setup.clock.now())
+    })).status).toBe(200);
   });
 
   it('issues 80-bit recovery codes and still accepts codes stored before them', async () => {
@@ -711,13 +743,188 @@ describe('two-factor failed-attempt limit and recovery codes (AF-07)', () => {
     expect(response.status).toBe(200);
   });
 
-  it.each([0, -1, 2.5])('rejects %s as maxFailedAttempts', async (value) => {
+  it.each([
+    ['maxFailedAttempts', 0],
+    ['maxFailedAttempts', -1],
+    ['maxFailedAttempts', 2.5],
+    ['maxFailedAttempts', 1001],
+    ['lockoutSeconds', 0],
+    ['lockoutSeconds', 1e12]
+  ])('refuses %s = %s when the server is set up', (field, value) => {
     const config = createConfig();
-    const user = await createUser(config, { primaryEmail: 'limit@example.com' });
-    const pluginConfig = { ...config.pluginRuntime!.twoFactor as Record<string, unknown>, maxFailedAttempts: value };
-    await createTwoFactorEnrollment(config, user, pluginConfig);
-    await expect(confirmTwoFactorEnrollment(config, user.id, '000000', pluginConfig)).rejects.toMatchObject({
-      code: 'AUTHFN_CONFIG_INVALID'
+    Object.assign(config.pluginRuntime!.twoFactor as Record<string, unknown>, { [field]: value });
+    expect(() => createTestServer(config)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+  });
+
+  it('does not let a request that read the count before a lock check a code during it', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 3 });
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    const wrong = setup.wrongCode(setup.clock.now());
+    const verify = (target: AuthFnRuntimeConfig, code: string) =>
+      verifyTwoFactorCode(target, setup.userId, code, setup.pluginConfig).then(() => 'ok', (error) => error.code);
+
+    // This request reads the count, then waits before writing its attempt.
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_enrollments' && 'failedAttemptCount' in params.data);
+    const stale = verify(config, wrong);
+    await reached;
+    // Meanwhile three wrong codes use the run and lock the enrollment.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(await verify(setup.config, wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    }
+    paused.release();
+    expect(await stale).toBe('AUTHFN_RATE_LIMITED');
+    expect(await verify(setup.config, generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
+  });
+
+  it('keeps a lock set after a correct code was checked but before its count was reset', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 3 });
+    const paused = pausingAdapter(setup.config.database);
+    const config = { ...setup.config, database: paused.adapter };
+    const verify = (target: AuthFnRuntimeConfig, code: string) =>
+      verifyTwoFactorCode(target, setup.userId, code, setup.pluginConfig).then(() => 'ok', (error) => error.code);
+
+    // The correct code is checked, then its reset waits.
+    const reached = paused.pauseNext((params) =>
+      params.model === 'two_factor_enrollments' && params.data.lockedUntil === null);
+    const correct = verify(config, generateTotp(setup.secret, setup.clock.now()));
+    await reached;
+    const wrong = setup.wrongCode(setup.clock.now());
+    expect(await verify(setup.config, wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    expect(await verify(setup.config, wrong)).toBe('AUTHFN_2FA_INVALID_CODE');
+    paused.release();
+    expect(await correct).toBe('ok');
+    // The correct code's check and the two wrong ones after it make a run of
+    // three and lock the enrollment; the late reset must not lift that lock.
+    setup.clock.advanceSeconds(30);
+    expect(await verify(setup.config, generateTotp(setup.secret, setup.clock.now()))).toBe('AUTHFN_RATE_LIMITED');
+  });
+
+  it('dates a lock from when it is written, not from when the request started', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 1, lockoutSeconds: 60 });
+    // The request is slow between loading the enrollment and reserving its
+    // attempt: two minutes pass.
+    let reads = 0;
+    const slow: Adapter = {
+      ...setup.config.database,
+      async findOne(params) {
+        const row = await setup.config.database.findOne(params);
+        if (params.model === 'two_factor_enrollments' && (reads += 1) === 2) {
+          setup.clock.advanceSeconds(120);
+        }
+        return row;
+      }
+    } as Adapter;
+    const config = { ...setup.config, database: slow };
+    await expect(verifyTwoFactorCode(config, setup.userId, setup.wrongCode(setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_2FA_INVALID_CODE' });
+    await expect(verifyTwoFactorCode(setup.config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
+  it('accepts a correct code when updateMany reports no rows for writes it made', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 2 });
+    const reportsZero: Adapter = {
+      ...setup.config.database,
+      async updateMany(params) {
+        await setup.config.database.updateMany(params);
+        return 0;
+      }
+    } as Adapter;
+    const config = { ...setup.config, database: reportsZero };
+    for (let round = 0; round < 3; round += 1) {
+      setup.clock.advanceSeconds(30);
+      await expect(verifyTwoFactorCode(config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+        .resolves.toEqual({ usedRecoveryCode: false });
+    }
+    await expect(verifyTwoFactorCode(config, setup.userId, setup.recoveryCodes[0], setup.pluginConfig))
+      .resolves.toEqual({ usedRecoveryCode: true });
+  });
+
+  it('checks no code when the adapter cannot confirm the attempt was counted', async () => {
+    const setup = await enrolledUser();
+    const unconfirmed: Adapter = {
+      ...setup.config.database,
+      capabilities: {
+        ...setup.config.database.capabilities,
+        operations: { ...setup.config.database.capabilities.operations, returning: false }
+      },
+      async updateMany() {
+        return Number.NaN;
+      }
+    } as Adapter;
+    const config = { ...setup.config, database: unconfirmed };
+    setup.clock.advanceSeconds(30);
+    await expect(verifyTwoFactorCode(config, setup.userId, generateTotp(setup.secret, setup.clock.now()), setup.pluginConfig))
+      .rejects.toMatchObject({ code: 'AUTHFN_RATE_LIMITED' });
+  });
+
+  it('keeps recovery codes working while TOTP codes are locked', async () => {
+    const setup = await enrolledUser({ maxFailedAttempts: 2 });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect((await setup.post('/2fa/challenge', {
+        challengeId: await setup.challenge(),
+        code: setup.wrongCode(setup.clock.now())
+      })).status).toBe(400);
+    }
+    expect((await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: generateTotp(setup.secret, setup.clock.now())
+    })).status).toBe(429);
+    expect((await setup.post('/2fa/challenge', {
+      challengeId: await setup.challenge(),
+      code: setup.recoveryCodes[0]
+    })).status).toBe(200);
+  });
+
+  it('spends one recovery code when two arrive for the same challenge', async () => {
+    const setup = await enrolledUser();
+    const challengeId = await setup.challenge();
+    const responses = await Promise.all(setup.recoveryCodes.slice(0, 2).map((code) =>
+      setup.post('/2fa/challenge', { challengeId, code })));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+    const used = await setup.config.database.findMany<{ usedAt: Date | null }>({
+      model: 'two_factor_recovery_codes',
+      where: [{ field: 'enrollmentId', operator: 'eq', value: setup.enrollmentId }],
+      namespace: 'authfn'
     });
+    expect(used.filter((code) => code.usedAt).length).toBe(1);
   });
 });
+
+/**
+ * Wraps an adapter so one chosen write waits until the test releases it,
+ * standing in for a request that is slow to reach the database.
+ */
+function pausingAdapter(base: Adapter) {
+  type WriteParams = { model: string; data: Record<string, unknown> };
+  let match: ((params: WriteParams) => boolean) | null = null;
+  let arrived: () => void = () => {};
+  let release: () => void = () => {};
+  const wrap = <T>(write: (params: never) => Promise<T>) => async (params: WriteParams): Promise<T> => {
+    if (match?.(params)) {
+      match = null;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      arrived();
+      await released;
+    }
+    return write(params as never);
+  };
+  return {
+    adapter: {
+      ...base,
+      update: wrap(base.update.bind(base)),
+      updateMany: wrap(base.updateMany.bind(base))
+    } as Adapter,
+    pauseNext(predicate: (params: WriteParams) => boolean): Promise<void> {
+      match = predicate;
+      return new Promise<void>((resolve) => {
+        arrived = resolve;
+      });
+    },
+    release: () => release()
+  };
+}
