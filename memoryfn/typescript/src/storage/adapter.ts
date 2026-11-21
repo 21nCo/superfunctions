@@ -82,8 +82,9 @@ export interface StorageAdapter {
     /**
      * Leave out chunks and facts of sources (rows with a sourceKey) before
      * ranking and truncating to topK. add() sets it for deduplication and
-     * conflict resolution, in one call per path. An adapter that implements
-     * replaceSourceIfChanged MUST honour it. add() drops any source row an
+     * conflict resolution, in one call per path. An adapter that stores source
+     * rows (through replaceSource or replaceSourceIfChanged) MUST honour it.
+     * add() drops any source row an
      * adapter returns anyway, without querying again, so ignoring the flag can
      * only make add() miss a candidate, never change a source row or throw.
      */
@@ -108,7 +109,8 @@ export interface StorageAdapter {
    * rejected, exactly as by replaceSource. Optional, so an adapter written
    * before it still serves the memory operations; without it upsertDocument
    * fails with MEMORY_DOCUMENTS_UNSUPPORTED before any provider call. An
-   * adapter that implements it MUST honour searchVectors' excludeSources.
+   * adapter that implements it, or stores source rows through replaceSource,
+   * MUST honour searchVectors' excludeSources.
    */
   replaceSourceIfChanged?(input: SourceReplace): Promise<SourceReplaceResult>;
   /** Soft-deletes every live chunk of the source and returns how many it deleted. */

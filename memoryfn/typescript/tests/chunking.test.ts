@@ -190,4 +190,11 @@ describe('hard split paragraph separator', () => {
       expect(chunks.join(' ')).toContain('word29');
     }
   });
+
+  it.each([[0, 64], [16, 48]])('keeps words apart around a skipped blank atom inside a paragraph (overlap %i)', (overlapChars, size) => {
+    const chunks = chunkMarkdown(`${'x'.repeat(size)}${' '.repeat(size)}bar`, { targetChars: 64, overlapChars });
+    expect(chunks.join('|')).not.toMatch(/xbar/);
+    expect(chunks.join(' ')).toMatch(/x bar/);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(64);
+  });
 });

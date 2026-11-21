@@ -263,9 +263,7 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
     }
     if (typeof value !== 'object' || open.has(value)) throw invalid();
     const isArray = read(() => Array.isArray(value));
-    // A plain object's prototype is null or some realm's Object.prototype, whose own prototype is null.
-    const prototype = isArray ? null : read(() => Object.getPrototypeOf(value));
-    if (prototype !== null && read(() => Object.getPrototypeOf(prototype)) !== null) throw invalid();
+    if (!isArray && !read(() => isPlainRecord(value))) throw invalid();
     open.add(value);
     let result: unknown;
     if (isArray) {
@@ -308,6 +306,21 @@ function metadataSnapshot(metadata: Record<string, unknown> | undefined): Record
     if (error instanceof RangeError) throw new MemorySourceLimitError();
     throw error;
   }
+}
+
+/**
+ * Whether `value`'s prototype is null or some realm's Object.prototype: a
+ * prototype without a parent whose own constructor is a function named Object
+ * that points back to it. A class instance, a class extending null and an
+ * object inheriting from another null-prototype object are not plain records,
+ * so their inherited properties are never silently dropped. May throw (a proxy).
+ */
+function isPlainRecord(value: object): boolean {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype === null) return true;
+  if (typeof prototype !== 'object' || Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor: unknown = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
+  return typeof constructor === 'function' && constructor.name === 'Object' && constructor.prototype === prototype;
 }
 
 /** UTF-8 bytes of JSON.stringify(text), counted without serializing it. */

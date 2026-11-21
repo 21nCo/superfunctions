@@ -514,6 +514,8 @@ describe('upsertDocument document text', () => {
     ['a revoked nested proxy', (() => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return { nested: proxy }; })()],
     ['a Date from another realm', runInNewContext('({ at: new Date(0) })') as Record<string, unknown>],
     ['a class instance', { item: new (class Item { name = 'x'; })() }],
+    ['an object inheriting from a null-prototype object', { item: Object.create(Object.assign(Object.create(null), { inherited: 'lost' })) }],
+    ['an instance of a class extending null', { item: Object.create((class Bare extends null {}).prototype) }],
   ])('rejects metadata with %s before any provider call, keeping the source', async (_name, metadata) => {
     const first = await memory.upsertDocument({ ...scope, content: docV1 });
     embedder.embedBatch.mockClear();
