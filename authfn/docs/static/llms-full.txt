@@ -8865,7 +8865,10 @@ You can also refuse password sign-in until the email is verified:
 authFnPasswordPlugin({ requireEmailVerifiedForSignIn: true })
 ```
 
-With that setting, a user whose session expires before they verify cannot sign in with their password to get a new session for the guarded request. Their way back is an email-code sign-in (or a password reset). That is a first proof of the mailbox, so it claims the account: it removes the password and anything else set up before, and they set a new password afterwards.
+With that setting, a user whose session expires before they verify cannot sign in with their password to get a new session for the guarded request. There are two ways back, and both are a first proof of the mailbox, so both claim the account (removing API keys, second factors, linked accounts and anything else set up before):
+
+- an email-code sign-in, which also removes the password; they can add a new one afterwards;
+- a password reset, which installs the new password and keeps it, so they then sign in with it.
 
 To gate in your application code:
 
