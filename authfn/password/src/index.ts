@@ -31,29 +31,29 @@ export type {
 } from 'authfn/plugin-types';
 
 export function authFnPasswordPlugin(
-  options: PasswordPluginConfig = {}
+  config: PasswordPluginConfig = {}
 ): AuthFnPlugin<'password', PasswordPluginRuntimeConfig, false> & { readonly otpEmailLimits: PasswordOtpEmailLimits } {
-  // One snapshot of the factory options for the routes, the startup check and
-  // the published limits, so later changes to the caller's object cannot
-  // make them disagree.
-  const config: PasswordPluginConfig = { ...options, otp: options.otp ? { ...options.otp } : undefined };
+  // One snapshot of the factory `otp` options for the routes, the startup
+  // check and the published limits, so later changes to the caller's object
+  // cannot make them disagree. Other options are read as before.
+  const factoryOtp: PasswordPluginConfig['otp'] = config.otp ? { ...config.otp } : undefined;
   return {
     name: 'password',
     // Read by core so every OTP route applies these deprecated limits.
     otpEmailLimits: {
-      maxFailedAttemptsPerEmail: config.otp?.maxFailedAttemptsPerEmail,
-      maxChallengesPerEmail: config.otp?.maxChallengesPerEmail,
-      emailAttemptWindowSeconds: config.otp?.emailAttemptWindowSeconds,
+      maxFailedAttemptsPerEmail: factoryOtp?.maxFailedAttemptsPerEmail,
+      maxChallengesPerEmail: factoryOtp?.maxChallengesPerEmail,
+      emailAttemptWindowSeconds: factoryOtp?.emailAttemptWindowSeconds,
       // Reset codes may live this long, so every route's scan must reach them.
-      challengeTtlSeconds: config.otp?.challengeTtlSeconds
+      challengeTtlSeconds: factoryOtp?.challengeTtlSeconds
     },
     schema: () => config.schema ?? createPasswordSchema(),
     validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime, {
       // The same merge the routes use, so the lifetime checked is theirs.
-      ...config.otp,
+      ...factoryOtp,
       ...readPluginRuntimeConfig<PasswordPluginRuntimeConfig>(runtime, 'password').otp
     }),
-    routes: (ctx) => createPasswordRoutes(ctx, config)
+    routes: (ctx) => createPasswordRoutes(ctx, config, factoryOtp)
   };
 }
 
@@ -94,11 +94,12 @@ function createPasswordSchema(): AuthFnSchemaDefinition['schemas'] {
 
 function createPasswordRoutes(
   ctx: AuthFnPluginRuntimeContext,
-  config: PasswordPluginConfig
+  config: PasswordPluginConfig,
+  factoryOtp: PasswordPluginConfig['otp']
 ): Route[] {
   const runtimeConfig = readPluginRuntimeConfig<PasswordPluginRuntimeConfig>(ctx, 'password');
   const otpConfig = {
-    ...config.otp,
+    ...factoryOtp,
     ...runtimeConfig.otp
   };
 

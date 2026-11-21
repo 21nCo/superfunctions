@@ -1499,6 +1499,22 @@ describe('authfn otp plugin', () => {
       later.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: factoryOtp })];
       factoryOtp.challengeTtlSeconds = 12 * 60 * 60;
       expect(resolveOtpEmailBudget(later, {}).longestTtlMs).toBe(600 * 1000);
+    });
+
+    it('still reads a non-enumerable requireEmailVerifiedForSignIn from the password factory options', async () => {
+      const options = {};
+      Object.defineProperty(options, 'requireEmailVerifiedForSignIn', { value: true, enumerable: false });
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin(options)];
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await post('/sign-up/password', { email: 'unverified@example.com', password: 'test-password-long-enough' });
+      const signIn = await post('/sign-in/password', { email: 'unverified@example.com', password: 'test-password-long-enough' });
+      expect(signIn.status).toBe(403);
 
       const invalid = createConfig() as LimitConfig;
       Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
