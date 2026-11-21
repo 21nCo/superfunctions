@@ -129,8 +129,13 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     /// Whether a frame's URL shows the same scheme and host as its reported
     /// origin, and so can say whether its port 0 is explicit.
     static func sameSchemeAndHost(_ string: String, scheme: String, host: String) -> Bool {
-        guard let parts = splitOrigin(string) else { return false }
         let scheme = scheme.lowercased()
+        guard let parts = splitOrigin(string) else {
+            // A custom-scheme URL without an authority (`app:/index.html`)
+            // has the scheme's hostless origin, as WebKit gives it.
+            return host.isEmpty && !isSpecial(scheme) && !hostlessSchemes.contains(scheme)
+                && hostlessURLScheme(string) == scheme
+        }
         return parts.scheme == scheme && canonicalHost(parts.host, scheme: scheme) == canonicalHost(host, scheme: scheme)
     }
 
@@ -310,6 +315,19 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         }
         guard significant.count <= 11 else { return nil }
         return UInt64(significant, radix: radix)
+    }
+
+    /// The scheme of a URL with no authority (`app:/index.html`,
+    /// `app:index.html`), or nil when it has one or no valid scheme.
+    private static func hostlessURLScheme(_ string: String) -> String? {
+        guard let colon = string.firstIndex(of: ":") else { return nil }
+        let scheme = string[..<colon].lowercased()
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }),
+              !string[colon...].hasPrefix("://") else {
+            return nil
+        }
+        return scheme
     }
 
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {

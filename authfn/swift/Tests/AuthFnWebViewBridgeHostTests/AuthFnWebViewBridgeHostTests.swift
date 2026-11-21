@@ -165,6 +165,13 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertFalse(policy.allowsMessage(scheme: "app", host: "portal", port: 0, frameURL: "about:blank"))
         XCTAssertFalse(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: "https://portal.example:0/home"))
         XCTAssertFalse(policy.allowsMessage(scheme: "https", host: "portal.example", port: 0, frameURL: ""))
+        // A hostless custom-scheme page may report its URL without an
+        // authority; it has the same origin as `app:///index.html`.
+        let hostless = AuthFnBridgeOriginPolicy(trustedOrigins: [URL(string: "app:///index.html")!])
+        XCTAssertTrue(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "app:/index.html"))
+        XCTAssertTrue(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "app:///index.html"))
+        XCTAssertFalse(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "about:blank"))
+        XCTAssertFalse(hostless.allowsMessage(scheme: "app", host: "", port: 0, frameURL: "other:/index.html"))
     }
 
     func testOriginPolicyWithoutOriginsTrustsNothing() {
