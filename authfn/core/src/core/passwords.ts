@@ -345,7 +345,12 @@ export async function signInWithPassword(
   // runtime: a current-cost hash is checked next to a dummy legacy check; a
   // legacy hash is checked next to deriving its current-cost upgrade; no
   // stored hash means two dummy checks.
-  const storedHash = credential?.passwordHash;
+  // A stored hash AuthFn cannot evaluate (corrupt, or a parameter set it
+  // never wrote) is checked like a missing one and then refused, so the
+  // answer is the same 401 as for a wrong password.
+  const rawHash = credential?.passwordHash;
+  const storedHash = rawHash !== undefined && isUsableStoredHash(rawHash) ? rawHash : undefined;
+  const unusableHash = rawHash !== undefined && storedHash === undefined;
   const legacy = storedHash !== undefined && isLegacyHash(storedHash);
   // Both jobs are admitted together or the request is refused before either
   // is queued. The current-cost job is always queued first, so the order of
@@ -369,7 +374,7 @@ export async function signInWithPassword(
       verifyPassword(password, DUMMY_LEGACY_HASH)
     ]);
   }
-  if (!user || !credential || !valid) {
+  if (!user || !credential || !valid || unusableHash) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
@@ -386,8 +391,9 @@ export async function signInWithPassword(
   if (upgradedHash && latest.passwordHash === credential.passwordHash) {
     const upgradedAt = await upgradePasswordHash(config, credential, upgradedHash);
     if (upgradedAt) {
-      // The caller gets what is stored now, not the hash it replaced.
-      latest = { ...latest, passwordHash: upgradedHash, updatedAt: upgradedAt };
+      // The caller gets what is stored now: read back, and if a reset
+      // replaced the upgrade meanwhile, the password is checked against it.
+      latest = await confirmCurrentCredential(config, user.id, password, upgradedHash);
     } else {
       // Another write got there first (another sign-in's upgrade, or a
       // reset): confirm the password against whatever is stored now.
@@ -678,6 +684,15 @@ function runScrypt(password: string, salt: string, keyLength: number, options: S
 const DUMMY_DIGEST = Buffer.alloc(PASSWORD_HASH_KEY_LENGTH).toString('base64url');
 const DUMMY_CURRENT_HASH = [PASSWORD_HASH_ALGO, '32768', '8', '3', 'authfn-dummy-salt', DUMMY_DIGEST].join('$');
 const DUMMY_LEGACY_HASH = [PASSWORD_HASH_ALGO, '16384', '8', '1', 'authfn-dummy-salt', DUMMY_DIGEST].join('$');
+
+function isUsableStoredHash(storedHash: string): boolean {
+  try {
+    parseStoredHash(storedHash);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function isLegacyHash(storedHash: string): boolean {
   const parts = storedHash.split('$');

@@ -346,8 +346,26 @@ export async function verifyOtpChallenge(
       }
     }
 
-    await internal.beforeConsume?.();
-    consumed = await consumeOtpChallenge(config, challenge, now);
+    if (internal.beforeConsume) {
+      await internal.beforeConsume();
+      // That work (a password hash) can take a while: the code must still
+      // belong to the current challenge when it is used.
+      const current = await findLatestChallenge(config, input.purpose, email);
+      if (!current || current.id !== challenge.id) {
+        throw new AuthFnOtpInvalidError('OTP code is invalid', {
+          challengeId: challenge.id
+        });
+      }
+    }
+    // The challenge must not have expired by the time it is used, checked
+    // against the clock now rather than when the request started.
+    const consumeAt = resolveNow(runtimeOptions);
+    if (challenge.expiresAt.getTime() <= consumeAt.getTime()) {
+      throw new AuthFnOtpExpiredError('OTP code has expired', {
+        challengeId: challenge.id
+      });
+    }
+    consumed = await consumeOtpChallenge(config, challenge, consumeAt);
   } catch (error) {
     await releaseOtpAttempt(config, reserved, now);
     throw error;

@@ -18,6 +18,40 @@ function memoryRegionStorage(): AuthFnRegionStorage & { values: Map<string, Auth
   };
 }
 
+
+/** A regional client whose requests are answered by `answer` (an OTP send by default). */
+function lookupClient(
+  answer: (url: string) => Response | undefined,
+  extra: Partial<Parameters<typeof createAuthFnRegionalClient>[0]> = {}
+) {
+  const urls: string[] = [];
+  const storage = memoryRegionStorage();
+  const client = createAuthFnRegionalClient({
+    defaultRegionId: 'us-east-1',
+    resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+    storage,
+    ...extra,
+    clientOptions: {
+      fetch: async (input) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        urls.push(url);
+        return answer(url) ?? Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
+      }
+    }
+  });
+  return { client, urls, storage };
+}
+
+function lookupAnswer(data: Record<string, unknown>) {
+  return (url: string) => url.endsWith('/regions/lookup')
+    ? Response.json({ ok: true, data, requestId: 'req_lookup' })
+    : undefined;
+}
+
+function sentTo(urls: string[]): string | undefined {
+  return urls.find((url) => url.endsWith('/otp/send'));
+}
+
 describe('@authfn/client regional client', () => {
   it('caches mismatch metadata and retries password sign-in once on the target region', async () => {
     const storage = memoryRegionStorage();
@@ -219,147 +253,48 @@ describe('@authfn/client regional client', () => {
   });
 
   it('lets a new sign-up through when a gateway lookup names no region', async () => {
-    const urls: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          urls.push(url);
-          if (url.endsWith('/regions/lookup')) {
-            // Gateway mode: no regionId, always continue locally.
-            return Response.json({
-              ok: true,
-              data: { identifier: 'new@example.com', authority: 'https://account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' });
-    expect(sent.ok).toBe(true);
-    expect(urls.some((url) => url.endsWith('/otp/send'))).toBe(true);
+    const { client, urls } = lookupClient(lookupAnswer({ identifier: 'new@example.com', authority: 'https://account.example.com', continueLocally: true }));
+    expect((await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' })).ok).toBe(true);
+    expect(sentTo(urls)).toBeDefined();
   });
 
   it('lets a new sign-up through when a server without a configured region answers unknown', async () => {
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({
-              ok: true,
-              data: { identifier: 'new@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' });
-    expect(sent.ok).toBe(true);
+    const { client } = lookupClient(lookupAnswer({ identifier: 'new@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true }));
+    expect((await client.sendOtp({ purpose: 'sign-up', email: 'new@example.com' })).ok).toBe(true);
   });
 
-  it('blocks sign-up for an account owned by another region served from the same authority', async () => {
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async () => Response.json({
-          ok: true,
-          data: { identifier: 'ada@example.com', regionId: 'eu-west-1', authority: 'https://account.example.com', continueLocally: true, ownedElsewhere: true },
-          requestId: 'req_lookup'
-        })
-      }
-    });
+  it.each([
+    ['an account owned by another region served from the same authority', { regionId: 'eu-west-1', authority: 'https://account.example.com', continueLocally: true, ownedElsewhere: true }],
+    ['an earlier server naming the user of a local account', { userId: 'user_test_1', regionId: 'us-east-1', authority: 'https://us-east-1.account.example.com', continueLocally: true }]
+  ])('blocks sign-up for %s', async (_label, data) => {
+    const { client } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', ...data }));
     const sent = await client.sendOtp({ purpose: 'sign-up', email: 'ada@example.com' });
-    expect(sent.ok).toBe(false);
-    expect(sent.ok ? undefined : sent.error.code).toBe('AUTHFN_ACCOUNT_ALREADY_EXISTS');
-  });
-
-  it('blocks sign-up when an earlier server names the user of a local account', async () => {
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({ ok: true, data: { identifier: 'ada@example.com', userId: 'user_test_1', regionId: 'us-east-1', authority: 'https://us-east-1.account.example.com', continueLocally: true }, requestId: 'req_lookup' });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'ada@example.com' });
-    expect(sent.ok).toBe(false);
     expect(sent.ok ? undefined : sent.error.code).toBe('AUTHFN_ACCOUNT_ALREADY_EXISTS');
   });
 
   it('lets a new sign-up through when the server answers with its own region for an unknown email', async () => {
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({ ok: true, data: { identifier: 'ada@example.com', regionId: 'eu-west-1', authority: 'https://eu-west-1.account.example.com', continueLocally: true }, requestId: 'req_lookup' });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-up', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
+    const { client } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', regionId: 'eu-west-1', authority: 'https://eu-west-1.account.example.com', continueLocally: true }));
+    expect((await client.sendOtp({ purpose: 'sign-up', email: 'ada@example.com' })).ok).toBe(true);
   });
 
   it('does not cache or switch to a region the server calls unknown', async () => {
-    const storage = memoryRegionStorage();
     const resolved: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
+    const { client, storage } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true }), {
       resolveBaseUrl: (regionId) => {
         resolved.push(regionId);
         if (regionId === 'unknown') {
           throw new Error('no base URL for region unknown');
         }
         return `https://${regionId}.account.example.com/auth`;
-      },
-      storage,
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({
-              ok: true,
-              data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://us-east-1.account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
       }
     });
-    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
+    expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
     expect(resolved).not.toContain('unknown');
     expect(await storage.get('ada@example.com')).toBeNull();
   });
 
   it('drops a cached route when a fresh lookup names no region', async () => {
-    const storage = memoryRegionStorage();
+    const { client, storage } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', authority: 'https://account.example.com', continueLocally: true }));
     await storage.set('ada@example.com', {
       identifier: 'ada@example.com',
       regionId: 'eu-west-1',
@@ -367,168 +302,50 @@ describe('@authfn/client regional client', () => {
       cachedAt: Date.now(),
       expiresAt: Date.now() + 60_000
     });
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage,
-      clientOptions: {
-        fetch: async () => Response.json({
-          ok: true,
-          data: { identifier: 'ada@example.com', authority: 'https://account.example.com', continueLocally: true },
-          requestId: 'req_lookup'
-        })
-      }
-    });
     await expect(client.resolveRegion({ identifier: 'ada@example.com', forceRefresh: true })).resolves.toBeNull();
     expect(await storage.get('ada@example.com')).toBeNull();
   });
 
-  it('follows a redirect to a region that is called unknown', async () => {
-    const urls: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          urls.push(url);
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({
-              ok: true,
-              data: {
-                identifier: 'ada@example.com',
-                regionId: 'unknown',
-                authority: 'https://unknown.account.example.com',
-                continueLocally: false,
-                ownedElsewhere: true,
-                redirectTo: 'https://unknown.account.example.com'
-              },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
-    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
+  it.each([
+    ['a redirect to a region called unknown', { regionId: 'unknown', authority: 'https://unknown.account.example.com', continueLocally: false, ownedElsewhere: true, redirectTo: 'https://unknown.account.example.com' }, {}, undefined],
+    ['a selected region configured as unknown', { regionId: 'unknown', authority: 'https://unknown.account.example.com', continueLocally: true }, {}, 'unknown'],
+    ['an earlier server naming a known account in a region called unknown', { userId: 'user_test_1', regionId: 'unknown', authority: 'https://account.example.com', continueLocally: true }, {}, undefined],
+    ['an app that says unknown is a region', { regionId: 'unknown', authority: 'https://account.example.com', continueLocally: true }, { unknownIsARegion: true }, undefined]
+  ])('routes sign-in to the region called unknown for %s', async (_label, data, extra, selected) => {
+    const { client, urls } = lookupClient(lookupAnswer({ identifier: 'ada@example.com', ...data }), extra);
+    if (selected) {
+      client.setCurrentRegionId(selected);
+    }
+    expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
+    expect(sentTo(urls)).toContain('https://unknown.account.example.com/');
   });
 
-  it('stays on a selected region that is configured as unknown', async () => {
-    const urls: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          urls.push(url);
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({
-              ok: true,
-              data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://unknown.account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
+  it.each([
+    ['answered from, even one called unknown', { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://unknown.account.example.com', continueLocally: true }, 'unknown'],
+    ['default when the retry names none', { identifier: 'ada@example.com', authority: 'https://account.example.com', continueLocally: true }, 'us-east-1']
+  ])('after a mismatch retry, reports and selects the region %s', async (_label, retryData, expected) => {
+    const { client, storage } = lookupClient((url) => {
+      if (url.startsWith('https://ap-south-1.')) {
+        return Response.json({
+          ok: false,
+          error: {
+            code: 'AUTHFN_REGION_MISMATCH',
+            message: 'Request must continue on a different region authority',
+            retryable: false,
+            details: { regionId: expected === 'unknown' ? 'unknown' : 'eu-west-1', authority: 'https://elsewhere.account.example.com' }
+          },
+          requestId: 'req_mismatch'
+        }, { status: 409 });
       }
+      return lookupAnswer(retryData)(url);
     });
-    client.setCurrentRegionId('unknown');
-    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
-    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
-  });
-
-  it('reports and selects the region a mismatch retry answered from, even one called unknown', async () => {
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          if (url.startsWith('https://us-east-1.')) {
-            return Response.json({
-              ok: false,
-              error: {
-                code: 'AUTHFN_REGION_MISMATCH',
-                message: 'Request must continue on a different region authority',
-                retryable: false,
-                details: { regionId: 'unknown', authority: 'https://unknown.account.example.com' }
-              },
-              requestId: 'req_mismatch'
-            }, { status: 409 });
-          }
-          return Response.json({
-            ok: true,
-            data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://unknown.account.example.com', continueLocally: true },
-            requestId: 'req_lookup'
-          });
-        }
-      }
-    });
+    client.setCurrentRegionId('ap-south-1');
     const prepared = await client.prepareEmailAuth({ email: 'ada@example.com', flow: 'sign-in' });
-    expect(prepared.ok).toBe(true);
-    expect(prepared.ok ? prepared.data.regionId : undefined).toBe('unknown');
-    expect(client.getCurrentRegionId()).toBe('unknown');
-  });
-
-  it('keeps the region an earlier server names for a known account, even one called unknown', async () => {
-    const urls: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          urls.push(url);
-          if (url.endsWith('/regions/lookup')) {
-            return Response.json({
-              ok: true,
-              data: { identifier: 'ada@example.com', userId: 'user_test_1', regionId: 'unknown', authority: 'https://account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
-    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
-  });
-
-  it('routes to a region named unknown when the app says it is one', async () => {
-    const urls: string[] = [];
-    const client = createAuthFnRegionalClient({
-      defaultRegionId: 'us-east-1',
-      unknownIsARegion: true,
-      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      storage: memoryRegionStorage(),
-      clientOptions: {
-        fetch: async (input) => {
-          const url = typeof input === 'string' ? input : input.toString();
-          urls.push(url);
-          if (url.endsWith('/regions/lookup')) {
-            // An earlier server, two regions on one authority, no user id.
-            return Response.json({
-              ok: true,
-              data: { identifier: 'ada@example.com', regionId: 'unknown', authority: 'https://account.example.com', continueLocally: true },
-              requestId: 'req_lookup'
-            });
-          }
-          return Response.json({ ok: true, data: { challengeId: 'otp_1', sent: true }, requestId: 'req_send' });
-        }
-      }
-    });
-    const sent = await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' });
-    expect(sent.ok).toBe(true);
-    expect(urls.find((url) => url.endsWith('/otp/send'))).toContain('https://unknown.account.example.com/');
+    expect(prepared.ok ? prepared.data.regionId : undefined).toBe(expected);
+    expect(client.getCurrentRegionId()).toBe(expected);
+    if (expected === 'us-east-1') {
+      expect(await storage.get('ada@example.com')).toBeNull();
+    }
   });
 
   it('looks up uncached identifiers through the currently selected region', async () => {

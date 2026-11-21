@@ -251,13 +251,16 @@ async function readSignInBody(request: Request): Promise<{
   password: string;
   sessionMode?: AuthFnSessionResponseMode;
 }> {
-  const body = await request.json() as {
-    email?: string;
+  const parsed = await request.json() as unknown;
+  // Anything but a JSON object reads as an empty one, and an email that is
+  // not a string as none: sign-in then refuses it as a validation error.
+  const body = (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}) as {
+    email?: unknown;
     password?: string;
     sessionMode?: AuthFnSessionResponseMode;
   };
   return {
-    email: body.email ?? '',
+    email: typeof body.email === 'string' ? body.email : '',
     password: body.password ?? '',
     // Only a known mode is kept; anything else means the default (cookie).
     sessionMode: body.sessionMode === 'cookie' || body.sessionMode === 'bearer' || body.sessionMode === 'hybrid'

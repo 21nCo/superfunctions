@@ -108,6 +108,10 @@ export function createAuthFnRegionalClient(
             cachedAt: Date.now(),
             expiresAt: Date.now() + cacheTtlMs
           }, lookupRegionId);
+        } else if (retry.ok) {
+          // The retry named no region: the route cached from the mismatch
+          // is dropped, so later requests use the default region.
+          await storage.delete(identifier);
         }
         return { lookup: retry, answeredBy: mismatch.regionId };
       } else {
@@ -161,16 +165,21 @@ export function createAuthFnRegionalClient(
       return accountExistsError(identifier, lookup.data, lookup.requestId);
     }
 
+    // An unresolved answer sends sign-in and reset to the default region,
+    // as the operations themselves do, so the preparation reports and
+    // selects that region; sign-up stays where it was asked.
     const answeredRegionId = concreteRegionId(lookup.data, answeredBy, options);
-    if (input.flow !== 'sign-up' && answeredRegionId) {
-      currentRegionId = answeredRegionId;
+    const preparedRegionId = answeredRegionId
+      ?? (input.flow === 'sign-up' ? selectedRegionId : options.defaultRegionId);
+    if (input.flow !== 'sign-up') {
+      currentRegionId = preparedRegionId;
     }
 
     return successEmailPreparation({
       identifier,
       flow: input.flow,
       selectedRegionId,
-      regionId: answeredRegionId ?? selectedRegionId,
+      regionId: preparedRegionId,
       authority: lookup.data.authority,
       domain: lookup.data.domain,
       userId: lookup.data.userId,

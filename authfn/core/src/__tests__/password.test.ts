@@ -444,6 +444,15 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     })
   );
 
+  /** Signs in with an old-cost password through `database`, which replaces it meanwhile: refused. */
+  async function expectOldPasswordRefused(database: AuthFnRuntimeConfig['database']): Promise<void> {
+    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' }))
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+  }
+
   function legacyHash(password: string): string {
     // The format written before AUTH-32: scrypt N = 2^14, r = 8, p = 1.
     const salt = randomBytes(16).toString('base64url');
@@ -508,10 +517,14 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });
     const salt = randomBytes(16).toString('base64url');
-    const expensive = ['scrypt', '65536', '8', '16', salt, 'test-digest'].join('$');
+    // A full 64-byte digest, so only the parameter allowlist refuses it.
+    const digest = Buffer.alloc(64, 1).toString('base64url');
+    const expensive = ['scrypt', '65536', '8', '16', salt, digest].join('$');
+    await expect(verifyPassword('test-password-strong', expensive)).rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
     await createPasswordCredential(config, { userId: user.id, passwordHash: expensive });
+    // Sign-in answers it like a wrong password, not with a server error.
     await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-strong' }))
-      .rejects.toMatchObject({ code: 'AUTHFN_INTERNAL_ERROR' });
+      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
   });
 
   it('accepts both of two simultaneous sign-ins to an account still on the older cost', async () => {
@@ -597,11 +610,7 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
         return typeof value === 'function' ? value.bind(target) : value;
       }
     });
-    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
-    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
-    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
-    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' }))
-      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+    await expectOldPasswordRefused(database);
   });
 
   it('checks a reset\'s new password length before using its code', async () => {
@@ -690,6 +699,55 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
     await expect(signInWithPassword(config, { email, password: 'test-password-strong' })).resolves.toBeTruthy();
   });
 
+  it('does not use a reset code that expired or was replaced while the new password was prepared', async () => {
+    const config = createConfig();
+    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
+    await updatePasswordCredential(config, { userId: user.id, password: 'test-password-original' });
+    let clock = new Date('2026-11-21T00:00:00.000Z');
+    let duringPreparation: (() => Promise<void>) | undefined;
+    const options = {
+      delivery: { send: async () => ({ sent: true }) },
+      codeGenerator: () => '731942',
+      now: () => clock,
+      passwordPolicy: {
+        compromisedPasswordChecker: async () => {
+          await duringPreparation?.();
+          return false;
+        }
+      }
+    };
+    const reset = () => completeResetPassword(config, options, {
+      purpose: 'reset-password', email: 'ada@example.com', code: '731942', newPassword: 'test-password-replacement'
+    });
+
+    // The code expires while the password is checked and hashed.
+    await sendOtpChallenge(config, {}, options, { purpose: 'reset-password', email: 'ada@example.com' });
+    duringPreparation = async () => {
+      clock = new Date(clock.getTime() + 24 * 60 * 60 * 1000);
+    };
+    await expect(reset()).rejects.toMatchObject({ code: 'AUTHFN_OTP_EXPIRED' });
+
+    // A newer code is sent while the password is prepared.
+    await sendOtpChallenge(config, {}, options, { purpose: 'reset-password', email: 'ada@example.com' });
+    duringPreparation = async () => {
+      duringPreparation = undefined;
+      clock = new Date(clock.getTime() + 1000);
+      await sendOtpChallenge(config, {}, { ...options, codeGenerator: () => '000111' }, { purpose: 'reset-password', email: 'ada@example.com' });
+    };
+    await expect(reset()).rejects.toMatchObject({ code: 'AUTHFN_OTP_INVALID' });
+
+    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-original' })).resolves.toBeTruthy();
+  });
+
+  it('refuses a sign-in body whose email is not a string with a validation error', async () => {
+    const auth = createTestServer(createConfig());
+    for (const body of [{ email: 123, password: 'test-password-strong' }, ['x'], null]) {
+      const response = await post(auth, '/sign-in/password', body);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+    }
+  });
+
   it('returns the upgraded credential after a sign-in rewrites an old-cost hash', async () => {
     const config = createConfig();
     const user = await createUser(config, { primaryEmail: 'ada@example.com' });
@@ -744,11 +802,7 @@ describe('password storage and sign-in answers (AF-13, AF-10)', () => {
         return typeof value === 'function' ? value.bind(target) : value;
       }
     });
-    const config: AuthFnRuntimeConfig = { ...createConfig(), database };
-    const user = await createUser(config, { primaryEmail: 'ada@example.com' });
-    await createPasswordCredential(config, { userId: user.id, passwordHash: legacyHash('test-password-legacy') });
-    await expect(signInWithPassword(config, { email: 'ada@example.com', password: 'test-password-legacy' }))
-      .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+    await expectOldPasswordRefused(database);
   });
 
   it('answers a region lookup for a local account like one for an unknown identifier', async () => {
