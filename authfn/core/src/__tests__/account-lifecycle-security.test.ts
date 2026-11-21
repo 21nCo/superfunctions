@@ -597,10 +597,10 @@ describe('AF-08: the sign-up profile is caller data', () => {
     // over is refused.
     for (const atLimit of [
       { label: 'x'.repeat(4084) },
-      { a: { b: { c: 'x'.repeat(4072) } } },
+      { a: { b: { c: 'x'.repeat(4076) } } },
       { list: ['x'.repeat(4079), 'y'] }
     ]) {
-      expect(JSON.stringify(atLimit).length).toBeLessThanOrEqual(4096);
+      expect(new TextEncoder().encode(JSON.stringify(atLimit)).length).toBe(4096);
       expect(() => readSignUpProfile(atLimit)).not.toThrow();
     }
     expect(() => readSignUpProfile({ label: 'x'.repeat(4085) })).toThrow(/too large/);

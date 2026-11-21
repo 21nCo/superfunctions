@@ -186,8 +186,10 @@ export function readSignUpProfile(profile: unknown): Record<string, unknown> {
  * It adds up a lower bound (each string's length plus its quotes, a key's
  * length plus quotes and colon, one byte between entries, at least one byte
  * for every other value) and stops as soon as the sum passes the budget.
- * Containers are walked entry by entry without copying them, so it never
- * does much more than `budget` steps, however wide or long the value is.
+ * Containers are walked entry by entry without copying them, so it visits
+ * at most about `budget` values and keys. (The engine may still prepare an
+ * object's key list before the walk; the size of the parsed body as a whole
+ * is bounded by a request size limit, not here.)
  */
 function jsonSizeExceeds(value: unknown, budget: number): boolean {
   let used = 0;
