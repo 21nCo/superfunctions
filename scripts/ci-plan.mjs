@@ -532,6 +532,19 @@ const jsByDir = new Map(jsPackages.map((manifest) => [manifest.dir, manifest]));
 const pythonByDir = new Map(pythonPackages.map((manifest) => [manifest.dir, manifest]));
 const pythonByName = new Map(pythonPackages.map((manifest) => [manifest.name, manifest]));
 
+// The workflow passes Turbo filters through the shell unquoted, and Turbo reads `...` and `{}` in a filter as
+// selectors, so every package directory must be plain path segments: letters, digits, `_`, `@`, `-`, and single dots
+// inside a segment or before it (`.github`). Every directory qualifies today; the plan fails rather than build a filter
+// that splits or selects the wrong packages.
+const SAFE_FILTER_DIR = /^\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*(?:\/\.?[A-Za-z0-9_@-]+(?:\.[A-Za-z0-9_@-]+)*)*$/;
+const unsafeDirs = jsPackages.map((manifest) => manifest.dir).filter((dir) => !SAFE_FILTER_DIR.test(dir));
+if (unsafeDirs.length > 0) {
+  console.error(
+    `CI planner: these package directories cannot be passed to Turbo as filters; rename them: ${unsafeDirs.map((dir) => JSON.stringify(dir)).join(", ")}`
+  );
+  process.exit(1);
+}
+
 const jsDirs = new Set(jsByDir.keys());
 const pythonDirs = new Set(pythonByDir.keys());
 
@@ -611,13 +624,6 @@ const mcpfnOnly =
   changedPaths.every((changedPath) =>
     matchesAny(MCPFN_PATTERNS, changedPath) ||
     matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
-
-// The workflow passes Turbo filters through the shell unquoted, so a package directory outside this character set
-// (none exists today) falls back to a full run instead of becoming a split or expanded filter.
-const SAFE_FILTER_DIR = /^[A-Za-z0-9._@/-]+$/;
-if (!fullJs && [...collectJsDependents(changedJsDirs, jsPackages)].some((dir) => !SAFE_FILTER_DIR.test(dir))) {
-  fullJs = true;
-}
 
 const selectedJsPackages = fullJs
   ? jsPackages

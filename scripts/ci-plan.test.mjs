@@ -478,12 +478,20 @@ test("a changed package without a task still runs that task in its dependents", 
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test("a changed package whose directory is not shell-safe forces a full JavaScript run", () => {
-  const { root, plan } = devfnFixture({ "filefn/reference assets/package.json": JSON.stringify({ name: "@filefn/reference-assets" }) });
+test("a package directory Turbo cannot take as a filter fails the plan", () => {
+  for (const dir of ["filefn/reference assets", "devfn/reference assets", "filefn/reference...", "filefn/{x}"]) {
+    const { root, plan } = devfnFixture({ [`${dir}/package.json`]: JSON.stringify({ name: "@fixture/odd" }) });
+    try {
+      assert.throws(() => plan("filefn/core/src/index.ts"), (error) => {
+        assert.match(String(error.stderr), /cannot be passed to Turbo as filters/, dir);
+        return true;
+      }, dir);
+    } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
+  }
+  // A leading dot, as in .github/apifn-cli-install, is fine.
+  const { root, plan } = devfnFixture({ ".github/apifn-cli-install/package.json": JSON.stringify({ name: "apifn-cli-install" }) });
   try {
-    const outputs = plan(({ put }) => put("filefn/reference assets/notes.md", "changed\n"));
-    assert.equal(outputs.full_js, "true");
-    assert.equal(outputs.js_build_filters, "");
+    assert.equal(plan(".github/apifn-cli-install/package.json").js_build_filters, "--filter=..../.github/apifn-cli-install");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
