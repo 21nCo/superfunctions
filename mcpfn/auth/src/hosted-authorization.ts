@@ -360,6 +360,37 @@ function normalizeAuthorizationResource(
   return resource;
 }
 
+export interface McpFnAuthorizationErrorRenderInput {
+  error: McpFnHostedAuthorizationError;
+  client: McpFnNormalizedClientRegistration;
+  request: Request;
+}
+
+export interface McpFnAuthorizationErrorOptions {
+  /**
+   * Client registration sources whose matched redirect URI may receive OAuth
+   * error redirects from the authorization endpoint. Defaults to
+   * `["pre-registered", "enterprise"]`: dynamically registered and Client ID
+   * Metadata Document redirect URIs are chosen by unauthenticated parties, so
+   * redirecting errors to them would make the issuer an open redirector.
+   */
+  redirectSources?: McpFnClientRegistrationSource[];
+  /** Replaces the default HTML error page for non-redirected errors. */
+  render?(input: McpFnAuthorizationErrorRenderInput): Response | Promise<Response>;
+}
+
+const DEFAULT_AUTHORIZATION_ERROR_REDIRECT_SOURCES: readonly McpFnClientRegistrationSource[] = [
+  "pre-registered",
+  "enterprise",
+];
+
+const CLIENT_REGISTRATION_SOURCES: ReadonlySet<string> = new Set<McpFnClientRegistrationSource>([
+  "pre-registered",
+  "dynamic",
+  "client-metadata-document",
+  "enterprise",
+]);
+
 export interface McpFnAuthorizationCompatibilityOptions {
   issuer: string | URL;
   /** Allow HTTP only for literal loopback issuers in controlled local testing. */
@@ -382,6 +413,8 @@ export interface McpFnAuthorizationCompatibilityOptions {
   supportedScopes?: string[];
   allowedResources?: Array<string | URL>;
   redirectPolicy?: McpFnRedirectPolicy;
+  /** Controls how authorization-endpoint validation errors reach the browser. */
+  authorizationErrors?: McpFnAuthorizationErrorOptions;
   clientMetadataDocuments?: {
     enabled: boolean;
     /** Required allowlist/policy hook before fetching an external client document. */
@@ -422,6 +455,7 @@ export function createMcpAuthorizationCompatibilityHandler(
   options: McpFnAuthorizationCompatibilityOptions,
 ): (request: Request) => Promise<Response> {
   validateClientMetadataDocumentOptions(options.clientMetadataDocuments);
+  validateAuthorizationErrorOptions(options.authorizationErrors);
   const issuer = normalizeIssuer(options.issuer, options.allowInsecureLoopbackIssuer ?? false);
   const rfc8414IssuerPath = issuer.pathname === "/" ? "" : issuer.pathname;
   const issuerPath = issuer.pathname === "/" ? "" : trimTrailingSlashes(issuer.pathname);
@@ -727,7 +761,7 @@ async function handleAuthorizationRequest(
       clientId,
       registrationSource: client.source,
     });
-    return trustedAuthorizationErrorRedirect(trustedRedirect, url, error);
+    return authorizationErrorResponse(options, client, trustedRedirect, url, request, error);
   }
   await emit(options, "authorization-request", "succeeded", undefined, {
     clientId,
@@ -735,6 +769,82 @@ async function handleAuthorizationRequest(
     redirectMatch: validated.redirectMatch,
   });
   return options.authorize(validated, request);
+}
+
+function validateAuthorizationErrorOptions(
+  options: McpFnAuthorizationErrorOptions | undefined,
+): void {
+  if (options === undefined) return;
+  const sources = options.redirectSources;
+  if (
+    sources !== undefined &&
+    (!Array.isArray(sources) ||
+      sources.some((source) => !CLIENT_REGISTRATION_SOURCES.has(source)))
+  ) {
+    throw new TypeError(
+      "authorizationErrors.redirectSources must contain only client registration sources",
+    );
+  }
+  if (options.render !== undefined && typeof options.render !== "function") {
+    throw new TypeError("authorizationErrors.render must be a function");
+  }
+}
+
+async function authorizationErrorResponse(
+  options: McpFnAuthorizationCompatibilityOptions,
+  client: McpFnNormalizedClientRegistration,
+  redirectUri: string,
+  authorizationUrl: URL,
+  request: Request,
+  error: McpFnHostedAuthorizationError,
+): Promise<Response> {
+  const redirectSources =
+    options.authorizationErrors?.redirectSources ?? DEFAULT_AUTHORIZATION_ERROR_REDIRECT_SOURCES;
+  if (redirectSources.includes(client.source)) {
+    return trustedAuthorizationErrorRedirect(redirectUri, authorizationUrl, error);
+  }
+  const render = options.authorizationErrors?.render;
+  if (render) return render({ error, client, request });
+  return renderMcpAuthorizationErrorPage(error);
+}
+
+/**
+ * Default authorization-endpoint error page: HTTP 400, HTML-escaped OAuth
+ * error code and description, no redirect URI link and no reflected state.
+ */
+export function renderMcpAuthorizationErrorPage(error: McpFnHostedAuthorizationError): Response {
+  const body = [
+    "<!doctype html>",
+    '<html lang="en">',
+    '<head><meta charset="utf-8"><meta name="robots" content="noindex">',
+    "<title>Authorization request failed</title></head>",
+    "<body>",
+    "<h1>Authorization request failed</h1>",
+    `<p>Error: <code>${escapeHtml(error.code)}</code></p>`,
+    `<p>${escapeHtml(error.message)}</p>`,
+    "</body>",
+    "</html>",
+  ].join("\n");
+  return new Response(body, {
+    status: 400,
+    headers: {
+      "cache-control": "no-store",
+      pragma: "no-cache",
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function trustedAuthorizationErrorRedirect(
