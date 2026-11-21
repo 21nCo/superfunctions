@@ -83,8 +83,9 @@ export function createAuthFnRegionalClient(
           await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
           return { lookup, answeredBy: lookupRegionId, route: mismatch };
         }
-        if (retry.ok && (retry.data === null || typeof retry.data !== 'object')) {
-          // A success envelope without a lookup answer counts as a failed retry.
+        if (retry.ok && !isLookupAnswer(retry.data)) {
+          // A success envelope without a lookup answer (no data, or an empty
+          // body such as a 204) counts as a failed retry.
           await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
           return { lookup, answeredBy: lookupRegionId, route: mismatch };
         }
@@ -369,6 +370,17 @@ function concreteRegionId(lookup: {
     return undefined;
   }
   return regionId;
+}
+
+/**
+ * Whether a lookup answer has the fields every server sends: `authority` and
+ * `continueLocally` (gateway answers carry no `regionId`).
+ */
+function isLookupAnswer(data: unknown): boolean {
+  return data !== null
+    && typeof data === 'object'
+    && typeof (data as { authority?: unknown }).authority === 'string'
+    && typeof (data as { continueLocally?: unknown }).continueLocally === 'boolean';
 }
 
 async function saveRegion(

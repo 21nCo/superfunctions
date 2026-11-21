@@ -412,6 +412,7 @@ describe('@authfn/client regional client', () => {
   });
 
   it('falls back to the mismatch destination when the retry answers without data', async () => {
+    let retryAnswer: (() => Response) | undefined;
     const { client, urls } = lookupClient((url) => {
       if (!url.endsWith('/regions/lookup')) {
         return undefined;
@@ -428,10 +429,19 @@ describe('@authfn/client regional client', () => {
           requestId: 'req_mismatch'
         }, { status: 409 });
       }
-      return Response.json({ ok: true, data: null, requestId: 'req_lookup' });
+      return retryAnswer!();
     });
-    expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
-    expect(sentTo(urls)).toContain('https://eu-west-1.account.example.com/');
+    for (const answer of [
+      () => Response.json({ ok: true, data: null, requestId: 'req_lookup' }),
+      () => new Response(null, { status: 204 })
+    ]) {
+      retryAnswer = answer;
+      urls.length = 0;
+      client.setCurrentRegionId('us-east-1');
+      expect((await client.sendOtp({ purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(true);
+      expect(sentTo(urls)).toContain('https://eu-west-1.account.example.com/');
+      await client.clearRegion({ identifier: 'ada@example.com' });
+    }
   });
 
   it('looks up uncached identifiers through the currently selected region', async () => {
