@@ -86,6 +86,32 @@ final class AuthFnWebViewBridgeHostTests: XCTestCase {
         XCTAssertTrue(refused.trustedOrigins.isEmpty)
     }
 
+    func testOriginPolicyParsesWebHostsAsWebKitDoes() {
+        let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "http://127.0.0.0x")!,
+            URL(string: "http://0300.0250.1")!,
+            URL(string: "wss://portal.example:443")!,
+            URL(string: "ws://portal.example:80")!,
+        ])
+        // A bare `0x` part is 0; octal parts; the last part fills the rest.
+        XCTAssertTrue(policy.allows(scheme: "http", host: "127.0.0.0", port: 0))
+        XCTAssertTrue(policy.allows(scheme: "http", host: "192.168.0.1", port: 0))
+        // Default ports of ws and wss compare like no port.
+        XCTAssertTrue(policy.allows(scheme: "wss", host: "portal.example", port: 0))
+        XCTAssertTrue(policy.allows(scheme: "ws", host: "portal.example", port: 0))
+
+        // A host that decodes to a forbidden character, or ends in a number
+        // without being an IPv4 address, is refused, not read as another host.
+        let refused = AuthFnBridgeOriginPolicy(trustedOrigins: [
+            URL(string: "https://example.test%3A8443")!,
+            URL(string: "https://example.test%2Fpath")!,
+            URL(string: "http://example.123")!,
+            URL(string: "http://256.1.1.1")!,
+        ])
+        XCTAssertTrue(refused.trustedOrigins.isEmpty)
+        XCTAssertFalse(refused.allows(scheme: "https", host: "example.test", port: 8443))
+    }
+
     func testOriginPolicyRefusesAnInheritedOriginWhosePortTheFrameCannotShow() {
         let policy = AuthFnBridgeOriginPolicy(trustedOrigins: [
             URL(string: "https://portal.example")!,

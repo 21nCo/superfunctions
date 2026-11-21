@@ -76,11 +76,18 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         if isUntrustable(scheme: parts.scheme, host: parts.host) {
             return nil
         }
-        if isSpecial(parts.scheme) {
-            // A host that decodes to non-ASCII (an internationalized domain not
-            // given in punycode) or to an empty one cannot be matched.
+        if isSpecial(parts.scheme) && !parts.host.hasPrefix("[") {
+            // WebKit refuses these hosts: one that decodes to non-ASCII (an
+            // internationalized domain not given in punycode), to nothing, or
+            // to a forbidden character (`example.test%3A8443` would otherwise
+            // read as another origin's host and port), and one that ends in a
+            // number but is not a valid IPv4 address.
             guard let decoded = parts.host.removingPercentEncoding,
-                  !decoded.isEmpty, decoded.allSatisfy(\.isASCII) else {
+                  !decoded.isEmpty, decoded.allSatisfy(\.isASCII),
+                  !decoded.unicodeScalars.contains(where: { forbiddenHostScalars.contains($0) || $0.value < 0x20 || $0.value == 0x7F }) else {
+                return nil
+            }
+            if endsInNumber(decoded.lowercased()) && canonicalIPv4(decoded.lowercased()) == nil {
                 return nil
             }
         }
@@ -111,7 +118,11 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
     static func key(scheme: String, host: String, port: String?) -> String {
         let scheme = scheme.lowercased()
         let host = canonicalHost(host, scheme: scheme)
-        let defaultPort = scheme == "https" ? 443 : (scheme == "http" ? 80 : nil)
+        let defaultPort: Int? = switch scheme {
+        case "https", "wss": 443
+        case "http", "ws": 80
+        default: nil
+        }
         guard let port, !port.isEmpty, let number = Int(port) else {
             return "\(scheme)://\(host)"
         }
@@ -147,21 +158,69 @@ public struct AuthFnBridgeOriginPolicy: Sendable, Equatable {
         return "[\(String(cString: buffer))]"
     }
 
-    /// The dotted-decimal form of a host WebKit reads as an IPv4 address (its
-    /// last label is a decimal, octal or hex number), or nil.
+    /// Characters WebKit refuses in a domain host.
+    static let forbiddenHostScalars = Set(" #%/:<>?@[\\]^|".unicodeScalars)
+
+    /// The labels of a host, without one trailing empty label (`a.b.`).
+    private static func ipv4Parts(_ host: String) -> [Substring] {
+        var parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count > 1, parts.last?.isEmpty == true {
+            parts.removeLast()
+        }
+        return parts
+    }
+
+    /// Whether WebKit parses this host as an IPv4 address: its last label is
+    /// a decimal number, or `0x` followed by hex digits (possibly none).
+    static func endsInNumber(_ host: String) -> Bool {
+        guard let last = ipv4Parts(host).last, !last.isEmpty else { return false }
+        if last.allSatisfy({ $0.isASCII && $0.isNumber }) {
+            return true
+        }
+        return (last.hasPrefix("0x") || last.hasPrefix("0X")) && last.dropFirst(2).allSatisfy({ $0.isASCII && $0.isHexDigit })
+    }
+
+    /// The dotted-decimal form of a host WebKit reads as an IPv4 address, or
+    /// nil. Parsed the way WebKit (and the WHATWG URL standard) does: one to
+    /// four parts, each decimal, octal (leading 0) or hex (`0x`, where a bare
+    /// `0x` is 0), the last one filling the remaining bytes.
     static func canonicalIPv4(_ host: String) -> String? {
-        let trimmed = host.hasSuffix(".") ? String(host.dropLast()) : host
-        guard let last = trimmed.split(separator: ".", omittingEmptySubsequences: false).last, !last.isEmpty else {
+        guard endsInNumber(host) else { return nil }
+        let parts = ipv4Parts(host)
+        guard (1...4).contains(parts.count) else { return nil }
+        var numbers: [UInt64] = []
+        for part in parts {
+            guard let number = parseIPv4Number(part) else { return nil }
+            numbers.append(number)
+        }
+        for number in numbers.dropLast() where number > 255 {
             return nil
         }
-        let isNumber = last.allSatisfy(\.isNumber) && last.allSatisfy(\.isASCII)
-            || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit))
-        guard isNumber else { return nil }
-        var address = in_addr()
-        guard inet_aton(trimmed, &address) == 1 else { return nil }
-        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-        guard inet_ntop(AF_INET, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
-        return String(cString: buffer)
+        let last = numbers[numbers.count - 1]
+        guard last < (UInt64(1) << (8 * UInt64(5 - numbers.count))) else { return nil }
+        var address = last
+        for (index, number) in numbers.dropLast().enumerated() {
+            address += number << (8 * UInt64(3 - index))
+        }
+        return (0..<4).map { String((address >> (8 * UInt64(3 - $0))) & 0xFF) }.joined(separator: ".")
+    }
+
+    private static func parseIPv4Number(_ part: Substring) -> UInt64? {
+        guard !part.isEmpty else { return nil }
+        var digits = part
+        var radix = 10
+        if digits.count >= 2, digits.hasPrefix("0x") || digits.hasPrefix("0X") {
+            digits = digits.dropFirst(2)
+            radix = 16
+        } else if digits.count >= 2, digits.hasPrefix("0") {
+            digits = digits.dropFirst()
+            radix = 8
+        }
+        if digits.isEmpty {
+            return 0
+        }
+        guard digits.allSatisfy(\.isASCII), digits.count <= 32 else { return nil }
+        return UInt64(digits, radix: radix)
     }
 
     private static func splitOrigin(_ string: String) -> (scheme: String, host: String, port: String?)? {
