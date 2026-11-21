@@ -510,6 +510,13 @@ async function isAccountHolderRequest(
     return false;
   }
   const cookieState = await getCookieSessionState(config, request, { touch: false });
+  if (countCookiesNamed(request, cookieState.cookiePolicy.sessionCookieName) > 1) {
+    // Only one value is read, and an empty or stale duplicate could hide the
+    // holder's live session and turn their own verification into a claim.
+    throw new AuthFnValidationError('Request carries more than one session cookie', {
+      cookie: cookieState.cookiePolicy.sessionCookieName
+    });
+  }
   if (cookieState.session?.type === 'session' && cookieState.session.actorId === userId) {
     // A live session of this very account must come with its CSRF token.
     // Without it the request may be cross-site, or come from a browser whose
@@ -521,6 +528,14 @@ async function isAccountHolderRequest(
   }
   const session = await authenticateAccountRequest(config, request);
   return session?.actorId === userId;
+}
+
+function countCookiesNamed(request: Request, name: string): number {
+  const header = request.headers.get('cookie');
+  if (!header) {
+    return 0;
+  }
+  return header.split(';').filter((part) => part.split('=')[0]?.trim() === name).length;
 }
 
 export async function completeResetPassword(

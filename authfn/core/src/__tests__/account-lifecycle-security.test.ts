@@ -225,6 +225,28 @@ describe('AF-05: everything set up before the mailbox was proven is removed when
     expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
   });
 
+  it('refuses, without using the code, a verify-email whose session cookie is duplicated', async () => {
+    const ctx = createFullContext();
+    const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
+    const cookies = cookieHeader(signUp);
+    const sessionCookie = cookies.split('; ').find((cookie) => /session=/.test(cookie))!;
+    const sessionName = sessionCookie.split('=')[0]!;
+    await ctx.handle(json('/otp/send', { purpose: 'verify-email', email: OWNER }));
+    const code = ctx.codeFor('verify-email', OWNER);
+    const refused = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      cookie: `${cookies}; ${sessionName}=`,
+      'x-authfn-csrf': csrfToken(signUp)
+    }));
+    expect(refused.status).toBe(400);
+    expect((await account(ctx, { cookie: cookies })).status).toBe(200);
+    const verified = await ctx.handle(json('/otp/verify', { purpose: 'verify-email', email: OWNER, code }, {
+      cookie: cookies,
+      'x-authfn-csrf': csrfToken(signUp)
+    }));
+    expect(verified.status).toBe(200);
+    expect((await ctx.handle(json('/sign-in/password', { email: OWNER, password: 'owner-test-password' }))).status).toBe(200);
+  });
+
   it('neither verifies nor claims a disabled account, so its holder keeps their credentials', async () => {
     const ctx = createFullContext();
     const signUp = await ctx.handle(json('/sign-up/password', { email: OWNER, password: 'owner-test-password' }));
