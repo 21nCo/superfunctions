@@ -109,7 +109,7 @@ Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privater
 
 ## Signature checks in every environment
 
-Every Apple identity token the kernel accepts is checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set.
+An identity token that reaches the kernel through the client (a web `form_post` `id_token`, or the native complete route) is always checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set. A token the kernel gets itself from Apple's token endpoint, in exchange for a `code`, arrives over TLS from Apple and is read without a signature check.
 
 ## Errors specific to Apple
 

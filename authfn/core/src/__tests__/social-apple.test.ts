@@ -519,6 +519,13 @@ describe('authfn apple social oauth', () => {
       expect((await start('otherapp:callback', ['myapp:'])).status).toBe(400);
     });
 
+    it('accepts a relative path only when it is listed exactly and stays on the site', async () => {
+      expect((await start('/post-auth', ['/post-auth'])).status).toBe(200);
+      expect((await start('/elsewhere', ['/post-auth'])).status).toBe(400);
+      expect((await start('//evil.example/post-auth', ['//evil.example/post-auth'])).status).toBe(400);
+      expect((await start('/\\evil.example', ['/\\evil.example'])).status).toBe(400);
+    });
+
     it('refuses a script scheme even when it is allowlisted exactly', async () => {
       const response = await start('javascript:alert(1)', ['javascript:alert(1)']);
       expect(response.status).toBe(400);

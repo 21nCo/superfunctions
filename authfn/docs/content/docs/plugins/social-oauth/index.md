@@ -175,6 +175,7 @@ Both `allowlistedRedirectUris` and `allowlistedReturnTo` have no wildcard suppor
 - `https://app.example.com` (or `http:`) matches any target with the same origin.
 - A custom scheme such as `myapp://oauthsignin` matches targets with the same scheme, host and port (`myapp://oauthsignin/done` matches; `otherapp://oauthsignin` and `myapp://other` don't). Custom-scheme URLs have no web origin, so they are never compared by origin.
 - An entry without a host, such as `myapp:callback`, matches only itself.
+- A relative path such as `/post-auth` matches only itself, and only when it is a plain path on the same site (one leading `/`, no `//`, backslash or control characters).
 
 `javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:` and `filesystem:` targets are refused even if listed.
 

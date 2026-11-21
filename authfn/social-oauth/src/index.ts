@@ -2069,6 +2069,17 @@ function isWebScheme(protocol: string): boolean {
 }
 
 /**
+ * A path on the current site: starts with one `/` (not `//`, which a browser
+ * reads as another host) and has no backslash or control characters, which
+ * browsers may also turn into a host change.
+ */
+function isSameOriginPath(value: string): boolean {
+  return value.startsWith('/')
+    && !value.startsWith('//')
+    && !/[\\\u0000-\u001f\u007f]/.test(value);
+}
+
+/**
  * An entry matches a target when the strings are equal, or when the entry is
  * a bare origin (no path, query or fragment) that covers the target:
  *
@@ -2085,7 +2096,9 @@ function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boole
   try {
     target = new URL(returnTo);
   } catch {
-    return false;
+    // A relative target stays on the site that started the flow; it must be
+    // listed exactly and be a plain path.
+    return isSameOriginPath(returnTo) && allowlist.includes(returnTo);
   }
   if (FORBIDDEN_RETURN_TARGET_SCHEMES.has(target.protocol)) {
     return false;
