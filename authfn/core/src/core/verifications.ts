@@ -645,10 +645,18 @@ export function resolveOtpEmailBudget(
   );
   // The calling route's lifetime counts too: it may come from the deprecated
   // factory options.
+  // A factory lifetime counts only where the password route uses it: its
+  // runtime `otp.challengeTtlSeconds` takes precedence, as on that route.
+  const passwordRuntimeTtl = password.otp && typeof password.otp === 'object'
+    ? password.otp.challengeTtlSeconds
+    : undefined;
+  const factoryTtls = passwordRuntimeTtl === undefined
+    ? published.filter((source) => source.challengeTtlSeconds !== undefined)
+    : [];
   const longestTtlMs = Math.max(
     resolveTtlMs(options),
     ...sources.map((source) => resolveTtlMs(source)),
-    ...published.filter((source) => source.challengeTtlSeconds !== undefined).map((source) => resolveTtlMs(source))
+    ...factoryTtls.map((source) => resolveTtlMs(source))
   );
   const windowsPerLifetime = Math.ceil(longestTtlMs / windowMs) + 1;
 
@@ -1239,7 +1247,7 @@ function resolveNow(options: OtpRuntimeOptions): Date {
 }
 
 function resolveTtlMs(options: OtpRuntimeOptions): number {
-  return (options.challengeTtlSeconds ?? DEFAULT_OTP_TTL_SECONDS) * 1000;
+  return readPositiveInteger(options.challengeTtlSeconds, DEFAULT_OTP_TTL_SECONDS, 'challengeTtlSeconds') * 1000;
 }
 
 function normalizeEmail(email: string): string {

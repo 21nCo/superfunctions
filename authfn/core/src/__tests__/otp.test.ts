@@ -1463,6 +1463,18 @@ describe('authfn otp plugin', () => {
       expect(resolveOtpEmailBudget(config, {}).longestTtlMs).toBe(4 * 60 * 60 * 1000);
     });
 
+    it('uses the factory reset lifetime only where the runtime config does not override it, and checks lifetimes at setup', () => {
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: Number.NaN } })];
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: 600 });
+      expect(() => createTestServer(config)).not.toThrow();
+      expect(Number.isFinite(resolveOtpEmailBudget(config, {}).scanLimit)).toBe(true);
+
+      const invalid = createConfig() as LimitConfig;
+      Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
+      expect(() => createTestServer(invalid)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
     it('retires a new challenge whose admission could not be confirmed even when reading it back fails', async () => {
       const base = memoryAdapter({ debug: false });
       let failAdmission = false;
