@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
@@ -55,6 +55,7 @@ from ..types import (
     AuthFnHookContext,
     AuthFnPlugin,
     AuthFnRuntimeResolution,
+    ConfigError,
     OAuthCallbackInvalidError,
     OAuthProviderUnsupportedError,
     OAuthStateInvalidError,
@@ -100,6 +101,9 @@ class SocialOAuthPluginConfig:
     now: Callable[[], datetime] = _utcnow
     state_ttl_seconds: int = DEFAULT_STATE_TTL_SECONDS
     encryption_key_ref: str = "oauth-default"
+    # Returns the secret key (at least 32 bytes) for a key reference. Provider
+    # tokens are encrypted with it; required before any token is stored.
+    encryption_key_resolver: Optional[Callable[[str], bytes | str]] = None
 
 
 class DbOAuthStateStore:
@@ -173,10 +177,12 @@ class DbEncryptedTokenVault:
         *,
         default_key_ref: str,
         now: Callable[[], datetime],
+        key_resolver: Optional[Callable[[str], bytes | str]] = None,
     ):
         self.config = config
         self.default_key_ref = default_key_ref
         self.now = now
+        self.key_resolver = key_resolver
 
     async def put(self, record: TokenRecord) -> None:
         normalized = (
@@ -240,7 +246,7 @@ class DbEncryptedTokenVault:
         row = await self.get(token_id)
         if row is None:
             return
-        decrypted = self._cipher(row.key_ref).decrypt(row.encrypted_payload.encode("utf-8"))
+        decrypted = self._decrypt(row.key_ref, row.encrypted_payload.encode("utf-8"))
         rotated = self._cipher(new_key_ref).encrypt(decrypted).decode("utf-8")
         await self.config.database.update(
             model="oauth_tokens",
@@ -261,7 +267,19 @@ class DbEncryptedTokenVault:
         )
 
     def _cipher(self, key_ref: str) -> Fernet:
-        return Fernet(_derive_fernet_key(self.config.namespace, key_ref))
+        """The cipher for a key reference, from the configured secret key."""
+        if self.key_resolver is None:
+            raise ConfigError("Social OAuth encryption_key_resolver must be configured to store provider tokens")
+        return Fernet(_fernet_key_from_secret(self.key_resolver(key_ref)))
+
+    def _decrypt(self, key_ref: str, ciphertext: bytes) -> bytes:
+        """Decrypts with the configured key; rows written before the key was
+        required used a key derived from the namespace alone, which is tried
+        next so they can be re-encrypted with rotate_key."""
+        try:
+            return self._cipher(key_ref).decrypt(ciphertext)
+        except InvalidToken:
+            return Fernet(_legacy_fernet_key(self.config.namespace, key_ref)).decrypt(ciphertext)
 
 
 class FetchOAuthTokenHttpClient:
@@ -455,6 +473,7 @@ class SocialOAuthService:
             config,
             default_key_ref=self.plugin_config.encryption_key_ref,
             now=self.plugin_config.now,
+            key_resolver=self.plugin_config.encryption_key_resolver,
         )
 
     async def start(
@@ -1539,9 +1558,25 @@ def _callback_user_id(result: Any) -> Optional[str]:
     return getattr(subject, "user_id", None) if subject is not None else None
 
 
-def _derive_fernet_key(namespace: str, key_ref: str) -> bytes:
+def _legacy_fernet_key(namespace: str, key_ref: str) -> bytes:
+    """The key earlier releases used: derived from public values only, so it
+    protected nothing. Kept only to read old rows during re-encryption."""
     digest = hashlib.sha256(f"{namespace}:{key_ref}:oauth".encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
+
+
+def _fernet_key_from_secret(secret: bytes | str) -> bytes:
+    raw = secret.encode("utf-8") if isinstance(secret, str) else bytes(secret)
+    if len(raw) < 32:
+        raise ConfigError("Social OAuth encryption key must be at least 32 bytes")
+    # A urlsafe-base64 Fernet key is used as is; anything else is hashed.
+    if len(raw) == 44:
+        try:
+            if len(base64.urlsafe_b64decode(raw)) == 32:
+                return raw
+        except (ValueError, TypeError):
+            pass
+    return base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
 
 
 def _parse_json_object(value: Any) -> Optional[Dict[str, Any]]:

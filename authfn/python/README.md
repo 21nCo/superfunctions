@@ -47,7 +47,10 @@ auth = create_authfn(
                                 "https://app.example.com/post-auth",
                             ],
                         }
-                    }
+                    },
+                    # Secret key (at least 32 bytes) that encrypts stored
+                    # provider tokens; required.
+                    "encryption_key_resolver": lambda key_ref: load_secret(key_ref),
                 }
             ),
             authfn_two_factor_plugin(),

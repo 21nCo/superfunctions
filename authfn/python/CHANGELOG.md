@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Social OAuth provider tokens are encrypted with a secret key from the new `encryption_key_resolver` (at least 32 bytes). Earlier releases derived the key from the namespace and key reference alone, so anyone who could read the `oauth_tokens` table could decrypt the tokens. Storing a token without a configured key now fails with `AUTHFN_CONFIG_INVALID`. `rotate_key` still reads rows written with the old derived key, so existing tokens can be re-encrypted with the configured key (AUTH-32 AF-14).
+
 ## [0.2.0] - 2026-11-18
 
 ### Added
