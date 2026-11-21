@@ -2,13 +2,15 @@
 // that exact SHA. The publish workflows run it right after the release owner gate, before anything is installed,
 // built or packed; a channel-only dispatch republishes nothing and skips it.
 //
-//   node scripts/assert-release-ci.mjs <40-hex release commit>
+//   node scripts/assert-release-ci.mjs <40-hex release commit> [--root <checkout whose manifests apply>]
 //
+// The manifests come from --root (in the publish workflows, the tag checkout), defaulting to this script's checkout.
 // The running repository comes from GITHUB_REPOSITORY and selects the CI to require. On public it is the `ci` section
 // of superfunctions.owners.json, defaulting to the GitHub Actions workflow .github/workflows/ci.yml; only push runs
 // count, because a pull_request run tests a merge commit and a workflow_dispatch run may plan no package jobs. On next,
 // CI runs on Depot and the synced GitHub Actions CI skips every job, so superfunctions.owners.next.json must name the
-// Depot check run in its `ci` section; without one, or with a workflow there, next refuses. Every counted run on the
+// check run Depot's GitHub App (slug "depot") reports in its `ci` section; without one, or with a workflow or another
+// app there, next refuses. Every counted run on the
 // commit must have succeeded, and there must be at least one. The GitHub API is read with GITHUB_TOKEN (or GH_TOKEN) at
 // GITHUB_API_URL.
 
@@ -17,7 +19,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_RELEASE_CI, REPO_ROOT, loadOwners } from './owners.mjs';
-import { PUBLISHING_REPOSITORIES, releaseRepoKind } from './assert-release-owner.mjs';
+import { PUBLISHING_REPOSITORIES, parseGateArgs, releaseRepoKind } from './assert-release-owner.mjs';
 
 const PER_PAGE = 100;
 /**
@@ -25,6 +27,8 @@ const PER_PAGE = 100;
  * it into the base, and a workflow_dispatch run of a commit already on dev plans an empty diff.
  */
 export const TESTED_COMMIT_EVENTS = Object.freeze(['push']);
+/** The GitHub App whose check runs carry next's CI result (Depot CI); the live slug is confirmed by SFNS-160. */
+export const DEPOT_APP_SLUG = 'depot';
 const MAX_PAGES = 10;
 
 export class ReleaseCiError extends Error {
@@ -57,11 +61,15 @@ export function describeCi(ci) {
 export function releaseCiFor(repo, owners) {
   if (repo === 'public') return owners.publicManifest.ci ?? DEFAULT_RELEASE_CI;
   const ci = owners.nextManifest?.ci;
-  if (ci?.kind === 'check-run') return ci;
-  const problem = ci ? 'names a GitHub Actions workflow in its "ci" section instead of' : 'has no "ci" section naming';
+  if (ci?.kind === 'check-run' && ci.app === DEPOT_APP_SLUG) return ci;
+  const problem = !ci
+    ? 'has no "ci" section naming'
+    : ci.kind === 'workflow'
+      ? 'names a GitHub Actions workflow in its "ci" section instead of'
+      : `names a check run from app ${JSON.stringify(ci.app)} in its "ci" section instead of`;
   throw new ReleaseCiError(
     'missing-config',
-    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: superfunctions.owners.next.json ${problem} the Depot check run ({"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}}). CI there runs on Depot, and the synced GitHub Actions CI skips every job outside ${PUBLISHING_REPOSITORIES.public}.`,
+    `Refusing to publish from ${PUBLISHING_REPOSITORIES.next}: superfunctions.owners.next.json ${problem} the Depot check run ({"ci": {"checkRun": "<name>", "app": "${DEPOT_APP_SLUG}"}}). CI there runs on Depot, and the synced GitHub Actions CI skips every job outside ${PUBLISHING_REPOSITORIES.public}.`,
   );
 }
 
@@ -149,8 +157,15 @@ export async function fetchCiRuns({ sha, ci, repository, token, apiBase = 'https
     const items = body?.[field];
     if (!Array.isArray(items)) throw new ReleaseCiError('api-error', `Refusing to publish: GitHub's response for ${url} has no ${field} list`, { url });
     runs.push(...items.map(normalize[ci.kind]));
+    // More results remain while the Link header offers a next page or total_count exceeds what was read; without
+    // either signal, a full page may still have a successor.
     const total = Number.isInteger(body.total_count) ? body.total_count : null;
-    if (items.length < PER_PAGE || (total !== null && runs.length >= total)) return runs;
+    const linked = /\brel="next"/.test(response.headers?.get?.('link') ?? '');
+    const more = linked || (total !== null ? runs.length < total : items.length === PER_PAGE);
+    if (!more) return runs;
+    if (items.length === 0) {
+      throw new ReleaseCiError('api-error', `Refusing to publish: GitHub's results for ${url} end early (${runs.length} of ${total ?? 'more'}), so the gate cannot read them all.`, { url });
+    }
   }
   // A failure on a page that was never read must not be missed: refuse rather than decide on part of the results.
   throw new ReleaseCiError(
@@ -178,8 +193,11 @@ export async function assertReleaseCi({ sha, repository, token, apiBase, root = 
 // realpath: a symlinked path to this file (such as macOS's /var -> /private/var) must still run the gate, never skip it.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
+    const { positionals, root } = parseGateArgs(process.argv.slice(2));
+    if (positionals.length !== 1) throw new Error('Usage: assert-release-ci.mjs <release commit> [--root <dir>]');
     const result = await assertReleaseCi({
-      sha: process.argv[2],
+      sha: positionals[0],
+      root,
       repository: process.env.GITHUB_REPOSITORY,
       token: process.env.GITHUB_TOKEN || process.env.GH_TOKEN,
       apiBase: process.env.GITHUB_API_URL || undefined,

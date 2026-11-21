@@ -69,7 +69,8 @@ function readJob(file, job) {
   return { steps: steps.map(stepLines => mapping(stepLines, 8)), permissions: mapping(lines.slice(permissions.start, permissions.end), 6) };
 }
 
-// A dispatch may name a tag made before the gates existed, so both gates come from the run's own commit.
+// Both gates come from the run's own commit (a dispatch may name a tag made before the gates existed) and read the tag
+// checkout's manifests; only a channel-only npm dispatch of a tag without manifests reads the run commit's.
 const ownerRun = kind =>
   [
     'set -euo pipefail',
@@ -77,7 +78,13 @@ const ownerRun = kind =>
     '# The dispatching branch may have moved or been deleted since dispatch; fetch its commit by SHA if needed.',
     'git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"',
     'git worktree add --detach "${gates}" "${GITHUB_SHA}"',
-    `node "\${gates}/scripts/assert-release-owner.mjs" ${kind} "\${RELEASE_TAG}"`,
+    ...(kind === 'npm'
+      ? [
+          'manifests="${GITHUB_WORKSPACE}"',
+          'if [[ "${CHANNEL_ONLY}" == "true" && ! -f "${manifests}/superfunctions.owners.json" ]]; then manifests="${gates}"; fi',
+          'node "${gates}/scripts/assert-release-owner.mjs" npm "${RELEASE_TAG}" --root "${manifests}"',
+        ]
+      : ['node "${gates}/scripts/assert-release-owner.mjs" python "${RELEASE_TAG}" --root "${GITHUB_WORKSPACE}"']),
     '',
   ].join('\n');
 
@@ -125,7 +132,8 @@ for (const workflow of WORKFLOWS) {
 
     assert.equal(steps[owner].run, workflow.ownerRun);
     assert.equal(steps[owner].if, undefined, 'the owner gate applies to every run, channel-only dispatches included');
-    assert.equal(steps[ci].run, `node "\${RUNNER_TEMP}/release-gates/scripts/assert-release-ci.mjs" "\${{ ${workflow.refOutput} }}"`);
+    assert.equal(steps[ci].run, `node "\${RUNNER_TEMP}/release-gates/scripts/assert-release-ci.mjs" "\${{ ${workflow.refOutput} }}" --root "\${GITHUB_WORKSPACE}"`);
+    assert.deepEqual(steps[owner].env, workflow.kind === 'npm' ? { CHANNEL_ONLY: '${{ inputs.channel_only }}' } : undefined);
     assert.equal(steps[ci].if, workflow.ciCondition);
     assert.deepEqual(steps[ci].env, { GITHUB_TOKEN: '${{ github.token }}' });
     assert.deepEqual(permissions, { contents: 'read', actions: 'read', checks: 'read' });
@@ -148,65 +156,109 @@ test('publish-tag.yml: every run but a channel-only dispatch first proves its ow
   assert.equal(steps[belongs].if, '!inputs.channel_only');
 });
 
-for (const { file, kind, tag, manifestEntry } of [
-  { file: 'publish-tag.yml', kind: 'npm', tag: 'widget-core-v0.1.0-beta.0', manifestEntry: { releases: { 'widget-core': 'public' } } },
-  { file: 'publish-python.yml', kind: 'python', tag: 'python-widget-v0.1.0', manifestEntry: { python: { widget: 'public' } } },
-]) {
-  test(`${file}: the owner step gates a dispatch of a tag made before the gates existed (${kind})`, async t => {
-    const { steps } = readJob(file, 'build');
-    const step = steps.find(candidate => candidate.name === 'Require this repository to own the release');
-    const temp = mkdtempSync(path.join(tmpdir(), 'release-gate-legacy-'));
-    t.after(() => rmSync(temp, { recursive: true, force: true }));
-    const source = path.join(temp, 'source');
-    const origin = path.join(temp, 'origin.git');
-    const repo = path.join(temp, 'repo');
-    mkdirSync(source);
-    const gitIn = cwd => (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    const src = gitIn(source);
-    src('init', '-q');
-    src('config', 'user.name', 'Release gate test');
-    src('config', 'user.email', 'release-gate-test@example.invalid');
-    // The legacy tag: a commit with neither the gate script nor an ownership manifest.
-    writeFileSync(path.join(source, 'README.md'), 'legacy release\n');
-    src('add', '.');
-    src('commit', '-q', '-m', 'Legacy release');
-    src('tag', tag);
-    // The dispatching commit: the gates and a manifest that gives the release to public.
-    mkdirSync(path.join(source, 'scripts'));
-    for (const script of ['assert-release-owner.mjs', 'assert-release-ci.mjs', 'owners.mjs', 'resolve-release-tag.mjs']) {
-      copyFileSync(path.join(import.meta.dirname, script), path.join(source, 'scripts', script));
+const ownersManifest = (kind, release, owner) => {
+  const entry = { [kind === 'npm' ? 'releases' : 'python']: { [release]: 'public' } };
+  if (owner === 'public') return { version: 1, paths: { scripts: 'public' }, rootFiles: { public: ['README.md'] }, ...entry };
+  // A public manifest without the release, plus a next manifest that owns it.
+  return { version: 1, paths: { scripts: 'public' }, rootFiles: { public: ['README.md'] } };
+};
+
+/**
+ * Runs a workflow's owner step in a tag checkout that holds only the tag commit, with the run's own commit (the
+ * gates plus `runOwner`'s manifest) fetched by SHA, as when the dispatching branch has moved since dispatch.
+ * `tagOwner` null means the tag predates the manifests.
+ */
+function ownerStepFixture(t, { file, kind, tag, release, tagOwner, runOwner = 'public' }) {
+  const step = readJob(file, 'build').steps.find(candidate => candidate.name === 'Require this repository to own the release');
+  const temp = mkdtempSync(path.join(tmpdir(), 'release-gate-dispatch-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const source = path.join(temp, 'source');
+  const origin = path.join(temp, 'origin.git');
+  const repo = path.join(temp, 'repo');
+  mkdirSync(source);
+  const gitIn = cwd => (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const src = gitIn(source);
+  src('init', '-q');
+  src('config', 'user.name', 'Release gate test');
+  src('config', 'user.email', 'release-gate-test@example.invalid');
+  const writeManifests = owner => {
+    rmSync(path.join(source, 'superfunctions.owners.json'), { force: true });
+    rmSync(path.join(source, 'superfunctions.owners.next.json'), { force: true });
+    if (owner === null) return;
+    writeFileSync(path.join(source, 'superfunctions.owners.json'), JSON.stringify(ownersManifest(kind, release, owner)));
+    if (owner === 'next') {
+      writeFileSync(path.join(source, 'superfunctions.owners.next.json'), JSON.stringify({ version: 1, [kind === 'npm' ? 'releases' : 'python']: { [release]: 'next' } }));
     }
-    writeFileSync(
-      path.join(source, 'superfunctions.owners.json'),
-      JSON.stringify({ version: 1, paths: { scripts: 'public' }, rootFiles: { public: ['README.md'] }, ...manifestEntry }),
-    );
-    src('add', '.');
-    src('commit', '-q', '-m', 'Add the release gates');
-    const workflowCommit = src('rev-parse', 'HEAD');
-    src('branch', '-M', 'dispatch');
-    execFileSync('git', ['clone', '-q', '--bare', source, origin]);
-    execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true']);
-    // The tag checkout holds only the tag commit, as if the dispatching branch had moved or been deleted.
-    execFileSync('git', ['clone', '-q', '--depth=1', '--branch', tag, `file://${origin}`, repo], { stdio: 'ignore' });
-    const git = gitIn(repo);
-    assert.throws(() => git('cat-file', '-e', `${workflowCommit}^{commit}`), 'the dispatching commit starts out missing');
-    const run = (repository, runnerTemp) =>
-      spawnSync('bash', ['-c', step.run], {
-        cwd: repo,
-        encoding: 'utf8',
-        env: { ...process.env, RUNNER_TEMP: runnerTemp, GITHUB_SHA: workflowCommit, RELEASE_TAG: tag, GITHUB_REPOSITORY: repository },
-      });
+  };
+  // The tag commit: no gate scripts; manifests only when tagOwner is set.
+  writeFileSync(path.join(source, 'README.md'), 'release\n');
+  writeManifests(tagOwner);
+  src('add', '-A');
+  src('commit', '-q', '-m', 'Tagged release');
+  src('tag', tag);
+  // The run's own commit: the gates and runOwner's manifests.
+  mkdirSync(path.join(source, 'scripts'));
+  for (const script of ['assert-release-owner.mjs', 'assert-release-ci.mjs', 'owners.mjs', 'resolve-release-tag.mjs']) {
+    copyFileSync(path.join(import.meta.dirname, script), path.join(source, 'scripts', script));
+  }
+  writeManifests(runOwner);
+  src('add', '-A');
+  src('commit', '-q', '-m', 'Add the release gates');
+  const workflowCommit = src('rev-parse', 'HEAD');
+  src('branch', '-M', 'dispatch');
+  execFileSync('git', ['clone', '-q', '--bare', source, origin]);
+  execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true']);
+  execFileSync('git', ['clone', '-q', '--depth=1', '--branch', tag, `file://${origin}`, repo], { stdio: 'ignore' });
+  const git = gitIn(repo);
+  assert.throws(() => git('cat-file', '-e', `${workflowCommit}^{commit}`), 'the run commit starts out missing from the tag checkout');
+  const run = ({ repository = '21nCo/superfunctions', channelOnly = 'false' } = {}) => {
     const runnerTemp = mkdtempSync(path.join(temp, 'runner-'));
-    const owned = run('21nCo/superfunctions', runnerTemp);
-    assert.equal(owned.status, 0, owned.stderr);
-    // The CI step that follows runs from the same worktree, which holds the dispatching commit's gate.
-    assert.equal(existsSync(path.join(runnerTemp, 'release-gates', 'scripts', 'assert-release-ci.mjs')), true);
-    assert.match(owned.stdout, /widget(?:-core)? is owned by public/);
-    const wrong = run('21nCo/super-functions.next', mkdtempSync(path.join(temp, 'runner-')));
-    assert.equal(wrong.status, 1);
-    assert.match(wrong.stderr, /owned by public \(21nCo\/superfunctions\)/);
-    // The tag checkout is untouched: still the legacy commit, with no gate files.
+    const result = spawnSync('bash', ['-c', step.run], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...process.env, RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: repo, GITHUB_SHA: workflowCommit, RELEASE_TAG: tag, GITHUB_REPOSITORY: repository, CHANNEL_ONLY: channelOnly },
+    });
+    // Whatever happened, the tag checkout is untouched and the CI step's gate is in place.
     assert.equal(git('rev-parse', 'HEAD'), git('rev-parse', `${tag}^{commit}`));
     assert.equal(existsSync(path.join(repo, 'scripts')), false);
+    if (result.status === 0) assert.equal(existsSync(path.join(runnerTemp, 'release-gates', 'scripts', 'assert-release-ci.mjs')), true);
+    return result;
+  };
+  return { run };
+}
+
+const DISPATCHES = [
+  { file: 'publish-tag.yml', kind: 'npm', tag: 'widget-core-v0.1.0-beta.0', release: 'widget-core' },
+  { file: 'publish-python.yml', kind: 'python', tag: 'python-widget-v0.1.0', release: 'widget' },
+];
+
+for (const dispatch of DISPATCHES) {
+  test(`${dispatch.file}: the tag's manifests decide ownership even when the gates come from a newer run commit`, t => {
+    const owned = ownerStepFixture(t, { ...dispatch, tagOwner: 'public' }).run();
+    assert.equal(owned.status, 0, owned.stderr);
+    assert.match(owned.stdout, /is owned by public/);
+    // The run commit says public, but the tag gives the release to next: the tag wins and public refuses.
+    const tagSaysNext = ownerStepFixture(t, { ...dispatch, tagOwner: 'next', runOwner: 'public' }).run();
+    assert.equal(tagSaysNext.status, 1);
+    assert.match(tagSaysNext.stderr, /owned by next \(21nCo\/super-functions\.next\)/);
+    const wrongRepo = ownerStepFixture(t, { ...dispatch, tagOwner: 'public' }).run({ repository: '21nCo/super-functions.next' });
+    assert.equal(wrongRepo.status, 1);
+    assert.match(wrongRepo.stderr, /owned by public \(21nCo\/superfunctions\)/);
+    // A tag without manifests cannot publish.
+    const legacy = ownerStepFixture(t, { ...dispatch, tagOwner: null }).run();
+    assert.equal(legacy.status, 1);
+    assert.match(legacy.stderr, /superfunctions\.owners\.json not found/);
   });
 }
+
+test('publish-tag.yml: a channel-only dispatch of a tag made before the manifests is gated by the run commit\'s manifests', t => {
+  const legacy = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner: null, runOwner: 'public' });
+  const owned = legacy.run({ channelOnly: 'true' });
+  assert.equal(owned.status, 0, owned.stderr);
+  const wrongRepo = legacy.run({ channelOnly: 'true', repository: '21nCo/super-functions.next' });
+  assert.equal(wrongRepo.status, 1);
+  assert.match(wrongRepo.stderr, /owned by public \(21nCo\/superfunctions\)/);
+  // A channel-only dispatch of a tag that has manifests still follows the tag.
+  const tagSaysNext = ownerStepFixture(t, { ...DISPATCHES[0], tagOwner: 'next', runOwner: 'public' }).run({ channelOnly: 'true' });
+  assert.equal(tagSaysNext.status, 1);
+});

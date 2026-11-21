@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ReleaseOwnerError, assertReleaseOwner, releaseOfTag, releaseRepoKind } from './assert-release-owner.mjs';
+import { ReleaseOwnerError, assertReleaseOwner, parseGateArgs, releaseOfTag, releaseRepoKind } from './assert-release-owner.mjs';
 
 const PUBLIC_REPO = '21nCo/superfunctions';
 const NEXT_REPO = '21nCo/super-functions.next';
@@ -147,6 +147,17 @@ test('the command reads GITHUB_REPOSITORY and exits non-zero with the refusal on
   assert.equal(wrong.status, 1);
   assert.match(wrong.stderr, /owned by public \(21nCo\/superfunctions\)/);
   assert.equal(run(PUBLIC_REPO, 'wheel', 'datafn-core-v1.0.0').status, 1);
+  assert.equal(run(PUBLIC_REPO, 'npm').status, 1);
+  assert.equal(run(PUBLIC_REPO, 'npm', 'datafn-core-v1.0.0', '--root').status, 1);
+});
+
+test('--root selects the checkout whose manifests decide ownership', t => {
+  const root = checkout(t, { pub: publicManifest({ releases: { 'datafn-core': undefined } }), next: nextManifest({ releases: { 'datafn-core': 'next' } }) });
+  const result = spawnSync(process.execPath, [script, 'npm', 'datafn-core-v1.0.0', '--root', root], { encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: PUBLIC_REPO } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /owned by next \(21nCo\/super-functions\.next\) in superfunctions\.owners\.next\.json/);
+  assert.deepEqual(parseGateArgs(['npm', '--root', root, 'x-v1.0.0']), { positionals: ['npm', 'x-v1.0.0'], root });
+  assert.throws(() => parseGateArgs(['--root', 'a', '--root', 'b']), /--root needs one directory/);
 });
 
 test('the command still runs the gate when reached through a symlink', t => {

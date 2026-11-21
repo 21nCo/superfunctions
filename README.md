@@ -70,12 +70,13 @@ succeeded (`pull_request` and `workflow_dispatch` runs do not count: one tests a
 merge commit, the other may plan no package jobs); `"ci": {"workflow": "<file>"}`
 in `superfunctions.owners.json` names another workflow file. On `next`, CI runs
 on Depot, so `superfunctions.owners.next.json` must name the check run with
-`"ci": {"checkRun": "<name>", "app": "<GitHub App slug>"}`; without it `next`
-refuses every tag. Tag only a commit whose CI has passed; if CI was still
+`"ci": {"checkRun": "<name>", "app": "depot"}`; without it, or with another app,
+`next` refuses every tag. Tag only a commit whose CI has passed; if CI was still
 running, dispatch the workflow again once it succeeds. A `channel_only` dispatch
 republishes nothing and skips only the CI check. Both checks run from the
 workflow run's own commit, so a dispatch also works for tags made before the
-checks existed.
+checks existed, but the tag's own manifests decide ownership; only a
+`channel_only` dispatch of a tag that has no manifests uses the run commit's.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries

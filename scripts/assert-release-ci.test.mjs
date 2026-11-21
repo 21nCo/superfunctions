@@ -61,15 +61,16 @@ function checkout(t, { publicCi, nextCi } = {}) {
   return root;
 }
 
-/** A fetch that serves recorded bodies by URL path and records each request. */
+/** A fetch that serves recorded bodies by URL path and records each request; a body may carry a `link` header. */
 function recordedFetch(routes) {
   const requests = [];
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     requests.push({ url: parsed, headers: init.headers });
-    const body = routes[parsed.pathname];
-    if (body === undefined) return new Response('{"message":"Not Found"}', { status: 404 });
-    return Response.json(typeof body === 'function' ? body(parsed) : body);
+    const route = routes[parsed.pathname];
+    if (route === undefined) return new Response('{"message":"Not Found"}', { status: 404 });
+    const { link, ...body } = typeof route === 'function' ? route(parsed) : route;
+    return Response.json(body, link ? { headers: { link } } : undefined);
   };
   return { fetchImpl, requests };
 }
@@ -155,6 +156,12 @@ test('next refuses without a ci section in its own manifest, even when GitHub Ac
       'superfunctions.owners.next.json has no "ci" section naming the Depot check run',
     );
   }
+  // A check run from another app is not Depot's CI result, whatever the manifest says.
+  await refuses(
+    assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: checkout(t, { nextCi: { checkRun: 'CI', app: 'some-other-app' } }), fetchImpl }),
+    'missing-config',
+    'names a check run from app "some-other-app" in its "ci" section instead of the Depot check run',
+  );
   // An explicit GitHub Actions workflow on next is refused too: its jobs are skipped there.
   await refuses(
     assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: checkout(t, { nextCi: { workflow: 'ci.yml' } }), fetchImpl }),
@@ -180,6 +187,25 @@ test('every page of runs is read before deciding', async t => {
   });
   await assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl });
   assert.deepEqual(requests.map(request => request.url.searchParams.get('page')), ['1', '2']);
+});
+
+test('a short page is not the last page while total_count or the Link header says more remain', async t => {
+  const root = checkout(t);
+  const nextLink = page => `<https://api.github.com${RUNS_PATH}?page=${page}>; rel="next"`;
+  const byTotal = recordedFetch({
+    [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 2, workflow_runs: [workflowRun({ id: 1 })] } : { total_count: 2, workflow_runs: [workflowRun({ id: 2, conclusion: 'failure' })] }),
+  });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: byTotal.fetchImpl }), 'failed');
+  assert.equal(byTotal.requests.length, 2);
+  const byLink = recordedFetch({
+    [CHECKS_PATH]: url => (url.searchParams.get('page') === '1' ? { link: nextLink(2), check_runs: [checkRun({ name: 'Depot CI' })] } : { check_runs: [checkRun({ id: 2, name: 'Depot CI', conclusion: 'failure' })] }),
+  });
+  const depot = checkout(t, { nextCi: { checkRun: 'Depot CI', app: 'depot' } });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: NEXT_REPO, token: TOKEN, root: depot, fetchImpl: byLink.fetchImpl }), 'failed');
+  assert.equal(byLink.requests.length, 2);
+  // A response that promises more but delivers an empty page refuses.
+  const truncated = recordedFetch({ [RUNS_PATH]: url => (url.searchParams.get('page') === '1' ? { total_count: 3, workflow_runs: [workflowRun()] } : { total_count: 3, workflow_runs: [] }) });
+  await refuses(assertReleaseCi({ sha: RELEASE_SHA, repository: PUBLIC_REPO, token: TOKEN, root, fetchImpl: truncated.fetchImpl }), 'api-error', 'end early (1 of 3)');
 });
 
 test('more results than the gate can page through refuse instead of deciding on part of them', async t => {
@@ -217,7 +243,9 @@ test('a failure on the release commit is not outvoted; runs on other commits nev
   assert.throws(() => evaluateCiRuns({ sha: RELEASE_SHA, ci: DEFAULT_RELEASE_CI, runs: [runs[0]] }), error => error.code === 'missing');
 });
 
-test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN and GITHUB_API_URL and exits non-zero on refusal', async t => {
+test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN, GITHUB_API_URL and --root and exits non-zero on refusal', async t => {
+  // --root selects the manifests: this one names a workflow file, which the request path shows was used.
+  const root = checkout(t, { publicCi: { workflow: 'ci.yml' } });
   const seen = [];
   const server = createServer((request, response) => {
     seen.push({ url: request.url, authorization: request.headers.authorization });
@@ -230,7 +258,7 @@ test('the command reads GITHUB_REPOSITORY, GITHUB_TOKEN and GITHUB_API_URL and e
   const apiBase = `http://127.0.0.1:${server.address().port}`;
   const run = sha =>
     new Promise(resolve => {
-      const child = spawn(process.execPath, [script, sha], {
+      const child = spawn(process.execPath, [script, sha, '--root', root], {
         env: { ...process.env, GITHUB_REPOSITORY: PUBLIC_REPO, GITHUB_TOKEN: TOKEN, GH_TOKEN: '', GITHUB_API_URL: apiBase },
       });
       let stdout = '';

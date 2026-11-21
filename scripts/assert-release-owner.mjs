@@ -1,11 +1,14 @@
 // Release owner gate (SFNS-121 D8, SFNS-124): a tag publishes only from the repository that owns its release slug
-// or Python project in the ownership manifests of the tagged commit. The publish workflows run it right after the
-// immutable-tag check, before anything is installed, built or packed.
+// or Python project in the ownership manifests. The publish workflows run it right after the immutable-tag check,
+// before anything is installed, built or packed.
 //
-//   node scripts/assert-release-owner.mjs npm <slug>-v<version>
-//   node scripts/assert-release-owner.mjs python python-<project>-v<version>
+//   node scripts/assert-release-owner.mjs npm <slug>-v<version> [--root <checkout whose manifests apply>]
+//   node scripts/assert-release-owner.mjs python python-<project>-v<version> [--root <dir>]
 //
-// The running repository comes from GITHUB_REPOSITORY.
+// The running repository comes from GITHUB_REPOSITORY. The manifests come from --root, defaulting to this script's own
+// checkout. The publish workflows run this script from the workflow run's own commit (so a tag made before the gates
+// existed is still gated) and pass the tag checkout as --root, so the tagged tree decides ownership; only a
+// channel-only npm dispatch of a tag that has no manifests, which republishes nothing, reads the run commit's.
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -29,6 +32,24 @@ export class ReleaseOwnerError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+/**
+ * Splits gate arguments into positionals and an optional `--root <dir>` (the checkout whose manifests apply).
+ * @param {string[]} args
+ */
+export function parseGateArgs(args) {
+  const positionals = [];
+  let root;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== '--root') {
+      positionals.push(args[index]);
+      continue;
+    }
+    if (root !== undefined || !args[index + 1]) throw new Error('--root needs one directory');
+    root = path.resolve(args[(index += 1)]);
+  }
+  return { positionals, root: root ?? REPO_ROOT };
 }
 
 const describe = owner => `${owner} (${PUBLISHING_REPOSITORIES[owner]})`;
@@ -80,7 +101,7 @@ export function releaseOfTag(kind, tag) {
 
 /**
  * Refuses a tag whose release is not owned by the running repository, naming the repository that owns it.
- * Ownership is read from the manifests of the checkout (the tagged commit).
+ * Ownership is read from the manifests in `root`.
  * @param {{ kind: 'npm' | 'python', tag: string, repository: string | undefined, root?: string }} input
  * @returns {{ owner: 'public' | 'next', name: string, repository: string, manifest: string }}
  */
@@ -135,8 +156,10 @@ export function assertReleaseOwner({ kind, tag, repository, root = REPO_ROOT }) 
 // realpath: a symlinked path to this file (such as macOS's /var -> /private/var) must still run the gate, never skip it.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const [kind, tag] = process.argv.slice(2);
-    const result = assertReleaseOwner({ kind, tag, repository: process.env.GITHUB_REPOSITORY });
+    const { positionals, root } = parseGateArgs(process.argv.slice(2));
+    if (positionals.length !== 2) throw new Error('Usage: assert-release-owner.mjs <npm|python> <tag> [--root <dir>]');
+    const [kind, tag] = positionals;
+    const result = assertReleaseOwner({ kind, tag, repository: process.env.GITHUB_REPOSITORY, root });
     console.log(`${tag}: ${result.name} is owned by ${describe(result.owner)} in ${result.manifest}; publishing from ${result.repository} is allowed.`);
   } catch (error) {
     console.error(error.message);

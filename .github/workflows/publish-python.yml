@@ -50,8 +50,8 @@ jobs:
         id: source
         run: node scripts/assert-release-ref.mjs "${RELEASE_TAG}"
       # SFNS-124: only the repository that owns the Python project publishes it, and only a commit that passed CI;
-      # both run before anything is installed, built or packed. Both gates, and the manifests they read, come from this
-      # run's own commit, because a dispatch may name a tag made before the gates existed; CI is checked on the tag commit.
+      # both run before anything is installed, built or packed. Both gates run from this run's own commit, because a
+      # dispatch may name a tag made before the gates existed, and read the tag checkout's manifests and CI.
       - name: Require this repository to own the release
         shell: bash
         run: |
@@ -60,11 +60,11 @@ jobs:
           # The dispatching branch may have moved or been deleted since dispatch; fetch its commit by SHA if needed.
           git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git worktree add --detach "${gates}" "${GITHUB_SHA}"
-          node "${gates}/scripts/assert-release-owner.mjs" python "${RELEASE_TAG}"
+          node "${gates}/scripts/assert-release-owner.mjs" python "${RELEASE_TAG}" --root "${GITHUB_WORKSPACE}"
       - name: Require successful CI on the release commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node "${RUNNER_TEMP}/release-gates/scripts/assert-release-ci.mjs" "${{ steps.source.outputs.release_commit }}"
+        run: node "${RUNNER_TEMP}/release-gates/scripts/assert-release-ci.mjs" "${{ steps.source.outputs.release_commit }}" --root "${GITHUB_WORKSPACE}"
       - name: Install release tools
         run: python -m pip install build twine packaging
       - name: Resolve exact package and version
