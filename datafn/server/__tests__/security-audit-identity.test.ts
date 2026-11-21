@@ -310,3 +310,149 @@ describe("DFN-06: relation write policy is enforced on relations", () => {
     await server.close();
   });
 });
+
+describe("DFN-01 follow-ups", () => {
+  it("an anonymous caller cannot reproduce an actor's key through a crafted clientId", async () => {
+    const { call, rowsIn, server } = await harness();
+    const insert = (id: string, clientId: string) => ({
+      resource: "people", version: 1, operation: "insert", id,
+      clientId, mutationId: "m-anon", record: { name: id },
+    });
+    await call("mutation", insert("p-alice", "c1"), tenantA);
+    const anon = await call("mutation", insert("p-anon", JSON.stringify(["alice", "c1"])), { "x-ns": "tenant:a" });
+    expect(anon.body.result).toMatchObject({ ok: true, deduped: false, affectedIds: ["p-anon"] });
+    expect((await rowsIn("people", "tenant:a")).map((r: any) => r.id).sort()).toEqual(["p-alice", "p-anon"]);
+    await server.close();
+  });
+
+  it("a scoped store keeps its scope guard after withDb()", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const scoped = scopeIdempotencyStore(new DbIdempotencyStore(db, "datafn"), { namespace: "tenant:a", actorId: "alice" });
+    const rebound = scoped.withDb!(db);
+    expect(() => scopeIdempotencyStore(rebound, { namespace: "tenant:b" })).toThrow();
+    expect(scopeIdempotencyStore(rebound, { namespace: "tenant:a", actorId: "alice" })).toBe(rebound);
+  });
+});
+
+describe("DFN-04 follow-ups", () => {
+  it("search reports a failing getActorId as a server error, not an unsupported query", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const server = await createDatafnServer<Ctx>({
+      schema,
+      database: db,
+      context: () => ({ ns: "tenant:a" }),
+      namespaceProvider: {
+        getNamespace: (ctx) => ctx.ns,
+        getActorId: () => {
+          throw new Error("identity service unavailable");
+        },
+      },
+    });
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "x" }),
+      }),
+    );
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as any).error.code).toBe("INTERNAL");
+    await server.close();
+  });
+});
+
+describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
+  const fkSchema: any = {
+    resources: [
+      {
+        name: "tasks",
+        version: 1,
+        fields: [
+          { name: "title", type: "string", required: true },
+          { name: "goalId", type: "string", required: false, nullable: true },
+        ],
+        permissions: { read: { fields: ["title", "goalId"] }, write: { fields: ["title", "goalId"] } },
+      },
+      {
+        name: "goals",
+        version: 1,
+        fields: [{ name: "name", type: "string", required: true }],
+        permissions: { read: { fields: ["name"] }, write: { fields: ["name"] } },
+      },
+      {
+        name: "folders",
+        version: 1,
+        fields: [
+          { name: "name", type: "string", required: true },
+          { name: "parentId", type: "string", required: false, nullable: true },
+        ],
+        permissions: { read: { fields: ["name", "parentId"] }, write: { fields: ["name", "parentId"] } },
+      },
+    ],
+    relations: [
+      // Default FK name: goalId.
+      { from: "tasks", to: "goals", type: "many-one", relation: "goal", inverse: "tasks" },
+      { from: "folders", to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" },
+    ],
+  };
+
+  async function fkHarness(schemaOverride: any) {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const server = await createDatafnServer<Ctx>({
+      schema: schemaOverride,
+      database: db,
+      context: () => ({ ns: "tenant:a", actor: "alice" }),
+      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId: (ctx) => ctx.actor },
+    });
+    const call = async (body: unknown) => {
+      const res = await server.router.handle(
+        new Request("http://localhost/datafn/mutation", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+      return { status: res.status, body: (await res.json()) as any };
+    };
+    return { db, server, call };
+  }
+
+  it("a many-one relation is writable when write.fields lists its default FK field", async () => {
+    const { db, server, call } = await fkHarness(fkSchema);
+    await db.create({ model: "tasks", data: { __ns: "tenant:a", id: "t1", title: "T" } } as any);
+    await db.create({ model: "goals", data: { __ns: "tenant:a", id: "g1", name: "G" } } as any);
+    const res = await call({ resource: "tasks", version: 1, operation: "relate", id: "t1", relations: { goal: "g1" } });
+    expect(res.status).toBe(200);
+    expect(res.body.result.ok).toBe(true);
+    await server.close();
+  });
+
+  it("an htree parent relation is writable when write.fields lists its FK field", async () => {
+    const { db, server, call } = await fkHarness(fkSchema);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f2", name: "child" } } as any);
+    const res = await call({ resource: "folders", version: 1, operation: "relate", id: "f2", relations: { parent: "f1" } });
+    expect(res.status).toBe(200);
+    await server.close();
+  });
+
+  it("defaultPermissions.relationWrites 'all' allows relation writes without scalar write defaults", async () => {
+    const withDefaults = {
+      ...fkSchema,
+      defaultPermissions: { read: "allResourceFields", relationWrites: "all" },
+      resources: fkSchema.resources.map(({ permissions: _p, ...r }: any) => r),
+    };
+    const { db, server, call } = await fkHarness(withDefaults);
+    await db.create({ model: "tasks", data: { __ns: "tenant:a", id: "t1", title: "T" } } as any);
+    await db.create({ model: "goals", data: { __ns: "tenant:a", id: "g1", name: "G" } } as any);
+    const relate = await call({ resource: "tasks", version: 1, operation: "relate", id: "t1", relations: { goal: "g1" } });
+    expect(relate.status).toBe(200);
+    // Scalar writes stay denied without a write default.
+    const merge = await call({ resource: "tasks", version: 1, operation: "merge", id: "t1", record: { title: "x" } });
+    expect(merge.status).toBe(403);
+    await server.close();
+  });
+});

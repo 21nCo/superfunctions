@@ -6,6 +6,7 @@
 import type { Adapter } from "@superfunctions/db";
 import {
   actorQualifiedClientId,
+  carryIdempotencyScope,
   isRetryableMutationResult,
   type IdempotencyScope,
   type IdempotencyStore,
@@ -36,7 +37,10 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // The outer store performs initialization before transactional mutation
     // execution. Preserve that state so rebinding does not issue DDL inside a
     // transaction (which implicitly commits on MySQL).
-    return new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured, this.actorId);
+    return carryIdempotencyScope(
+      this,
+      new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured, this.actorId),
+    );
   }
 
   /**

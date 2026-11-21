@@ -59,14 +59,28 @@ function scopeKey(scope: IdempotencyScope): string {
 }
 
 /**
- * Qualify a client id with the actor that sent it. Exported for stores that
- * keep the namespace in a column of its own.
+ * Qualify a client id with the actor that sent it (null for an anonymous
+ * caller). Always encoded, so no raw client id can equal another actor's key.
+ * Exported for stores that keep the namespace in a column of its own.
  */
 export function actorQualifiedClientId(
   clientId: string,
   actorId: string | undefined,
 ): string {
-  return actorId === undefined ? clientId : JSON.stringify([actorId, clientId]);
+  return JSON.stringify([actorId ?? null, clientId]);
+}
+
+/**
+ * Carry the scope guard from a scoped store to a store derived from it (for
+ * example by `withDb`), so the derived store cannot be re-scoped elsewhere.
+ */
+export function carryIdempotencyScope<T extends IdempotencyStore>(
+  from: IdempotencyStore,
+  to: T,
+): T {
+  const key = (from as ScopedStore)[SCOPED];
+  if (key !== undefined) (to as ScopedStore)[SCOPED] = key;
+  return to;
 }
 
 /**

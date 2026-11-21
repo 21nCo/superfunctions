@@ -20,6 +20,7 @@ import {
   getTemporalGroupAliases,
   parseSortTerm,
   relationFkFieldForManyOne,
+  relationFkFieldForOneMany,
   relationTargetEndpoint,
   resolveCapabilities,
 } from "@datafn/core";
@@ -131,13 +132,16 @@ function resolveDefaultPermissions(
   const readDefault = typeof defaults === "string" ? defaults : defaults.read;
   const writeDefault = typeof defaults === "string" ? defaults : defaults.write;
   const readFields = defaultPermissionModeEnabled(readDefault) ? fields : undefined;
+  // `relationWrites: "all"` grants relation writes on its own, whether or not
+  // scalar field writes are enabled by default.
+  const relationFields = relationWriteModeEnabled(defaults)
+    ? relationWriteFields(schema, resource.name)
+    : [];
   const writeFields = defaultPermissionModeEnabled(writeDefault)
-    ? fields.concat(
-        relationWriteModeEnabled(defaults)
-          ? relationWriteFields(schema, resource.name)
-          : [],
-      )
-    : undefined;
+    ? fields.concat(relationFields)
+    : relationFields.length > 0
+      ? relationFields
+      : undefined;
 
   if (!readFields && !writeFields) {
     return undefined;
@@ -632,26 +636,27 @@ export function validateRelationAuthz(
   return { ok: true };
 }
 
-/** The FK field this resource holds for `relationName`, if any. */
+/**
+ * The FK field a relation write through `relationName` stores, resolved the
+ * same way the relation executor does (`findRelationMatch` plus the core FK
+ * helpers), so a policy that lists the FK field allows the relation.
+ */
 function findOwnForeignKeyField(
   schema: DatafnSchema,
   resourceName: string,
   relationName: string,
 ): string | undefined {
-  for (const rel of schema.relations ?? []) {
-    const r = rel as { from?: string | string[]; to?: string | string[]; relation?: string; inverse?: string; type?: string; fkField?: string; foreignKey?: string };
-    const fk = r.fkField ?? r.foreignKey;
-    if (!fk) continue;
-    const from = Array.isArray(r.from) ? r.from : [r.from];
-    const to = Array.isArray(r.to) ? r.to : [r.to];
-    // many-one: the source row holds the FK under the forward relation name.
-    if (r.type === "many-one" && r.relation === relationName && from.includes(resourceName)) {
-      return fk;
-    }
-    // one-many: the target row holds the FK; its inverse relation is many-one.
-    if (r.type === "one-many" && r.inverse === relationName && to.includes(resourceName)) {
-      return fk;
-    }
+  const match = findRelationMatch(schema, resourceName, relationName);
+  if (!match) return undefined;
+  const { relation, direction } = match;
+  if (relation.type === "htree") {
+    return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
+  }
+  if (relation.type === "many-one" && direction === "forward") {
+    return relationFkFieldForManyOne(relation);
+  }
+  if (relation.type === "one-many" && direction === "inverse") {
+    return relationFkFieldForOneMany(relation);
   }
   return undefined;
 }
