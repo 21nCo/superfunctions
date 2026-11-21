@@ -1,0 +1,31 @@
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_7ca42ff1e238b5 206-227,311-314,331
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_e5ac07859c1bc9::t_ce5a226cd6f980 688-723
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_8ff7f18d1a1e34 26-32,303,347-350,360,493-502
+authfn/core/src/http/router.ts
+  s_e5ac07859c1bc9::t_409f707ec91cf9 235-239,254,263,265
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_049e1ef4adb52d 139
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_3abe2fbced857b 6477
+authfn/social-oauth/src/index.ts
+  s_e5ac07859c1bc9::t_3dd372c06cd95c 373-376,379-387,587-588,2805-2806,2828-2829
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "163afae55f42471024d0bd4837037f039c98fd8d",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
