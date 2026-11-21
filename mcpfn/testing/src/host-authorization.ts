@@ -278,10 +278,11 @@ async function runHostedCase(
         "authorization",
         decision,
       );
-      assertIneligibleClientRejection(decision, authorizationError);
+      assertClientStageRejection(decision, authorizationError, fixture.expected.errorCode);
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture, decision)) {
+      assertPostMatchPermitted(decision);
       const pageErrorCode = await validateUnvettedErrorPage(
         authorizationResponse,
         fixture,
@@ -292,7 +293,7 @@ async function runHostedCase(
     if (!isRedirect(authorizationResponse.status)) {
       throw new Error(`Authorization request did not redirect (HTTP ${authorizationResponse.status})`);
     }
-    assertCallbackEligible(decision);
+    assertPostMatchPermitted(decision);
     const code = validatedRedirectCode(authorizationResponse, fixture, target.issuer);
     if (fixture.token) return runHostedTokenCase(target, fixture, fixture.token, code);
     return assessHostedCase(fixture, phase, responseStatus);
@@ -490,7 +491,7 @@ async function validateOAuthRejection(
   const authorization = context === "authorization";
   const unvetted = authorization && isUnvettedRedirectSource(fixture);
   const clientRejected = typeof body?.error === "string" && CLIENT_REJECTION_CODES.has(body.error);
-  if (authorization && !clientRejected && !unvetted && isCallbackEligible(decision)) {
+  if (authorization && !clientRejected && !unvetted && decision?.postMatchPermitted) {
     throw new Error("Registered authorization requests require an OAuth error callback");
   }
   if (response.status !== 400) throw new Error("OAuth error response has invalid HTTP status");
@@ -528,21 +529,32 @@ function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolea
 type RegistrationEligibility = "eligible" | "ineligible" | "indeterminate";
 
 /**
- * The one per-case redirect decision. `uriMatch` is whether the requested
- * redirect URI matches the registration of the client the request names,
- * under the authorization server's own matching rule (exact match after
- * normalization, plus RFC 8252 loopback runtime ports unless the policy
- * disables them); a malformed registration (including a redirect URI the MCP
- * redirect profile rejects) matches nothing. `eligibility` mirrors the
- * server's client compatibility check, which runs before redirect matching
- * (see `registrationEligibility`). The two are independent: every consumer
- * reads the same decision.
+ * The one per-case, stage-aware redirect decision, computed once and read by
+ * every consumer (JSON envelope, HTML page, error callback, code callback).
+ * `uriMatch` is whether the requested redirect URI matches the registration
+ * of the client the request names, under the authorization server's own
+ * matching rule (exact match after normalization, plus RFC 8252 loopback
+ * runtime ports unless the policy disables them); a malformed registration
+ * (including a redirect URI the MCP redirect profile rejects) matches nothing.
+ * `eligibility` mirrors the server's client compatibility check, which runs
+ * before redirect matching (see `registrationEligibility`); it is independent
+ * of `uriMatch`.
  */
 interface RedirectDecision {
   uriMatch?: McpFnRedirectMatch;
   eligibility: RegistrationEligibility;
-  /** The server may reject the ineligible registration as `invalid_scope`. */
-  scopeRejection?: boolean;
+  /**
+   * The client-stage error codes a correct server may return for a
+   * registration that is not eligible, before it matches the redirect URI.
+   * Undefined when the request names another client, whose rejection says
+   * nothing about this registration.
+   */
+  permittedClientCodes?: ReadonlySet<string>;
+  /**
+   * A post-match response (error page, error callback or code callback) is
+   * permitted only for a matched redirect URI of an eligible registration.
+   */
+  postMatchPermitted: boolean;
 }
 
 function redirectDecision(
@@ -553,13 +565,21 @@ function redirectDecision(
   >,
 ): RedirectDecision {
   const { registration, authorization } = fixture;
-  if (authorization.clientId !== registration.clientId) return { eligibility: "ineligible" };
+  if (authorization.clientId !== registration.clientId) {
+    return { eligibility: "ineligible", postMatchPermitted: false };
+  }
   const policy = target.redirectPolicy;
   let client: McpFnNormalizedClientRegistration;
   try {
     client = normalizeMcpClientRegistration({ ...registration, redirectPolicy: policy });
   } catch {
-    return { eligibility: "ineligible" };
+    // The server rejects a registration it cannot normalize as
+    // invalid_client_metadata, or treats it as an unknown client.
+    return {
+      eligibility: "ineligible",
+      permittedClientCodes: CLIENT_REJECTION_CODES,
+      postMatchPermitted: false,
+    };
   }
   let uriMatch: McpFnRedirectMatch | undefined;
   try {
@@ -567,48 +587,77 @@ function redirectDecision(
   } catch {
     // A mismatch is not a registered redirect.
   }
-  return { uriMatch, ...registrationEligibility(client, registration, target) };
-}
-
-function isCallbackEligible(decision: RedirectDecision | undefined): boolean {
-  return decision?.uriMatch !== undefined && decision.eligibility === "eligible";
+  const { eligibility, scopeRejection } = registrationEligibility(client, registration, target);
+  return {
+    uriMatch,
+    eligibility,
+    permittedClientCodes: clientStageCodes(client, scopeRejection),
+    postMatchPermitted: uriMatch !== undefined && eligibility === "eligible",
+  };
 }
 
 /**
- * An error or code callback may target only a requested redirect URI that
- * matched an eligible registration.
+ * A stored registration (dynamic, pre-registered, enterprise) that fails the
+ * server's compatibility check is an unknown client: `invalid_client`. A
+ * client-metadata-document fixture may be stored (through `clients.resolve`)
+ * or fetched, and the harness cannot tell which, so it permits the union of
+ * both paths: `invalid_client` when stored, `invalid_client_metadata` when
+ * fetched, and `invalid_scope` when the fetched document fails on its scope
+ * alone. Every one of these is a non-callback client-stage rejection, and the
+ * reflection check still applies to it.
  */
-function assertCallbackEligible(decision: RedirectDecision | undefined): void {
+function clientStageCodes(
+  client: McpFnNormalizedClientRegistration,
+  scopeRejection: boolean,
+): ReadonlySet<string> {
+  if (client.source !== "client-metadata-document") return STORED_CLIENT_REJECTION_CODES;
+  return scopeRejection
+    ? new Set([...CLIENT_REJECTION_CODES, "invalid_scope"])
+    : CLIENT_REJECTION_CODES;
+}
+
+const STORED_CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set(["invalid_client"]);
+
+const INDETERMINATE_ELIGIBILITY =
+  "Registration eligibility is indeterminate: the target declares only one server default " +
+  "token endpoint authentication method for a client-metadata-document fixture without " +
+  "one; set token_endpoint_auth_method on the fixture";
+
+/**
+ * An error page, error callback or code callback answers a request whose
+ * redirect URI the server matched, so it requires a matched URI of an
+ * eligible registration.
+ */
+function assertPostMatchPermitted(decision: RedirectDecision | undefined): void {
   if (decision?.uriMatch && decision.eligibility === "indeterminate") {
-    throw new Error(
-      "Callback eligibility is indeterminate: the target declares only one server default " +
-        "token endpoint authentication method for a client-metadata-document fixture without " +
-        "one; set token_endpoint_auth_method on the fixture",
-    );
+    throw new Error(INDETERMINATE_ELIGIBILITY);
   }
-  if (!isCallbackEligible(decision)) {
+  if (!decision?.postMatchPermitted) {
     throw new Error("Rejected redirect URI must not receive a callback");
   }
 }
 
 /**
- * The server rejects an incompatible registration before it matches the
- * redirect URI or validates the rest of the request (see
- * `registrationEligibility`), so a matching URI must not let its rejection
- * carry a post-match error code.
+ * The server rejects a registration that is not eligible before it matches
+ * the redirect URI or validates the rest of the request, so, whether or not
+ * the URI matches, its JSON rejection must carry a client-stage code. A host
+ * policy that runs before client resolution (such as `beforeClientResolution`)
+ * may reject first with its own code; the response alone cannot tell that from
+ * later validation, so only a code the fixture explicitly expects is accepted
+ * in its place.
  */
-function assertIneligibleClientRejection(
+function assertClientStageRejection(
   decision: RedirectDecision,
-  errorCode: string | undefined,
+  errorCode: string,
+  expectedErrorCode: string | undefined,
 ): void {
-  const clientError = errorCode !== undefined && (CLIENT_REJECTION_CODES.has(errorCode) ||
-    (decision.scopeRejection === true && errorCode === "invalid_scope"));
-  if (decision.uriMatch && decision.eligibility === "ineligible" &&
-      errorCode !== undefined && !clientError) {
-    throw new Error(
-      `An ineligible client registration must be rejected as a client error, not ${errorCode}`,
-    );
-  }
+  const permitted = decision.permittedClientCodes;
+  if (decision.eligibility === "eligible" || !permitted) return;
+  if (permitted.has(errorCode) || errorCode === expectedErrorCode) return;
+  if (decision.eligibility === "indeterminate") throw new Error(INDETERMINATE_ELIGIBILITY);
+  throw new Error(
+    `An ineligible client registration must be rejected as a client error, not ${errorCode}`,
+  );
 }
 
 /**
@@ -625,22 +674,37 @@ function registrationEligibility(
   client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
   target: Pick<McpFnHostedAuthorizationTargetAdapter, "tokenEndpointAuthMethods" | "supportedScopes">,
-): Pick<RedirectDecision, "eligibility" | "scopeRejection"> {
-  const method = authMethodEligibility(client, registration, target.tokenEndpointAuthMethods);
-  if (method === "ineligible") return { eligibility: "ineligible" };
-  if (!client.responseTypes.includes("code")) return { eligibility: "ineligible" };
-  if (!client.grantTypes.includes("authorization_code")) return { eligibility: "ineligible" };
+): { eligibility: RegistrationEligibility; scopeRejection: boolean } {
+  const ineligible = { eligibility: "ineligible", scopeRejection: false } as const;
+  const supportedMethods = target.tokenEndpointAuthMethods;
+  const method = authMethodEligibility(client, registration, supportedMethods);
+  if (method === "ineligible") return ineligible;
+  if (!client.responseTypes.includes("code")) return ineligible;
+  if (!client.grantTypes.includes("authorization_code")) return ineligible;
   const scope: unknown = client.metadata.scope;
-  if (scope === undefined) return { eligibility: method };
-  if (typeof scope !== "string") return { eligibility: "ineligible" };
+  if (scope === undefined) return { eligibility: method, scopeRejection: false };
+  if (typeof scope !== "string") return ineligible;
   const supported = target.supportedScopes;
   if (supported && !scope.split(/\s+/).filter(Boolean).every((entry) => supported.includes(entry))) {
+    // Only a fetched document whose method passed is rejected on its scope.
     return {
       eligibility: "ineligible",
-      scopeRejection: client.source === "client-metadata-document",
+      scopeRejection: client.source === "client-metadata-document" &&
+        (!supportedMethods || supportedMethods.includes(fetchedAuthMethod(client, registration))),
     };
   }
-  return { eligibility: method };
+  return { eligibility: method, scopeRejection: false };
+}
+
+/** The method the server applies to a Client ID Metadata Document it fetches. */
+function fetchedAuthMethod(
+  client: McpFnNormalizedClientRegistration,
+  registration: McpFnHostedRegistrationFixture,
+): string {
+  const declared: unknown = registration.metadata.token_endpoint_auth_method;
+  return declared === undefined || declared === null
+    ? "client_secret_basic"
+    : client.tokenEndpointAuthMethod;
 }
 
 /** Server defaults for a Client ID Metadata Document without a method. */
@@ -780,7 +844,7 @@ function validateAuthorizationErrorRedirect(
   const callback = new URL(response.headers.get("location") ?? "");
   // Redirects must target a requested URI that matched an eligible
   // registration, never a rejected requested URI.
-  assertCallbackEligible(decision);
+  assertPostMatchPermitted(decision);
   const errors = callback.searchParams.getAll("error");
   if (errors.length !== 1 || !errors[0] || callback.searchParams.has("code")) {
     throw new Error("Invalid OAuth error callback");
