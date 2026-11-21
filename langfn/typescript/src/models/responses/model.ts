@@ -107,6 +107,10 @@ export class ResponsesChatModel extends ChatModel {
     if (config.apiKey !== undefined && !isHeaderValue(config.apiKey)) {
       throw new ValidationError("ResponsesChatModel apiKey must be a single-line Latin-1 string");
     }
+    // A blank key is no credential; sent as "Bearer   " it would only fail at the provider.
+    if (config.apiKey && !config.apiKey.trim()) {
+      throw new ValidationError("ResponsesChatModel apiKey must not be blank");
+    }
     this.rawApiKey = config.apiKey;
     this.apiKeyRef = config.apiKeyRef;
     this.secretProvider = config.secretProvider;
@@ -216,7 +220,7 @@ export class ResponsesChatModel extends ChatModel {
     const headers: Record<string, string> = { ...this.headers, "content-type": "application/json", accept };
     if (this.rawApiKey !== undefined || this.apiKeyRef !== undefined) {
       const apiKey = this.rawApiKey || resolveSecret(this.apiKeyRef, this.secretProvider) || "";
-      if (!apiKey) throw new NotConfiguredError(`${this.provider} API key is required`, { provider: this.provider });
+      if (!apiKey.trim()) throw new NotConfiguredError(`${this.provider} API key is required`, { provider: this.provider });
       if (!isHeaderValue(apiKey)) {
         throw new ValidationError(`${this.provider} API key must be a single-line Latin-1 string`, { provider: this.provider });
       }

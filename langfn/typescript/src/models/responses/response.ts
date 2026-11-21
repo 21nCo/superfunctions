@@ -228,6 +228,13 @@ export function normalizeOutputItem(item: JsonRecord): ResponsesOutputItem {
           if (isRecord(part) && part.type === undefined) part.type = "summary_text";
         }
       }
+      // An untyped reasoning content part is reasoning text (parseReasoning admits no other),
+      // and the input schema requires its type on replay.
+      if (Array.isArray(normalized.content)) {
+        for (const part of normalized.content) {
+          if (isRecord(part) && part.type === undefined) part.type = "reasoning_text";
+        }
+      }
       break;
     case "function_call":
       if (normalized.status === null) normalized.status = "completed";
@@ -339,7 +346,8 @@ export function parseResponsesResponse(
   options: ParseResponsesOptions = {},
 ): ResponsesChatResponse {
   if (!isRecord(data)) throw new ProviderError("Responses body must be a JSON object", { provider });
-  const status = data.status;
+  // A null status is no status, as in a terminal stream event.
+  const status = data.status === null ? undefined : data.status;
   assertNoReportedError(data, provider);
   if (status === "failed") throw responsesError(provider, { status: 200, body: data, error: data.error });
   if (status !== undefined && status !== "completed" && status !== "incomplete") {
@@ -355,6 +363,10 @@ export function parseResponsesResponse(
         metadata: { callId: call.id },
       });
     }
+  }
+  // Only an absent or null usage is unknown; any other non-object report is invalid.
+  if (data.usage !== undefined && data.usage !== null && !isRecord(data.usage)) {
+    throw new LangFnError("Provider reported invalid token usage", { code: "INVALID_TOKEN_USAGE", provider });
   }
   const usage = isRecord(data.usage)
     ? providerUsage(data.usage.input_tokens, data.usage.output_tokens, data.usage.total_tokens)

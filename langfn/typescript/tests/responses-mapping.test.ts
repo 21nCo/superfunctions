@@ -341,6 +341,65 @@ describe("stream mapping", () => {
     expect(parseResponsesResponse(completed([call]), "fixture").responseId).toBe("resp_fixture_mapping");
   });
 
+  it("rejects any frame whose SSE event name and JSON type differ, before any tool call or end", async () => {
+    const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
+    const changed = { ...call, arguments: "{\"q\":2}" };
+    const lifecycle = (id: string) => ({ response: { id, status: "in_progress", output: [] } });
+    for (const [data, event] of [
+      // A finished call under a non-done JSON type would be hidden from the ledger.
+      [{ type: "response.output_item.added", output_index: 0, item: call }, "response.output_item.done"],
+      [{ type: "response.output_item.done", output_index: 0, item: call }, "response.output_item.added"],
+      // A conflicting lifecycle frame would skip the response id check.
+      [{ type: "response.in_progress", ...lifecycle("resp_other") }, "response.created"],
+      // A delta whose names differ.
+      [{ type: "response.output_text.delta", delta: "Hi" }, "response.reasoning_text.delta"],
+    ] as Array<[Record<string, unknown>, string]>) {
+      const outcome = await mapRaw(frame(data, event) + frame({ type: "response.completed", response: completed([changed]) }));
+      expect(outcome.error).toBeInstanceOf(ProviderError);
+      expect(String(outcome.error)).toContain(`event ${event} conflicts with its type ${String(data.type)}`);
+      expect(outcome.seen).toEqual([]);
+    }
+    // Matching names, a default event name, or one discriminator still pass.
+    for (const text of [
+      frame({ type: "response.created", ...lifecycle("resp_fixture_mapping") }, "response.created"),
+      frame({ type: "response.output_text.delta", delta: "Hi" }, "message"),
+      frame({ delta: "Hi" }, "response.output_text.delta"),
+      frame({ type: "response.output_item.done", output_index: 0, item: call }),
+    ]) {
+      const outcome = await mapRaw(text + frame({ type: "response.completed", response: completed([call]) }));
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.seen.map((event) => event.type).filter((type) => type !== "content")).toEqual(["tool_call", "message", "end"]);
+    }
+  });
+
+  it("validates every finished item with the output shape rules and judges the populated error envelope", async () => {
+    const done = (item: unknown) => frame({ type: "response.output_item.done", item });
+    const message = { type: "message", role: "assistant", content: [{ type: "output_text", text: "Hi.", annotations: [] }] };
+    for (const [finished, error] of [
+      [{ ...message, role: "user" }, "must be from the assistant"],
+      [{ ...message, content: "Hi." }, "content must be an array"],
+      [{ type: "function_call_output", output: "ok" }, "must not contain function_call_output"],
+    ] as Array<[unknown, string]>) {
+      // With the terminal output present (matching nothing unidentified) and with it omitted.
+      for (const output of [[message], []]) {
+        const outcome = await mapRaw(done(finished) + frame({ type: "response.completed", response: completed(output) }));
+        expect(outcome.error).toBeInstanceOf(ProviderError);
+        expect(String(outcome.error)).toContain(error);
+        expect(outcome.seen).toEqual([]);
+      }
+    }
+    // An empty error object reports nothing, so the populated one decides the typed class.
+    const rateLimit = { code: "rate_limit_exceeded", message: "slow down" };
+    for (const text of [
+      frame({ type: "response.failed", error: rateLimit, response: { id: "resp_fixture_mapping", status: "failed", error: {} } }),
+      frame({ type: "error", error: {}, code: "rate_limit_exceeded", message: "slow down" }),
+    ]) {
+      const outcome = await mapRaw(text);
+      expect(outcome.error).toBeInstanceOf(RateLimitError);
+      expect(outcome.seen).toEqual([]);
+    }
+  });
+
   it("rejects a terminal output that disagrees with what the stream already finished", async () => {
     const call = { id: "fc_fixture", type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{\"q\":1}" };
     const done = (item: unknown = call, index = 0) => frame({ type: "response.output_item.done", output_index: index, item });
@@ -789,7 +848,7 @@ describe("request mapping", () => {
     expect(parseResponsesResponse(completed(replayed.responsesOutput), "fixture").message.responsesOutput).toEqual(replayed.responsesOutput);
   });
 
-  it("normalizes null annotations and rejects malformed output shapes on parse and on replay", () => {
+  it("normalizes null annotations and rejects malformed output shapes on parse and on replay", async () => {
     const text = (part: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
       type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Hi.", ...part }], ...extra,
     });
@@ -830,6 +889,21 @@ describe("request mapping", () => {
     for (const part of [{ type: "reasoning_text", text: "think" }, { text: "think" }]) {
       expect(parseResponsesResponse(completed([{ ...reasoning([]), content: [part] }, text({})]), "fixture").reasoning[0].content).toEqual(["think"]);
     }
+    // An untyped reasoning content part is replayed as reasoning_text, from a JSON and from a
+    // stream-derived turn, so the continuation request carries its discriminator.
+    const untyped = { ...reasoning([]), content: [{ text: "think" }] };
+    const call = { type: "function_call", status: "completed", call_id: "call_fixture", name: "lookup", arguments: "{}" };
+    const fromJson = parseResponsesResponse(completed([untyped, call]), "fixture").message;
+    const continuation = (assistant: ResponsesMessage) => payload(
+      [{ role: "user", content: "go" }, assistant, { role: "tool", content: "ok", tool_call_id: "call_fixture" } as ResponsesMessage],
+      reasoningProfile,
+    ) as { input: Array<Record<string, unknown>> };
+    expect(continuation(fromJson).input.find((item) => item.type === "reasoning")?.content).toEqual([{ type: "reasoning_text", text: "think" }]);
+    const streamed = await collect(mapResponsesStream(readServerSentEvents(body(
+      `data: ${JSON.stringify({ type: "response.completed", response: completed([untyped, call]) })}\n\n`,
+    )), "fixture"));
+    const fromStream = (streamed.find((event) => event.type === "message") as { message: ResponsesMessage }).message;
+    expect(continuation(fromStream).input.find((item) => item.type === "reasoning")?.content).toEqual([{ type: "reasoning_text", text: "think" }]);
     // A replayed output that repeats an item id fails before sending, as it does on parse.
     const repeated = text({}, { id: "msg_fixture" });
     const twice = (second: unknown) => ({ role: "assistant", content: "Hi.Hi.", responsesOutput: [repeated, second] }) as unknown as ResponsesMessage;
@@ -1403,6 +1477,24 @@ describe("ResponsesChatModel configuration", () => {
     expect(dated).toBeInstanceOf(RateLimitError);
     expect(dated).toMatchObject({ retryAfter: 30 });
     expect(await limited({ "retry-after": "Fri, 20 Nov 2026 23:59:00 GMT" })).toMatchObject({ retryAfter: 0 });
+  });
+
+  it("rejects a blank direct or resolved key before sending", async () => {
+    const seen: Headers[] = [];
+    const base = { model: "m", baseUrl: "https://gateway.example.test", profile: customProfile, fetchImpl: okFetch(seen) };
+    expect(() => new ResponsesChatModel({ ...base, apiKey: "   " })).toThrow(ValidationError);
+    const model = new ResponsesChatModel({ ...base, apiKeyRef: "FIXTURE_KEY", secretProvider: () => " \t " });
+    await expect(model.chat({ messages: [{ role: "user", content: "x" }] })).rejects.toBeInstanceOf(NotConfiguredError);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("reads a non-object usage as invalid and a null status as absent, as the stream does", () => {
+    const message = { type: "message", role: "assistant", content: [{ type: "output_text", text: "Hi.", annotations: [] }] };
+    for (const usage of ["12", 12, [], true]) {
+      expect(() => parseResponsesResponse(completed([message], { usage }), "fixture")).toThrow(expect.objectContaining({ code: "INVALID_TOKEN_USAGE" }));
+    }
+    expect(parseResponsesResponse(completed([message], { usage: null }), "fixture").usage).toBeUndefined();
+    expect(parseResponsesResponse(completed([message], { status: null }), "fixture").finishReason).toBe("stop");
   });
 
   it("fails with NotConfiguredError when a configured key reference does not resolve", async () => {
