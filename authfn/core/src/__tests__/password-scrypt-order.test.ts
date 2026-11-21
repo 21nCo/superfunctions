@@ -66,7 +66,7 @@ describe('sign-in scrypt job order (AF-10)', () => {
     }
   });
 
-  it('refuses an oversized password before any scrypt job, for every email', async () => {
+  it('refuses an oversized or non-string password before any scrypt job, for every email', async () => {
     const config: AuthFnRuntimeConfig = {
       database: memoryAdapter({ debug: false }),
       namespace: 'authfn',
@@ -74,12 +74,14 @@ describe('sign-in scrypt job order (AF-10)', () => {
     };
     const user = await createUser(config, { primaryEmail: 'known@example.com' });
     await updatePasswordCredential(config, { userId: user.id, password: 'test-password-current' });
-    const oversized = 'x'.repeat(64 * 1024 + 1);
+    const refused: unknown[] = ['x'.repeat(64 * 1024 + 1), { length: 1 }, ['x'], 123, true];
     for (const email of ['known@example.com', 'nobody@example.com']) {
-      started.length = 0;
-      await expect(signInWithPassword(config, { email, password: oversized }))
-        .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
-      expect(started).toEqual([]);
+      for (const password of refused) {
+        started.length = 0;
+        await expect(signInWithPassword(config, { email, password: password as string }))
+          .rejects.toMatchObject({ code: 'AUTHFN_INVALID_CREDENTIALS' });
+        expect(started).toEqual([]);
+      }
     }
   });
 
