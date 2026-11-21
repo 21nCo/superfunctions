@@ -3,6 +3,7 @@ import {
   createMcpAuthorizationCompatibilityHandler,
   normalizeMcpClientRegistration,
   type McpFnNormalizedClientRegistration,
+  type McpFnRedirectPolicy,
 } from "@mcpfn/auth";
 
 import {
@@ -505,6 +506,7 @@ describe("unvetted-client authorization rejections", () => {
     ids: string[],
     authorizationErrors?: AuthorizationErrorOptions,
     adjust: (fixture: ReturnType<typeof rejectionFixture>) => void = () => {},
+    redirectPolicy?: McpFnRedirectPolicy,
   ) {
     const registrations = new Map<string, McpFnNormalizedClientRegistration>();
     const handler = createMcpAuthorizationCompatibilityHandler({
@@ -512,6 +514,7 @@ describe("unvetted-client authorization rejections", () => {
       clients: { resolve: async (clientId) => registrations.get(clientId) ?? null },
       allowedResources: [resource],
       supportedScopes: ["mcp:read"],
+      redirectPolicy,
       authorizationErrors,
       authorize: async () => new Response("unexpected authorize", { status: 500 }),
       tokenAuthority: {
@@ -525,8 +528,12 @@ describe("unvetted-client authorization rejections", () => {
     });
     return runHostedAuthorizationRegression({
       issuer,
+      redirectPolicy,
       async prepareRegistration(fixture) {
-        registrations.set(fixture.clientId, normalizeMcpClientRegistration(fixture));
+        registrations.set(
+          fixture.clientId,
+          normalizeMcpClientRegistration({ ...fixture, redirectPolicy }),
+        );
       },
       request: (request) => handler(request),
     }, ids.map((id) => {
@@ -666,5 +673,143 @@ describe("unvetted-client authorization rejections", () => {
       render: ({ request }) => render(new URL(request.url).searchParams.get("redirect_uri")!),
     });
     expect(result?.status).toBe("failed");
+  });
+
+  describe("registered redirect decision", () => {
+    const LOOPBACK = "http://127.0.0.1/callback";
+    const RUNTIME_PORT = "http://127.0.0.1:49152/callback";
+    const ALL_SOURCES = {
+      redirectSources: ["pre-registered", "enterprise", "dynamic", "client-metadata-document"],
+    } satisfies AuthorizationErrorOptions;
+
+    function redirect(registered: string, requested: string) {
+      return (fixture: ReturnType<typeof rejectionFixture>) => {
+        fixture.registration.metadata.redirect_uris = [registered];
+        fixture.authorization.redirectUri = requested;
+      };
+    }
+
+    /** A target that sends every authorization error to the requested URI. */
+    function callbackTarget(redirectPolicy?: McpFnRedirectPolicy) {
+      return {
+        issuer,
+        redirectPolicy,
+        prepareRegistration: async () => {},
+        request: async (request: Request) => {
+          const params = new URL(request.url).searchParams;
+          const callback = new URL(params.get("redirect_uri")!);
+          callback.searchParams.set("error", "invalid_target");
+          callback.searchParams.set("state", params.get("state")!);
+          return new Response(null, { status: 302, headers: { location: callback.toString() } });
+        },
+      };
+    }
+
+    it("matches a runtime loopback port like the authorization server", async () => {
+      const results = await runAgainstMcpFn(
+        [DYNAMIC, METADATA_DOCUMENT],
+        undefined,
+        redirect(LOOPBACK, RUNTIME_PORT),
+      );
+      for (const result of results) {
+        expect(result).toMatchObject({
+          status: "passed",
+          responseStatus: 400,
+          errorCode: "invalid_target",
+        });
+      }
+    });
+
+    it("treats a runtime loopback port as a mismatch when the redirect policy disables it", async () => {
+      const policy = { allowDynamicLoopbackPort: false };
+      const [result] = await runAgainstMcpFn([DYNAMIC], undefined, (fixture) => {
+        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+        fixture.expected.errorCode = "invalid_request";
+      }, policy);
+      expect(result).toMatchObject({
+        status: "passed",
+        responseStatus: 400,
+        errorCode: "invalid_request",
+      });
+      const fixture = rejectionFixture(DYNAMIC);
+      redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+      const [callback] = await runHostedAuthorizationRegression(callbackTarget(policy), [fixture]);
+      expect(callback).toMatchObject({
+        status: "failed",
+        error: "Rejected redirect URI must not receive a callback",
+      });
+    });
+
+    it("matches a canonical HTTPS equivalent of the registered URI", async () => {
+      const equivalent = redirect(
+        "https://client.example.com/callback",
+        "https://CLIENT.example.com:443/callback",
+      );
+      const [page] = await runAgainstMcpFn([DYNAMIC], undefined, equivalent);
+      expect(page).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
+      const [callback] = await runAgainstMcpFn([DYNAMIC], ALL_SOURCES, equivalent);
+      expect(callback).toMatchObject({ status: "passed", responseStatus: 302, errorCode: "invalid_target" });
+    });
+
+    it("accepts runtime-port error callbacks for every source the host redirects", async () => {
+      const results = await runAgainstMcpFn(
+        [DYNAMIC, METADATA_DOCUMENT, PRE_REGISTERED],
+        ALL_SOURCES,
+        redirect(LOOPBACK, RUNTIME_PORT),
+      );
+      for (const result of results) {
+        expect(result).toMatchObject({
+          status: "passed",
+          responseStatus: 302,
+          errorCode: "invalid_target",
+        });
+      }
+    });
+
+    it.each([
+      ["a different URI", "https://client.example.com/callback", "https://client.example.com/other"],
+      ["a plain-HTTP non-loopback URI", "http://client.example.com/callback", "http://client.example.com/callback"],
+      ["a URI with a fragment", "https://client.example.com/callback#f", "https://client.example.com/callback#f"],
+    ])("never classifies %s as registered", async (_name, registered, requested) => {
+      for (const id of [DYNAMIC, PRE_REGISTERED]) {
+        const fixture = rejectionFixture(id);
+        redirect(registered, requested)(fixture);
+        const [callback] = await runHostedAuthorizationRegression(callbackTarget(), [fixture]);
+        expect(callback).toMatchObject({
+          status: "failed",
+          error: "Rejected redirect URI must not receive a callback",
+        });
+      }
+      const fixture = rejectionFixture(DYNAMIC);
+      redirect(registered, requested)(fixture);
+      const [page] = await runHostedAuthorizationRegression({
+        issuer,
+        prepareRegistration: async () => {},
+        request: htmlPage("<p><code>invalid_target</code></p>"),
+      }, [fixture]);
+      expect(page).toMatchObject({
+        status: "failed",
+        error: "Authorization request did not redirect (HTTP 400)",
+      });
+    });
+
+    it.each([
+      ["the requested runtime-port URI in HTML", () =>
+        htmlPage(`<a href="${RUNTIME_PORT}">Back</a>`)()],
+      ["the requested runtime-port URI in JSON", () =>
+        Response.json({ error: "invalid_target", redirect_uri: RUNTIME_PORT }, { status: 400 })],
+      ["the registered URI it matched", () =>
+        htmlPage(`<code>invalid_target</code> <a href="${LOOPBACK}">Back</a>`)()],
+    ])("rejects an error response that reflects %s", async (_name, render) => {
+      const [result] = await runAgainstMcpFn(
+        [DYNAMIC],
+        { render },
+        redirect(LOOPBACK, RUNTIME_PORT),
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: "Authorization error response must not reflect the client redirect URI",
+      });
+    });
   });
 });

@@ -1,5 +1,10 @@
 import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
-import type { McpFnClientRegistrationSource } from "@mcpfn/auth";
+import {
+  matchMcpRedirectUri,
+  type McpFnClientRegistrationSource,
+  type McpFnRedirectMatch,
+  type McpFnRedirectPolicy,
+} from "@mcpfn/auth";
 import {
   derivePkceS256Challenge,
   redactOAuthValue,
@@ -50,6 +55,13 @@ export interface McpFnHostedAuthorizationCase {
 
 export interface McpFnHostedAuthorizationTargetAdapter {
   issuer: string;
+  /**
+   * Redirect policy of the target's authorization server (its
+   * `redirectPolicy`). The harness decides whether a requested redirect URI
+   * is registered with the same matching rule, including RFC 8252 loopback
+   * runtime ports. Defaults to the @mcpfn/auth default policy.
+   */
+  redirectPolicy?: McpFnRedirectPolicy;
   prepareRegistration(fixture: McpFnHostedRegistrationFixture): Promise<void>;
   request(request: Request): Promise<Response>;
 }
@@ -235,13 +247,24 @@ async function runHostedCase(
       redirect: "manual",
     }));
     responseStatus = authorizationResponse.status;
+    const redirectMatch = registeredRedirectMatch(fixture, target.redirectPolicy);
     const authorizationError = await oauthError(authorizationResponse);
     if (authorizationError) {
-      await validateOAuthRejection(authorizationResponse, fixture, target.issuer, "authorization");
+      await validateOAuthRejection(
+        authorizationResponse,
+        fixture,
+        target.issuer,
+        "authorization",
+        redirectMatch,
+      );
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
-    if (isUnvettedErrorPage(authorizationResponse, fixture)) {
-      const pageErrorCode = await validateUnvettedErrorPage(authorizationResponse, fixture);
+    if (isUnvettedErrorPage(authorizationResponse, fixture, redirectMatch)) {
+      const pageErrorCode = await validateUnvettedErrorPage(
+        authorizationResponse,
+        fixture,
+        redirectMatch,
+      );
       return assessHostedCase(fixture, phase, responseStatus, pageErrorCode, undefined, true);
     }
     if (!isRedirect(authorizationResponse.status)) {
@@ -433,14 +456,15 @@ async function validateOAuthRejection(
   fixture: McpFnHostedAuthorizationCase,
   issuer: string,
   context: "authorization" | "token",
+  redirectMatch?: McpFnRedirectMatch,
 ): Promise<void> {
   if (context === "authorization" && isRedirect(response.status)) {
-    validateAuthorizationErrorRedirect(response, fixture, issuer);
+    validateAuthorizationErrorRedirect(response, fixture, issuer, redirectMatch);
     return;
   }
   const text = await response.clone().text().catch(() => "");
   const body = parseJson(text) as { error?: unknown } | null | undefined;
-  const registered = hasRegisteredRedirect(fixture);
+  const registered = redirectMatch !== undefined;
   const unvetted = context === "authorization" && registered && isUnvettedRedirectSource(fixture);
   if (context === "authorization" && body?.error !== "invalid_client" && registered && !unvetted) {
     throw new Error("Registered authorization requests require an OAuth error callback");
@@ -450,7 +474,7 @@ async function validateOAuthRejection(
       !body || typeof body.error !== "string" || !body.error) {
     throw new Error("OAuth error response must be a JSON error envelope");
   }
-  if (unvetted) assertRedirectUriNotReflected(text, fixture);
+  if (unvetted) assertRedirectUriNotReflected(text, fixture, redirectMatch);
 }
 
 /**
@@ -466,19 +490,43 @@ function isUnvettedRedirectSource(fixture: McpFnHostedAuthorizationCase): boolea
   return !PROVISIONED_REDIRECT_SOURCES.has(fixture.registration.source);
 }
 
-function hasRegisteredRedirect(fixture: McpFnHostedAuthorizationCase): boolean {
-  return (fixture.registration.metadata.redirect_uris as string[] | undefined)
-    ?.includes(fixture.authorization.redirectUri) ?? false;
+/**
+ * The one decision whether the requested redirect URI is registered, made
+ * with the authorization server's own matching rule (exact match after
+ * normalization, plus RFC 8252 loopback runtime ports unless the policy
+ * disables them). A URI that does not match, or that the MCP redirect profile
+ * rejects, is never registered.
+ */
+function registeredRedirectMatch(
+  fixture: McpFnHostedAuthorizationCase,
+  policy: McpFnRedirectPolicy | undefined,
+): McpFnRedirectMatch | undefined {
+  const registered = fixture.registration.metadata.redirect_uris as unknown;
+  if (!Array.isArray(registered)) return undefined;
+  for (const candidate of registered) {
+    if (typeof candidate !== "string") continue;
+    try {
+      return matchMcpRedirectUri(fixture.authorization.redirectUri, [candidate], policy);
+    } catch {
+      // A mismatch or an unparseable URI is not a registration.
+    }
+  }
+  return undefined;
 }
 
-function isUnvettedErrorPage(response: Response, fixture: McpFnHostedAuthorizationCase): boolean {
+function isUnvettedErrorPage(
+  response: Response,
+  fixture: McpFnHostedAuthorizationCase,
+  redirectMatch: McpFnRedirectMatch | undefined,
+): boolean {
   return response.status >= 400 && response.status < 500 &&
-    hasRegisteredRedirect(fixture) && isUnvettedRedirectSource(fixture);
+    redirectMatch !== undefined && isUnvettedRedirectSource(fixture);
 }
 
 async function validateUnvettedErrorPage(
   response: Response,
   fixture: McpFnHostedAuthorizationCase,
+  redirectMatch: McpFnRedirectMatch | undefined,
 ): Promise<string | undefined> {
   if (response.status !== 400) {
     throw new Error("Authorization error page has invalid HTTP status");
@@ -491,7 +539,7 @@ async function validateUnvettedErrorPage(
     throw new Error("Authorization error response must be an HTML page or a JSON error envelope");
   }
   const body = await response.clone().text();
-  assertRedirectUriNotReflected(body, fixture);
+  assertRedirectUriNotReflected(body, fixture, redirectMatch);
   return htmlErrorCode(body);
 }
 
@@ -524,14 +572,23 @@ function htmlErrorCode(html: string): string | undefined {
   return undefined;
 }
 
-function assertRedirectUriNotReflected(body: string, fixture: McpFnHostedAuthorizationCase): void {
-  const redirectUri = fixture.authorization.redirectUri;
-  const forms = [
+function assertRedirectUriNotReflected(
+  body: string,
+  fixture: McpFnHostedAuthorizationCase,
+  redirectMatch: McpFnRedirectMatch | undefined,
+): void {
+  // The requested URI as sent and as the server normalized it, and the
+  // registered URI it matched.
+  const redirectUris = new Set([
+    fixture.authorization.redirectUri,
+    ...(redirectMatch ? [redirectMatch.requested, redirectMatch.registered] : []),
+  ]);
+  const forms = [...redirectUris].flatMap((redirectUri) => [
     redirectUri,
     JSON.stringify(redirectUri).slice(1, -1),
     redirectUri.replaceAll("/", "\\/"),
     redirectUri.replaceAll("&", "&amp;"),
-  ];
+  ]);
   if (forms.some((form) => body.includes(form))) {
     throw new Error("Authorization error response must not reflect the client redirect URI");
   }
@@ -549,11 +606,12 @@ function validateAuthorizationErrorRedirect(
   response: Response,
   fixture: McpFnHostedAuthorizationCase,
   issuer: string,
+  redirectMatch: McpFnRedirectMatch | undefined,
 ): void {
   const callback = new URL(response.headers.get("location") ?? "");
-  // Redirects must target the registered URI, never a rejected requested URI.
-  const registered = fixture.registration.metadata.redirect_uris as string[];
-  if (!registered?.includes(fixture.authorization.redirectUri)) {
+  // Redirects must target a requested URI that matched a registration, never
+  // a rejected requested URI.
+  if (!redirectMatch) {
     throw new Error("Rejected redirect URI must not receive a callback");
   }
   const errors = callback.searchParams.getAll("error");
