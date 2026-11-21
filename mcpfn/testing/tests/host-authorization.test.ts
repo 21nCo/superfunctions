@@ -1292,7 +1292,10 @@ describe("unvetted-client authorization rejections", () => {
         }
       });
 
-      it("accepts an expected host policy rejection that runs before client resolution", async () => {
+      const NOT_CLIENT_ERROR = (error: string) =>
+        `An ineligible client registration must be rejected as a client error, not ${error}`;
+
+      it("accepts a declared policy rejection that runs before client resolution", async () => {
         let lookups = 0;
         const handler = createMcpAuthorizationCompatibilityHandler({
           issuer,
@@ -1317,31 +1320,89 @@ describe("unvetted-client authorization rejections", () => {
             },
           },
         });
-        const fixture = rejectionFixture(DYNAMIC);
-        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
-        fixture.registration.metadata.response_types = ["token"];
-        fixture.expected.errorCode = "access_denied";
-        const [policy] = await runHostedAuthorizationRegression({
+        const policyTarget = (preClientResolutionErrorCodes?: string[]) => ({
           issuer,
+          preClientResolutionErrorCodes,
           prepareRegistration: async () => {},
-          request: (request) => handler(request),
-        }, [fixture]);
-        expect(policy).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "access_denied" });
+          request: (request: Request) => handler(request),
+        });
+        const ineligible = (requested: string, expected?: string) => {
+          const fixture = rejectionFixture(DYNAMIC);
+          redirect(LOOPBACK, requested)(fixture);
+          fixture.registration.metadata.response_types = ["token"];
+          if (expected) fixture.expected.errorCode = expected;
+          else delete fixture.expected.errorCode;
+          return fixture;
+        };
+        const cases = [
+          ineligible("https://other.example.com/cb"),
+          ineligible(RUNTIME_PORT),
+          ineligible(RUNTIME_PORT, "access_denied"),
+        ];
+        for (const fixture of cases) {
+          const [declared] = await runHostedAuthorizationRegression(policyTarget(["access_denied"]), [fixture]);
+          expect(declared).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "access_denied" });
+          const [undeclared] = await runHostedAuthorizationRegression(policyTarget(), [fixture]);
+          expect(undeclared).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("access_denied") });
+        }
         expect(lookups).toBe(0);
-        const laterStage = {
+        const [laterStage] = await runHostedAuthorizationRegression({
           issuer,
+          preClientResolutionErrorCodes: ["access_denied"],
           prepareRegistration: async () => {},
           request: async () => Response.json({ error: "invalid_target" }, { status: 400 }),
+        }, [cases[0]]);
+        expect(laterStage).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
+      });
+
+      it("never takes the expected code as evidence of a pre-resolution rejection", async () => {
+        const indeterminate = rejectionFixture(METADATA_DOCUMENT);
+        redirect(LOOPBACK, RUNTIME_PORT)(indeterminate);
+        delete indeterminate.registration.metadata.token_endpoint_auth_method;
+        indeterminate.expected.errorCode = "invalid_target";
+        const ineligible = rejectionFixture(DYNAMIC);
+        redirect(LOOPBACK, RUNTIME_PORT)(ineligible);
+        ineligible.registration.metadata.response_types = ["token"];
+        ineligible.expected.errorCode = "invalid_target";
+        for (const preClientResolutionErrorCodes of [undefined, ["access_denied"]]) {
+          const target = {
+            issuer,
+            tokenEndpointAuthMethods: ["none"],
+            preClientResolutionErrorCodes,
+            prepareRegistration: async () => {},
+            request: async () => Response.json({ error: "invalid_target" }, { status: 400 }),
+          };
+          const [a, b] = await runHostedAuthorizationRegression(target, [indeterminate, ineligible]);
+          expect(a).toMatchObject({ status: "failed", error: INDETERMINATE });
+          expect(b).toMatchObject({ status: "failed", error: NOT_CLIENT_ERROR("invalid_target") });
+        }
+      });
+
+      it("never lets a declared policy code permit a post-match response", async () => {
+        const ineligible = rejectionFixture(DYNAMIC);
+        redirect(LOOPBACK, RUNTIME_PORT)(ineligible);
+        ineligible.registration.metadata.response_types = ["token"];
+        const indeterminate = rejectionFixture(METADATA_DOCUMENT);
+        redirect(LOOPBACK, RUNTIME_PORT)(indeterminate);
+        delete indeterminate.registration.metadata.token_endpoint_auth_method;
+        for (const fixture of [ineligible, indeterminate]) delete fixture.expected.errorCode;
+        const declared = { tokenEndpointAuthMethods: ["none"], preClientResolutionErrorCodes: ["access_denied"] };
+        const page = {
+          issuer,
+          ...declared,
+          prepareRegistration: async () => {},
+          request: async () => htmlPage("<p><code>access_denied</code></p>")(),
         };
-        const notClientError = {
-          status: "failed",
-          error: "An ineligible client registration must be rejected as a client error, not invalid_target",
-        };
-        const [mismatched] = await runHostedAuthorizationRegression(laterStage, [fixture]);
-        expect(mismatched).toMatchObject(notClientError);
-        delete fixture.expected.errorCode;
-        const [undeclared] = await runHostedAuthorizationRegression(laterStage, [fixture]);
-        expect(undeclared).toMatchObject(notClientError);
+        const callback = { ...callbackTarget(undefined, "access_denied"), ...declared };
+        // An ineligible registration's page is not an unvetted error page at all.
+        for (const [target, ineligibleError] of [
+          [page, "Authorization request did not redirect (HTTP 400)"],
+          [callback, "Rejected redirect URI must not receive a callback"],
+        ] as const) {
+          const [a, b] = await runHostedAuthorizationRegression(target, [ineligible, indeterminate]);
+          expect(a).toMatchObject({ status: "failed", error: ineligibleError });
+          expect(b).toMatchObject({ status: "failed", error: INDETERMINATE });
+        }
       });
 
       it("checks registered scopes only when the target declares supported scopes", async () => {

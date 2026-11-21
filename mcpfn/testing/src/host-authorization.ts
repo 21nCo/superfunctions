@@ -83,6 +83,15 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * omitted, the harness adds no scope constraint.
    */
   supportedScopes?: string[];
+  /**
+   * OAuth error codes the target may return before it looks up the client,
+   * for example from a `beforeClientResolution` hook or an equivalent gateway
+   * policy. A JSON rejection carrying one of these codes is accepted for a
+   * registration the server would otherwise reject as a client error. These
+   * codes never permit an error page or a callback. When omitted, the target
+   * declares no pre-resolution rejection.
+   */
+  preClientResolutionErrorCodes?: string[];
   prepareRegistration(fixture: McpFnHostedRegistrationFixture): Promise<void>;
   request(request: Request): Promise<Response>;
 }
@@ -278,7 +287,7 @@ async function runHostedCase(
         "authorization",
         decision,
       );
-      assertClientStageRejection(decision, authorizationError, fixture.expected.errorCode);
+      assertClientStageRejection(decision, authorizationError, target.preClientResolutionErrorCodes);
       return assessHostedCase(fixture, phase, authorizationResponse.status, authorizationError);
     }
     if (isUnvettedErrorPage(authorizationResponse, fixture, decision)) {
@@ -646,17 +655,18 @@ function assertPostMatchPermitted(decision: RedirectDecision | undefined): void 
  * the URI matches, its JSON rejection must carry a client-stage code. A host
  * policy that runs before client resolution (such as `beforeClientResolution`)
  * may reject first with its own code; the response alone cannot tell that from
- * later validation, so only a code the fixture explicitly expects is accepted
- * in its place.
+ * later validation, so only a code the target declares in
+ * `preClientResolutionErrorCodes` is accepted in its place. The fixture's
+ * expected code is never stage evidence.
  */
 function assertClientStageRejection(
   decision: RedirectDecision,
   errorCode: string,
-  expectedErrorCode: string | undefined,
+  preClientResolutionErrorCodes: readonly string[] | undefined,
 ): void {
   const permitted = decision.permittedClientCodes;
   if (decision.eligibility === "eligible" || !permitted) return;
-  if (permitted.has(errorCode) || errorCode === expectedErrorCode) return;
+  if (permitted.has(errorCode) || preClientResolutionErrorCodes?.includes(errorCode)) return;
   if (decision.eligibility === "indeterminate") throw new Error(INDETERMINATE_ELIGIBILITY);
   throw new Error(
     `An ineligible client registration must be rejected as a client error, not ${errorCode}`,
