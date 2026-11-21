@@ -95,7 +95,7 @@ Don't ship DataFn to production without ticking every item below. They're indepe
 
 The Python server SDK (`datafn` on PyPI) is not at parity with `@datafn/server` and should not face untrusted clients yet:
 
-- A resource without `permissions` can be read and written; there is no deny-by-default. Only private shareable resources get record access checks.
+- An ordinary resource without `permissions` can be read and written; there is no deny-by-default. Private shareable resources are the exception: queries and mutations on them need explicit `permissions`.
 - Queries and clones load whole tables and filter in memory.
 - There is no rate limit, payload limit, REST or search.
 
