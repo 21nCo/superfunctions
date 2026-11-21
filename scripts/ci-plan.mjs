@@ -425,8 +425,9 @@ const SOURCE_REFERENCE_FILES = [
   "*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.json", "*.svelte", "*.vue", "*.astro",
   "*.css", "*.scss", "*.sass", "*.less", "*.pcss",
 ];
-// A "../" path in quotes, or in an unquoted CSS url(...).
-const RELATIVE_PARENT_PATH = /["'`(](\.\.\/[^"'`()\s$]*)["'`)]/g;
+// A "../" path in quotes (spaces allowed; a template literal stops at its first `${`), or in an unquoted CSS url(...).
+const QUOTED_PARENT_PATH = /(["'`])(\.\.\/(?:(?!\1)[^\n$])*)\1/g;
+const CSS_URL_PARENT_PATH = /url\(\s*(\.\.\/[^)\s"'`]+)\s*\)/g;
 
 // Test files and test configuration: a reference from one of these affects only the referencing package's tests. Any
 // other file (fixtures included, which a build may bundle) counts as a build input.
@@ -468,7 +469,11 @@ function collectSourceReferences(packageDirs) {
     } catch {
       continue;
     }
-    for (const [, specifier] of source.matchAll(RELATIVE_PARENT_PATH)) {
+    const specifiers = [
+      ...[...source.matchAll(QUOTED_PARENT_PATH)].map((match) => match[2]),
+      ...[...source.matchAll(CSS_URL_PARENT_PATH)].map((match) => match[1]),
+    ];
+    for (const specifier of specifiers) {
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier));
       if (target.startsWith("../")) {
         continue;
@@ -590,7 +595,12 @@ function collectTurboRootInputs(packageDirs) {
     } catch {
       continue;
     }
-    const tasks = { ...rootTasks, ...(config?.tasks || config?.pipeline || {}) };
+    // Turbo merges a package task over the root task field by field, so an omitted dependsOn keeps the root's.
+    const packageTasks = config?.tasks || config?.pipeline || {};
+    const tasks = { ...rootTasks };
+    for (const [name, task] of Object.entries(packageTasks)) {
+      tasks[name] = { ...rootTasks[name], ...task };
+    }
     const feedsBuild = tasksReachableFrom("build", tasks);
     for (const [taskName, task] of Object.entries(config?.tasks || config?.pipeline || {})) {
       const name = taskName.replace(/^.*#/, "");

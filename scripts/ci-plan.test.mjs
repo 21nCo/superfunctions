@@ -600,7 +600,14 @@ test("a package whose source reads another package's files changes with it, depe
     "declfn/app/package.json": JSON.stringify({ name: "@declfn/app", scripts: { test: "vitest run" }, dependencies: { "@declfn/wrapper": "*" } }),
     // A stylesheet importing another package's CSS is a build reference.
     "cssfn/workbench/package.json": JSON.stringify({ name: "@cssfn/workbench", scripts: { build: "vite build" } }),
-    "cssfn/workbench/src/styles.css": '@import "../../../filefn/core/src/catalog.css";\n.logo { background: url(../../../otherfn/cli/src/logo.svg); }\n',
+    "cssfn/workbench/src/styles.css": '@import "../../../filefn/core/src/catalog.css";\n.logo { background: url( ../../../otherfn/cli/src/logo.svg ); }\n',
+    // A quoted path may contain spaces.
+    "spacefn/app/package.json": JSON.stringify({ name: "@spacefn/app", scripts: { build: "vite build" } }),
+    "spacefn/app/src/index.ts": 'import icon from "../../../devfn/proxy/assets/app icon.svg";\n',
+    // A root task's dependsOn survives a package override that sets only inputs.
+    "turbo.json": JSON.stringify({ tasks: { build: { dependsOn: ["^build", "typecheck:declarations"] } } }),
+    "inheritfn/wrapper/package.json": JSON.stringify({ name: "@inheritfn/wrapper", scripts: { build: "tsup" } }),
+    "inheritfn/wrapper/turbo.json": JSON.stringify({ extends: ["//"], tasks: { build: { inputs: ["src/**"] }, "typecheck:declarations": { inputs: ["$TURBO_ROOT$/clifn/core/types/**"] } } }),
   });
   try {
     const outputs = plan("filefn/core/src/index.ts");
@@ -612,6 +619,8 @@ test("a package whose source reads another package's files changes with it, depe
     assert.match(plan(({ put }) => put("devfn/proxy/types/a.d.ts", "export {};\n")).js_build_filters, /--filter=\.\.\.\.\/declfn\/app --filter=\.\.\.\.\/declfn\/wrapper/);
     assert.match(outputs.js_build_filters, /--filter=\.\.\.\.\/cssfn\/workbench/);
     assert.match(plan("otherfn/cli/src/index.ts").js_build_filters, /--filter=\.\.\.\.\/cssfn\/workbench/);
+    assert.match(plan(({ put }) => put("devfn/proxy/assets/app icon.svg", "<svg/>\n")).js_build_filters, /--filter=\.\.\.\.\/spacefn\/app/);
+    assert.match(plan(({ put }) => put("clifn/core/types/a.d.ts", "export {};\n")).js_build_filters, /--filter=\.\.\.\.\/inheritfn\/wrapper/);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
