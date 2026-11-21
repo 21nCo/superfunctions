@@ -962,7 +962,7 @@ async function handBackOtpAttempt(
       if (!current || current.attemptCount < floor) {
         return;
       }
-      const applied = await updateOtpChallengeIfMatches(
+      const outcome = await updateOtpChallengeOutcome(
         config,
         challengeId,
         current.consumedAt
@@ -974,7 +974,9 @@ async function handBackOtpAttempt(
             ],
         { attemptCount: current.attemptCount - 1, updatedAt }
       );
-      if (applied) {
+      // Retry only after a confirmed no-op; an unknown outcome may already
+      // have lowered the count.
+      if (outcome !== 'not-applied') {
         return;
       }
     }
@@ -994,7 +996,7 @@ async function releaseOtpAttempt(
   updatedAt: Date
 ): Promise<'applied' | 'not-applied' | 'unknown'> {
   try {
-    const applied = await updateOtpChallengeIfMatches(
+    return await updateOtpChallengeOutcome(
       config,
       reservation.challengeId,
       [
@@ -1006,7 +1008,6 @@ async function releaseOtpAttempt(
         updatedAt
       }
     );
-    return applied ? 'applied' : 'not-applied';
   } catch {
     // The write may or may not have applied. Keeping the reservation is the
     // safe outcome; the caller rethrows the error that ended the request.
@@ -1038,6 +1039,21 @@ async function updateOtpChallengeIfMatches(
   guards: WhereClause[],
   data: Record<string, unknown>
 ): Promise<boolean> {
+  return (await updateOtpChallengeOutcome(config, challengeId, guards, data)) === 'applied';
+}
+
+/**
+ * The same conditional write, reporting `unknown` when the adapter could not
+ * say whether it applied (an affected-row count that is not a finite
+ * number). Callers that undo a reservation must not write again after an
+ * unknown outcome, since the first write may already have applied.
+ */
+async function updateOtpChallengeOutcome(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  challengeId: string,
+  guards: WhereClause[],
+  data: Record<string, unknown>
+): Promise<'applied' | 'not-applied' | 'unknown'> {
   const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: challengeId }, ...guards];
   if (config.database.capabilities?.operations?.returning === true) {
     try {
@@ -1048,10 +1064,10 @@ async function updateOtpChallengeIfMatches(
         select: ['id'],
         namespace: namespace(config)
       });
-      return row?.id === challengeId;
+      return row?.id === challengeId ? 'applied' : 'unknown';
     } catch (error) {
       if (isNotFoundError(error)) {
-        return false;
+        return 'not-applied';
       }
       throw error;
     }
@@ -1063,7 +1079,10 @@ async function updateOtpChallengeIfMatches(
     data,
     namespace: namespace(config)
   });
-  return Number.isFinite(affected) && affected > 0;
+  if (!Number.isFinite(affected)) {
+    return 'unknown';
+  }
+  return affected > 0 ? 'applied' : 'not-applied';
 }
 
 function isNotFoundError(error: unknown): boolean {
