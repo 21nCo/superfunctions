@@ -67,10 +67,11 @@ export interface McpFnHostedAuthorizationTargetAdapter {
   /**
    * Token endpoint authentication methods the target supports (its
    * `capabilities.tokenEndpointAuthMethods`). When declared, a registration
-   * with another method is ineligible and registers no redirect URI; the
-   * fixture is treated as the stored registration, so an omitted method is
-   * `none`. When omitted, the harness adds no authentication-method
-   * constraint.
+   * with another method is ineligible and registers no redirect URI. An
+   * omitted method is `none`, except that a client-metadata-document fixture
+   * without one is eligible under either server default (`none` when stored,
+   * `client_secret_basic` when fetched). When omitted, the harness adds no
+   * authentication-method constraint.
    */
   tokenEndpointAuthMethods?: string[];
   /**
@@ -539,7 +540,7 @@ function registeredRedirectMatch(
   const policy = target.redirectPolicy;
   try {
     const client = normalizeMcpClientRegistration({ ...registration, redirectPolicy: policy });
-    if (!isEligibleRegistration(client, target)) return undefined;
+    if (!isEligibleRegistration(client, registration, target)) return undefined;
     return matchMcpRedirectUri(authorization.redirectUri, client.redirectUris, policy);
   } catch {
     // A mismatch or a malformed registration is not a registered redirect.
@@ -552,19 +553,19 @@ function registeredRedirectMatch(
  * before redirect matching: the registration must allow response type `code`
  * and grant type `authorization_code`; its token endpoint authentication
  * method and its `scope` must be supported by the target when the adapter
- * declares `tokenEndpointAuthMethods` or `supportedScopes`. The fixture is
- * evaluated as the stored registration the target resolves, so an omitted or
- * null method is `none`, as on the server's stored-registration path.
+ * declares `tokenEndpointAuthMethods` or `supportedScopes`.
  */
 function isEligibleRegistration(
   client: McpFnNormalizedClientRegistration,
+  registration: McpFnHostedRegistrationFixture,
   target: Pick<McpFnHostedAuthorizationTargetAdapter, "tokenEndpointAuthMethods" | "supportedScopes">,
 ): boolean {
   if (!client.responseTypes.includes("code")) return false;
   if (!client.grantTypes.includes("authorization_code")) return false;
   if (
     target.tokenEndpointAuthMethods &&
-    !target.tokenEndpointAuthMethods.includes(client.tokenEndpointAuthMethod)
+    !registeredAuthMethods(client, registration).some((method) =>
+      target.tokenEndpointAuthMethods!.includes(method))
   ) {
     return false;
   }
@@ -574,6 +575,24 @@ function isEligibleRegistration(
   if (!target.supportedScopes) return true;
   const supported = new Set(target.supportedScopes);
   return scope.split(/\s+/).filter(Boolean).every((entry) => supported.has(entry));
+}
+
+/**
+ * Token endpoint authentication methods the server may assign the
+ * registration. A stored registration without a method is `none`; the server
+ * defaults a Client ID Metadata Document it fetches to `client_secret_basic`.
+ * The harness cannot tell which path the target takes for a
+ * client-metadata-document fixture without a method, so it allows both.
+ */
+function registeredAuthMethods(
+  client: McpFnNormalizedClientRegistration,
+  registration: McpFnHostedRegistrationFixture,
+): string[] {
+  const declared: unknown = registration.metadata.token_endpoint_auth_method;
+  if (client.source === "client-metadata-document" && (declared === undefined || declared === null)) {
+    return ["none", "client_secret_basic"];
+  }
+  return [client.tokenEndpointAuthMethod];
 }
 
 function isUnvettedErrorPage(
