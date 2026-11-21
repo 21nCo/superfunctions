@@ -1,0 +1,35 @@
+langfn/typescript/src/models/responses/request.ts
+  s_e5ac07859c1bc9::t_969ded8bcf1266 112-115,308-310,324-326
+langfn/typescript/src/models/responses/response.ts
+  s_e5ac07859c1bc9::t_3656deae04cfa1 214-223
+langfn/typescript/src/models/responses/stream.ts
+  s_e5ac07859c1bc9::t_19b23585f1b726 4,103-107,110-114,132-157,164-181,189,205,218-227,232,236,248,250-258,262,264-268,277-278,299-300,302,327-329
+langfn/typescript/tests/responses-mapping.test.ts
+  s_a941fa5a2a6cc9::t_7209635be05223 278-279,453,455-457,459-461,463-464,499-501,503,505,509-511,560,562,568,570,584-585,833,836,867,869,871,873,934,937,994-1126,1518-1546
+langfn/typescript/src/models/responses/ledger.ts
+  s_e5ac07859c1bc9::t_9823c19d0177b8 1-391
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "681ee1811aefa0f91451384380148eb7c16b653e",
+  "prompts": {},
+  "sessions": {
+    "s_a941fa5a2a6cc9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc39-ce2f-7a43-bfce-0870dd87370b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
