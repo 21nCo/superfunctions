@@ -15,6 +15,7 @@
     "!scripts/assert-release-owner.*",
     "!scripts/assert-release-ci.*",
     "!scripts/release-gate-workflows.*",
+    "!scripts/notify-next-sync-workflow.*",
     "package.json",
     "tsconfig*.json",
     "vitest.config.*",
