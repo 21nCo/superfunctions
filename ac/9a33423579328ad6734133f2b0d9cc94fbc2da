@@ -1,0 +1,21 @@
+langfn/typescript/src/models/responses/request.ts
+  s_16be63ea3e7b52::t_4f74abb3295f1c 146
+langfn/typescript/tests/responses-credentials.test.ts
+  s_16be63ea3e7b52::t_d75155a7cf4e26 368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac9a33423579328ad6734133f2b0d9cc94fbc2da",
+  "prompts": {},
+  "sessions": {
+    "s_16be63ea3e7b52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8823089-696a-43c0-9af1-0bbbc7b606b5",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,83 @@
+langfn/typescript/src/models/profiles/chatgpt.ts
+  s_b731d9e005b41a::t_5b8aca42d7b4a5 1-39
+langfn/typescript/src/models/profiles/index.ts
+  s_b731d9e005b41a::t_9865cc5f19323a 4
+langfn/typescript/src/models/profiles/types.ts
+  s_b731d9e005b41a::t_27f0dc5a31d5cc 36-42,45-60,78-99,124-130,140-141,145-158
+langfn/typescript/src/models/responses/errors.ts
+  s_b731d9e005b41a::t_5f9960aadfaaa5 1-34
+langfn/typescript/src/models/responses/request.ts
+  s_c7ec784961d5e7::t_49ee33b142844b 4-9,42,46,108-114,118-158
+langfn/typescript/src/models/responses/response.ts
+  s_b731d9e005b41a::t_23c2621d7e7376 8,503-509,546,548-550,595,600
+langfn/typescript/src/models/responses/stream.ts
+  s_c7ec784961d5e7::t_8b876221e592cc 16,227-231,260,262,401-402
+langfn/typescript/tests/responses-credentials.test.ts
+  s_ee6eadb84498cb::t_1ef66e85a93f8f 1-343
+langfn/typescript/src/models/responses/credentials.ts
+  s_c7ec784961d5e7::t_65da30c3c18ec7 1-169
+langfn/typescript/src/models/responses/index.ts
+  s_db17e32d2efb29::t_45f4bc4738570b 5-15
+langfn/typescript/src/models/responses/model.ts
+  s_bb12ce24195805::t_fbe27d58781773 1-8,15-16,40-46,96,125-134,168,193-209,239,280-283,285-319,321-322,407-429
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-text.sse
+  s_db17e32d2efb29::t_f9ac96f55cec5c 1-21
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-usage-limit.sse
+  s_db17e32d2efb29::t_ca1895444b556e 1-6
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/unauthorized.json
+  s_db17e32d2efb29::t_26505c28eaa208 1-14
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/usage-limit.json
+  s_db17e32d2efb29::t_87cc4b3867db9d 1-15
+langfn/typescript/tests/fixtures/responses/openai/insufficient-quota.json
+  s_db17e32d2efb29::t_af72c7f062cfa2 1-14
+langfn/typescript/tests/fixtures/responses/openrouter/insufficient-credits.json
+  s_db17e32d2efb29::t_49b6b2b8bc527d 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be065d70562f1cef21165eaf81605b376acccd0d",
+  "prompts": {},
+  "sessions": {
+    "s_b731d9e005b41a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f58510-17b5-46b8-a268-6b49b5f9edb4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_bb12ce24195805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a8dcb80-9d95-482d-98a1-34764ad66f5d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c7ec784961d5e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "725aba51-cd3f-454e-b48e-f55aeead54ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_db17e32d2efb29": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2003b-dc5d-7b90-a3f8-3373760a3af7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ee6eadb84498cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20084-9faa-7340-b8f4-46462c78b63c",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
