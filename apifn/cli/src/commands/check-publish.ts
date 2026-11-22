@@ -12,9 +12,9 @@
  *   folding), so name shape and probes only add refusals before publication and never prove two
  *   names distinct. The early refusals: two paths that lead, after symlinks, to the same name in
  *   the same directory or to the same existing inode; two missing names that differ only in case
- *   or Unicode normalization where a probe made at the output's exact spelling is found under
- *   the other's (or the probe cannot tell). The directory each output was observed in is bound
- *   for the run: it must still be that directory at every later step.
+ *   or Unicode normalization where a probe entry built from them folds (or cannot tell). The
+ *   directory each output was observed in is bound for the run: it must still be that directory
+ *   at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
  *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
  *   what this run installed is the staged file's own (rename keeps the inode), never a lookup of
@@ -143,15 +143,18 @@ function sameInode(found: BigIntStats, own: BigIntStats): boolean {
 }
 
 /**
- * Whether the directory `anchor` treats the missing entry names `a` (the output's) and `b` as one
- * name, from those exact spellings: the run creates `a` (O_EXCL, so nothing is replaced) and looks
- * up `b`. The same inode is a fold; anything else but a failed lookup is unknown. A failed lookup
- * proves nothing (the publication guard decides), so it is only "not refused here". `a` is
- * removed while it is still this run's inode.
+ * Whether the directory `anchor` folds the entry names `a` and `b` together, judged by a probe of
+ * other names: the run creates a probe whose name ends in `a` (O_EXCL) and looks up the same name
+ * ending in `b`. The same inode is a fold and anything but a failed lookup unknown; both refuse
+ * before publication. A failed lookup proves nothing about `a` and `b` themselves (vfat gives
+ * each long name its own short alias), so "distinct" only means "not refused here" and the
+ * publication guard decides. The probe never takes either destination name, so a probe that
+ * cannot be removed or is interrupted leaves no placeholder there. It is removed while still ours.
  */
 function probeNames(anchor: Anchor, a: string, b: string): Alias {
   if (!stillAnchored(anchor)) return "unknown";
-  const probe = path.join(anchor.dir, a);
+  const prefix = `.apifn-probe-${process.pid}-${randomBytes(4).toString("hex")}-`;
+  const probe = path.join(anchor.dir, prefix + a);
   let fd: number;
   try {
     fd = openSync(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
@@ -160,7 +163,7 @@ function probeNames(anchor: Anchor, a: string, b: string): Alias {
   }
   const own = fstatSync(fd, BIG);
   try {
-    const found = lstatSync(path.join(anchor.dir, b), BIG);
+    const found = lstatSync(path.join(anchor.dir, prefix + b), BIG);
     return sameInode(found, own) && stillAnchored(anchor) ? "same" : "unknown";
   } catch (error) {
     return isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
