@@ -1,10 +1,10 @@
-import { constants } from "node:buffer";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
+import { Worker } from "node:worker_threads";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
-import { PROJECTION_REPEAT_LIMIT } from "../src/json-value.js";
+import { documentValueLimit, PROJECTION_REPEAT_LIMIT } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 type Action = (options: Record<string, never>, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
@@ -1030,39 +1030,89 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(reads.count).toBe(0);
   });
 
-  it("stops an array whose items outgrow the longest printable text long before reading them all", async () => {
-    // 2 * length - 1 fits the engine's maximum string length, so the length alone is accepted; ten-character items
-    // need five times that, so the walk must stop after a small fraction of the items.
-    const length = Math.floor((constants.MAX_STRING_LENGTH - 2) / 2);
+  it("rejects an array longer than the result may hold before reading it, yet keeps long shared strings", async () => {
     const reads = { count: 0 };
-    const make = () =>
-      new Proxy([], {
-        get: (target, key) => {
-          if (key === "length") {
-            return length;
-          }
-          if (typeof key === "string" && /^\d+$/.test(key)) {
-            reads.count += 1;
-            return "0123456789";
-          }
-          return Reflect.get(target, key);
-        },
-      });
-
-    const data = await runDocument(() => ({ data: make() }));
+    // Its JSON text would be short enough for JSON.stringify; it only has more items than the walk may build.
+    const tooMany = new Proxy([], {
+      get: (target, key) => {
+        if (key === "length") {
+          return documentValueLimit() + 1;
+        }
+        if (typeof key === "string" && /^\d+$/.test(key)) {
+          reads.count += 1;
+          return 0;
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const data = await runDocument(() => ({ data: tooMany }));
     expect(data.exitCode).toBe(1);
     expect(parseOnlyDocument(data)).toEqual({
       ok: false,
       error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
     });
-    expect(reads.count).toBeGreaterThan(0);
-    expect(reads.count).toBeLessThan(length / 100);
+    expect(reads.count).toBe(0);
 
-    const failure = await runDocument(() => {
-      throw Object.assign(new Error("long"), { code: "LONG", exitCode: 9, details: { list: make() } });
+    // 512 rows share one 1 MiB string under a redacted key: nothing is copied, so the details and diagnostic stay.
+    const secret = "x".repeat(2 ** 20);
+    const rows = () => Array.from({ length: 512 }, () => ({ password: secret }));
+    const redactedRows = Array.from({ length: 512 }, () => ({ password: "[REDACTED]" }));
+    const failure = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { rows: rows() } });
+      throw Object.assign(new Error("rows"), { code: "ROWS", exitCode: 9, details: { rows: rows() } });
     });
     expect(failure.exitCode).toBe(9);
-    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "LONG", message: "long" } });
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "ROWS", message: "rows", details: { rows: redactedRows } },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: { rows: redactedRows } }],
+    });
+  });
+
+  it("prints one document for oversized sparse, proxy and generated values in a worker with a 32 MiB heap", async () => {
+    const runner = new URL("../dist/runner.js", import.meta.url).href;
+    const source = `
+      const { parentPort } = require("node:worker_threads");
+      const generated = (depth) => ({ toJSON: () => (depth > 0 ? Array.from({ length: 64 }, () => generated(depth - 1)) : 0) });
+      const zeros = new Proxy([], { get: (t, k) => (k === "length" ? 2e8 : typeof k === "string" && /^\\d+$/.test(k) ? 0 : Reflect.get(t, k)) });
+      const cases = {
+        sparse: () => new Array(120_000_000),
+        proxy: () => zeros,
+        generated: () => generated(5),
+        records: () => Array.from({ length: 1000 }, (_, id) => ({ id, tags: ["a"] })),
+      };
+      import(${JSON.stringify(runner)}).then(async ({ runAction }) => {
+        const results = {};
+        for (const [name, make] of Object.entries(cases)) {
+          const out = [];
+          const exitCode = await runAction(() => ({ data: make() }), {}, {
+            mode: "json", jsonStyle: "document", color: false,
+            stdout: (text) => out.push(text), stderr: () => {},
+          });
+          results[name] = { exitCode, out };
+        }
+        parentPort.postMessage(results);
+      });
+    `;
+    const worker = new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 32 } });
+    const results = await new Promise<Record<string, { exitCode: number; out: string[] }>>((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", (code) => reject(new Error(`worker exited with ${code}`)));
+    });
+    await worker.terminate();
+
+    const failed = {
+      ok: false,
+      error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+    };
+    for (const name of ["sparse", "proxy", "generated"]) {
+      expect(results[name].exitCode).toBe(1);
+      expect(parseOnlyDocument({ out: results[name].out.join(""), writes: results[name].out.length })).toEqual(failed);
+    }
+    const records = parseOnlyDocument({ out: results.records.out.join(""), writes: results.records.out.length });
+    expect(results.records.exitCode).toBe(0);
+    expect((records.data as unknown[]).length).toBe(1000);
   });
 
   it("reads array items without descriptor lookups, as JSON.stringify does", async () => {
