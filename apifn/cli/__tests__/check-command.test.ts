@@ -3216,6 +3216,26 @@ describe("apifn check: publication re-checks every protected path after each cha
     });
   }
 
+  it.skipIf(POSIX_ONLY)("a spec link rebound to the published report is caught, the report is rolled back and the new link is kept", async () => {
+    const { dir, code, errors, stdout } = await checkReaching(
+      async (root) => {
+        await commitSpec(root);
+        await rename(path.join(root, SPEC), path.join(root, ".apifn", "real.yml"));
+        await symlink("real.yml", path.join(root, SPEC));
+      },
+      (root) => {
+        rmSync(path.join(root, SPEC));
+        symlinkSync("report.md", path.join(root, SPEC));
+      }
+    );
+    expect(code).toBe(2);
+    expect(stdout).toBe("");
+    expect(errors).toContain("reached the spec .apifn/openapi.yml");
+    expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+    expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+  });
+
   it("an existing spec that a report write changes is caught in a report-only run, and the report is rolled back", async () => {
     let spec = "";
     const { dir, code, errors } = await checkReaching(

@@ -546,7 +546,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const guarded: Guarded[] =
       outputs.length === 0 ? [] : sourcesOf(options, inputs, cwd).map((source) => guardOf(source.role, source.file));
     if (outputs.length > 0 && repair === null) {
-      guarded.push({ role: `the spec ${inputs.specLabel}`, destination: specTarget.destination, observed: committed.observed });
+      guarded.push({ role: `the spec ${inputs.specLabel}`, file: inputs.specPath, destination: specTarget.destination, observed: committed.observed });
     }
     await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook);
 

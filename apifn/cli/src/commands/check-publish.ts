@@ -31,7 +31,10 @@
  *   rolled back; bytes another writer put there are left alone and the error names the conflict.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
- * and the rename (a window of one system call) is not detected.
+ * and the rename (a window of one system call) is not detected. Where a filesystem joins an
+ * output's name with a protected one in a way no name or probe predicts, the output is reachable
+ * through that name from its rename until the check that follows (one system call later) rolls it
+ * back; a reader in that window, or a run killed inside it, can see it there.
  */
 
 import {
@@ -268,6 +271,8 @@ export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Obser
 export interface Guarded {
   /** How errors name the file, such as "the spec .apifn/openapi.yml". */
   role: string;
+  /** The path as the run was given it: it must still lead to `destination`. */
+  file: string;
   destination: string;
   observed: FileState;
 }
@@ -275,7 +280,7 @@ export interface Guarded {
 /** `file` guarded at the destination a write would reach, in the state it is in now. */
 export function guardOf(role: string, file: string): Guarded {
   const destination = writeDestination(file);
-  return { role, destination, observed: currentState(destination) };
+  return { role, file, destination, observed: currentState(destination) };
 }
 
 /** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
@@ -399,7 +404,8 @@ function verifier(all: Staged[], guarded: Guarded[]): Verify {
         `${staged.output.option} reached ${role} (${destination}) while apifn check wrote it: the filesystem treats the two names as one file, or another process changed it; pick another file.`
       );
     for (const guard of guarded) {
-      if (!sameState(currentState(guard.destination), guard.observed)) throw reached(guard.role, guard.destination);
+      const holds = sameDestination(guard.file, guard.destination) && sameState(currentState(guard.destination), guard.observed);
+      if (!holds) throw reached(guard.role, guard.destination);
     }
     for (const other of all) {
       if (!sameState(currentState(other.destination), expectedNow(other))) throw reached(`the output of ${other.output.option}`, other.destination);
