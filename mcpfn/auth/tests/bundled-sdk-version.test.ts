@@ -89,25 +89,27 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   // MCP-13 data ban: the SDK name in any executable string, template fragment
   // or constant-folded string expression fails, whatever reads it; the scan
   // parses the real ESM and CJS bundles, so comments and regexes never count.
+  const doubled = (name: string, times: number) => `var ${name} = "ab";${` ${name} = ${name} + ${name};`.repeat(times)}`;
   const executableLoads = [
     "\nvoid import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
     "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
     "\n/*\n * note */ require(\"@modelcontextprotocol/sdk/types.js\");\n",
-    // CommonJS loads through the module object, aliased or not.
+    // Loads through the module object, aliased or not. The cases below, kept
+    // from the earlier loader and receiver modeling, all fail on the SDK
+    // string itself: no callee or receiver is classified.
     "\nvar sdk = module.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nconst mod = module; var sdk = mod.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module?.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module[\"require\"](\"@modelcontextprotocol/sdk\");\n",
-    // A require method fails closed unless its receiver is a same-file object
-    // whose require member provably cannot load: a forwarding wrapper, an
-    // unresolved receiver and a reassigned or mutated helper all load the SDK.
+    // A forwarding wrapper, an unresolved receiver and a reassigned or mutated
+    // helper.
     "\nvar loader = { require: (id) => require(id) };\nvar sdk = loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = globalThis.helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = unknownHelper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar h2 = { require: (id) => id }; h2 = module; h2.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar h3 = { require: (id) => id }; h3.require = require; h3.require(\"@modelcontextprotocol/sdk/types.js\");\n",
-    // Callee and specifier are normalized alike: parentheses, comma sequences,
-    // aliases, constant specifiers and string concatenation.
+    // Parentheses, comma sequences, aliases, constant specifiers and string
+    // concatenation.
     "\nvar sdk = require((\"@modelcontextprotocol/sdk/types.js\"));\n",
     "\nvoid import((\"@modelcontextprotocol/sdk/types.js\"));\n",
     "\nvar sdk = (0, require)(\"@modelcontextprotocol/sdk/types.js\");\n",
@@ -116,20 +118,20 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nconst sdkId = \"@modelcontextprotocol/sdk/types.js\"; var sdk = require(sdkId);\n",
     "\nvar sdk = require(\"@modelcontextprotocol/\" + \"sdk\");\n",
     "\nconst req = createRequire(__filename); var sdk = req(\"@modelcontextprotocol/sdk/types.js\");\n",
-    // Bindings resolve lexically: an inner-block helper does not exempt the
-    // global receiver of the same name. A cycle is unrolled once, not dropped.
+    // A block-scoped helper, and constants folded through bindings: a cycle is
+    // unrolled once, not dropped.
     "\nglobalThis.mcp13Loader = module; { const mcp13Loader = { require: (id) => id }; }\nmcp13Loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar mcp13P = \"@modelcontextprotocol/sdk\"; mcp13P = mcp13P + \"\"; require(mcp13P);\n",
     "\nvar mcp13C = \"@modelcontextprotocol/\"; mcp13C = mcp13C + \"sdk\"; require(mcp13C);\n",
     "\nvar mcp13Q = \"@modelcontextprotocol/\"; mcp13Q += \"sdk\"; require(mcp13Q);\n",
-    // A helper that exposes itself, is called through a computed key that
-    // resolves to another method, or can be rebound by eval is not inert.
+    // A helper that returns itself, is called through a computed key or is
+    // rebound by eval.
     "\n{ const h4 = { require() { return this; } }; h4.require().require = require; h4.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
     "\n{ const h5 = { require: (id) => id, change() { this.require = module.require.bind(module); } }; { const require = \"change\"; h5[require](); } h5.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
     "\nvar h6 = { require: (id) => id }; (eval)(\"h6 = module\"); h6.require(\"@modelcontextprotocol/sdk/types.js\");\n",
-    // A computed key that cannot be fully resolved (here a cycle) can name require.
+    // A call through a computed key that folds through a cycle.
     "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
-    // An exported helper, or a key rewritten by destructuring or a loop target.
+    // An exported helper, and keys rewritten by destructuring or a loop target.
     "\nexport const h8 = { require: (id) => id }; h8.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\n{ let k = \"require\"; const h9 = { require: (id) => id, change() { this.require = require; } }; [k] = [\"change\"]; h9[k](); h9.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
     "\n{ let k = \"require\"; const h10 = { require: (id) => id, change() { this.require = require; } }; for (k of [\"change\"]) h10[k](); h10.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
@@ -139,7 +141,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nimport { createRequire as createRequire2 } from \"node:module\"; createRequire2(__filename)(\"@modelcontextprotocol/sdk\");\n",
     "\nrequire.call(null, \"@modelcontextprotocol/sdk\");\n",
     "\nrequire.apply(null, [\"@modelcontextprotocol/sdk\"]);\n",
-    // Loop declarations and destructuring declarations also rewrite a key.
+    // Keys rewritten by loop and destructuring declarations.
     "\nvar k11 = \"require\"; const h11 = { require: (id) => id, change() { this.require = require; } }; for (var k11 of [\"change\"]) h11[k11](); h11.require(\"@modelcontextprotocol/sdk\");\n",
     "\nvar k12 = \"require\"; const h12 = { require: (id) => id, change() { this.require = require; } }; var { k12 } = { k12: \"change\" }; h12[k12](); h12.require(\"@modelcontextprotocol/sdk\");\n",
     // A bound loader, `new` and a parenthesized call dispatch.
@@ -165,6 +167,11 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\n{ const k = \"require\"; const h7 = { require(id) { return id; } }; h7[k](\"@modelcontextprotocol/sdk/types.js\"); h7[(\"require\")](\"@modelcontextprotocol/sdk/types.js\"); }\n",
     "\nrequire(\"node:path\" || \"@modelcontextprotocol/sdk/types.js\");\n",
     "\n{ const callbacks = [(id) => id]; callbacks[0](\"@modelcontextprotocol/sdk\"); const identity = (id) => id; identity.description = \"label\"; identity(\"@modelcontextprotocol/sdk\"); }\n",
+    // Folding is exact for the SDK name at any size: a name assembled over a
+    // long += chain, behind a long doubled prefix, or as one of many branches.
+    "\nvar mcp13R = \"@\"; mcp13R += \"model\"; mcp13R += \"context\"; mcp13R += \"protocol\"; mcp13R += \"/\"; mcp13R += \"s\"; mcp13R += \"d\"; mcp13R += \"k\"; f(mcp13R);\n",
+    `\n${doubled("mcp13W", 12)}\nrequire(mcp13W + "@modelcontextprotocol/" + "sdk");\n`,
+    `\nvar p65 = ${Array.from({ length: 64 }, (_, i) => `c${i} ? "a${i}" : `).join("")}"@modelcontextprotocol/";\nrequire(p65 + "sdk");\n`,
   ];
   const inertText = [
     // SDK text in a regex, a comment or JSDoc is not executable data.
@@ -178,6 +185,11 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\n{ let msg = \"\"; msg = msg + \".\"; console.log(msg); }\n",
     "\n{ let tm = \"\"; tm = `${tm}.`; console.log(tm); }\n",
     "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"other-pkg\"); }\n",
+    // Ordinary code with many distinct folded strings and no SDK name: a padded
+    // template, a long += chain and a doubled binding.
+    "\nvar mcp13Wide = Math.random() > 0.5; var mcp13Pad = mcp13Wide ? \"  \" : \" \";\nvar mcp13Line = `${mcp13Pad}a${mcp13Pad}b${mcp13Pad}c${mcp13Pad}d${mcp13Pad}e${mcp13Pad}f${mcp13Pad}g`;\n",
+    "\nvar mcp13S = \"x\"; mcp13S += \"a\"; mcp13S += \"b\"; mcp13S += \"c\"; mcp13S += \"d\"; mcp13S += \"e\"; mcp13S += \"f\"; mcp13S += \"g\"; mcp13S += \"h\";\nvar mcp13U = mcp13S + \"!\";\n",
+    `\n${doubled("mcp13D", 14)}\nvar mcp13E = mcp13D + "!";\n`,
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
@@ -206,11 +218,19 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     expect(() => verifyBundledSdk(appendToBuiltBundle(file, "\nconst mcp13Scope = \"@modelcontextprotocol/\";\nrequire(mcp13Scope + \"sdk/types.js\");\n"))).toThrow(
       `instead of bundling it: "@modelcontextprotocol/sdk/types.js" at line ${lines + 2}`,
     );
+    // A long folded value is named by the window where the SDK name completes.
+    expect(() => verifyBundledSdk(appendToBuiltBundle(file, `\n${doubled("mcp13W", 12)}\nrequire(mcp13W + "@modelcontextprotocol/" + "sdk");\n`))).toThrow(
+      `instead of bundling it: "ab@modelcontextprotocol/sdk" at line ${lines + 2}`,
+    );
   }, BUILT_TIMEOUT);
 
-  // More candidate strings than the verifier folds fails instead of passing.
-  const overflow = `\nvar p65 = ${Array.from({ length: 64 }, (_, i) => `c${i} ? "a${i}" : `).join("")}"@modelcontextprotocol/";\nrequire(p65 + "sdk");\n`;
-  runOnBuild.each(artifacts)("fails closed on an SDK load with more candidate specifiers than it folds in the built %s", (file) => {
+  // More distinct candidates than the verifier folds fails instead of passing.
+  // Candidates are distinct when they can complete the SDK name differently:
+  // each value here is a different SDK name suffix and prefix around "#".
+  const sdkName = "@modelcontextprotocol/sdk";
+  const parts = Array.from({ length: 65 }, (_, k) => JSON.stringify(`${sdkName.slice(1 + (k % 24))}#${sdkName.slice(0, 1 + Math.floor(k / 24))}`));
+  const overflow = `\nvar p65 = ${parts.map((part, k) => `c${k} ? ${part} : `).join("")}"";\nf(p65 + "x");\n`;
+  runOnBuild.each(artifacts)("fails closed on more distinct candidate strings than it folds in the built %s", (file) => {
     expect(() => verifyBundledSdk(appendToBuiltBundle(file, overflow))).toThrow("more than 64 candidate strings");
   }, BUILT_TIMEOUT);
 });

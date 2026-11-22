@@ -81,11 +81,22 @@ export function bundledSdkBanner(packageRoot) {
 // every value their binding is assigned by a declaration initializer, `=`,
 // `+=`, `||=`, `&&=` or `??=`. It follows parentheses, the last operand of a
 // comma sequence and every operand of a conditional or logical expression,
-// and unrolls a cycle (`p = p + "x"`) once. Each fold has a step budget and a
-// candidate cap, and exceeding either fails closed. Out of scope: a specifier
+// and unrolls a cycle (`p = p + "x"`) once. Out of scope: a specifier
 // assembled at runtime from non-constant values (a call result, a parameter,
 // a destructured or loop-bound value, character codes), which no static scan
 // of the bundle can decide.
+//
+// A folded candidate is not kept as its raw string but as what decides SDK
+// containment in any concatenation: its transition function over the
+// matching automaton of the SDK name (a state per matched prefix length, plus
+// an absorbing state once the whole name has been read). Composing functions
+// is exact for concatenation, so strings with the same function are
+// interchangeable for containment and are deduplicated at every join, binding
+// expansion and union. Each candidate keeps one representative string for the
+// diagnostic: its text while short, and otherwise its first and last
+// SDK_NAME.length - 1 characters and, once it contains the name, the window
+// where the name was completed. Each fold has a step budget and a cap on
+// distinct candidates, and exceeding either fails closed.
 const { SyntaxKind } = ts;
 const SEQUENCE_OPERATORS = new Set([SyntaxKind.CommaToken, SyntaxKind.EqualsToken]);
 const LOGICAL_ASSIGNMENTS = [SyntaxKind.BarBarEqualsToken, SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.QuestionQuestionEqualsToken];
@@ -94,9 +105,76 @@ const VALUE_ASSIGNMENTS = new Set([SyntaxKind.EqualsToken, ...LOGICAL_ASSIGNMENT
 const CONCAT_OPERATORS = new Set([SyntaxKind.PlusToken, SyntaxKind.PlusEqualsToken]);
 const MAX_STRING_VALUES = 64;
 const MAX_RESOLUTION_STEPS = 10_000;
+const MAX_TEXT = 1024;
+const EDGE = SDK_NAME.length - 1;
+const FOUND = SDK_NAME.length;
 const hasSdkName = (text) => typeof text === "string" && text.includes(SDK_NAME);
 const isTemplateFragment = (node) => ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node);
 const isConcat = (node) => ts.isBinaryExpression(node) && CONCAT_OPERATORS.has(node.operatorToken.kind);
+
+// The matching automaton of SDK_NAME (Knuth-Morris-Pratt): for each character
+// of the name, the next state from every state. Any other character returns
+// to state 0, and FOUND is absorbing.
+const SDK_AUTOMATON = (() => {
+  const fallback = [0];
+  for (let i = 1, k = 0; i < SDK_NAME.length; i++) {
+    while (k > 0 && SDK_NAME[i] !== SDK_NAME[k]) k = fallback[k - 1];
+    if (SDK_NAME[i] === SDK_NAME[k]) k += 1;
+    fallback[i] = k;
+  }
+  const next = (state, char) => {
+    let k = state;
+    while (k > 0 && SDK_NAME[k] !== char) k = fallback[k - 1];
+    return SDK_NAME[k] === char ? k + 1 : 0;
+  };
+  return new Map([...new Set(SDK_NAME)].map((char) => [char, Array.from({ length: FOUND + 1 }, (_, state) => (state === FOUND ? FOUND : next(state, char)))]));
+})();
+
+function candidateOf(map, text, head, tail, window) {
+  return { key: map.join(","), map, text, head, tail, window };
+}
+
+// The candidate of one constant string, memoized per bundle.
+function literal(text, scope) {
+  let candidate = scope.literals.get(text);
+  if (candidate === undefined) {
+    const map = Array.from({ length: FOUND + 1 }, (_, state) => state);
+    for (const char of text) {
+      const row = SDK_AUTOMATON.get(char);
+      for (let state = 0; state < FOUND; state++) {
+        if (map[state] !== FOUND) map[state] = row === undefined ? 0 : row[map[state]];
+      }
+    }
+    const at = text.indexOf(SDK_NAME);
+    const window = at < 0 ? null : text.slice(Math.max(0, at - EDGE), at + FOUND + EDGE);
+    candidate = candidateOf(map, text.length <= MAX_TEXT ? text : null, text.slice(0, EDGE), text.slice(-EDGE), window);
+    scope.literals.set(text, candidate);
+  }
+  return candidate;
+}
+
+// The candidate of `a + b`. A name that neither part contains on its own but
+// their concatenation does crosses the boundary, so it lies in the last EDGE
+// characters of `a` followed by the first EDGE characters of `b`.
+function concat(a, b) {
+  const map = a.map.map((state) => b.map[state]);
+  const text = a.text !== null && b.text !== null && a.text.length + b.text.length <= MAX_TEXT ? a.text + b.text : null;
+  const window = a.window ?? b.window ?? (map[0] === FOUND ? a.tail + b.head : null);
+  return candidateOf(map, text, (a.head + b.head).slice(0, EDGE), (a.tail + b.tail).slice(-EDGE), window);
+}
+
+// Candidates that decide containment alike are kept once; more distinct
+// candidates than the cap fail closed.
+function distinct(candidates) {
+  const unique = new Map();
+  for (const candidate of candidates) if (!unique.has(candidate.key)) unique.set(candidate.key, candidate);
+  if (unique.size > MAX_STRING_VALUES) {
+    throw new BundledSdkError(`cannot fold a string expression in the bundle: more than ${MAX_STRING_VALUES} candidate strings`);
+  }
+  return [...unique.values()];
+}
+
+const containsSdk = (candidate) => candidate.map[0] === FOUND;
 
 // The values each lexical binding of one bundle is assigned, from the
 // TypeScript binder and checker.
@@ -129,7 +207,13 @@ function indexBindings(file, source) {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return { symbolOf: (id) => checker.getSymbolAtLocation(id), values: (symbol) => values.get(symbol) ?? [], active: new Map(), steps: 0 };
+  return {
+    symbolOf: (id) => checker.getSymbolAtLocation(id),
+    values: (symbol) => values.get(symbol) ?? [],
+    literals: new Map(),
+    active: new Map(),
+    steps: 0,
+  };
 }
 
 function step(scope) {
@@ -148,38 +232,38 @@ function throughBinding(node, scope) {
   const gathered = [];
   scope.active.set(symbol, gathered);
   try {
-    for (const value of scope.values(symbol)) gathered.push(...stringValues(value, scope));
-    return gathered;
+    for (const value of scope.values(symbol)) gathered.splice(0, gathered.length, ...distinct([...gathered, ...stringValues(value, scope)]));
+    return [...gathered];
   } finally {
     scope.active.delete(symbol);
   }
 }
 
-function combine(parts) {
-  return parts.reduce((left, right) => {
-    if (left.length * right.length > MAX_STRING_VALUES) {
-      throw new BundledSdkError(`cannot fold a string expression in the bundle: more than ${MAX_STRING_VALUES} candidate strings`);
-    }
-    return left.flatMap((a) => right.map((b) => a + b));
-  }, [""]);
+function combine(parts, scope) {
+  return parts.reduce((left, right) => distinct(left.flatMap((a) => right.map((b) => concat(a, b)))), [literal("", scope)]);
 }
 
-// The constant strings `node` can evaluate to; a non-constant part yields none.
+// A template fragment whose cooked text is invalid (tagged templates only) is
+// not a constant.
+const fragment = (node, scope) => (node.text === undefined ? [] : [literal(node.text, scope)]);
+
+// The candidates of the constant strings `node` can evaluate to; a
+// non-constant part yields none.
 function stringValues(node, scope) {
   step(scope);
   if (ts.isParenthesizedExpression(node)) return stringValues(node.expression, scope);
-  if (ts.isStringLiteralLike(node)) return [node.text];
-  if (ts.isNumericLiteral(node)) return [String(Number(node.text))];
+  if (ts.isStringLiteralLike(node)) return [literal(node.text, scope)];
+  if (ts.isNumericLiteral(node)) return [literal(String(Number(node.text)), scope)];
   if (ts.isIdentifier(node)) return throughBinding(node, scope);
-  if (ts.isConditionalExpression(node)) return [...stringValues(node.whenTrue, scope), ...stringValues(node.whenFalse, scope)];
+  if (ts.isConditionalExpression(node)) return distinct([...stringValues(node.whenTrue, scope), ...stringValues(node.whenFalse, scope)]);
   if (ts.isTemplateExpression(node)) {
-    return combine([[node.head.text], ...node.templateSpans.flatMap((span) => [stringValues(span.expression, scope), [span.literal.text]])]);
+    return combine([fragment(node.head, scope), ...node.templateSpans.flatMap((span) => [stringValues(span.expression, scope), fragment(span.literal, scope)])], scope);
   }
   if (!ts.isBinaryExpression(node)) return [];
   const kind = node.operatorToken.kind;
   if (SEQUENCE_OPERATORS.has(kind)) return stringValues(node.right, scope);
-  if (EITHER_OPERATORS.has(kind)) return [...stringValues(node.left, scope), ...stringValues(node.right, scope)];
-  if (CONCAT_OPERATORS.has(kind)) return combine([stringValues(node.left, scope), stringValues(node.right, scope)]);
+  if (EITHER_OPERATORS.has(kind)) return distinct([...stringValues(node.left, scope), ...stringValues(node.right, scope)]);
+  if (CONCAT_OPERATORS.has(kind)) return combine([stringValues(node.left, scope), stringValues(node.right, scope)], scope);
   return [];
 }
 
@@ -209,7 +293,7 @@ function sdkReferences(file, code) {
     if (ts.isStringLiteralLike(node) || isTemplateFragment(node)) {
       for (const value of new Set([node.text, node.rawText])) if (hasSdkName(value)) report(node, value);
     } else if (isConcat(node) || ts.isTemplateExpression(node)) {
-      for (const value of fold(node)) if (hasSdkName(value)) report(node, value);
+      for (const candidate of fold(node)) if (containsSdk(candidate)) report(node, candidate.text ?? candidate.window);
     }
     ts.forEachChild(node, visit);
   };
