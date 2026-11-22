@@ -164,6 +164,16 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nvar h6 = { require: (id) => id }; (eval)(\"h6 = module\"); h6.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     // A computed key that cannot be fully resolved (here a cycle) can name require.
     "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    // An exported helper, or a key rewritten by destructuring or a loop target.
+    "\nexport const h8 = { require: (id) => id }; h8.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\n{ let k = \"require\"; const h9 = { require: (id) => id, change() { this.require = require; } }; [k] = [\"change\"]; h9[k](); h9.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\n{ let k = \"require\"; const h10 = { require: (id) => id, change() { this.require = require; } }; for (k of [\"change\"]) h10[k](); h10.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    // Logical assignments, a renamed createRequire, and call/apply.
+    "\nvar lp; require(lp ||= \"@modelcontextprotocol/sdk\");\nvar lr; (lr ||= require)(\"@modelcontextprotocol/sdk\");\n",
+    "\nconst { createRequire: cr } = require(\"node:module\"); cr(__filename)(\"@modelcontextprotocol/sdk\");\n",
+    "\nimport { createRequire as createRequire2 } from \"node:module\"; createRequire2(__filename)(\"@modelcontextprotocol/sdk\");\n",
+    "\nrequire.call(null, \"@modelcontextprotocol/sdk\");\n",
+    "\nrequire.apply(null, [\"@modelcontextprotocol/sdk\"]);\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
