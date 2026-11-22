@@ -2400,6 +2400,21 @@ describe("apifn check: the git baseline is the pinned object (round 4)", () => {
     }
   );
 
+  it("an unrelated tracked name that is not UTF-8 beside the spec path does not stop the walk", async () => {
+    const { root, service } = await gitBase();
+    const blob = git(root, "rev-parse", "HEAD:breaking/.apifn/openapi.yml").trim();
+    const listing = execFileSync("git", ["ls-tree", "HEAD"], { cwd: root });
+    const entry = Buffer.concat([Buffer.from(`100644 blob ${blob}\t`), Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0xe9, 0x2e, 0x79, 0x6d, 0x6c]), Buffer.from("\n")]);
+    const tree = execFileSync("git", ["mktree"], { cwd: root, input: Buffer.concat([listing, entry]) }).toString().trim();
+    const commit = git(root, "commit-tree", tree, "-p", "HEAD", "-m", "latin-1 sibling").trim();
+    git(root, "update-ref", "HEAD", commit);
+
+    const { code, report } = await runJson(["check", "--base", "HEAD"], service);
+    expect(report.base.status).toBe("compared");
+    expect(report.breaking.length).toBeGreaterThan(0);
+    expect(code).toBe(1);
+  });
+
   it("a base spec at the ref that is not UTF-8 exits 2", async () => {
     const { root, service, baseText } = await gitBase();
     await writeFile(path.join(service, SPEC), Buffer.concat([Buffer.from(baseText), Buffer.from("# \xff\n", "latin1")]));
@@ -2673,6 +2688,18 @@ describe("apifn check: argument handling stays in step with cac (round 4)", () =
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("Unknown option `--unknown`");
   });
+
+  it.each([["--no-unknown"], ["--unknown", "operand"]])(
+    "%s before a malformed check --help is a usage error, and check --help alone still prints help",
+    async (...leading) => {
+      const root = await fixtures();
+      const dir = path.join(root, "base");
+      const malformed = await run([...leading, "check", "--format", "nope", "--help"], dir);
+      expect(malformed.code).toBe(2);
+      expect(malformed.stderr).not.toBe("");
+      expect((await run(["check", "--help"], dir)).code).toBe(0);
+    }
+  );
 
   it("a dash-prefixed path reads the same separated and attached; a missing value is still an error", async () => {
     const root = await fixtures();

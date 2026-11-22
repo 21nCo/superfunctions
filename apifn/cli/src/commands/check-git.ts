@@ -87,6 +87,15 @@ class Git {
   ) {}
 
   run(args: string[], options: { maxBuffer?: number } = {}): { code: number; stdout: string; stderr: string } {
+    const result = this.spawn(args, options);
+    const stdout = decodeUtf8(result.stdout);
+    if (stdout === null) {
+      throw new CheckUsageError(`git ${args.join(" ")} printed bytes that are not valid UTF-8`);
+    }
+    return { ...result, stdout };
+  }
+
+  private spawn(args: string[], options: { maxBuffer?: number }): { code: number; stdout: Buffer; stderr: string } {
     const result = spawnSync(this.executable, ["--no-replace-objects", ...args], {
       cwd: this.root,
       env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
@@ -96,11 +105,7 @@ class Git {
     if (result.error) {
       throw new CheckUsageError(`Failed to run git ${args.join(" ")}: ${result.error.message}`);
     }
-    const stdout = decodeUtf8(result.stdout);
-    if (stdout === null) {
-      throw new CheckUsageError(`git ${args.join(" ")} printed bytes that are not valid UTF-8`);
-    }
-    return { code: result.status ?? 1, stdout, stderr: result.stderr.toString("utf8") };
+    return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr.toString("utf8") };
   }
 
   ok(args: string[], options?: { maxBuffer?: number }): string {
@@ -112,11 +117,19 @@ class Git {
     return result.stdout;
   }
 
-  /** The direct entries of one tree object. */
+  /**
+   * The direct entries of one tree object, read as bytes: a name that is not UTF-8 is left out (it
+   * cannot equal a component of the spec path), so an unrelated sibling never stops the walk.
+   */
   entries(tree: string): TreeEntry[] {
     let listing = this.listings.get(tree);
     if (!listing) {
-      listing = parseTreeListing(this.ok(["ls-tree", "-z", "-l", "--full-tree", tree]));
+      const args = ["ls-tree", "-z", "-l", "--full-tree", tree];
+      const result = this.spawn(args, {});
+      if (result.code !== 0) {
+        throw new CheckUsageError(`git ${args.join(" ")} failed: ${result.stderr.trim() || `exit status ${result.code}`}`);
+      }
+      listing = parseTreeListing(result.stdout);
       this.listings.set(tree, listing);
     }
     return listing;
@@ -142,13 +155,18 @@ interface TreeEntry {
   name: string;
 }
 
-function parseTreeListing(listing: string): TreeEntry[] {
+function parseTreeListing(listing: Buffer): TreeEntry[] {
   const entries: TreeEntry[] = [];
-  for (const line of listing.split("\0")) {
-    const tab = line.indexOf("\t");
-    if (tab < 0) continue;
-    const [mode, type, object, size] = line.slice(0, tab).split(/ +/);
-    entries.push({ mode, type, object, size: Number(size), name: line.slice(tab + 1) });
+  for (let start = 0; start < listing.length; ) {
+    let end = listing.indexOf(0, start);
+    if (end < 0) end = listing.length;
+    const record = listing.subarray(start, end);
+    start = end + 1;
+    const tab = record.indexOf(0x09);
+    const name = tab < 0 ? null : decodeUtf8(record.subarray(tab + 1));
+    if (name === null) continue;
+    const [mode, type, object, size] = record.subarray(0, tab).toString("latin1").split(/ +/);
+    entries.push({ mode, type, object, size: Number(size), name });
   }
   return entries;
 }

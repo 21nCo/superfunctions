@@ -144,12 +144,13 @@ export function parseCheckArgv(argv: string[]): CheckArgs {
 
 /**
  * How many tokens after option `token` cac reads as its value before the command name: a known
- * value option takes its separate value; a known flag or `--name=value` takes none; an unknown
+ * value option takes its separate value; a known flag, `--no-<name>` or `--name=value` takes none; an unknown
  * option takes the next token that is not an option (cac's parser gives it that value), so
  * `--unknown operand check --help` still runs check.
  */
 function valueTokensBeforeCommand(token: string, next: string | undefined): number {
-  if (token.includes("=")) return 0;
+  // cac's parser reads `--no-<name>` as `<name>: false`, consuming nothing.
+  if (token.includes("=") || token.startsWith("--no-")) return 0;
   const name = kebab(token.replace(/^--?/, ""));
   if (Object.hasOwn(VALUE_OPTIONS, name)) return isSeparateValue(next) ? 1 : 0;
   if (Object.hasOwn(FLAGS, name) || SHORT_FLAGS.has(token)) return 0;
