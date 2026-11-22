@@ -11,14 +11,19 @@
  * - numbers finite, and each literal naming an integer (`9007199254740993`, `9007199254740993.0`,
  *   `9.007199254740993e15`) the double it reads as (exactly, or as its shortest round-trip
  *   decimal), so no value changes on the way to JSON;
- * - only strings, numbers, booleans, null, sequences and mappings (no binary, sets or dates).
+ * - only strings, numbers, booleans, null, sequences and mappings (no binary, sets or dates): a
+ *   collection with any tag but the plain `!!map` or `!!seq` (`!!set`, `!!omap`) is rejected
+ *   before conversion;
+ * - linear work: duplicate keys are found in one pass of the converter (the yaml package's own
+ *   check compares every key with every other), and each scalar, however many aliases name it,
+ *   is converted once and measured at its source length.
  *
  * Any violation throws ContractParseError; each caller decides what it means (committed: drift,
  * base: load error, head: invalid spec).
  */
 
 import { isAlias, isMap, isPair, isScalar, isSeq, parseDocument, visit } from "yaml";
-import type { Alias, Document, Node as YamlNode, Pair } from "yaml";
+import type { Alias, Document, Node as YamlNode, Pair, Scalar, YAMLMap, YAMLSeq } from "yaml";
 
 /** Largest contract text read from a file, git or HTTP. */
 export const MAX_SPEC_BYTES = 32 * 1024 * 1024;
@@ -41,7 +46,8 @@ const PARSE_OPTIONS = {
   schema: "core",
   version: "1.2",
   merge: false,
-  uniqueKeys: true,
+  // The converter rejects duplicate and colliding keys in one pass (see Converter.mapping).
+  uniqueKeys: false,
   intAsBigInt: true,
   prettyErrors: false,
 } as const;
@@ -117,12 +123,15 @@ class Measurer {
     if (isAlias(node)) return this.add({ nodes: 0, bytes: 0 }, this.size(this.anchors.get(node)));
     if (isPair(node)) return this.add(this.add({ nodes: 0, bytes: 0 }, this.size(node.key)), this.size(node.value));
     if (isMap(node) || isSeq(node)) {
+      assertPlainCollection(node);
       const total = { nodes: 1, bytes: 0 };
       for (const item of node.items) this.add(total, this.size(item));
       return total;
     }
-    const value = isScalar(node) ? node.value : undefined;
-    return { nodes: 1, bytes: typeof value === "string" ? value.length : 8 };
+    if (!isScalar(node)) return { nodes: 1, bytes: 8 };
+    // A number is charged its source text: the converter reads that text (once per scalar).
+    const length = typeof node.value === "string" ? node.value.length : (node.source?.length ?? 0);
+    return { nodes: 1, bytes: Math.max(8, length) };
   }
 
   private add(total: Size, part: Size): Size {
@@ -140,15 +149,35 @@ class Measurer {
   }
 }
 
+const MAP_TAG = "tag:yaml.org,2002:map";
+const SEQ_TAG = "tag:yaml.org,2002:seq";
+
+/** A collection read as a JSON object or array must carry no tag but the plain one for its kind. */
+function assertPlainCollection(node: YAMLMap | YAMLSeq): void {
+  const plain = isMap(node) ? MAP_TAG : SEQ_TAG;
+  if (node.tag !== undefined && node.tag !== plain) {
+    throw new ContractParseError(`the document has a ${node.tag} collection, which JSON cannot represent`);
+  }
+}
+
 class Converter {
   private readonly done = new Map<YamlNode, JsonValue>();
+  /** Each scalar's JSON value, so an aliased scalar (value or key) is converted once. */
+  private readonly scalars = new Map<Scalar, JsonValue>();
 
   constructor(private readonly anchors: Map<Alias, YamlNode>) {}
+
+  private scalar(node: Scalar, at: string): JsonValue {
+    if (this.scalars.has(node)) return this.scalars.get(node) as JsonValue;
+    const result = scalarValue(node.value, at, node.source);
+    this.scalars.set(node, result);
+    return result;
+  }
 
   value(node: unknown, at: string): JsonValue {
     if (node === null || node === undefined) return null;
     if (isAlias(node)) return this.value(this.anchors.get(node), at);
-    if (isScalar(node)) return scalarValue(node.value, at, node.source);
+    if (isScalar(node)) return this.scalar(node, at);
     const known = this.done.get(node as YamlNode);
     if (known !== undefined) return known;
     let result: JsonValue;
@@ -193,7 +222,7 @@ class Converter {
     if (!isAlias(node) && target.type === "PLAIN" && target.value === "<<") {
       throw new ContractParseError(`${at} has a YAML merge key (<<), which is not supported`);
     }
-    const value = scalarValue(target.value, `${at} key`, target.source);
+    const value = this.scalar(target, `${at} key`);
     if (typeof value === "string") return { text: value, via };
     if (typeof value === "number") return { text: String(value), via };
     throw new ContractParseError(`${at} has a ${value === null ? "null" : typeof value} key, which JSON cannot represent`);

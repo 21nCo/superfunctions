@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -24,7 +25,7 @@ import { access, chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, s
 import path from "node:path";
 import { createRequire } from "node:module";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/index.js";
 import {
   CHECK_REPORT_MARKER,
@@ -34,8 +35,12 @@ import {
   runCheckCommand,
   versionCoversBreaking,
 } from "../src/commands/check.js";
+import { diffOpenAPI } from "@apifn/core";
 import { comparable } from "../src/commands/check-compare.js";
+import { fetchBounded } from "../src/commands/check-io.js";
+import { observe } from "../src/commands/check-publish.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
+import { loadRouterModule } from "../src/utils/router-loader.js";
 import type { Output } from "../src/utils/output.js";
 import type { CheckReport } from "../src/commands/check.js";
 import { tempDir } from "./temp-dirs.js";
@@ -421,7 +426,7 @@ describe("apifn check: --base <git-ref>", () => {
 
     const result = await run(["check", "--base", "HEAD", "--format", "json"], service);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("git show");
+    expect(result.stderr).toContain("git cat-file blob");
     expect(result.stdout).toBe("");
   });
 
@@ -654,7 +659,7 @@ describe("apifn check: documents without a faithful JSON form", () => {
 
     const result = await run(["check", "--base-spec", "base.json"], dir);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("unique");
+    expect(result.stderr).toContain('two keys that are both "paths"');
     expect(result.stdout).toBe("");
   });
 
@@ -1341,7 +1346,7 @@ describe("apifn check: the base is validated and both sides are dereferenced", (
     const head = await refService({ required: true });
     const allowed = await runJson(["check", "--base-spec", base, "--allow-breaking"], head);
     expect(allowed.code).toBe(0);
-    expect(allowed.report.breaking.length).toBe(1);
+    expect(allowed.report.breaking).toHaveLength(1);
   });
 
   it("a base the validator rejects (paths: []) exits 2 and --write publishes nothing", async () => {
@@ -2283,5 +2288,428 @@ describe("apifn check: --write keeps the committed format, told by content", () 
     expect((await run(["check", "--spec", "contract", "--write"], dir)).code).toBe(0);
     expect((await lstat(path.join(dir, "contract"))).isSymbolicLink()).toBe(true);
     expect((JSON.parse(await readFile(target, "utf8")) as { openapi: string }).openapi).toBe("3.1.0");
+  });
+});
+
+describe("apifn check: effective schemas resolve references and keep literal data (round 4)", () => {
+  function doc(schemas: Record<string, unknown>, extra: Record<string, unknown> = {}): Record<string, never> {
+    return { openapi: "3.1.0", info: { title: "S", version: "1.0.0" }, paths: {}, components: { schemas, ...extra } } as never;
+  }
+  const schemasOf = (value: ReturnType<typeof comparable>) => value.components?.schemas as Record<string, Record<string, unknown>>;
+
+  it("unevaluatedProperties beside a $ref sees the properties its target evaluates", () => {
+    const target = { type: "object", properties: { id: { type: "string" } } };
+    const merged = comparable(doc({ A: target, B: { $ref: "#/components/schemas/A", unevaluatedProperties: false } }));
+    expect(schemasOf(merged).B).toEqual({ ...target, unevaluatedProperties: false });
+    // The target's own unevaluatedProperties cannot see a sibling's properties: still refused.
+    const closedTarget = { ...target, unevaluatedProperties: false };
+    expect(() =>
+      comparable(doc({ A: closedTarget, B: { $ref: "#/components/schemas/A", properties: { extra: { type: "string" } } } }))
+    ).toThrow("changes what");
+  });
+
+  it("number with [number, integer] is number, so the equivalent inline schema has no breaking change", () => {
+    const viaRef = comparable(doc({ A: { type: ["number", "integer"] }, B: { $ref: "#/components/schemas/A", type: "number" } }));
+    expect(schemasOf(viaRef).B.type).toBe("number");
+    const inline = comparable(doc({ A: { type: ["number", "integer"] }, B: { type: "number" } }));
+    expect(diffOpenAPI(inline, viaRef).breaking).toHaveLength(0);
+  });
+
+  it("a $ref key in literal data is data; a genuine Example Object reference is resolved", () => {
+    const literal = { $ref: "#/components/schemas/A" };
+    const merged = comparable(
+      doc(
+        {
+          A: { type: "string" },
+          B: { type: "object", example: literal, default: { $ref: "#/nowhere" }, "x-sample": { $ref: "#/nowhere" }, examples: [literal] },
+          C: { type: "object", properties: { default: { $ref: "#/components/schemas/A" } } },
+        },
+        {
+          examples: { E: { summary: "e", value: { $ref: "#/nowhere" } } },
+          requestBodies: { R: { content: { "application/json": { schema: { type: "object" }, examples: { e: { $ref: "#/components/examples/E" } } } } } },
+        }
+      )
+    );
+    expect(schemasOf(merged).B).toMatchObject({ example: literal, default: { $ref: "#/nowhere" }, examples: [literal] });
+    expect(schemasOf(merged).C.properties).toEqual({ default: { type: "string" } });
+    const body = (merged.components as Record<string, Record<string, Record<string, unknown>>>).requestBodies.R;
+    expect(body).toMatchObject({ content: { "application/json": { examples: { e: { summary: "e", value: { $ref: "#/nowhere" } } } } } });
+  });
+
+  it("a fragment inside a schema resource with its own $id resolves in that resource", () => {
+    const resource = {
+      $id: "https://example.com/schemas/r",
+      type: "object",
+      $defs: { X: { type: "string", minLength: 2 } },
+      properties: { x: { $ref: "#/$defs/X" } },
+    };
+    const merged = comparable(doc({ R: resource }));
+    expect((schemasOf(merged).R.properties as Record<string, unknown>).x).toEqual({ type: "string", minLength: 2 });
+  });
+
+  it("a $ref that leaves the document is refused even inside literal data (the validator would follow it)", () => {
+    expect(() => comparable(doc({ B: { type: "object", example: { $ref: "other.yml#/x" } } }))).toThrow("outside the document");
+  });
+});
+
+describe("apifn check: the git baseline is the pinned object (round 4)", () => {
+  async function gitBase(): Promise<{ root: string; service: string; baseText: string; headText: string }> {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await commitSpec(path.join(root, "base"));
+    await commitSpec(service);
+    const baseText = await readFile(path.join(root, "base", SPEC), "utf8");
+    const headText = await readFile(path.join(service, SPEC), "utf8");
+    await writeFile(path.join(service, SPEC), baseText);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract");
+    await writeFile(path.join(service, SPEC), headText);
+    return { root, service, baseText, headText };
+  }
+
+  it("a refs/replace object cannot substitute the base contract", async () => {
+    const { root, service, headText } = await gitBase();
+    const original = git(root, "rev-parse", "HEAD:breaking/.apifn/openapi.yml").trim();
+    const decoy = path.join(root, "decoy.yml");
+    await writeFile(decoy, headText);
+    const replacement = git(root, "hash-object", "-w", decoy).trim();
+    git(root, "replace", original, replacement);
+
+    const { code, report } = await runJson(["check", "--base", "HEAD"], service);
+    expect(report.base.status).toBe("compared");
+    expect(report.breaking.length).toBeGreaterThan(0);
+    expect(code).toBe(1);
+  });
+
+  it.skipIf(POSIX_ONLY).each(["contract.yml/", "contract.yml/."])(
+    "a tracked spec link to a file followed by %j exits 2, never reads the file",
+    async (target) => {
+      const { root, service, baseText } = await gitBase();
+      await writeFile(path.join(service, ".apifn", "contract.yml"), baseText);
+      await rm(path.join(service, SPEC));
+      await symlink(target, path.join(service, SPEC));
+      git(root, "add", "-A");
+      git(root, "commit", "-q", "-m", "spec link with a trailing slash");
+      await rm(path.join(service, SPEC));
+      await commitSpec(service);
+
+      const result = await run(["check", "--base", "HEAD"], service);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("needs it to be a directory");
+    }
+  );
+
+  it("a base spec at the ref that is not UTF-8 exits 2", async () => {
+    const { root, service, baseText } = await gitBase();
+    await writeFile(path.join(service, SPEC), Buffer.concat([Buffer.from(baseText), Buffer.from("# \xff\n", "latin1")]));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "malformed base");
+    await commitSpec(service);
+
+    const result = await run(["check", "--base", "HEAD"], service);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("not valid UTF-8");
+  });
+});
+
+describe("apifn check: inputs are read strictly and without blocking (round 4)", () => {
+  async function based(): Promise<{ root: string; dir: string; baseText: string }> {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "breaking");
+    await commitSpec(dir);
+    return { root, dir, baseText: await readFile(path.join(root, "base", SPEC), "utf8") };
+  }
+
+  it("a base file that is not UTF-8 exits 2; a correctly encoded U+FFFD is read", async () => {
+    const { dir, baseText } = await based();
+    await writeFile(path.join(dir, "bad.yml"), Buffer.concat([Buffer.from(baseText), Buffer.from("# \xff\xfe\n", "latin1")]));
+    const bad = await run(["check", "--base-spec", "bad.yml"], dir);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain("not valid UTF-8");
+
+    await writeFile(path.join(dir, "good.yml"), `${baseText}# �\n`);
+    const good = await runJson(["check", "--base-spec", "good.yml"], dir);
+    expect(good.report.base.status).toBe("compared");
+  });
+
+  it("a committed spec that is not UTF-8 is unparseable drift, and --write repairs it", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    await writeFile(path.join(dir, SPEC), Buffer.concat([Buffer.from(generated), Buffer.from("# \xff\n", "latin1")]));
+
+    const { code, report } = await runJson(["check"], dir);
+    expect({ code, driftState: report.driftState }).toEqual({ code: 1, driftState: "unparseable" });
+    expect((await run(["check", "--write"], dir)).code).toBe(0);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(generated);
+  });
+
+  it.skipIf(POSIX_ONLY)("a FIFO base spec or committed spec with no writer exits 2 promptly instead of blocking", async () => {
+    const { dir } = await based();
+    execFileSync("mkfifo", [path.join(dir, "base.fifo")]);
+    const jiti = path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
+    const bin = path.join(import.meta.dirname, "..", "src", "bin.ts");
+    for (const args of [["--base-spec", "base.fifo"], ["--spec", "base.fifo"]]) {
+      const child = spawn(process.execPath, [jiti, bin, "check", ...args], { cwd: dir, stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
+      const code = await new Promise<number | null>((resolve) => child.on("close", (exit) => resolve(exit)));
+      clearTimeout(timer);
+      expect({ args, code, stderr }).toEqual({ args, code: 2, stderr: expect.stringContaining("not a regular file") });
+    }
+  }, 40_000);
+
+  it("an HTTP error status whose body stalls exits 2 and releases the connection", async () => {
+    const { dir } = await based();
+    let closed = false;
+    const server = createServer((req, res) => {
+      req.socket.on("close", () => {
+        closed = true;
+      });
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.write("partial error body");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const errors: string[] = [];
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.1.0" } } },
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        baseSpec: `http://127.0.0.1:${port}/openapi.yml`,
+        httpTimeoutMs: 10_000,
+        writeStdout: () => {},
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("HTTP 500");
+      const deadline = Date.now() + 2_000;
+      while (!closed && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed).toBe(true);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
+describe("apifn check: an HTTP error status cancels its body (round 4)", () => {
+  it("fetchBounded cancels the unread body of a non-success response before it throws", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+      cancel: () => {
+        cancelled = true;
+      },
+    });
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 503 }));
+    try {
+      await expect(fetchBounded("http://127.0.0.1:9/openapi.yml", 10_000)).rejects.toThrow("HTTP 503");
+      expect(cancelled).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("apifn check: the strict parser rejects tagged collections and stays linear (round 4)", () => {
+  it.each(["!!set { a: null }", "!!omap [ { a: 1 } ]", "!!pairs [ { a: 1 } ]"])("a %s collection has no faithful JSON form", (tagged) => {
+    expect(() => parseContract(`openapi: 3.1.0\nx: ${tagged}\n`)).toThrow("collection");
+  });
+
+  it("plain !!map and !!seq tags are read", () => {
+    expect(parseContract("openapi: 3.1.0\nx: !!map { a: !!seq [1] }\n")).toEqual({ openapi: "3.1.0", x: { a: [1] } });
+  });
+
+  it("a tagged base exits 2 and a tagged committed spec is unparseable drift", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    await writeFile(path.join(dir, "tagged.yml"), `${generated}x-set: !!set { a: null }\n`);
+    expect((await run(["check", "--base-spec", "tagged.yml"], dir)).code).toBe(2);
+    await writeFile(path.join(dir, SPEC), `${generated}x-set: !!set { a: null }\n`);
+    const { code, report } = await runJson(["check"], dir);
+    expect({ code, driftState: report.driftState }).toEqual({ code: 1, driftState: "unparseable" });
+  });
+
+  it("duplicate keys in a wide mapping are found in linear time, literal and via an alias", () => {
+    const wide = (count: number) => Array.from({ length: count }, (_, i) => `  k${i}: ${i}`).join("\n");
+    const started = performance.now();
+    expect(Object.keys(parseContract(`openapi: 3.1.0\nx:\n${wide(40_000)}\n`).x as object)).toHaveLength(40_000);
+    // Pairwise key comparison takes several seconds here; one pass takes well under one.
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(() => parseContract(`openapi: 3.1.0\nx:\n${wide(3)}\n  k1: again\n`)).toThrow('two keys that are both "k1"');
+    expect(() => parseContract(`openapi: 3.1.0\na: &k k1\nx:\n${wide(3)}\n  *k : again\n`)).toThrow("alias");
+  });
+
+  it("an aliased numeric scalar is charged its source length each time it appears", () => {
+    const long = `1.${"0".repeat(100_000)}`;
+    const aliases = Array.from({ length: 700 }, (_, i) => `  - *n # ${i}`).join("\n");
+    expect(() => parseContract(`openapi: 3.1.0\nn: &n ${long}\nx:\n${aliases}\n`)).toThrow("characters of text");
+    const few = Array.from({ length: 50 }, () => "  - *n").join("\n");
+    expect((parseContract(`openapi: 3.1.0\nn: &n ${long}\nx:\n${few}\n`).x as number[]).every((value) => value === 1)).toBe(true);
+  });
+});
+
+describe("apifn check: publication binds the paths it read and the directories it made (round 4)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  it.skipIf(POSIX_ONLY)("a dangling spec link retargeted while the base loads exits 2 and creates nothing", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const baseText = await readFile(path.join(dir, SPEC), "utf8");
+    await rm(path.join(dir, SPEC));
+    await symlink("a.yml", path.join(dir, SPEC));
+    const server = createServer((_req, res) => {
+      // The link moves from missing a.yml to missing b.yml while the base is being read.
+      rmSync(path.join(dir, SPEC));
+      symlinkSync("b.yml", path.join(dir, SPEC));
+      res.end(baseText);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const errors: string[] = [];
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        baseSpec: `http://127.0.0.1:${port}/openapi.yml`,
+        write: true,
+        writeStdout: () => {},
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("changed while apifn check ran");
+      expect(existsSync(path.join(dir, ".apifn", "a.yml"))).toBe(false);
+      expect(existsSync(path.join(dir, ".apifn", "b.yml"))).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it.skipIf(POSIX_ONLY)("a spec link through a regular file and `..` exits 2 instead of writing beside the file", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, ".apifn", "file.txt"), "a file\n");
+    await symlink("file.txt/../x.yml", path.join(dir, SPEC));
+
+    const result = await run(["check", "--write"], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("not a directory");
+    expect(existsSync(path.join(dir, ".apifn", "x.yml"))).toBe(false);
+  });
+
+  it("rollback leaves a directory another process put in place of one this run created", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    const created = path.join(dir, "new", "deep");
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      specPath: path.join("new", "deep", "openapi.yml"),
+      write: true,
+      writeStdout: () => {},
+      publishHook: (step) => {
+        if (step !== "backup") return;
+        // Another process moves this run's directory (with its staged file) away and makes its own.
+        renameSync(created, path.join(dir, "moved"));
+        execFileSync("mkdir", [created]);
+      },
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("changed while apifn check ran");
+    expect(statSync(created).isDirectory()).toBe(true);
+  });
+
+  it("file identities are bigint stats, so device and inode numbers above 2^53 stay distinct", async () => {
+    const dir = await tempDir("apifn-check-bigint-");
+    const file = path.join(dir, "spec.yml");
+    await writeFile(file, "openapi: 3.1.0\n");
+    const observed = observe(file);
+    expect(typeof observed.state?.ino).toBe("bigint");
+    expect(typeof observed.anchor.dev).toBe("bigint");
+    expect(observed.state?.ino).toBe(statSync(file, { bigint: true }).ino);
+  });
+});
+
+describe("apifn check: the router module is the one file loaded (round 4)", () => {
+  it("a router that moves itself while it loads still generates the same bytes, and is the file check protects", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const expected = await readFile(path.join(dir, SPEC), "utf8");
+    const source = await readFile(path.join(dir, "router.ts"), "utf8");
+    const moving = path.join(dir, "moving.ts");
+    await writeFile(moving, `import { renameSync } from "node:fs";\nrenameSync(${JSON.stringify(moving)}, ${JSON.stringify(path.join(dir, "moved.ts"))});\n${source}`);
+
+    const generated = await run(["generate", "./moving", "--output", "out.yml"], dir);
+    expect(generated.code).toBe(0);
+    expect(await readFile(path.join(dir, "out.yml"), "utf8")).toBe(expected);
+
+    const loaded = await loadRouterModule("./router", dir);
+    expect(realpathSync(loaded.file)).toBe(realpathSync(path.join(dir, "router.ts")));
+    const report = await run(["check", "./router", "--report", "router.ts"], dir);
+    expect(report.code).toBe(2);
+    expect(report.stderr).toContain("the router module");
+  });
+});
+
+describe("apifn check: argument handling stays in step with cac (round 4)", () => {
+  it("an unknown leading option with an operand before check --help is a usage error, not help", async () => {
+    const root = await fixtures();
+    const result = await run(["--unknown", "operand", "check", "--help"], path.join(root, "base"));
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("Unknown option `--unknown`");
+  });
+
+  it("a dash-prefixed path reads the same separated and attached; a missing value is still an error", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await cp(path.join(dir, SPEC), path.join(dir, "-odd.yml"));
+    const separated = await runJson(["check", "--spec", "-odd.yml", "--base-spec", "-odd.yml"], dir);
+    const attached = await runJson(["check", "--spec=-odd.yml", "--base-spec=-odd.yml"], dir);
+    expect(separated).toEqual(attached);
+    expect({ code: separated.code, status: separated.report.base.status }).toEqual({ code: 0, status: "compared" });
+    const missing = await run(["check", "--spec", "--write"], dir);
+    expect({ code: missing.code, stderr: missing.stderr }).toEqual({ code: 2, stderr: expect.stringContaining("--spec takes one value") });
+  });
+});
+
+describe("apifn check: Markdown keeps every line ending inside its field (round 4)", () => {
+  it.each(["\r", "\r\n", "\n"])("a version with %j stays on the Versions row; JSON keeps it", async (ending) => {
+    const dir = (await fixtures()) + "/base";
+    const version = `1.0.0${ending}## injected`;
+    const config = { router: "./router.ts", openapi: { info: { title: "Check fixture", version } } };
+    const outputs: Record<string, string> = {};
+    for (const format of ["markdown", "json"]) {
+      let stdout = "";
+      await runCheckCommand({
+        cwd: dir,
+        config,
+        format,
+        output: { error: () => {} } as unknown as Output,
+        writeStdout: (text) => {
+          stdout += text;
+        },
+      });
+      outputs[format] = stdout;
+    }
+    expect(outputs.markdown.startsWith(CHECK_REPORT_MARKER)).toBe(true);
+    expect(outputs.markdown).not.toContain("\r");
+    expect(outputs.markdown.split("\n").some((line) => line.startsWith("## injected"))).toBe(false);
+    expect((JSON.parse(outputs.json) as CheckReport).versions.head).toBe(version);
   });
 });

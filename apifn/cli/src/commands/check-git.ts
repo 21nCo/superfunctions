@@ -18,12 +18,19 @@
  *   spelling of an in-repository symlinked directory (even one back to the root); only when it is
  *   proven absent is the file a write to the spec lands on (an untracked spec symlink followed)
  *   tried;
+ * - every git call runs with replace objects disabled (`--no-replace-objects` and
+ *   GIT_NO_REPLACE_OBJECTS), so `refs/replace` cannot substitute the commit, a tree or the blob;
+ *   the spec is read as the very blob object the walk found;
+ * - a component followed by `/` or `/.` must be a directory, as for the kernel: a blob there is
+ *   an error, never the spec;
+ * - git output is decoded as strict UTF-8; malformed bytes are an error;
  * - every git failure is an error (exit 2), never a new contract.
  */
 
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { decodeUtf8 } from "./check-io.js";
 import { MAX_SPEC_BYTES } from "./check-parse.js";
 import {
   CheckUsageError,
@@ -80,16 +87,20 @@ class Git {
   ) {}
 
   run(args: string[], options: { maxBuffer?: number } = {}): { code: number; stdout: string; stderr: string } {
-    const result = spawnSync(this.executable, args, {
+    const result = spawnSync(this.executable, ["--no-replace-objects", ...args], {
       cwd: this.root,
-      encoding: "utf8",
+      env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
       maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
       windowsHide: true,
     });
     if (result.error) {
       throw new CheckUsageError(`Failed to run git ${args.join(" ")}: ${result.error.message}`);
     }
-    return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+    const stdout = decodeUtf8(result.stdout);
+    if (stdout === null) {
+      throw new CheckUsageError(`git ${args.join(" ")} printed bytes that are not valid UTF-8`);
+    }
+    return { code: result.status ?? 1, stdout, stderr: result.stderr.toString("utf8") };
   }
 
   ok(args: string[], options?: { maxBuffer?: number }): string {
@@ -171,9 +182,48 @@ function entryKind(entry: TreeEntry): string {
   return entry.type === "tree" ? "directory" : entry.type;
 }
 
-/** True when nothing but `.` and empty components is left: the component just read is the last. */
-function isLast(pending: string[]): boolean {
-  return pending.every((part) => part === "" || part === ".");
+/** The walk's state: the directories resolved so far and the components still to read. */
+class Walk {
+  readonly frames: Frame[] = [];
+  links = 0;
+
+  constructor(
+    readonly git: Git,
+    readonly rootTree: string,
+    readonly relative: string,
+    readonly ref: string,
+    public pending: string[]
+  ) {}
+
+  at(): string {
+    return this.frames.map((frame) => frame.name).join("/");
+  }
+
+  here(entry: TreeEntry): string {
+    const at = this.at();
+    return at ? `${at}/${entry.name}` : entry.name;
+  }
+
+  fail(message: string): never {
+    throw new CheckUsageError(message);
+  }
+
+  /** `..`: back to the directory that holds the one the walk is in. */
+  up(): void {
+    if (this.frames.length === 0) this.fail(`The spec path ${this.relative} at ${this.ref} leaves the repository.`);
+    this.frames.pop();
+  }
+
+  /** A tracked symbolic link: its target is read next, from the directory that holds it. */
+  follow(entry: TreeEntry): void {
+    this.links += 1;
+    if (this.links > MAX_TREE_LINKS) this.fail(`Too many symbolic links in ${this.relative} at ${this.ref}.`);
+    const target = this.git.ok(["cat-file", "blob", entry.object]);
+    if (target.startsWith("/")) {
+      this.fail(`${this.here(entry)} at ${this.ref} is a symbolic link that leaves the repository (${target}).`);
+    }
+    this.pending = [...target.split("/"), ...this.pending];
+  }
 }
 
 /**
@@ -181,45 +231,45 @@ function isLast(pending: string[]): boolean {
  * the directory that holds them and resolving `..` against the directories actually walked.
  */
 function walkTree(git: Git, commit: string, relative: string, ref: string): Lookup {
-  const rootTree = `${commit}^{tree}`;
-  const frames: Frame[] = [];
-  const at = () => frames.map((frame) => frame.name).join("/");
-  let pending = relative.split("/");
-  let links = 0;
-  while (pending.length > 0) {
-    const part = pending[0];
-    pending = pending.slice(1);
+  const walk = new Walk(git, `${commit}^{tree}`, relative, ref, relative.split("/"));
+  while (walk.pending.length > 0) {
+    const part = walk.pending.shift() as string;
     if (part === "" || part === ".") continue;
     if (part === "..") {
-      if (frames.length === 0) throw new CheckUsageError(`The spec path ${relative} at ${ref} leaves the repository.`);
-      frames.pop();
+      walk.up();
       continue;
     }
-    const entry = findEntry(git, frames.at(-1)?.tree ?? rootTree, part, at());
+    const entry = findEntry(git, walk.frames.at(-1)?.tree ?? walk.rootTree, part, walk.at());
     if (!entry) return { found: false };
-    const here = at() ? `${at()}/${entry.name}` : entry.name;
     if (entry.mode === "120000") {
-      links += 1;
-      if (links > MAX_TREE_LINKS) throw new CheckUsageError(`Too many symbolic links in ${relative} at ${ref}.`);
-      const target = git.ok(["cat-file", "blob", entry.object]);
-      if (target.startsWith("/")) {
-        throw new CheckUsageError(`${here} at ${ref} is a symbolic link that leaves the repository (${target}).`);
-      }
-      pending = [...target.split("/"), ...pending];
-      continue;
+      walk.follow(entry);
+    } else if (walk.pending.length === 0) {
+      return lastEntry(walk, entry);
+    } else if (entry.type === "tree") {
+      walk.frames.push({ name: entry.name, tree: entry.object });
+    } else {
+      return throughFile(walk, entry);
     }
-    if (isLast(pending)) {
-      if (entry.type !== "blob") throw new CheckUsageError(`${here} at ${ref} is a ${entryKind(entry)}, not a spec file.`);
-      return { found: true, path: here, entry };
-    }
-    // A file where the path needs a directory: nothing is tracked at the path.
-    if (entry.type === "blob") return { found: false };
-    if (entry.type !== "tree") {
-      throw new CheckUsageError(`${here} at ${ref} is a ${entry.type}; apifn check does not read into it.`);
-    }
-    frames.push({ name: entry.name, tree: entry.object });
   }
-  throw new CheckUsageError(`The spec path ${relative} at ${ref} resolves to a directory.`);
+  return walk.fail(`The spec path ${relative} at ${ref} resolves to a directory.`);
+}
+
+/** The last component: it must be a blob, which is the spec. */
+function lastEntry(walk: Walk, entry: TreeEntry): Lookup {
+  if (entry.type !== "blob") walk.fail(`${walk.here(entry)} at ${walk.ref} is a ${entryKind(entry)}, not a spec file.`);
+  return { found: true, path: walk.here(entry), entry };
+}
+
+/**
+ * A non-directory where the path goes on. A blob before a further name means nothing is tracked
+ * at the path; a blob before only `/` or `/.` is an error (the kernel's ENOTDIR), never the spec.
+ */
+function throughFile(walk: Walk, entry: TreeEntry): Lookup {
+  if (entry.type !== "blob") walk.fail(`${walk.here(entry)} at ${walk.ref} is a ${entry.type}; apifn check does not read into it.`);
+  if (walk.pending.every((part) => part === "" || part === ".")) {
+    walk.fail(`${walk.here(entry)} at ${walk.ref} is a file, but the spec path needs it to be a directory.`);
+  }
+  return { found: false };
 }
 
 /**
@@ -294,7 +344,8 @@ export function readSpecAtRef(ref: string, specPath: string): GitBaseline {
     if (lookup.entry.size > MAX_SPEC_BYTES) {
       throw new CheckUsageError(`${lookup.path} at ${label} is ${lookup.entry.size} bytes (limit ${MAX_SPEC_BYTES}).`);
     }
-    const text = git.ok(["show", `${commit}:${lookup.path}`], { maxBuffer: MAX_SPEC_BYTES + 1 });
+    // The blob object the walk found, by its id: nothing resolves the path a second time.
+    const text = git.ok(["cat-file", "blob", lookup.entry.object], { maxBuffer: MAX_SPEC_BYTES + 1 });
     return { commit, path: lookup.path, text };
   }
   return { commit, path: null, text: null };

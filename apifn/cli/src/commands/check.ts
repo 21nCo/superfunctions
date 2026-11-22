@@ -32,10 +32,10 @@ import { buildSpecFromRouter, resolveSpecPath, serializeSpec } from "./generate.
 import { comparable, validationErrorsOf } from "./check-compare.js";
 import type { ValidationProblem } from "./check-compare.js";
 import { readSpecAtRef } from "./check-git.js";
-import { fetchBounded, isHttpUrl, readBoundedFile } from "./check-io.js";
-import { MAX_SPEC_BYTES, canonicalJson, parseContract } from "./check-parse.js";
+import { fetchBounded, isHttpUrl, readBoundedFile, unreadableMessage } from "./check-io.js";
+import { canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
-import { CheckUsageError, errorMessage, isMissingPath } from "./check-paths.js";
+import { CheckUsageError, errorMessage, isMissingPath, writeDestination } from "./check-paths.js";
 import { assertSeparateFiles, observe, publish } from "./check-publish.js";
 import type { FileState, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
@@ -233,14 +233,23 @@ type CommittedSpec =
   | { state: "unparseable"; raw: string | null; observed: FileState }
   | { state: "missing"; observed: null };
 
-function readCommittedSpec(specPath: string): CommittedSpec {
-  let read: ReturnType<typeof readBoundedFile>;
+/**
+ * Reads the committed spec at the destination `observe` bound (where --write would land), not
+ * through the path again: a spec link retargeted meanwhile cannot split the drift read from the
+ * publication. The path must still lead there after the read.
+ */
+function readCommittedSpec(specPath: string, target: Observed): CommittedSpec {
+  let read: ReturnType<typeof readBoundedFile> | null;
   try {
-    read = readBoundedFile(specPath);
+    read = readBoundedFile(target.destination);
   } catch (error) {
-    if (isMissingPath(error)) return { state: "missing", observed: null };
-    throw new CheckUsageError(`Failed to read spec ${specPath}: ${errorMessage(error)}`);
+    if (!isMissingPath(error)) throw new CheckUsageError(`Failed to read spec ${specPath}: ${errorMessage(error)}`);
+    read = null;
   }
+  if (writeDestination(specPath) !== target.destination) {
+    throw new CheckUsageError(`Spec ${specPath} changed while apifn check ran (it no longer leads to ${target.destination}).`);
+  }
+  if (read === null) return { state: "missing", observed: null };
   if (read.text === null) return { state: "unparseable", raw: null, observed: read.state };
   try {
     return { state: "present", doc: parseContract(read.text), raw: read.text, observed: read.state };
@@ -264,8 +273,8 @@ async function readBaseText(options: CheckCommandOptions, inputs: RunInputs): Pr
     if (inputs.baseSpecFile === undefined) {
       return await fetchBounded(ref, options.httpTimeoutMs);
     }
-    const { text } = readBoundedFile(inputs.baseSpecFile);
-    if (text === null) throw new Error(`the file is larger than ${MAX_SPEC_BYTES} bytes`);
+    const { text, unreadable } = readBoundedFile(inputs.baseSpecFile);
+    if (text === null) throw new Error(unreadableMessage(unreadable ?? "too-large"));
     return text;
   } catch (error) {
     throw new CheckUsageError(`Failed to load base spec '${ref}': ${errorMessage(error)}`);
@@ -495,7 +504,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     assertOutputsSeparate(options, inputs, { spec: specTarget, report: reportTarget }, cwd);
 
     const base = await loadBase(options, inputs);
-    const committed = readCommittedSpec(inputs.specPath);
+    const committed = readCommittedSpec(inputs.specPath, specTarget);
     const head = await readHead(inputs.generated);
     const { report, repair } = evaluate(options, inputs, base, committed, head, specTarget.destination);
     const rendered = renderReport(report, format);

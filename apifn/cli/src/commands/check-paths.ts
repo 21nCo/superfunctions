@@ -1,6 +1,6 @@
 /** Path helpers shared by the git baseline lookup and the publisher of `apifn check`. */
 
-import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export class CheckUsageError extends Error {}
@@ -37,6 +37,14 @@ function symlinkTarget(candidate: string): string | null {
   }
 }
 
+function isDirectory(dir: string): boolean {
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The path a write to `target` lands on: every existing symlink on the way, the leaf included,
  * is followed as the kernel would; components that do not exist yet are kept as given.
@@ -50,6 +58,11 @@ export function writeDestination(target: string): string {
     const part = pending.shift() as string;
     if (part === "" || part === ".") continue;
     if (part === "..") {
+      // The kernel steps out of a directory only: `file/..` and `missing/..` fail (ENOTDIR,
+      // ENOENT), so a link target spelled that way leads nowhere.
+      if (!isDirectory(resolved)) {
+        throw new CheckUsageError(`${target} leads through ${resolved}, which is not a directory, before '..'.`);
+      }
       resolved = path.dirname(resolved);
       continue;
     }

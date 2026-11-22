@@ -4,7 +4,7 @@ import { stringify as toYaml } from "yaml";
 import { fromRouter } from "@apifn/core";
 import type { OpenAPIDocument } from "@apifn/core";
 import type { ApifnConfig } from "../config.js";
-import { loadRouter, resolveRouterFile } from "../utils/router-loader.js";
+import { loadRouterModule } from "../utils/router-loader.js";
 import type { Output } from "../utils/output.js";
 
 /** Resolves the spec path `apifn generate` writes and `apifn check` reads. */
@@ -38,7 +38,7 @@ export async function buildSpecFromRouter(options: {
     throw new Error("Router path is required. Pass [router-path] or set config.router.");
   }
 
-  const router = await loadRouter(routerPath, options.cwd);
+  const { router, file: routerFile } = await loadRouterModule(routerPath, options.cwd);
   const routes = router.getRoutes();
 
   const configuredInfo = options.config.openapi?.info;
@@ -51,7 +51,7 @@ export async function buildSpecFromRouter(options: {
     servers: options.config.openapi?.servers,
   });
 
-  return { doc, routeCount: routes.length, routerFile: resolveRouterFile(routerPath, options.cwd) };
+  return { doc, routeCount: routes.length, routerFile };
 }
 
 export async function runGenerateCommand(options: {

@@ -52,64 +52,109 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
  * Returns a copy of `doc` with every local `$ref` replaced by its target. Keys beside a `$ref` apply
  * together with the target, as OpenAPI 3.1 reads them, so they are conjoined with it (see
  * `conjoin`). A reference back into a schema being expanded (a recursive schema) stays a `$ref`,
- * so the comparison still sees its name. A reference that leaves the document, does not resolve,
- * expands past MAX_EXPANDED_SPEC_NODES or has siblings that cannot be conjoined exactly throws
- * DereferenceError.
+ * so the comparison still sees its name. Literal data (`example`, `default`, `const`, `enum`,
+ * schema `examples`, an Example Object's value, `x-` extensions) is copied as it is: a `$ref` key
+ * there is data, not a reference. Inside a schema resource with its own `$id`, a fragment resolves
+ * against that resource, not the document root. A reference that leaves the document, does not
+ * resolve, expands past MAX_EXPANDED_SPEC_NODES or has siblings that cannot be conjoined exactly
+ * throws DereferenceError.
  */
 export function dereference(doc: JsonObject): JsonObject {
-  return new Dereferencer(doc).copy(doc) as JsonObject;
+  return new Dereferencer().copy(doc, "node", doc) as JsonObject;
+}
+
+/**
+ * How a value is read: `node` (an OpenAPI or schema object, whose keys are keywords), `names` (a
+ * map from names to nodes, such as `properties` or `responses`), `examples` (a map of Example
+ * Objects), `example` (one Example Object or its `$ref`) or `literal` (data).
+ */
+type Mode = "node" | "names" | "examples" | "example" | "literal";
+
+/** Keywords whose value maps names (any string, `default` and `$ref` included) to nodes. */
+const NAME_MAPS = new Set([
+  "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "schemas", "responses",
+  "parameters", "requestBodies", "headers", "securitySchemes", "links", "callbacks", "pathItems", "paths",
+  "webhooks", "content", "encoding", "variables",
+]);
+/** Keywords whose value is data. */
+const LITERALS = new Set(["example", "default", "const", "enum"]);
+
+/** How the value under `key` of a node is read. */
+function childMode(key: string, value: JsonValue): Mode {
+  if (LITERALS.has(key) || key.startsWith("x-")) return "literal";
+  if (key === "examples") return Array.isArray(value) ? "literal" : "examples";
+  return NAME_MAPS.has(key) ? "names" : "node";
 }
 
 class Dereferencer {
   private nodes = 0;
-  private readonly expanding: string[] = [];
+  /** The targets being expanded, by identity. */
+  private readonly expanding: JsonValue[] = [];
 
-  constructor(private readonly doc: JsonObject) {}
-
-  copy(value: JsonValue): JsonValue {
+  /** `resource` is the schema resource a fragment resolves in: the document, or the nearest `$id`. */
+  copy(value: JsonValue, mode: Mode, resource: JsonValue): JsonValue {
     this.nodes += 1;
     if (this.nodes > MAX_EXPANDED_SPEC_NODES) {
       throw new DereferenceError(`the $refs expand to more than ${MAX_EXPANDED_SPEC_NODES} nodes`);
     }
-    if (Array.isArray(value)) return value.map((item) => this.copy(item));
+    if (Array.isArray(value)) return value.map((item) => this.copy(item, mode === "names" ? "node" : mode, resource));
     if (!isRecord(value)) return value;
-    return typeof value.$ref === "string" ? this.expand(value.$ref, value) : this.copyRecord(value, null);
+    // Checked in literal data too: the validator follows every `$ref`, so one that leaves the
+    // document is refused before the validator could read a file or URL for it.
+    if (typeof value.$ref === "string" && !value.$ref.startsWith("#")) throw outside(value.$ref);
+    if (mode === "literal") return this.copyRecord(value, () => "literal", resource);
+    if (mode === "names") return this.copyRecord(value, () => "node", resource);
+    if (mode === "examples") return this.copyRecord(value, () => "example", resource);
+    if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, resource);
+    if (mode === "example") return this.copyRecord(value, () => "literal", resource);
+    const own = typeof value.$id === "string" ? value : resource;
+    return this.copyRecord(value, (key, item) => childMode(key, item), own);
   }
 
-  private copyRecord(value: Record<string, JsonValue>, skip: string | null): JsonObject {
+  private copyRecord(
+    value: Record<string, JsonValue>,
+    modeOf: (key: string, item: JsonValue) => Mode,
+    resource: JsonValue,
+    skip?: string
+  ): JsonObject {
     const result: JsonObject = {};
     for (const [key, item] of Object.entries(value)) {
-      if (key === skip) continue;
-      Object.defineProperty(result, key, { value: this.copy(item), enumerable: true, writable: true, configurable: true });
+      if (key !== skip) setOwn(result, key, this.copy(item, modeOf(key, item), resource));
     }
     return result;
   }
 
-  private expand(ref: string, value: Record<string, JsonValue>): JsonValue {
-    if (!ref.startsWith("#")) {
-      throw new DereferenceError(`$ref '${ref}' points outside the document, which apifn check does not follow`);
+  private expand(ref: string, value: Record<string, JsonValue>, mode: Mode, resource: JsonValue): JsonValue {
+    const siblingMode = (key: string, item: JsonValue): Mode => (mode === "example" ? "literal" : childMode(key, item));
+    const found = resolve(resource, ref);
+    if (this.expanding.includes(found.target)) {
+      return this.copyRecord(value, siblingMode, resource);
     }
-    if (this.expanding.includes(ref)) {
-      return this.copyRecord(value, null);
-    }
-    this.expanding.push(ref);
-    const target = this.copy(this.resolve(ref));
+    this.expanding.push(found.target);
+    const target = this.copy(found.target, mode, found.resource);
     this.expanding.pop();
-    const siblings = this.copyRecord(value, "$ref");
+    const siblings = this.copyRecord(value, siblingMode, resource, "$ref");
     if (Object.keys(siblings).length === 0) return target;
     if (!isRecord(target)) {
       throw new DereferenceError(`$ref '${ref}' has sibling keys but its target is not an object`);
     }
     return conjoin(target, siblings, ref);
   }
+}
 
-  private resolve(ref: string): JsonValue {
-    let current: JsonValue = this.doc;
-    for (const token of pointerTokens(ref)) {
-      current = step(current, token, ref);
-    }
-    return current;
+function outside(ref: string): DereferenceError {
+  return new DereferenceError(`$ref '${ref}' points outside the document, which apifn check does not follow`);
+}
+
+/** The target of a fragment `ref` in `resource`, and the schema resource that holds the target. */
+function resolve(resource: JsonValue, ref: string): { target: JsonValue; resource: JsonValue } {
+  let current = resource;
+  let holder = resource;
+  for (const token of pointerTokens(ref)) {
+    holder = current !== resource && isRecord(current) && typeof current.$id === "string" ? current : holder;
+    current = step(current, token, ref);
   }
+  return { target: current, resource: holder };
 }
 
 /** Annotations: they constrain nothing, so the keys beside the `$ref` replace the target's. */
@@ -122,23 +167,37 @@ const UPPER_BOUNDS = new Set(["maximum", "exclusiveMaximum", "maxLength", "maxIt
  * Keywords whose meaning depends on keywords beside them (their partners): `additionalProperties`
  * applies to the names `properties` and `patternProperties` leave, `items` to the entries after
  * `prefixItems`, and so on. Conjoining may change a partner (more property names, a longer
- * prefix), which would move what the dependent keyword applies to, so that is refused.
+ * prefix), which would move what the dependent keyword applies to, so that is refused. A list of
+ * pairs, not an object literal: one keyword is `then`.
  */
-const SCOPED: Record<string, readonly string[]> = {
-  additionalProperties: ["properties", "patternProperties"],
-  unevaluatedProperties: ["properties", "patternProperties", "additionalProperties", "allOf", "anyOf", "oneOf", "if", "then", "else", "dependentSchemas"],
-  items: ["prefixItems"],
-  unevaluatedItems: ["prefixItems", "items", "contains", "allOf", "anyOf", "oneOf", "if", "then", "else"],
-  minContains: ["contains"],
-  maxContains: ["contains"],
-  then: ["if"],
-  else: ["if"],
-};
+const SCOPED: ReadonlyArray<readonly [keyword: string, partners: readonly string[]]> = [
+  ["additionalProperties", ["properties", "patternProperties"]],
+  ["unevaluatedProperties", ["properties", "patternProperties", "additionalProperties", "allOf", "anyOf", "oneOf", "if", "then", "else", "dependentSchemas"]],
+  ["items", ["prefixItems"]],
+  ["unevaluatedItems", ["prefixItems", "items", "contains", "allOf", "anyOf", "oneOf", "if", "then", "else"]],
+  ["minContains", ["contains"]],
+  ["maxContains", ["contains"]],
+  ["then", ["if"]],
+  ["else", ["if"]],
+];
+/**
+ * `unevaluated*` beside a `$ref` already sees what the target evaluates (`$ref` applies in place),
+ * so on the sibling side the conjunction keeps its scope.
+ */
+const SEES_TARGET = new Set(["unevaluatedProperties", "unevaluatedItems"]);
+
+/** Code-unit order, independent of locale. */
+function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
 
 /** What a partner contributes to a dependent keyword's scope: its names, its length or itself. */
 function scopeOf(key: string, value: JsonValue | undefined): string {
   if (value === undefined) return "";
-  if ((key === "properties" || key === "patternProperties") && isRecord(value)) return canonicalJson(Object.keys(value).sort());
+  if ((key === "properties" || key === "patternProperties") && isRecord(value)) {
+    return canonicalJson(Object.keys(value).sort(byCodeUnit));
+  }
   if (key === "prefixItems" && Array.isArray(value)) return String(value.length);
   return canonicalJson(value);
 }
@@ -194,15 +253,16 @@ function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObj
     for (const [name, schema] of Object.entries(properties)) if (names.has(name)) setOwn(kept, name, schema);
     setOwn(result, "properties", kept);
   }
-  assertScopeKept(target, closed[0] !== null, result, ref);
-  assertScopeKept(siblings, closed[1] !== null, result, ref);
+  assertScopeKept(target, closed[0] !== null, false, result, ref);
+  assertScopeKept(siblings, closed[1] !== null, true, result, ref);
   return result;
 }
 
 /** Throws when a dependent keyword of `side` would apply to a different scope in `result`. */
-function assertScopeKept(side: JsonObject, closedHandled: boolean, result: JsonObject, ref: string): void {
-  for (const [key, partners] of Object.entries(SCOPED)) {
+function assertScopeKept(side: JsonObject, closedHandled: boolean, beside: boolean, result: JsonObject, ref: string): void {
+  for (const [key, partners] of SCOPED) {
     if (own(side, key) === undefined || (key === "additionalProperties" && closedHandled)) continue;
+    if (beside && SEES_TARGET.has(key)) continue;
     const moved = partners.find((partner) => scopeOf(partner, own(side, partner)) !== scopeOf(partner, own(result, partner)));
     if (moved !== undefined) {
       throw new DereferenceError(
@@ -212,42 +272,63 @@ function assertScopeKept(side: JsonObject, closedHandled: boolean, result: JsonO
   }
 }
 
-/** The JSON Schema types both lists allow; `integer` is the part of `number` they share. */
+/**
+ * The JSON Schema types both lists allow; `integer` is the part of `number` they share, and is
+ * dropped when `number` itself is allowed (it adds nothing).
+ */
 function bothTypes(a: JsonValue, b: JsonValue): JsonValue | undefined {
   const left = Array.isArray(a) ? a : [a];
   const right = Array.isArray(b) ? b : [b];
   const allows = (types: JsonValue[], type: JsonValue) => types.includes(type) || (type === "integer" && types.includes("number"));
-  const both = [...left.filter((type) => allows(right, type)), ...right.filter((type) => type === "integer" && !left.includes(type) && allows(left, type))];
-  if (both.length === 0) return undefined;
-  return both.length === 1 ? both[0] : both;
+  const both = new Set<JsonValue>();
+  for (const type of left) if (allows(right, type)) both.add(type);
+  for (const type of right) if (allows(left, type)) both.add(type);
+  if (both.has("number")) both.delete("integer");
+  const list = [...both];
+  if (list.length === 0) return undefined;
+  return list.length === 1 ? list[0] : list;
 }
 
-function combineKeyword(key: string, a: JsonValue, b: JsonValue, ref: string): JsonValue | undefined {
-  if (typeof a === "number" && typeof b === "number") {
-    if (LOWER_BOUNDS.has(key)) return Math.max(a, b);
-    if (UPPER_BOUNDS.has(key)) return Math.min(a, b);
-    return undefined;
-  }
-  if (key === "required" && Array.isArray(a) && Array.isArray(b)) {
-    return [...a, ...b.filter((item) => !a.includes(item))];
-  }
-  if (key === "enum" && Array.isArray(a) && Array.isArray(b)) {
-    const allowed = new Set(b.map((item) => canonicalJson(item)));
-    return a.filter((item) => allowed.has(canonicalJson(item)));
-  }
-  if (key === "type") return bothTypes(a, b);
-  if (key === "properties" && isRecord(a) && isRecord(b)) {
-    const merged: JsonObject = { ...a };
-    for (const [name, schema] of Object.entries(b)) {
-      const existing = own(merged, name);
-      let value: JsonValue = schema;
-      if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref);
-      else if (existing !== undefined && canonicalJson(existing) !== canonicalJson(schema)) return undefined;
-      setOwn(merged, name, value);
-    }
-    return merged;
-  }
+function combineBound(key: string, a: number, b: number): number | undefined {
+  if (LOWER_BOUNDS.has(key)) return Math.max(a, b);
+  if (UPPER_BOUNDS.has(key)) return Math.min(a, b);
   return undefined;
+}
+
+function combineRequired(a: JsonValue, b: JsonValue): JsonValue | undefined {
+  if (!Array.isArray(a) || !Array.isArray(b)) return undefined;
+  return [...a, ...b.filter((item) => !a.includes(item))];
+}
+
+function combineEnum(a: JsonValue, b: JsonValue): JsonValue | undefined {
+  if (!Array.isArray(a) || !Array.isArray(b)) return undefined;
+  const allowed = new Set(b.map((item) => canonicalJson(item)));
+  return a.filter((item) => allowed.has(canonicalJson(item)));
+}
+
+function combineProperties(a: JsonValue, b: JsonValue, ref: string): JsonValue | undefined {
+  if (!isRecord(a) || !isRecord(b)) return undefined;
+  const merged: JsonObject = { ...a };
+  for (const [name, schema] of Object.entries(b)) {
+    const existing = own(merged, name);
+    let value: JsonValue = schema;
+    if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref);
+    else if (existing !== undefined && canonicalJson(existing) !== canonicalJson(schema)) return undefined;
+    setOwn(merged, name, value);
+  }
+  return merged;
+}
+
+const COMBINERS = new Map<string, (a: JsonValue, b: JsonValue, ref: string) => JsonValue | undefined>([
+  ["required", combineRequired],
+  ["enum", combineEnum],
+  ["type", bothTypes],
+  ["properties", combineProperties],
+]);
+
+function combineKeyword(key: string, a: JsonValue, b: JsonValue, ref: string): JsonValue | undefined {
+  if (typeof a === "number" && typeof b === "number") return combineBound(key, a, b);
+  return COMBINERS.get(key)?.(a, b, ref);
 }
 
 function step(current: JsonValue, token: string, ref: string): JsonValue {

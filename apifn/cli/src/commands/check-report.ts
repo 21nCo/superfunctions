@@ -109,8 +109,9 @@ export function formatCheckText(report: CheckReport): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** Folds every Markdown line ending (CRLF, LF and a bare CR) to a space: one field, one line. */
 function oneLine(value: string): string {
-  return value.replaceAll(/\r?\n/g, " ");
+  return value.replaceAll(/\r\n?|\n/g, " ");
 }
 
 /** Markdown text with every character that could start markup escaped (pipes included). */

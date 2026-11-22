@@ -120,7 +120,7 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, keeping the spelling of a symlinked directory on the way, even one back to the root) is then walked in that commit's tree one component at a time, as the kernel would: a tracked symbolic link met on the way is followed inside the same tree from the directory that holds it, and `..` returns to the directory actually walked. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read with `git show <commit>:<path>`. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
+- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, keeping the spelling of a symlinked directory on the way, even one back to the root) is then walked in that commit's tree one component at a time, as the kernel would: a tracked symbolic link met on the way is followed inside the same tree from the directory that holds it, and `..` returns to the directory actually walked. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read as the object the walk found (`git cat-file blob <object>`), with replace objects disabled on every git call, and must be valid UTF-8; a file followed by `/` or `/.` in a link target is an error, not the spec. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`); one 30-second deadline covers the request and the whole response body
 - `--allow-breaking` — report breaking changes without failing
 - `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing, in the committed file's format: a file starting with `{` stays JSON, a YAML file stays the YAML `generate` writes, and a missing or unreadable file follows its suffix (`.json` is JSON)
@@ -139,7 +139,10 @@ beside a `$ref` apply together with its target (`required` lists and `properties
 keep the tighter one, `integer` is the part of `number` both allow, and a side closed by
 `additionalProperties: false` keeps only its own property names); a `$ref` that leaves the
 document, does not resolve, or has a sibling with no exact combined form, or one that would change
-what a keyword such as `additionalProperties` or `items` applies to, exits `2`.
+what a keyword such as `additionalProperties` or `items` applies to, exits `2`. Literal data
+(`example`, `default`, `const`, `enum`, schema `examples`, an Example Object's value, `x-`
+extensions) is compared as written, and a fragment inside a schema with its own `$id` resolves in
+that schema.
 
 Writes are safe: nothing is written until every exit-`2` path has passed. No output may land on a
 file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on

@@ -56,6 +56,15 @@ function kebab(name: string): string {
   return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
+/**
+ * True when `next`, the token after a value option, is that option's separate value: anything but
+ * a `--` option or a short flag, so `--spec -odd.yml` names a path like `--spec=-odd.yml` does,
+ * while `--spec --help` is a missing value.
+ */
+function isSeparateValue(next: string | undefined): next is string {
+  return next !== undefined && !next.startsWith("--") && !SHORT_FLAGS.has(next);
+}
+
 /** Reads one `--name[=value]` token (and its separate value) into `args`; returns tokens consumed. */
 function readLongOption(argv: string[], i: number, args: CheckArgs, given: Set<string>): number {
   const token = argv[i];
@@ -63,7 +72,7 @@ function readLongOption(argv: string[], i: number, args: CheckArgs, given: Set<s
   const name = kebab(eq === -1 ? token.slice(2) : token.slice(2, eq));
   if (Object.hasOwn(VALUE_OPTIONS, name)) {
     const next = argv[i + 1];
-    const separate = eq === -1 && next !== undefined && !next.startsWith("-");
+    const separate = eq === -1 && isSeparateValue(next);
     let value: string | undefined;
     if (eq !== -1) {
       value = token.slice(eq + 1);
@@ -134,8 +143,22 @@ export function parseCheckArgv(argv: string[]): CheckArgs {
 }
 
 /**
- * True when `argv` runs `apifn check`: its first positional (global options and their values
- * skipped) is `check`. The check reads its arguments before cac does, so a malformed check
+ * How many tokens after option `token` cac reads as its value before the command name: a known
+ * value option takes its separate value; a known flag or `--name=value` takes none; an unknown
+ * option takes the next token that is not an option (cac's parser gives it that value), so
+ * `--unknown operand check --help` still runs check.
+ */
+function valueTokensBeforeCommand(token: string, next: string | undefined): number {
+  if (token.includes("=")) return 0;
+  const name = kebab(token.replace(/^--?/, ""));
+  if (Object.hasOwn(VALUE_OPTIONS, name)) return isSeparateValue(next) ? 1 : 0;
+  if (Object.hasOwn(FLAGS, name) || SHORT_FLAGS.has(token)) return 0;
+  return next !== undefined && !next.startsWith("-") ? 1 : 0;
+}
+
+/**
+ * True when `argv` runs `apifn check`: its first positional (options and the values cac gives
+ * them skipped) is `check`. The check reads its arguments before cac does, so a malformed check
  * invocation is a usage error (exit 2) even when it also asks for help.
  */
 export function isCheckInvocation(argv: string[]): boolean {
@@ -143,11 +166,26 @@ export function isCheckInvocation(argv: string[]): boolean {
     const token = argv[i];
     if (token === "--") return false;
     if (!token.startsWith("-") || token === "-") return token === "check";
-    const name = kebab(token.slice(2));
-    if (token.startsWith("--") && !token.includes("=") && Object.hasOwn(VALUE_OPTIONS, name)) {
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("-")) i += 1;
-    }
+    i += valueTokensBeforeCommand(token, argv[i + 1]);
   }
   return false;
+}
+
+/**
+ * `argv` with each separate option value attached (`--spec -odd.yml` -> `--spec=-odd.yml`), for
+ * cac's own parse of a check invocation: cac would read a dash-prefixed value as short flags.
+ */
+export function attachCheckValues(argv: string[]): string[] {
+  const attached: string[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    const name = kebab(token.slice(2));
+    if (token.startsWith("--") && !token.includes("=") && Object.hasOwn(VALUE_OPTIONS, name) && isSeparateValue(argv[i + 1])) {
+      attached.push(`${token}=${argv[i + 1]}`);
+      i += 1;
+    } else {
+      attached.push(token);
+    }
+  }
+  return attached;
 }

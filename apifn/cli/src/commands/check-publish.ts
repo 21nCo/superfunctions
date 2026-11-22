@@ -43,33 +43,38 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import type { Stats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { CheckUsageError, errorMessage, foldPath, isMissingPath, nearestExistingDir, writeDestination } from "./check-paths.js";
 
-/** What a file was when the run looked at it: its identity, or absent. */
-export type FileState = { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number; mode: number } | null;
+/**
+ * What a file was when the run looked at it: its identity, or absent. Every field comes from a
+ * bigint stat: device and inode numbers above 2^53 stay distinct, and times keep nanoseconds.
+ */
+export type FileState = { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint; mode: number } | null;
 
-export function stateOf(stats: Stats): FileState {
-  return { dev: stats.dev, ino: stats.ino, size: stats.size, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs, mode: stats.mode };
+export function stateOf(stats: BigIntStats): FileState {
+  return { dev: stats.dev, ino: stats.ino, size: stats.size, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs, mode: Number(stats.mode) };
 }
+
+const BIG = { bigint: true } as const;
 
 function sameState(a: FileState, b: FileState): boolean {
   if (a === null || b === null) return a === b;
-  return sameContent(a, b) && a.ctimeMs === b.ctimeMs;
+  return sameContent(a, b) && a.ctimeNs === b.ctimeNs;
 }
 
 /** Same inode with the same size and modification time (a new link or a rename changes ctime only). */
 function sameContent(a: FileState, b: FileState): boolean {
   if (a === null || b === null) return a === b;
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
 }
 
 /** The current state of `file` (not following a final symlink). */
 function currentState(file: string): FileState {
   try {
-    return stateOf(lstatSync(file));
+    return stateOf(lstatSync(file, BIG));
   } catch (error) {
     if (isMissingPath(error)) return null;
     throw error;
@@ -79,19 +84,19 @@ function currentState(file: string): FileState {
 /** A directory bound for the run: its path and the device and inode it had when observed. */
 export interface Anchor {
   dir: string;
-  dev: number;
-  ino: number;
+  dev: bigint;
+  ino: bigint;
 }
 
 function anchorOf(dir: string): Anchor {
-  const stats = statSync(dir);
+  const stats = statSync(dir, BIG);
   return { dir, dev: stats.dev, ino: stats.ino };
 }
 
 /** True while `anchor.dir` is still the directory it was bound to. */
 function stillAnchored(anchor: Anchor): boolean {
   try {
-    const stats = statSync(anchor.dir);
+    const stats = statSync(anchor.dir, BIG);
     return stats.dev === anchor.dev && stats.ino === anchor.ino;
   } catch {
     return false;
@@ -99,8 +104,8 @@ function stillAnchored(anchor: Anchor): boolean {
 }
 
 interface Location {
-  dev: number;
-  ino: number;
+  dev: bigint;
+  ino: bigint;
   rest: string;
   leaf: FileState;
 }
@@ -113,7 +118,7 @@ function locate(file: string): Location {
   const destination = writeDestination(file);
   let leaf: FileState = null;
   try {
-    leaf = stateOf(statSync(destination));
+    leaf = stateOf(statSync(destination, BIG));
   } catch (error) {
     if (!isMissingPath(error)) throw error;
   }
@@ -197,7 +202,8 @@ interface Staged {
   bytes: Buffer;
   /** The staged file's identity (after the rename, its change time then), read through `fd`. */
   installed?: FileState;
-  createdDir?: string;
+  /** The directories this run created for the destination, deepest first, with their identities. */
+  created: Anchor[];
   backup?: string;
   backupState?: FileState;
   /** True when the backup is a hard link to the observed file (not a copy). */
@@ -219,24 +225,52 @@ function removeQuietly(file: string | undefined): void {
   }
 }
 
-/** Removes the directories mkdir created for a destination, deepest first, while empty. */
+/**
+ * Removes the directories this run created for a destination, deepest first, while empty and
+ * still the directory this run created (another process's replacement is left alone).
+ */
 function removeCreatedDirs(staged: Staged): void {
-  if (staged.createdDir === undefined) return;
-  let dir = path.dirname(staged.destination);
-  for (;;) {
+  for (const created of staged.created) {
+    if (!stillAnchored(created)) return;
     try {
-      rmdirSync(dir);
+      rmdirSync(created.dir);
     } catch {
       return;
     }
-    if (dir === staged.createdDir) return;
-    dir = path.dirname(dir);
   }
 }
 
-/** True while the directories bound for this output are still the ones the run observed. */
+/** The directories `mkdir -p` created for `dir`, from `first` (the shallowest) down, deepest first. */
+function createdChain(dir: string, first: string | undefined): Anchor[] {
+  if (first === undefined) return [];
+  const chain: Anchor[] = [];
+  for (let current = dir; ; current = path.dirname(current)) {
+    chain.push(anchorOf(current));
+    if (current === first || path.dirname(current) === current) return chain;
+  }
+}
+
+/** True when `file` still leads where it led when the run observed it (no link was retargeted). */
+function sameDestination(file: string, destination: string): boolean {
+  try {
+    return writeDestination(file) === destination;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True while the directories bound for this output are still the ones the run observed, each
+ * created directory is still the one this run made, and the path the user gave still leads to the
+ * bound destination.
+ */
 function placeHolds(staged: Staged): boolean {
-  return stillAnchored(staged.anchor) && (staged.parent === undefined || stillAnchored(staged.parent));
+  return (
+    stillAnchored(staged.anchor) &&
+    (staged.parent === undefined || stillAnchored(staged.parent)) &&
+    staged.created.every(stillAnchored) &&
+    sameDestination(staged.output.file, staged.destination)
+  );
 }
 
 function changed(staged: Staged): CheckUsageError {
@@ -245,8 +279,9 @@ function changed(staged: Staged): CheckUsageError {
 
 function stage(staged: Staged): void {
   if (!stillAnchored(staged.anchor)) throw changed(staged);
-  staged.createdDir = mkdirSync(path.dirname(staged.destination), { recursive: true });
-  if (!stillAnchored(staged.anchor)) throw changed(staged);
+  const first = mkdirSync(path.dirname(staged.destination), { recursive: true });
+  staged.created = createdChain(path.dirname(staged.destination), first);
+  if (!placeHolds(staged)) throw changed(staged);
   staged.parent = anchorOf(path.dirname(staged.destination));
   const temp = tempName(staged.destination);
   const fd = openSync(temp, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o666);
@@ -255,7 +290,7 @@ function stage(staged: Staged): void {
   if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
   writeFileSync(fd, staged.bytes);
   fsyncSync(fd);
-  staged.installed = stateOf(fstatSync(fd));
+  staged.installed = stateOf(fstatSync(fd, BIG));
 }
 
 /** True when the file open as `fd` holds exactly `bytes`. */
@@ -280,7 +315,7 @@ function stillOwned(staged: Staged): boolean {
   const installed = staged.installed as FileState;
   return (
     sameState(currentState(staged.destination), installed) &&
-    sameState(stateOf(fstatSync(staged.fd)), installed) &&
+    sameState(stateOf(fstatSync(staged.fd, BIG)), installed) &&
     holdsBytes(staged.fd, staged.bytes)
   );
 }
@@ -321,7 +356,7 @@ function install(staged: Staged, hook: PublishHook | undefined): void {
   staged.published = true;
   // The rename changes the change time of the installed inode and, by dropping a link, of the
   // backup's: record both now, the installed one through the descriptor, not by name.
-  staged.installed = stateOf(fstatSync(staged.fd as number));
+  staged.installed = stateOf(fstatSync(staged.fd as number, BIG));
   if (staged.backup !== undefined) {
     const backupNow = currentState(staged.backup);
     if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
@@ -383,6 +418,7 @@ export async function publish(
     before: output.observed,
     anchor: output.target.anchor,
     bytes: Buffer.from(output.text, "utf8"),
+    created: [],
     published: false,
   }));
   try {

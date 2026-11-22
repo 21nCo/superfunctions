@@ -8,7 +8,7 @@ import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
 import { runCheckCommand } from "./commands/check.js";
-import { isCheckInvocation, parseCheckArgv } from "./commands/check-args.js";
+import { attachCheckValues, isCheckInvocation, parseCheckArgv } from "./commands/check-args.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
@@ -500,9 +500,11 @@ export async function runCli(
 
   // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
   // check invocation that also names --help, instead of the usage error (exit 2).
+  let cacArgv = argv;
   if (isCheckInvocation(argv)) {
     try {
       parseCheckArgv(argv);
+      cacArgv = attachCheckValues(argv);
     } catch (error) {
       createOutput({ writeStdout: runOptions.stdout, writeStderr: runOptions.stderr, color: false }).error(
         error instanceof Error ? error.message : String(error)
@@ -512,7 +514,7 @@ export async function runCli(
   }
 
   try {
-    cli.parse(["node", "apifn", ...argv], { run: false });
+    cli.parse(["node", "apifn", ...cacArgv], { run: false });
     await cli.runMatchedCommand();
   } catch (error) {
     // `apifn check` reserves exit 1 for a failed contract check: a usage error exits 2.
