@@ -1,0 +1,33 @@
+apifn/cli/src/commands/check-compare.ts
+  s_c103c927d0234f::t_6da5c8aff087a9 9,52-57,103,115-175
+apifn/cli/src/commands/check-git.ts
+  s_c103c927d0234f::t_4908e5cbdd9b94 9-13,17-20,164-167,174-176,179-182,185-187,189-208,211-220,222,227-228,233-234,241-242,244
+apifn/cli/src/commands/check-parse.ts
+  s_c103c927d0234f::t_bf01e235aa8396 11-13,151,196,203-227,233,242-247
+apifn/cli/src/commands/check.ts
+  s_c103c927d0234f::t_83064d10008bfd 40,70-73,203-207,209,219-222,225-226,341-343,349-357,359,461-481,484,492,507,517,522
+apifn/cli/README.md
+  s_c103c927d0234f::t_de25e2046cfa9f 123,137-140,147-154
+apifn/cli/__tests__/check-command.test.ts
+  s_c103c927d0234f::t_4b0d68ca8c45ce 5-6,13,20,25-26,1403-1428,1754-1755,1795-2102
+apifn/cli/src/commands/check-args.ts
+  s_c103c927d0234f::t_bd35dd8c7f0086 5-6,12-13,127-132
+apifn/cli/src/commands/check-publish.ts
+  s_c103c927d0234f::t_9c819acdff4c24 7-8,10-21,29,55-61,74-95,103-106,115,129-135,143-144,151-152,154,160,165,167-170,177-196,226-234,236,238-239,247,262-279,282-284,290-294,297,306,310,316-321,325-326,328-332,335,337-338,345,350,352,356,358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f789230be175f64ccb42a0183e3ee131dec74aa7",
+  "prompts": {},
+  "sessions": {
+    "s_c103c927d0234f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "215bd5f2-7ca5-406d-a5ea-352cc5eca59f",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
