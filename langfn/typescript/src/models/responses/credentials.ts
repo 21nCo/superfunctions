@@ -29,7 +29,7 @@ export interface CredentialSource {
 
 /** fetch accepts only Latin-1 (ByteString) header values; CR, LF and NUL are never valid. */
 export function isBearerToken(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "" && /^[^\r\n\0Ā-￿]*$/.test(value);
+  return typeof value === "string" && value.trim() !== "" && /^[^\r\n\0\u0100-\uffff]*$/.test(value);
 }
 
 /**

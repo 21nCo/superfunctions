@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { ProviderAuthError, RateLimitError, ValidationError } from "../src/core/errors.js";
+import { ProviderAuthError, RateLimitError, TimeoutError, ValidationError } from "../src/core/errors.js";
 import type { StreamEvent } from "../src/core/types.js";
 import {
   chatGPTSignInProfile,
@@ -82,6 +82,19 @@ function chatgptModel(fetchImpl: typeof fetch, credentials: CredentialSource, pr
   return new ResponsesChatModel({ model: "gpt-5.1", baseUrl: OPENAI_BASE_URL, profile, credentials, fetchImpl });
 }
 
+/** Record unhandled promise rejections while a test runs. */
+function watchUnhandledRejections() {
+  const reasons: unknown[] = [];
+  const listener = (reason: unknown) => { reasons.push(reason); };
+  process.on("unhandledRejection", listener);
+  return { reasons, stop: () => process.off("unhandledRejection", listener) };
+}
+
+/** Let pending microtasks and timers run, so a dropped rejection would be reported. */
+async function settleTasks(): Promise<void> {
+  for (let turn = 0; turn < 3; turn += 1) await new Promise((resolveTurn) => setTimeout(resolveTurn, 0));
+}
+
 const ask: ResponsesChatRequest = { messages: [{ role: "user", content: "What is the capital of France?" }] };
 
 async function collect(stream: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
@@ -128,7 +141,11 @@ describe("Sign in with ChatGPT credentials", () => {
   it("requires sign-in again, without a retry, when the refresh reports the session ended", async () => {
     const server = replay(["chatgpt-signin/unauthorized.json"]);
     const { source } = oauthSource([null]);
-    await expect(chatgptModel(server.fetchImpl, source).chat(ask)).rejects.toBeInstanceOf(ReauthRequiredError);
+    const model = chatgptModel(server.fetchImpl, source);
+    const error = await model.chat(ask).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReauthRequiredError);
+    // Named for the model's provider, like the re-auth error the model raises itself.
+    expect((error as ReauthRequiredError).provider).toBe(model.provider);
     expect(server.requests).toHaveLength(1);
   });
 
@@ -180,6 +197,58 @@ describe("Sign in with ChatGPT credentials", () => {
     expect(server.fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("runs no credential step when the caller aborted before the request", async () => {
+    const unhandled = watchUnhandledRejections();
+    try {
+      const server = replay([]);
+      const { source, refresh } = oauthSource([null], ""); // No token yet: the first request would refresh.
+      const controller = new AbortController();
+      const reason = new Error("caller cancelled");
+      controller.abort(reason);
+      await expect(chatgptModel(server.fetchImpl, source).chat({ ...ask, signal: controller.signal })).rejects.toBe(reason);
+      await settleTasks();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(server.fetchImpl).not.toHaveBeenCalled();
+      expect(unhandled.reasons).toEqual([]);
+    } finally {
+      unhandled.stop();
+    }
+  });
+
+  it("stops waiting for a 401 refresh when the caller aborts, and drops its late failure", async () => {
+    const unhandled = watchUnhandledRejections();
+    try {
+      const server = replay(["chatgpt-signin/unauthorized.json"]);
+      let finishRefresh: (token: null) => void = () => {};
+      const refresh = vi.fn(() => new Promise<null>((resolveRefresh) => { finishRefresh = resolveRefresh; }));
+      const source = new OAuthTokenSource({ token: { accessToken: FIRST_TOKEN }, refresh });
+      const controller = new AbortController();
+      const pending = chatgptModel(server.fetchImpl, source).chat({ ...ask, signal: controller.signal });
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+      const reason = new Error("caller cancelled");
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
+      // The refresh then ends the session; nobody is waiting for its ReauthRequiredError.
+      finishRefresh(null);
+      await settleTasks();
+      expect(unhandled.reasons).toEqual([]);
+      expect(server.requests).toHaveLength(1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      unhandled.stop();
+    }
+  });
+
+  it("bounds a credential step that never settles by the model timeout", async () => {
+    const server = replay([]);
+    const source: CredentialSource = { getAccessToken: () => new Promise<string>(() => {}), onAuthError: () => false };
+    const model = new ResponsesChatModel({
+      model: "gpt-5.1", baseUrl: OPENAI_BASE_URL, profile: chatGPTSignInProfile(), credentials: source, fetchImpl: server.fetchImpl, timeout: 20,
+    });
+    await expect(model.chat(ask)).rejects.toBeInstanceOf(TimeoutError);
+    expect(server.fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid token from the source without sending or echoing it", async () => {
     const server = replay([]);
     const bad = "test-token\r\nx-injected: 1";
@@ -228,6 +297,22 @@ describe("quota exhaustion", () => {
     const error = await model.chat(ask).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(QuotaExceededError);
     expect(error).not.toBeInstanceOf(RateLimitError);
+  });
+
+  it.each([
+    ["a failed 200 body", "openrouter/failed-insufficient-credits.json"],
+    ["a streamed response.failed event", "openrouter/stream-failed-insufficient-credits.sse"],
+    ["a streamed error event", "openrouter/stream-error-insufficient-credits.sse"],
+  ] as const)("maps OpenRouter credit exhaustion (code 402) in %s to QuotaExceededError", async (_name, fixture) => {
+    const server = replay([fixture]);
+    const model = new ResponsesChatModel({
+      model: "gpt-5.1", baseUrl: OPENROUTER_BASE_URL, profile: openRouterProfile(), apiKey: TEST_API_KEY, fetchImpl: server.fetchImpl,
+    });
+    const run = fixture.endsWith(".sse") ? collect(model.streamChat(ask)) : model.chat(ask);
+    const error = await run.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QuotaExceededError);
+    expect(error).not.toBeInstanceOf(RateLimitError);
+    expect(server.requests).toHaveLength(1);
   });
 
   it("keeps an ordinary 429 a RateLimitError", async () => {

@@ -4,6 +4,7 @@ import {
   NotConfiguredError,
   ProviderAuthError,
   ProviderError,
+  TimeoutError,
   ValidationError,
 } from "../../core/errors.js";
 import type { CompletionRequest, CompletionResponse, StreamEvent } from "../../core/types.js";
@@ -41,7 +42,8 @@ export interface ResponsesChatModelConfig {
    * A pluggable bearer credential, such as an {@link OAuthTokenSource} for Sign in with ChatGPT,
    * asked before every request and told about a 401 (see {@link CredentialSource}). Exclusive
    * with `apiKey`, `apiKeyRef` and an Authorization header: a failed request never falls back to
-   * another credential.
+   * another credential. Each source call is bounded by `timeout` and the request's signal; none
+   * starts once the signal has aborted.
    */
   credentials?: CredentialSource;
   apiKeyRef?: string;
@@ -292,20 +294,20 @@ export class ResponsesChatModel extends ChatModel {
       if (!isUnauthorized(error)) throw error;
       firstRejection = error;
     }
-    const retry = await untilAborted(Promise.resolve().then(() => source.onAuthError({ token, error: firstRejection, attempt: 1 })), signal);
+    const retry = await this.credentialStep(() => source.onAuthError({ token, error: firstRejection, attempt: 1 }), signal);
     if (retry !== true) throw firstRejection;
     token = await this.accessToken(source, signal);
     try {
       return await this.sendOnce(payload, signal, accept, token);
     } catch (error) {
       if (!isUnauthorized(error)) throw error;
-      await untilAborted(Promise.resolve().then(() => source.onAuthError({ token, error, attempt: 2 })), signal);
+      await this.credentialStep(() => source.onAuthError({ token, error, attempt: 2 }), signal);
       throw new ReauthRequiredError(undefined, { provider: this.provider, metadata: error.metadata, cause: error });
     }
   }
 
   private async accessToken(source: CredentialSource, signal: AbortSignal | undefined): Promise<string> {
-    const token = await untilAborted(Promise.resolve().then(() => source.getAccessToken()), signal);
+    const token = await this.credentialStep(() => source.getAccessToken(), signal);
     // Checked without echoing the token.
     if (typeof token !== "string" || !token.trim()) {
       throw new NotConfiguredError(`${this.provider} credential source returned no access token`, { provider: this.provider });
@@ -314,6 +316,41 @@ export class ResponsesChatModel extends ChatModel {
       throw new ValidationError(`${this.provider} access token must be a single-line Latin-1 string`, { provider: this.provider });
     }
     return token;
+  }
+
+  /**
+   * Run a credential step (a token lookup, a refresh) under the caller's signal and the model's
+   * timeout. A signal already aborted runs no step; a step that settles after the abort or the
+   * timeout has nobody waiting for it, so its outcome is observed and dropped.
+   */
+  private async credentialStep<T>(step: () => T | Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    throwIfAborted(signal);
+    const promise = Promise.resolve().then(step);
+    promise.catch(() => undefined);
+    let stop = () => {};
+    const stopped = new Promise<never>((_, reject) => {
+      const onAbort = () => reject(signal?.reason);
+      const timer = this.timeout > 0
+        ? setTimeout(() => reject(new TimeoutError(`${this.provider} credential source timed out`, { provider: this.provider })), this.timeout)
+        : undefined;
+      signal?.addEventListener("abort", onAbort, { once: true });
+      stop = () => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+    });
+    stopped.catch(() => undefined);
+    try {
+      return await Promise.race([promise, stopped]);
+    } catch (error) {
+      // A source's re-auth signal names the model's provider, as the model's own one does.
+      if (error instanceof ReauthRequiredError && error.provider === undefined) {
+        throw new ReauthRequiredError(error.message, { provider: this.provider, metadata: error.metadata, cause: error });
+      }
+      throw error;
+    } finally {
+      stop();
+    }
   }
 
   private async sendOnce(payload: Record<string, unknown>, signal: AbortSignal | undefined, accept: string, token?: string): Promise<Response> {
@@ -407,24 +444,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 /** A 401 from the endpoint itself (not an auth error reported inside a 200 body or stream). */
 function isUnauthorized(error: unknown): error is ProviderAuthError {
   return error instanceof ProviderAuthError && !(error instanceof ReauthRequiredError) && error.metadata.status === 401;
-}
-
-/** Wait for a credential step, but stop with the abort reason as soon as the caller aborts. */
-async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return await promise;
-  throwIfAborted(signal);
-  // A step that settles after the abort has nobody waiting for it.
-  promise.catch(() => undefined);
-  let onAbort = () => {};
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-  try {
-    return await Promise.race([promise, aborted]);
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-  }
 }
 
 function discardBody(response: Response): void {

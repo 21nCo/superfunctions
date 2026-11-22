@@ -522,7 +522,7 @@ function canonicalErrorType(body: unknown): string | undefined {
 
 /**
  * Classify a provider error. Handles OpenAI (`{ error: { code: "rate_limit_exceeded" } }`),
- * OpenRouter (`{ error: { code: 429, message } }`, and a failed response's canonical
+ * OpenRouter (`{ error: { code: 429, message } }`, in-band credit exhaustion `{ error: { code: 402 } }`, and a failed response's canonical
  * `error_type`) and stream `error` events.
  */
 export function responsesError(
@@ -547,7 +547,7 @@ export function responsesError(
   if (details.status === 401) return authError();
   // An exhausted quota is not a passing rate limit, even on a 429: retrying cannot succeed
   // until the plan resets or credit is added.
-  if (details.status === 402 || isQuotaCode(code) || isQuotaCode(error?.type) || isQuotaCode(errorType)) return quotaError();
+  if (details.status === 402 || code === 402 || isQuotaCode(code) || isQuotaCode(error?.type) || isQuotaCode(errorType)) return quotaError();
   if (details.status === 429) return rateLimitError();
   // A native code that names the class decides; else OpenRouter's canonical error_type does.
   if (code === "invalid_api_key" || code === 401) return authError();
