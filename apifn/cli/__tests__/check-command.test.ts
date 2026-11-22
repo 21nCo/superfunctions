@@ -3454,6 +3454,7 @@ describe("apifn check: separation is established on the reserved destination bef
         `let handled = 0;`,
         host === "once" ? `process.once("SIGTERM", () => { handled += 1; });` : "",
         host === "sigint" ? `process.on("SIGINT", () => { handled += 1; });` : "",
+        host === "removed" ? `const gone = () => { handled += 1; }; process.on("SIGTERM", gone);` : "",
         `const code = await runCheckCommand({`,
         `  cwd: ${JSON.stringify(dir)},`,
         `  config: ${JSON.stringify(CONFIG)},`,
@@ -3470,6 +3471,7 @@ describe("apifn check: separation is established on the reserved destination bef
         `  publishHook: (step, destination) => {`,
         `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
         host === "sigint" ? `    process.kill(process.pid, "SIGINT");` : "",
+        host === "removed" ? `    process.removeListener("SIGTERM", gone);` : "",
         `    process.kill(process.pid, "SIGTERM");`,
         alias ? `    symlinkSync(destination, ${JSON.stringify(path.join(dir, SPEC))});` : "",
         `  },`,
@@ -3579,6 +3581,45 @@ describe("apifn check: separation is established on the reserved destination bef
     expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
     expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
   }, 30_000);
+
+  it.skipIf(POSIX_ONLY)("a host listener removed before the signal does not count: SIGTERM keeps its default action", async () => {
+    const { dir, code, signal, stdout } = await interrupted("installed", false, false, "removed");
+    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+  }, 30_000);
+
+  it.skipIf(POSIX_ONLY)("a host-handled signal during the stdout write awaits the write: the delivered report and the files agree", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    const onTerm = () => {};
+    process.on("SIGTERM", onTerm);
+    let delivered = "";
+    try {
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: () => {} } as unknown as Output,
+        reportPath: path.join(".apifn", "report.md"),
+        format: "json",
+        writeStdout: (text) => {
+          process.kill(process.pid, "SIGTERM");
+          // A reader that drains later.
+          return new Promise<void>((resolve) =>
+            setTimeout(() => {
+              delivered = text;
+              resolve();
+            }, 100)
+          );
+        },
+      });
+      expect(code).toBe(1);
+      expect(delivered).not.toBe("");
+      expect(await readFile(path.join(dir, ".apifn", "report.md"), "utf8")).toBe(delivered);
+    } finally {
+      process.removeListener("SIGTERM", onTerm);
+    }
+  });
 
   it("the delivered report is the commit: a guarded file edited while stdout completes does not undo it", async () => {
     const root = await fixtures();

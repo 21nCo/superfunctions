@@ -35,10 +35,11 @@
  *   (its callback, not its return), which is the commit. If a step before it fails, every
  *   published output is rolled back; bytes another writer put there are left alone and the error
  *   names the conflict.
- * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal is recorded, every
- *   output is rolled back if it came before the commit (the end of the stdout write, which a
- *   signal does not wait for), and then the signal is raised again unless another listener (an
- *   embedding host's) already had it. A run that writes no file holds no signal. When the run
+ * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal that comes before
+ *   stdout rolls every output back. One that no host listener received (it would end the process)
+ *   also does not wait for a pending stdout write: the outputs are rolled back and the signal is
+ *   raised again. A host that handles a signal during the stdout write keeps running, so the write
+ *   is awaited and commits as usual. A run that writes no file holds no signal. When the run
  *   yields to the event loop before stdout, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
@@ -602,6 +603,8 @@ function writeFailure(staged: Staged, error: unknown): CheckUsageError {
 }
 
 const HELD_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+/** The signal recorders of the publications running now. */
+const RECORDERS = new Set<unknown>();
 
 /**
  * Lets the event loop pass its poll phase once, so a held signal already raised reaches its
@@ -614,7 +617,7 @@ function nextTurn(): Promise<void> {
 interface HeldSignals {
   /** The first held signal so far. */
   received: () => NodeJS.Signals | undefined;
-  /** Settles with the first held signal. */
+  /** Settles with the first held signal no host listener received (it would end the process). */
   arrived: Promise<NodeJS.Signals>;
   release: () => void;
 }
@@ -627,23 +630,26 @@ interface HeldSignals {
 function holdSignals(): HeldSignals {
   let received: NodeJS.Signals | undefined;
   const unhandled = new Set<NodeJS.Signals>();
-  // Listeners present before the recorder: a one-shot one is gone by the time the recorder runs.
-  const hosted = new Set<NodeJS.Signals>(HELD_SIGNALS.filter((signal) => process.listenerCount(signal) > 0));
   let notify: (signal: NodeJS.Signals) => void = () => {};
   const arrived = new Promise<NodeJS.Signals>((resolve) => {
     notify = resolve;
   });
+  // The recorder runs first, so the other listeners present now are exactly those this delivery
+  // reaches (a one-shot one included); another publication's recorder is not a host's.
   const record = (signal: NodeJS.Signals) => {
     received ??= signal;
-    if (!hosted.has(signal) && process.listenerCount(signal) <= 1) unhandled.add(signal);
+    if (process.listeners(signal).some((listener) => !RECORDERS.has(listener))) return;
+    unhandled.add(signal);
     notify(signal);
   };
-  for (const signal of HELD_SIGNALS) process.on(signal, record);
+  RECORDERS.add(record);
+  for (const signal of HELD_SIGNALS) process.prependListener(signal, record);
   return {
     received: () => received,
     arrived,
     release: () => {
       for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
+      RECORDERS.delete(record);
       for (const signal of unhandled) process.kill(process.pid, signal);
     },
   };
@@ -723,7 +729,8 @@ async function publishAll(
   eachOutput(all, hook, (staged) => stage(staged, verify));
   eachOutput(all, hook, (staged) => install(staged, hook, verify));
   await checkpoint();
-  // A stdout write can wait on its reader indefinitely: a held signal does not wait for it.
+  // A stdout write can wait on its reader indefinitely: a signal that will end the process does not
+  // wait for it. A host that handles the signal keeps running, so the write is awaited.
   const outcome = await Promise.race([
     Promise.resolve()
       .then(emit)
