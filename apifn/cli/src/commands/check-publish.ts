@@ -4,11 +4,12 @@
  * - No output may land on a file the run read (spec, base file, router module, config file) or
  *   on the other output. Two paths are one file when they lead, after symlinks, to the same name
  *   in the same directory (device and inode, so a symlinked or bind-mounted directory counts), or
- *   to the same existing inode (a hard link). Names that differ only in Unicode normalization
- *   are always one name; names that differ in case are one only where that directory folds
- *   case (see foldsNames). The
- *   directory each output was
- *   observed in is bound for the run: it must still be that directory at every later step.
+ *   to the same existing inode (a hard link). Two existing files are one only by inode; a missing
+ *   name and an existing file are distinct (its lookup failed). Two missing names that differ only
+ *   in case or Unicode normalization are one where their directory folds such names, judged from
+ *   that directory's own entries (see aliasOf); with no such evidence the run refuses. The
+ *   directory each output was observed in is bound for the run: it must still be that directory
+ *   at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
  *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
  *   what this run installed is the staged file's own (rename keeps the inode), never a lookup of
@@ -119,67 +120,6 @@ function locationOf(anchor: Anchor, destination: string, leaf: FileState): Locat
   return { anchor, rest: path.relative(anchor.dir, destination), leaf };
 }
 
-/** The other-case spelling of `name` (null when it has no cased letter). */
-function otherCase(name: string): string | null {
-  const lower = name.toLowerCase();
-  const upper = name.toUpperCase();
-  if (lower === upper) return null;
-  return name === lower ? upper : lower;
-}
-
-/**
- * Whether `variant` (the other-case spelling of `file`) finds the same inode as `file`: false when
- * it is missing or another file, null when that cannot be told.
- */
-function sameEntry(file: string, variant: string): boolean | null {
-  let original: BigIntStats;
-  try {
-    original = lstatSync(file, BIG);
-  } catch {
-    return null;
-  }
-  try {
-    const found = lstatSync(variant, BIG);
-    return found.dev === original.dev && found.ino === original.ino;
-  } catch (error) {
-    return isMissingPath(error) ? false : null;
-  }
-}
-
-/**
- * True when the directory `anchor` treats names that differ only in case as one, told by looking
- * up an existing name in the other case: one of its own
- * entries, else its own name in its parent on the same device. When nothing can tell, the answer
- * is true, so a possible alias is refused rather than overwritten.
- */
-function foldsNames(anchor: Anchor): boolean {
-  let entries: string[] = [];
-  try {
-    entries = readdirSync(anchor.dir);
-  } catch {
-    // Unreadable: fall through to the parent.
-  }
-  for (const name of entries) {
-    const variant = otherCase(name);
-    if (variant === null) continue;
-    const same = sameEntry(path.join(anchor.dir, name), path.join(anchor.dir, variant));
-    if (same !== null) return same;
-  }
-  const parent = path.dirname(anchor.dir);
-  const variant = otherCase(path.basename(anchor.dir));
-  if (parent !== anchor.dir && variant !== null) {
-    try {
-      if (statSync(parent, BIG).dev === anchor.dev) {
-        const same = sameEntry(anchor.dir, path.join(parent, variant));
-        if (same !== null) return same;
-      }
-    } catch {
-      // Fall through.
-    }
-  }
-  return true;
-}
-
 function locate(file: string): Location {
   const destination = writeDestination(file);
   let leaf: FileState = null;
@@ -191,13 +131,88 @@ function locate(file: string): Location {
   return locationOf(anchorOf(nearestExistingDir(destination)), destination, leaf);
 }
 
-function sameFile(a: Location, b: Location): boolean {
-  if (a.leaf !== null && b.leaf !== null && a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino) return true;
-  if (a.anchor.dev !== b.anchor.dev || a.anchor.ino !== b.anchor.ino) return false;
-  // Names equal after NFC are one name wherever normalization folds (APFS, even case-sensitive),
-  // so they are always refused; a case-only difference is one name where the directory folds case.
-  if (a.rest.normalize("NFC") === b.rest.normalize("NFC")) return true;
-  return foldPath(a.rest) === foldPath(b.rest) && foldsNames(a.anchor);
+/** The other-case spelling of `name` (null when it has none that keeps every letter in place). */
+function otherCase(name: string): string | null {
+  const lower = name.toLowerCase();
+  const upper = name.toUpperCase();
+  if (lower === upper || lower.length !== name.length || upper.length !== name.length) return null;
+  const variant = name === lower ? upper : lower;
+  return variant.toLowerCase() === lower ? variant : null;
+}
+
+/** The other Unicode normalization of `name` (null when NFC and NFD spell it alike). */
+function otherNormalization(name: string): string | null {
+  const nfd = name.normalize("NFD");
+  if (nfd !== name) return nfd;
+  const nfc = name.normalize("NFC");
+  return nfc === name ? null : nfc;
+}
+
+/**
+ * What the directory `anchor` itself shows about whether it treats `variantOf(name)` as `name`,
+ * from its own entries (never its parent's policy, which can differ per directory):
+ * - a variant listed as an entry of its own is a distinct name, even when both share an inode
+ *   (hard links), so the directory does not fold;
+ * - a variant the listing lacks and a lookup does not find is a distinct name too;
+ * - a variant the listing lacks but a lookup finds as the same inode is a fold.
+ * Null when no entry can tell (no entry with a variant, or the directory cannot be listed).
+ */
+function foldsVariants(anchor: Anchor, variantOf: (name: string) => string | null): boolean | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(anchor.dir);
+  } catch {
+    return null;
+  }
+  const listed = new Set(entries);
+  for (const name of entries) {
+    const variant = variantOf(name);
+    if (variant === null) continue;
+    if (listed.has(variant)) return false;
+    let original: BigIntStats;
+    try {
+      original = lstatSync(path.join(anchor.dir, name), BIG);
+    } catch {
+      continue;
+    }
+    try {
+      const found = lstatSync(path.join(anchor.dir, variant), BIG);
+      // Another inode under an unlisted name appeared after the listing: no evidence either way.
+      if (found.dev === original.dev && found.ino === original.ino) return true;
+    } catch (error) {
+      if (isMissingPath(error)) return false;
+    }
+  }
+  return null;
+}
+
+/** Spelling with letter case folded and normalization kept, to tell whether two names differ in normalization. */
+function caseFolded(value: string): string {
+  return value.toUpperCase().toLowerCase();
+}
+
+type Alias = "same" | "distinct" | "unknown";
+
+/**
+ * Whether two write locations are one file:
+ * - both exist: inode identity alone decides (distinct inodes are never one file);
+ * - exactly one exists: the failed lookup of the other already shows its name reaches no file
+ *   there, so they are distinct;
+ * - both missing: one file when bound to one directory under the same name, or names that differ
+ *   only in case or Unicode normalization where that directory folds such names. The evidence
+ *   comes from that directory's own entries (foldsVariants); with none, the answer is unknown.
+ */
+function aliasOf(a: Location, b: Location): Alias {
+  if (a.leaf !== null && b.leaf !== null) return a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino ? "same" : "distinct";
+  if (a.leaf !== null || b.leaf !== null) return "distinct";
+  if (a.anchor.dev !== b.anchor.dev || a.anchor.ino !== b.anchor.ino) return "distinct";
+  if (a.rest === b.rest) return "same";
+  if (foldPath(a.rest) !== foldPath(b.rest)) return "distinct";
+  const evidence: Array<boolean | null> = [];
+  if (a.rest.normalize("NFC") !== b.rest.normalize("NFC")) evidence.push(foldsVariants(a.anchor, otherCase));
+  if (caseFolded(a.rest) !== caseFolded(b.rest)) evidence.push(foldsVariants(a.anchor, otherNormalization));
+  if (evidence.includes(false)) return "distinct";
+  return evidence.includes(null) ? "unknown" : "same";
 }
 
 export interface NamedFile {
@@ -247,9 +262,14 @@ export function observe(file: string): Observed {
 export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Observed; others: NamedFile[] }>): void {
   for (const { output, at, others } of checks) {
     const location = locationOf(at.anchor, at.destination, at.state);
-    const clash = others.find((other) => sameFile(location, locate(other.file)));
-    if (clash) {
-      throw new CheckUsageError(`${output.role} is ${clash.role}; pick another file.`);
+    for (const other of others) {
+      const alias = aliasOf(location, locate(other.file));
+      if (alias === "same") throw new CheckUsageError(`${output.role} is ${other.role}; pick another file.`);
+      if (alias === "unknown") {
+        throw new CheckUsageError(
+          `${output.role} may be ${other.role}: its names differ only in case or Unicode normalization, and ${location.anchor.dir} has no entry that shows whether it folds such names; pick another file.`,
+        );
+      }
     }
   }
 }

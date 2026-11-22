@@ -6,6 +6,7 @@ import { execFileSync, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  linkSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -52,6 +53,16 @@ const CASE_INSENSITIVE_FS = (() => {
   const dir = mkdtempSync(path.join(tmpdir(), "apifn-check-case-"));
   try {
     return existsSync(dir.toUpperCase()) && existsSync(dir.toLowerCase());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+/** True when the temp directory's filesystem treats NFC and NFD spellings as one name (APFS). */
+const NORMALIZATION_INSENSITIVE_FS = (() => {
+  const dir = mkdtempSync(path.join(tmpdir(), "apifn-check-nfc-"));
+  try {
+    writeFileSync(path.join(dir, "caf\u00e9"), "");
+    return existsSync(path.join(dir, "cafe\u0301"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -2974,11 +2985,21 @@ describe("apifn check: directory requirements and created directories survive bi
   });
 });
 
-describe("apifn check: output names compare by case only where the directory folds case (round 5)", () => {
-  it("a report whose name differs from the spec only in case is the spec exactly where the filesystem folds case", async () => {
+describe("apifn check: output aliases are judged from the destination directory's own entries (round 6)", () => {
+  const NO_EVIDENCE = "has no entry that shows whether it folds such names";
+
+  /** The base fixture with a committed (or missing) spec and the given entries in .apifn. */
+  async function destination(entries: (apifn: string) => void, spec: "committed" | "missing"): Promise<string> {
     const root = await fixtures();
     const dir = path.join(root, "base");
-    await commitSpec(dir);
+    if (spec === "committed") await commitSpec(dir);
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    entries(path.join(dir, ".apifn"));
+    return dir;
+  }
+
+  it("a report whose name differs from an existing spec only in case: the spec where the filesystem folds case, a new file where it does not", async () => {
+    const dir = await destination(() => {}, "committed");
     const before = await readFile(path.join(dir, SPEC), "utf8");
     const report = path.join(".apifn", "OpenAPI.yml");
     const result = await run(["check", "--report", report], dir);
@@ -2992,15 +3013,95 @@ describe("apifn check: output names compare by case only where the directory fol
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(before);
   });
 
-  it("names equal after NFC are one name on every filesystem, before either output is written", async () => {
+  it("an existing report and a missing spec whose names differ only in case: refused where they are one file, both kept apart where not", async () => {
+    const dir = await destination((apifn) => writeFileSync(path.join(apifn, "OpenAPI.yml"), "old report\n"), "missing");
+    const report = path.join(".apifn", "OpenAPI.yml");
+    const result = await run(["check", "--write", "--report", report], dir);
+    if (CASE_INSENSITIVE_FS) {
+      expect(result.code).toBe(2);
+      expect(await readFile(path.join(dir, report), "utf8")).toBe("old report\n");
+    } else {
+      expect(result.code).toBe(0);
+      expect(await readFile(path.join(dir, report), "utf8")).toBe(result.stdout);
+      expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
+    }
+  });
+
+  for (const write of [false, true]) {
+    it(`an empty destination directory gives no evidence: a case-variant report of the missing spec exits 2 and writes nothing${write ? " (--write)" : ""}`, async () => {
+      const dir = await destination(() => {}, "missing");
+      const args = ["check", "--report", path.join(".apifn", "OpenAPI.yml"), ...(write ? ["--write"] : [])];
+      const result = await run(args, dir);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(NO_EVIDENCE);
+      expect(result.stdout).toBe("");
+      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+    });
+  }
+
+  it("an entry whose other-case spelling a lookup finds is a fold; one it does not find is a distinct name", async () => {
+    const dir = await destination((apifn) => writeFileSync(path.join(apifn, "Probe.txt"), ""), "missing");
+    const report = path.join(".apifn", "OpenAPI.yml");
+    const result = await run(["check", "--write", "--report", report], dir);
+    if (CASE_INSENSITIVE_FS) {
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("is the spec itself");
+      expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(["Probe.txt"]);
+    } else {
+      expect(result.code).toBe(0);
+      expect(await readFile(path.join(dir, report), "utf8")).toBe(result.stdout);
+      expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
+    }
+  });
+
+  it.skipIf(CASE_INSENSITIVE_FS)("two listed entries that differ in case are distinct names even as hard links of one inode", async () => {
+    const dir = await destination((apifn) => {
+      writeFileSync(path.join(apifn, "Probe.txt"), "");
+      linkSync(path.join(apifn, "Probe.txt"), path.join(apifn, "probe.txt"));
+    }, "missing");
+    const report = path.join(".apifn", "OpenAPI.yml");
+    const result = await run(["check", "--write", "--report", report], dir);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(await readFile(path.join(dir, report), "utf8")).toBe(result.stdout);
+    expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
+  });
+
+  const NFC_SPEC = path.join(".apifn", "caf\u00e9.yml");
+  const NFD_REPORT = path.join(".apifn", "cafe\u0301.yml");
+
+  it("names equal after NFC with no entry that shows how the directory treats normalization exit 2 before either output is written", async () => {
     const root = await fixtures();
     const dir = path.join(root, "base");
-    const spec = path.join(".apifn", "caf\u00e9.yml");
-    const report = path.join(".apifn", "cafe\u0301.yml");
-    const result = await run(["check", "--spec", spec, "--write", "--report", report], dir);
+    const result = await run(["check", "--spec", NFC_SPEC, "--write", "--report", NFD_REPORT], dir);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("is the spec itself");
+    expect(result.stderr).toContain(NO_EVIDENCE);
     expect(existsSync(path.join(dir, ".apifn"))).toBe(false);
+  });
+
+  it("names equal after NFC are one file where a lookup finds an entry's other normalization, and distinct where it does not", async () => {
+    const dir = await destination((apifn) => writeFileSync(path.join(apifn, "na\u00efve.txt"), ""), "missing");
+    const result = await run(["check", "--spec", NFC_SPEC, "--write", "--report", NFD_REPORT], dir);
+    if (NORMALIZATION_INSENSITIVE_FS) {
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("is the spec itself");
+      expect(await readdir(path.join(dir, ".apifn"))).toEqual(["na\u00efve.txt"]);
+    } else {
+      expect(result.code).toBe(0);
+      expect(await readFile(path.join(dir, NFD_REPORT), "utf8")).toBe(result.stdout);
+      expect(parseYaml(await readFile(path.join(dir, NFC_SPEC), "utf8"))).toHaveProperty("openapi");
+    }
+  });
+
+  it.skipIf(NORMALIZATION_INSENSITIVE_FS)("names equal after NFC are distinct where the directory lists both spellings of an entry", async () => {
+    const dir = await destination((apifn) => {
+      writeFileSync(path.join(apifn, "na\u00efve.txt"), "");
+      writeFileSync(path.join(apifn, "nai\u0308ve.txt"), "");
+    }, "missing");
+    const result = await run(["check", "--spec", NFC_SPEC, "--write", "--report", NFD_REPORT], dir);
+    expect(result.code).toBe(0);
+    expect(await readFile(path.join(dir, NFD_REPORT), "utf8")).toBe(result.stdout);
+    expect(parseYaml(await readFile(path.join(dir, NFC_SPEC), "utf8"))).toHaveProperty("openapi");
   });
 
   it("a report naming the spec itself is still refused", async () => {
