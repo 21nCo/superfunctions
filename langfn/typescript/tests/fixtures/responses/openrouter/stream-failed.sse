@@ -1,0 +1,10 @@
+: OPENROUTER PROCESSING
+
+data: {"type":"response.created","sequence_number":0,"response":{"id":"gen-fixture-openrouter_stream_failed","object":"response","created_at":1763683200,"status":"in_progress","model":"openai/gpt-5.1","output":[],"usage":null,"store":false,"error":null,"incomplete_details":null}}
+
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_fixture_openrouter_failed","output_index":0,"content_index":0,"delta":"Partial"}
+
+: OPENROUTER PROCESSING
+
+data: {"type":"error","sequence_number":2,"error":{"code":429,"message":"Rate limit exceeded upstream."}}
+
