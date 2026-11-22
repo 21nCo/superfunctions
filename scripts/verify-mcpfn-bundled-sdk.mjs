@@ -66,7 +66,8 @@ export function bundledSdkBanner(packageRoot) {
 
 // Executable loads of the SDK: `import ... from "<sdk>"`, `export ... from
 // "<sdk>"`, `import "<sdk>"`, and `import(`, `require(` or esbuild's
-// `__require(` with an SDK specifier (MCP-13). The bundle is parsed with the
+// `__require(` with an SDK specifier, including CommonJS `module.require(`,
+// `module?.require(` and `module["require"](` (MCP-13). The bundle is parsed with the
 // TypeScript parser, so comments, strings, template text and regular
 // expressions are never mistaken for code, every ECMAScript line terminator
 // and escape is handled, and specifiers and identifiers are compared decoded.
@@ -77,6 +78,18 @@ const isSdkSpecifier = (node) =>
   (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
   (node.text === SDK_NAME || node.text.startsWith(`${SDK_NAME}/`));
 
+// The loader a call names: `require`/`__require`, or `require` read from
+// `module`; a `require` method of any other object is not a loader.
+function loaderName(callee) {
+  if (ts.isIdentifier(callee)) return SDK_LOADERS.has(ts.idText(callee)) ? ts.idText(callee) : undefined;
+  let member;
+  if (ts.isPropertyAccessExpression(callee)) member = ts.idText(callee.name);
+  else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) member = callee.argumentExpression.text;
+  if (member !== "require") return undefined;
+  const object = ts.skipParentheses(callee.expression);
+  return ts.isIdentifier(object) && ts.idText(object) === "module" ? "module.require" : undefined;
+}
+
 function sdkLoad(node) {
   if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && isSdkSpecifier(node.moduleSpecifier)) {
     return `${ts.isImportDeclaration(node) ? "import" : "export"} "${node.moduleSpecifier.text}"`;
@@ -84,8 +97,8 @@ function sdkLoad(node) {
   if (!ts.isCallExpression(node) || !isSdkSpecifier(node.arguments[0])) return undefined;
   const callee = node.expression;
   if (callee.kind === ts.SyntaxKind.ImportKeyword) return `import("${node.arguments[0].text}")`;
-  if (ts.isIdentifier(callee) && SDK_LOADERS.has(ts.idText(callee))) return `${ts.idText(callee)}("${node.arguments[0].text}")`;
-  return undefined;
+  const loader = loaderName(ts.skipParentheses(callee));
+  return loader ? `${loader}("${node.arguments[0].text}")` : undefined;
 }
 
 function externalSdkImports(file, code) {

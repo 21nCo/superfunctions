@@ -110,6 +110,10 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nvar x = 1; // note\rrequire(\"@modelcontextprotocol/sdk\");\n",
     "\nvar x = 1; // note\u2028require(\"@modelcontextprotocol/sdk\");\n",
     "\nvar x = 1; // note\u2029require(\"@modelcontextprotocol/sdk\");\n",
+    // CommonJS loads through the module object.
+    "\nvar sdk = module.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = module?.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = module[\"require\"](\"@modelcontextprotocol/sdk\");\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
@@ -118,6 +122,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\n// import(\"@modelcontextprotocol/sdk/types.js\")\n/* require(\n\"@modelcontextprotocol/sdk\") */\n",
     // Division after a function expression, a regex in a template substitution
     // or after a class body, and an escaped CRLF line continuation in a string.
+    "\nvar loader = { require: (id) => id }; loader.require(\"@modelcontextprotocol/sdk\");\n",
     "\nvar n = function () {} / 2;\nvar s = `${/[\"]/.test(\"x\")}`;\nclass C {}\n/[\"]/.test(\"z\");\nvar c = \"a\\\r\nb\";\n",
   ];
   function appendToBuiltBundle(file: string, code: string): string {
