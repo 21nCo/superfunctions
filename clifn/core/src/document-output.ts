@@ -1,6 +1,12 @@
-import type { Diagnostic } from "./diagnostics.js";
-import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
-import { createDocumentBudget, DocumentBudgetExceeded, resolveJsonMember, type DocumentBudget } from "./json-value.js";
+import { redactValue, type Diagnostic } from "./diagnostics.js";
+import { mapRunnerError, MESSAGE_TOO_LONG, RUNNER_FAILED_CODE } from "./errors.js";
+import {
+  createDocumentBudget,
+  DocumentBudgetExceeded,
+  resolveJsonMember,
+  spendText,
+  type DocumentBudget,
+} from "./json-value.js";
 import { createOutput, type OutputService, type Spinner } from "./output.js";
 
 export interface DocumentOutputOptions {
@@ -9,6 +15,11 @@ export interface DocumentOutputOptions {
   color?: boolean;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
+  /**
+   * The longest document text to print, in characters. Defaults to the engine's maximum string length, where
+   * `JSON.stringify` throws; tests pass a smaller limit. Not part of the public runner options.
+   */
+  maxLength?: number;
 }
 
 export type DocumentOutcome =
@@ -31,16 +42,28 @@ const SERIALIZATION_FAILURE = {
   error: { code: RUNNER_FAILED_CODE, message: "Unable to serialize the result document" },
 } as const;
 
+/** The text of `{"ok":true,"data":}` and of `{"ok":false,"error":{"code":,"message":}}` around their values. */
+const SUCCESS_FRAME_LENGTH = '{"ok":true,"data":}'.length;
+const FAILURE_FRAME_LENGTH = '{"ok":false,"error":{"code":,"message":}}'.length;
+/** The text `,"diagnostics":[]` adds, and `,"details":` in a diagnostic. */
+const DIAGNOSTICS_MEMBER_LENGTH = ',"diagnostics":[]'.length;
+const DETAILS_MEMBER_LENGTH = ',"details":'.length;
+
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Prints the document. Its members fit the budget, but escapes or a long data string or error message can still make
- * the text longer than the engine allows; the diagnostics and then the error details are left out before the
- * caller falls back to the serialization-failure document, so optional members never replace the outcome.
+ * Prints the document. Its members were counted against the budget without their escapes, so escapes can still make
+ * the text longer than `maxLength` or than the engine allows. The diagnostics, then the error details, are left out,
+ * then an error message is replaced by a fixed short one, before the caller falls back to the serialization-failure
+ * document, so optional members never replace the outcome. Returns undefined when even that does not fit.
  */
-function stringifyDocument(document: Record<string, unknown>, warn: (message: string) => void): string {
+function stringifyDocument(
+  document: Record<string, unknown>,
+  maxLength: number,
+  warn: (message: string) => void
+): string | undefined {
   const shed = [
     () => {
       if (document.diagnostics !== undefined) {
@@ -53,15 +76,26 @@ function stringifyDocument(document: Record<string, unknown>, warn: (message: st
         delete document.error.details;
       }
     },
+    () => {
+      if (isJsonObject(document.error)) {
+        document.error.message = MESSAGE_TOO_LONG;
+      }
+    },
   ];
-  for (const leaveOut of shed) {
+  for (let step = 0; ; step += 1) {
     try {
-      return JSON.stringify(document);
+      const text = JSON.stringify(document);
+      if (text.length <= maxLength) {
+        return text;
+      }
     } catch {
-      leaveOut();
+      // Too long for the engine: shed below.
     }
+    if (step === shed.length) {
+      return undefined;
+    }
+    shed[step]();
   }
-  return JSON.stringify(document);
 }
 
 /**
@@ -75,11 +109,12 @@ function toDocumentData(data: unknown, budget: DocumentBudget): unknown {
 }
 
 /**
- * Resolves a diagnostic to the JSON value the document prints, redacting its details on the resolved value, so a
- * `toJSON` in the details cannot bring a redacted field back. It keeps the members `createDiagnostic` keeps, but reads
- * them from the original diagnostic without cloning, so each value in the details serializes through its own `toJSON`
- * (a Date prints its ISO string, a class prints only what its serializer returns). Details that do not resolve to an
- * object or do not fit `budget` are left out, and what they spent is given back. Throws when the diagnostic is not an
+ * Resolves a diagnostic to the JSON value the document prints, redacting its details once they are completely
+ * resolved, so every getter and `toJSON` in them runs as in `JSON.stringify` and none can bring a redacted field
+ * back. It keeps the members `createDiagnostic` keeps, but reads them from the original diagnostic without cloning,
+ * so each value in the details serializes through its own `toJSON` (a Date prints its ISO string, a class prints only
+ * what its serializer returns). Details that do not resolve to an object or do not fit `budget` are left out, and
+ * what they spent is given back. Throws when the diagnostic is not an
  * object, its details throw, or its other members cannot be serialized or do not fit `budget`.
  */
 function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: DocumentBudget): Record<string, unknown> {
@@ -88,19 +123,20 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: Doc
   if (!isJsonObject(resolved)) {
     throw new TypeError("diagnostic did not resolve to an object");
   }
-  const bytesLeft = budget.bytesLeft;
+  const charsLeft = budget.charsLeft;
   let resolvedDetails: unknown;
   try {
-    resolvedDetails = resolveJsonMember("details", details || undefined, { budget, redact: true });
+    spendText(budget, DETAILS_MEMBER_LENGTH);
+    resolvedDetails = resolveJsonMember("details", details || undefined, { budget });
   } catch (error) {
     if (!(error instanceof DocumentBudgetExceeded)) {
       throw error;
     }
   }
   if (isJsonObject(resolvedDetails)) {
-    resolved.details = resolvedDetails;
+    resolved.details = redactValue(resolvedDetails);
   } else {
-    budget.bytesLeft = bytesLeft;
+    budget.charsLeft = charsLeft;
   }
   return resolved;
 }
@@ -155,19 +191,28 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   };
 
   // A diagnostic that cannot be resolved or redacted (not an object, a throwing getter or toJSON in its details, or
-  // more than is left of the document's budget) is dropped with a warning on stderr and gives back what it spent, so
-  // it cannot cost the run its result document.
+  // text longer than is left of the document's budget) is dropped with a warning on stderr and gives back what it
+  // spent, so it cannot cost the run its result document.
   const redactEach = (input: readonly Diagnostic[], budget: DocumentBudget): Array<Record<string, unknown>> => {
     const redacted: Array<Record<string, unknown>> = [];
+    const charsLeft = budget.charsLeft;
+    if (input.length > 0) {
+      budget.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
+    }
     input.forEach((diagnostic, index) => {
-      const bytesLeft = budget.bytesLeft;
+      const before = budget.charsLeft;
       try {
+        // Its separator, then its text.
+        spendText(budget, redacted.length > 0 ? 1 : 0);
         redacted.push(toDocumentDiagnostic(diagnostic, index, budget));
       } catch {
-        budget.bytesLeft = bytesLeft;
-        logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted`);
+        budget.charsLeft = before;
+        logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
       }
     });
+    if (redacted.length === 0) {
+      budget.charsLeft = charsLeft;
+    }
     return redacted;
   };
 
@@ -176,8 +221,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     finish(outcome, diagnostics) {
       let text: string | undefined;
       let exitCode = 1;
-      // One budget for the whole document: data or error details first, then each diagnostic in order.
-      const budget = createDocumentBudget();
+      // One budget for the whole document: its frame, the data or the error, then each diagnostic in order.
+      const maxLength = options.maxLength ?? createDocumentBudget().charsLeft;
+      const budget = createDocumentBudget(maxLength);
       try {
         let document: Record<string, unknown>;
         if (outcome.ok) {
@@ -189,9 +235,11 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
             dropped = collected.filter((_, index) => index !== lastJson);
           }
           warnDropped(dropped);
+          spendText(budget, SUCCESS_FRAME_LENGTH);
           document = { ok: true, data: toDocumentData(data, budget) };
           exitCode = outcome.exitCode;
         } else {
+          budget.charsLeft -= FAILURE_FRAME_LENGTH;
           const mapped = mapRunnerError(outcome.error, budget);
           warnDropped(collected);
           document = { ok: false, error: mapped.error };
@@ -203,7 +251,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           document.diagnostics = redacted;
         }
         // Every member is already a plain JSON value, so this runs no user code and drops or restores nothing.
-        text = stringifyDocument(document, logs.warn);
+        text = stringifyDocument(document, maxLength, logs.warn);
       } catch {
         text = undefined;
       }

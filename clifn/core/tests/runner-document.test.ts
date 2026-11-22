@@ -1,12 +1,12 @@
+import { constants } from "node:buffer";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
-import { Worker } from "node:worker_threads";
-import { build } from "esbuild";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
-import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, resolveJsonMember, VALUE_BYTES } from "../src/json-value.js";
+import type { Diagnostic } from "../src/diagnostics.js";
+import { createDocumentOutput, type DocumentOutcome } from "../src/document-output.js";
+import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, resolveJsonMember } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 type Action = (options: Record<string, never>, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
@@ -866,6 +866,8 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
   });
 
   it("serializes in one pass: a one-shot getter beside a projection loop runs once and the loop is cut at the cap", async () => {
+    // Each projection carries the same 76 KiB string: 64 of them fit the document, so the run keeps its outcome.
+    const text = "t".repeat(76 * 1024);
     const created: Array<{ getter: number; toJSON: number }> = [];
     const make = () => {
       const counts = { getter: 0, toJSON: 0 };
@@ -873,7 +875,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       const loop = {
         toJSON(this: object) {
           counts.toJSON += 1;
-          return { again: this, password: "test-password" };
+          return { again: this, password: "test-password", text };
         },
       };
       return {
@@ -887,7 +889,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         loop,
       };
     };
-    const printed = (password: string) => ({ once: "once", loop: nest((inner) => ({ again: inner, password })) });
+    const printed = (password: string) => ({ once: "once", loop: nest((inner) => ({ again: inner, password, text })) });
 
     await expectEveryMember(make, printed("test-password"), printed("[REDACTED]"));
     // Data, the json() fallback, and the diagnostic and error details of the failing run: four values, each read once.
@@ -1032,13 +1034,13 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(reads.count).toBe(0);
   });
 
-  it("rejects an array longer than the result may hold before reading it, yet keeps long shared strings", async () => {
+  it("rejects an array whose text cannot fit the engine's string limit before reading it", async () => {
     const reads = { count: 0 };
-    // Its JSON text would be short enough for JSON.stringify; it only has more items than the walk may build.
+    // 2n + 1 characters (brackets, separators and one per item) are more than the engine can print.
     const tooMany = new Proxy([], {
       get: (target, key) => {
         if (key === "length") {
-          return Math.floor(createDocumentBudget().bytesLeft / VALUE_BYTES) + 1;
+          return Math.ceil(constants.MAX_STRING_LENGTH / 2);
         }
         if (typeof key === "string" && /^\d+$/.test(key)) {
           reads.count += 1;
@@ -1054,25 +1056,29 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
     });
     expect(reads.count).toBe(0);
-
-    // 512 rows share one 1 MiB string under a redacted key: nothing is copied, so the details and diagnostic stay.
-    const secret = "x".repeat(2 ** 20);
-    const rows = () => Array.from({ length: 512 }, () => ({ password: secret }));
-    const redactedRows = Array.from({ length: 512 }, () => ({ password: "[REDACTED]" }));
-    const failure = await runDocument((_options, ctx) => {
-      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { rows: rows() } });
-      throw Object.assign(new Error("rows"), { code: "ROWS", exitCode: 9, details: { rows: rows() } });
-    });
-    expect(failure.exitCode).toBe(9);
-    expect(parseOnlyDocument(failure)).toEqual({
-      ok: false,
-      error: { code: "ROWS", message: "rows", details: { rows: redactedRows } },
-      diagnostics: [{ code: "D", severity: "info", message: "m", details: { rows: redactedRows } }],
-    });
   });
 
-  it("keeps the outcome when optional members outgrow the document, and redacts without reading sensitive values", async () => {
-    // 64 nested projections of a shared 9 MiB headline need more text than one document may hold.
+  it("prints large ordinary data byte for byte as JSON.stringify does", { timeout: 60_000 }, async () => {
+    const dense = Array.from({ length: 5_000_000 }, (_, index) => index % 10);
+    const denseResult = await runDocument(() => ({ data: dense }));
+    expect(denseResult.exitCode).toBe(0);
+    expect(denseResult.writes).toBe(1);
+    expect(denseResult.out).toBe(`${JSON.stringify({ ok: true, data: dense })}\n`);
+
+    const wide = Object.fromEntries(
+      Array.from({ length: 200_000 }, (_, id) => [
+        `key-${id}`,
+        { id, name: `name-${id}`, tags: ["a", "b"], on: id % 2 === 0, none: null, ratio: id / 7 },
+      ])
+    );
+    const wideResult = await runDocument(() => ({ data: wide }));
+    expect(wideResult.exitCode).toBe(0);
+    expect(wideResult.writes).toBe(1);
+    expect(wideResult.out).toBe(`${JSON.stringify({ ok: true, data: wide })}\n`);
+  });
+
+  it("keeps the outcome when optional members outgrow the document", async () => {
+    // 64 nested projections of a shared 9 MiB headline are more text than the engine can print.
     const headline = "h".repeat(9 * 2 ** 20);
     const loop = () => ({
       toJSON(this: object) {
@@ -1103,156 +1109,71 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       ],
     });
 
-    // Strings and keys count their length and quotes, read without scanning them.
-    for (const text of ['plain', 'q"b\\', "\u0000\u001f\n\t", "\ud83d\ude00", "\ud800x\udc00", "end\ud83d"]) {
+    // Strings and keys count their length and quotes, read without scanning them: the exact text unless escaped.
+    for (const text of ["plain", 'q"b\\', "\u0000\u001f\n\t", "😀", "\ud800x\udc00", "end\ud83d"]) {
       const budget = createDocumentBudget();
-      const before = budget.bytesLeft;
-      // An array and its item, or an object and its member, cost VALUE_BYTES each; the string adds its JSON length.
+      const before = budget.charsLeft;
       expect(resolveJsonMember("k", [text], { budget })).toEqual([text]);
-      expect(before - budget.bytesLeft).toBe(2 * VALUE_BYTES + text.length + 2);
+      expect(before - budget.charsLeft).toBe(text.length + 4);
       expect(resolveJsonMember("k", { [text]: 1 }, { budget })).toEqual({ [text]: 1 });
-      expect(before - budget.bytesLeft).toBe(4 * VALUE_BYTES + 2 * (text.length + 2));
+      expect(before - budget.charsLeft).toBe(2 * text.length + 10);
     }
-
-    // A sensitive member is "[REDACTED]" unless JSON drops it; nothing under it runs.
-    const throwing = { toJSON: () => ({ inner: { toJSON: () => { throw new Error("read"); } } }) };
-    const redacted = await runDocument(() => {
-      throw Object.assign(new Error("r"), { code: "RD", details: { token: throwing, password: undefined, ok: 1 } });
-    });
-    expect(parseOnlyDocument(redacted)).toEqual({
-      ok: false,
-      error: { code: "RD", message: "r", details: { token: "[REDACTED]", ok: 1 } },
-    });
   });
 
-  it("prints one document for oversized values and diagnostics in a worker with a 32 MiB heap", async () => {
-    const bundle = await build({
-      entryPoints: [fileURLToPath(new URL("../src/runner.ts", import.meta.url))],
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      write: false,
-      logLevel: "silent",
-    });
-    const dir = mkdtempSync(join(tmpdir(), "clifn-document-worker-"));
-    const runner = join(dir, "runner.mjs");
-    writeFileSync(runner, bundle.outputFiles[0].text);
-    const source = `
-      const { parentPort } = require("node:worker_threads");
-      const generated = (depth) => ({ toJSON: () => (depth > 0 ? Array.from({ length: 64 }, () => generated(depth - 1)) : 0) });
-      const items = (length, item) => new Proxy([], { get: (t, k) => (k === "length" ? length : typeof k === "string" && /^\\d+$/.test(k) ? item : Reflect.get(t, k)) });
-      const cases = {
-        sparse: () => ({ data: new Array(120_000_000) }),
-        proxy: () => ({ data: items(2e8, 0) }),
-        generated: () => ({ data: generated(5) }),
-        strings: () => ({ data: Array.from({ length: 5000 }, () => ({ toJSON: () => "x".repeat(2 ** 20) })) }),
-        // 12 MiB of NUL characters: more than the budget by length alone, so never scanned or escaped.
-        escaped: () => {
-          const nul = "\\u0000".repeat(12 * 2 ** 20);
-          return {
-            data: { ok: 1 },
-            diagnostics: [{ code: "NUL", severity: "info", message: "nul", details: { toJSON: () => ({ nul }) } }],
-            error: Object.assign(new Error("nul"), { code: "EXPECTED", exitCode: 7, details: { nul } }),
-          };
+  it("resolves error and diagnostic details completely before redacting them", async () => {
+    const make = (counts: { inner: number; visible: number }) => {
+      const state = { value: "before" };
+      const details = {
+        token: {
+          get inner() {
+            counts.inner += 1;
+            state.value = "after";
+            return "test-token-value";
+          },
         },
-        diagnostics: () => ({
-          data: { ok: 1 },
-          diagnostics: Array.from({ length: 60 }, (_, i) => ({ code: "D", severity: "info", message: String(i), details: { list: items(20_000, {}) } })),
-        }),
-        // Seven retained 20 MiB ropes as details: rejected by length, never flattened, and the diagnostics stay.
-        ropes: () => {
-          const ropes = Array.from({ length: 7 }, (_, i) => ("x" + i).repeat(10 * 2 ** 20));
-          return {
-            data: 1,
-            diagnostics: ropes.map((rope, i) => ({ code: "ROPE", severity: "info", message: String(i), details: { toJSON: () => rope } })),
-            nested: ropes.map((rope) => ({ code: "NESTED", severity: "info", message: "n", details: { rope } })),
-          };
-        },
-        // Twenty distinct 4 MiB ropes, each within the budget, in details that resolve to an array: never flattened.
-        smallRopes: () => ({
-          data: 1,
-          diagnostics: Array.from({ length: 20 }, (_, i) => {
-            const rope = ("y" + i).repeat(2 * 2 ** 20);
-            return { code: "SMALL", severity: "info", message: String(i), details: { toJSON: () => [rope] } };
-          }),
-        }),
-        records: () => ({ data: Array.from({ length: 1000 }, (_, id) => ({ id, tags: ["a"] })) }),
       };
-      import(${JSON.stringify(pathToFileURL(runner).href)}).then(async ({ runAction }) => {
-        const results = {};
-        for (const [name, make] of Object.entries(cases)) {
-          const out = [];
-          const exitCode = await runAction((_options, ctx) => {
-            const result = make();
-            if (result.error) {
-              for (const diagnostic of result.diagnostics) ctx.diagnostics.add(diagnostic);
-              throw result.error;
-            }
-            if (result.nested) {
-              return { data: result.data, diagnostics: [...result.diagnostics, ...result.nested] };
-            }
-            return result;
-          }, {}, {
-            mode: "json", jsonStyle: "document", color: false,
-            stdout: (text) => out.push(text), stderr: () => {},
-          });
-          results[name] = { exitCode, out };
-        }
-        parentPort.postMessage(results);
+      Object.defineProperty(details, "visible", {
+        enumerable: true,
+        get() {
+          counts.visible += 1;
+          return state.value;
+        },
       });
-    `;
-    const worker = new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 32 } });
-    try {
-      const results = await new Promise<Record<string, { exitCode: number; out: string[] }>>((resolve, reject) => {
-        worker.once("message", resolve);
-        worker.once("error", reject);
-        worker.once("exit", (code) => reject(new Error(`worker exited with ${code}`)));
-      });
-      const documentOf = (name: string) =>
-        parseOnlyDocument({ out: results[name].out.join(""), writes: results[name].out.length });
-      for (const name of ["sparse", "proxy", "generated", "strings"]) {
-        expect(results[name].exitCode).toBe(1);
-        expect(documentOf(name)).toEqual({
-          ok: false,
-          error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
-        });
-      }
-      expect(results.escaped.exitCode).toBe(7);
-      expect(documentOf("escaped")).toEqual({
-        ok: false,
-        error: { code: "EXPECTED", message: "nul" },
-        diagnostics: [{ code: "NUL", severity: "info", message: "nul" }],
-      });
-      expect(results.ropes.exitCode).toBe(0);
-      expect(documentOf("ropes")).toEqual({
-        ok: true,
-        data: 1,
-        diagnostics: [
-          ...Array.from({ length: 7 }, (_, i) => ({ code: "ROPE", severity: "info", message: String(i) })),
-          ...Array.from({ length: 7 }, () => ({ code: "NESTED", severity: "info", message: "n" })),
-        ],
-      });
-      expect(results.smallRopes.exitCode).toBe(0);
-      expect(documentOf("smallRopes")).toEqual({
-        ok: true,
-        data: 1,
-        diagnostics: Array.from({ length: 20 }, (_, i) => ({ code: "SMALL", severity: "info", message: String(i) })),
-      });
-      // The diagnostics share one budget: details that no longer fit are left out, and the outcome stands.
-      const withDiagnostics = documentOf("diagnostics");
-      expect(results.diagnostics.exitCode).toBe(0);
-      expect(withDiagnostics.data).toEqual({ ok: 1 });
-      const printed = withDiagnostics.diagnostics as Array<Record<string, unknown>>;
-      expect(printed.map((diagnostic) => diagnostic.message)).toEqual(Array.from({ length: 60 }, (_, i) => String(i)));
-      const withDetails = printed.filter((diagnostic) => "details" in diagnostic).length;
-      expect(withDetails).toBeGreaterThan(0);
-      expect(withDetails).toBeLessThan(60);
-      expect(results.records.exitCode).toBe(0);
-      expect((documentOf("records").data as unknown[]).length).toBe(1000);
-    } finally {
-      await worker.terminate();
-      rmSync(dir, { recursive: true, force: true });
-    }
+      return details;
+    };
+    const nativeCounts = { inner: 0, visible: 0 };
+    expect(JSON.parse(JSON.stringify(make(nativeCounts)))).toEqual({
+      token: { inner: "test-token-value" },
+      visible: "after",
+    });
+    expect(nativeCounts).toEqual({ inner: 1, visible: 1 });
+
+    const redacted = { token: "[REDACTED]", visible: "after" };
+    const counts = { inner: 0, visible: 0 };
+    const failure = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: make(counts) });
+      throw Object.assign(new Error("failed"), { code: "BAD_THING", exitCode: 5, details: make(counts) });
+    });
+    expect(failure.exitCode).toBe(5);
+    expect(failure.out).not.toContain("test-token-value");
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "BAD_THING", message: "failed", details: redacted },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: redacted }],
+    });
+    expect(counts).toEqual({ inner: 2, visible: 2 });
+
+    const returnedCounts = { inner: 0, visible: 0 };
+    const success = await runDocument(() => ({
+      data: null,
+      diagnostics: [{ code: "R", severity: "warning", message: "r", details: make(returnedCounts) }],
+    }));
+    expect(parseOnlyDocument(success)).toEqual({
+      ok: true,
+      data: null,
+      diagnostics: [{ code: "R", severity: "warning", message: "r", details: redacted }],
+    });
+    expect(returnedCounts).toEqual({ inner: 1, visible: 1 });
   });
 
   it("reads array items without descriptor lookups, as JSON.stringify does", async () => {
@@ -1389,6 +1310,108 @@ describe("document mode number boxes and throughput", () => {
     expect((parseOnlyDocument(result).data as unknown[]).length).toBe(100_000);
     // Generous: the walker that probed slots by throwing took about 90 times native; this one takes about 3.
     expect(documentMs).toBeLessThan(nativeMs * 25 + 500);
+  });
+});
+
+describe("document mode text limit", () => {
+  const failureDocument = {
+    ok: false,
+    error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+  };
+  const finishWith = (maxLength: number, outcome: DocumentOutcome, diagnostics: Diagnostic[] = []) => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const output = createDocumentOutput({
+      maxLength,
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+    });
+    const exitCode = output.finish(outcome, diagnostics);
+    return { exitCode, out: stdout.join(""), writes: stdout.length, stderr: stderr.join("") };
+  };
+  const warnings = (stderr: string) =>
+    stderrLines(stderr)
+      .filter((line) => line.level === "warn")
+      .map((line) => line.message);
+
+  it("prints data whose text is exactly the limit and fails one character below it", () => {
+    const data = { list: [1, 22, 333], name: "plain", on: true, none: null, nested: { ratio: 0.5 } };
+    const text = JSON.stringify({ ok: true, data });
+    const fits = finishWith(text.length, { ok: true, data, exitCode: 0 });
+    expect(fits.exitCode).toBe(0);
+    expect(fits.out).toBe(`${text}\n`);
+
+    const over = finishWith(text.length - 1, { ok: true, data, exitCode: 0 });
+    expect(over.exitCode).toBe(1);
+    expect(parseOnlyDocument(over)).toEqual(failureDocument);
+  });
+
+  it("fails data whose escapes make the printed text longer than the limit", () => {
+    // 22 characters are counted, 122 would be printed.
+    const data = "\u0000".repeat(20);
+    const result = finishWith(100, { ok: true, data, exitCode: 0 });
+    expect(result.exitCode).toBe(1);
+    expect(parseOnlyDocument(result)).toEqual(failureDocument);
+  });
+
+  it("omits error details over the limit and keeps the code, message and exit code", () => {
+    for (const details of [{ text: "x".repeat(300) }, { text: "\u0000".repeat(30) }]) {
+      const error = Object.assign(new Error("big"), { code: "BIG", exitCode: 6, details });
+      const result = finishWith(150, { ok: false, error });
+      expect(result.exitCode).toBe(6);
+      expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "BIG", message: "big" } });
+    }
+  });
+
+  it("drops diagnostics or their details over the limit with a warning and keeps the outcome", () => {
+    const diagnostics: Diagnostic[] = [
+      { code: "LONG", severity: "info", message: "x".repeat(300) },
+      { code: "DETAILS", severity: "info", message: "d", details: { text: "y".repeat(300) } },
+      { code: "SMALL", severity: "info", message: "s", details: { n: 1 } },
+    ];
+    const result = finishWith(200, { ok: true, data: { done: true }, exitCode: 3 }, diagnostics);
+    expect(result.exitCode).toBe(3);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: { done: true },
+      diagnostics: [
+        { code: "DETAILS", severity: "info", message: "d" },
+        { code: "SMALL", severity: "info", message: "s", details: { n: 1 } },
+      ],
+    });
+    expect(warnings(result.stderr)).toEqual([
+      "diagnostic 0 was dropped from the result document: it could not be redacted or printed",
+    ]);
+
+    // Escapes only show in the final text: then every diagnostic is left out, and the outcome still stands.
+    const escaped = finishWith(150, { ok: true, data: { done: true }, exitCode: 0 }, [
+      { code: "NUL", severity: "info", message: "\u0000".repeat(30) },
+    ]);
+    expect(escaped.exitCode).toBe(0);
+    expect(parseOnlyDocument(escaped)).toEqual({ ok: true, data: { done: true } });
+    expect(warnings(escaped.stderr)).toEqual([
+      "diagnostics were dropped from the result document: it was too long to print",
+    ]);
+  });
+
+  it("replaces an error message over the limit with a fixed one and keeps the code and exit code", () => {
+    const tooLong = { code: "LONG", message: "The error message was too long to print." };
+    const longError = Object.assign(new Error("m".repeat(500)), { code: "LONG", exitCode: 4 });
+    const long = finishWith(200, { ok: false, error: longError });
+    expect(long.exitCode).toBe(4);
+    expect(parseOnlyDocument(long)).toEqual({ ok: false, error: tooLong });
+
+    // Counted short enough, printed too long: the diagnostics, the details and then the message are shed.
+    const escaped = finishWith(
+      150,
+      {
+        ok: false,
+        error: Object.assign(new Error("\u0000".repeat(30)), { code: "LONG", exitCode: 4, details: { n: 1 } }),
+      },
+      [{ code: "D", severity: "info", message: "d" }]
+    );
+    expect(escaped.exitCode).toBe(4);
+    expect(parseOnlyDocument(escaped)).toEqual({ ok: false, error: tooLong });
   });
 });
 
