@@ -77,7 +77,7 @@ export async function runDocumentFixture(
   const pipe = { isTTY: false };
 
   const exitCode = await runAction(
-    async (options: DocumentFixtureInput, ctx) => {
+    (options: DocumentFixtureInput, ctx) => {
       ctx.output.info(`status for ${options.name} from ${parser}`);
       if (options.fail) {
         throw Object.assign(new Error(`${options.name} is unavailable`), { code: "STATUS_UNAVAILABLE", exitCode: 3 });

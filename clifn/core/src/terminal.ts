@@ -101,16 +101,17 @@ export interface ResolveRunnerOptionsContext {
 }
 
 export type ResolvedRunnerOptions = Required<
-  Pick<RunnerOptions, "mode" | "color" | "quiet" | "verbose" | "nonInteractive">
+  Pick<RunnerOptions, "mode" | "color" | "stderrColor" | "quiet" | "verbose" | "nonInteractive">
 > &
   Pick<RunnerOptions, "jsonStyle">;
 
 /**
  * Turns parsed global flags and the terminal rules (D9) into runner options: `--json` selects `mode: 'json'` with
  * `jsonStyle: 'document'`, `--yes`/`--non-interactive` or a non-interactive terminal sets `nonInteractive`, and
- * `--color`/`--no-color` override the colour rules. Text mode writes `debug`, `info`, `success` and `warn` to stdout
- * with the same colour setting, so automatic colour there also needs stdout to be a TTY; a piped stdout never gets
- * ANSI escapes unless `--color` or `FORCE_COLOR` asks for them. Parser-agnostic: pass the flags your parser produced.
+ * `--color`/`--no-color` override the colour rules. Colour is set per stream: `stderrColor` (errors and the spinner)
+ * follows the rules, while `color` (text-mode `debug`, `info`, `success` and `warn` on stdout) also needs stdout to be
+ * a TTY, so a piped stdout never gets ANSI escapes unless `--color` or `FORCE_COLOR` asks for them while a terminal
+ * stderr keeps its colour. Parser-agnostic: pass the flags your parser produced.
  */
 export function resolveRunnerOptions(
   flags: RunnerFlags = {},
@@ -128,8 +129,10 @@ export function resolveRunnerOptions(
   const stdout = "stdout" in streams ? streams.stdout : process.stdout;
   const env = context.env ?? process.env;
   let color = terminal.color;
+  let stderrColor = terminal.color;
   if (flags.color === true || flags.color === false) {
     color = flags.color;
+    stderrColor = flags.color;
   } else if (!json && colorFromEnv(env) === undefined) {
     color = terminal.color && isTty(stdout);
   }
@@ -138,6 +141,7 @@ export function resolveRunnerOptions(
     mode: json ? "json" : "text",
     ...(json ? { jsonStyle: "document" as const } : {}),
     color,
+    stderrColor,
     quiet: flags.quiet === true,
     verbose: flags.verbose === true,
     nonInteractive: flags.yes === true || flags.nonInteractive === true || !terminal.interactive,

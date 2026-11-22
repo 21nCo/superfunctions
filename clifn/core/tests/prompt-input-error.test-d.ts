@@ -19,10 +19,15 @@ describe("PromptInputError types", () => {
   });
 
   it("rejects a non-default code type without its runtime code, and unknown codes", () => {
-    // @ts-expect-error the instance would carry CLIFN_PROMPT_INPUT_ERROR at runtime
-    new PromptInputError<"CLIFN_PROMPT_NON_INTERACTIVE">("no tty");
-    // @ts-expect-error not a prompt error code
-    new PromptInputError("bad input", "SOMETHING_ELSE");
+    // Type-only probes: the functions are never called, so no error object is built.
+    const missingRuntimeCode = () =>
+      // @ts-expect-error the instance would carry CLIFN_PROMPT_INPUT_ERROR at runtime
+      new PromptInputError<"CLIFN_PROMPT_NON_INTERACTIVE">("no tty");
+    const unknownCode = () =>
+      // @ts-expect-error not a prompt error code
+      new PromptInputError("bad input", "SOMETHING_ELSE");
+    expectTypeOf(missingRuntimeCode).toBeFunction();
+    expectTypeOf(unknownCode).toBeFunction();
   });
 
   it("narrows an unknown caught value to the code union, not any", async () => {

@@ -1,4 +1,4 @@
-import { runAction } from "../src/runner.js";
+import { runAction, type RunnerOptions } from "../src/runner.js";
 import { resolveRunnerOptions, resolveTerminal, type ResolveTerminalOptions } from "../src/terminal.js";
 
 const tty = { isTTY: true };
@@ -49,6 +49,7 @@ describe("resolveRunnerOptions", () => {
     expect(resolveRunnerOptions({}, { env: {}, streams })).toEqual({
       mode: "text",
       color: true,
+      stderrColor: true,
       quiet: false,
       verbose: false,
       nonInteractive: false,
@@ -60,6 +61,7 @@ describe("resolveRunnerOptions", () => {
       mode: "json",
       jsonStyle: "document",
       color: true,
+      stderrColor: true,
       quiet: true,
       verbose: true,
       nonInteractive: true,
@@ -96,6 +98,7 @@ describe("resolveRunnerOptions", () => {
     expect(resolveRunnerOptions(flags, { env: {}, streams })).toEqual({
       mode: "text",
       color: true,
+      stderrColor: true,
       quiet: false,
       verbose: false,
       nonInteractive: false,
@@ -105,13 +108,13 @@ describe("resolveRunnerOptions", () => {
   it("treats explicitly undefined streams as non-TTY rather than the process streams", () => {
     expect(
       resolveRunnerOptions({}, { env: {}, streams: { stdin: undefined, stdout: undefined, stderr: undefined } })
-    ).toMatchObject({ color: false, nonInteractive: true });
+    ).toMatchObject({ color: false, stderrColor: false, nonInteractive: true });
   });
 
   const ANSI = /\u001b\[/;
   const mixed = { stdin: tty, stdout: pipe, stderr: tty };
 
-  async function runText(options: ReturnType<typeof resolveRunnerOptions>) {
+  async function runText(options: RunnerOptions) {
     let stdout = "";
     let stderr = "";
     await runAction(
@@ -127,13 +130,22 @@ describe("resolveRunnerOptions", () => {
     return { stdout, stderr };
   }
 
-  it("keeps ANSI off a piped stdout in text mode when stderr is a TTY", async () => {
+  it("keeps ANSI off a piped stdout in text mode and colours a TTY stderr", async () => {
     const options = resolveRunnerOptions({}, { env: {}, streams: mixed });
-    expect(options.color).toBe(false);
+    expect(options).toMatchObject({ color: false, stderrColor: true });
     const result = await runText(options);
     expect(result.stdout).toContain("info line");
     expect(result.stdout).not.toMatch(ANSI);
     expect(result.stderr).toContain("error line");
+    expect(result.stderr).toMatch(ANSI);
+  });
+
+  it("leaves both streams plain when stderr is piped, as colour follows stderr (D9)", async () => {
+    const options = resolveRunnerOptions({}, { env: {}, streams: { stdin: tty, stdout: tty, stderr: pipe } });
+    expect(options).toMatchObject({ color: false, stderrColor: false });
+    const result = await runText(options);
+    expect(result.stdout).not.toMatch(ANSI);
+    expect(result.stderr).not.toMatch(ANSI);
   });
 
   it.each<[string, boolean | "auto" | undefined, Record<string, string>, typeof mixed, boolean]>([
@@ -144,7 +156,7 @@ describe("resolveRunnerOptions", () => {
     ["--no-color on TTYs", false, {}, { ...mixed, stdout: tty }, false],
   ])("uses colour in text mode for %s as the flags and environment decide", async (_label, color, env, streams, expected) => {
     const options = resolveRunnerOptions({ color }, { env, streams });
-    expect(options.color).toBe(expected);
+    expect(options).toMatchObject({ color: expected, stderrColor: expected });
     const result = await runText(options);
     expect(ANSI.test(result.stdout)).toBe(expected);
     expect(ANSI.test(result.stderr)).toBe(expected);
@@ -156,13 +168,22 @@ describe("resolveRunnerOptions", () => {
 
   it("leaves the runner's own colour default unchanged when its options are not resolved", async () => {
     let stdout = "";
+    let stderr = "";
     await runAction(
       async (_options, ctx) => {
         ctx.output.info("plain default");
+        ctx.output.error("plain error");
       },
       {},
-      { stdout: (text) => (stdout += text), stderr: () => {} }
+      { stdout: (text) => (stdout += text), stderr: (text) => (stderr += text) }
     );
     expect(stdout).toMatch(ANSI);
+    expect(stderr).toMatch(ANSI);
+  });
+
+  it("gives stderr the runner's color when stderrColor is not set", async () => {
+    const result = await runText({ mode: "text", color: false });
+    expect(result.stdout).not.toMatch(ANSI);
+    expect(result.stderr).not.toMatch(ANSI);
   });
 });

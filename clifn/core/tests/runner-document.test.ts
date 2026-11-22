@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
@@ -608,6 +609,172 @@ describe("document mode resolves each member to JSON once", () => {
     expect(parseOnlyDocument(failure)).toEqual({
       ok: false,
       error: { code: "CYCLIC", message: "cyclic", details: printed },
+    });
+  });
+});
+
+describe("document mode follows JSON.stringify for arrays, toJSON calls and boxed primitives", () => {
+  /** Native JSON for a fresh copy of the same input, built by `make`. */
+  const native = (make: () => unknown) => JSON.parse(JSON.stringify({ data: make() })).data as unknown;
+
+  it.each<[string, () => unknown[]]>([
+    [
+      "an append",
+      () => {
+        const list: unknown[] = [];
+        list.push({ toJSON: () => (list.push(2), 1) });
+        return list;
+      },
+    ],
+    [
+      "a shrink",
+      () => {
+        const list: unknown[] = [];
+        list.push({ toJSON: () => ((list.length = 1), 1) }, 2);
+        return list;
+      },
+    ],
+    [
+      "repeated growth",
+      () => {
+        let calls = 0;
+        const list: unknown[] = [];
+        const grow = { toJSON: () => (calls < 10_000 && (calls += 1, list.push(grow)), 1) };
+        list.push(grow);
+        return list;
+      },
+    ],
+  ])("reads an array's length once when a toJSON causes %s", async (_label, make) => {
+    const expected = native(make);
+    const data = await runDocument(() => ({ data: make() }));
+    expect(parseOnlyDocument(data)).toEqual({ ok: true, data: expected });
+
+    const failure = await runDocument(() => {
+      throw Object.assign(new Error("resized"), { code: "RESIZED", details: { list: make() } });
+    });
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "RESIZED", message: "resized", details: { list: expected } },
+    });
+  });
+
+  /** Two nodes that point at each other and serialize as fresh shallow copies of themselves. */
+  const projectedCycle = () => {
+    const parent: Record<string, unknown> = { name: "parent", password: "test-password" };
+    const child: Record<string, unknown> = { name: "child", parent };
+    parent.child = child;
+    for (const node of [parent, child]) {
+      node.toJSON = function (this: Record<string, unknown>) {
+        return { ...this, toJSON: undefined };
+      };
+    }
+    return parent;
+  };
+  const printedCycle = { name: "parent", password: "[REDACTED]", child: { name: "child", parent: "[Circular]" } };
+
+  it("marks a cycle through toJSON projections in data, the json() fallback, diagnostics and error details", async () => {
+    // data is not redacted; diagnostics and error details are.
+    const returned = await runDocument(() => ({ data: projectedCycle() }));
+    expect(parseOnlyDocument(returned)).toEqual({
+      ok: true,
+      data: { ...printedCycle, password: "test-password" },
+    });
+
+    const fallback = await runDocument((_options, ctx) => {
+      ctx.output.json(projectedCycle());
+    });
+    expect((parseOnlyDocument(fallback).data as Record<string, unknown>).child).toEqual({
+      name: "child",
+      parent: "[Circular]",
+    });
+
+    const diagnostics = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: projectedCycle() });
+      return { data: null, diagnostics: [{ code: "R", severity: "warn", message: "r", details: projectedCycle() }] };
+    });
+    expect(parseOnlyDocument(diagnostics).diagnostics).toEqual([
+      { code: "D", severity: "info", message: "m", details: printedCycle },
+      { code: "R", severity: "warn", message: "r", details: printedCycle },
+    ]);
+
+    const failure = await runDocument(() => {
+      throw Object.assign(new Error("cyclic"), { code: "CYCLIC", exitCode: 4, details: projectedCycle() });
+    });
+    expect(failure.exitCode).toBe(4);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "CYCLIC", message: "cyclic", details: printedCycle },
+    });
+  });
+
+  it("does not mark repeated acyclic references, with or without toJSON, as circular", async () => {
+    const plain = { v: 1 };
+    const projected = { v: 2, toJSON: (key: string) => ({ v: 2, key }) };
+    const result = await runDocument(() => ({ data: { a: plain, b: plain, c: projected, d: [projected, projected] } }));
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: { a: { v: 1 }, b: { v: 1 }, c: { v: 2, key: "c" }, d: [{ v: 2, key: "0" }, { v: 2, key: "1" }] },
+    });
+  });
+
+  it("calls a toJSON that has its own call property with its receiver and member key", async () => {
+    const holder = <T extends object>(target: T) => {
+      const serializer = function (this: unknown, key: string) {
+        return { key, receiver: this === target };
+      };
+      Object.defineProperty(serializer, "call", { value: 1 });
+      return Object.assign(target, { toJSON: serializer });
+    };
+
+    const object = await runDocument(() => ({ data: holder({}) }));
+    expect(parseOnlyDocument(object)).toEqual({ ok: true, data: { key: "data", receiver: true } });
+
+    const fn = await runDocument(() => ({ data: holder(() => undefined) }));
+    expect(parseOnlyDocument(fn)).toEqual({ ok: true, data: { key: "data", receiver: true } });
+
+    const nested = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { inner: holder({}) } });
+      throw Object.assign(new Error("failed"), { code: "FAILED", details: { list: [holder({})] } });
+    });
+    expect(parseOnlyDocument(nested)).toEqual({
+      ok: false,
+      error: { code: "FAILED", message: "failed", details: { list: [{ key: "0", receiver: true }] } },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: { inner: { key: "inner", receiver: true } } }],
+    });
+  });
+
+  it("unwraps boxed primitives by internal slot, as JSON.stringify does, in this and another realm", async () => {
+    const make = () => {
+      const numberLike = Object.assign(Object.create(Number.prototype) as object, { a: 1 });
+      const stringLike = Object.assign(Object.create(String.prototype) as object, { b: "x" });
+      const booleanLike = Object.assign(Object.create(Boolean.prototype) as object, { c: true });
+      const falseBox = Object.assign(new Boolean(false), { valueOf: () => true });
+      const numberBox = Object.assign(new Number(1), { valueOf: () => 7 });
+      const stringBox = Object.assign(new String("s"), { toString: () => "shown" });
+      return {
+        boxes: [new Number(5), new String("s"), new Boolean(false), new Boolean(true)],
+        foreign: runInNewContext("[new Number(5), new String('s'), new Boolean(false)]") as unknown[],
+        lookalikes: [numberLike, stringLike, booleanLike],
+        overridden: [falseBox, numberBox, stringBox],
+      };
+    };
+    const expected = {
+      boxes: [5, "s", false, true],
+      foreign: [5, "s", false],
+      lookalikes: [{ a: 1 }, { b: "x" }, { c: true }],
+      overridden: [false, 7, "shown"],
+    };
+    expect(native(make)).toEqual(expected);
+
+    const result = await runDocument(() => ({ data: { ...make(), bigint: Object(3n) as object } }));
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: { ...expected, bigint: "3" } });
+
+    const failure = await runDocument(() => {
+      throw Object.assign(new Error("boxed"), { code: "BOXED", details: make() });
+    });
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "BOXED", message: "boxed", details: expected },
     });
   });
 });

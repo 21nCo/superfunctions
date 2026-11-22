@@ -18,6 +18,11 @@ export interface OutputOptions {
   quiet?: boolean;
   verbose?: boolean;
   color?: boolean;
+  /**
+   * Colour for what goes to stderr (`error` messages and the spinner) when it differs from stdout, as when stdout is
+   * piped and stderr is a terminal. Defaults to `color`.
+   */
+  stderrColor?: boolean;
   mode?: OutputMode;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
@@ -195,6 +200,7 @@ export function createOutput(options: OutputOptions = {}): OutputService {
   const quiet = options.quiet ?? false;
   const verbose = options.verbose ?? false;
   const color = options.color ?? true;
+  const stderrColor = options.stderrColor ?? color;
   const stdout = options.stdout ?? ((text: string) => process.stdout.write(text));
   const stderr = options.stderr ?? ((text: string) => process.stderr.write(text));
 
@@ -211,7 +217,7 @@ export function createOutput(options: OutputOptions = {}): OutputService {
       return;
     }
 
-    writer(formatTextMessage(color, level, message, details));
+    writer(formatTextMessage(level === "error" ? stderrColor : color, level, message, details));
   };
 
   return {
@@ -250,7 +256,7 @@ export function createOutput(options: OutputOptions = {}): OutputService {
       if (quiet || mode === "json") {
         return createNoopSpinner();
       }
-      return createSpinner(message, stderr, color);
+      return createSpinner(message, stderr, stderrColor);
     },
   };
 }

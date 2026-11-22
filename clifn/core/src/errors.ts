@@ -32,7 +32,7 @@ export interface MappedRunnerError {
 }
 
 function describeMessageCode(code: string): string {
-  return Object.prototype.hasOwnProperty.call(MESSAGE_CODE_DESCRIPTIONS, code)
+  return Object.hasOwn(MESSAGE_CODE_DESCRIPTIONS, code)
     ? MESSAGE_CODE_DESCRIPTIONS[code]
     : UNLISTED_MESSAGE_CODE_DESCRIPTION;
 }

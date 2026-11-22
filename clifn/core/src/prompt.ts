@@ -84,7 +84,7 @@ function resolveChoice<T extends string>(value: string, choices: readonly T[]): 
 }
 
 function hasOwn(target: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(target, key);
+  return Object.hasOwn(target, key);
 }
 
 function resolveAsk(options: PromptOptions | undefined): AskFn {
