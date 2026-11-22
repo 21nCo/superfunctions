@@ -1,15 +1,31 @@
 import readline from "node:readline";
 
-export class PromptInputError extends Error {
-  readonly code = "CLIFN_PROMPT_INPUT_ERROR";
+export type PromptErrorCode = "CLIFN_PROMPT_INPUT_ERROR" | "CLIFN_PROMPT_NON_INTERACTIVE";
 
-  constructor(message: string) {
+export class PromptInputError<TCode extends PromptErrorCode = "CLIFN_PROMPT_INPUT_ERROR"> extends Error {
+  readonly code: TCode;
+
+  constructor(message: string, code?: TCode) {
     super(message);
     this.name = "PromptInputError";
+    this.code = code ?? ("CLIFN_PROMPT_INPUT_ERROR" as TCode);
   }
 }
 
 type AskFn = (label: string) => Promise<string>;
+
+export interface PromptOptions {
+  /** Answers each question; replaces the default readline asker. */
+  ask?: AskFn;
+  /**
+   * Where the default asker writes the question. When an options object names `output` or `nonInteractive`, the
+   * default is stderr, so stdout stays free for results; otherwise (including `createPrompt()` and `prompt`) it
+   * is stdout, as before.
+   */
+  output?: NodeJS.WritableStream;
+  /** Every prompt throws `PromptInputError` with code `CLIFN_PROMPT_NON_INTERACTIVE` instead of asking. */
+  nonInteractive?: boolean;
+}
 
 export interface PromptApi {
   select<T extends string>(label: string, choices: T[]): Promise<T>;
@@ -24,11 +40,11 @@ function assertChoices(choices: readonly string[]): void {
   }
 }
 
-function createReadlineAskFn(): AskFn {
+function createReadlineAskFn(output?: NodeJS.WritableStream): AskFn {
   return async (label: string): Promise<string> => {
     const rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout,
+      output: output ?? process.stdout,
     });
     return await new Promise((resolve) => {
       rl.question(label, (answer) => {
@@ -52,8 +68,54 @@ function resolveChoice<T extends string>(value: string, choices: readonly T[]): 
   throw new PromptInputError(`invalid selection "${value}"`);
 }
 
-export function createPrompt(options?: { ask?: AskFn }): PromptApi {
-  const ask = options?.ask ?? createReadlineAskFn();
+function hasOwn(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
+function resolveAsk(options: PromptOptions | undefined): AskFn {
+  if (options === undefined || options === null) {
+    return createReadlineAskFn();
+  }
+
+  if (options.ask) {
+    return options.ask;
+  }
+
+  // Only the options introduced with `output` and `nonInteractive` move the question to stderr (D2).
+  const newForm = hasOwn(options, "output") || hasOwn(options, "nonInteractive");
+  return createReadlineAskFn(options.output ?? (newForm ? process.stderr : undefined));
+}
+
+function nonInteractiveError(label: string): PromptInputError<"CLIFN_PROMPT_NON_INTERACTIVE"> {
+  return new PromptInputError(
+    `prompt "${label}" needs an answer, but prompts are non-interactive`,
+    "CLIFN_PROMPT_NON_INTERACTIVE"
+  );
+}
+
+function createNonInteractivePrompt(): PromptApi {
+  return {
+    async select(label) {
+      throw nonInteractiveError(label);
+    },
+    async multiSelect(label) {
+      throw nonInteractiveError(label);
+    },
+    async text(label) {
+      throw nonInteractiveError(label);
+    },
+    async confirm(label) {
+      throw nonInteractiveError(label);
+    },
+  };
+}
+
+export function createPrompt(options?: PromptOptions): PromptApi {
+  if (options?.nonInteractive === true) {
+    return createNonInteractivePrompt();
+  }
+
+  const ask = resolveAsk(options);
 
   return {
     async select<T extends string>(label: string, choices: T[]): Promise<T> {

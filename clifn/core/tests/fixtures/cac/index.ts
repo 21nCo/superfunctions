@@ -1,11 +1,12 @@
 import { cac } from "cac";
-import { runParsedFixture, type ParserFixtureResult } from "../shared.js";
+import { runDocumentFixture, runParsedFixture, type ParserFixtureResult } from "../shared.js";
 
 interface CacOptions {
   name?: string;
   quiet?: boolean;
   verbose?: boolean;
   json?: boolean;
+  fail?: boolean;
 }
 
 export async function runCacFixture(argv: string[]): Promise<ParserFixtureResult> {
@@ -25,6 +26,14 @@ export async function runCacFixture(argv: string[]): Promise<ParserFixtureResult
     .option("--name <name>", "Name to greet")
     .action(async (options: CacOptions) => {
       pending = runParsedFixture("cac", options.name ?? "world", options);
+      return pending;
+    });
+  cli
+    .command("status")
+    .option("--name <name>", "Name to report")
+    .option("--fail", "Fail the status check")
+    .action(async (options: CacOptions) => {
+      pending = runDocumentFixture("cac", { name: options.name ?? "world", fail: options.fail }, options);
       return pending;
     });
 

@@ -1,4 +1,5 @@
 import type { Diagnostic } from "./diagnostics.js";
+import { createDocumentOutput, type DocumentOutcome, type DocumentOutput } from "./document-output.js";
 import { createExec, type ExecService } from "./exec.js";
 import { createOutput, type OutputService } from "./output.js";
 import { createScaffold, type ScaffoldService } from "./scaffold.js";
@@ -10,6 +11,14 @@ export interface RunnerDiagnosticsSink {
 
 export type RunnerDiagnosticsListener = (diagnostics: readonly Diagnostic[]) => void;
 
+/**
+ * How `mode: 'json'` writes output. `'lines'` (the default) prints each message and value as its own JSON line.
+ * `'document'` prints exactly one result document on stdout (D8), `{"ok":true,"data":...}` or
+ * `{"ok":false,"error":{"code","message","details"?}}` with `diagnostics` when there are any, and writes every
+ * message as a JSON line to stderr. It has no effect in text mode.
+ */
+export type RunnerJsonStyle = "lines" | "document";
+
 export interface RunnerOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -17,6 +26,7 @@ export interface RunnerOptions {
   verbose?: boolean;
   color?: boolean;
   mode?: "text" | "json";
+  jsonStyle?: RunnerJsonStyle;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
   nonInteractive?: boolean;
@@ -77,14 +87,26 @@ export async function runAction<TOptions>(
   const diagnostics: Diagnostic[] = [];
   const baseExec = createExec();
   const baseScaffold = createScaffold();
-  const output = createOutput({
-    quiet: runnerOptions.quiet,
-    verbose: runnerOptions.verbose,
-    color: runnerOptions.color,
-    mode: runnerOptions.mode,
-    stdout: runnerOptions.stdout,
-    stderr: runnerOptions.stderr,
-  });
+  const document =
+    runnerOptions.mode === "json" && runnerOptions.jsonStyle === "document"
+      ? createDocumentOutput({
+          quiet: runnerOptions.quiet,
+          verbose: runnerOptions.verbose,
+          color: runnerOptions.color,
+          stdout: runnerOptions.stdout ?? ((text: string) => process.stdout.write(text)),
+          stderr: runnerOptions.stderr ?? ((text: string) => process.stderr.write(text)),
+        })
+      : undefined;
+  const output =
+    document?.service ??
+    createOutput({
+      quiet: runnerOptions.quiet,
+      verbose: runnerOptions.verbose,
+      color: runnerOptions.color,
+      mode: runnerOptions.mode,
+      stdout: runnerOptions.stdout,
+      stderr: runnerOptions.stderr,
+    });
 
   const diagnosticSink: RunnerDiagnosticsSink = {
     add(input: Diagnostic) {
@@ -120,6 +142,10 @@ export async function runAction<TOptions>(
     nonInteractive: runnerOptions.nonInteractive ?? false,
   };
 
+  if (document) {
+    return await runDocumentAction(action, options, ctx, runnerOptions, document);
+  }
+
   try {
     const result = await action(options, ctx);
 
@@ -150,4 +176,34 @@ export async function runAction<TOptions>(
 
     return 1;
   }
+}
+
+async function runDocumentAction<TOptions>(
+  action: (options: TOptions, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult,
+  options: TOptions,
+  ctx: RunnerContext,
+  runnerOptions: RunnerOptions,
+  document: DocumentOutput
+): Promise<number> {
+  let outcome: DocumentOutcome;
+
+  try {
+    const result = await action(options, ctx);
+
+    for (const diagnostic of result?.diagnostics ?? []) {
+      ctx.diagnostics.add(diagnostic);
+    }
+
+    runnerOptions.onDiagnostics?.(ctx.diagnostics.list());
+    outcome = { ok: true, data: result?.data, exitCode: normalizeExitCode(result?.exitCode) };
+  } catch (error) {
+    try {
+      runnerOptions.onDiagnostics?.(ctx.diagnostics.list());
+    } catch {
+      // The document reports the action's failure; a failing listener does not replace it or suppress the document.
+    }
+    outcome = { ok: false, error };
+  }
+
+  return document.finish(outcome, ctx.diagnostics.list());
 }
