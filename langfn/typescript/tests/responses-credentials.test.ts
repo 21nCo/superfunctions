@@ -26,6 +26,7 @@ import {
   type OAuthRefreshContext,
   type ResponsesChatRequest,
 } from "../src/models/responses/index.js";
+import { responsesError } from "../src/models/responses/response.js";
 import { retryAsync } from "../src/utils/retry.js";
 import { toHttpErrorPayload } from "../src/http/validation.js";
 
@@ -316,6 +317,36 @@ describe("quota exhaustion", () => {
     expect(server.requests).toHaveLength(1);
   });
 
+  it.each([
+    ["an HTTP 429 body", "chatgpt-signin/subscription-usage-limit.json"],
+    ["a streamed response.failed event", "chatgpt-signin/stream-subscription-usage-limit.sse"],
+  ] as const)("maps the plan limit subscription_sharing_usage_limit_exceeded in %s to QuotaExceededError, sent once", async (_name, fixture) => {
+    const server = replay([fixture, fixture, fixture]);
+    const { source, refresh } = oauthSource([]);
+    const calls = spied(source);
+    const model = chatgptModel(server.fetchImpl, calls);
+
+    // Default retry policy apart from its delays: a quota is final, so it sends once.
+    const error = await retryAsync(() => model.chat(ask), { baseDelayMs: 0, maxDelayMs: 0 }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QuotaExceededError);
+    expect(error).not.toBeInstanceOf(RateLimitError);
+    expect(error).toMatchObject({ metadata: { providerCode: "subscription_sharing_usage_limit_exceeded" } });
+    expect(server.requests).toHaveLength(1);
+    expect(calls.getAccessToken).toHaveBeenCalledTimes(1);
+    expect(calls.onAuthError).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("keeps the temporary subscription_sharing_usage_unavailable apart from quota exhaustion", () => {
+    const error = { code: "subscription_sharing_usage_unavailable", message: "Usage is temporarily unavailable." };
+    expect(responsesError("chatgpt-signin", { status: 429, body: { error } })).toBeInstanceOf(RateLimitError);
+    for (const status of [503, 200, undefined]) {
+      const classified = responsesError("chatgpt-signin", { status, body: { error } });
+      expect(classified).not.toBeInstanceOf(QuotaExceededError);
+      expect(classified).not.toBeInstanceOf(RateLimitError);
+    }
+  });
+
   it("keeps an ordinary 429 a RateLimitError", async () => {
     const server = replay(["openai/rate-limit.json"]);
     const model = new ResponsesChatModel({
@@ -380,13 +411,63 @@ describe("chatgpt-signin profile", () => {
       .toThrow(RouteRestrictionError);
   });
 
+  it("sends system messages as developer items in order on chat() and streamChat(); other profiles keep system", async () => {
+    const messages: ResponsesChatRequest["messages"] = [
+      { role: "system", content: "Answer briefly." },
+      { role: "user", content: "What is the capital of France?" },
+      { role: "system", content: "Name the city only." },
+    ];
+    const expected = [
+      { type: "message", role: "developer", content: "Answer briefly." },
+      { type: "message", role: "user", content: "What is the capital of France?" },
+      { type: "message", role: "developer", content: "Name the city only." },
+    ];
+    const server = replay(["chatgpt-signin/stream-text.sse", "chatgpt-signin/stream-text.sse"]);
+    const model = chatgptModel(server.fetchImpl, oauthSource([]).source);
+    await model.chat({ messages });
+    await collect(model.streamChat({ messages }));
+    expect(server.requests.map((request) => request.body.input)).toEqual([expected, expected]);
+
+    for (const profile of [openAIProfile(), openRouterProfile()]) {
+      const payload = buildResponsesPayload({ messages }, { model: "gpt-5.1", profile, stream: false });
+      expect(payload.input).toEqual(expected.map((item) => (item.role === "developer" ? { ...item, role: "system" } : item)));
+    }
+  });
+
+  it.each([
+    ["the request", { maxOutputTokens: 64 }, undefined, "maxOutputTokens"],
+    ["the model config", {}, 64, "maxOutputTokens (model default)"],
+  ] as const)("rejects an output cap set in %s before any credential or request", async (_source, extra, modelCap, option) => {
+    const server = replay([]);
+    const getAccessToken = vi.fn(() => FIRST_TOKEN);
+    const model = new ResponsesChatModel({
+      model: "gpt-5.1", baseUrl: OPENAI_BASE_URL, profile: chatGPTSignInProfile(), maxOutputTokens: modelCap,
+      credentials: { getAccessToken, onAuthError: () => false }, fetchImpl: server.fetchImpl,
+    });
+    const request = { ...ask, ...extra };
+    for (const run of [() => model.chat(request), () => collect(model.streamChat(request))]) {
+      const error = await run().catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(RouteRestrictionError);
+      expect(error).toMatchObject({ code: "ROUTE_RESTRICTION", restriction: "outputTokenCap", option, profileId: "chatgpt-signin" });
+    }
+    expect(getAccessToken).not.toHaveBeenCalled();
+    expect(server.fetchImpl).not.toHaveBeenCalled();
+
+    for (const profile of [openAIProfile(), openRouterProfile()]) {
+      const payload = buildResponsesPayload(request, { model: "gpt-5.1", profile, stream: false, maxOutputTokens: modelCap });
+      expect(payload.max_output_tokens).toBe(64);
+    }
+  });
+
   it("keeps its route limits fixed", () => {
-    for (const field of ["streaming", "streamOnly", "restrictions", "id"]) {
+    for (const field of ["streaming", "streamOnly", "restrictions", "systemRole", "id"]) {
       expect(() => chatGPTSignInProfile({ [field]: false } as never)).toThrow(ValidationError);
     }
     expect(chatGPTSignInProfile({ vision: false })).toMatchObject({ id: "chatgpt-signin", vision: false, streaming: true, streamOnly: true });
     expect(() => defineCapabilityProfile({ ...openAIProfile(), streaming: false, streamOnly: true })).toThrow(ValidationError);
     expect(() => defineCapabilityProfile({ ...openAIProfile(), restrictions: ["hostedHistory", "anything" as never] })).toThrow(ValidationError);
+    expect(() => defineCapabilityProfile({ ...openAIProfile(), systemRole: "assistant" as never })).toThrow(ValidationError);
+    expect(chatGPTSignInProfile()).toMatchObject({ systemRole: "developer", restrictions: expect.arrayContaining(["outputTokenCap"]) });
   });
 });
 

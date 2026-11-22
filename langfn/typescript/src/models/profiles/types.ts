@@ -40,22 +40,31 @@ export interface CapabilityProfile {
   readonly streamOnly?: boolean;
   /** Request options the route refuses; each fails with {@link RouteRestrictionError} before sending. */
   readonly restrictions?: readonly RouteRestriction[];
+  /**
+   * Input role for system messages: `developer` on a route that refuses `role: "system"` items.
+   * Text and order are kept. Defaults to `system`.
+   */
+  readonly systemRole?: SystemRole;
 }
+
+export type SystemRole = "system" | "developer";
 
 /**
  * A request option a route refuses:
  * - `hostedTools`: provider-hosted tools (any tool, tool choice or replayed item that is not a function tool);
  * - `previousResponseId`: `previous_response_id` continuation from a stored response;
  * - `background`: background mode;
- * - `hostedHistory`: server-side history (`conversation`, or `store` other than false).
+ * - `hostedHistory`: server-side history (`conversation`, or `store` other than false);
+ * - `outputTokenCap`: `max_output_tokens`, whether set per request or as the model default.
  */
-export type RouteRestriction = "hostedTools" | "previousResponseId" | "background" | "hostedHistory";
+export type RouteRestriction = "hostedTools" | "previousResponseId" | "background" | "hostedHistory" | "outputTokenCap";
 
 export const ROUTE_RESTRICTIONS: readonly RouteRestriction[] = Object.freeze([
   "hostedTools",
   "previousResponseId",
   "background",
   "hostedHistory",
+  "outputTokenCap",
 ]);
 
 export type CapabilityProfileOverrides = Partial<Omit<CapabilityProfile, "id">>;
@@ -128,6 +137,9 @@ export function defineCapabilityProfile(profile: CapabilityProfile): CapabilityP
     throw new ValidationError("Capability profile streamOnly needs the streaming capability");
   }
   const restrictions = routeRestrictions(profile.restrictions);
+  if (profile.systemRole !== undefined && profile.systemRole !== "system" && profile.systemRole !== "developer") {
+    throw new ValidationError('Capability profile systemRole must be "system" or "developer"');
+  }
   return Object.freeze({
     id: profile.id,
     tools: profile.tools,
@@ -139,6 +151,7 @@ export function defineCapabilityProfile(profile: CapabilityProfile): CapabilityP
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     ...(profile.streamOnly ? { streamOnly: true } : {}),
     ...(restrictions.length ? { restrictions: Object.freeze(restrictions) } : {}),
+    ...(profile.systemRole === "developer" ? { systemRole: "developer" as const } : {}),
   });
 }
 

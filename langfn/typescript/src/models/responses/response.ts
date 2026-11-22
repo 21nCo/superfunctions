@@ -500,8 +500,17 @@ export function parseResponsesResponse(
   };
 }
 
-/** Codes and types that report an exhausted plan or credit quota rather than a passing rate limit. */
-const QUOTA_CODES = new Set(["insufficient_quota", "usage_limit_reached", "usage_not_included"]);
+/**
+ * Codes and types that report an exhausted plan or credit quota rather than a passing rate limit.
+ * `subscription_sharing_usage_limit_exceeded` is the Sign in with ChatGPT plan limit; its sibling
+ * `subscription_sharing_usage_unavailable` is a temporary failure and is deliberately absent.
+ */
+const QUOTA_CODES = new Set([
+  "insufficient_quota",
+  "usage_limit_reached",
+  "usage_not_included",
+  "subscription_sharing_usage_limit_exceeded",
+]);
 
 function isQuotaCode(value: unknown): boolean {
   return typeof value === "string" && QUOTA_CODES.has(value);

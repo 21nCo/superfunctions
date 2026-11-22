@@ -6,15 +6,16 @@ export type ChatGPTSignInProfileOverrides = Partial<
   Pick<CapabilityProfile, "tools" | "structuredOutput" | "vision" | "reasoning" | "contextWindow" | "maxOutputTokens">
 >;
 
-const FIXED = ["id", "streaming", "streamOnly", "restrictions"] as const;
+const FIXED = ["id", "streaming", "streamOnly", "restrictions", "systemRole"] as const;
 
 /**
  * Profile for Sign in with ChatGPT: a ChatGPT plan's OAuth access token on the public
  * `/v1/responses` route (use {@link OPENAI_BASE_URL} with an {@link OAuthTokenSource}). The
- * route's preview limits are fixed: every request streams with `store: false`, and hosted tools,
- * `previous_response_id`, background mode and server-side history fail with
- * {@link RouteRestrictionError} before any request. Function tools, structured output, vision
- * and reasoning may be narrowed for the chosen model.
+ * route's preview limits are fixed: every request streams with `store: false`, system messages
+ * are sent as `developer` items, and hosted tools, `previous_response_id`, background mode,
+ * server-side history and `max_output_tokens` fail with {@link RouteRestrictionError} before any
+ * request. Function tools, structured output, vision and reasoning may be narrowed for the
+ * chosen model.
  *
  * A failed plan request never falls back to an API key: the caller switches explicitly.
  */
@@ -35,5 +36,6 @@ export function chatGPTSignInProfile(overrides: ChatGPTSignInProfileOverrides = 
     streaming: true,
     streamOnly: true,
     restrictions: ROUTE_RESTRICTIONS,
+    systemRole: "developer",
   });
 }

@@ -88,6 +88,11 @@ export function buildResponsesPayload(
 
   const maxOutputTokens = request.maxOutputTokens ?? options.maxOutputTokens;
   if (maxOutputTokens !== undefined) {
+    // A route that refuses the cap fails here rather than drop a limit the caller set.
+    if (profile.restrictions?.includes("outputTokenCap")) {
+      const option = request.maxOutputTokens !== undefined ? "maxOutputTokens" : "maxOutputTokens (model default)";
+      throw new RouteRestrictionError("outputTokenCap", option, profile.id);
+    }
     if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) {
       throw new ValidationError("maxOutputTokens must be a positive safe integer");
     }
@@ -188,7 +193,7 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
     }
     switch (message.role) {
       case "system":
-        input.push({ type: "message", role: "system", content: message.content });
+        input.push({ type: "message", role: profile.systemRole ?? "system", content: message.content });
         return;
       case "user":
         input.push(toUserItem(message, index, profile));
