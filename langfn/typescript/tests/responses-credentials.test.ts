@@ -27,6 +27,7 @@ import {
   type ResponsesChatRequest,
 } from "../src/models/responses/index.js";
 import { retryAsync } from "../src/utils/retry.js";
+import { toHttpErrorPayload } from "../src/http/validation.js";
 
 const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/responses");
 // Obviously fake credentials; no value here is a real token.
@@ -424,5 +425,31 @@ describe("credential configuration", () => {
     expect(viaSource.requests).toHaveLength(2);
     expect(source.onAuthError).toHaveBeenCalledTimes(1);
     expect(() => new StaticApiKeySource(" ")).toThrow(ValidationError);
+  });
+});
+
+describe("HTTP error boundary", () => {
+  it("keeps quota at 429, re-auth at 401 and refused route options at 400", async () => {
+    const quota = await new ResponsesChatModel({
+      model: "gpt-5.1",
+      baseUrl: OPENAI_BASE_URL,
+      profile: openAIProfile(),
+      apiKey: TEST_API_KEY,
+      fetchImpl: replay(["openai/insufficient-quota.json"]).fetchImpl,
+    }).chat(ask).catch((caught: unknown) => caught);
+    expect(quota).toBeInstanceOf(QuotaExceededError);
+    expect(toHttpErrorPayload(quota)).toMatchObject({ status: 429, code: "PROVIDER_QUOTA_EXCEEDED" });
+
+    const reauthServer = replay(["chatgpt-signin/unauthorized.json", "chatgpt-signin/unauthorized.json"]);
+    const reauth = await chatgptModel(reauthServer.fetchImpl, oauthSource([SECOND_TOKEN]).source).chat(ask).catch((caught: unknown) => caught);
+    expect(reauth).toBeInstanceOf(ReauthRequiredError);
+    expect(toHttpErrorPayload(reauth)).toMatchObject({ status: 401, code: "PROVIDER_REAUTH_REQUIRED" });
+
+    const routeServer = replay([]);
+    const refused = await chatgptModel(routeServer.fetchImpl, oauthSource([]).source)
+      .chat({ ...ask, background: true } as unknown as ResponsesChatRequest)
+      .catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(RouteRestrictionError);
+    expect(toHttpErrorPayload(refused)).toMatchObject({ status: 400, code: "ROUTE_RESTRICTION" });
   });
 });

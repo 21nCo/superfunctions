@@ -325,7 +325,10 @@ export class ResponsesChatModel extends ChatModel {
    */
   private async credentialStep<T>(step: () => T | Promise<T>, signal: AbortSignal | undefined): Promise<T> {
     throwIfAborted(signal);
-    const promise = Promise.resolve().then(step);
+    const promise = Promise.resolve().then(() => {
+      throwIfAborted(signal);
+      return step();
+    });
     promise.catch(() => undefined);
     let stop = () => {};
     const stopped = new Promise<never>((_, reject) => {
