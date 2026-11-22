@@ -1,0 +1,23 @@
+clifn/core/CHANGELOG.md
+  s_424c1337b4ca6d::t_2938882c316f87 6
+clifn/core/src/json-value.ts
+  s_424c1337b4ca6d::t_c61bee47f2d95e 2,57-59,61-67,78-79,86-90,154,180,197-198,202,206,217,238-240,244,249-250
+clifn/core/tests/runner-document.test.ts
+  s_424c1337b4ca6d::t_b23f0e038a0042 5,7,1033,1035-1048,1054,1056-1062,1065-1115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9e479d0b004de302d47949a9166e01eb70af3f5d",
+  "prompts": {},
+  "sessions": {
+    "s_424c1337b4ca6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_424c1337b4ca6d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
