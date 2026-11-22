@@ -408,7 +408,10 @@ function verifier(all: Staged[], guarded: Guarded[]): Verify {
       if (!holds) throw reached(guard.role, guard.destination);
     }
     for (const other of all) {
-      if (!sameState(currentState(other.destination), expectedNow(other))) throw reached(`the output of ${other.output.option}`, other.destination);
+      // Each output's own path must still lead to its bound destination, too (placeHolds).
+      if (!placeHolds(other) || !sameState(currentState(other.destination), expectedNow(other))) {
+        throw reached(`the output of ${other.output.option}`, other.destination);
+      }
     }
   };
 }

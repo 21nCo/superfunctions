@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -3234,6 +3235,36 @@ describe("apifn check: publication re-checks every protected path after each cha
     expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
     expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
     expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+  });
+
+  it.skipIf(POSIX_ONLY)("a repaired spec link rebound to the report after its install is caught before stdout, and the new link is kept", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, ".apifn", "real.yml"), "openapi: 3.1.0\n");
+    await symlink("real.yml", path.join(dir, SPEC));
+    const errors: string[] = [];
+    let stdout = "";
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      write: true,
+      reportPath: path.join(".apifn", "report.md"),
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      publishHook: (step, destination) => {
+        if (step !== "installed" || !destination.endsWith("real.yml")) return;
+        rmSync(path.join(dir, SPEC));
+        symlinkSync("report.md", path.join(dir, SPEC));
+      },
+    });
+    expect(code).toBe(2);
+    expect(stdout).toBe("");
+    expect(errors.join("\n")).toContain("reached the output of --write");
+    expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+    expect(readlinkSync(path.join(dir, SPEC))).toBe("report.md");
   });
 
   it("an existing spec that a report write changes is caught in a report-only run, and the report is rolled back", async () => {
