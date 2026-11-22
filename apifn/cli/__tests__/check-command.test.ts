@@ -3274,6 +3274,37 @@ describe("apifn check: publication re-checks every protected path after each cha
     expect(existsSync(path.join(dir, "out"))).toBe(false);
   });
 
+  it.skipIf(POSIX_ONLY)("a run that writes no file resolves no guard: an input path that no longer resolves does not change its verdict", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    // A config path that loops (as if the loaded file were replaced by a link to itself).
+    const loop = path.join(dir, "loop.config.ts");
+    symlinkSync("loop.config.ts", loop);
+    const run = async (extra: { write?: boolean; reportPath?: string }) => {
+      const errors: string[] = [];
+      let stdout = "";
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        configFile: loop,
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        ...extra,
+        writeStdout: (text) => {
+          stdout += text;
+        },
+      });
+      return { code, errors: errors.join("\n"), stdout };
+    };
+    // A stdout-only run (--write separates its target from the inputs before any read, as before).
+    const result = await run({});
+    expect(result).toMatchObject({ code: 0, errors: "" });
+    expect(result.stdout).toContain("apifn check");
+    // A run that writes a report must still be able to guard its inputs.
+    expect((await run({ reportPath: "report.md" })).code).toBe(2);
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+  });
+
   it("distinct outputs keep the normal verdict and leave the inputs byte-identical", async () => {
     const root = await fixtures();
     const dir = path.join(root, "base");

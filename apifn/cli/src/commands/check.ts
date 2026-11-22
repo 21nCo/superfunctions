@@ -541,9 +541,11 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
       });
     }
     // Publication re-checks these after every change it makes: the inputs, and the spec when the
-    // run does not write it (missing must stay missing), whatever their names look like.
-    const guarded: Guarded[] = sourcesOf(options, inputs, cwd).map((source) => guardOf(source.role, source.file));
-    if (repair === null) {
+    // run does not write it (missing must stay missing), whatever their names look like. A run
+    // that writes no file makes no change, so it resolves no guard.
+    const guarded: Guarded[] =
+      outputs.length === 0 ? [] : sourcesOf(options, inputs, cwd).map((source) => guardOf(source.role, source.file));
+    if (outputs.length > 0 && repair === null) {
       guarded.push({ role: `the spec ${inputs.specLabel}`, destination: specTarget.destination, observed: committed.observed });
     }
     await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook);
