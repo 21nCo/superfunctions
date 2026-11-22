@@ -1,0 +1,19 @@
+apifn/cli/src/commands/check-publish.ts
+  s_8d7fdfd2143933::t_5e6b0d8ffbb992 15-17,146-152,156-157,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b149a31c0ac19167a08cac2d3709c4c74d981832",
+  "prompts": {},
+  "sessions": {
+    "s_8d7fdfd2143933": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8d7fdfd2143933",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
