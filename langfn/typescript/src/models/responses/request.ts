@@ -143,6 +143,7 @@ function assertRouteRestrictions(request: ResponsesChatRequest, profile: Capabil
   if (present(raw.background) && raw.background !== false) refuse("background", "background");
   if (present(raw.conversation)) refuse("hostedHistory", "conversation");
   if (present(raw.store) && raw.store !== false) refuse("hostedHistory", "store");
+  if (present(raw.max_output_tokens)) refuse("outputTokenCap", "max_output_tokens");
   if (Array.isArray(request.tools)) {
     request.tools.forEach((tool, index) => {
       const type = isObject(tool) ? tool.type : undefined;

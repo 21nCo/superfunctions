@@ -365,6 +365,7 @@ describe("chatgpt-signin profile", () => {
     ["background", { background: true }, "background"],
     ["conversation", { conversation: "conv_fixture" }, "hostedHistory"],
     ["store", { store: true }, "hostedHistory"],
+    ["max_output_tokens", { max_output_tokens: 64 }, "outputTokenCap"],
     ["tools[0]", { tools: [{ type: "web_search", name: "web_search" }] }, "hostedTools"],
     ["tool_choice", { tool_choice: { type: "web_search_preview" } }, "hostedTools"],
     ["tool_choice", { tool_choice: { type: "allowed_tools", mode: "auto", tools: [{ type: "file_search" }] } }, "hostedTools"],
