@@ -28,7 +28,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { decodeUtf8 } from "./check-io.js";
 import { MAX_SPEC_BYTES } from "./check-parse.js";
@@ -294,16 +294,17 @@ function throughFile(walk: Walk, entry: TreeEntry): Lookup {
  * The spec path as given (resolved, no symlink followed) relative to the logical repository root:
  * the shallowest ancestor whose native realpath is the repository's, so a path through an
  * in-repository link back to the root keeps that link's tracked spelling. Null when no ancestor
- * is the repository root, or when a `..` follows a symlink: the filesystem applies it after the
- * link (in its target's parent), so the lexical spelling would name another file than the one the
- * check reads and writes, and only the destination's own path is looked up.
+ * is the repository root, or when the lexical spelling leads to another file than the one the check
+ * reads and writes (the filesystem applies a `..` after a symlink in the link target's parent):
+ * then only the destination's own path is looked up.
  */
 function literalRepoPath(target: string, root: string): string | null {
-  const parts = target.split(process.platform === "win32" ? /[\\/]/ : "/");
-  for (let i = 1; i < parts.length; i += 1) {
-    if (parts[i] === ".." && isSymlink(parts.slice(0, i).join(path.sep) || path.sep)) return null;
-  }
   const resolved = path.resolve(target);
+  try {
+    if (writeDestination(resolved) !== writeDestination(target)) return null;
+  } catch {
+    return null;
+  }
   let found: string | null = null;
   for (let dir = path.dirname(resolved); ; dir = path.dirname(dir)) {
     let real: string | null;
@@ -316,14 +317,6 @@ function literalRepoPath(target: string, root: string): string | null {
     if (path.dirname(dir) === dir) break;
   }
   return found === null ? null : toRepoPath(path.relative(found, resolved));
-}
-
-function isSymlink(file: string): boolean {
-  try {
-    return lstatSync(file).isSymbolicLink();
-  } catch {
-    return false;
-  }
 }
 
 function toRepoPath(relative: string): string | null {

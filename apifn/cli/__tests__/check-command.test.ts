@@ -3766,12 +3766,15 @@ describe("apifn check: the git baseline is read at the path the check reads and 
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "base contract and a decoy");
     await commitSpec(service);
-    const { code, report } = await runJson(["check", "--base", "HEAD", "--spec", "link/../openapi.yml"], service);
-    expect({ code, versions: report.versions, status: report.base.status }).toEqual({
-      code: 1,
-      versions: { base: "1.0.0", head: "1.1.0" },
-      status: "compared",
-    });
-    expect(report.breaking.length).toBeGreaterThan(0);
+    for (const spec of ["link/../openapi.yml", "link/./../openapi.yml", "link//../openapi.yml"]) {
+      const { code, report } = await runJson(["check", "--base", "HEAD", "--spec", spec], service);
+      expect({ spec, code, versions: report.versions, status: report.base.status }).toEqual({
+        spec,
+        code: 1,
+        versions: { base: "1.0.0", head: "1.1.0" },
+        status: "compared",
+      });
+      expect(report.breaking.length).toBeGreaterThan(0);
+    }
   });
 });
