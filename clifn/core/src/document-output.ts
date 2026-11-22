@@ -1,6 +1,6 @@
 import type { Diagnostic } from "./diagnostics.js";
 import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
-import { createDocumentBudget, resolveJsonMember, type DocumentBudget } from "./json-value.js";
+import { createDocumentBudget, DocumentBudgetExceeded, resolveJsonMember, type DocumentBudget } from "./json-value.js";
 import { createOutput, type OutputService, type Spinner } from "./output.js";
 
 export interface DocumentOutputOptions {
@@ -50,7 +50,8 @@ function toDocumentData(data: unknown, budget: DocumentBudget): unknown {
  * `toJSON` in the details cannot bring a redacted field back. It keeps the members `createDiagnostic` keeps, but reads
  * them from the original diagnostic without cloning, so each value in the details serializes through its own `toJSON`
  * (a Date prints its ISO string, a class prints only what its serializer returns). Details that do not resolve to an
- * object are left out. Throws when the diagnostic is not an object, cannot be serialized or does not fit `budget`.
+ * object or do not fit `budget` are left out, and what they spent is given back. Throws when the diagnostic is not an
+ * object, its details throw, or its other members cannot be serialized or do not fit `budget`.
  */
 function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: DocumentBudget): Record<string, unknown> {
   const { code, severity, message, path, details } = diagnostic;
@@ -58,9 +59,19 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: Doc
   if (!isJsonObject(resolved)) {
     throw new TypeError("diagnostic did not resolve to an object");
   }
-  const resolvedDetails = resolveJsonMember("details", details || undefined, { budget, redact: true });
+  const bytesLeft = budget.bytesLeft;
+  let resolvedDetails: unknown;
+  try {
+    resolvedDetails = resolveJsonMember("details", details || undefined, { budget, redact: true });
+  } catch (error) {
+    if (!(error instanceof DocumentBudgetExceeded)) {
+      throw error;
+    }
+  }
   if (isJsonObject(resolvedDetails)) {
     resolved.details = resolvedDetails;
+  } else {
+    budget.bytesLeft = bytesLeft;
   }
   return resolved;
 }

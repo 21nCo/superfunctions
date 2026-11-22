@@ -58,6 +58,8 @@ export const PROJECTION_REPEAT_LIMIT = 64;
 const REDACTED = "[REDACTED]";
 /** What one array item, object member or container of the result counts against the budget, in bytes. */
 export const VALUE_BYTES = 64;
+/** Code units JSON.stringify writes as a two-character escape: " \\ \b \t \n \f \r. */
+const SHORT_ESCAPES = new Set([0x22, 0x5c, 0x08, 0x09, 0x0a, 0x0c, 0x0d]);
 /** Characters that JSON.stringify escapes in a string. */
 const ESCAPED = /["\\\u0000-\u001f\ud800-\udfff]/;
 
@@ -66,6 +68,9 @@ const ESCAPED = /["\\\u0000-\u001f\ud800-\udfff]/;
  * costs VALUE_BYTES and each kept string or key its JSON length, so the count bounds both the heap the resolved
  * members hold and the length of the text printed from them.
  */
+/** Thrown when a value does not fit what is left of a document's budget. */
+export class DocumentBudgetExceeded extends RangeError {}
+
 export interface DocumentBudget {
   bytesLeft: number;
 }
@@ -103,13 +108,34 @@ function isTracked(value: unknown): value is object {
 function spend(walk: Walk, bytes: number): void {
   walk.budget.bytesLeft -= bytes;
   if (walk.budget.bytesLeft < 0) {
-    throw new RangeError("Value too large for a result document");
+    throw new DocumentBudgetExceeded("Value too large for a result document");
   }
 }
 
-/** The length of the JSON string literal for `text`. */
-function jsonStringLength(text: string): number {
-  return ESCAPED.test(text) ? JSON.stringify(text).length : text.length + 2;
+/**
+ * The length of the JSON string literal for `text`, counted without building it; the count stops once it passes
+ * `limit`, so an oversized string costs no allocation before the budget rejects it.
+ */
+function jsonStringLength(text: string, limit: number): number {
+  if (!ESCAPED.test(text)) {
+    return text.length + 2;
+  }
+  let length = 2;
+  for (let index = 0; index < text.length && length <= limit; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (SHORT_ESCAPES.has(unit)) {
+      length += 2;
+    } else if (unit < 0x20) {
+      length += 6;
+    } else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
+      length += 2;
+      index += 1;
+    } else {
+      // A lone surrogate prints as \uXXXX.
+      length += unit >= 0xd800 && unit <= 0xdfff ? 6 : 1;
+    }
+  }
+  return length;
 }
 
 /** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
@@ -177,7 +203,7 @@ function serializeProperty(walk: Walk, holder: object, key: string): unknown {
   }
   const primitive = toJsonPrimitive(value);
   if (typeof primitive === "string") {
-    spend(walk, jsonStringLength(primitive));
+    spend(walk, jsonStringLength(primitive, walk.budget.bytesLeft));
   }
   return primitive;
 }
@@ -249,7 +275,7 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
     const redacted = walk.redact && isSensitiveKey(name);
     const member = redacted ? redactProperty(record, name) : serializeProperty(walk, record, name);
     if (member !== undefined) {
-      spend(walk, VALUE_BYTES + jsonStringLength(name) + (redacted ? REDACTED.length + 2 : 0));
+      spend(walk, VALUE_BYTES + jsonStringLength(name, walk.budget.bytesLeft) + (redacted ? REDACTED.length + 2 : 0));
       entries.push([name, member]);
     }
   }

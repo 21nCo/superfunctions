@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 import { Worker } from "node:worker_threads";
 import { build } from "esbuild";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
-import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, VALUE_BYTES } from "../src/json-value.js";
+import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, resolveJsonMember, VALUE_BYTES } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 type Action = (options: Record<string, never>, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
@@ -1024,11 +1024,11 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(parseOnlyDocument(failure)).toEqual({
       ok: false,
       error: { code: "HUGE", message: "huge" },
-      diagnostics: [{ code: "KEPT", severity: "info", message: "kept" }],
+      diagnostics: [
+        { code: "D", severity: "info", message: "m" },
+        { code: "KEPT", severity: "info", message: "kept" },
+      ],
     });
-    expect(stderrLines(failure.stderr).map((line) => line.message)).toContain(
-      "diagnostic 0 was dropped from the result document: it could not be redacted"
-    );
     expect(reads.count).toBe(0);
   });
 
@@ -1085,17 +1085,31 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(failure.exitCode).toBe(7);
     expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
 
+    // Diagnostic details that do not fit, or are not an object, are left out and give their budget back.
     const success = await runDocument((_options, ctx) => {
       ctx.diagnostics.add({ code: "BIG", severity: "info", message: "big", details: { loop: loop() } });
-      ctx.diagnostics.add({ code: "SMALL", severity: "info", message: "small" });
+      ctx.diagnostics.add({ code: "TEXT", severity: "info", message: "text", details: { toJSON: () => headline } });
+      ctx.diagnostics.add({ code: "SMALL", severity: "info", message: "small", details: { n: 1 } });
       return { data: { done: true } };
     });
     expect(success.exitCode).toBe(0);
     expect(parseOnlyDocument(success)).toEqual({
       ok: true,
       data: { done: true },
-      diagnostics: [{ code: "SMALL", severity: "info", message: "small" }],
+      diagnostics: [
+        { code: "BIG", severity: "info", message: "big" },
+        { code: "TEXT", severity: "info", message: "text" },
+        { code: "SMALL", severity: "info", message: "small", details: { n: 1 } },
+      ],
     });
+
+    // Strings and keys count their exact JSON length, escapes included.
+    for (const text of ['plain', 'q"b\\', "\u0000\u001f\n\t", "\ud83d\ude00", "\ud800x\udc00", "end\ud83d"]) {
+      const budget = createDocumentBudget();
+      const before = budget.bytesLeft;
+      expect(resolveJsonMember("k", text, { budget })).toBe(text);
+      expect(before - budget.bytesLeft).toBe(JSON.stringify(text).length);
+    }
 
     // A sensitive member is "[REDACTED]" unless JSON drops it; nothing under it runs.
     const throwing = { toJSON: () => ({ inner: { toJSON: () => { throw new Error("read"); } } }) };
@@ -1129,6 +1143,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         proxy: () => ({ data: items(2e8, 0) }),
         generated: () => ({ data: generated(5) }),
         strings: () => ({ data: Array.from({ length: 5000 }, () => ({ toJSON: () => "x".repeat(2 ** 20) })) }),
+        // Escaped, 12 MiB of NUL characters would need 72 MiB of text: counted, never built.
+        escaped: () => {
+          const nul = "\\u0000".repeat(12 * 2 ** 20);
+          return {
+            data: { ok: 1 },
+            diagnostics: [{ code: "NUL", severity: "info", message: "nul", details: { toJSON: () => ({ nul }) } }],
+            error: Object.assign(new Error("nul"), { code: "EXPECTED", exitCode: 7, details: { nul } }),
+          };
+        },
         diagnostics: () => ({
           data: { ok: 1 },
           diagnostics: Array.from({ length: 60 }, (_, i) => ({ code: "D", severity: "info", message: String(i), details: { list: items(20_000, {}) } })),
@@ -1139,7 +1162,14 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         const results = {};
         for (const [name, make] of Object.entries(cases)) {
           const out = [];
-          const exitCode = await runAction(() => make(), {}, {
+          const exitCode = await runAction((_options, ctx) => {
+            const result = make();
+            if (result.error) {
+              for (const diagnostic of result.diagnostics) ctx.diagnostics.add(diagnostic);
+              throw result.error;
+            }
+            return result;
+          }, {}, {
             mode: "json", jsonStyle: "document", color: false,
             stdout: (text) => out.push(text), stderr: () => {},
           });
@@ -1164,13 +1194,21 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
           error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
         });
       }
-      // The diagnostics share one budget: those that no longer fit are dropped, and the outcome stands.
+      expect(results.escaped.exitCode).toBe(7);
+      expect(documentOf("escaped")).toEqual({
+        ok: false,
+        error: { code: "EXPECTED", message: "nul" },
+        diagnostics: [{ code: "NUL", severity: "info", message: "nul" }],
+      });
+      // The diagnostics share one budget: details that no longer fit are left out, and the outcome stands.
       const withDiagnostics = documentOf("diagnostics");
       expect(results.diagnostics.exitCode).toBe(0);
       expect(withDiagnostics.data).toEqual({ ok: 1 });
-      const kept = (withDiagnostics.diagnostics as unknown[] | undefined)?.length ?? 0;
-      expect(kept).toBeGreaterThan(0);
-      expect(kept).toBeLessThan(60);
+      const printed = withDiagnostics.diagnostics as Array<Record<string, unknown>>;
+      expect(printed.map((diagnostic) => diagnostic.message)).toEqual(Array.from({ length: 60 }, (_, i) => String(i)));
+      const withDetails = printed.filter((diagnostic) => "details" in diagnostic).length;
+      expect(withDetails).toBeGreaterThan(0);
+      expect(withDetails).toBeLessThan(60);
       expect(results.records.exitCode).toBe(0);
       expect((documentOf("records").data as unknown[]).length).toBe(1000);
     } finally {
