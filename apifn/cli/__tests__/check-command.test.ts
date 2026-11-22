@@ -1396,6 +1396,26 @@ describe("apifn check: one strict, bounded parser for every document", () => {
     expect((await runJson(["check"], dir)).report.drift).toBe(false);
   });
 
+  it.each([
+    ["int64 bounds", `{ type: "integer", minimum: -9223372036854775808, maximum: 9223372036854775807 }`],
+    ["2^64 and an exponent float", `{ type: "number", minimum: 18446744073709551616, maximum: 1e21 }`],
+    ["the largest double", `{ type: "number", maximum: Number.MAX_VALUE }`],
+  ])("a router with %s checks clean after generate, and --write repairs its stale spec", async (_label, schema) => {
+    const dir = await service(schema);
+    await commitSpec(dir);
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    const clean = await runJson(["check"], dir);
+    expect({ code: clean.code, drift: clean.report.drift, valid: clean.report.valid }).toEqual({
+      code: 0,
+      drift: false,
+      valid: true,
+    });
+
+    await writeFile(path.join(dir, SPEC), generated.replace("title: Numbers", "title: Stale"));
+    expect((await runJson(["check", "--write"], dir)).report.written).toBe(true);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(generated);
+  });
+
   it("a generated value with no JSON form is an invalid spec and is never written", async () => {
     const dir = await service(`{ type: "number", maximum: Infinity }`);
     const { code, report } = await runJson(["check", "--write"], dir);
@@ -1707,6 +1727,28 @@ describe("apifn check: Markdown escaping and usage errors", () => {
     expect(result.code).toBe(2);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain(message);
+  });
+
+  it.each([
+    ["--write", "false"],
+    ["--allow-breaking", "true"],
+    ["--help", "false"],
+  ])("a separate value on %s (%s) is a usage error and writes nothing", async (flag, value) => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    const result = await run(["check", flag, value], dir);
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(`${flag} takes no value`);
+    expect(existsSync(path.join(dir, SPEC))).toBe(false);
+  });
+
+  it("a router operand named false before the switches is still a router", async () => {
+    const root = await fixtures();
+    const result = await run(["check", "false", "--write"], path.join(root, "base"));
+    expect(result.code).toBe(2);
+    expect(result.stderr).not.toContain("takes no value");
+    expect(result.stderr).toContain("Failed to generate the spec from the router");
   });
 
   it("--help alone still prints help, for check and for the other commands", async () => {

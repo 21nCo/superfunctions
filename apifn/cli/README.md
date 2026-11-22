@@ -148,14 +148,16 @@ them in the meantime, in which case their bytes are kept and the error says so.
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 `check` accepts only this grammar: a second positional (for example a ref given without
-`--base`), any argument after `--`, a value on `--write`, `--allow-breaking` or `--help`, or a
+`--base`), any argument after `--`, a value on `--write`, `--allow-breaking` or `--help` (`=value`,
+or a separate `true` or `false`; a router named `false` is `./false`), or a
 repeated value option is a usage error, also when `--help` is given.
 
 Committed, base and generated documents are read by one strict parser (YAML 1.2, which contains
 JSON): at most 32 MB of text, a mapping at the root, no duplicate mapping keys and no YAML merge
 keys. They may use any number of aliases, but a document whose aliases expand past 5,000,000 nodes
 or 64 MB of text, or form a cycle, is rejected. So is a document with no faithful JSON form: a
-`.nan` or `.inf` value, an integer a double cannot hold exactly, a collection used as a mapping
+`.nan` or `.inf` value, an integer literal that is neither the double it reads as nor that
+double's shortest decimal (`9007199254740993`; `9223372036854776000` for 2^63 is read), a collection used as a mapping
 key, or two keys that become the same JSON key (`200` and `"200"`, or an alias key naming a literal
 key beside it). A committed spec that fails is drift (`unparseable`, repaired by `--write`); a base
 that fails is a load error (exit `2`); a generated spec that fails is invalid (exit `1`, never

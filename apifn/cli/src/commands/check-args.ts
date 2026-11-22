@@ -80,6 +80,11 @@ function readLongOption(argv: string[], i: number, args: CheckArgs, given: Set<s
   if (eq !== -1) {
     throw new CheckArgsError(`--${name} takes no value`);
   }
+  // `--write false` would otherwise read `false` as the router; `./false` still names one.
+  const next = argv[i + 1];
+  if (next === "true" || next === "false") {
+    throw new CheckArgsError(`--${name} takes no value, got '${next}'; to name a router '${next}', pass ./${next}`);
+  }
   const field = FLAGS[name];
   if (field) args[field] = true;
   return 1;

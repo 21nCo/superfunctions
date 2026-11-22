@@ -8,7 +8,8 @@
  *   nodes and MAX_EXPANDED_SPEC_BYTES of scalar text (measured before anything is converted);
  * - no duplicate or colliding mapping keys (`1` and `"1"`, an alias key naming a literal key
  *   beside it), no merge keys, no collection keys, no alias cycles;
- * - numbers finite, and integers a double holds exactly, so no value changes on the way to JSON;
+ * - numbers finite, and each integer literal the double it reads as (exactly, or as its shortest
+ *   round-trip decimal), so no value changes on the way to JSON;
  * - only strings, numbers, booleans, null, sequences and mappings (no binary, sets or dates).
  *
  * Any violation throws ContractParseError; each caller decides what it means (committed: drift,
@@ -203,19 +204,19 @@ function scalarValue(value: unknown, at: string): JsonValue {
     return value;
   }
   if (typeof value === "bigint") {
-    // An integer a double holds exactly reads the same everywhere; one it rounds does not.
+    // An integer literal must name the double it reads as: exactly, or as that double's shortest
+    // round-trip decimal (what JSON.stringify and `apifn generate` write, such as
+    // 9223372036854776000 for 2^63). 9007199254740993 names neither, so readers disagree on it.
     const number = Number(value);
-    if (!Number.isFinite(number) || BigInt(number) !== value) {
-      throw new ContractParseError(`${at} is the integer ${value}, outside the range JSON numbers hold exactly`);
+    if (!Number.isFinite(number) || (BigInt(number) !== value && String(number) !== value.toString())) {
+      throw new ContractParseError(`${at} is the integer ${value}, which a JSON number does not hold exactly`);
     }
     return number;
   }
   if (typeof value === "number") {
+    // A float literal reads as the same double in every JSON reader.
     if (!Number.isFinite(value)) {
       throw new ContractParseError(`${at} is ${value}, which JSON cannot represent`);
-    }
-    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
-      throw new ContractParseError(`${at} is ${value}, outside the range JSON numbers hold exactly`);
     }
     return value;
   }
