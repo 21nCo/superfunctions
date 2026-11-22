@@ -6,25 +6,51 @@
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
+/** What the binary passes to the run: the abort signal and the publication report. */
+export interface SignalOwner {
+  signal: AbortSignal;
+  onPublishing: (publishing: boolean) => void;
+}
+
 /**
- * Runs `run` with SIGINT, SIGTERM and SIGHUP turned into an abort of its signal. Once `run` has
- * settled (an abort rolls back what `apifn check` wrote), the listeners are removed and the first
- * signal received is raised again, so it keeps its default action.
+ * Runs `run`, owning SIGINT, SIGTERM and SIGHUP from the moment it starts writing files (it says
+ * so through `onPublishing`): before that no listener is installed, so a signal during loading or
+ * generation keeps its default action even if a router never settles. While files are being
+ * written, a signal aborts the run; once it has settled (the abort rolled back what it wrote), the
+ * listeners are removed and the first signal is raised again, so it keeps its default action.
+ * After the commit a signal keeps its default action at once.
  */
-export async function withSignalAbort(run: (signal: AbortSignal) => Promise<number>): Promise<number> {
+export async function withSignalAbort(run: (owner: SignalOwner) => Promise<number>): Promise<number> {
   const controller = new AbortController();
+  let publishing = false;
   let received: NodeJS.Signals | undefined;
-  const onSignal = (signal: NodeJS.Signals) => {
-    received ??= signal;
-    controller.abort(signal);
+  const release = () => {
+    for (const signal of SIGNALS) process.removeListener(signal, onSignal);
   };
-  for (const signal of SIGNALS) process.on(signal, onSignal);
+  function onSignal(signal: NodeJS.Signals): void {
+    received ??= signal;
+    if (publishing) {
+      controller.abort(signal);
+      return;
+    }
+    release();
+    process.kill(process.pid, signal);
+  }
+  let installed = false;
   try {
-    return await run(controller.signal);
+    return await run({
+      signal: controller.signal,
+      onPublishing: (value) => {
+        publishing = value;
+        if (!value || installed) return;
+        installed = true;
+        for (const signal of SIGNALS) process.on(signal, onSignal);
+      },
+    });
   } finally {
     // A signal raised during the run's last synchronous steps reaches the listener first.
     await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
-    for (const signal of SIGNALS) process.removeListener(signal, onSignal);
-    if (received !== undefined) process.kill(process.pid, received);
+    release();
+    if (controller.signal.aborted && received !== undefined) process.kill(process.pid, received);
   }
 }

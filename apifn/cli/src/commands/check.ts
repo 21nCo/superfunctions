@@ -74,6 +74,8 @@ export interface CheckCommandOptions {
   publishHook?: PublishHook;
   /** Cancels the run: an abort before the stdout write completes rolls back and exits 2. */
   signal?: AbortSignal;
+  /** Called with true when the run starts writing files and with false once they are committed or rolled back. */
+  onPublishing?: (publishing: boolean) => void;
   /** Total time for an HTTP(S) --base-spec, body included (default 30 s). */
   httpTimeoutMs?: number;
 }
@@ -550,7 +552,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     if (outputs.length > 0 && repair === null) {
       guarded.push({ role: `the spec ${inputs.specLabel}`, file: inputs.specPath, destination: specTarget.destination, observed: committed.observed });
     }
-    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal);
+    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal, options.onPublishing);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {

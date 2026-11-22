@@ -39,8 +39,10 @@
  *   removes and raises no process signal listener, so an embedding host's own handling is left
  *   alone. An abort before the commit rolls every output back (checked after each step and after
  *   the yield before stdout); one while the stdout write is pending abandons that write and rolls
- *   back. Both exit 2. The standalone binary (bin.ts) alone turns SIGINT, SIGTERM and SIGHUP into an
- *   abort and raises the signal again once the rollback is done. When the run yields to the event
+ *   back. Both exit 2. `onPublishing` reports when files are being written. The standalone binary
+ *   (signals.ts) alone handles SIGINT, SIGTERM and SIGHUP: while files are being written it turns
+ *   one into an abort and raises it again once the rollback is done; otherwise it keeps its default
+ *   action at once. When the run yields to the event
  *   loop before stdout, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
@@ -623,7 +625,8 @@ export async function publish(
   guarded: Guarded[],
   emit: () => void | Promise<void>,
   hook?: PublishHook,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onPublishing?: (publishing: boolean) => void
 ): Promise<void> {
   const all: Staged[] = outputs.map((output) => ({
     output,
@@ -634,10 +637,13 @@ export async function publish(
     created: [],
     published: false,
   }));
+  // Only a run that writes files has anything to roll back on an abort.
+  if (all.length > 0) onPublishing?.(true);
   try {
     await publishAll(all, verifier(all, guarded), emit, hook, signal);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
+    if (all.length > 0) onPublishing?.(false);
   }
 }
 

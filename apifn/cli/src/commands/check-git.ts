@@ -294,9 +294,12 @@ function throughFile(walk: Walk, entry: TreeEntry): Lookup {
  * The spec path as given (resolved, no symlink followed) relative to the logical repository root:
  * the shallowest ancestor whose native realpath is the repository's, so a path through an
  * in-repository link back to the root keeps that link's tracked spelling. Null when no ancestor
- * is the repository root.
+ * is the repository root, or when the path has a `..` component: the filesystem applies it after
+ * the component before it (a link), so the lexical spelling can name another file than the one
+ * the check reads and writes, and only the destination's own path is looked up.
  */
 function literalRepoPath(target: string, root: string): string | null {
+  if (target.split(process.platform === "win32" ? /[\\/]/ : "/").includes("..")) return null;
   const resolved = path.resolve(target);
   let found: string | null = null;
   for (let dir = path.dirname(resolved); ; dir = path.dirname(dir)) {

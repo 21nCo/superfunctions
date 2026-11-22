@@ -24,9 +24,11 @@ export interface CliRunOptions {
   /**
    * Cancels `apifn check`: an abort before its report reaches stdout rolls back every file it wrote
    * and exits 2. The library installs no process signal listener; the `apifn` binary turns
-   * SIGINT, SIGTERM and SIGHUP into this abort.
+   * SIGINT, SIGTERM and SIGHUP into this abort while `onPublishing` says files are being written.
    */
   signal?: AbortSignal;
+  /** Called with true when `apifn check` starts writing files and with false once they are committed or rolled back. */
+  onPublishing?: (publishing: boolean) => void;
 }
 
 function toArray(value: string | string[] | undefined): string[] | undefined {
@@ -348,6 +350,7 @@ export async function runCli(
         output,
         writeStdout: runOptions.stdout,
         signal: runOptions.signal,
+        onPublishing: runOptions.onPublishing,
       });
       if (result !== 0) exitCode = result;
     });

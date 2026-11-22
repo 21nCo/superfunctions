@@ -3637,8 +3637,8 @@ describe("apifn check: cancellation is an AbortSignal; only the binary owns proc
           `import { symlinkSync } from "node:fs";`,
           `import { runCheckCommand } from ${src("commands/check.ts")};`,
           `import { withSignalAbort } from ${src("signals.ts")};`,
-          `await withSignalAbort((signal) => runCheckCommand({`,
-          `  cwd: process.cwd(), config: ${JSON.stringify(CONFIG)}, reportPath: ".apifn/report.md", format: "json", write: ${write}, signal,`,
+          `await withSignalAbort((owner) => runCheckCommand({`,
+          `  cwd: process.cwd(), config: ${JSON.stringify(CONFIG)}, reportPath: ".apifn/report.md", format: "json", write: ${write}, ...owner,`,
           `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
           `  writeStdout: () => {`,
           `    if (${JSON.stringify(step)} !== "stdout") return;`,
@@ -3663,20 +3663,24 @@ describe("apifn check: cancellation is an AbortSignal; only the binary owns proc
     }, 30_000);
   }
 
-  it.skipIf(POSIX_ONLY)("the apifn binary turns SIGTERM during check into an abort: nothing is written and it dies by SIGTERM", async () => {
+  it.skipIf(POSIX_ONLY)("a signal while the apifn binary is still loading the router keeps its default action at once", async () => {
     const dir = await service();
-    // The router signals its own process while the check loads it.
+    // A router that never finishes loading (it never yields, so no JavaScript listener could run).
     const router = await readFile(path.join(dir, "router.ts"), "utf8");
-    await writeFile(path.join(dir, "router.ts"), `process.kill(process.pid, "SIGTERM");\n${router}`);
-    const bin = JSON.parse(src("bin.ts")) as string;
-    const result = await spawned(dir, [bin, "check", "--write", "--report", "report.md"]);
-    expect({ code: result.code, signal: result.signal, stdout: result.stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
-    expect(result.stderr).toContain("received SIGTERM before its report was delivered");
+    await writeFile(path.join(dir, "router.ts"), `import { writeSync } from "node:fs";\nwriteSync(2, "loading\\n");\nwhile (Date.now() > 0) {}\n${router}`);
+    const child = spawn(process.execPath, [jiti(), JSON.parse(src("bin.ts")) as string, "check", "--write", "--report", "report.md"], {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (chunk.toString().includes("loading")) child.kill("SIGINT");
+    });
+    const stuck = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => child.on("close", (exit, sig) => resolve([exit, sig])));
+    clearTimeout(stuck);
+    expect({ code, signal }).toEqual({ code: null, signal: "SIGINT" });
     expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
     expect(existsSync(path.join(dir, "report.md"))).toBe(false);
-    // Every other command keeps the default action.
-    const generate = await spawned(dir, [bin, "generate"]);
-    expect({ code: generate.code, signal: generate.signal, stderr: generate.stderr }).toEqual({ code: null, signal: "SIGTERM", stderr: "" });
   }, 30_000);
 });
 
@@ -3743,5 +3747,31 @@ describe("apifn check: an operand's `..` is applied by the filesystem, after the
     expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
     expect(result.stderr).toContain("which is not a directory");
     expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+  });
+});
+
+describe("apifn check: the git baseline is read at the path the check reads and writes (round 10)", () => {
+  it.skipIf(POSIX_ONLY)("--spec link/../openapi.yml with --base reads the blob at the destination, never a tracked decoy at the lexical path", async () => {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await commitSpec(path.join(root, "base"));
+    await commitSpec(service);
+    // The decoy at the lexical spelling (breaking/openapi.yml) is the head contract itself.
+    await cp(path.join(service, SPEC), path.join(service, "openapi.yml"));
+    await cp(path.join(root, "base", SPEC), path.join(service, SPEC));
+    await mkdir(path.join(service, ".apifn", "inner"));
+    await writeFile(path.join(service, ".apifn", "inner", "keep"), "");
+    await symlink(path.join(".apifn", "inner"), path.join(service, "link"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract and a decoy");
+    await commitSpec(service);
+    const { code, report } = await runJson(["check", "--base", "HEAD", "--spec", "link/../openapi.yml"], service);
+    expect({ code, versions: report.versions, status: report.base.status }).toEqual({
+      code: 1,
+      versions: { base: "1.0.0", head: "1.1.0" },
+      status: "compared",
+    });
+    expect(report.breaking.length).toBeGreaterThan(0);
   });
 });
