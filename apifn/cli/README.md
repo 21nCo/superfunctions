@@ -144,7 +144,9 @@ what a keyword such as `additionalProperties` or `items` applies to, exits `2`. 
 extensions) is compared as written, and a fragment inside a schema with its own `$id` resolves in
 that schema.
 
-Writes are safe: nothing is written until every exit-`2` path has passed. No output may land on a
+Writes are safe. Loading, generation, parsing, validation and the comparison finish before any file
+is touched; a failure there writes nothing. Publication can still fail (exit `2`) after it has
+started, and then rolls back every output it wrote. No output may land on a
 file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on
 the other output; paths are compared after symlinks, by directory identity and, conservatively,
 ignoring case and Unicode normalization, so `--report router.ts` exits `2`. The report and the
@@ -157,8 +159,17 @@ edited them in the meantime (the run restores a file only while it holds the ino
 bytes this run wrote), in which case their bytes are kept and the error says so. `--write` keeps
 the committed format: text `JSON.parse` accepts stays JSON, other YAML stays YAML (flow style
 included), and a missing or unreadable spec follows the suffix of the file written (a symlink's
-target). POSIX has no compare-and-swap
+target). A missing destination is first reserved as an empty file and every protected path is
+checked again before any byte is written. POSIX has no compare-and-swap
 rename, so a replacement made between the last check and the rename itself is not detected.
+
+Interruption: the `apifn` binary turns SIGINT, SIGTERM and SIGHUP during `check` into a
+cancellation: what the run wrote is rolled back (a pending stdout write is abandoned), then the
+signal is raised again. Embedded through `runCli`, the library installs no process signal listener
+and leaves the host's handling alone; pass `signal` (an `AbortSignal`) to cancel it the same way
+(exit `2`). A run that cannot clean up (SIGKILL, a crash) can leave an empty file at a missing
+output's own name, or a staged temp file beside it; it never leaves output bytes at a protected
+name. That empty file is the accepted residue (owner decision, 2026-11-22).
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 `check` accepts only this grammar: a second positional (for example a ref given without

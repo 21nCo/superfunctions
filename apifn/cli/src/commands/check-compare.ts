@@ -65,13 +65,13 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
 }
 
 /**
- * Returns a copy of `doc` with every local `$ref` replaced by its target. Keys beside a `$ref` apply
- * together with the target, as OpenAPI 3.1 reads them, so they are conjoined with it (see
- * `conjoin`). A reference back into a schema being expanded (a recursive schema) stays a `$ref`,
+ * Returns a copy of `doc` with every local `$ref` replaced by its target. Keys beside a schema `$ref`
+ * apply together with the target, as OpenAPI 3.1 reads them, so they are conjoined with it (see
+ * `conjoin`); beside a Reference Object elsewhere only `summary` and `description` apply. A reference back into a schema being expanded (a recursive schema) stays a `$ref`,
  * so the comparison still sees its name. Literal data (`example`, `default`, `const`, `enum`,
  * schema `examples`, an Example Object's value, `x-` extensions) is copied as it is: a `$ref` key
- * there is data, not a reference. Inside a schema resource with its own `$id`, a fragment resolves
- * against that resource, not the document root. A reference that leaves the document, does not
+ * there is data, not a reference. Inside a schema resource with its own `$id` (its own `$ref`
+ * included), a fragment resolves against that resource, not the document root. A reference that leaves the document, does not
  * resolve, expands past MAX_EXPANDED_SPEC_NODES or has siblings that cannot be conjoined exactly
  * throws DereferenceError. A recursive reference inside a schema resource is spelled from the
  * document root.
@@ -95,10 +95,19 @@ function relocate(doc: JsonObject): JsonObject {
  * map from names to nodes, such as `properties`), `extNames` (a names map that also takes `x-`
  * extensions: Paths and Responses), `components`, `examples` (a map of Example Objects), `example`
  * (one Example Object or its `$ref`), `links` and `link` (Link Objects, whose `parameters` and
- * `requestBody` are data) or `literal` (data). A Callback Object is a `node`: its `x-` keys are data
- * and its expressions Path Items.
+ * `requestBody` are data), `objects` and `object` (a map of, or one, OpenAPI object that may be a
+ * Reference Object: a Parameter, Response, Request Body, Header, Security Scheme or Callback),
+ * `extObjects` (Responses: `objects` that also take `x-` extensions) or `literal` (data). A Callback
+ * Object is an `object`: its `x-` keys are data and its expressions Path Items.
  */
-type Mode = "node" | "names" | "extNames" | "components" | "examples" | "example" | "links" | "link" | "literal";
+type Mode =
+  | "node" | "names" | "extNames" | "objects" | "extObjects" | "object" | "components" | "examples" | "example" | "links" | "link"
+  | "literal";
+
+/** Modes whose `$ref` is a Reference Object: only `summary` and `description` beside it apply. */
+const REFERENCE_MODES = new Set<Mode>(["object", "example", "link"]);
+/** Maps whose entries may be Reference Objects (not Schema Objects). */
+const OBJECT_MAPS = new Set(["parameters", "requestBodies", "headers", "securitySchemes", "callbacks", "responses"]);
 
 /** A schema resource: the document or the nearest schema with its own `$id`, and its pointer. */
 interface Resource {
@@ -109,9 +118,8 @@ interface Resource {
 
 /** Keywords whose value maps names (any string, `default` and `$ref` included) to nodes. */
 const NAME_MAPS = new Set([
-  "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "schemas", "responses",
-  "parameters", "requestBodies", "headers", "securitySchemes", "links", "callbacks", "pathItems", "paths",
-  "webhooks", "content", "encoding", "variables",
+  "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "schemas", "links", "pathItems",
+  "paths", "webhooks", "content", "encoding", "variables",
 ]);
 /** Keywords whose value is data. */
 const LITERALS = new Set(["example", "default", "const", "enum"]);
@@ -122,7 +130,10 @@ function childMode(key: string, value: JsonValue): Mode {
   if (key === "examples") return Array.isArray(value) ? "literal" : "examples";
   if (key === "components") return "components";
   if (key === "links") return "links";
-  if (key === "paths" || key === "responses") return "extNames";
+  if (key === "paths") return "extNames";
+  if (key === "responses") return "extObjects";
+  if (key === "requestBody") return "object";
+  if (OBJECT_MAPS.has(key)) return "objects";
   return NAME_MAPS.has(key) ? "names" : "node";
 }
 
@@ -133,10 +144,14 @@ function entryMode(mode: Mode, key: string, value: JsonValue): Mode | null {
       return "node";
     case "extNames":
       return key.startsWith("x-") ? "literal" : "node";
+    case "objects":
+      return "object";
+    case "extObjects":
+      return key.startsWith("x-") ? "literal" : "object";
     case "components":
       if (key.startsWith("x-")) return "literal";
       if (key === "examples" || key === "links") return key;
-      return "names";
+      return OBJECT_MAPS.has(key) ? "objects" : "names";
     case "examples":
       return "example";
     case "links":
@@ -166,19 +181,19 @@ class Dereferencer {
       throw new DereferenceError(`the $refs expand to more than ${MAX_EXPANDED_SPEC_NODES} nodes`);
     }
     if (Array.isArray(value)) {
-      const itemMode = mode === "names" || mode === "extNames" ? "node" : mode;
+      const itemMode = MAP_ITEMS[mode] ?? mode;
       return value.map((item, index) => this.copy(item, itemMode, resource, `${at}/${index}`));
     }
     if (!isRecord(value)) return value;
     // Literal data is copied as data; the validator's copy drops its `$ref` keys (see relocate).
     if (mode === "literal") return this.copyRecord(value, () => "literal", resource, at, this.inline ? undefined : "$ref");
     if (typeof value.$ref === "string" && !value.$ref.startsWith("#")) throw outside(value.$ref);
-    const isMap = mode === "names" || mode === "extNames" || mode === "components" || mode === "examples" || mode === "links";
-    if (isMap) return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
-    if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, resource, at);
+    if (MAP_MODES.has(mode)) return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
+    // A schema's own `$id` is the resource its `$ref` (and every fragment inside it) resolves in.
+    const own = REFERENCE_MODES.has(mode) || typeof value.$id !== "string" ? resource : { node: value, pointer: at };
+    if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, own, at);
     if (mode === "example") return this.copyRecord(value, () => "literal", resource, at);
     if (mode === "link") return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
-    const own = typeof value.$id === "string" ? { node: value, pointer: at } : resource;
     return this.copyRecord(value, (key, item) => childMode(key, item), own, at);
   }
 
@@ -205,6 +220,12 @@ class Dereferencer {
       // Kept as a reference (never inlined or conjoined in the validator's copy), spelled from the
       // document root when it resolves inside a resource.
       const kept = this.copyRecord(value, siblingMode, resource, at, "$ref");
+      // The validator follows every `$ref` on the way to a target, so a target inside the node that
+      // holds the reference (its own `$id` resource) is reached through `allOf`, which applies in
+      // place like `$ref`, leaving no `$ref` on the way.
+      if (!this.inline && found !== null && found.pointer.startsWith(`${at}/`)) {
+        return { ...kept, allOf: [...(Array.isArray(kept.allOf) ? kept.allOf : []), { $ref: `#${found.pointer}` }] };
+      }
       return { $ref: found === null || resource.pointer === "" ? ref : `#${found.pointer}`, ...kept };
     }
     this.expanding.push(found.target);
@@ -212,11 +233,29 @@ class Dereferencer {
     this.expanding.pop();
     const siblings = this.copyRecord(value, siblingMode, resource, at, "$ref");
     if (Object.keys(siblings).length === 0) return target;
+    if (REFERENCE_MODES.has(mode)) return withReferenceSiblings(target, siblings);
     if (!isRecord(target)) {
       throw new DereferenceError(`$ref '${ref}' has sibling keys but its target is not an object`);
     }
     return conjoin(target, siblings, ref, true);
   }
+}
+
+const MAP_MODES = new Set<Mode>(["names", "extNames", "objects", "extObjects", "components", "examples", "links"]);
+/** How the items of an array read in a map mode are read. */
+const MAP_ITEMS: Partial<Record<Mode, Mode>> = { names: "node", extNames: "node", objects: "object", extObjects: "object" };
+
+/**
+ * A Reference Object outside a schema (OpenAPI 3.1): its `summary` and `description` replace the
+ * target's, and any other key beside it is ignored.
+ */
+function withReferenceSiblings(target: JsonValue, siblings: JsonObject): JsonValue {
+  if (!isRecord(target)) return target;
+  const result: JsonObject = { ...target };
+  for (const key of ["summary", "description"]) {
+    if (Object.hasOwn(siblings, key)) setOwn(result, key, siblings[key]);
+  }
+  return result;
 }
 
 function outside(ref: string): DereferenceError {

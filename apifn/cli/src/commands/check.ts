@@ -72,6 +72,8 @@ export interface CheckCommandOptions {
   writeStdout?: (text: string) => void | Promise<void>;
   /** Called between the publisher's steps (tests change the filesystem there). */
   publishHook?: PublishHook;
+  /** Cancels the run: an abort before the stdout write completes rolls back and exits 2. */
+  signal?: AbortSignal;
   /** Total time for an HTTP(S) --base-spec, body included (default 30 s). */
   httpTimeoutMs?: number;
 }
@@ -198,7 +200,7 @@ async function generate(options: CheckCommandOptions, cwd: string): Promise<RunI
     specLabel: path.relative(cwd, specPath).split(path.sep).join("/") || specPath,
     generated: built.doc,
     routerFile: built.routerFile,
-    baseSpecFile: local ? path.resolve(cwd, options.baseSpec as string) : undefined,
+    baseSpecFile: local ? resolveOperand(cwd, options.baseSpec as string) : undefined,
     reportPath: options.reportPath === undefined ? undefined : resolveOperand(cwd, options.reportPath),
   };
 }
@@ -548,7 +550,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     if (outputs.length > 0 && repair === null) {
       guarded.push({ role: `the spec ${inputs.specLabel}`, file: inputs.specPath, destination: specTarget.destination, observed: committed.observed });
     }
-    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook);
+    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {

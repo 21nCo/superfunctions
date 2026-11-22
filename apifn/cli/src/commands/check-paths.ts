@@ -54,19 +54,17 @@ function isNonDirectory(file: string): boolean {
   }
 }
 
-/** True when `spelled` ends in a component that only a directory satisfies: `/`, `.` or `..`. */
-function endsInDirectory(spelled: string): boolean {
-  const last = spelled.split(process.platform === "win32" ? /[\\/]/ : "/").pop() as string;
-  return last === "" || last === "." || last === "..";
-}
+/** The separators a path is split on: `/`, and on Windows `\\` too. */
+const SEPARATORS = process.platform === "win32" ? /[\\/]/ : "/";
 
 /**
- * `operand` resolved against `cwd`, keeping a trailing directory requirement (path.resolve drops
- * a trailing `/` or `.`) for writeDestination to enforce.
+ * `operand` made absolute against `cwd` without lexical normalization: a `..` stays for the
+ * filesystem walk (writeDestination, or the kernel) to apply after the component before it, so
+ * `link/../report.md` lands beside the link's target, as the kernel would write it, and
+ * `file/../x` fails; a trailing `/` or `.` keeps its directory requirement.
  */
 export function resolveOperand(cwd: string, operand: string): string {
-  const resolved = path.resolve(cwd, operand);
-  return endsInDirectory(operand) ? `${resolved}${path.sep}` : resolved;
+  return path.isAbsolute(operand) ? operand : `${cwd}${path.sep}${operand}`;
 }
 
 /**
@@ -77,11 +75,10 @@ export function resolveOperand(cwd: string, operand: string): string {
  * (ENOTDIR), so both throw CheckUsageError instead of being dropped.
  */
 export function writeDestination(target: string): string {
-  const absolute = path.resolve(target);
+  // No path.resolve: it would collapse `..` before the walk consults the filesystem.
+  const absolute = path.isAbsolute(target) ? target : `${process.cwd()}${path.sep}${target}`;
   let resolved = path.parse(absolute).root;
-  const pending = absolute.slice(resolved.length).split(path.sep);
-  // path.resolve drops a trailing separator or `.`; keep the directory requirement it carried.
-  if (endsInDirectory(target)) pending.push("");
+  const pending = absolute.slice(resolved.length).split(SEPARATORS);
   let links = 0;
   let directoryOnly = false;
   while (pending.length > 0) {
@@ -114,9 +111,9 @@ export function writeDestination(target: string): string {
     }
     if (path.isAbsolute(link)) {
       resolved = path.parse(link).root;
-      pending.unshift(...link.slice(resolved.length).split(path.sep));
+      pending.unshift(...link.slice(resolved.length).split(SEPARATORS));
     } else {
-      pending.unshift(...link.split(path.sep));
+      pending.unshift(...link.split(SEPARATORS));
     }
   }
   if (directoryOnly) {

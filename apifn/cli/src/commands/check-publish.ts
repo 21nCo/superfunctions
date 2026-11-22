@@ -35,12 +35,13 @@
  *   (its callback, not its return), which is the commit. If a step before it fails, every
  *   published output is rolled back; bytes another writer put there are left alone and the error
  *   names the conflict.
- * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal that comes before
- *   stdout rolls every output back. One that no host listener received (it would end the process)
- *   also does not wait for a pending stdout write: the outputs are rolled back and the signal is
- *   raised again. A host that handles a signal during the stdout write keeps running, so the write
- *   is awaited and commits as usual. A run that writes no file holds no signal. When the run
- *   yields to the event loop before stdout, every protected path is checked again.
+ * - Cancellation is an AbortSignal, never a process signal: this module installs, inspects,
+ *   removes and raises no process signal listener, so an embedding host's own handling is left
+ *   alone. An abort before the commit rolls every output back (checked after each step and after
+ *   the yield before stdout); one while the stdout write is pending abandons that write and rolls
+ *   back. Both exit 2. The standalone binary (bin.ts) alone turns SIGINT, SIGTERM and SIGHUP into an
+ *   abort and raises the signal again once the rollback is done. When the run yields to the event
+ *   loop before stdout, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. A run that cannot clean up (killed
@@ -602,71 +603,27 @@ function writeFailure(staged: Staged, error: unknown): CheckUsageError {
   return new CheckUsageError(`Failed to write ${staged.output.noun} ${staged.output.file}: ${errorMessage(error)}`);
 }
 
-const HELD_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-/** The signal recorders of the publications running now. */
-const RECORDERS = new Set<unknown>();
-
 /**
- * Lets the event loop pass its poll phase once, so a held signal already raised reaches its
- * listener (an immediate scheduled during the poll phase runs before the loop polls again).
+ * Lets the event loop pass its poll phase once, so a signal already raised reaches the binary's
+ * listener and aborts (an immediate scheduled during the poll phase runs before the loop polls
+ * again).
  */
 function nextTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
-interface HeldSignals {
-  /** The first held signal so far. */
-  received: () => NodeJS.Signals | undefined;
-  /** Settles with the first held signal no host listener received (it would end the process). */
-  arrived: Promise<NodeJS.Signals>;
-  release: () => void;
-}
-
-/**
- * Records SIGINT, SIGTERM and SIGHUP until `release`, which removes the recorder and raises again
- * each signal that no other listener had (an embedding host's, a one-shot one included), so it
- * keeps its default action.
- */
-function holdSignals(): HeldSignals {
-  let received: NodeJS.Signals | undefined;
-  const unhandled = new Set<NodeJS.Signals>();
-  let notify: (signal: NodeJS.Signals) => void = () => {};
-  const arrived = new Promise<NodeJS.Signals>((resolve) => {
-    notify = resolve;
-  });
-  // The recorder runs first, so the other listeners present now are exactly those this delivery
-  // reaches (a one-shot one included); another publication's recorder is not a host's.
-  const record = (signal: NodeJS.Signals) => {
-    received ??= signal;
-    if (process.listeners(signal).some((listener) => !RECORDERS.has(listener))) return;
-    unhandled.add(signal);
-    notify(signal);
-  };
-  RECORDERS.add(record);
-  for (const signal of HELD_SIGNALS) process.prependListener(signal, record);
-  return {
-    received: () => received,
-    arrived,
-    release: () => {
-      for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
-      RECORDERS.delete(record);
-      for (const signal of unhandled) process.kill(process.pid, signal);
-    },
-  };
-}
-
 /**
  * Publishes the outputs (in order), then awaits `emit` (stdout). After every change it makes, the
  * guarded paths and the other outputs must be as expected (see the module comment). Any failure,
- * including one stdout reports after its write returned, or a held signal that arrived before the
- * commit, rolls back what was published and throws a CheckUsageError (a held signal is then
- * raised again).
+ * including one stdout reports after its write returned, or an abort of `signal` before the
+ * commit, rolls back what was published and throws a CheckUsageError.
  */
 export async function publish(
   outputs: PlannedOutput[],
   guarded: Guarded[],
   emit: () => void | Promise<void>,
-  hook?: PublishHook
+  hook?: PublishHook,
+  signal?: AbortSignal
 ): Promise<void> {
   const all: Staged[] = outputs.map((output) => ({
     output,
@@ -677,17 +634,29 @@ export async function publish(
     created: [],
     published: false,
   }));
-  // A run that writes no file has nothing to roll back: it leaves signals alone.
-  const signals: HeldSignals =
-    all.length > 0 ? holdSignals() : { received: () => undefined, arrived: new Promise(() => {}), release: () => {} };
   try {
-    await publishAll(all, verifier(all, guarded), emit, hook, signals);
+    await publishAll(all, verifier(all, guarded), emit, hook, signal);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
-    // A signal that came during the last synchronous steps (a failure path too) is recorded now.
-    await nextTurn();
-    signals.release();
   }
+}
+
+function abortError(signal: AbortSignal): CheckUsageError {
+  const why = typeof signal.reason === "string" ? `received ${signal.reason}` : "was aborted";
+  return new CheckUsageError(`apifn check ${why} before its report was delivered; no output it wrote is kept.`);
+}
+
+/** Settles when `signal` aborts (never without one); `stop` removes its listener. */
+function abortOf(signal: AbortSignal | undefined): { aborted: Promise<void>; stop: () => void } {
+  let stop = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    if (signal === undefined) return;
+    if (signal.aborted) resolve();
+    const onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    stop = () => signal.removeEventListener("abort", onAbort);
+  });
+  return { aborted, stop };
 }
 
 /** Runs `step` for each output; a failure rolls back every output. */
@@ -706,41 +675,49 @@ async function publishAll(
   verify: Verify,
   emit: () => void | Promise<void>,
   hook: PublishHook | undefined,
-  signals: HeldSignals
+  signal: AbortSignal | undefined
 ): Promise<void> {
-  const interrupted = (signal: NodeJS.Signals) =>
-    rollBackAll(all, new CheckUsageError(`apifn check received ${signal} while it wrote its outputs.`), hook);
-  // When the run yields to the event loop before stdout, a held signal can arrive and another
-  // process can act: after the yield, roll back on a signal and check every protected path again.
+  if (signal?.aborted) throw abortError(signal);
+  // Every check after a change also stops on an abort: the outputs are then rolled back.
+  const checked: Verify = (staged) => {
+    if (signal?.aborted) throw abortError(signal);
+    verify(staged);
+  };
+  // When the run yields to the event loop before stdout, an abort can arrive and another process
+  // can act: after the yield, roll back on an abort and check every protected path again.
   const checkpoint = async () => {
     await nextTurn();
-    const signal = signals.received();
-    if (signal !== undefined) throw interrupted(signal);
     const last = all.at(-1);
+    if (signal?.aborted && last === undefined) throw abortError(signal);
     if (last === undefined) return;
     try {
-      verify(last);
+      checked(last);
     } catch (error) {
       throw rollBackAll(all, writeFailure(last, error), hook);
     }
   };
   // Reservation, staging and installation run in one synchronous stretch.
-  eachOutput(all, hook, (staged) => reserve(staged, hook, verify));
-  eachOutput(all, hook, (staged) => stage(staged, verify));
-  eachOutput(all, hook, (staged) => install(staged, hook, verify));
+  eachOutput(all, hook, (staged) => reserve(staged, hook, checked));
+  eachOutput(all, hook, (staged) => stage(staged, checked));
+  eachOutput(all, hook, (staged) => install(staged, hook, checked));
   await checkpoint();
-  // A stdout write can wait on its reader indefinitely: a signal that will end the process does not
-  // wait for it. A host that handles the signal keeps running, so the write is awaited.
-  const outcome = await Promise.race([
-    Promise.resolve()
-      .then(emit)
-      .then(
-        () => ({ done: true as const }),
-        (error: unknown) => ({ error })
-      ),
-    signals.arrived.then((signal) => ({ signal })),
-  ]);
-  if ("signal" in outcome) throw interrupted(outcome.signal);
+  // A stdout write can wait on its reader indefinitely: an abort does not wait for it.
+  const abort = abortOf(signal);
+  let outcome: { done: true } | { error: unknown } | { aborted: true };
+  try {
+    outcome = await Promise.race([
+      Promise.resolve()
+        .then(emit)
+        .then(
+          () => ({ done: true as const }),
+          (error: unknown) => ({ error })
+        ),
+      abort.aborted.then(() => ({ aborted: true as const })),
+    ]);
+  } finally {
+    abort.stop();
+  }
+  if ("aborted" in outcome) throw rollBackAll(all, abortError(signal as AbortSignal), hook);
   if ("error" in outcome) {
     throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(outcome.error)}`), hook);
   }

@@ -173,17 +173,23 @@ export function isCheckInvocation(argv: string[]): boolean {
 }
 
 /**
- * `argv` with each separate option value attached (`--spec -odd.yml` -> `--spec=-odd.yml`), for
- * cac's own parse of a check invocation: cac would read a dash-prefixed value as short flags.
+ * `argv` in the grammar above, spelled for cac's own parse of a check invocation, so cac finds the
+ * same command: each separate option value is attached (`--spec -odd.yml` -> `--spec=-odd.yml`;
+ * cac would read a dash-prefixed value as short flags), and each check flag is spelled as cac
+ * declares it (`--allow-breaking` -> `--allowBreaking`; cac knows only the camel-case name as a
+ * flag and would take the next token, `check` in `apifn --allow-breaking check`, as its value).
  */
 export function attachCheckValues(argv: string[]): string[] {
   const attached: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const name = kebab(token.slice(2));
-    if (token.startsWith("--") && !token.includes("=") && Object.hasOwn(VALUE_OPTIONS, name) && isSeparateValue(argv[i + 1])) {
+    const plain = token.startsWith("--") && !token.includes("=");
+    if (plain && Object.hasOwn(VALUE_OPTIONS, name) && isSeparateValue(argv[i + 1])) {
       attached.push(`${token}=${argv[i + 1]}`);
       i += 1;
+    } else if (plain && Object.hasOwn(FLAGS, name) && FLAGS[name] !== null) {
+      attached.push(`--${FLAGS[name]}`);
     } else {
       attached.push(token);
     }

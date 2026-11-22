@@ -1158,6 +1158,8 @@ describe("apifn check: no write lands on the base spec", () => {
 
   it("--report naming the --base-spec file exits 2 and leaves it unchanged", async () => {
     const { dir, baseText } = await staleService();
+    // `out/..` is applied by the filesystem, so `out` must exist as a directory.
+    await mkdir(path.join(dir, "out"));
     for (const report of CASE_INSENSITIVE_FS ? ["base.yml", "BASE.yml", "./out/../base.yml"] : ["base.yml", "./out/../base.yml"]) {
       const result = await run(["check", "--base-spec", "base.yml", "--report", report], dir);
       expect({ report, code: result.code, stdout: result.stdout }).toEqual({ report, code: 2, stdout: "" });
@@ -2840,12 +2842,34 @@ describe("apifn check: scope, resources and literal data hold on base and head a
     expect(self.stderr).toContain("cannot combine");
   });
 
+  const BODY_FIELD_REQUIRED = [
+    {
+      type: "modified",
+      breaking: true,
+      path: "paths./users.post.requestBody.content.application/json.schema.required",
+      description: "Existing request body field 'first' became required in paths./users.post",
+    },
+  ];
+
   it("a resource-relative $ref is diffed against its target in that resource", async () => {
-    const base = await usersService(RESOURCE, `{ type: "object" }`);
-    const head = await usersService(RESOURCE.replace("minLength: 2", "minLength: 2, maxLength: 8"), `{ $ref: "${GET_SCHEMA}/properties/name" }`);
-    const result = await run(["check", "--base-spec", path.join(base, SPEC)], head);
-    expect(result.stderr).toBe("");
-    expect([0, 1]).toContain(result.code);
+    // The same reference on both sides; only the definition it points at changes.
+    const resource = `{ $id: "https://example.com/schemas/user", type: "object", $defs: { Name: { type: "object", properties: { first: { type: "string" } } } }, properties: { name: { $ref: "#/$defs/Name" } } }`;
+    const body = `{ $ref: "${GET_SCHEMA}/properties/name" }`;
+    const base = await usersService(resource, body);
+    const head = await usersService(resource.replace(`{ first: { type: "string" } }`, `{ first: { type: "string" } }, required: ["first"]`), body);
+    const { code, report } = await runJson(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect({ code, verdict: report.verdict, breaking: report.breaking }).toEqual({ code: 1, verdict: "fail", breaking: BODY_FIELD_REQUIRED });
+  });
+
+  it("a schema's own $id is the resource its own $ref resolves in (round 10)", async () => {
+    const named = `{ $id: "https://example.com/schemas/name", $ref: "#/$defs/Name", $defs: { Name: { type: "object", properties: { first: { type: "string" } } } } }`;
+    const body = `{ $ref: "${GET_SCHEMA}" }`;
+    const base = await usersService(named, body);
+    const self = await runJson(["check", "--base-spec", SPEC], base);
+    expect({ code: self.code, valid: self.report.valid, status: self.report.base.status }).toEqual({ code: 0, valid: true, status: "compared" });
+    const head = await usersService(named.replace(`{ first: { type: "string" } }`, `{ first: { type: "string" } }, required: ["first"]`), body);
+    const { code, report } = await runJson(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect({ code, verdict: report.verdict, breaking: report.breaking }).toEqual({ code: 1, verdict: "fail", breaking: BODY_FIELD_REQUIRED });
   });
 
   it("extension entries, Link Object payloads and Example values are data: never followed, never refused", async () => {
@@ -3439,66 +3463,6 @@ describe("apifn check: separation is established on the reserved destination bef
     expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("another writer\n");
   });
 
-  /** Runs check in a child process that sends itself SIGTERM at `step` for the report. */
-  async function interrupted(step: string, write: boolean, alias = false, host = ""): Promise<{ dir: string; code: number | null; signal: string | null; stdout: string }> {
-    const root = await fixtures();
-    const dir = path.join(root, "base");
-    await mkdir(path.join(dir, ".apifn"));
-    const script = path.join(root, "interrupt.ts");
-    const check = path.join(import.meta.dirname, "..", "src", "commands", "check.ts");
-    await writeFile(
-      script,
-      [
-        `import { symlinkSync } from "node:fs";`,
-        `import { runCheckCommand } from ${JSON.stringify(check)};`,
-        `let handled = 0;`,
-        host === "once" ? `process.once("SIGTERM", () => { handled += 1; });` : "",
-        host === "sigint" ? `process.on("SIGINT", () => { handled += 1; });` : "",
-        host === "removed" ? `const gone = () => { handled += 1; }; process.on("SIGTERM", gone);` : "",
-        `const code = await runCheckCommand({`,
-        `  cwd: ${JSON.stringify(dir)},`,
-        `  config: ${JSON.stringify(CONFIG)},`,
-        `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
-        `  reportPath: ".apifn/report.md",`,
-        `  format: "json",`,
-        `  write: ${write},`,
-        `  writeStdout: () => {`,
-        `    if (${JSON.stringify(step)} !== "stdout") return;`,
-        `    process.kill(process.pid, "SIGTERM");`,
-        `    setInterval(() => {}, 1000); // like a pending pipe write, it keeps the process alive`,
-        `    return new Promise(() => {}); // a reader that never drains`,
-        `  },`,
-        `  publishHook: (step, destination) => {`,
-        `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
-        host === "sigint" ? `    process.kill(process.pid, "SIGINT");` : "",
-        host === "removed" ? `    process.removeListener("SIGTERM", gone);` : "",
-        `    process.kill(process.pid, "SIGTERM");`,
-        alias ? `    symlinkSync(destination, ${JSON.stringify(path.join(dir, SPEC))});` : "",
-        `  },`,
-        `});`,
-        `process.stdout.write(\`survived handled=\${handled} code=\${code}\\n\`);`,
-      ].join("\n")
-    );
-    const jiti = path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
-    const child = spawn(process.execPath, [jiti, script], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
-    let stdout = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    const stuck = setTimeout(() => child.kill("SIGKILL"), 10_000);
-    const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => child.on("close", (exit, sig) => resolve([exit, sig])));
-    clearTimeout(stuck);
-    return { dir, code, signal, stdout };
-  }
-
-  for (const [step, write] of [["reserved", false], ["installed", false], ["installed", true], ["stdout", true]] as const) {
-    it.skipIf(POSIX_ONLY)(`SIGTERM at '${step}' rolls back every output and is raised again${write ? " (--write)" : ""}`, async () => {
-      const { dir, code, signal, stdout } = await interrupted(step, write);
-      expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
-      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
-    }, 30_000);
-  }
-
   it.skipIf(POSIX_ONLY)("a missing spec name that reaches the report while the run yields before stdout is caught: exit 2, the link is kept", async () => {
     const root = await fixtures();
     const dir = path.join(root, "base");
@@ -3526,101 +3490,6 @@ describe("apifn check: separation is established on the reserved destination bef
     expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
   });
 
-  it.skipIf(POSIX_ONLY)("a host that listens for SIGTERM gets it once, keeps running, and the outputs are rolled back", async () => {
-    const root = await fixtures();
-    const dir = path.join(root, "base");
-    await mkdir(path.join(dir, ".apifn"));
-    let host = 0;
-    const onTerm = () => {
-      host += 1;
-    };
-    process.on("SIGTERM", onTerm);
-    const listening = process.listenerCount("SIGTERM");
-    const errors: string[] = [];
-    let duringStdoutOnly = -1;
-    try {
-      const code = await runCheckCommand({
-        cwd: dir,
-        config: CONFIG,
-        output: { error: (message: string) => errors.push(message) } as unknown as Output,
-        reportPath: path.join(".apifn", "report.md"),
-        writeStdout: () => {},
-        publishHook: (step) => {
-          if (step === "installed") process.kill(process.pid, "SIGTERM");
-        },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(code).toBe(2);
-      expect(host).toBe(1);
-      expect(errors.join("\n")).toContain("received SIGTERM");
-      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
-      // A run that writes no file installs no listener.
-      await runCheckCommand({
-        cwd: dir,
-        config: CONFIG,
-        output: { error: () => {} } as unknown as Output,
-        writeStdout: () => {
-          duringStdoutOnly = process.listenerCount("SIGTERM");
-        },
-      });
-      expect(duringStdoutOnly).toBe(listening);
-      expect(process.listenerCount("SIGTERM")).toBe(listening);
-    } finally {
-      process.removeListener("SIGTERM", onTerm);
-    }
-  });
-
-  it.skipIf(POSIX_ONLY)("a one-shot host SIGTERM handler is honoured: the host survives and the outputs are rolled back", async () => {
-    const { dir, code, signal, stdout } = await interrupted("installed", true, false, "once");
-    expect({ code, signal, stdout }).toEqual({ code: 0, signal: null, stdout: "survived handled=1 code=2\n" });
-    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
-  }, 30_000);
-
-  it.skipIf(POSIX_ONLY)("an unhandled SIGTERM keeps its default action after a host-handled SIGINT came first", async () => {
-    const { dir, code, signal, stdout } = await interrupted("installed", false, false, "sigint");
-    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
-    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
-  }, 30_000);
-
-  it.skipIf(POSIX_ONLY)("a host listener removed before the signal does not count: SIGTERM keeps its default action", async () => {
-    const { dir, code, signal, stdout } = await interrupted("installed", false, false, "removed");
-    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
-    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
-  }, 30_000);
-
-  it.skipIf(POSIX_ONLY)("a host-handled signal during the stdout write awaits the write: the delivered report and the files agree", async () => {
-    const root = await fixtures();
-    const dir = path.join(root, "base");
-    await mkdir(path.join(dir, ".apifn"));
-    const onTerm = () => {};
-    process.on("SIGTERM", onTerm);
-    let delivered = "";
-    try {
-      const code = await runCheckCommand({
-        cwd: dir,
-        config: CONFIG,
-        output: { error: () => {} } as unknown as Output,
-        reportPath: path.join(".apifn", "report.md"),
-        format: "json",
-        writeStdout: (text) => {
-          process.kill(process.pid, "SIGTERM");
-          // A reader that drains later.
-          return new Promise<void>((resolve) =>
-            setTimeout(() => {
-              delivered = text;
-              resolve();
-            }, 100)
-          );
-        },
-      });
-      expect(code).toBe(1);
-      expect(delivered).not.toBe("");
-      expect(await readFile(path.join(dir, ".apifn", "report.md"), "utf8")).toBe(delivered);
-    } finally {
-      process.removeListener("SIGTERM", onTerm);
-    }
-  });
-
   it("the delivered report is the commit: a guarded file edited while stdout completes does not undo it", async () => {
     const root = await fixtures();
     const dir = path.join(root, "base");
@@ -3646,11 +3515,233 @@ describe("apifn check: separation is established on the reserved destination bef
     expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
     expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
   });
+});
 
-  it.skipIf(POSIX_ONLY)("SIGTERM that comes with an alias at 'reserved' is still raised after the rollback", async () => {
-    const { dir, code, signal, stdout } = await interrupted("reserved", false, true);
-    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
-    expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(["openapi.yml"]);
-    expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+// ---------------------------------------------------------------------------
+// PR #410 round 10 (the last architecture reset). Each test below failed at 947174f1a.
+// ---------------------------------------------------------------------------
+
+describe("apifn check: cancellation is an AbortSignal; only the binary owns process signals (round 10)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+  const counts = () => ["SIGINT", "SIGTERM", "SIGHUP"].map((signal) => process.listenerCount(signal)).join(",");
+  const jiti = () => path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
+  const src = (file: string) => JSON.stringify(path.join(import.meta.dirname, "..", "src", file));
+
+  async function service(): Promise<string> {
+    const dir = path.join(await fixtures(), "base");
+    await mkdir(path.join(dir, ".apifn"));
+    return dir;
+  }
+
+  async function spawned(dir: string, args: string[]): Promise<{ code: number | null; signal: string | null; stdout: string; stderr: string }> {
+    const child = spawn(process.execPath, [jiti(), ...args], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const stuck = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => child.on("close", (exit, sig) => resolve([exit, sig])));
+    clearTimeout(stuck);
+    return { code, signal, stdout, stderr };
+  }
+
+  for (const step of ["reserved", "installed", "stdout"] as const) {
+    it(`an abort at '${step}' rolls back every output and exits 2; no process signal listener is touched`, async () => {
+      const dir = await service();
+      const controller = new AbortController();
+      const before = counts();
+      const seen = new Set<string>();
+      const steps: string[] = [];
+      const errors: string[] = [];
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        reportPath: path.join(".apifn", "report.md"),
+        format: "json",
+        write: true,
+        signal: controller.signal,
+        writeStdout: () => {
+          seen.add(counts());
+          if (step !== "stdout") return;
+          setTimeout(() => controller.abort("SIGTERM"), 20);
+          return new Promise<void>(() => {}); // a reader that never drains
+        },
+        publishHook: (current) => {
+          steps.push(current);
+          seen.add(counts());
+          if (current === step) controller.abort("SIGTERM");
+        },
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("received SIGTERM before its report was delivered");
+      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+      // An abort at the first reservation stops before another output is reserved or a temp staged.
+      if (step === "reserved") expect(steps.filter((s) => s !== "rollback")).toEqual(["reserved"]);
+      expect({ seen: [...seen], after: counts() }).toEqual({ seen: [before], after: before });
+    });
+  }
+
+  for (const host of ["a one-shot handler prepended while stdout is pending", "a handler added with process.on before the run"]) {
+    it.skipIf(POSIX_ONLY)(`an embedding host's SIGTERM handler (${host}) runs once; the host survives and the report stays published`, async () => {
+      const dir = await service();
+      const once = host.startsWith("a one-shot");
+      const script = path.join(dir, "host.ts");
+      await writeFile(
+        script,
+        [
+          `import { readFileSync } from "node:fs";`,
+          `import { runCheckCommand } from ${src("commands/check.ts")};`,
+          `const counts = () => ["SIGINT", "SIGTERM", "SIGHUP"].map((s) => process.listenerCount(s)).join(",");`,
+          `let handled = 0;`,
+          `const handler = () => { handled += 1; };`,
+          once ? "" : `process.on("SIGTERM", handler);`,
+          `const before = counts();`,
+          `const seen = new Set();`,
+          `let delivered = "";`,
+          `const code = await runCheckCommand({`,
+          `  cwd: process.cwd(), config: ${JSON.stringify(CONFIG)}, reportPath: ".apifn/report.md", format: "json", write: true,`,
+          `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
+          `  publishHook: () => { seen.add(counts()); },`,
+          `  writeStdout: (text) => {`,
+          `    seen.add(counts());`,
+          once ? `    process.prependOnceListener("SIGTERM", handler);` : "",
+          `    process.kill(process.pid, "SIGTERM");`,
+          `    return new Promise((resolve) => setTimeout(() => { delivered = text; resolve(); }, 100));`,
+          `  },`,
+          `});`,
+          `await new Promise((resolve) => setTimeout(resolve, 50));`,
+          `const published = delivered !== "" && readFileSync(".apifn/report.md", "utf8") === delivered;`,
+          `process.stdout.write(JSON.stringify({ handled, code, published, seen: [...seen].every((c) => c === before), same: counts() === before }));`,
+        ].join("\n")
+      );
+      const result = await spawned(dir, [script]);
+      expect({ code: result.code, signal: result.signal, stderr: result.stderr }).toEqual({ code: 0, signal: null, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual({ handled: 1, code: 0, published: true, seen: true, same: true });
+    }, 30_000);
+  }
+
+  for (const [step, write, alias] of [
+    ["reserved", false, false],
+    ["reserved", false, true],
+    ["installed", false, false],
+    ["installed", true, false],
+    ["stdout", true, false],
+  ] as const) {
+    it.skipIf(POSIX_ONLY)(`under the binary's signal owner, SIGTERM at '${step}'${write ? " (--write)" : ""}${alias ? " with an alias" : ""} rolls back, then the process dies by SIGTERM`, async () => {
+      const dir = await service();
+      const script = path.join(dir, "owner.ts");
+      await writeFile(
+        script,
+        [
+          `import { symlinkSync } from "node:fs";`,
+          `import { runCheckCommand } from ${src("commands/check.ts")};`,
+          `import { withSignalAbort } from ${src("signals.ts")};`,
+          `await withSignalAbort((signal) => runCheckCommand({`,
+          `  cwd: process.cwd(), config: ${JSON.stringify(CONFIG)}, reportPath: ".apifn/report.md", format: "json", write: ${write}, signal,`,
+          `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
+          `  writeStdout: () => {`,
+          `    if (${JSON.stringify(step)} !== "stdout") return;`,
+          `    process.kill(process.pid, "SIGTERM");`,
+          `    setInterval(() => {}, 1000); // like a pending pipe write, it keeps the process alive`,
+          `    return new Promise(() => {}); // a reader that never drains`,
+          `  },`,
+          `  publishHook: (step, destination) => {`,
+          `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
+          `    process.kill(process.pid, "SIGTERM");`,
+          alias ? `    symlinkSync(destination, ${JSON.stringify(path.join(dir, SPEC))});` : "",
+          `  },`,
+          `}));`,
+          `process.stdout.write("survived\\n");`,
+        ].join("\n")
+      );
+      const result = await spawned(dir, [script]);
+      expect({ code: result.code, signal: result.signal, stdout: result.stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+      expect(result.stderr).toContain(alias ? "reached the spec" : "received SIGTERM");
+      expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(alias ? ["openapi.yml"] : []);
+      if (alias) expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
+    }, 30_000);
+  }
+
+  it.skipIf(POSIX_ONLY)("the apifn binary turns SIGTERM during check into an abort: nothing is written and it dies by SIGTERM", async () => {
+    const dir = await service();
+    // The router signals its own process while the check loads it.
+    const router = await readFile(path.join(dir, "router.ts"), "utf8");
+    await writeFile(path.join(dir, "router.ts"), `process.kill(process.pid, "SIGTERM");\n${router}`);
+    const bin = JSON.parse(src("bin.ts")) as string;
+    const result = await spawned(dir, [bin, "check", "--write", "--report", "report.md"]);
+    expect({ code: result.code, signal: result.signal, stdout: result.stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+    expect(result.stderr).toContain("received SIGTERM before its report was delivered");
+    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+    // Every other command keeps the default action.
+    const generate = await spawned(dir, [bin, "generate"]);
+    expect({ code: generate.code, signal: generate.signal, stderr: generate.stderr }).toEqual({ code: null, signal: "SIGTERM", stderr: "" });
   }, 30_000);
+});
+
+describe("apifn check: Reference Objects outside schemas take only summary and description (round 10)", () => {
+  it("siblings of a Parameter or Response $ref are not conjoined: a valid base is compared, not refused", () => {
+    const merged = comparable({
+      openapi: "3.1.0",
+      info: { title: "S", version: "1.0.0" },
+      paths: {
+        "/u": {
+          get: {
+            parameters: [{ $ref: "#/components/parameters/Filter", required: true, description: "beside" }],
+            responses: { "200": { $ref: "#/components/responses/Ok", description: "here", "x-other": 1 } },
+          },
+        },
+      },
+      components: {
+        parameters: { Filter: { name: "filter", in: "query", required: false, schema: { type: "string" } } },
+        responses: { Ok: { description: "ok" } },
+      },
+    }) as unknown as { paths: Record<string, { get: { parameters: unknown[]; responses: Record<string, unknown> } }> };
+    expect(merged.paths["/u"].get.parameters[0]).toEqual({ name: "filter", in: "query", required: false, description: "beside", schema: { type: "string" } });
+    expect(merged.paths["/u"].get.responses["200"]).toEqual({ description: "here" });
+  });
+});
+
+describe("apifn check: one argv grammar for the pre-parser and cac (round 10)", () => {
+  it.each([["--allow-breaking"], ["--allowBreaking"]])("`apifn %s check` runs the check and still lists the breaking change", async (flag) => {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "breaking");
+    await commitSpec(dir);
+    const args = ["check", "--base-spec", path.join("..", "base", SPEC)];
+    const gated = await runJson(args, dir);
+    expect({ code: gated.code, verdict: gated.report.verdict }).toEqual({ code: 1, verdict: "fail" });
+    const allowed = await runJson([flag, ...args], dir);
+    expect({ code: allowed.code, verdict: allowed.report.verdict, breaking: allowed.report.breaking }).toEqual({
+      code: 0,
+      verdict: "warn",
+      breaking: gated.report.breaking,
+    });
+    expect(allowed.report.breaking.length).toBeGreaterThan(0);
+  });
+});
+
+describe("apifn check: an operand's `..` is applied by the filesystem, after the component before it (round 10)", () => {
+  it.skipIf(POSIX_ONLY)("--report link/../report.md lands beside the link's target, where the kernel would write it", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await mkdir(path.join(root, "data", "sub"), { recursive: true });
+    await symlink(path.join(root, "data", "sub"), path.join(dir, "link"));
+    const result = await run(["check", "--report", "link/../report.md"], dir);
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: "" });
+    expect(await readFile(path.join(root, "data", "report.md"), "utf8")).toBe(result.stdout);
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+  });
+
+  it("--report file/../report.md exits 2 (the kernel would fail with ENOTDIR) and writes nothing", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const result = await run(["check", "--report", "router.ts/../report.md"], dir);
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("which is not a directory");
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+  });
 });

@@ -21,6 +21,12 @@ export interface CliRunOptions {
   cwd?: string;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+  /**
+   * Cancels `apifn check`: an abort before its report reaches stdout rolls back every file it wrote
+   * and exits 2. The library installs no process signal listener; the `apifn` binary turns
+   * SIGINT, SIGTERM and SIGHUP into this abort.
+   */
+  signal?: AbortSignal;
 }
 
 function toArray(value: string | string[] | undefined): string[] | undefined {
@@ -341,6 +347,7 @@ export async function runCli(
         configFile,
         output,
         writeStdout: runOptions.stdout,
+        signal: runOptions.signal,
       });
       if (result !== 0) exitCode = result;
     });
