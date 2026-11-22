@@ -1,5 +1,6 @@
 import { constants } from "node:buffer";
 import { types } from "node:util";
+import { isSensitiveKey } from "./sensitive-keys.js";
 
 /** Turns a value into one `JSON.stringify` accepts: bigints become strings and cycles become "[Circular]". */
 export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -53,6 +54,8 @@ const CIRCULAR = "[Circular]";
  * chains up to this depth print exactly as JSON.stringify prints them.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
+/** What `redactValue` prints for the value of a sensitive key. */
+const REDACTED_LENGTH = '"[REDACTED]"'.length;
 
 /** Thrown when a value's JSON text cannot fit what is left of a document's budget. */
 export class DocumentBudgetExceeded extends RangeError {}
@@ -91,6 +94,8 @@ interface Walk {
   /** Originals that reached PROJECTION_REPEAT_LIMIT while still open: any further recurrence of them is marked. */
   readonly capped: Set<unknown>;
   readonly budget: DocumentBudget;
+  /** Count the value of every sensitive key as the "[REDACTED]" that `redactValue` will print for it. */
+  readonly chargeRedacted: boolean;
 }
 
 function isTracked(value: unknown): value is object {
@@ -246,7 +251,15 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
   spendText(walk.budget, 2);
   const entries: Array<[string, unknown]> = [];
   for (const name of Object.keys(record)) {
+    const redacted = walk.chargeRedacted && isSensitiveKey(name);
+    const charsLeft = walk.budget.charsLeft;
+    // A sensitive value is resolved like any other, so its getters and toJSON run in order, and its text must fit
+    // while it is resolved; once resolved it counts only as the "[REDACTED]" that replaces it.
     const member = serializeProperty(walk, record, name);
+    if (redacted && member !== undefined) {
+      walk.budget.charsLeft = charsLeft;
+      spendText(walk.budget, REDACTED_LENGTH);
+    }
     if (member !== undefined) {
       // The key, its colon and, after the first member, a separator.
       spendText(walk.budget, jsonStringLength(name) + 1 + (entries.length > 0 ? 1 : 0));
@@ -276,6 +289,9 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
  *   text), and an array counts 2n + 1 characters before its index 0 is read, so an oversized sparse or proxy array
  *   fails at once. Nothing is refunded on a throw; the caller restores `budget.charsLeft` when it drops the member.
  *
+ * With `chargeRedacted`, the value of every sensitive object key is still resolved completely, but once resolved it
+ * counts only as the "[REDACTED]" that `redactValue` prints for it, so details whose redacted text fits are kept.
+ *
  * A value, or its text, that does not fit the heap exhausts it as it would in JSON.stringify; that is not caught.
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
@@ -285,10 +301,13 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
 export function resolveJsonMember(
   key: string,
   value: unknown,
-  { budget = createDocumentBudget() }: { budget?: DocumentBudget } = {}
+  {
+    budget = createDocumentBudget(),
+    chargeRedacted = false,
+  }: { budget?: DocumentBudget; chargeRedacted?: boolean } = {}
 ): unknown {
   const holder = Object.create(null) as Record<string, unknown>;
   holder[key] = value;
-  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), budget };
+  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), budget, chargeRedacted };
   return serializeProperty(walk, holder, key);
 }

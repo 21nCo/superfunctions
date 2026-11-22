@@ -112,15 +112,15 @@ function plainMessage(error: unknown, message: unknown): string {
  * message and exit code still stand.
  */
 function documentDetails(details: unknown, budget: DocumentBudget): Record<string, unknown> | undefined {
-  if (!isPlainObject(details)) {
-    return undefined;
-  }
   const charsLeft = budget.charsLeft;
   try {
-    spendText(budget, DETAILS_MEMBER_LENGTH);
-    const resolved = resolveJsonMember("details", details, { budget });
-    if (isPlainObject(resolved)) {
-      return redactValue(resolved) as Record<string, unknown>;
+    // Inside the try: a proxy whose getPrototypeOf trap throws only makes the details unusable.
+    if (isPlainObject(details)) {
+      spendText(budget, DETAILS_MEMBER_LENGTH);
+      const resolved = resolveJsonMember("details", details, { budget, chargeRedacted: true });
+      if (isPlainObject(resolved)) {
+        return redactValue(resolved) as Record<string, unknown>;
+      }
     }
   } catch {
     // Omitted below.

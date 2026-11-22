@@ -433,6 +433,18 @@ describe("document mode resolves each member to JSON once", () => {
       }),
     ],
     ["resolves to a non-object", () => ({ toJSON: () => "text" })],
+    [
+      "throws when their prototype is read",
+      () =>
+        new Proxy(
+          {},
+          {
+            getPrototypeOf() {
+              throw new Error("prototype failed");
+            },
+          }
+        ),
+    ],
   ])("keeps the code, message and exit code and omits details that %s", async (_label, makeDetails) => {
     const result = await runDocument(async () => {
       throw Object.assign(new Error("conflict"), { code: "CONFLICT", exitCode: 12, details: makeDetails() });
@@ -1120,6 +1132,33 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     }
   });
 
+  it("counts a sensitive value as the redacted text it prints, so long shared secrets keep the details", async () => {
+    // 512 rows share one 1 MiB string under a redacted key: unredacted, they would be more than the engine can print.
+    const secret = "x".repeat(2 ** 20);
+    const rows = () => ({ rows: Array.from({ length: 512 }, () => ({ password: secret })), visible: "kept" });
+    const redactedRows = { rows: Array.from({ length: 512 }, () => ({ password: "[REDACTED]" })), visible: "kept" };
+    const failure = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: rows() });
+      throw Object.assign(new Error("rows"), { code: "ROWS", exitCode: 9, details: rows() });
+    });
+    expect(failure.exitCode).toBe(9);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "ROWS", message: "rows", details: redactedRows },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: redactedRows }],
+    });
+
+    const success = await runDocument(() => ({
+      data: null,
+      diagnostics: [{ code: "R", severity: "info", message: "r", details: rows() }],
+    }));
+    expect(parseOnlyDocument(success)).toEqual({
+      ok: true,
+      data: null,
+      diagnostics: [{ code: "R", severity: "info", message: "r", details: redactedRows }],
+    });
+  });
+
   it("resolves error and diagnostic details completely before redacting them", async () => {
     const make = (counts: { inner: number; visible: number }) => {
       const state = { value: "before" };
@@ -1334,14 +1373,15 @@ describe("document mode text limit", () => {
       .filter((line) => line.level === "warn")
       .map((line) => line.message);
 
-  it("prints data whose text is exactly the limit and fails one character below it", () => {
+  it("prints data whose text and newline are exactly the limit and fails one character below it", () => {
     const data = { list: [1, 22, 333], name: "plain", on: true, none: null, nested: { ratio: 0.5 } };
     const text = JSON.stringify({ ok: true, data });
-    const fits = finishWith(text.length, { ok: true, data, exitCode: 0 });
+    // The newline counts, so a document that fits the engine's limit can always be written with it.
+    const fits = finishWith(text.length + 1, { ok: true, data, exitCode: 0 });
     expect(fits.exitCode).toBe(0);
     expect(fits.out).toBe(`${text}\n`);
 
-    const over = finishWith(text.length - 1, { ok: true, data, exitCode: 0 });
+    const over = finishWith(text.length, { ok: true, data, exitCode: 0 });
     expect(over.exitCode).toBe(1);
     expect(parseOnlyDocument(over)).toEqual(failureDocument);
   });

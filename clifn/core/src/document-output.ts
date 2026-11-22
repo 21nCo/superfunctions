@@ -16,8 +16,9 @@ export interface DocumentOutputOptions {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   /**
-   * The longest document text to print, in characters. Defaults to the engine's maximum string length, where
-   * `JSON.stringify` throws; tests pass a smaller limit. Not part of the public runner options.
+   * The longest text to write to stdout, in characters, counting the document and its newline. Defaults to the
+   * engine's maximum string length, where `JSON.stringify` throws; tests pass a smaller limit. Not part of the public
+   * runner options.
    */
   maxLength?: number;
 }
@@ -55,7 +56,7 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * Prints the document. Its members were counted against the budget without their escapes, so escapes can still make
- * the text longer than `maxLength` or than the engine allows. The diagnostics, then the error details, are left out,
+ * the text longer than `maxLength` (the text before its newline) or than the engine allows. The diagnostics, then the error details, are left out,
  * then an error message is replaced by a fixed short one, before the caller falls back to the serialization-failure
  * document, so optional members never replace the outcome. Returns undefined when even that does not fit.
  */
@@ -127,7 +128,7 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: Doc
   let resolvedDetails: unknown;
   try {
     spendText(budget, DETAILS_MEMBER_LENGTH);
-    resolvedDetails = resolveJsonMember("details", details || undefined, { budget });
+    resolvedDetails = resolveJsonMember("details", details || undefined, { budget, chargeRedacted: true });
   } catch (error) {
     if (!(error instanceof DocumentBudgetExceeded)) {
       throw error;
@@ -221,8 +222,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     finish(outcome, diagnostics) {
       let text: string | undefined;
       let exitCode = 1;
-      // One budget for the whole document: its frame, the data or the error, then each diagnostic in order.
-      const maxLength = options.maxLength ?? createDocumentBudget().charsLeft;
+      // One budget for the whole document: its frame, the data or the error, then each diagnostic in order. The
+      // newline is reserved, so a document that fits can always be written with it.
+      const maxLength = (options.maxLength ?? createDocumentBudget().charsLeft) - 1;
       const budget = createDocumentBudget(maxLength);
       try {
         let document: Record<string, unknown>;
