@@ -127,23 +127,31 @@ function indexBindings(file, source) {
   const add = (map, key, value) => key !== undefined && map.set(key, [...(map.get(key) ?? []), value]);
   // Every identifier a destructuring pattern or loop target writes becomes
   // unresolved; `({ require: r } = x)` binds a require method.
+  // A property write (`x.y = v`) writes no binding; a default's value and a
+  // computed key are read, not written.
   const markWrites = (target) => {
+    if (isMemberAccess(target) || ts.isComputedPropertyName(target)) return;
     if (ts.isIdentifier(target) && !isNamePosition(target)) add(values, symbolOf(target), UNKNOWN);
     const value = ts.isPropertyAssignment(target) && ts.skipParentheses(target.initializer);
     if (value && keyText(target.name) === "require" && ts.isIdentifier(value)) add(values, symbolOf(value), target);
-    ts.forEachChild(target, markWrites);
+    if (ts.isBinaryExpression(target) && target.operatorToken.kind === SyntaxKind.EqualsToken) markWrites(target.left);
+    else ts.forEachChild(target, markWrites);
   };
   const visit = (node) => {
     if (ts.isIdentifier(node) && !isNamePosition(node)) add(uses, ts.idText(node), node);
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) add(values, symbolOf(node.name), node.initializer);
     // `const { require: r } = x` binds a require method, and a renamed
     // `createRequire` import or binding element binds the loader factory.
-    if ((ts.isBindingElement(node) || ts.isImportSpecifier(node)) && ts.isIdentifier(node.name) && LOADER_KEYS.has(keyText(node.propertyName ?? node.name))) add(values, symbolOf(node.name), node);
+    // Any other binding element, and a loop's declared variable, is unresolved.
+    if ((ts.isBindingElement(node) || ts.isImportSpecifier(node)) && ts.isIdentifier(node.name)) {
+      add(values, symbolOf(node.name), LOADER_KEYS.has(keyText(node.propertyName ?? node.name)) ? node : UNKNOWN);
+    }
+    if (ts.isVariableDeclaration(node) && (ts.isForInStatement(node.parent.parent) || ts.isForOfStatement(node.parent.parent))) markWrites(node.name);
     const kind = ts.isBinaryExpression(node) ? node.operatorToken.kind : undefined;
     if (kind >= SyntaxKind.FirstAssignment && kind <= SyntaxKind.LastAssignment) {
       const target = ts.skipParentheses(node.left);
       // `x = y` makes x y, `x += y` makes it `x + y`, `x ||= y`, `&&=` and `??=` can make it y.
-      if (!ts.isIdentifier(target)) markWrites(target);
+      if (ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target)) markWrites(target);
       else if (kind === SyntaxKind.EqualsToken || LOGICAL_ASSIGNMENTS.has(kind)) add(values, symbolOf(target), node.right);
       else add(values, symbolOf(target), kind === SyntaxKind.PlusEqualsToken ? node : UNKNOWN);
     }
@@ -251,6 +259,7 @@ function stringValues(node, scope) {
   const inner = operands(node);
   if (inner) return inner.flatMap((operand) => stringValues(operand, scope));
   if (ts.isStringLiteralLike(node)) return [node.text];
+  if (ts.isNumericLiteral(node)) return [String(Number(node.text))];
   if (ts.isIdentifier(node)) return throughBinding(node, scope, stringValues);
   if (ts.isBinaryExpression(node) && CONCAT_OPERATORS.has(node.operatorToken.kind)) {
     return combine([stringValues(node.left, scope), stringValues(node.right, scope)]);
@@ -379,6 +388,9 @@ function loaderName(callee, scope) {
     if (ts.isPropertyAssignment(leaf)) return ".require";
     if (mayRead(leaf, "require", scope) && !isInertRequireReceiver(ts.skipParentheses(leaf.expression), scope)) return ".require";
     if (ts.isCallExpression(leaf) && leaves(leaf.expression, scope).some((inner) => createsRequire(inner, scope))) return "createRequire()";
+    // `loader.bind(thisArg)` is the loader.
+    const bound = ts.isCallExpression(leaf) && readsOnly(leaf.expression, "bind", scope) && loaderName(leaf.expression.expression, scope);
+    if (bound) return bound;
   }
   return undefined;
 }
@@ -387,7 +399,7 @@ function sdkLoad(node, scope) {
   if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && isSdkName(node.moduleSpecifier.text)) {
     return `${ts.isImportDeclaration(node) ? "import" : "export"} "${node.moduleSpecifier.text}"`;
   }
-  if (!ts.isCallExpression(node)) return undefined;
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return undefined;
   const [callee, argument] = callTarget(node, scope);
   if (argument === undefined) return undefined;
   // The callee is resolved first, so only a call that can load spends the
@@ -399,16 +411,17 @@ function sdkLoad(node, scope) {
   return specifier === undefined ? undefined : `${loader}("${specifier}")`;
 }
 
-// The function a call runs and its first argument: `f.call(thisArg, spec)`
-// and `f.apply(thisArg, [spec])` run f with spec.
+// The function a call or `new` runs and its first argument:
+// `f.call(thisArg, spec)` and `f.apply(thisArg, [spec])` run f with spec.
 function callTarget(node, scope) {
-  const callee = node.expression;
-  if (readsOnly(callee, "call", scope)) return [callee.expression, node.arguments[1]];
+  const callee = ts.skipParentheses(node.expression);
+  const args = node.arguments ?? [];
+  if (readsOnly(callee, "call", scope)) return [callee.expression, args[1]];
   if (readsOnly(callee, "apply", scope)) {
-    const list = node.arguments[1] && ts.skipParentheses(node.arguments[1]);
+    const list = args[1] && ts.skipParentheses(args[1]);
     return [callee.expression, list && ts.isArrayLiteralExpression(list) ? list.elements[0] : undefined];
   }
-  return [callee, node.arguments[0]];
+  return [node.expression, args[0]];
 }
 
 function calleeLoader(callee, scope) {

@@ -18,8 +18,11 @@ const runOnBuild = it.runIf(built || Boolean(process.env.CI));
 const BUILT_TIMEOUT = 60_000;
 
 const temporary: string[] = [];
-afterEach(() => {
+afterEach(async () => {
   for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // The built-artifact cases are synchronous; yield a macrotask between them so
+  // the Vitest worker can answer its RPC calls during a long run.
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 describe("bundled @modelcontextprotocol/sdk version", () => {
@@ -134,6 +137,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nimport { createRequire as createRequire2 } from \"node:module\"; createRequire2(__filename)(\"@modelcontextprotocol/sdk\");\n",
     "\nrequire.call(null, \"@modelcontextprotocol/sdk\");\n",
     "\nrequire.apply(null, [\"@modelcontextprotocol/sdk\"]);\n",
+    // Loop declarations and destructuring declarations also rewrite a key.
+    "\nvar k11 = \"require\"; const h11 = { require: (id) => id, change() { this.require = require; } }; for (var k11 of [\"change\"]) h11[k11](); h11.require(\"@modelcontextprotocol/sdk\");\n",
+    "\nvar k12 = \"require\"; const h12 = { require: (id) => id, change() { this.require = require; } }; var { k12 } = { k12: \"change\" }; h12[k12](); h12.require(\"@modelcontextprotocol/sdk\");\n",
+    // A bound loader, `new` and a parenthesized call dispatch.
+    "\nrequire.bind(null)(\"@modelcontextprotocol/sdk\");\nconst boundRequire = module.require.bind(module); boundRequire(\"@modelcontextprotocol/sdk\");\n",
+    "\nnew require(\"@modelcontextprotocol/sdk\");\n(require.call)(null, \"@modelcontextprotocol/sdk\");\n",
   ];
   const inertText = [
     "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
@@ -153,6 +162,8 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nrequire(\"node:path\" || \"@modelcontextprotocol/sdk/types.js\");\n",
     // A known non-loader call spends no resolution budget on its arguments.
     `\n{ let v0 = "a"; ${Array.from({ length: 14 }, (_, i) => `let v${i + 1} = v${i} + v${i};`).join(" ")} console.log(v14); }\n`,
+    // A numeric key and a property write keep a resolved non-loader callee.
+    "\n{ const callbacks = [(id) => id]; callbacks[0](\"@modelcontextprotocol/sdk\"); const identity = (id) => id; identity.description = \"label\"; identity(\"@modelcontextprotocol/sdk\"); }\n",
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
