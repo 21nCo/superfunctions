@@ -22,6 +22,7 @@ New additive subpaths are exported for the generic CLI-builder surface:
 - `@clifn/core/diagnostics`
 - `@clifn/core/exec`
 - `@clifn/core/scaffold`
+- `@clifn/core/paths`
 
 ## Install
 
@@ -209,11 +210,14 @@ Consumer ownership stays explicit:
 ### `@clifn/core/credentials`
 
 - `createCredentialStore(path?)` -> INI profile store.
+- `createCredentialStore({ appName })` -> the same store at `<config>/credentials` from `resolveAppPaths(appName)`; `{ path }` equals the string form. Without an argument the Conduct default `~/.conduct/credentials` stays.
 - `MissingProfileError` -> typed error when profile is not found.
 
 ### `@clifn/core/config`
 
 - `createProjectConfig(path?)` -> JSON project config store.
+- `createProjectConfig({ appName, fileName? })` -> `<config>/<fileName>` (default `config.json`); `{ cwd?, fileName }` -> a project-local file; `{ path }` equals the string form. Without an argument the Conduct default `conduct.config.json` stays.
+- `{ appName }` stores resolve only the config directory for the current platform (`env` and `homedir` may be passed through, a different `platform` throws); `fileName` must stay inside its directory. Only own properties of the options object are read (enumerable or not; inherited keys are ignored). The selector of the form (`appName`, `path`, or `fileName` for a project-local file) must be a string, and an optional key set to `undefined` (`fileName` beside `appName`, `cwd`, `env`, `homedir`) takes its default. A selector set to `undefined` or a non-string, a key from another form, or an unknown key throws `InvalidStoreOptionsError` (`CLIFN_INVALID_STORE_OPTIONS`) instead of falling back to another form or the Conduct default. Every own property descriptor is captured before any getter runs, and each getter is called once. An object-form target must name a file: `{ path: "" }`, a path ending in a separator or a root (`C:\`, `\\server\share`), `.` or `..`, and a NUL character in `path`, `fileName` or `cwd` throw `InvalidStoreOptionsError` before any filesystem call; the string form is used as given. `fileName` cannot start with a drive (`C:`) before or after normalization (`./C:x`). On Windows no `fileName` segment, and not the base name of an object-form target, may contain `:`, be a device name (`nul`, `CON.json`) or end with a dot or space, since Windows would open a device or another name. Loading the module does not fail when the home or working directory is unavailable; the no-argument defaults are still taken at import when they can be.
 - `InvalidConfigError` -> typed error for invalid JSON/object shapes.
 
 ### `@clifn/core/client`
@@ -265,6 +269,12 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - subprocess execution contract for buffered capture, streaming, and timeout reporting
 - `@clifn/core/scaffold`
   - deterministic file and directory scaffolding contract with explicit overwrite policy
+- `@clifn/core/paths`
+  - `resolveAppPaths(appName, { platform?, env?, homedir? })` -> `{ config, state, cache }`: `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_CACHE_HOME` (else `~/.config`, `~/.local/state`, `~/.cache`) followed by `/<app>` on Linux, macOS and other POSIX platforms; `%APPDATA%\<app>` and `%LOCALAPPDATA%\<app>\State` / `\Cache` on Windows (else `<home>\AppData\Roaming` / `Local`)
+  - environment values count only when they are absolute paths (a UNC path needs a real server and share; device and extended-length `\\.\` / `\\?\` paths are not used, and the home directory follows the same rule); relative or empty values, and values containing a NUL character, use the defaults, and only a default reads the home directory (a home directory containing a NUL is invalid)
+  - app names match `^[a-z0-9][a-z0-9._-]{0,63}$`, else `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`); on Windows (`platform: "win32"`, and the stores on Windows) a name also cannot end with `.` (Windows drops it, so `tool.` would share `tool`'s directories) or be a device name (`con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`), with or without an extension (`nul.txt`)
+  - `ensureAppDir(dir)` creates a missing directory with mode `0o700` on POSIX and resolves to `dir`; concurrent calls on one path both resolve
+  - symlinks or directories that another program plants under these paths are not defended against yet
 
 ## Adoption boundary
 
@@ -390,7 +400,7 @@ Use these public subpaths directly; do not import from internal `dist/*` paths.
 
 ## Application credentials and safe retry defaults
 
-Pass an explicit path to `createCredentialStore` for each product (for example its own config directory); the legacy default remains Conduct-specific. Writes hold an exclusive sibling `.lock`, write and fsync a unique mode-0600 temporary file, then rename it atomically. Concurrent writes fail with `CLIFN_CREDENTIAL_STORE_BUSY` rather than losing updates. After a process crash, stop all writers and inspect/remove only its stale lock before retrying. Symlink credential files are rejected. Filesystem permissions are a fallback, not encryption or an OS keychain.
+Pass `{ appName }` (or an explicit path) to `createCredentialStore` for each product so it stores credentials in its own config directory; the legacy no-argument default remains Conduct-specific. Writes hold an exclusive sibling `.lock`, write and fsync a unique mode-0600 temporary file, then rename it atomically. Concurrent writes fail with `CLIFN_CREDENTIAL_STORE_BUSY` rather than losing updates. After a process crash, stop all writers and inspect/remove only its stale lock before retrying. Symlink credential files are rejected. Filesystem permissions are a fallback, not encryption or an OS keychain.
 
 The synchronous `CredentialStore` interface is injectable into `createApiClient`. A consumer keychain adapter should use a product-specific service name and profile account, store each complete `{backend,key}` value atomically, and expose only profile names in diagnostics. An asynchronous OS keychain can be loaded at CLI startup into a short-lived in-memory implementation; persist changes through the keychain before reporting success. Never serialize keychain values to a config file as an implicit fallback.
 

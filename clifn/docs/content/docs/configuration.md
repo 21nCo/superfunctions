@@ -27,7 +27,7 @@ The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module 
 
 ## Store project settings
 
-`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Supply a product-specific path; the legacy default is `conduct.config.json` in `process.cwd()`, resolved once when the module is first loaded. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
+`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Pass `{ appName: "my-cli", fileName? }` for `<config>/config.json` from `resolveAppPaths` (`@clifn/core/paths`), `{ cwd?, fileName }` for a project-local file, or a product-specific path (`{ path }` is the same as the string); `fileName` must stay inside its directory, and malformed options raise `InvalidStoreOptionsError`. The legacy default is `conduct.config.json` in `process.cwd()`, resolved once when the module is first loaded. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
 
 ## Read environment values
 
