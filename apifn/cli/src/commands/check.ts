@@ -17,7 +17,8 @@
  * - faithful bounded parsing (check-parse.ts): committed, base and generated documents go
  *   through one strict parser with size budgets;
  * - safe publication (check-publish.ts): nothing is written until every exit-2 path has passed;
- *   outputs never land on inputs, are renamed into place and rolled back on a later failure.
+ *   outputs never land on inputs (checked again after every change publication makes), are
+ *   renamed into place and rolled back on a later failure.
  *
  * Exit codes: 0 pass (warnings allowed) · 1 drift, invalid spec or a breaking change the version
  * rule does not cover · 2 usage or load error (message on stderr, no report, nothing written).
@@ -36,8 +37,8 @@ import { fetchBounded, isHttpUrl, readBoundedFile, unreadableMessage } from "./c
 import { canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
 import { CheckUsageError, errorMessage, isMissingPath, resolveOperand, writeDestination } from "./check-paths.js";
-import { assertSeparateFiles, observe, publish } from "./check-publish.js";
-import type { FileState, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
+import { assertSeparateFiles, guardOf, observe, publish } from "./check-publish.js";
+import type { FileState, Guarded, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
 import type { CheckFormat, CheckReport, CheckVerdict, DriftState } from "./check-report.js";
 
@@ -207,10 +208,9 @@ interface Targets {
   report?: Observed;
 }
 
-/** No output of the run may land on a file it reads or on the other output. */
-function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, targets: Targets, cwd: string): void {
+/** The files the run reads besides the spec: the router module, the config file and a local base. */
+function sourcesOf(options: CheckCommandOptions, inputs: RunInputs, cwd: string): NamedFile[] {
   const shown = (file: string) => path.relative(cwd, file) || file;
-  const spec: NamedFile = { role: "the spec itself", file: inputs.specPath };
   const sources: NamedFile[] = [{ role: `the router module ${shown(inputs.routerFile)}`, file: inputs.routerFile }];
   if (options.configFile !== undefined) {
     sources.push({ role: `the config file ${shown(options.configFile)}`, file: options.configFile });
@@ -218,6 +218,13 @@ function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, 
   if (inputs.baseSpecFile !== undefined) {
     sources.push({ role: `the --base-spec file ${options.baseSpec}`, file: inputs.baseSpecFile });
   }
+  return sources;
+}
+
+/** No output of the run may land on a file it reads or on the other output (refused early). */
+function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, targets: Targets, cwd: string): void {
+  const spec: NamedFile = { role: "the spec itself", file: inputs.specPath };
+  const sources = sourcesOf(options, inputs, cwd);
   const checks: Parameters<typeof assertSeparateFiles>[0] = [];
   if (inputs.reportPath !== undefined && targets.report !== undefined) {
     const output = { role: `--report ${options.reportPath}`, file: inputs.reportPath };
@@ -533,7 +540,13 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
         text: repair,
       });
     }
-    await publish(outputs, () => writeStdout(rendered), options.publishHook);
+    // Publication re-checks these after every change it makes: the inputs, and the spec when the
+    // run does not write it (missing must stay missing), whatever their names look like.
+    const guarded: Guarded[] = sourcesOf(options, inputs, cwd).map((source) => guardOf(source.role, source.file));
+    if (repair === null) {
+      guarded.push({ role: `the spec ${inputs.specLabel}`, destination: specTarget.destination, observed: committed.observed });
+    }
+    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {

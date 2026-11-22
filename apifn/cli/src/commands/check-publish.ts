@@ -2,15 +2,19 @@
  * Safe publication for `apifn check`: the spec repair (`--write`) and the report file.
  *
  * - No output may land on a file the run read (spec, base file, router module, config file) or
- *   on the other output. Two paths are one file when they lead, after symlinks, to the same name
- *   in the same directory (device and inode, so a symlinked or bind-mounted directory counts), or
- *   to the same existing inode (a hard link). Two existing files are one only by inode; a missing
- *   name and an existing file are distinct (its lookup failed). Two missing names that differ only
- *   in case or Unicode normalization are one where their directory folds those exact spellings,
- *   judged by a probe entry made from them in that directory and removed again (see aliasOf);
- *   when the probe cannot tell, the run refuses before writing anything. The
- *   directory each output was observed in is bound for the run: it must still be that directory
- *   at every later step.
+ *   on the other output. Separation is an outcome, checked during publication: every protected
+ *   path (the inputs, the spec even when only a report is written, and each other output) is
+ *   passed to publish with its observed state and looked up again at its bound destination after
+ *   every change the run makes (a created directory, a staged temp file, a backup, a rename). A
+ *   missing one must still be missing and an existing one unchanged; otherwise every published
+ *   output and created directory is rolled back and the run exits 2 before stdout. A filesystem
+ *   can join names in ways no name comparison predicts (vfat 8.3 short names, partial case
+ *   folding), so name shape and probes only add refusals before publication and never prove two
+ *   names distinct. The early refusals: two paths that lead, after symlinks, to the same name in
+ *   the same directory or to the same existing inode; two missing names that differ only in case
+ *   or Unicode normalization where a probe made at the output's exact spelling is found under
+ *   the other's (or the probe cannot tell). The directory each output was observed in is bound
+ *   for the run: it must still be that directory at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
  *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
  *   what this run installed is the staged file's own (rename keeps the inode), never a lookup of
@@ -139,17 +143,15 @@ function sameInode(found: BigIntStats, own: BigIntStats): boolean {
 }
 
 /**
- * Whether the directory `anchor` treats the entry names `a` and `b` as one name, from those exact
- * spellings: the run creates a probe whose name ends in `a` (O_EXCL, so nothing is replaced) and
- * looks up the same name ending in `b`. The same inode is a fold, a failed lookup a distinct name,
- * anything else (no probe, another file, the directory moved) unknown. Folding is not uniform
- * across characters (HFS+ leaves some unnormalized, vfat folds only ASCII case), so no other entry
- * of the directory can stand in for these spellings. The probe is removed while it is still ours.
+ * Whether the directory `anchor` treats the missing entry names `a` (the output's) and `b` as one
+ * name, from those exact spellings: the run creates `a` (O_EXCL, so nothing is replaced) and looks
+ * up `b`. The same inode is a fold; anything else but a failed lookup is unknown. A failed lookup
+ * proves nothing (the publication guard decides), so it is only "not refused here". `a` is
+ * removed while it is still this run's inode.
  */
 function probeNames(anchor: Anchor, a: string, b: string): Alias {
   if (!stillAnchored(anchor)) return "unknown";
-  const prefix = `.apifn-probe-${process.pid}-${randomBytes(4).toString("hex")}-`;
-  const probe = path.join(anchor.dir, prefix + a);
+  const probe = path.join(anchor.dir, a);
   let fd: number;
   try {
     fd = openSync(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
@@ -158,7 +160,7 @@ function probeNames(anchor: Anchor, a: string, b: string): Alias {
   }
   const own = fstatSync(fd, BIG);
   try {
-    const found = lstatSync(path.join(anchor.dir, prefix + b), BIG);
+    const found = lstatSync(path.join(anchor.dir, b), BIG);
     return sameInode(found, own) && stillAnchored(anchor) ? "same" : "unknown";
   } catch (error) {
     return isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
@@ -178,9 +180,10 @@ function probeNames(anchor: Anchor, a: string, b: string): Alias {
  * - exactly one exists: the failed lookup of the other already shows its name reaches no file
  *   there, so they are distinct;
  * - both missing: one file when bound to one directory under the same name. Names that differ
- *   only in case or Unicode normalization are judged by probing their first differing component
- *   in that directory (probeNames). A difference below a directory that does not exist yet has
- *   no directory to probe, so the answer is unknown.
+ *   only in case or Unicode normalization are probed at their first differing component in that
+ *   directory (probeNames). A difference below a directory that does not exist yet has no
+ *   directory to probe, so the answer is unknown.
+ * "distinct" only means "not refused before publication": publish checks the outcome.
  */
 function aliasOf(a: Location, b: Location): Alias {
   if (a.leaf !== null && b.leaf !== null) return a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino ? "same" : "distinct";
@@ -255,9 +258,27 @@ export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Obser
   }
 }
 
+/**
+ * A path publication must leave as it found it: an input or the spec when the run does not write
+ * it. `observed` is its state when the run read it (null when missing).
+ */
+export interface Guarded {
+  /** How errors name the file, such as "the spec .apifn/openapi.yml". */
+  role: string;
+  destination: string;
+  observed: FileState;
+}
+
+/** `file` guarded at the destination a write would reach, in the state it is in now. */
+export function guardOf(role: string, file: string): Guarded {
+  const destination = writeDestination(file);
+  return { role, destination, observed: currentState(destination) };
+}
+
 /** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
- * the run created one directory for a destination, named in place of the destination). */
-export type PublishStep = "mkdir" | "backup" | "rename" | "rollback";
+ * the run created one directory for a destination, named in place of the destination;
+ * `installed`: right after an output was renamed into place). */
+export type PublishStep = "mkdir" | "backup" | "rename" | "installed" | "rollback";
 export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
@@ -318,7 +339,7 @@ function removeCreatedDirs(staged: Staged): void {
  * point leaves a record of every directory this run made. A directory that appears meanwhile
  * (EEXIST) is someone else's: the run stops.
  */
-function makeParents(staged: Staged, hook: PublishHook | undefined): void {
+function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   const missing: string[] = [];
   for (let dir = path.dirname(staged.destination); !existsSync(dir) && path.dirname(dir) !== dir; dir = path.dirname(dir)) {
     missing.unshift(dir);
@@ -327,6 +348,7 @@ function makeParents(staged: Staged, hook: PublishHook | undefined): void {
     mkdirSync(dir);
     staged.created.unshift(anchorOf(dir));
     hook?.("mkdir", dir);
+    verify(staged);
   }
 }
 
@@ -357,9 +379,34 @@ function changed(staged: Staged): CheckUsageError {
   return new CheckUsageError(`${staged.destination} changed while apifn check ran; ${staged.output.option} wrote nothing.`);
 }
 
-function stage(staged: Staged, hook: PublishHook | undefined): void {
+/** What the destination of `staged` must be now: what the run installed there, or the observed
+ * file (with a backup link's change time) or absence. */
+function expectedNow(staged: Staged): FileState {
+  if (staged.published) return staged.installed as FileState;
+  return staged.backup === undefined ? staged.before : expectedBeforeRename(staged);
+}
+
+/** Checks, after a change the run made for `staged`, that no protected path changed. */
+type Verify = (staged: Staged) => void;
+
+function verifier(all: Staged[], guarded: Guarded[]): Verify {
+  return (staged) => {
+    const reached = (role: string, destination: string) =>
+      new CheckUsageError(
+        `${staged.output.option} reached ${role} (${destination}) while apifn check wrote it: the filesystem treats the two names as one file, or another process changed it; pick another file.`
+      );
+    for (const guard of guarded) {
+      if (!sameState(currentState(guard.destination), guard.observed)) throw reached(guard.role, guard.destination);
+    }
+    for (const other of all) {
+      if (!sameState(currentState(other.destination), expectedNow(other))) throw reached(`the output of ${other.output.option}`, other.destination);
+    }
+  };
+}
+
+function stage(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   if (!stillAnchored(staged.anchor)) throw changed(staged);
-  makeParents(staged, hook);
+  makeParents(staged, hook, verify);
   if (!placeHolds(staged)) throw changed(staged);
   staged.parent = anchorOf(path.dirname(staged.destination));
   const temp = tempName(staged.destination);
@@ -370,6 +417,7 @@ function stage(staged: Staged, hook: PublishHook | undefined): void {
   writeFileSync(fd, staged.bytes);
   fsyncSync(fd);
   staged.installed = stateOf(fstatSync(fd, BIG));
+  verify(staged);
 }
 
 /** True when the file open as `fd` holds exactly `bytes`. */
@@ -421,10 +469,11 @@ function expectedBeforeRename(staged: Staged): FileState {
 }
 
 /** Renames the staged file over the destination, re-checking the place before each step. */
-function install(staged: Staged, hook: PublishHook | undefined): void {
+function install(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   hook?.("backup", staged.destination);
   if (!placeHolds(staged) || !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
   backUp(staged);
+  verify(staged);
   hook?.("rename", staged.destination);
   if (!placeHolds(staged) || !sameState(currentState(staged.destination), expectedBeforeRename(staged))) {
     throw changed(staged);
@@ -440,6 +489,8 @@ function install(staged: Staged, hook: PublishHook | undefined): void {
     const backupNow = currentState(staged.backup);
     if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
   }
+  hook?.("installed", staged.destination);
+  verify(staged);
 }
 
 /** Undoes one published output while the destination still holds exactly what this run installed. */
@@ -483,11 +534,14 @@ function writeFailure(staged: Staged, error: unknown): CheckUsageError {
 }
 
 /**
- * Publishes the outputs (in order), then awaits `emit` (stdout). Any failure, including one stdout
- * reports after its write returned, rolls back what was published and throws a CheckUsageError.
+ * Publishes the outputs (in order), then awaits `emit` (stdout). After every change it makes, the
+ * guarded paths and the other outputs must be as expected (see the module comment). Any failure,
+ * including one stdout reports after its write returned, rolls back what was published and
+ * throws a CheckUsageError.
  */
 export async function publish(
   outputs: PlannedOutput[],
+  guarded: Guarded[],
   emit: () => void | Promise<void>,
   hook?: PublishHook
 ): Promise<void> {
@@ -501,23 +555,28 @@ export async function publish(
     published: false,
   }));
   try {
-    await publishAll(all, emit, hook);
+    await publishAll(all, verifier(all, guarded), emit, hook);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
   }
 }
 
-async function publishAll(all: Staged[], emit: () => void | Promise<void>, hook: PublishHook | undefined): Promise<void> {
+async function publishAll(
+  all: Staged[],
+  verify: Verify,
+  emit: () => void | Promise<void>,
+  hook: PublishHook | undefined
+): Promise<void> {
   for (const staged of all) {
     try {
-      stage(staged, hook);
+      stage(staged, hook, verify);
     } catch (error) {
       throw rollBackAll(all, writeFailure(staged, error), hook);
     }
   }
   for (const staged of all) {
     try {
-      install(staged, hook);
+      install(staged, hook, verify);
     } catch (error) {
       throw rollBackAll(all, writeFailure(staged, error), hook);
     }

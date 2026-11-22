@@ -4,6 +4,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   linkSync,
@@ -3159,5 +3160,130 @@ describe("apifn check: output aliases are judged from the destination directory 
     const result = await run(["check", "--report", SPEC], dir);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("is the spec itself");
+  });
+});
+
+describe("apifn check: publication re-checks every protected path after each change it makes (round 8)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  /**
+   * Runs check on the base fixture with a report at .apifn/report.md. `onInstalled` runs right
+   * after the report is renamed into place and stands in for a filesystem that makes another name
+   * reach it there (a vfat short name or a case fold no name comparison predicts).
+   */
+  async function checkReaching(
+    setup: (dir: string) => Promise<void>,
+    onInstalled: (dir: string, report: string) => void,
+    extra: { write?: boolean; baseSpec?: string } = {}
+  ): Promise<{ dir: string; code: number; errors: string; stdout: string }> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"), { recursive: true });
+    await setup(dir);
+    const errors: string[] = [];
+    let stdout = "";
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      reportPath: path.join(".apifn", "report.md"),
+      format: "json",
+      ...extra,
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      publishHook: (step, destination) => {
+        if (step === "installed" && destination.endsWith("report.md")) onInstalled(dir, destination);
+      },
+    });
+    return { dir, code, errors: errors.join("\n"), stdout };
+  }
+
+  for (const write of [false, true]) {
+    it.skipIf(POSIX_ONLY)(`a missing spec name that comes to reach the report is rolled back: exit 2, the spec stays absent, nothing is left${write ? " (--write)" : ""}`, async () => {
+      const { dir, code, errors, stdout } = await checkReaching(
+        async () => {},
+        (root, report) => symlinkSync(report, path.join(root, SPEC)),
+        { write }
+      );
+      expect(code).toBe(2);
+      expect(stdout).toBe("");
+      expect(errors).toContain(write ? "reached the output of --write" : "reached the spec .apifn/openapi.yml");
+      expect(existsSync(path.join(dir, SPEC))).toBe(false);
+      expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+      expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(["openapi.yml"]);
+      expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+    });
+  }
+
+  it("an existing spec that a report write changes is caught in a report-only run, and the report is rolled back", async () => {
+    let spec = "";
+    const { dir, code, errors } = await checkReaching(
+      async (root) => {
+        await commitSpec(root);
+        await writeFile(path.join(root, ".apifn", "report.md"), "previous report\n");
+        spec = await readFile(path.join(root, SPEC), "utf8");
+      },
+      (root) => {
+        // The write reached the spec: its bytes changed.
+        writeFileSync(path.join(root, SPEC), `${spec}# reached\n`);
+      }
+    );
+    expect(code).toBe(2);
+    expect(errors).toContain("reached the spec .apifn/openapi.yml");
+    expect(await readFile(path.join(dir, ".apifn", "report.md"), "utf8")).toBe("previous report\n");
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+  });
+
+  it("a --base-spec file and the router module are guarded too", async () => {
+    for (const target of ["base.yml", "router.ts"]) {
+      const { dir, code, errors } = await checkReaching(
+        async (root) => {
+          await commitSpec(root);
+          await cp(path.join(root, SPEC), path.join(root, "base.yml"));
+        },
+        (root) => {
+          appendFileSync(path.join(root, target), "\n");
+        },
+        { baseSpec: "base.yml" }
+      );
+      expect(code).toBe(2);
+      expect(errors).toContain(target === "base.yml" ? "reached the --base-spec file base.yml" : "reached the router module router.ts");
+      expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+    }
+  });
+
+  it("a directory the run creates that reaches a guarded name is removed again", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      reportPath: path.join("out", "report.md"),
+      writeStdout: () => {},
+      publishHook: (step) => {
+        // Stands in for a directory entry that the guarded spec's name now reaches.
+        if (step === "mkdir") appendFileSync(path.join(dir, SPEC), "# reached\n");
+      },
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("reached the spec .apifn/openapi.yml");
+    expect(existsSync(path.join(dir, "out"))).toBe(false);
+  });
+
+  it("distinct outputs keep the normal verdict and leave the inputs byte-identical", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const before = await Promise.all([SPEC, "router.ts"].map((file) => readFile(path.join(dir, file))));
+    const result = await run(["check", "--report", path.join(".apifn", "openapi-report.md"), "--format", "markdown"], dir);
+    expect(result.code).toBe(0);
+    expect(await readFile(path.join(dir, ".apifn", "openapi-report.md"), "utf8")).toBe(result.stdout);
+    const after = await Promise.all([SPEC, "router.ts"].map((file) => readFile(path.join(dir, file))));
+    expect(after).toEqual(before);
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
   });
 });
