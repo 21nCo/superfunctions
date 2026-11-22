@@ -658,6 +658,41 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     });
   });
 
+  it.each<[string, () => unknown]>([
+    [
+      "a fractional length",
+      () => new Proxy([1, 2], { get: (target, key) => (key === "length" ? 1.5 : Reflect.get(target, key)) }),
+    ],
+    [
+      "a length that changes on every read",
+      () => {
+        let reads = 0;
+        return new Proxy([1, 2, 3], {
+          get: (target, key) => (key === "length" ? (reads += 1) : Reflect.get(target, key)),
+        });
+      },
+    ],
+    [
+      "a length object",
+      () => {
+        const length = { valueOf: () => 2.9 };
+        return new Proxy([1, 2, 3], { get: (target, key) => (key === "length" ? length : Reflect.get(target, key)) });
+      },
+    ],
+  ])("converts %s once, as JSON.stringify does", async (_label, make) => {
+    const expected = native(make);
+    const data = await runDocument(() => ({ data: make() }));
+    expect(parseOnlyDocument(data)).toEqual({ ok: true, data: expected });
+
+    const failure = await runDocument(() => {
+      throw Object.assign(new Error("length"), { code: "LENGTH", details: { list: make() } });
+    });
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "LENGTH", message: "length", details: { list: expected } },
+    });
+  });
+
   /** Two nodes that point at each other and serialize as fresh shallow copies of themselves. */
   const projectedCycle = () => {
     const parent: Record<string, unknown> = { name: "parent", password: "test-password" };
@@ -670,23 +705,27 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     }
     return parent;
   };
-  const printedCycle = { name: "parent", password: "[REDACTED]", child: { name: "child", parent: "[Circular]" } };
+  // Each toJSON returns a fresh copy, so the cycle is marked where an original value comes back under the same key.
+  const printedCycle = {
+    name: "parent",
+    password: "[REDACTED]",
+    child: { name: "child", parent: { name: "parent", password: "[REDACTED]", child: "[Circular]" } },
+  };
 
   it("marks a cycle through toJSON projections in data, the json() fallback, diagnostics and error details", async () => {
     // data is not redacted; diagnostics and error details are.
     const returned = await runDocument(() => ({ data: projectedCycle() }));
-    expect(parseOnlyDocument(returned)).toEqual({
-      ok: true,
-      data: { ...printedCycle, password: "test-password" },
-    });
+    const unredacted = {
+      name: "parent",
+      password: "test-password",
+      child: { name: "child", parent: { name: "parent", password: "test-password", child: "[Circular]" } },
+    };
+    expect(parseOnlyDocument(returned)).toEqual({ ok: true, data: unredacted });
 
     const fallback = await runDocument((_options, ctx) => {
       ctx.output.json(projectedCycle());
     });
-    expect((parseOnlyDocument(fallback).data as Record<string, unknown>).child).toEqual({
-      name: "child",
-      parent: "[Circular]",
-    });
+    expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: unredacted });
 
     const diagnostics = await runDocument((_options, ctx) => {
       ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: projectedCycle() });
@@ -705,6 +744,39 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       ok: false,
       error: { code: "CYCLIC", message: "cyclic", details: printedCycle },
     });
+  });
+
+  it("follows a keyed toJSON that projects itself for one key and a leaf for another, as native JSON does", async () => {
+    const keyed = (leaf: () => unknown) => ({
+      toJSON(this: object, key: string): unknown {
+        return key === "child" ? leaf() : { child: this };
+      },
+    });
+    for (const leaf of [() => "leaf", () => ({ leaf: true, password: "test-password" })]) {
+      const expected = native(() => keyed(leaf));
+      expect(expected).toEqual({ child: leaf() });
+      const redacted = JSON.parse(JSON.stringify(expected).replace('"test-password"', '"[REDACTED]"')) as unknown;
+
+      const returned = await runDocument(() => ({ data: keyed(leaf) }));
+      expect(parseOnlyDocument(returned)).toEqual({ ok: true, data: expected });
+
+      const fallback = await runDocument((_options, ctx) => {
+        ctx.output.json(keyed(leaf));
+      });
+      expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: expected });
+
+      const failure = await runDocument((_options, ctx) => {
+        ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { node: keyed(leaf) } });
+        throw Object.assign(new Error("keyed"), { code: "KEYED", exitCode: 5, details: { node: keyed(leaf) } });
+      });
+      expect(failure.exitCode).toBe(5);
+      // As a member named "node", the toJSON projects { child: this } and then the leaf for "child".
+      expect(parseOnlyDocument(failure)).toEqual({
+        ok: false,
+        error: { code: "KEYED", message: "keyed", details: { node: redacted } },
+        diagnostics: [{ code: "D", severity: "info", message: "m", details: { node: redacted } }],
+      });
+    }
   });
 
   it("does not mark repeated acyclic references, with or without toJSON, as circular", async () => {
@@ -776,6 +848,57 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       ok: false,
       error: { code: "BOXED", message: "boxed", details: expected },
     });
+  });
+});
+
+describe("document mode number boxes and throughput", () => {
+  const bigintNumberBox = () => Object.assign(new Number(1), { valueOf: () => 9007199254740993n });
+
+  it("rejects a Number box whose valueOf returns a bigint, as JSON.stringify does", async () => {
+    expect(() => JSON.stringify(bigintNumberBox())).toThrow(TypeError);
+
+    const data = await runDocument(() => ({ data: { count: bigintNumberBox() } }));
+    expect(data.exitCode).toBe(1);
+    expect(parseOnlyDocument(data)).toEqual({
+      ok: false,
+      error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+    });
+
+    const failure = await runDocument(() => {
+      const details = { count: bigintNumberBox() };
+      throw Object.assign(new Error("bad details"), { code: "BAD_DETAILS", exitCode: 6, details });
+    });
+    expect(failure.exitCode).toBe(6);
+    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "BAD_DETAILS", message: "bad details" } });
+  });
+
+  it("coerces a Number box through its numeric valueOf and keeps bigints as strings", async () => {
+    const result = await runDocument(() => ({
+      data: {
+        box: Object.assign(new Number(1), { valueOf: () => 2.5 }),
+        big: 9007199254740993n,
+        bigBox: Object(9007199254740993n) as object,
+      },
+    }));
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: { box: 2.5, big: "9007199254740993", bigBox: "9007199254740993" },
+    });
+  });
+
+  it("resolves 100,000 ordinary records within a bounded multiple of native JSON", async () => {
+    const records = Array.from({ length: 100_000 }, (_, index) => ({ id: index, name: `n${index}`, tags: ["a"] }));
+    let started = performance.now();
+    JSON.parse(JSON.stringify(records));
+    const nativeMs = performance.now() - started;
+
+    started = performance.now();
+    const result = await runDocument(() => ({ data: records }));
+    const documentMs = performance.now() - started;
+
+    expect((parseOnlyDocument(result).data as unknown[]).length).toBe(100_000);
+    // Generous: the slot-probing walker took about 90 times native; the native walk with a replacer takes about 3.
+    expect(documentMs).toBeLessThan(nativeMs * 25 + 500);
   });
 });
 

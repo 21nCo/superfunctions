@@ -1,3 +1,5 @@
+import { types } from "node:util";
+
 /** Turns a value into one `JSON.stringify` accepts: bigints become strings and cycles become "[Circular]". */
 export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "bigint") {
@@ -43,135 +45,71 @@ export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>())
 }
 
 const CIRCULAR = "[Circular]";
-const numberValueOf = Number.prototype.valueOf;
-const stringValueOf = String.prototype.valueOf;
-const booleanValueOf = Boolean.prototype.valueOf;
 const bigintValueOf = BigInt.prototype.valueOf;
 
-type ActivePath = WeakSet<object>;
-
-function isTracked(value: unknown): value is object {
-  return (typeof value === "object" && value !== null) || typeof value === "function";
+/** An object JSON.stringify is serializing, with the original member value and key it came from. */
+interface Frame {
+  readonly node: object;
+  readonly original: unknown;
+  readonly key: string;
 }
 
-/** As JSON.stringify does: an object, function or bigint with a callable toJSON is replaced by its result for `key`. */
-function applyToJSON(key: string, value: unknown): unknown {
-  if (isTracked(value) || typeof value === "bigint") {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") {
-      return Reflect.apply(toJSON, value, [key]);
-    }
-  }
-  return value;
-}
-
-/** True when `value` has the internal slot that `valueOf` brand-checks, in any realm. */
-function hasPrimitiveSlot(valueOf: () => unknown, value: object): boolean {
+/** The member value as stored, read without running a getter; undefined when it cannot be read that way. */
+function storedValue(holder: object, key: string): unknown {
   try {
-    Reflect.apply(valueOf, value, []);
-    return true;
+    const descriptor = Reflect.getOwnPropertyDescriptor(holder, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
 /**
- * Unwraps a boxed primitive as JSON.stringify does, by internal slot rather than prototype: a Number or String box is
- * coerced (honouring its own valueOf or toString), a Boolean box gives its slot value and a BigInt box its bigint.
+ * A JSON.stringify replacer that keeps the active path of the objects being serialized. It runs after the native
+ * toJSON call, so it sees each projection with its real key; bigints and BigInt boxes become strings. An object is
+ * "[Circular]" when it is already being serialized higher up (where JSON.stringify throws a TypeError), or when the
+ * same original value is reached again under the same member key (a toJSON that keeps returning fresh copies, which
+ * JSON.stringify would follow until its stack overflows).
  */
-function unbox(value: object): unknown {
-  if (hasPrimitiveSlot(numberValueOf, value)) {
-    return Number(value);
-  }
-  if (hasPrimitiveSlot(stringValueOf, value)) {
-    return String(value);
-  }
-  if (hasPrimitiveSlot(booleanValueOf, value)) {
-    return Reflect.apply(booleanValueOf, value, []);
-  }
-  if (hasPrimitiveSlot(bigintValueOf, value)) {
-    return Reflect.apply(bigintValueOf, value, []);
-  }
-  return value;
-}
-
-/** A non-object value as JSON writes it; undefined when JSON drops the member (undefined, a function, a symbol). */
-function resolveScalar(value: unknown): unknown {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
+function createReplacer(): (this: object, key: string, value: unknown) => unknown {
+  const path: Frame[] = [];
+  return function replacer(this: object, key: string, value: unknown): unknown {
+    while (path.length > 0 && path[path.length - 1].node !== this) {
+      path.pop();
+    }
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+    if (typeof value !== "object" || value === null) {
+      return value;
+    }
+    if (types.isBigIntObject(value)) {
+      return (Reflect.apply(bigintValueOf, value, []) as bigint).toString();
+    }
+    const original = storedValue(this, key);
+    const repeated = path.some(
+      (frame) => frame.node === value || (frame.key === key && frame.original === original && original !== undefined)
+    );
+    if (repeated) {
+      return CIRCULAR;
+    }
+    path.push({ node: value, original, key });
     return value;
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  return undefined;
-}
-
-function resolveArray(array: readonly unknown[], path: ActivePath): unknown[] {
-  // The length is read once, as JSON.stringify does, so a getter or toJSON that resizes the array cannot change it.
-  const length = array.length;
-  const items: unknown[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const item = resolveProperty(String(index), array[index], path);
-    items.push(item === undefined ? null : item);
-  }
-  return items;
-}
-
-function resolveRecord(record: Record<string, unknown>, path: ActivePath): Record<string, unknown> {
-  const entries: Array<[string, unknown]> = [];
-  for (const name of Object.keys(record)) {
-    const nested = resolveProperty(name, record[name], path);
-    if (nested !== undefined) {
-      entries.push([name, nested]);
-    }
-  }
-  return Object.fromEntries(entries);
-}
-
-function resolveProperty(key: string, value: unknown, path: ActivePath): unknown {
-  // Both the original value and its toJSON projection stay on the active path while their members resolve, so a
-  // node whose toJSON returns a fresh copy of itself still ends in "[Circular]"; leaving the path on exit keeps
-  // repeated acyclic references intact.
-  if (isTracked(value) && path.has(value)) {
-    return CIRCULAR;
-  }
-  let current = applyToJSON(key, value);
-  if (typeof current === "object" && current !== null) {
-    current = unbox(current);
-  }
-  if (typeof current !== "object" || current === null) {
-    return resolveScalar(current);
-  }
-  if (path.has(current)) {
-    return CIRCULAR;
-  }
-
-  const added = [value, current].filter((item): item is object => isTracked(item) && !path.has(item));
-  for (const item of added) {
-    path.add(item);
-  }
-  try {
-    return Array.isArray(current)
-      ? resolveArray(current, path)
-      : resolveRecord(current as Record<string, unknown>, path);
-  } finally {
-    for (const item of added) {
-      path.delete(item);
-    }
-  }
+  };
 }
 
 /**
  * Resolves a value to the plain JSON value that `JSON.stringify` writes for it as the member `key` of an object.
- * It walks the original value as `JSON.stringify` does, so every `toJSON` (on an object, function, array or bigint,
- * at any depth) runs once with its real member key or array index; bigints become strings and cycles become
- * "[Circular]", as in `normalizeJsonValue`. The result is built from fresh plain objects and arrays, so redacting it
- * and serializing it again calls no user code. Returns undefined when JSON drops the member (undefined, a function,
- * a symbol, or a `toJSON` that returns one). Throws when a getter or `toJSON` throws.
+ * The walk is native `JSON.stringify` itself (toJSON calls with their real key or index, array lengths, boxed
+ * primitives, dropped members), with two extensions: bigints (and BigInt boxes) become strings, and cycles become
+ * "[Circular]", as in `normalizeJsonValue`. The result is parsed back into fresh plain objects and arrays, so
+ * redacting it and serializing it again calls no user code. Returns undefined when JSON drops the member
+ * (undefined, a function, a symbol, or a `toJSON` that returns one). Throws whatever `JSON.stringify` throws for the
+ * value, such as a throwing getter or `toJSON`, or a boxed number whose `valueOf` returns a bigint.
  */
 export function resolveJsonMember(key: string, value: unknown): unknown {
-  return resolveProperty(key, value, new WeakSet<object>());
+  const holder = Object.create(null) as Record<string, unknown>;
+  holder[key] = value;
+  const text = JSON.stringify(holder, createReplacer());
+  return (JSON.parse(text) as Record<string, unknown>)[key];
 }
