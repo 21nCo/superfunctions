@@ -30,9 +30,11 @@ const RELEASE_FILES = [
   "scripts/verify-mcpfn-bundled-sdk.mjs",
   "scripts/verify-mcpfn-bundled-sdk.d.mts",
 ];
-// npm run exports npm_config_* settings of the outer workspace install; the
-// isolated install must not inherit them.
-const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)));
+// npm run exports npm_config_* settings of the outer workspace install, and a
+// Git hook exports GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE: the isolated
+// install, the scratch repository and the packer's git lookup must not reach
+// the caller's checkout through them.
+const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(npm_|GIT_)/i.test(name)));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function run(command, args, cwd, extraEnv = {}) {
@@ -60,7 +62,10 @@ try {
   for (const [packagePath, slug] of PACKAGES) {
     const cwd = path.join(isolatedRoot, packagePath);
     const { version } = JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8"));
-    run(npm, ["install", "--workspaces=false", "--package-lock=false", "--no-audit", "--no-fund"], cwd);
+    // The workflow's install, under CI's lifecycle policy (npm ci
+    // --ignore-scripts, then a rebuild of the trusted esbuild binding only).
+    run(npm, ["install", "--workspaces=false", "--package-lock=false", "--ignore-scripts", "--no-audit", "--no-fund"], cwd);
+    run(npm, ["rebuild", "esbuild", "--workspaces=false"], cwd);
     // The workflow reads the packed tarball from GITHUB_OUTPUT.
     const output = path.join(isolatedRoot, `${slug}.github-output`);
     run(process.execPath, ["scripts/pack-release-package.mjs", `${slug}-v${version}`], isolatedRoot, { GITHUB_OUTPUT: output });
