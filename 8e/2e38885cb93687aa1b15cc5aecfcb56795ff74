@@ -1,0 +1,19 @@
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_6025ca1f10e73e::t_f2fdf28916e19a 577-579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e2e38885cb93687aa1b15cc5aecfcb56795ff74",
+  "prompts": {},
+  "sessions": {
+    "s_6025ca1f10e73e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "611e3fa2-91e8-49a2-abbc-b560dc9aada5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
