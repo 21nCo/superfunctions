@@ -1,4 +1,5 @@
 import { constants } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { runInNewContext } from "node:vm";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
 import type { Diagnostic } from "../src/diagnostics.js";
 import { createDocumentOutput, type DocumentOutcome } from "../src/document-output.js";
-import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, resolveJsonMember } from "../src/json-value.js";
+import { createDocumentBudget, PROJECTION_REPEAT_LIMIT, serializeJsonMember } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 type Action = (options: Record<string, never>, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
@@ -1121,14 +1122,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       ],
     });
 
-    // Strings and keys count their length and quotes, read without scanning them: the exact text unless escaped.
+    // Strings and keys are charged at the exact length of their printed text, escapes included.
     for (const text of ["plain", 'q"b\\', "\u0000\u001f\n\t", "😀", "\ud800x\udc00", "end\ud83d"]) {
-      const budget = createDocumentBudget();
-      const before = budget.charsLeft;
-      expect(resolveJsonMember("k", [text], { budget })).toEqual([text]);
-      expect(before - budget.charsLeft).toBe(text.length + 4);
-      expect(resolveJsonMember("k", { [text]: 1 }, { budget })).toEqual({ [text]: 1 });
-      expect(before - budget.charsLeft).toBe(2 * text.length + 10);
+      for (const value of [[text], { [text]: 1 }]) {
+        const budget = createDocumentBudget();
+        const before = budget.charsLeft;
+        const printed = String(serializeJsonMember("k", value, { budget }));
+        expect(printed).toBe(JSON.stringify(value));
+        expect(before - budget.charsLeft).toBe(printed.length);
+      }
     }
   });
 
@@ -1423,14 +1425,19 @@ describe("document mode text limit", () => {
       "diagnostic 0 was dropped from the result document: it could not be redacted or printed",
     ]);
 
-    // Escapes only show in the final text: then every diagnostic is left out, and the outcome still stands.
+    // Escapes are counted: a diagnostic whose escaped text does not fit is dropped, and the outcome still stands.
     const escaped = finishWith(150, { ok: true, data: { done: true }, exitCode: 0 }, [
       { code: "NUL", severity: "info", message: "\u0000".repeat(30) },
+      { code: "OK", severity: "info", message: "ok" },
     ]);
     expect(escaped.exitCode).toBe(0);
-    expect(parseOnlyDocument(escaped)).toEqual({ ok: true, data: { done: true } });
+    expect(parseOnlyDocument(escaped)).toEqual({
+      ok: true,
+      data: { done: true },
+      diagnostics: [{ code: "OK", severity: "info", message: "ok" }],
+    });
     expect(warnings(escaped.stderr)).toEqual([
-      "diagnostics were dropped from the result document: it was too long to print",
+      "diagnostic 0 was dropped from the result document: it could not be redacted or printed",
     ]);
   });
 
@@ -1441,7 +1448,7 @@ describe("document mode text limit", () => {
     expect(long.exitCode).toBe(4);
     expect(parseOnlyDocument(long)).toEqual({ ok: false, error: tooLong });
 
-    // Counted short enough, printed too long: the diagnostics, the details and then the message are shed.
+    // An escaped message is counted at its printed length: it is replaced, the details still fit, a diagnostic does not.
     const escaped = finishWith(
       150,
       {
@@ -1451,8 +1458,117 @@ describe("document mode text limit", () => {
       [{ code: "D", severity: "info", message: "d" }]
     );
     expect(escaped.exitCode).toBe(4);
-    expect(parseOnlyDocument(escaped)).toEqual({ ok: false, error: tooLong });
+    expect(parseOnlyDocument(escaped)).toEqual({ ok: false, error: { ...tooLong, details: { n: 1 } } });
   });
+
+  it("prints a sensitive value as the redacted text alone, so long secrets keep the details within the limit", () => {
+    const calls = { password: 0, toJSON: 0 };
+    const details = () => ({
+      get password() {
+        calls.password += 1;
+        return "x".repeat(256);
+      },
+      apiKey: {
+        toJSON() {
+          calls.toJSON += 1;
+          return "y".repeat(256);
+        },
+      },
+      token: undefined,
+      visible: "keep",
+    });
+    const redacted = { password: "[REDACTED]", apiKey: "[REDACTED]", visible: "keep" };
+    const diagnostic = (): Diagnostic => ({ code: "D", severity: "info", message: "m", details: details() });
+
+    const failure = finishWith(240, {
+      ok: false,
+      error: Object.assign(new Error("boom"), { code: "TEST_FAILED", exitCode: 4, details: details() }),
+    });
+    expect(failure.exitCode).toBe(4);
+    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "TEST_FAILED", message: "boom", details: redacted } });
+    expect(calls).toEqual({ password: 1, toJSON: 1 });
+
+    const failureWithDiagnostic = finishWith(
+      240,
+      { ok: false, error: Object.assign(new Error("boom"), { code: "TEST_FAILED", exitCode: 4 }) },
+      [diagnostic()]
+    );
+    expect(failureWithDiagnostic.exitCode).toBe(4);
+    expect(parseOnlyDocument(failureWithDiagnostic)).toEqual({
+      ok: false,
+      error: { code: "TEST_FAILED", message: "boom" },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: redacted }],
+    });
+    expect(calls).toEqual({ password: 2, toJSON: 2 });
+
+    const success = finishWith(240, { ok: true, data: { done: true }, exitCode: 2 }, [diagnostic()]);
+    expect(success.exitCode).toBe(2);
+    expect(parseOnlyDocument(success)).toEqual({
+      ok: true,
+      data: { done: true },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: redacted }],
+    });
+    expect(calls).toEqual({ password: 3, toJSON: 3 });
+    expect(warnings(success.stderr)).toEqual([]);
+  });
+
+  it("omits redacted details whose value JSON.stringify could not print, before reading any of its items", () => {
+    const reads = { count: 0 };
+    const huge = () =>
+      new Proxy([], {
+        get: (target, key) => {
+          if (key === "length") {
+            return 2 ** 32;
+          }
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            reads.count += 1;
+          }
+          return Reflect.get(target, key);
+        },
+      });
+    const result = finishWith(
+      10_000,
+      {
+        ok: false,
+        error: Object.assign(new Error("boom"), { code: "TEST_FAILED", exitCode: 5, details: { token: huge(), n: 1 } }),
+      },
+      [{ code: "D", severity: "info", message: "m", details: { secret: huge() } }]
+    );
+    expect(result.exitCode).toBe(5);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: false,
+      error: { code: "TEST_FAILED", message: "boom" },
+      diagnostics: [{ code: "D", severity: "info", message: "m" }],
+    });
+    expect(reads.count).toBe(0);
+  });
+});
+
+describe("document mode memory", () => {
+  it("writes the text as it walks: 2M references to one record print byte for byte within a 64 MiB heap", () => {
+    // A copy of each occurrence would need far more than the heap; native JSON.stringify fits, and so must the document.
+    const script = [
+      `const { runAction } = await import(${JSON.stringify(new URL("../dist/runner.js", import.meta.url).href)});`,
+      "const record = { id: 1 };",
+      "const data = new Array(2_000_000).fill(record);",
+      "const chunks = [];",
+      "const exitCode = await runAction(() => ({ data }), {}, {",
+      '  mode: "json", jsonStyle: "document", color: false,',
+      "  stdout: (text) => chunks.push(text), stderr: (text) => process.stderr.write(text),",
+      "});",
+      "process.stdout.write(`${chunks.length}:${exitCode}:`);",
+      "process.stdout.write(chunks.join(''));",
+    ].join("\n");
+    const child = spawnSync(process.execPath, ["--max-old-space-size=64", "--input-type=module", "-e", script], {
+      encoding: "utf8",
+      maxBuffer: 64 * 2 ** 20,
+    });
+    expect(child.stderr).toBe("");
+    expect(child.status).toBe(0);
+    const native = `${JSON.stringify({ ok: true, data: new Array(2_000_000).fill({ id: 1 }) })}\n`;
+    expect(child.stdout.length).toBe("1:0:".length + native.length);
+    expect(child.stdout === `1:0:${native}`).toBe(true);
+  }, 60_000);
 });
 
 describe("document mode exec streaming", () => {

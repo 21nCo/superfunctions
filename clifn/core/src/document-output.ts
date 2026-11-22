@@ -1,9 +1,10 @@
-import { redactValue, type Diagnostic } from "./diagnostics.js";
-import { mapRunnerError, MESSAGE_TOO_LONG, RUNNER_FAILED_CODE } from "./errors.js";
+import type { Diagnostic } from "./diagnostics.js";
+import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
 import {
   createDocumentBudget,
   DocumentBudgetExceeded,
-  resolveJsonMember,
+  JsonText,
+  serializeJsonMember,
   spendText,
   type DocumentBudget,
 } from "./json-value.js";
@@ -50,96 +51,63 @@ const FAILURE_FRAME_LENGTH = '{"ok":false,"error":{"code":,"message":}}'.length;
 const DIAGNOSTICS_MEMBER_LENGTH = ',"diagnostics":[]'.length;
 const DETAILS_MEMBER_LENGTH = ',"details":'.length;
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+/** A copy of `budget` that a segment of the document charges; the caller keeps it only when the segment is kept. */
+function segmentOf(budget: DocumentBudget): DocumentBudget {
+  return { charsLeft: budget.charsLeft };
 }
 
 /**
- * Prints the document. Its members were counted against the budget without their escapes, so escapes can still make
- * the text longer than `maxLength` (the text before its newline) or than the engine allows. The diagnostics, then the error details, are left out,
- * then an error message is replaced by a fixed short one, before the caller falls back to the serialization-failure
- * document, so optional members never replace the outcome. Returns undefined when even that does not fit.
- */
-function stringifyDocument(
-  document: Record<string, unknown>,
-  maxLength: number,
-  warn: (message: string) => void
-): string | undefined {
-  const shed = [
-    () => {
-      if (document.diagnostics !== undefined) {
-        delete document.diagnostics;
-        warn("diagnostics were dropped from the result document: it was too long to print");
-      }
-    },
-    () => {
-      if (isJsonObject(document.error)) {
-        delete document.error.details;
-      }
-    },
-    () => {
-      if (isJsonObject(document.error)) {
-        document.error.message = MESSAGE_TOO_LONG;
-      }
-    },
-  ];
-  for (let step = 0; ; step += 1) {
-    try {
-      const text = JSON.stringify(document);
-      if (text.length <= maxLength) {
-        return text;
-      }
-    } catch {
-      // Too long for the engine: shed below.
-    }
-    if (step === shed.length) {
-      return undefined;
-    }
-    shed[step]();
-  }
-}
-
-/**
- * The success document always has a `data` member: the value is resolved as the member `data` (see
- * `resolveJsonMember`), and a value JSON drops (undefined, a function, a symbol, or a `toJSON` that returns one of
- * those for that key) becomes null. A value that throws while it is resolved is rethrown so the caller prints the
+ * The success document always has a `data` member: the value is written as the member `data` (see
+ * `serializeJsonMember`), and a value JSON drops (undefined, a function, a symbol, or a `toJSON` that returns one of
+ * those for that key) prints null. A value that throws while it is written is rethrown so the caller prints the
  * serialization-failure document.
  */
-function toDocumentData(data: unknown, budget: DocumentBudget): unknown {
-  return resolveJsonMember("data", data, { budget }) ?? null;
+function toDocumentData(data: unknown, budget: DocumentBudget): JsonText {
+  const text = serializeJsonMember("data", data, { budget });
+  if (text !== undefined) {
+    return text;
+  }
+  spendText(budget, "null".length);
+  const nullText = new JsonText();
+  nullText.write("null");
+  return nullText;
 }
 
 /**
- * Resolves a diagnostic to the JSON value the document prints, redacting its details once they are completely
- * resolved, so every getter and `toJSON` in them runs as in `JSON.stringify` and none can bring a redacted field
- * back. It keeps the members `createDiagnostic` keeps, but reads them from the original diagnostic without cloning,
- * so each value in the details serializes through its own `toJSON` (a Date prints its ISO string, a class prints only
- * what its serializer returns). Details that do not resolve to an object or do not fit `budget` are left out, and
- * what they spent is given back. Throws when the diagnostic is not an
- * object, its details throw, or its other members cannot be serialized or do not fit `budget`.
+ * Writes a diagnostic as the JSON text the document prints, with its details redacted as they are written, so every
+ * getter and `toJSON` in them runs as in `JSON.stringify` and none can bring a redacted field back. It keeps the
+ * members `createDiagnostic` keeps, but reads them from the original diagnostic without cloning, so each value in the
+ * details serializes through its own `toJSON` (a Date prints its ISO string, a class prints only what its serializer
+ * returns). Details that do not serialize to an object or do not fit `budget` are left out and charge nothing.
+ * Throws when the diagnostic is not an object, its details throw, or its other members cannot be serialized or do
+ * not fit `budget`.
  */
-function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: DocumentBudget): Record<string, unknown> {
+function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: DocumentBudget): JsonText {
   const { code, severity, message, path, details } = diagnostic;
-  const resolved = resolveJsonMember(String(index), { code, severity, message, path }, { budget });
-  if (!isJsonObject(resolved)) {
-    throw new TypeError("diagnostic did not resolve to an object");
+  const base = serializeJsonMember(String(index), { code, severity, message, path }, { budget })?.toString() ?? "";
+  if (!base.startsWith("{")) {
+    throw new TypeError("diagnostic did not serialize to an object");
   }
-  const charsLeft = budget.charsLeft;
-  let resolvedDetails: unknown;
+  const text = new JsonText();
+  // The members without the closing brace, then the details, then the brace.
+  text.write(base.slice(0, -1));
+  const segment = segmentOf(budget);
+  let detailsText: JsonText | undefined;
   try {
-    spendText(budget, DETAILS_MEMBER_LENGTH);
-    resolvedDetails = resolveJsonMember("details", details || undefined, { budget, chargeRedacted: true });
+    spendText(segment, base.length > 2 ? DETAILS_MEMBER_LENGTH : DETAILS_MEMBER_LENGTH - 1);
+    detailsText = serializeJsonMember("details", details || undefined, { budget: segment, redact: true });
   } catch (error) {
     if (!(error instanceof DocumentBudgetExceeded)) {
       throw error;
     }
   }
-  if (isJsonObject(resolvedDetails)) {
-    resolved.details = redactValue(resolvedDetails);
-  } else {
-    budget.charsLeft = charsLeft;
+  if (detailsText?.first === "{") {
+    budget.charsLeft = segment.charsLeft;
+    text.write(base.length > 2 ? ',"details":' : '"details":');
+    text.append(detailsText);
   }
-  return resolved;
+  text.write("}");
+  return text;
 }
 
 /**
@@ -191,30 +159,37 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     }
   };
 
-  // A diagnostic that cannot be resolved or redacted (not an object, a throwing getter or toJSON in its details, or
-  // text longer than is left of the document's budget) is dropped with a warning on stderr and gives back what it
-  // spent, so it cannot cost the run its result document.
-  const redactEach = (input: readonly Diagnostic[], budget: DocumentBudget): Array<Record<string, unknown>> => {
-    const redacted: Array<Record<string, unknown>> = [];
-    const charsLeft = budget.charsLeft;
-    if (input.length > 0) {
-      budget.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
-    }
+  // A diagnostic that cannot be serialized (not an object, a throwing getter or toJSON in its details, or text longer
+  // than is left of the document's budget) is dropped with a warning on stderr and charges nothing, so it cannot cost
+  // the run its result document. Returns the `,"diagnostics":[...]` member, or undefined when none is kept.
+  const writeDiagnostics = (input: readonly Diagnostic[], budget: DocumentBudget): JsonText | undefined => {
+    const segment = segmentOf(budget);
+    segment.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
+    const text = new JsonText();
+    text.write(',"diagnostics":[');
+    let kept = 0;
     input.forEach((diagnostic, index) => {
-      const before = budget.charsLeft;
+      const item = segmentOf(segment);
       try {
         // Its separator, then its text.
-        spendText(budget, redacted.length > 0 ? 1 : 0);
-        redacted.push(toDocumentDiagnostic(diagnostic, index, budget));
+        spendText(item, kept > 0 ? 1 : 0);
+        const diagnosticText = toDocumentDiagnostic(diagnostic, index, item);
+        if (kept > 0) {
+          text.write(",");
+        }
+        text.append(diagnosticText);
+        segment.charsLeft = item.charsLeft;
+        kept += 1;
       } catch {
-        budget.charsLeft = before;
         logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
       }
     });
-    if (redacted.length === 0) {
-      budget.charsLeft = charsLeft;
+    if (kept === 0) {
+      return undefined;
     }
-    return redacted;
+    text.write("]");
+    budget.charsLeft = segment.charsLeft;
+    return text;
   };
 
   return {
@@ -222,12 +197,13 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     finish(outcome, diagnostics) {
       let text: string | undefined;
       let exitCode = 1;
-      // One budget for the whole document: its frame, the data or the error, then each diagnostic in order. The
-      // newline is reserved, so a document that fits can always be written with it.
+      // One budget for the whole document, charged at the exact length of its text: its frame, the data or the error,
+      // then each diagnostic in order, each a segment that is kept whole or dropped whole. The newline is reserved, so
+      // a document that fits can always be written with it.
       const maxLength = (options.maxLength ?? createDocumentBudget().charsLeft) - 1;
       const budget = createDocumentBudget(maxLength);
       try {
-        let document: Record<string, unknown>;
+        const document = new JsonText();
         if (outcome.ok) {
           let data = outcome.data;
           let dropped: CollectedCall[] = collected;
@@ -238,32 +214,40 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           }
           warnDropped(dropped);
           spendText(budget, SUCCESS_FRAME_LENGTH);
-          document = { ok: true, data: toDocumentData(data, budget) };
+          document.write('{"ok":true,"data":');
+          document.append(toDocumentData(data, budget));
           exitCode = outcome.exitCode;
         } else {
           budget.charsLeft -= FAILURE_FRAME_LENGTH;
           const mapped = mapRunnerError(outcome.error, budget);
           warnDropped(collected);
-          document = { ok: false, error: mapped.error };
+          document.write(`{"ok":false,"error":{"code":${mapped.codeText},"message":${mapped.messageText}`);
+          if (mapped.details !== undefined) {
+            document.write(',"details":');
+            document.append(mapped.details);
+          }
+          document.write("}");
           exitCode = mapped.exitCode;
         }
 
-        const redacted = redactEach(diagnostics, budget);
-        if (redacted.length > 0) {
-          document.diagnostics = redacted;
+        const diagnosticsText = writeDiagnostics(diagnostics, budget);
+        if (diagnosticsText !== undefined) {
+          document.append(diagnosticsText);
         }
-        // Every member is already a plain JSON value, so this runs no user code and drops or restores nothing.
-        text = stringifyDocument(document, maxLength, logs.warn);
+        document.write("}\n");
+        // Every piece was charged at its exact length, so this check only guards the accounting.
+        const printed = document.toString();
+        text = budget.charsLeft >= 0 && printed.length <= maxLength + 1 ? printed : undefined;
       } catch {
         text = undefined;
       }
 
       if (text === undefined) {
         // Whatever failed while the document was prepared, stdout still receives exactly one document.
-        text = JSON.stringify(SERIALIZATION_FAILURE);
+        text = `${JSON.stringify(SERIALIZATION_FAILURE)}\n`;
         exitCode = 1;
       }
-      options.stdout(`${text}\n`);
+      options.stdout(text);
       return exitCode;
     },
   };

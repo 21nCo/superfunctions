@@ -46,16 +46,15 @@ export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>())
   return value;
 }
 
-const CIRCULAR = "[Circular]";
+const CIRCULAR = '"[Circular]"';
+const REDACTED = '"[REDACTED]"';
 /**
  * How many projections of one original member value may be open on the active path at once (see
- * `resolveJsonMember`). A toJSON that keeps returning fresh objects which lead back to the same value (where
+ * `serializeJsonMember`). A toJSON that keeps returning fresh objects which lead back to the same value (where
  * JSON.stringify recurses until its stack overflows) is marked "[Circular]" in place at the next recurrence; finite
  * chains up to this depth print exactly as JSON.stringify prints them.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
-/** What `redactValue` prints for the value of a sensitive key. */
-const REDACTED_LENGTH = '"[REDACTED]"'.length;
 
 /** Thrown when a value's JSON text cannot fit what is left of a document's budget. */
 export class DocumentBudgetExceeded extends RangeError {}
@@ -67,19 +66,80 @@ export interface DocumentBudget {
 
 /**
  * The budget of one result document: the engine's maximum string length, where `JSON.stringify` itself throws a
- * RangeError, or a smaller `limit` (used by tests). Data, error details and diagnostics charge a lower bound of the
- * text they print against it, so a value whose text cannot be printed is rejected before it is built. A value, or its
- * JSON text, that does not fit the heap exhausts it here as it would in `JSON.stringify`: that is outside this bound.
+ * RangeError, or a smaller `limit` (used by tests). Every piece of text is charged at its exact length as it is
+ * written, so a document that stays within its budget is exactly that long. A value, or its JSON text, that does not
+ * fit the heap exhausts it here as it would in `JSON.stringify`: that is outside this bound.
  */
 export function createDocumentBudget(limit: number = constants.MAX_STRING_LENGTH): DocumentBudget {
   return { charsLeft: limit };
 }
 
-/** Counts `chars` of text against the budget; throws a RangeError, before they are built, when they do not fit. */
+/** Counts `chars` of text against the budget; throws a RangeError when they do not fit. */
 export function spendText(budget: DocumentBudget, chars: number): void {
   budget.charsLeft -= chars;
   if (budget.charsLeft < 0) {
     throw new DocumentBudgetExceeded("Value too large for a result document");
+  }
+}
+
+/**
+ * The JSON text of `text` as a string, or undefined when it is longer than `room` characters. A string whose bare
+ * length and quotes already exceed `room` is rejected before it is encoded.
+ */
+export function encodeString(text: string, room: number): string | undefined {
+  if (text.length + 2 > room) {
+    return undefined;
+  }
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(text);
+  } catch {
+    // Escapes made it longer than the engine allows.
+    return undefined;
+  }
+  return encoded.length <= room ? encoded : undefined;
+}
+
+/** Receives JSON text in order. */
+interface TextSink {
+  write(text: string): void;
+}
+
+const DISCARD: TextSink = { write() {} };
+/** Parts joined into one flat chunk, so many small writes do not each stay a separate string. */
+const PARTS_PER_CHUNK = 4096;
+
+/**
+ * JSON text built in order from small writes, joined into flat chunks as it grows, so it holds about the text itself
+ * and no copy of the value it came from.
+ */
+export class JsonText implements TextSink {
+  private chunks: string[] = [];
+  private parts: string[] = [];
+  /** The first piece written: "{" for an object, "[" for an array. */
+  first: string | undefined;
+
+  write(text: string): void {
+    this.first ??= text;
+    this.parts.push(text);
+    if (this.parts.length === PARTS_PER_CHUNK) {
+      this.chunks.push(this.parts.join(""));
+      this.parts = [];
+    }
+  }
+
+  /** Appends the text of `other`, without copying it. */
+  append(other: JsonText): void {
+    for (const chunk of other.chunks) {
+      this.write(chunk);
+    }
+    for (const part of other.parts) {
+      this.write(part);
+    }
+  }
+
+  toString(): string {
+    return [...this.chunks, ...this.parts].join("");
   }
 }
 
@@ -93,29 +153,28 @@ interface Walk {
   readonly originals: Map<unknown, number>;
   /** Originals that reached PROJECTION_REPEAT_LIMIT while still open: any further recurrence of them is marked. */
   readonly capped: Set<unknown>;
-  readonly budget: DocumentBudget;
-  /** Count the value of every sensitive key as the "[REDACTED]" that `redactValue` will print for it. */
-  readonly chargeRedacted: boolean;
+  /** Where text goes and what it is charged to; a redacted value is walked into a discard sink with its own budget. */
+  out: TextSink;
+  budget: DocumentBudget;
+  /** Print the value of every sensitive object key as "[REDACTED]", as `redactValue` does. */
+  redact: boolean;
+}
+
+function emit(walk: Walk, text: string): void {
+  spendText(walk.budget, text.length);
+  walk.out.write(text);
+}
+
+function emitString(walk: Walk, text: string): void {
+  const encoded = encodeString(text, walk.budget.charsLeft);
+  if (encoded === undefined) {
+    throw new DocumentBudgetExceeded("Value too large for a result document");
+  }
+  emit(walk, encoded);
 }
 
 function isTracked(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
-}
-
-/**
- * The length of `text` as a JSON string, without its escapes: read from `length` alone, so no string is scanned or
- * flattened. Escapes only make the printed text longer; `createDocumentOutput` checks the final text.
- */
-function jsonStringLength(text: string): number {
-  return text.length + 2;
-}
-
-/** The length of the JSON text of a primitive `toJsonPrimitive` returned (0 when JSON drops it). */
-function primitiveLength(value: string | number | boolean | null | undefined): number {
-  if (typeof value === "string") {
-    return jsonStringLength(value);
-  }
-  return value === undefined ? 0 : String(value).length;
 }
 
 /** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
@@ -148,18 +207,20 @@ function unbox(value: object): unknown {
   return value;
 }
 
-/** The JSON primitive a non-object value prints as (bigints as strings), or undefined when JSON drops it. */
-function toJsonPrimitive(value: unknown): string | number | boolean | null | undefined {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return value;
+/** Writes a primitive's JSON text (bigints as strings); returns false when JSON drops it. */
+function writePrimitive(walk: Walk, value: unknown): boolean {
+  if (typeof value === "string") {
+    emitString(walk, value);
+  } else if (typeof value === "number") {
+    emit(walk, Number.isFinite(value) ? String(value) : "null");
+  } else if (value === null || typeof value === "boolean") {
+    emit(walk, String(value));
+  } else if (typeof value === "bigint") {
+    emitString(walk, value.toString());
+  } else {
+    return false;
   }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  return undefined;
+  return true;
 }
 
 /** The first steps of SerializeJSONProperty: reads `holder[key]` once, applies its toJSON and unboxes the result. */
@@ -175,15 +236,22 @@ function project(holder: object, key: string): { original: unknown; value: unkno
   return { original, value: typeof value === "object" && value !== null ? unbox(value) : value };
 }
 
-/** SerializeJSONProperty: the JSON value of `holder[key]`, or undefined when JSON drops the member. */
-function serializeProperty(walk: Walk, holder: object, key: string): unknown {
+/**
+ * SerializeJSONProperty: writes the JSON text of `holder[key]`, after `before` once the member is known to print.
+ * Returns false when JSON drops the member.
+ */
+function serializeProperty(walk: Walk, holder: object, key: string, before?: () => void): boolean {
   const { original, value } = project(holder, key);
   if (typeof value === "object" && value !== null) {
-    return serializeNode(walk, value, original);
+    before?.();
+    serializeNode(walk, value, original);
+    return true;
   }
-  const primitive = toJsonPrimitive(value);
-  spendText(walk.budget, primitiveLength(primitive));
-  return primitive;
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+    return false;
+  }
+  before?.();
+  return writePrimitive(walk, value);
 }
 
 /** True when `node` must print as "[Circular]": it is being serialized, or its original recurs past the limit. */
@@ -204,16 +272,20 @@ function isRecurrence(walk: Walk, node: object, original: unknown, open: number)
  * PROJECTION_REPEAT_LIMIT projections open is "[Circular]" in place, and so is every later recurrence of that original
  * while it stays open, so a toJSON that branches back to itself cannot multiply the work.
  */
-function serializeNode(walk: Walk, node: object, original: unknown): unknown {
+function serializeNode(walk: Walk, node: object, original: unknown): void {
   const open = walk.originals.get(original) ?? 0;
   if (isRecurrence(walk, node, original, open)) {
-    spendText(walk.budget, jsonStringLength(CIRCULAR));
-    return CIRCULAR;
+    emit(walk, CIRCULAR);
+    return;
   }
   walk.nodes.add(node);
   walk.originals.set(original, open + 1);
   try {
-    return Array.isArray(node) ? serializeArray(walk, node) : serializeObject(walk, node);
+    if (Array.isArray(node)) {
+      serializeArray(walk, node);
+    } else {
+      serializeObject(walk, node);
+    }
   } finally {
     walk.nodes.delete(node);
     if (open === 0) {
@@ -226,88 +298,110 @@ function serializeNode(walk: Walk, node: object, original: unknown): unknown {
 }
 
 /**
- * SerializeJSONArray: the length is converted once. Every index prints at least one character and a separator, so
- * the brackets, separators and one character per item (2n + 1) are counted before any index is read, and an array
- * whose text cannot fit throws at once. Each index is read once; a dropped item becomes null.
+ * SerializeJSONArray: the length is converted once. Every index prints at least one character and a separator, so an
+ * array whose brackets, separators and one character per item (2n + 1) cannot fit throws before any index is read.
+ * Each index is read once; a dropped item prints null.
  */
-function serializeArray(walk: Walk, array: object): unknown[] {
+function serializeArray(walk: Walk, array: object): void {
   const length = toLength(Reflect.get(array, "length"));
-  spendText(walk.budget, length === 0 ? 2 : 2 * length + 1);
-  const items: unknown[] = [];
+  if ((length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
+    throw new DocumentBudgetExceeded("Value too large for a result document");
+  }
+  emit(walk, "[");
   for (let index = 0; index < length; index += 1) {
-    // The item's own text replaces the one character already counted for it.
-    walk.budget.charsLeft += 1;
-    const item = serializeProperty(walk, array, String(index));
-    if (item === undefined) {
-      spendText(walk.budget, "null".length);
+    if (index > 0) {
+      emit(walk, ",");
     }
-    items.push(item === undefined ? null : item);
-  }
-  return items;
-}
-
-/** SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. */
-function serializeObject(walk: Walk, record: object): Record<string, unknown> {
-  spendText(walk.budget, 2);
-  const entries: Array<[string, unknown]> = [];
-  for (const name of Object.keys(record)) {
-    const redacted = walk.chargeRedacted && isSensitiveKey(name);
-    const charsLeft = walk.budget.charsLeft;
-    // A sensitive value is resolved like any other, so its getters and toJSON run in order, and its text must fit
-    // while it is resolved; once resolved it counts only as the "[REDACTED]" that replaces it.
-    const member = serializeProperty(walk, record, name);
-    if (redacted && member !== undefined) {
-      walk.budget.charsLeft = charsLeft;
-      spendText(walk.budget, REDACTED_LENGTH);
-    }
-    if (member !== undefined) {
-      // The key, its colon and, after the first member, a separator.
-      spendText(walk.budget, jsonStringLength(name) + 1 + (entries.length > 0 ? 1 : 0));
-      entries.push([name, member]);
+    if (!serializeProperty(walk, array, String(index))) {
+      emit(walk, "null");
     }
   }
-  return Object.fromEntries(entries);
+  emit(walk, "]");
 }
 
 /**
- * Resolves a value to the plain JSON value that `JSON.stringify` writes for it as the member `key` of an object,
- * following its algorithm step by step in a single pass: each member is read once, each getter and toJSON runs
- * exactly as often as JSON.stringify runs it, toJSON (on an object, function or bigint) gets its real key or array
- * index, an array length is converted once, boxed primitives are unwrapped by internal slot, and dropped members are
- * left out or become null in arrays. The result is built from fresh plain objects and arrays, so redacting it and
- * serializing it again calls no user code.
+ * Walks the value of a sensitive member into a discard sink, so its getters and toJSON run in order, against a
+ * budget of its own at the engine's limit, so a value JSON.stringify could not print still fails. Returns false when
+ * JSON drops the member.
+ */
+function discardProperty(walk: Walk, record: object, name: string): boolean {
+  const { out, budget, redact } = walk;
+  walk.out = DISCARD;
+  walk.budget = createDocumentBudget();
+  walk.redact = false;
+  try {
+    return serializeProperty(walk, record, name);
+  } finally {
+    walk.out = out;
+    walk.budget = budget;
+    walk.redact = redact;
+  }
+}
+
+/**
+ * SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. With
+ * `redact`, a sensitive member that JSON prints is written as "[REDACTED]".
+ */
+function serializeObject(walk: Walk, record: object): void {
+  emit(walk, "{");
+  let members = 0;
+  const writeKey = (name: string) => {
+    if (members > 0) {
+      emit(walk, ",");
+    }
+    emitString(walk, name);
+    emit(walk, ":");
+    members += 1;
+  };
+  for (const name of Object.keys(record)) {
+    if (walk.redact && isSensitiveKey(name)) {
+      if (discardProperty(walk, record, name)) {
+        writeKey(name);
+        emit(walk, REDACTED);
+      }
+    } else {
+      serializeProperty(walk, record, name, () => writeKey(name));
+    }
+  }
+  emit(walk, "}");
+}
+
+/**
+ * Writes the JSON text `JSON.stringify` writes for a value as the member `key` of an object, following its algorithm
+ * step by step in a single pass: each member is read once, each getter and toJSON runs exactly as often as
+ * JSON.stringify runs it, toJSON (on an object, function or bigint) gets its real key or array index, an array length
+ * is converted once, boxed primitives are unwrapped by internal slot, and dropped members are left out or become null
+ * in arrays. Only the text is kept, never a copy of the value, and each piece is charged to `budget` at its exact
+ * length as it is written.
  *
- * Where JSON.stringify would throw or never finish, the result stays printable, and these are the only divergences:
+ * Where JSON.stringify would throw or never finish, the text stays printable, and these are the only divergences:
  * - bigints become strings, as in `normalizeJsonValue`;
  * - an object or array that is already being serialized prints "[Circular]" (JSON.stringify throws a TypeError);
  * - a toJSON that keeps returning fresh objects leading back to the same original value prints
  *   PROJECTION_REPEAT_LIMIT (64) nested projections and then "[Circular]" in place, and later recurrences of that
  *   value inside it are marked at once; a finite chain deeper than 64 projections of one value is cut the same way;
- * - a value whose JSON text cannot fit what is left of `budget` (see `createDocumentBudget`) throws a RangeError, as
- *   JSON.stringify does past the engine's string limit, but before the rest of the value is resolved: each value
- *   counts a lower bound of its text (punctuation, separators, keys and strings with their quotes, number and literal
- *   text), and an array counts 2n + 1 characters before its index 0 is read, so an oversized sparse or proxy array
- *   fails at once. Nothing is refunded on a throw; the caller restores `budget.charsLeft` when it drops the member.
+ * - text that cannot fit what is left of `budget` (see `createDocumentBudget`) throws a RangeError, as JSON.stringify
+ *   does past the engine's string limit; an array checks 2n + 1 characters before its index 0 is read, so an
+ *   oversized sparse or proxy array fails at once.
  *
- * With `chargeRedacted`, the value of every sensitive object key is still resolved completely, but once resolved it
- * counts only as the "[REDACTED]" that `redactValue` prints for it, so details whose redacted text fits are kept.
+ * With `redact`, every sensitive object key below the member (see `redactValue`) prints "[REDACTED]" when JSON prints
+ * it at all. Its value is still walked in order, so its getters and toJSON run as in JSON.stringify, but its text is
+ * discarded and counted only against a budget of its own at the engine's limit.
  *
  * A value, or its text, that does not fit the heap exhausts it as it would in JSON.stringify; that is not caught.
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a
- * bigint.
+ * bigint. On a throw, `budget` has been charged for part of the text: callers charge a copy and keep it on success.
  */
-export function resolveJsonMember(
+export function serializeJsonMember(
   key: string,
   value: unknown,
-  {
-    budget = createDocumentBudget(),
-    chargeRedacted = false,
-  }: { budget?: DocumentBudget; chargeRedacted?: boolean } = {}
-): unknown {
+  { budget = createDocumentBudget(), redact = false }: { budget?: DocumentBudget; redact?: boolean } = {}
+): JsonText | undefined {
   const holder = Object.create(null) as Record<string, unknown>;
   holder[key] = value;
-  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), budget, chargeRedacted };
-  return serializeProperty(walk, holder, key);
+  const out = new JsonText();
+  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), out, budget, redact };
+  return serializeProperty(walk, holder, key) ? out : undefined;
 }

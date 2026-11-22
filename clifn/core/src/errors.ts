@@ -1,5 +1,11 @@
-import { redactValue } from "./diagnostics.js";
-import { createDocumentBudget, resolveJsonMember, spendText, type DocumentBudget } from "./json-value.js";
+import {
+  createDocumentBudget,
+  encodeString,
+  serializeJsonMember,
+  spendText,
+  type DocumentBudget,
+  type JsonText,
+} from "./json-value.js";
 
 /** Code used when a thrown value carries no usable code (D8). */
 export const RUNNER_FAILED_CODE = "CLIFN_RUNNER_FAILED";
@@ -27,11 +33,15 @@ const UNLISTED_MESSAGE_CODE_DESCRIPTION = "The operation failed.";
 export interface RunnerErrorPayload {
   code: string;
   message: string;
-  details?: unknown;
 }
 
 export interface MappedRunnerError {
   error: RunnerErrorPayload;
+  /** The JSON text of the code and the message, as the document prints them. */
+  codeText: string;
+  messageText: string;
+  /** The JSON text of the redacted details, when they are kept. */
+  details?: JsonText;
   exitCode: number;
 }
 
@@ -105,43 +115,47 @@ function plainMessage(error: unknown, message: unknown): string {
 }
 
 /**
- * Resolves plain-object details to the JSON value the document prints, then redacts it: the details are resolved
- * completely first, so every getter and `toJSON` in them runs as it runs in `JSON.stringify`, and a `toJSON` cannot
- * bring a redacted field back. Details that cannot be read or serialized, whose text does not fit the document's
- * budget, or that do not resolve to an object are omitted, and what they spent of the budget is restored; the code,
- * message and exit code still stand.
+ * Writes plain-object details as the JSON text the document prints, with every sensitive key redacted as it is
+ * written (see `serializeJsonMember`), so every getter and `toJSON` in them runs as it runs in `JSON.stringify` and a
+ * `toJSON` cannot bring a redacted field back. Details that cannot be read or serialized, whose text does not fit the
+ * document's budget, or that do not serialize to an object are omitted and charge nothing; the code, message and exit
+ * code still stand.
  */
-function documentDetails(details: unknown, budget: DocumentBudget): Record<string, unknown> | undefined {
-  const charsLeft = budget.charsLeft;
+function documentDetails(details: unknown, budget: DocumentBudget): JsonText | undefined {
+  const segment = { charsLeft: budget.charsLeft };
   try {
     // Inside the try: a proxy whose getPrototypeOf trap throws only makes the details unusable.
     if (isPlainObject(details)) {
-      spendText(budget, DETAILS_MEMBER_LENGTH);
-      const resolved = resolveJsonMember("details", details, { budget, chargeRedacted: true });
-      if (isPlainObject(resolved)) {
-        return redactValue(resolved) as Record<string, unknown>;
+      spendText(segment, DETAILS_MEMBER_LENGTH);
+      const text = serializeJsonMember("details", details, { budget: segment, redact: true });
+      if (text?.first === "{") {
+        budget.charsLeft = segment.charsLeft;
+        return text;
       }
     }
   } catch {
     // Omitted below.
   }
-  budget.charsLeft = charsLeft;
   return undefined;
 }
 
 /**
- * Charges the code and message text to `budget`. A message that does not fit becomes MESSAGE_TOO_LONG, and a code
- * taken from a message that does not fit either becomes CLIFN_RUNNER_FAILED; the exit code is kept.
+ * Charges the exact JSON text of the code and message to `budget`. A message that does not fit becomes
+ * MESSAGE_TOO_LONG, and a code that leaves no room even for that becomes CLIFN_RUNNER_FAILED; the exit code is kept.
  */
-function chargeText(payload: RunnerErrorPayload, budget: DocumentBudget): void {
-  const room = budget.charsLeft - (payload.code.length + 2);
-  if (room < payload.message.length + 2) {
+function chargeText(payload: RunnerErrorPayload, budget: DocumentBudget): { codeText: string; messageText: string } {
+  let codeText = encodeString(payload.code, budget.charsLeft);
+  let messageText = codeText === undefined ? undefined : encodeString(payload.message, budget.charsLeft - codeText.length);
+  if (codeText === undefined || messageText === undefined) {
     payload.message = MESSAGE_TOO_LONG;
-    if (room < MESSAGE_TOO_LONG.length + 2) {
+    messageText = JSON.stringify(MESSAGE_TOO_LONG);
+    if (codeText === undefined || budget.charsLeft - codeText.length < messageText.length) {
       payload.code = RUNNER_FAILED_CODE;
+      codeText = JSON.stringify(RUNNER_FAILED_CODE);
     }
   }
-  spendText(budget, payload.code.length + payload.message.length + 4);
+  spendText(budget, codeText.length + messageText.length);
+  return { codeText, messageText };
 }
 
 function mapFields(error: unknown, fields: ThrownFields, budget: DocumentBudget): MappedRunnerError {
@@ -156,13 +170,8 @@ function mapFields(error: unknown, fields: ThrownFields, budget: DocumentBudget)
     payload = { code: RUNNER_FAILED_CODE, message: plainMessage(error, message) };
   }
 
-  chargeText(payload, budget);
-  const usableDetails = documentDetails(details, budget);
-  if (usableDetails !== undefined) {
-    payload.details = usableDetails;
-  }
-
-  return { error: payload, exitCode: readExitCode(fields.exitCode) };
+  const text = chargeText(payload, budget);
+  return { error: payload, ...text, details: documentDetails(details, budget), exitCode: readExitCode(fields.exitCode) };
 }
 
 /**
@@ -170,8 +179,8 @@ function mapFields(error: unknown, fields: ThrownFields, budget: DocumentBudget)
  * 1. a string `code` matching `^[A-Z][A-Z0-9_]{1,63}$` is used as the code;
  * 2. a `message` that is exactly `^CLIFN_[A-Z0-9_]+$` becomes the code, and the message a fixed description;
  * 3. anything else is `CLIFN_RUNNER_FAILED`.
- * `details` is kept only when it is a plain object that resolves to a JSON object within `budget`, and is redacted
- * once resolved. The code and message are charged to `budget` first; a message that does not fit is replaced by a
+ * `details` is kept only when it is a plain object that serializes to a JSON object within `budget`, redacted as it is
+ * written. The exact text of the code and message is charged to `budget` first; a message that does not fit is replaced by a
  * fixed short one. The message is always a non-empty string. The exit code is an integer `exitCode` from 1 to 125,
  * else 1.
  */
@@ -180,6 +189,11 @@ export function mapRunnerError(error: unknown, budget: DocumentBudget = createDo
     return mapFields(error, readFields(error), budget);
   } catch {
     // A throwing getter or proxy on the thrown value must not stop the runner from reporting the failure.
-    return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1 };
+    return {
+      error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE },
+      codeText: JSON.stringify(RUNNER_FAILED_CODE),
+      messageText: JSON.stringify(UNKNOWN_FAILURE_MESSAGE),
+      exitCode: 1,
+    };
   }
 }
