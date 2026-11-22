@@ -1,0 +1,14 @@
+apifn/cli/__tests__/check-command.test.ts
+  h_a39f9495f9ec1d 3769-3778
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cad071c99a8b443dfb33b6f7a18dda1c573add0",
+  "prompts": {},
+  "humans": {
+    "h_a39f9495f9ec1d": {
+      "author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
