@@ -1,0 +1,27 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_124319b903d839::t_c5e8a46db80af8 1097,1099-1108,1135-1136,1146,1392-1393,2361-2364,2756-2973
+apifn/cli/src/commands/check-compare.ts
+  s_124319b903d839::t_65176b267be90a 19-24,26-31,33,58-62,76-77,80-90,95-98,100-107,122-124,128-149,155-162,167-170,172-173,175-181,187-188,193,198,200-206,209,211,216,224-230,233,235,237,264-266,314-315,317,339,397
+apifn/cli/src/commands/check-paths.ts
+  s_124319b903d839::t_2f5be471096fc3 48-71,74-77,83-84,86,89-95,122-124
+apifn/cli/src/commands/check-publish.ts
+  s_124319b903d839::t_8a77d9bc066ce0 6-9,34,42,111-112,118-179,194-197,254-256,311-325,356,358,509
+apifn/cli/src/commands/check.ts
+  s_124319b903d839::t_e50058ed08dab2 38,191-193,201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4ad8042ae8dd8769c2db6d26ec15520db940b45",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
