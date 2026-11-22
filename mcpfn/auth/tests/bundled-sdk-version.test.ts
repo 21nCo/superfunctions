@@ -93,17 +93,32 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nconst mod = module; var sdk = mod.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module?.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module[\"require\"](\"@modelcontextprotocol/sdk\");\n",
-    // A require method on any receiver with an SDK specifier fails closed: in a
-    // bundle it cannot be told apart from an aliased module.require, and a
-    // wrapper such as { require: (id) => require(id) } really loads the SDK.
-    "\nvar helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // A require method fails closed unless its receiver is a same-file object
+    // whose require member provably cannot load: a forwarding wrapper, an
+    // unresolved receiver and a reassigned or mutated helper all load the SDK.
     "\nvar loader = { require: (id) => require(id) };\nvar sdk = loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = globalThis.helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = unknownHelper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar h2 = { require: (id) => id }; h2 = module; h2.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar h3 = { require: (id) => id }; h3.require = require; h3.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // Callee and specifier are normalized alike: parentheses, comma sequences,
+    // aliases, constant specifiers and string concatenation.
+    "\nvar sdk = require((\"@modelcontextprotocol/sdk/types.js\"));\n",
+    "\nvoid import((\"@modelcontextprotocol/sdk/types.js\"));\n",
+    "\nvar sdk = (0, require)(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar sdk = (0, module.require)(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nconst r = require; var sdk = r(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nconst sdkId = \"@modelcontextprotocol/sdk/types.js\"; var sdk = require(sdkId);\n",
+    "\nvar sdk = require(\"@modelcontextprotocol/\" + \"sdk\");\n",
+    "\nconst req = createRequire(__filename); var sdk = req(\"@modelcontextprotocol/sdk/types.js\");\n",
   ];
   const inertText = [
     "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
     "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\n// import(\"@modelcontextprotocol/sdk\")\n",
     // A require method call with another specifier or a non-literal argument.
     "\nvar obj = { require: (id) => id };\nvar name = \"x\";\nobj.require(\"other-pkg\");\nobj.require(name);\n",
+    // A same-file helper whose require method only returns its argument.
+    "\nconst helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
@@ -111,7 +126,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   });
 
   runOnBuild.each(artifacts.flatMap((file) => executableLoads.map((code, index) => ({ file, index, code }))))(
-    "rejects SDK loads split across lines or comments, or through a require method, in the built $file (case $index)",
+    "rejects SDK loads split across lines or comments, wrapped, aliased or through a loading require method, in the built $file (case $index)",
     ({ file, code }) => {
       expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).toThrow(`dist/${file} imports @modelcontextprotocol/sdk instead of bundling it`);
     },
@@ -119,7 +134,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   );
 
   runOnBuild.each(artifacts.flatMap((file) => inertText.map((code, index) => ({ file, index, code }))))(
-    "accepts SDK import text in strings, comments and other require methods of the built $file (case $index)",
+    "accepts SDK import text in strings and comments and inert require methods of the built $file (case $index)",
     ({ file, code }) => {
       expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).not.toThrow();
     },
