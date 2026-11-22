@@ -1,8 +1,10 @@
+import { constants } from "node:buffer";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
+import { PROJECTION_REPEAT_LIMIT } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 type Action = (options: Record<string, never>, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
@@ -675,7 +677,17 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     [
       "a length object",
       () => {
-        const length = { valueOf: () => 2.9 };
+        let coercions = 0;
+        // Each copy may be converted once; a second ToLength (or ToNumber) of the same length throws.
+        const length = {
+          valueOf: () => {
+            coercions += 1;
+            if (coercions > 1) {
+              throw new Error("length converted twice");
+            }
+            return 2.9;
+          },
+        };
         return new Proxy([1, 2, 3], { get: (target, key) => (key === "length" ? length : Reflect.get(target, key)) });
       },
     ],
@@ -705,23 +717,27 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     }
     return parent;
   };
-  const printedCycle = { name: "parent", password: "[REDACTED]", child: { name: "child", parent: "[Circular]" } };
+  /** `wrap` applied PROJECTION_REPEAT_LIMIT times around "[Circular]": a projection loop cut in place at the cap. */
+  const nest = (wrap: (inner: unknown) => unknown) => {
+    let node: unknown = "[Circular]";
+    for (let depth = 0; depth < PROJECTION_REPEAT_LIMIT; depth += 1) {
+      node = wrap(node);
+    }
+    return node;
+  };
+  const printCycle = (password: string) =>
+    nest((inner) => ({ name: "parent", password, child: { name: "child", parent: inner } }));
+  const printedCycle = printCycle("[REDACTED]");
 
   it("marks a cycle through toJSON projections in data, the json() fallback, diagnostics and error details", async () => {
     // data is not redacted; diagnostics and error details are.
     const returned = await runDocument(() => ({ data: projectedCycle() }));
-    expect(parseOnlyDocument(returned)).toEqual({
-      ok: true,
-      data: { ...printedCycle, password: "test-password" },
-    });
+    expect(parseOnlyDocument(returned)).toEqual({ ok: true, data: printCycle("test-password") });
 
     const fallback = await runDocument((_options, ctx) => {
       ctx.output.json(projectedCycle());
     });
-    expect((parseOnlyDocument(fallback).data as Record<string, unknown>).child).toEqual({
-      name: "child",
-      parent: "[Circular]",
-    });
+    expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: printCycle("test-password") });
 
     const diagnostics = await runDocument((_options, ctx) => {
       ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: projectedCycle() });
@@ -776,7 +792,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
   });
 
   /** Runs `make()` as returned data, the json() fallback, diagnostic details and error details, expecting `printed`. */
-  const expectEveryMember = async (make: () => unknown, printed: unknown) => {
+  const expectEveryMember = async (make: () => unknown, printed: unknown, redacted: unknown = printed) => {
     expect(parseOnlyDocument(await runDocument(() => ({ data: make() })))).toEqual({ ok: true, data: printed });
     const fallback = await runDocument((_options, ctx) => {
       ctx.output.json(make());
@@ -789,8 +805,8 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(failure.exitCode).toBe(7);
     expect(parseOnlyDocument(failure)).toEqual({
       ok: false,
-      error: { code: "FAILED", message: "failed", details: { value: printed } },
-      diagnostics: [{ code: "D", severity: "info", message: "m", details: { value: printed } }],
+      error: { code: "FAILED", message: "failed", details: { value: redacted } },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: { value: redacted } }],
     });
   };
 
@@ -807,7 +823,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       },
     });
     expect(() => JSON.stringify(throughGetter())).toThrow(RangeError);
-    await expectEveryMember(throughGetter, { name: "n", child: "[Circular]" });
+    await expectEveryMember(throughGetter, nest((inner) => ({ name: "n", child: inner })));
 
     const throughProxy = () => {
       const source: object = {
@@ -816,7 +832,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       return source;
     };
     expect(() => JSON.stringify(throughProxy())).toThrow(RangeError);
-    await expectEveryMember(throughProxy, ["[Circular]"]);
+    await expectEveryMember(throughProxy, nest((inner) => [inner]));
   });
 
   it("keeps finite toJSON recursion and members a toJSON reassigns as native JSON prints them", async () => {
@@ -845,6 +861,208 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     };
     expect(native(reassigning)).toEqual({ member: { leaf: true } });
     await expectEveryMember(reassigning, { member: { leaf: true } });
+  });
+
+  it("serializes in one pass: a one-shot getter beside a projection loop runs once and the loop is cut at the cap", async () => {
+    const created: Array<{ getter: number; toJSON: number }> = [];
+    const make = () => {
+      const counts = { getter: 0, toJSON: 0 };
+      created.push(counts);
+      const loop = {
+        toJSON(this: object) {
+          counts.toJSON += 1;
+          return { again: this, password: "test-password" };
+        },
+      };
+      return {
+        get once() {
+          counts.getter += 1;
+          if (counts.getter > 1) {
+            throw new Error("replayed");
+          }
+          return "once";
+        },
+        loop,
+      };
+    };
+    const printed = (password: string) => ({ once: "once", loop: nest((inner) => ({ again: inner, password })) });
+
+    await expectEveryMember(make, printed("test-password"), printed("[REDACTED]"));
+    // Data, the json() fallback, and the diagnostic and error details of the failing run: four values, each read once.
+    expect(created).toHaveLength(4);
+    for (const counts of created) {
+      // The member's toJSON and one call per recurrence until the cap: never a second walk.
+      expect(counts).toEqual({ getter: 1, toJSON: PROJECTION_REPEAT_LIMIT + 1 });
+    }
+  });
+
+  it("prints finite and key-dependent chains up to the cap as native JSON does and cuts longer ones in place", async () => {
+    const stateful = (depth: number, calls = { count: 0 }) => {
+      const source: object = {
+        toJSON: () => ((calls.count += 1) <= depth ? { next: source, password: "test-password" } : "leaf"),
+      };
+      return source;
+    };
+    const chain = (depth: number, leaf: unknown, password: string) => {
+      let node = leaf;
+      for (let level = 0; level < depth; level += 1) {
+        node = { next: node, password };
+      }
+      return node;
+    };
+
+    expect(native(() => stateful(PROJECTION_REPEAT_LIMIT))).toEqual(
+      chain(PROJECTION_REPEAT_LIMIT, "leaf", "test-password")
+    );
+    await expectEveryMember(
+      () => stateful(PROJECTION_REPEAT_LIMIT),
+      chain(PROJECTION_REPEAT_LIMIT, "leaf", "test-password"),
+      chain(PROJECTION_REPEAT_LIMIT, "leaf", "[REDACTED]")
+    );
+
+    // Natively 70 levels; here the 65th projection of the same value is "[Circular]", after 65 toJSON calls.
+    const calls = { count: 0 };
+    expect(native(() => stateful(70))).toEqual(chain(70, "leaf", "test-password"));
+    const beyond = await runDocument(() => ({ data: stateful(70, calls) }));
+    expect(parseOnlyDocument(beyond)).toEqual({
+      ok: true,
+      data: chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "test-password"),
+    });
+    expect(calls.count).toBe(PROJECTION_REPEAT_LIMIT + 1);
+    await expectEveryMember(
+      () => stateful(70),
+      chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "test-password"),
+      chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "[REDACTED]")
+    );
+
+    // The key carries the depth: k0 projects { k1: this }, and so on, until the key that names the last level.
+    const keyed = (last: number) => ({
+      toJSON(this: object, key: string): unknown {
+        const level = key.startsWith("k") ? Number(key.slice(1)) : 0;
+        return level >= last ? `leaf ${level}` : { [`k${level + 1}`]: this };
+      },
+    });
+    const keyedChain = (depth: number, leaf: unknown) => {
+      let node = leaf;
+      for (let level = depth; level >= 1; level -= 1) {
+        node = { [`k${level}`]: node };
+      }
+      return node;
+    };
+    const keyedLeaf = keyedChain(PROJECTION_REPEAT_LIMIT, `leaf ${PROJECTION_REPEAT_LIMIT}`);
+    expect(native(() => keyed(PROJECTION_REPEAT_LIMIT))).toEqual(keyedLeaf);
+    await expectEveryMember(() => keyed(PROJECTION_REPEAT_LIMIT), keyedLeaf);
+    expect(native(() => keyed(100))).toEqual(keyedChain(100, "leaf 100"));
+    await expectEveryMember(() => keyed(100), keyedChain(PROJECTION_REPEAT_LIMIT, "[Circular]"));
+
+    // A loop referenced twice is cut at the same depth in both places.
+    const loop = { toJSON: (key: string) => ({ again: loop, key }) };
+    const twice = await runDocument(() => ({ data: { a: loop, b: [loop] } }));
+    const cut = (key: string) => {
+      let node: unknown = { again: "[Circular]", key: "again" };
+      for (let level = 1; level < PROJECTION_REPEAT_LIMIT; level += 1) {
+        node = { again: node, key: level === PROJECTION_REPEAT_LIMIT - 1 ? key : "again" };
+      }
+      return node;
+    };
+    expect(parseOnlyDocument(twice)).toEqual({ ok: true, data: { a: cut("a"), b: [cut("0")] } });
+  });
+
+  it("marks a branching projection loop at once after the cap, so the work stays linear", async () => {
+    let calls = 0;
+    const branching = {
+      toJSON(this: object) {
+        calls += 1;
+        return { a: this, b: this };
+      },
+    };
+    expect(() => JSON.stringify(branching)).toThrow(RangeError);
+    calls = 0;
+    const result = await runDocument(() => ({ data: branching }));
+    let printed: unknown = { a: "[Circular]", b: "[Circular]" };
+    for (let depth = 1; depth < PROJECTION_REPEAT_LIMIT; depth += 1) {
+      printed = { a: printed, b: "[Circular]" };
+    }
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: printed });
+    // One call per member: 64 projections, the cut "a" under the deepest one, and a "b" under each.
+    expect(calls).toBe(2 * PROJECTION_REPEAT_LIMIT + 1);
+  });
+
+  it("rejects an array length that cannot be printed before reading any item, as JSON.stringify does", async () => {
+    const huge = (reads: { count: number }) =>
+      new Proxy([], {
+        get: (target, key) => {
+          if (key === "length") {
+            return 2 ** 32;
+          }
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            reads.count += 1;
+          }
+          return Reflect.get(target, key);
+        },
+      });
+    const nativeReads = { count: 0 };
+    expect(() => JSON.stringify({ data: huge(nativeReads) })).toThrow(RangeError);
+    expect(nativeReads.count).toBe(0);
+
+    const reads = { count: 0 };
+    const data = await runDocument(() => ({ data: { list: huge(reads) } }));
+    expect(data.exitCode).toBe(1);
+    expect(parseOnlyDocument(data)).toEqual({
+      ok: false,
+      error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+    });
+
+    const failure = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { list: huge(reads) } });
+      ctx.diagnostics.add({ code: "KEPT", severity: "info", message: "kept" });
+      throw Object.assign(new Error("huge"), { code: "HUGE", exitCode: 8, details: { list: huge(reads) } });
+    });
+    expect(failure.exitCode).toBe(8);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "HUGE", message: "huge" },
+      diagnostics: [{ code: "KEPT", severity: "info", message: "kept" }],
+    });
+    expect(stderrLines(failure.stderr).map((line) => line.message)).toContain(
+      "diagnostic 0 was dropped from the result document: it could not be redacted"
+    );
+    expect(reads.count).toBe(0);
+  });
+
+  it("stops an array whose items outgrow the longest printable text long before reading them all", async () => {
+    // 2 * length - 1 fits the engine's maximum string length, so the length alone is accepted; ten-character items
+    // need five times that, so the walk must stop after a small fraction of the items.
+    const length = Math.floor((constants.MAX_STRING_LENGTH - 2) / 2);
+    const reads = { count: 0 };
+    const make = () =>
+      new Proxy([], {
+        get: (target, key) => {
+          if (key === "length") {
+            return length;
+          }
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            reads.count += 1;
+            return "0123456789";
+          }
+          return Reflect.get(target, key);
+        },
+      });
+
+    const data = await runDocument(() => ({ data: make() }));
+    expect(data.exitCode).toBe(1);
+    expect(parseOnlyDocument(data)).toEqual({
+      ok: false,
+      error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+    });
+    expect(reads.count).toBeGreaterThan(0);
+    expect(reads.count).toBeLessThan(length / 100);
+
+    const failure = await runDocument(() => {
+      throw Object.assign(new Error("long"), { code: "LONG", exitCode: 9, details: { list: make() } });
+    });
+    expect(failure.exitCode).toBe(9);
+    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "LONG", message: "long" } });
   });
 
   it("reads array items without descriptor lookups, as JSON.stringify does", async () => {
