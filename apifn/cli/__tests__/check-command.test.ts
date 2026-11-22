@@ -3458,6 +3458,12 @@ describe("apifn check: separation is established on the reserved destination bef
         `  reportPath: ".apifn/report.md",`,
         `  format: "json",`,
         `  write: ${write},`,
+        `  writeStdout: () => {`,
+        `    if (${JSON.stringify(step)} !== "stdout") return;`,
+        `    process.kill(process.pid, "SIGTERM");`,
+        `    setInterval(() => {}, 1000); // like a pending pipe write, it keeps the process alive`,
+        `    return new Promise(() => {}); // a reader that never drains`,
+        `  },`,
         `  publishHook: (step, destination) => {`,
         `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
         `    process.kill(process.pid, "SIGTERM");`,
@@ -3473,17 +3479,46 @@ describe("apifn check: separation is established on the reserved destination bef
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
+    const stuck = setTimeout(() => child.kill("SIGKILL"), 10_000);
     const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => child.on("close", (exit, sig) => resolve([exit, sig])));
+    clearTimeout(stuck);
     return { dir, code, signal, stdout };
   }
 
-  for (const [step, write] of [["reserved", false], ["installed", false], ["installed", true]] as const) {
+  for (const [step, write] of [["reserved", false], ["installed", false], ["installed", true], ["stdout", true]] as const) {
     it.skipIf(POSIX_ONLY)(`SIGTERM at '${step}' rolls back every output and is raised again${write ? " (--write)" : ""}`, async () => {
       const { dir, code, signal, stdout } = await interrupted(step, write);
       expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
       expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
     }, 30_000);
   }
+
+  it.skipIf(POSIX_ONLY)("a missing spec name that reaches the report while the run yields before stdout is caught: exit 2, the link is kept", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    const errors: string[] = [];
+    let stdout = "";
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      reportPath: path.join(".apifn", "report.md"),
+      format: "json",
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      publishHook: (step, destination) => {
+        // Another process links the spec name to the report once the run yields.
+        if (step === "installed") setImmediate(() => symlinkSync(destination, path.join(dir, SPEC)));
+      },
+    });
+    expect(code).toBe(2);
+    expect(stdout).toBe("");
+    expect(errors.join("\n")).toContain("reached the spec .apifn/openapi.yml");
+    expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+    expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
+  });
 
   it.skipIf(POSIX_ONLY)("SIGTERM that comes with an alias at 'reserved' is still raised after the rollback", async () => {
     const { dir, code, signal, stdout } = await interrupted("reserved", false, true);

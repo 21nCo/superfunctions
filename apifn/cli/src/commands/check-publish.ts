@@ -35,8 +35,9 @@
  *   (its callback, not its return). If that or a later step fails, every published output is
  *   rolled back; bytes another writer put there are left alone and the error names the conflict.
  * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal is recorded, every
- *   output is rolled back if it came before the commit (the end of the stdout write), and then the
- *   handlers are restored and the signal raised again.
+ *   output is rolled back if it came before the commit (the end of the stdout write, which a
+ *   signal does not wait for), and then the handlers are restored and the signal raised again.
+ *   Each time the run yields to the event loop, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. A run that cannot clean up (killed
@@ -605,15 +606,29 @@ function nextTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+interface HeldSignals {
+  /** The first held signal so far. */
+  received: () => NodeJS.Signals | undefined;
+  /** Settles with the first held signal. */
+  arrived: Promise<NodeJS.Signals>;
+  release: () => void;
+}
+
 /** Records SIGINT, SIGTERM and SIGHUP until `release`, which restores the handlers and raises again. */
-function holdSignals(): { received: () => NodeJS.Signals | undefined; release: () => void } {
+function holdSignals(): HeldSignals {
   let received: NodeJS.Signals | undefined;
+  let notify: (signal: NodeJS.Signals) => void = () => {};
+  const arrived = new Promise<NodeJS.Signals>((resolve) => {
+    notify = resolve;
+  });
   const record = (signal: NodeJS.Signals) => {
     received ??= signal;
+    notify(signal);
   };
   for (const signal of HELD_SIGNALS) process.on(signal, record);
   return {
     received: () => received,
+    arrived,
     release: () => {
       for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
       if (received !== undefined) process.kill(process.pid, received);
@@ -645,7 +660,7 @@ export async function publish(
   }));
   const signals = holdSignals();
   try {
-    await publishAll(all, verifier(all, guarded), emit, hook, signals.received);
+    await publishAll(all, verifier(all, guarded), emit, hook, signals);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
     // A signal that came during the last synchronous steps (a failure path too) is recorded now.
@@ -670,26 +685,43 @@ async function publishAll(
   verify: Verify,
   emit: () => void | Promise<void>,
   hook: PublishHook | undefined,
-  received: () => NodeJS.Signals | undefined
+  signals: HeldSignals
 ): Promise<void> {
-  // A held signal is delivered on the event loop: let it run, then roll back if one came.
-  const interrupted = async () => {
+  const interrupted = (signal: NodeJS.Signals) =>
+    rollBackAll(all, new CheckUsageError(`apifn check received ${signal} while it wrote its outputs.`), hook);
+  // Whenever the run yields to the event loop, a held signal can arrive and another process can
+  // act: after each yield, roll back on a signal and check every protected path again.
+  const checkpoint = async () => {
     await nextTurn();
-    const signal = received();
-    if (signal !== undefined) {
-      throw rollBackAll(all, new CheckUsageError(`apifn check received ${signal} while it wrote its outputs.`), hook);
+    const signal = signals.received();
+    if (signal !== undefined) throw interrupted(signal);
+    const last = all.at(-1);
+    if (last === undefined) return;
+    try {
+      verify(last);
+    } catch (error) {
+      throw rollBackAll(all, writeFailure(last, error), hook);
     }
   };
+  // Reservation, staging and installation run in one synchronous stretch.
   eachOutput(all, hook, (staged) => reserve(staged, hook, verify));
-  await interrupted();
   eachOutput(all, hook, (staged) => stage(staged, verify));
   eachOutput(all, hook, (staged) => install(staged, hook, verify));
-  await interrupted();
-  try {
-    await emit();
-  } catch (error) {
-    throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(error)}`), hook);
+  await checkpoint();
+  // A stdout write can wait on its reader indefinitely: a held signal does not wait for it.
+  const outcome = await Promise.race([
+    Promise.resolve()
+      .then(emit)
+      .then(
+        () => ({ done: true as const }),
+        (error: unknown) => ({ error })
+      ),
+    signals.arrived.then((signal) => ({ signal })),
+  ]);
+  if ("signal" in outcome) throw interrupted(outcome.signal);
+  if ("error" in outcome) {
+    throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(outcome.error)}`), hook);
   }
-  await interrupted();
+  await checkpoint();
   for (const staged of all) removeQuietly(staged.backup);
 }
