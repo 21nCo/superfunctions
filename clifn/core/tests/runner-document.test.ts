@@ -312,6 +312,49 @@ describe("runAction with jsonStyle 'document'", () => {
       error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
     });
   });
+
+  it.each([
+    ["a json(undefined) call", (ctx: RunnerContext) => ctx.output.json(undefined), undefined],
+    ["function data", undefined, () => 1],
+    ["symbol data", undefined, Symbol("data")],
+    ["data whose toJSON returns undefined", undefined, { toJSON: () => undefined }],
+  ])("keeps the data member as null for %s", async (_name, call, data) => {
+    const result = await runDocument(async (_options, ctx) => {
+      call?.(ctx);
+      return data === undefined ? undefined : { data };
+    });
+
+    expect(result.exitCode).toBe(0);
+    const document = parseOnlyDocument(result);
+    expect(Object.hasOwn(document, "data")).toBe(true);
+    expect(document).toEqual({ ok: true, data: null });
+  });
+
+  it("drops a diagnostic that cannot be redacted and still prints the one document", async () => {
+    const result = await runDocument(async (_options, ctx) => {
+      ctx.diagnostics.add(null as never);
+      ctx.diagnostics.add({
+        code: "THROWING_DETAILS",
+        severity: "warning",
+        message: "details getter throws",
+        details: {
+          get value() {
+            throw new Error("getter failed");
+          },
+        },
+      });
+      ctx.diagnostics.add({ code: "KEPT", severity: "info", message: "kept" });
+      return { data: { done: true } };
+    });
+
+    expect(result.exitCode).toBe(0);
+    const document = parseOnlyDocument(result);
+    expect(document.ok).toBe(true);
+    expect(document.data).toEqual({ done: true });
+    expect((document.diagnostics as Array<{ code: string }>).map((entry) => entry.code)).toEqual(["KEPT"]);
+    const warnings = stderrLines(result.stderr).filter((line) => line.level === "warn");
+    expect(warnings).toHaveLength(2);
+  });
 });
 
 describe("document mode log routing", () => {

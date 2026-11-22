@@ -40,6 +40,16 @@ function serializeDocument(document: unknown): string | undefined {
 }
 
 /**
+ * The success document always has a `data` member: a value JSON drops (undefined, a function, a symbol, or a
+ * `toJSON` that returns one of those) becomes null. A value that throws while it is serialized is rethrown so the
+ * caller prints the serialization-failure document.
+ */
+function toDocumentData(data: unknown): unknown {
+  const normalized = normalizeJsonValue(data);
+  return JSON.stringify(normalized) === undefined ? null : normalized;
+}
+
+/**
  * The output service for `jsonStyle: 'document'` (D8): every message is a JSON line on stderr, `json` and `table`
  * calls are collected instead of printed, and `finish` prints the one result document on stdout.
  */
@@ -88,36 +98,56 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     }
   };
 
+  // A diagnostic that cannot be redacted (not an object, or a throwing getter in its details) is dropped with a
+  // warning on stderr, so it cannot cost the run its result document.
+  const redactEach = (input: readonly Diagnostic[]): Diagnostic[] => {
+    const redacted: Diagnostic[] = [];
+    input.forEach((diagnostic, index) => {
+      try {
+        redacted.push(...redactDiagnostics([diagnostic]));
+      } catch {
+        logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted`);
+      }
+    });
+    return redacted;
+  };
+
   return {
     service,
     finish(outcome, diagnostics) {
-      let document: Record<string, unknown>;
-      let exitCode: number;
-
-      if (outcome.ok) {
-        let data = outcome.data;
-        let dropped: CollectedCall[] = collected;
-        if (data === undefined) {
-          const lastJson = collected.map((entry) => entry.call).lastIndexOf("json");
-          data = lastJson === -1 ? null : collected[lastJson].value;
-          dropped = collected.filter((_, index) => index !== lastJson);
+      let text: string | undefined;
+      let exitCode = 1;
+      try {
+        let document: Record<string, unknown>;
+        if (outcome.ok) {
+          let data = outcome.data;
+          let dropped: CollectedCall[] = collected;
+          if (data === undefined) {
+            const lastJson = collected.map((entry) => entry.call).lastIndexOf("json");
+            data = lastJson === -1 ? null : collected[lastJson].value;
+            dropped = collected.filter((_, index) => index !== lastJson);
+          }
+          warnDropped(dropped);
+          document = { ok: true, data: toDocumentData(data) };
+          exitCode = outcome.exitCode;
+        } else {
+          const mapped = mapRunnerError(outcome.error);
+          warnDropped(collected);
+          document = { ok: false, error: mapped.error };
+          exitCode = mapped.exitCode;
         }
-        warnDropped(dropped);
-        document = { ok: true, data };
-        exitCode = outcome.exitCode;
-      } else {
-        const mapped = mapRunnerError(outcome.error);
-        warnDropped(collected);
-        document = { ok: false, error: mapped.error };
-        exitCode = mapped.exitCode;
+
+        const redacted = redactEach(diagnostics);
+        if (redacted.length > 0) {
+          document.diagnostics = redacted;
+        }
+        text = serializeDocument(document);
+      } catch {
+        text = undefined;
       }
 
-      if (diagnostics.length > 0) {
-        document.diagnostics = redactDiagnostics(diagnostics);
-      }
-
-      let text = serializeDocument(document);
       if (text === undefined) {
+        // Whatever failed while the document was prepared, stdout still receives exactly one document.
         text = JSON.stringify(SERIALIZATION_FAILURE);
         exitCode = 1;
       }
