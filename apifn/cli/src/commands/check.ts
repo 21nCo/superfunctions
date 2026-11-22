@@ -340,10 +340,11 @@ function driftOf(committed: CommittedSpec, head: Head): DriftState {
 /**
  * `--write` keeps the committed file's format, told by its content: text that JSON.parse accepts
  * is JSON (flow-style YAML such as `{openapi: 3.1.0}` is not), other text that parsed is YAML, and
- * anything else (missing, too large, neither) follows the suffix.
+ * anything else (missing, too large, neither) follows the suffix of `destination`, the file the
+ * publisher writes (a symlinked spec is written at its target, so the target's suffix decides).
  */
-function repairText(head: Head, specPath: string, committed: CommittedSpec): string {
-  return repairAsJson(specPath, committed) ? `${JSON.stringify(head.doc, null, 2)}\n` : head.yaml;
+function repairText(head: Head, destination: string, committed: CommittedSpec): string {
+  return repairAsJson(destination, committed) ? `${JSON.stringify(head.doc, null, 2)}\n` : head.yaml;
 }
 
 function isJsonText(raw: string): boolean {
@@ -356,10 +357,10 @@ function isJsonText(raw: string): boolean {
   }
 }
 
-function repairAsJson(specPath: string, committed: CommittedSpec): boolean {
+function repairAsJson(destination: string, committed: CommittedSpec): boolean {
   if (committed.state !== "missing" && typeof committed.raw === "string" && isJsonText(committed.raw)) return true;
   if (committed.state === "present") return false;
-  return /\.json$/i.test(specPath);
+  return /\.json$/i.test(destination);
 }
 
 /** Diffs the dereferenced base and head. */
@@ -401,7 +402,8 @@ function evaluate(
   inputs: RunInputs,
   base: BaseSpec,
   committed: CommittedSpec,
-  head: Head
+  head: Head,
+  specDestination: string
 ): Evaluation {
   const failures: string[] = [];
   const warnings: string[] = [];
@@ -409,7 +411,7 @@ function evaluate(
   // 2. Drift: a repair is written only when the generated spec has a faithful form.
   const driftState = driftOf(committed, head);
   const drift = driftState !== "none";
-  const repair = drift && options.write && head.doc !== null ? repairText(head, inputs.specPath, committed) : null;
+  const repair = drift && options.write && head.doc !== null ? repairText(head, specDestination, committed) : null;
   if (drift && repair === null) {
     failures.push(
       `Committed spec ${inputs.specLabel} ${DRIFT_PROBLEMS[driftState]}. Rerun this check with --write, then commit the spec.`
@@ -495,7 +497,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const base = await loadBase(options, inputs);
     const committed = readCommittedSpec(inputs.specPath);
     const head = await readHead(inputs.generated);
-    const { report, repair } = evaluate(options, inputs, base, committed, head);
+    const { report, repair } = evaluate(options, inputs, base, committed, head, specTarget.destination);
     const rendered = renderReport(report, format);
 
     // Every exit-2 path above has passed: publish the report file, then the repair, then stdout.

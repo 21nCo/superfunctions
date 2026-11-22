@@ -119,15 +119,64 @@ const LOWER_BOUNDS = new Set(["minimum", "exclusiveMinimum", "minLength", "minIt
 const UPPER_BOUNDS = new Set(["maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties", "maxContains"]);
 
 /**
+ * Keywords whose meaning depends on keywords beside them (their partners): `additionalProperties`
+ * applies to the names `properties` and `patternProperties` leave, `items` to the entries after
+ * `prefixItems`, and so on. Conjoining may change a partner (more property names, a longer
+ * prefix), which would move what the dependent keyword applies to, so that is refused.
+ */
+const SCOPED: Record<string, readonly string[]> = {
+  additionalProperties: ["properties", "patternProperties"],
+  unevaluatedProperties: ["properties", "patternProperties", "additionalProperties", "allOf", "anyOf", "oneOf", "if", "then", "else", "dependentSchemas"],
+  items: ["prefixItems"],
+  unevaluatedItems: ["prefixItems", "items", "contains", "allOf", "anyOf", "oneOf", "if", "then", "else"],
+  minContains: ["contains"],
+  maxContains: ["contains"],
+  then: ["if"],
+  else: ["if"],
+};
+
+/** What a partner contributes to a dependent keyword's scope: its names, its length or itself. */
+function scopeOf(key: string, value: JsonValue | undefined): string {
+  if (value === undefined) return "";
+  if ((key === "properties" || key === "patternProperties") && isRecord(value)) return canonicalJson(Object.keys(value).sort());
+  if (key === "prefixItems" && Array.isArray(value)) return String(value.length);
+  return canonicalJson(value);
+}
+
+function own(record: JsonObject, key: string): JsonValue | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function setOwn(record: JsonObject, key: string, value: JsonValue): void {
+  Object.defineProperty(record, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
+ * A side closed by `additionalProperties: false` (and no `patternProperties` on either side)
+ * allows only its own property names, so the conjunction keeps exactly those: a name only the
+ * other side declares is forbidden and leaves `properties`, as it would written inline.
+ */
+function closedNames(side: JsonObject, other: JsonObject): Set<string> | null {
+  if (own(side, "additionalProperties") !== false) return null;
+  if (own(side, "patternProperties") !== undefined || own(other, "patternProperties") !== undefined) return null;
+  const otherAdditional = own(other, "additionalProperties");
+  if (otherAdditional !== undefined && otherAdditional !== false) return null;
+  const properties = own(side, "properties");
+  return new Set(isRecord(properties) ? Object.keys(properties) : []);
+}
+
+/**
  * The schema both `target` and `siblings` describe, written with the keywords the differ reads:
  * `required` and `enum` combine exactly, `properties` combine per property, bounds keep the
- * tighter one and `type` keeps the types both allow. Any other keyword present on both sides with
- * different values has no exact single-schema form, so it throws DereferenceError (exit 2).
+ * tighter one and `type` keeps the types both allow (`integer` is a `number`). Keyword scope is
+ * kept on both sides (see SCOPED and closedNames). Any other keyword present on both sides with
+ * different values, or a change of scope, has no exact single-schema form, so it throws
+ * DereferenceError (exit 2).
  */
 function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObject {
   const result: JsonObject = { ...target };
   for (const [key, value] of Object.entries(siblings)) {
-    const current = Object.hasOwn(result, key) ? result[key] : undefined;
+    const current = own(result, key);
     let combined: JsonValue | undefined;
     if (current === undefined || canonicalJson(current) === canonicalJson(value)) combined = value;
     else if (ANNOTATIONS.has(key) || key.startsWith("x-")) combined = value;
@@ -135,9 +184,42 @@ function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObj
     if (combined === undefined) {
       throw new DereferenceError(`$ref '${ref}' has a sibling '${key}' that apifn check cannot combine with its target`);
     }
-    Object.defineProperty(result, key, { value: combined, enumerable: true, writable: true, configurable: true });
+    setOwn(result, key, combined);
   }
+  const closed = [closedNames(target, siblings), closedNames(siblings, target)];
+  for (const names of closed) {
+    const properties = own(result, "properties");
+    if (names === null || !isRecord(properties)) continue;
+    const kept: JsonObject = {};
+    for (const [name, schema] of Object.entries(properties)) if (names.has(name)) setOwn(kept, name, schema);
+    setOwn(result, "properties", kept);
+  }
+  assertScopeKept(target, closed[0] !== null, result, ref);
+  assertScopeKept(siblings, closed[1] !== null, result, ref);
   return result;
+}
+
+/** Throws when a dependent keyword of `side` would apply to a different scope in `result`. */
+function assertScopeKept(side: JsonObject, closedHandled: boolean, result: JsonObject, ref: string): void {
+  for (const [key, partners] of Object.entries(SCOPED)) {
+    if (own(side, key) === undefined || (key === "additionalProperties" && closedHandled)) continue;
+    const moved = partners.find((partner) => scopeOf(partner, own(side, partner)) !== scopeOf(partner, own(result, partner)));
+    if (moved !== undefined) {
+      throw new DereferenceError(
+        `$ref '${ref}' and its siblings combine '${moved}' in a way that changes what '${key}' applies to, which apifn check cannot compare`
+      );
+    }
+  }
+}
+
+/** The JSON Schema types both lists allow; `integer` is the part of `number` they share. */
+function bothTypes(a: JsonValue, b: JsonValue): JsonValue | undefined {
+  const left = Array.isArray(a) ? a : [a];
+  const right = Array.isArray(b) ? b : [b];
+  const allows = (types: JsonValue[], type: JsonValue) => types.includes(type) || (type === "integer" && types.includes("number"));
+  const both = [...left.filter((type) => allows(right, type)), ...right.filter((type) => type === "integer" && !left.includes(type) && allows(left, type))];
+  if (both.length === 0) return undefined;
+  return both.length === 1 ? both[0] : both;
 }
 
 function combineKeyword(key: string, a: JsonValue, b: JsonValue, ref: string): JsonValue | undefined {
@@ -153,20 +235,15 @@ function combineKeyword(key: string, a: JsonValue, b: JsonValue, ref: string): J
     const allowed = new Set(b.map((item) => canonicalJson(item)));
     return a.filter((item) => allowed.has(canonicalJson(item)));
   }
-  if (key === "type") {
-    const allowed = new Set(Array.isArray(b) ? b : [b]);
-    const both = (Array.isArray(a) ? a : [a]).filter((type) => allowed.has(type));
-    if (both.length === 0) return undefined;
-    return both.length === 1 ? both[0] : both;
-  }
+  if (key === "type") return bothTypes(a, b);
   if (key === "properties" && isRecord(a) && isRecord(b)) {
     const merged: JsonObject = { ...a };
     for (const [name, schema] of Object.entries(b)) {
-      const existing = Object.hasOwn(merged, name) ? merged[name] : undefined;
+      const existing = own(merged, name);
       let value: JsonValue = schema;
       if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref);
       else if (existing !== undefined && canonicalJson(existing) !== canonicalJson(schema)) return undefined;
-      Object.defineProperty(merged, name, { value, enumerable: true, writable: true, configurable: true });
+      setOwn(merged, name, value);
     }
     return merged;
   }

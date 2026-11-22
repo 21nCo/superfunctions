@@ -12,7 +12,11 @@
  *   the destination after the rename.
  * - Immediately before the backup, the rename and each rollback step, the directory and the
  *   destination are checked again: the destination must still be the file the run observed (or
- *   still absent) before publishing, and still exactly what this run installed before a rollback.
+ *   still absent) before publishing. Before a rollback restores or unlinks an output, the run must
+ *   still own it: the destination is the inode this run staged (its descriptor is kept open), with
+ *   the change time it had right after the rename and exactly the bytes this run wrote, read back
+ *   through that descriptor. An edit in place changes the change time, which no writer can set,
+ *   and its bytes; size and modification time are not proof.
  * - stdout is part of the transaction: the backups are kept until the stdout write has completed
  *   (its callback, not its return). If that or a later step fails, every published output is
  *   rolled back; bytes another writer put there are left alone and the error names the conflict.
@@ -32,6 +36,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readSync,
   renameSync,
   rmdirSync,
   statSync,
@@ -186,11 +191,17 @@ interface Staged {
   /** The destination's own directory once it exists. */
   parent?: Anchor;
   temp?: string;
-  /** The staged file's identity, which the destination holds once this run renamed it there. */
+  /** The staged file's descriptor, kept open until publish ends: it names this run's inode. */
+  fd?: number;
+  /** The bytes this run wrote. */
+  bytes: Buffer;
+  /** The staged file's identity (after the rename, its change time then), read through `fd`. */
   installed?: FileState;
   createdDir?: string;
   backup?: string;
   backupState?: FileState;
+  /** True when the backup is a hard link to the observed file (not a copy). */
+  linked?: boolean;
   published: boolean;
 }
 
@@ -238,16 +249,40 @@ function stage(staged: Staged): void {
   if (!stillAnchored(staged.anchor)) throw changed(staged);
   staged.parent = anchorOf(path.dirname(staged.destination));
   const temp = tempName(staged.destination);
-  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
+  const fd = openSync(temp, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o666);
   staged.temp = temp;
-  try {
-    if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
-    writeFileSync(fd, staged.output.text, "utf8");
-    fsyncSync(fd);
-    staged.installed = stateOf(fstatSync(fd));
-  } finally {
-    closeSync(fd);
+  staged.fd = fd;
+  if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
+  writeFileSync(fd, staged.bytes);
+  fsyncSync(fd);
+  staged.installed = stateOf(fstatSync(fd));
+}
+
+/** True when the file open as `fd` holds exactly `bytes`. */
+function holdsBytes(fd: number, bytes: Buffer): boolean {
+  const read = Buffer.alloc(bytes.length + 1);
+  let total = 0;
+  for (;;) {
+    const count = readSync(fd, read, total, read.length - total, total);
+    if (count === 0) break;
+    total += count;
+    if (total === read.length) break;
   }
+  return total === bytes.length && read.subarray(0, total).equals(bytes);
+}
+
+/**
+ * True while the destination is still what this run installed (see the module comment): the same
+ * inode with the same change time as right after the rename, holding exactly the bytes written.
+ */
+function stillOwned(staged: Staged): boolean {
+  if (!placeHolds(staged) || staged.fd === undefined) return false;
+  const installed = staged.installed as FileState;
+  return (
+    sameState(currentState(staged.destination), installed) &&
+    sameState(stateOf(fstatSync(staged.fd)), installed) &&
+    holdsBytes(staged.fd, staged.bytes)
+  );
 }
 
 function backUp(staged: Staged): void {
@@ -261,8 +296,14 @@ function backUp(staged: Staged): void {
   staged.backup = backup;
   staged.backupState = currentState(backup);
   // A link made by name must name the observed file; a copy must have copied it.
-  const linked = sameContent(staged.backupState, staged.before);
-  if (!linked && !sameContent(currentState(staged.destination), staged.before)) throw changed(staged);
+  staged.linked = sameContent(staged.backupState, staged.before);
+  if (!staged.linked && !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
+}
+
+/** What the destination must be right before the rename: the backup's inode (the link changed its
+ * change time) or, after a copy, the observed file unchanged. */
+function expectedBeforeRename(staged: Staged): FileState {
+  return staged.linked ? (staged.backupState as FileState) : staged.before;
 }
 
 /** Renames the staged file over the destination, re-checking the place before each step. */
@@ -271,12 +312,20 @@ function install(staged: Staged, hook: PublishHook | undefined): void {
   if (!placeHolds(staged) || !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
   backUp(staged);
   hook?.("rename", staged.destination);
-  // The backup link changed the destination's ctime only.
-  if (!placeHolds(staged) || !sameContent(currentState(staged.destination), staged.before)) throw changed(staged);
-  if (!sameContent(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
+  if (!placeHolds(staged) || !sameState(currentState(staged.destination), expectedBeforeRename(staged))) {
+    throw changed(staged);
+  }
+  if (!sameState(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
   renameSync(staged.temp as string, staged.destination);
   staged.temp = undefined;
   staged.published = true;
+  // The rename changes the change time of the installed inode and, by dropping a link, of the
+  // backup's: record both now, the installed one through the descriptor, not by name.
+  staged.installed = stateOf(fstatSync(staged.fd as number));
+  if (staged.backup !== undefined) {
+    const backupNow = currentState(staged.backup);
+    if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
+  }
 }
 
 /** Undoes one published output while the destination still holds exactly what this run installed. */
@@ -290,11 +339,9 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
   hook?.("rollback", staged.destination);
   const kept = staged.backup ? ` Its previous bytes are in ${staged.backup}.` : "";
   const conflict = `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
-  if (!placeHolds(staged) || !sameContent(currentState(staged.destination), staged.installed as FileState)) {
-    return conflict;
-  }
+  if (!stillOwned(staged)) return conflict;
   if (staged.backup) {
-    if (!sameContent(currentState(staged.backup), staged.backupState as FileState)) return conflict;
+    if (!sameState(currentState(staged.backup), staged.backupState as FileState)) return conflict;
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);
@@ -335,9 +382,17 @@ export async function publish(
     destination: output.target.destination,
     before: output.observed,
     anchor: output.target.anchor,
+    bytes: Buffer.from(output.text, "utf8"),
     published: false,
   }));
+  try {
+    await publishAll(all, emit, hook);
+  } finally {
+    for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
+  }
+}
 
+async function publishAll(all: Staged[], emit: () => void | Promise<void>, hook: PublishHook | undefined): Promise<void> {
   for (const staged of all) {
     try {
       stage(staged);

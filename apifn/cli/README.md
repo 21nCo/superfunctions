@@ -136,8 +136,10 @@ The base must pass the same validator as the generated spec (a base it rejects, 
 `paths: []`, exits `2`), and both sides are compared with every local `$ref` replaced by its
 target, so a change behind a shared schema counts like the same change written inline. Keys
 beside a `$ref` apply together with its target (`required` lists and `properties` combine, bounds
-keep the tighter one); a `$ref` that leaves the document, does not resolve, or has a sibling with
-no exact combined form exits `2`.
+keep the tighter one, `integer` is the part of `number` both allow, and a side closed by
+`additionalProperties: false` keeps only its own property names); a `$ref` that leaves the
+document, does not resolve, or has a sibling with no exact combined form, or one that would change
+what a keyword such as `additionalProperties` or `items` applies to, exits `2`.
 
 Writes are safe: nothing is written until every exit-`2` path has passed. No output may land on a
 file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on
@@ -147,10 +149,12 @@ repaired spec are written to temp files beside their destinations and renamed in
 symlink keeps pointing at its target, which is replaced). The directory and the destination are
 checked again right before each rename: if either changed while the check ran, nothing is written.
 stdout is part of the same transaction: if writing it fails, even after the write returned (a
-closed pipe), the check exits `2` and both are rolled back, unless another writer replaced them in
-the meantime, in which case their bytes are kept and the error says so. `--write` keeps the
-committed format: text `JSON.parse` accepts stays JSON, other YAML stays YAML (flow style
-included), and a missing or unreadable spec follows its suffix. POSIX has no compare-and-swap
+closed pipe), the check exits `2` and both are rolled back, unless another writer replaced or
+edited them in the meantime (the run restores a file only while it holds the inode and the exact
+bytes this run wrote), in which case their bytes are kept and the error says so. `--write` keeps
+the committed format: text `JSON.parse` accepts stays JSON, other YAML stays YAML (flow style
+included), and a missing or unreadable spec follows the suffix of the file written (a symlink's
+target). POSIX has no compare-and-swap
 rename, so a replacement made between the last check and the rename itself is not detected.
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.

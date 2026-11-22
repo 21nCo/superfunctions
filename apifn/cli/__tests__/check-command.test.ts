@@ -3,7 +3,19 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1426,6 +1438,14 @@ describe("apifn check: one strict, bounded parser for every document", () => {
     }
   );
 
+  it("a long decimal with a long run of zeros is read in linear time", () => {
+    // 1.000…0001 with 200,000 zeros: the old /0+$/ scan restarted at every zero (seconds here).
+    const zeros = "0".repeat(200_000);
+    const started = performance.now();
+    expect(parseContract(`openapi: 3.1.0\nx: 1.${zeros}1\ny: 1${zeros}.0e-200000\n`)).toMatchObject({ x: 1, y: 1 });
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it.each([
     ["int64 bounds", `{ type: "integer", minimum: -9223372036854775808, maximum: 9223372036854775807 }`],
     ["2^64 and an exponent float", `{ type: "number", minimum: 18446744073709551616, maximum: 1e21 }`],
@@ -1930,6 +1950,72 @@ describe("apifn check: keys beside a $ref apply together with its target", () =>
       "cannot combine"
     );
   });
+
+  /** GET /users answers GET /user's schema closed to some names, inline or as a $ref with siblings. */
+  async function closedService(viaRef: boolean, siblingNames: string[]): Promise<string> {
+    const dir = await tempDir("apifn-check-closed-");
+    const target = `{ type: "object", properties: { id: { type: "string" }, name: { type: "string" } } }`;
+    const sibling = `properties: { ${siblingNames.map((name) => `${name}: { type: "string" }`).join(", ")} }, additionalProperties: false`;
+    const response = viaRef
+      ? `{ $ref: "#/paths/~1user/get/responses/200/content/application~1json/schema", ${sibling} }`
+      : `{ type: "object", ${sibling} }`;
+    await writeFile(
+      path.join(dir, "router.ts"),
+      `export default { getRoutes() { return [
+  { method: "GET", path: "/user", handler: async () => Response.json({}), meta: { operationId: "getUser", responses: { 200: { description: "ok", schema: ${target} } } } },
+  { method: "GET", path: "/users", handler: async () => Response.json({}), meta: { operationId: "listUsers", responses: { 200: { description: "ok", schema: ${response} } } } },
+]; } };
+`
+    );
+    await writeFile(
+      path.join(dir, "apifn.config.ts"),
+      `export default { router: "./router.ts", openapi: { info: { title: "Closed", version: "1.0.0" } } };\n`
+    );
+    await commitSpec(dir);
+    return dir;
+  }
+
+  it.each([false, true])(
+    "a closed response that drops a property is breaking whether its schema is inline or a $ref (via $ref: %s)",
+    async (viaRef) => {
+      const base = await closedService(viaRef, ["id", "name"]);
+      const head = await closedService(viaRef, ["id"]);
+      const { code, report } = await runJson(["check", "--base-spec", path.join(base, SPEC)], head);
+      expect(report.base.status).toBe("compared");
+      expect({ code, breaking: report.breaking.length }).toEqual({ code: 1, breaking: 1 });
+    }
+  );
+
+  it("a closed side keeps only its own property names, as the same schema written inline", () => {
+    const target = { type: "object", properties: { id: { type: "string" }, name: { type: "string" } } };
+    const closed = comparable(doc({ A: target, B: { $ref: "#/components/schemas/A", properties: { id: { minLength: 1 } }, additionalProperties: false } }));
+    expect((closed.components?.schemas as Record<string, unknown>).B).toEqual({
+      type: "object",
+      properties: { id: { type: "string", minLength: 1 } },
+      additionalProperties: false,
+    });
+  });
+
+  it.each([
+    ["scalar number with integer", "number", "integer", "integer"],
+    ["scalar integer with number", "integer", "number", "integer"],
+    ["an array with a scalar", ["number", "null"], "integer", "integer"],
+    ["two arrays", ["number", "null"], ["integer", "null", "string"], ["null", "integer"]],
+  ])("type intersects %s", (_label, a, b, expected) => {
+    const merged = comparable(doc({ A: { type: a }, B: { $ref: "#/components/schemas/A", type: b } }));
+    expect((merged.components?.schemas as Record<string, { type: unknown }>).B.type).toEqual(expected);
+  });
+
+  it.each([
+    ["an open side's additionalProperties would cover fewer names", { type: "object", properties: { a: {} }, additionalProperties: { type: "string" } }, { properties: { b: {} } }],
+    ["items would start after a new prefix", { type: "array", items: { type: "string" } }, { prefixItems: [{ type: "number" }] }],
+    ["minContains would count another contains", { type: "array", minContains: 2 }, { contains: { type: "string" } }],
+    ["then would follow another if", { then: { required: ["a"] } }, { if: { type: "object" } }],
+  ])("a sibling that changes what a keyword applies to is refused: %s", (_label, target, sibling) => {
+    expect(() => comparable(doc({ A: target, B: { $ref: "#/components/schemas/A", ...sibling } }))).toThrow(
+      "changes what"
+    );
+  });
 });
 
 describe("apifn check: publication re-checks each step and stdout completes the transaction", () => {
@@ -2006,6 +2092,90 @@ describe("apifn check: publication re-checks each step and stdout completes the 
     expect(errors.join("\n")).toContain(`${reportFile} changed after apifn check wrote it`);
     expect(await readFile(reportFile, "utf8")).toBe("other report\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+  });
+
+  /** Rewrites `file` in place with bytes of the same length and puts its times back exactly. */
+  function editInPlace(file: string, text: string): void {
+    const before = statSync(file, { bigint: true });
+    expect(Buffer.byteLength(text)).toBe(Number(before.size));
+    // touch -r copies the times at full (nanosecond) precision; fs.utimes rounds them.
+    const times = `${file}.times`;
+    writeFileSync(times, "");
+    execFileSync("touch", ["-r", file, times]);
+    const fd = openSync(file, "r+");
+    writeSync(fd, text, 0);
+    closeSync(fd);
+    execFileSync("touch", ["-r", times, file]);
+    rmSync(times);
+    const after = statSync(file, { bigint: true });
+    expect({ ino: after.ino, size: after.size, mtimeNs: after.mtimeNs }).toEqual({
+      ino: before.ino,
+      size: before.size,
+      mtimeNs: before.mtimeNs,
+    });
+  }
+
+  it.each(["openapi.yml", "report.md"])(
+    "an in-place edit of the published %s that keeps its size and mtime is not rolled back over",
+    async (name) => {
+      const dir = await staleService();
+      const file = name === "report.md" ? path.join(dir, "report.md") : path.join(dir, SPEC);
+      let newer = "";
+      const { code, errors } = await checkWithHook(
+        dir,
+        {},
+        (step, destination) => {
+          if (step === "rollback" && destination.endsWith(name)) {
+            const published = readFileSync(file, "utf8");
+            newer = published.replace(/./, (c) => (c === "x" ? "y" : "x"));
+            editInPlace(file, newer);
+          }
+        },
+        () => {
+          throw new Error("stdout closed");
+        }
+      );
+      expect(newer).not.toBe("");
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain(`changed after apifn check wrote it`);
+      expect(await readFile(file, "utf8")).toBe(newer);
+      const other = name === "report.md" ? path.join(dir, SPEC) : path.join(dir, "report.md");
+      expect(await readFile(other, "utf8")).toBe(name === "report.md" ? "openapi: 3.1.0\n" : "previous report\n");
+    }
+  );
+
+  it("a spec replaced by another inode during rollback is kept, and a report still owned is restored", async () => {
+    const dir = await staleService();
+    const specFile = path.join(dir, SPEC);
+    const { code, errors } = await checkWithHook(
+      dir,
+      {},
+      (step, destination) => {
+        if (step === "rollback" && destination.endsWith("openapi.yml")) {
+          writeFileSync(`${specFile}.other`, "other: 1\n");
+          renameSync(`${specFile}.other`, specFile);
+        }
+      },
+      () => {
+        throw new Error("stdout closed");
+      }
+    );
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain(`changed after apifn check wrote it`);
+    expect(await readFile(specFile, "utf8")).toBe("other: 1\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+  });
+
+  it("a failed stdout with untouched outputs restores the previous bytes, or the absence of a new report", async () => {
+    const dir = await staleService();
+    await rm(path.join(dir, "report.md"));
+    const { code } = await checkWithHook(dir, {}, () => {}, () => {
+      throw new Error("stdout closed");
+    });
+    expect(code).toBe(2);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+    expect(await allLeftovers(dir)).toEqual([]);
   });
 
   it.skipIf(POSIX_ONLY)("a spec directory swapped for a link to the base's directory before the rename writes nothing", async () => {
@@ -2099,5 +2269,19 @@ describe("apifn check: --write keeps the committed format, told by content", () 
       expect(() => JSON.parse(repaired)).toThrow();
       expect((parseYaml(repaired) as { openapi: string }).openapi).toBe("3.1.0");
     }
+  });
+
+  it.skipIf(POSIX_ONLY).each([
+    ["a missing spec", null],
+    ["unreadable text", "{ [\n"],
+  ])("%s reached through an extensionless link to a .json file is repaired as JSON at the link's target", async (_label, text) => {
+    const dir = path.join(await fixtures(), "base");
+    const target = path.join(dir, "contract.json");
+    if (text !== null) await writeFile(target, text);
+    await symlink("contract.json", path.join(dir, "contract"));
+
+    expect((await run(["check", "--spec", "contract", "--write"], dir)).code).toBe(0);
+    expect((await lstat(path.join(dir, "contract"))).isSymbolicLink()).toBe(true);
+    expect((JSON.parse(await readFile(target, "utf8")) as { openapi: string }).openapi).toBe("3.1.0");
   });
 });

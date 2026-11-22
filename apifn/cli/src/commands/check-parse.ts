@@ -207,11 +207,13 @@ function integerOf(literal: string): bigint | null {
   const [, sign, whole, fraction = "", exponent = "0"] = match;
   const digits = `${whole}${fraction}`.replace(/^0+/, "");
   if (digits === "") return 0n;
-  const significant = digits.replace(/0+$/, "");
-  const scale = Number(exponent) - fraction.length + (digits.length - significant.length);
-  // A finite double is below 10^309, so a larger scale cannot name one.
-  if (scale < 0 || scale > 400) return null;
-  const value = BigInt(significant) * 10n ** BigInt(scale);
+  // Linear scan for the trailing zeros (a /0+$/ search restarts at every zero run: quadratic).
+  let end = digits.length;
+  while (digits.codePointAt(end - 1) === 0x30) end -= 1;
+  const scale = Number(exponent) - fraction.length + (digits.length - end);
+  // A finite double is below 10^309, so an integer with more digits cannot name one.
+  if (scale < 0 || end + scale > 400) return null;
+  const value = BigInt(digits.slice(0, end)) * 10n ** BigInt(scale);
   return sign === "-" ? -value : value;
 }
 
