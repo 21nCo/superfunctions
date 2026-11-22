@@ -1,0 +1,19 @@
+scripts/test-mcpfn-isolated-release.mjs
+  s_9ddc95a9c1b73a::t_6e476e0e764caa 33-37,65-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81b3da6354340347392119c525951c3d9e71cd54",
+  "prompts": {},
+  "sessions": {
+    "s_9ddc95a9c1b73a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79c8301c-194c-48bc-a590-75cb4b69bd22",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
