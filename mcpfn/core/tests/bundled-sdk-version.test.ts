@@ -119,7 +119,9 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     expect(() => verifyBundledSdk(dir)).toThrow(`dist/index.js bundles @modelcontextprotocol/sdk 1.29.0 but package.json pins ${pinned}`);
   }, BUILT_TIMEOUT);
 
-  // MCP-13: the import scan reads tokens, not lines, on the real ESM and CJS bundles.
+  // MCP-13 data ban: the SDK name in any executable string, template fragment
+  // or constant-folded string expression fails, whatever reads it; the scan
+  // parses the real ESM and CJS bundles, so comments and regexes never count.
   const executableLoads = [
     "\nvoid import(\n  \"@modelcontextprotocol/sdk/server/index.js\"\n);\n",
     "\nvar server = require(\n  '@modelcontextprotocol/sdk/server/index.js'\n);\n",
@@ -183,32 +185,44 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     // A bound loader, `new` and a parenthesized call dispatch.
     "\nrequire.bind(null)(\"@modelcontextprotocol/sdk\");\nconst boundRequire = module.require.bind(module); boundRequire(\"@modelcontextprotocol/sdk\");\n",
     "\nnew require(\"@modelcontextprotocol/sdk\");\n(require.call)(null, \"@modelcontextprotocol/sdk\");\n",
+    // Loads that need no loader modeling under the data ban: apply through a
+    // bound array, a comma-wrapped call, a prefilled bind, parameter and member
+    // aliases, and a constant specifier folded through bindings or a template.
+    "\nconst mcp13Args = [\"@modelcontextprotocol/sdk/types.js\"]; require.apply(null, mcp13Args);\n",
+    "\n(0, require.call)(null, \"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nrequire.bind(null, \"@modelcontextprotocol/sdk\")();\n",
+    "\n(function (load) { return load(\"@modelcontextprotocol/sdk/types.js\"); })(require);\n",
+    "\nconst mcp13Loaders = { load: require }; mcp13Loaders.load(\"@modelcontextprotocol/sdk\");\nconst mcp13List = [require]; mcp13List[0](\"@modelcontextprotocol/sdk\");\n",
+    "\nconst mcp13Scope = \"@modelcontextprotocol/\"; const mcp13Id = mcp13Scope + \"sdk\"; require(mcp13Id);\n",
+    "\nconst mcp13T = \"@modelcontextprotocol/\"; void import(`${mcp13T}sdk/types.js`);\n",
+    // The SDK name as data fails in any position, even where nothing loads it:
+    // strings, templates, a path join, an identity helper, a callback, a key.
+    "\nimport { join as mcp13Join } from \"node:path\"; mcp13Join(\"@modelcontextprotocol/sdk\", \"README.md\");\n",
+    "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
+    "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\n",
+    "\nconst helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nfunction mcp13A() { const id = \"@modelcontextprotocol/sdk/types.js\"; return id; }\nfunction mcp13B() { const id = \"node:path\"; return require(id); }\n",
+    "\n{ const k = \"require\"; const h7 = { require(id) { return id; } }; h7[k](\"@modelcontextprotocol/sdk/types.js\"); h7[(\"require\")](\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\nrequire(\"node:path\" || \"@modelcontextprotocol/sdk/types.js\");\n",
+    "\n{ const callbacks = [(id) => id]; callbacks[0](\"@modelcontextprotocol/sdk\"); const identity = (id) => id; identity.description = \"label\"; identity(\"@modelcontextprotocol/sdk\"); }\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
-    "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
-    "\nvar HINT = `require('@modelcontextprotocol/sdk/types.js')`;\nvar SDK = /from \"@modelcontextprotocol\\/sdk\"/;\n",
+    // SDK text in a regex, a comment or JSDoc is not executable data.
+    "\nvar SDK = /from \"@modelcontextprotocol\\/sdk\"/;\n",
     "\n// import(\"@modelcontextprotocol/sdk/types.js\")\n/* require(\n\"@modelcontextprotocol/sdk\") */\n",
+    "\n/** @type {import(\"@modelcontextprotocol/sdk/types.js\").Tool} */\nvar mcp13Tool;\n",
     // Division after a function expression, a regex in a template substitution
     // or after a class body, and an escaped CRLF line continuation in a string.
     "\nvar n = function () {} / 2;\nvar s = `${/[\"]/.test(\"x\")}`;\nclass C {}\n/[\"]/.test(\"z\");\nvar c = \"a\\\r\nb\";\n",
+    // Protocol keys under io.modelcontextprotocol are not the SDK package name.
+    "\nvar mcp13Meta = \"io.modelcontextprotocol/related-task\"; var mcp13K = `io.modelcontextprotocol/${mcp13Meta}`;\n",
     // A require method call with another specifier or a non-literal argument.
     "\nvar obj = { require: (id) => id };\nvar name = \"x\";\nobj.require(\"other-pkg\");\nobj.require(name);\n",
-    // A same-file helper whose require method only returns its argument.
-    "\nconst helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
-    // An SDK string bound in another function does not reach this require.
-    "\nfunction mcp13A() { const id = \"@modelcontextprotocol/sdk/types.js\"; return id; }\nfunction mcp13B() { const id = \"node:path\"; return require(id); }\n",
-    // Cyclic updates terminate, as call arguments and as computed member keys.
+    // Cyclic updates terminate when folded.
     "\n{ let msg = \"\"; msg = msg + \".\"; console.log(msg); }\n",
     "\n{ let tm = \"\"; tm = `${tm}.`; console.log(tm); }\n",
     "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"other-pkg\"); }\n",
-    // Computed keys resolve like loader keys; a literal short-circuit is static.
-    "\n{ const k = \"require\"; const h7 = { require(id) { return id; } }; h7[k](\"@modelcontextprotocol/sdk/types.js\"); h7[(\"require\")](\"@modelcontextprotocol/sdk/types.js\"); }\n",
-    "\nrequire(\"node:path\" || \"@modelcontextprotocol/sdk/types.js\");\n",
-    // A known non-loader call spends no resolution budget on its arguments.
-    `\n{ let v0 = "a"; ${Array.from({ length: 14 }, (_, i) => `let v${i + 1} = v${i} + v${i};`).join(" ")} console.log(v14); }\n`,
-    // A numeric key and a property write keep a resolved non-loader callee.
-    "\n{ const callbacks = [(id) => id]; callbacks[0](\"@modelcontextprotocol/sdk\"); const identity = (id) => id; identity.description = \"label\"; identity(\"@modelcontextprotocol/sdk\"); }\n",
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
@@ -216,22 +230,30 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   });
 
   runOnBuild.each(artifacts.flatMap((file) => executableLoads.map((code, index) => ({ file, index, code }))))(
-    "rejects SDK loads split across lines or comments, escaped, wrapped, aliased or through a loading require method, in the built $file (case $index)",
+    "rejects the SDK name in executable data, split across lines or comments, escaped, wrapped, aliased or folded, in the built $file (case $index)",
     ({ file, code }) => {
-      expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).toThrow(`dist/${file} imports @modelcontextprotocol/sdk instead of bundling it`);
+      expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).toThrow(`dist/${file} references @modelcontextprotocol/sdk in executable code instead of bundling it`);
     },
     BUILT_TIMEOUT,
   );
 
   runOnBuild.each(artifacts.flatMap((file) => inertText.map((code, index) => ({ file, index, code }))))(
-    "accepts valid code, SDK import text in strings, templates, regexes and comments, and inert require methods of the built $file (case $index)",
+    "accepts valid code, SDK text in regexes, comments and JSDoc, protocol keys and other require specifiers in the built $file (case $index)",
     ({ file, code }) => {
       expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).not.toThrow();
     },
     BUILT_TIMEOUT,
   );
 
-  // More candidate specifiers than the verifier folds fails instead of passing.
+  // The diagnostic names the value and its line in the bundle.
+  runOnBuild.each(artifacts)("names the SDK value and its line in the built %s", (file) => {
+    const lines = readFileSync(join(packageRoot, "dist", file), "utf8").split("\n").length;
+    expect(() => verifyBundledSdk(appendToBuiltBundle(file, "\nconst mcp13Scope = \"@modelcontextprotocol/\";\nrequire(mcp13Scope + \"sdk/types.js\");\n"))).toThrow(
+      `instead of bundling it: "@modelcontextprotocol/sdk/types.js" at line ${lines + 2}`,
+    );
+  }, BUILT_TIMEOUT);
+
+  // More candidate strings than the verifier folds fails instead of passing.
   const overflow = `\nvar p65 = ${Array.from({ length: 64 }, (_, i) => `c${i} ? "a${i}" : `).join("")}"@modelcontextprotocol/";\nrequire(p65 + "sdk");\n`;
   runOnBuild.each(artifacts)("fails closed on an SDK load with more candidate specifiers than it folds in the built %s", (file) => {
     expect(() => verifyBundledSdk(appendToBuiltBundle(file, overflow))).toThrow("more than 64 candidate strings");
@@ -239,17 +261,18 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
 
   it("fails closed on a bundle it cannot scan", () => {
     expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(
-      "cannot scan the bundle for @modelcontextprotocol/sdk imports: Unterminated string literal.",
+      "cannot scan the bundle for @modelcontextprotocol/sdk references: Unterminated string literal.",
     );
   });
 
-  it("fails closed when the values of a loader call cannot be resolved within the step budget", () => {
+  it("fails closed when a string expression cannot be folded within the step budget", () => {
     let chain = "var v0 = \"a\";\n";
     for (let i = 1; i <= 30; i++) chain += `var v${i} = v${i - 1} + v${i - 1};\n`;
-    expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}require(v30);\n` })).message).toContain(
-      "cannot resolve the values of a call in the bundle within 10000 steps",
-    );
-    expect(() => verifyBundledSdk(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}f(v30);\n` }))).not.toThrow();
+    for (const call of ["require(v30);\n", "f(v30);\n"]) {
+      expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}${call}` })).message).toContain(
+        "cannot fold a string expression in the bundle within 10000 steps at line",
+      );
+    }
   });
 
   it("accepts a bundle whose SDK sources come from the pinned version", () => {
@@ -290,7 +313,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
       installedVersion: "1.32.2",
       esm: "/**\n * import { Server } from '@modelcontextprotocol/sdk/server/index.js';\n */\nimport { Server } from \"@modelcontextprotocol/sdk/server/index.js\";\nexport { Server };\n",
     }));
-    expect(error.message).toContain("imports @modelcontextprotocol/sdk instead of bundling it");
+    expect(error.message).toContain("references @modelcontextprotocol/sdk in executable code instead of bundling it");
   });
 
   it("fails on an esbuild __require of the SDK or an import after a same-line comment", () => {
@@ -298,7 +321,7 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
       "var server = __require(\"@modelcontextprotocol/sdk/server/index.js\");\n",
       "/* inlined */ import { Server } from \"@modelcontextprotocol/sdk/server/index.js\";\n",
     ]) {
-      expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm })).message).toContain("imports @modelcontextprotocol/sdk instead of bundling it");
+      expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm })).message).toContain("references @modelcontextprotocol/sdk in executable code instead of bundling it");
     }
   });
 
