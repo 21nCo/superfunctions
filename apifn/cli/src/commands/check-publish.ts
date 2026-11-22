@@ -370,17 +370,20 @@ function sameDestination(file: string, destination: string): boolean {
 }
 
 /**
- * True while the directories bound for this output are still the ones the run observed, each
- * created directory is still the one this run made, and the path the user gave still leads to the
- * bound destination.
+ * True while the directories bound for this output are still the ones the run observed and each
+ * created directory is still the one this run made.
  */
-function placeHolds(staged: Staged): boolean {
+function dirsHold(staged: Staged): boolean {
   return (
     stillAnchored(staged.anchor) &&
     (staged.parent === undefined || stillAnchored(staged.parent)) &&
-    staged.created.every(stillAnchored) &&
-    sameDestination(staged.output.file, staged.destination)
+    staged.created.every(stillAnchored)
   );
+}
+
+/** dirsHold, and the path the user gave still leads to the bound destination. */
+function placeHolds(staged: Staged): boolean {
+  return dirsHold(staged) && sameDestination(staged.output.file, staged.destination);
 }
 
 function changed(staged: Staged): CheckUsageError {
@@ -447,10 +450,12 @@ function holdsBytes(fd: number, bytes: Buffer): boolean {
 
 /**
  * True while the destination is still what this run installed (see the module comment): the same
- * inode with the same change time as right after the rename, holding exactly the bytes written.
+ * inode with the same change time as right after the rename, holding exactly the bytes written, in
+ * the bound directories. Rollback acts on the bound destination only, so a path the user gave that
+ * now leads elsewhere (a link retargeted) does not stop it from undoing this run's write there.
  */
 function stillOwned(staged: Staged): boolean {
-  if (!placeHolds(staged) || staged.fd === undefined) return false;
+  if (!dirsHold(staged) || staged.fd === undefined) return false;
   const installed = staged.installed as FileState;
   return (
     sameState(currentState(staged.destination), installed) &&

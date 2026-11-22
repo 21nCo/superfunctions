@@ -3263,8 +3263,12 @@ describe("apifn check: publication re-checks every protected path after each cha
     expect(code).toBe(2);
     expect(stdout).toBe("");
     expect(errors.join("\n")).toContain("reached the output of --write");
+    expect(errors.join("\n")).not.toContain("changed after apifn check wrote it");
     expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
     expect(readlinkSync(path.join(dir, SPEC))).toBe("report.md");
+    // The bound destination is still this run's write, so it is restored and its backup removed.
+    expect(await readFile(path.join(dir, ".apifn", "real.yml"), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
   });
 
   it("an existing spec that a report write changes is caught in a report-only run, and the report is rolled back", async () => {
