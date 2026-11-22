@@ -151,6 +151,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nconst sdkId = \"@modelcontextprotocol/sdk/types.js\"; var sdk = require(sdkId);\n",
     "\nvar sdk = require(\"@modelcontextprotocol/\" + \"sdk\");\n",
     "\nconst req = createRequire(__filename); var sdk = req(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // Bindings resolve lexically: an inner-block helper does not exempt the
+    // global receiver of the same name. A cycle is unrolled once, not dropped.
+    "\nglobalThis.mcp13Loader = module; { const mcp13Loader = { require: (id) => id }; }\nmcp13Loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar mcp13P = \"@modelcontextprotocol/sdk\"; mcp13P = mcp13P + \"\"; require(mcp13P);\n",
+    "\nvar mcp13C = \"@modelcontextprotocol/\"; mcp13C = mcp13C + \"sdk\"; require(mcp13C);\n",
+    "\nvar mcp13Q = \"@modelcontextprotocol/\"; mcp13Q += \"sdk\"; require(mcp13Q);\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
@@ -164,6 +170,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nvar obj = { require: (id) => id };\nvar name = \"x\";\nobj.require(\"other-pkg\");\nobj.require(name);\n",
     // A same-file helper whose require method only returns its argument.
     "\nconst helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // An SDK string bound in another function does not reach this require.
+    "\nfunction mcp13A() { const id = \"@modelcontextprotocol/sdk/types.js\"; return id; }\nfunction mcp13B() { const id = \"node:path\"; return require(id); }\n",
+    // Cyclic updates terminate, as call arguments and as computed member keys.
+    "\n{ let msg = \"\"; msg = msg + \".\"; console.log(msg); }\n",
+    "\n{ let tm = \"\"; tm = `${tm}.`; console.log(tm); }\n",
+    "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
@@ -189,6 +201,14 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
   it("fails closed on a bundle it cannot scan", () => {
     expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(
       "cannot scan the bundle for @modelcontextprotocol/sdk imports: Unterminated string literal.",
+    );
+  });
+
+  it("fails closed when the values of a call cannot be resolved within the step budget", () => {
+    let chain = "var v0 = \"a\";\n";
+    for (let i = 1; i <= 30; i++) chain += `var v${i} = v${i - 1} + v${i - 1};\n`;
+    expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}f(v30);\n` })).message).toContain(
+      "cannot resolve the values of a call in the bundle within 10000 steps",
     );
   });
 

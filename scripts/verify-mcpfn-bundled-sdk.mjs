@@ -73,18 +73,20 @@ export function bundledSdkBanner(packageRoot) {
 // and escape is handled, and specifiers and identifiers are compared decoded.
 // A bundle that does not parse fails instead of passing.
 //
-// Callee and specifier go through one normalization (`leaves`): parentheses
+// Callee and specifier go through one normalization (`operands`): parentheses
 // are stripped, a comma sequence or an assignment yields its last operand, a
 // conditional or logical expression yields both operands, and an identifier
-// also yields every value the file binds to that name (scope-insensitive, so
-// it errs toward rejecting). `(0, require)(("<sdk>"))`, `const r = require;
-// r(id)` with `const id = "<sdk>"`, and `"@modelcontextprotocol/" + "sdk"`
-// are all loads.
+// also yields every value assigned to the binding it resolves to lexically.
+// `(0, require)(("<sdk>"))`, `const r = require; r(id)` with `const id =
+// "<sdk>"` in scope, and `"@modelcontextprotocol/" + "sdk"` are all loads.
 const { SyntaxKind } = ts;
 const SDK_LOADERS = new Set(["require", "__require"]);
 const SEQUENCE_OPERATORS = new Set([SyntaxKind.CommaToken, SyntaxKind.EqualsToken]);
 const EITHER_OPERATORS = new Set([SyntaxKind.BarBarToken, SyntaxKind.AmpersandAmpersandToken, SyntaxKind.QuestionQuestionToken]);
+const CONCAT_OPERATORS = new Set([SyntaxKind.PlusToken, SyntaxKind.PlusEqualsToken]);
+const LOGICAL_ASSIGNMENTS = new Set([SyntaxKind.BarBarEqualsToken, SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.QuestionQuestionEqualsToken]);
 const MAX_STRING_VALUES = 64;
+const MAX_RESOLUTION_STEPS = 10_000;
 const isSdkName = (text) => text === SDK_NAME || text.startsWith(`${SDK_NAME}/`);
 const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node);
 const keyText = (name) => (ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined);
@@ -98,23 +100,44 @@ function isNamePosition(node) {
   return ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent);
 }
 
-// What each name is bound to in one bundle, and where each name is used.
-function indexBindings(source) {
+// The lexical bindings of one bundle, from the TypeScript binder and checker:
+// what each binding is assigned, and where each name is used.
+function indexBindings(file, source) {
+  const host = {
+    getSourceFile: (name) => (name === file ? source : undefined),
+    fileExists: (name) => name === file,
+    readFile: () => undefined,
+    writeFile: () => {},
+    getDefaultLibFileName: () => "lib.d.ts",
+    getCurrentDirectory: () => "/",
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  };
+  const checker = ts.createProgram([file], { allowJs: true, noLib: true, noResolve: true, types: [] }, host).getTypeChecker();
+  const symbolOf = (id) =>
+    ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id ? checker.getShorthandAssignmentValueSymbol(id.parent) : checker.getSymbolAtLocation(id);
   const values = new Map();
   const uses = new Map();
   let dynamicScope = false;
-  const add = (map, name, value) => map.set(name, [...(map.get(name) ?? []), value]);
+  const add = (map, key, value) => key !== undefined && map.set(key, [...(map.get(key) ?? []), value]);
   const visit = (node) => {
     if (ts.isIdentifier(node) && !isNamePosition(node)) add(uses, ts.idText(node), node);
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) add(values, ts.idText(node.name), node.initializer);
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) add(values, symbolOf(node.name), node.initializer);
     // `const { require: r } = x` and `({ require: r } = x)` bind a require method.
-    if (ts.isBindingElement(node) && ts.isIdentifier(node.name) && keyText(node.propertyName ?? node.name) === "require") add(values, ts.idText(node.name), node);
+    if (ts.isBindingElement(node) && ts.isIdentifier(node.name) && keyText(node.propertyName ?? node.name) === "require") add(values, symbolOf(node.name), node);
+    if (ts.isBinaryExpression(node) && ts.isIdentifier(ts.skipParentheses(node.left))) {
+      // `x += y` can make x `x + y`; `x ||= y`, `&&=` and `??=` can make it y.
+      const target = symbolOf(ts.skipParentheses(node.left));
+      if (node.operatorToken.kind === SyntaxKind.PlusEqualsToken) add(values, target, node);
+      if (LOGICAL_ASSIGNMENTS.has(node.operatorToken.kind)) add(values, target, node.right);
+    }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === SyntaxKind.EqualsToken) {
       const target = ts.skipParentheses(node.left);
-      if (ts.isIdentifier(target)) add(values, ts.idText(target), node.right);
+      if (ts.isIdentifier(target)) add(values, symbolOf(target), node.right);
       if (ts.isObjectLiteralExpression(target)) {
         for (const property of target.properties) {
-          if (ts.isPropertyAssignment(property) && keyText(property.name) === "require" && ts.isIdentifier(property.initializer)) add(values, ts.idText(property.initializer), property);
+          if (ts.isPropertyAssignment(property) && keyText(property.name) === "require" && ts.isIdentifier(property.initializer)) add(values, symbolOf(property.initializer), property);
         }
       }
     }
@@ -122,49 +145,88 @@ function indexBindings(source) {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return { values: (name) => values.get(name) ?? [], uses: (name) => uses.get(name) ?? [], dynamicScope };
+  return { symbolOf, values: (symbol) => values.get(symbol) ?? [], uses: (name) => uses.get(name) ?? [], dynamicScope, active: new Map(), steps: 0 };
 }
 
-function leaves(node, scope, seen = new Set()) {
-  if (ts.isParenthesizedExpression(node)) return leaves(node.expression, scope, seen);
-  if (ts.isBinaryExpression(node) && SEQUENCE_OPERATORS.has(node.operatorToken.kind)) return leaves(node.right, scope, seen);
-  if (ts.isBinaryExpression(node) && EITHER_OPERATORS.has(node.operatorToken.kind)) return [...leaves(node.left, scope, seen), ...leaves(node.right, scope, seen)];
-  if (ts.isConditionalExpression(node)) return [...leaves(node.whenTrue, scope, seen), ...leaves(node.whenFalse, scope, seen)];
-  if (!ts.isIdentifier(node) || seen.has(ts.idText(node))) return [node];
-  seen.add(ts.idText(node));
-  return [node, ...scope.values(ts.idText(node)).flatMap((value) => leaves(value, scope, seen))];
+// Every value resolution shares one step budget per call and tracks the
+// bindings it is expanding, so it terminates on any bundle; a bundle whose
+// values cannot be resolved within the budget fails instead of passing. A
+// binding reached again while it is expanded (`p = p + "x"`) yields the values
+// gathered for it so far, so a cycle is unrolled once instead of dropped.
+function step(scope) {
+  scope.steps += 1;
+  if (scope.steps > MAX_RESOLUTION_STEPS) {
+    throw new BundledSdkError(`cannot resolve the values of a call in the bundle within ${MAX_RESOLUTION_STEPS} steps`);
+  }
 }
+
+function throughBinding(node, scope, resolve) {
+  const symbol = scope.symbolOf(node);
+  if (symbol === undefined) return [];
+  if (!scope.active.has(resolve)) scope.active.set(resolve, new Map());
+  const expanding = scope.active.get(resolve);
+  if (expanding.has(symbol)) return [...expanding.get(symbol)];
+  const gathered = [];
+  expanding.set(symbol, gathered);
+  try {
+    for (const value of scope.values(symbol)) gathered.push(...resolve(value, scope));
+    return gathered;
+  } finally {
+    expanding.delete(symbol);
+  }
+}
+
+// One normalization for callee and specifier: `operands` follows parentheses,
+// the last operand of a comma sequence or assignment, and both operands of a
+// conditional or logical expression.
+function operands(node) {
+  if (ts.isParenthesizedExpression(node)) return [node.expression];
+  if (ts.isBinaryExpression(node) && SEQUENCE_OPERATORS.has(node.operatorToken.kind)) return [node.right];
+  if (ts.isBinaryExpression(node) && EITHER_OPERATORS.has(node.operatorToken.kind)) return [node.left, node.right];
+  if (ts.isConditionalExpression(node)) return [node.whenTrue, node.whenFalse];
+  return undefined;
+}
+
+// The expressions `node` can evaluate to, through operands and the values of
+// the bindings it names.
+function leaves(node, scope) {
+  step(scope);
+  const inner = operands(node);
+  if (inner) return inner.flatMap((operand) => leaves(operand, scope));
+  return ts.isIdentifier(node) ? [node, ...throughBinding(node, scope, leaves)] : [node];
+}
+
+const combine = (parts) =>
+  parts.reduce((left, right) => left.flatMap((a) => right.map((b) => a + b)).slice(0, MAX_STRING_VALUES), [""]);
 
 // The strings `node` can evaluate to, folding `+` and template substitutions.
 function stringValues(node, scope) {
-  const combine = (parts) =>
-    parts.reduce((left, right) => left.flatMap((a) => right.map((b) => a + b)).slice(0, MAX_STRING_VALUES), [""]);
-  return leaves(node, scope).flatMap((leaf) => {
-    if (ts.isStringLiteralLike(leaf)) return [leaf.text];
-    if (ts.isBinaryExpression(leaf) && leaf.operatorToken.kind === SyntaxKind.PlusToken) {
-      return combine([stringValues(leaf.left, scope), stringValues(leaf.right, scope)]);
-    }
-    if (ts.isTemplateExpression(leaf)) {
-      return combine([[leaf.head.text], ...leaf.templateSpans.flatMap((span) => [stringValues(span.expression, scope), [span.literal.text]])]);
-    }
-    return [];
-  });
+  step(scope);
+  const inner = operands(node);
+  if (inner) return inner.flatMap((operand) => stringValues(operand, scope));
+  if (ts.isStringLiteralLike(node)) return [node.text];
+  if (ts.isIdentifier(node)) return throughBinding(node, scope, stringValues);
+  if (ts.isBinaryExpression(node) && CONCAT_OPERATORS.has(node.operatorToken.kind)) {
+    return combine([stringValues(node.left, scope), stringValues(node.right, scope)]);
+  }
+  if (ts.isTemplateExpression(node)) {
+    return combine([[node.head.text], ...node.templateSpans.flatMap((span) => [stringValues(span.expression, scope), [span.literal.text]])]);
+  }
+  return [];
 }
 
-const sdkSpecifier = (node, scope) => (node === undefined ? undefined : stringValues(node, scope).find(isSdkName));
-
-// The member `node` reads, for `x.name` or a resolvable `x["name"]`.
-function memberName(node, scope) {
-  if (ts.isPropertyAccessExpression(node)) return ts.idText(node.name);
-  if (ts.isElementAccessExpression(node)) return stringValues(node.argumentExpression, scope)[0];
-  return undefined;
+// Whether `node` reads `x.name`, or `x[key]` with a key that can be `name`.
+function readsMember(node, name, scope) {
+  if (ts.isPropertyAccessExpression(node)) return ts.idText(node.name) === name;
+  return ts.isElementAccessExpression(node) && stringValues(node.argumentExpression, scope).includes(name);
 }
 
 // Whether `node` (a receiver use) is `node.require(...)` or `node["require"](...)`
 // called directly, possibly through parentheses or a comma sequence.
-function isRequireCallReceiver(node, scope) {
+function isRequireCallReceiver(node) {
   const member = node.parent;
-  if (member.expression !== node || memberName(member, scope) !== "require") return false;
+  const key = ts.isPropertyAccessExpression(member) ? member.name : member.argumentExpression;
+  if (!(ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) || member.expression !== node || keyText(key) !== "require") return false;
   let callee = member;
   while (ts.isParenthesizedExpression(callee.parent) || (ts.isBinaryExpression(callee.parent) && callee.parent.operatorToken.kind === SyntaxKind.CommaToken && callee.parent.right === callee)) {
     callee = callee.parent;
@@ -187,20 +249,27 @@ function isInertFunction(fn) {
 }
 
 // Receiver contract (MCP-13): a `require` method call with an SDK specifier is
-// a load unless its receiver is an identifier, other than `module`, that the
-// file declares exactly once as an object literal whose only `require` member
-// is an inert function (`const helper = { require: (id) => id }`), and that is
-// used nowhere else than as the receiver of such direct calls, so it is never
-// aliased, reassigned or mutated. `module`, an alias of it, a forwarding
-// wrapper `{ require: (id) => require(id) }` and any other receiver fail closed.
+// a load unless its receiver is an identifier, other than `module`, whose
+// lexical binding at the call is declared exactly once, as a variable
+// initialized with an object literal whose only `require` member is an inert
+// function (`const helper = { require: (id) => id }`), and whose every use is
+// the receiver of such a direct call, so it is never aliased, exported,
+// reassigned or mutated. A same-name identifier the checker cannot resolve to
+// another binding also counts as a use. `module`, an alias of it, a forwarding
+// wrapper `{ require: (id) => require(id) }`, a global and any other receiver
+// fail closed.
 function isInertRequireReceiver(receiver, scope) {
   if (!ts.isIdentifier(receiver) || ts.idText(receiver) === "module" || scope.dynamicScope) return false;
-  let declaration;
+  const symbol = scope.symbolOf(receiver);
+  const [declaration, ...others] = symbol?.declarations ?? [];
+  if (!declaration || others.length > 0 || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return false;
   for (const use of scope.uses(ts.idText(receiver))) {
-    if (ts.isVariableDeclaration(use.parent) && use.parent.name === use && !declaration) declaration = use.parent;
-    else if (!isRequireCallReceiver(use, scope)) return false;
+    if (use === declaration.name) continue;
+    const useSymbol = ts.isExportSpecifier(use.parent) ? undefined : scope.symbolOf(use);
+    if (useSymbol !== undefined && useSymbol !== symbol) continue;
+    if (useSymbol === undefined || !isRequireCallReceiver(use)) return false;
   }
-  const object = declaration?.initializer && ts.skipParentheses(declaration.initializer);
+  const object = declaration.initializer && ts.skipParentheses(declaration.initializer);
   if (!object || !ts.isObjectLiteralExpression(object) || object.properties.some((property) => ts.isSpreadAssignment(property) || (property.name && ts.isComputedPropertyName(property.name)))) return false;
   const members = object.properties.filter((property) => keyText(property.name) === "require");
   if (members.length !== 1) return false;
@@ -209,14 +278,15 @@ function isInertRequireReceiver(receiver, scope) {
   return isFunction(fn) && isInertFunction(fn);
 }
 
+const createsRequire = (node, scope) => (ts.isIdentifier(node) ? ts.idText(node) === "createRequire" : readsMember(node, "createRequire", scope));
+
 // The loader `callee` can be, or undefined when none of its values loads.
 function loaderName(callee, scope) {
   for (const leaf of leaves(callee, scope)) {
     if (ts.isIdentifier(leaf) && SDK_LOADERS.has(ts.idText(leaf))) return ts.idText(leaf);
     if (ts.isBindingElement(leaf) || ts.isPropertyAssignment(leaf)) return ".require";
-    if (memberName(leaf, scope) === "require" && !isInertRequireReceiver(ts.skipParentheses(leaf.expression), scope)) return ".require";
-    const createsRequire = (inner) => (ts.isIdentifier(inner) ? ts.idText(inner) : memberName(inner, scope)) === "createRequire";
-    if (ts.isCallExpression(leaf) && leaves(leaf.expression, scope).some(createsRequire)) return "createRequire()";
+    if (readsMember(leaf, "require", scope) && !isInertRequireReceiver(ts.skipParentheses(leaf.expression), scope)) return ".require";
+    if (ts.isCallExpression(leaf) && leaves(leaf.expression, scope).some((inner) => createsRequire(inner, scope))) return "createRequire()";
   }
   return undefined;
 }
@@ -225,22 +295,25 @@ function sdkLoad(node, scope) {
   if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && isSdkName(node.moduleSpecifier.text)) {
     return `${ts.isImportDeclaration(node) ? "import" : "export"} "${node.moduleSpecifier.text}"`;
   }
-  if (!ts.isCallExpression(node)) return undefined;
-  const specifier = sdkSpecifier(node.arguments[0], scope);
+  if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined;
+  scope.steps = 0;
+  const specifier = stringValues(node.arguments[0], scope).find(isSdkName);
   if (specifier === undefined) return undefined;
   if (node.expression.kind === SyntaxKind.ImportKeyword) return `import("${specifier}")`;
+  scope.steps = 0;
   const loader = loaderName(node.expression, scope);
   return loader ? `${loader}("${specifier}")` : undefined;
 }
 
 function externalSdkImports(file, code) {
-  const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const fileName = `/${file}`;
+  const source = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const [error] = source.parseDiagnostics ?? [{ start: 0, messageText: "parser reported no diagnostics" }];
   if (error) {
     const message = ts.flattenDiagnosticMessageText(error.messageText, " ");
     throw new BundledSdkError(`cannot scan the bundle for ${SDK_NAME} imports: ${message} at offset ${error.start}`);
   }
-  const scope = indexBindings(source);
+  const scope = indexBindings(fileName, source);
   const imports = [];
   const visit = (node) => {
     const load = sdkLoad(node, scope);

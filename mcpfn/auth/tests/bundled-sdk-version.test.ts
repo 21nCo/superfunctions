@@ -111,6 +111,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nconst sdkId = \"@modelcontextprotocol/sdk/types.js\"; var sdk = require(sdkId);\n",
     "\nvar sdk = require(\"@modelcontextprotocol/\" + \"sdk\");\n",
     "\nconst req = createRequire(__filename); var sdk = req(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // Bindings resolve lexically: an inner-block helper does not exempt the
+    // global receiver of the same name. A cycle is unrolled once, not dropped.
+    "\nglobalThis.mcp13Loader = module; { const mcp13Loader = { require: (id) => id }; }\nmcp13Loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar mcp13P = \"@modelcontextprotocol/sdk\"; mcp13P = mcp13P + \"\"; require(mcp13P);\n",
+    "\nvar mcp13C = \"@modelcontextprotocol/\"; mcp13C = mcp13C + \"sdk\"; require(mcp13C);\n",
+    "\nvar mcp13Q = \"@modelcontextprotocol/\"; mcp13Q += \"sdk\"; require(mcp13Q);\n",
   ];
   const inertText = [
     "\nvar HELP = \"import { Server } from '@modelcontextprotocol/sdk/server/index.js'\";\n",
@@ -119,6 +125,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nvar obj = { require: (id) => id };\nvar name = \"x\";\nobj.require(\"other-pkg\");\nobj.require(name);\n",
     // A same-file helper whose require method only returns its argument.
     "\nconst helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // An SDK string bound in another function does not reach this require.
+    "\nfunction mcp13A() { const id = \"@modelcontextprotocol/sdk/types.js\"; return id; }\nfunction mcp13B() { const id = \"node:path\"; return require(id); }\n",
+    // Cyclic updates terminate, as call arguments and as computed member keys.
+    "\n{ let msg = \"\"; msg = msg + \".\"; console.log(msg); }\n",
+    "\n{ let tm = \"\"; tm = `${tm}.`; console.log(tm); }\n",
+    "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
