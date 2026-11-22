@@ -45,18 +45,54 @@ function isDirectory(dir: string): boolean {
   }
 }
 
+/** True when `file` exists (symlinks followed) and is not a directory. */
+function isNonDirectory(file: string): boolean {
+  try {
+    return !statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** True when `spelled` ends in a component that only a directory satisfies: `/`, `.` or `..`. */
+function endsInDirectory(spelled: string): boolean {
+  const last = spelled.split(process.platform === "win32" ? /[\\/]/ : "/").pop() as string;
+  return last === "" || last === "." || last === "..";
+}
+
+/**
+ * `operand` resolved against `cwd`, keeping a trailing directory requirement (path.resolve drops
+ * a trailing `/` or `.`) for writeDestination to enforce.
+ */
+export function resolveOperand(cwd: string, operand: string): string {
+  const resolved = path.resolve(cwd, operand);
+  return endsInDirectory(operand) ? `${resolved}${path.sep}` : resolved;
+}
+
 /**
  * The path a write to `target` lands on: every existing symlink on the way, the leaf included,
- * is followed as the kernel would; components that do not exist yet are kept as given.
+ * is followed as the kernel would; components that do not exist yet are kept as given. A
+ * trailing `/`, `.` or `..` (in `target` or a link target) asks for a directory, as it does to
+ * the kernel: such a path never names a file, and a `/` or `.` after an existing file fails
+ * (ENOTDIR), so both throw CheckUsageError instead of being dropped.
  */
 export function writeDestination(target: string): string {
   const absolute = path.resolve(target);
   let resolved = path.parse(absolute).root;
   const pending = absolute.slice(resolved.length).split(path.sep);
+  // path.resolve drops a trailing separator or `.`; keep the directory requirement it carried.
+  if (endsInDirectory(target)) pending.push("");
   let links = 0;
+  let directoryOnly = false;
   while (pending.length > 0) {
     const part = pending.shift() as string;
-    if (part === "" || part === ".") continue;
+    directoryOnly = part === "" || part === "." || part === "..";
+    if (part === "" || part === ".") {
+      if (isNonDirectory(resolved)) {
+        throw new CheckUsageError(`${target} leads through ${resolved}, which is not a directory, before '/' or '.'.`);
+      }
+      continue;
+    }
     if (part === "..") {
       // The kernel steps out of a directory only: `file/..` and `missing/..` fail (ENOTDIR,
       // ENOENT), so a link target spelled that way leads nowhere.
@@ -82,6 +118,9 @@ export function writeDestination(target: string): string {
     } else {
       pending.unshift(...link.split(path.sep));
     }
+  }
+  if (directoryOnly) {
+    throw new CheckUsageError(`${target} ends in '/', '.' or '..', so it names a directory, not a file.`);
   }
   return resolved;
 }

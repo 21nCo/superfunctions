@@ -35,7 +35,7 @@ import { readSpecAtRef } from "./check-git.js";
 import { fetchBounded, isHttpUrl, readBoundedFile, unreadableMessage } from "./check-io.js";
 import { canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
-import { CheckUsageError, errorMessage, isMissingPath, writeDestination } from "./check-paths.js";
+import { CheckUsageError, errorMessage, isMissingPath, resolveOperand, writeDestination } from "./check-paths.js";
 import { assertSeparateFiles, observe, publish } from "./check-publish.js";
 import type { FileState, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
@@ -188,7 +188,9 @@ async function generate(options: CheckCommandOptions, cwd: string): Promise<RunI
   } catch (error) {
     throw new CheckUsageError(`Failed to generate the spec from the router: ${errorMessage(error)}`);
   }
-  const specPath = resolveSpecPath({ specPath: options.specPath, cwd, config: options.config });
+  const specPath = options.specPath
+    ? resolveOperand(cwd, options.specPath)
+    : resolveSpecPath({ cwd, config: options.config });
   const local = options.baseSpec !== undefined && !isHttpUrl(options.baseSpec);
   return {
     specPath,
@@ -196,7 +198,7 @@ async function generate(options: CheckCommandOptions, cwd: string): Promise<RunI
     generated: built.doc,
     routerFile: built.routerFile,
     baseSpecFile: local ? path.resolve(cwd, options.baseSpec as string) : undefined,
-    reportPath: options.reportPath === undefined ? undefined : path.resolve(cwd, options.reportPath),
+    reportPath: options.reportPath === undefined ? undefined : resolveOperand(cwd, options.reportPath),
   };
 }
 

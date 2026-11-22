@@ -16,10 +16,21 @@ export interface ValidationProblem {
   message: string;
 }
 
-/** Runs the existing validator on a copy (it dereferences in place) and keeps the errors. */
+/**
+ * Runs the existing validator and keeps the errors. It reads a relocated copy (see `relocate`):
+ * the structure it validates is the document's own, but a fragment inside a schema resource is
+ * spelled from the document root, as the validator resolves it, and no `$ref` key is left in
+ * literal data, so the validator follows only genuine references, all inside the document.
+ */
 export async function validationErrorsOf(doc: JsonObject): Promise<ValidationProblem[]> {
+  let form: JsonObject;
   try {
-    const errors = await validateOpenAPI(parseOpenAPI(structuredClone(doc)));
+    form = relocate(parseOpenAPI(structuredClone(doc)) as unknown as JsonObject);
+  } catch (error) {
+    return [{ path: "openapi", message: error instanceof Error ? error.message : String(error) }];
+  }
+  try {
+    const errors = await validateOpenAPI(form as unknown as OpenAPIDocument);
     return errors.filter((e) => e.severity === "error").map((e) => ({ path: e.path, message: e.message }));
   } catch (error) {
     return [{ path: "openapi", message: error instanceof Error ? error.message : String(error) }];
@@ -44,6 +55,11 @@ function pointerTokens(ref: string): string[] {
     .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
 }
 
+/** One RFC 6901 token, spelled for a URI fragment. */
+function encodeToken(token: string): string {
+  return encodeURIComponent(token.replaceAll("~", "~0").replaceAll("/", "~1"));
+}
+
 function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -57,18 +73,38 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
  * there is data, not a reference. Inside a schema resource with its own `$id`, a fragment resolves
  * against that resource, not the document root. A reference that leaves the document, does not
  * resolve, expands past MAX_EXPANDED_SPEC_NODES or has siblings that cannot be conjoined exactly
- * throws DereferenceError.
+ * throws DereferenceError. A recursive reference inside a schema resource is spelled from the
+ * document root.
  */
 export function dereference(doc: JsonObject): JsonObject {
-  return new Dereferencer().copy(doc, "node", doc) as JsonObject;
+  return new Dereferencer(true).copy(doc, "node", { node: doc, pointer: "" }, "") as JsonObject;
+}
+
+/**
+ * The form the validator reads: the document as it is, except that a reference inside a schema
+ * resource with its own `$id` is spelled from the document root (the validator resolves every
+ * fragment from the root) and a `$ref` key in literal data is dropped (the validator would follow
+ * it). A reference that leaves the document throws DereferenceError.
+ */
+function relocate(doc: JsonObject): JsonObject {
+  return new Dereferencer(false).copy(doc, "node", { node: doc, pointer: "" }, "") as JsonObject;
 }
 
 /**
  * How a value is read: `node` (an OpenAPI or schema object, whose keys are keywords), `names` (a
- * map from names to nodes, such as `properties` or `responses`), `examples` (a map of Example
- * Objects), `example` (one Example Object or its `$ref`) or `literal` (data).
+ * map from names to nodes, such as `properties`), `extNames` (a names map that also takes `x-`
+ * extensions: Paths and Responses), `components`, `examples` (a map of Example Objects), `example`
+ * (one Example Object or its `$ref`), `links` and `link` (Link Objects, whose `parameters` and
+ * `requestBody` are data) or `literal` (data).
  */
-type Mode = "node" | "names" | "examples" | "example" | "literal";
+type Mode = "node" | "names" | "extNames" | "components" | "examples" | "example" | "links" | "link" | "literal";
+
+/** A schema resource: the document or the nearest schema with its own `$id`, and its pointer. */
+interface Resource {
+  node: JsonValue;
+  /** Its location from the document root, as a URI-fragment JSON pointer (`""` for the root). */
+  pointer: string;
+}
 
 /** Keywords whose value maps names (any string, `default` and `$ref` included) to nodes. */
 const NAME_MAPS = new Set([
@@ -83,7 +119,32 @@ const LITERALS = new Set(["example", "default", "const", "enum"]);
 function childMode(key: string, value: JsonValue): Mode {
   if (LITERALS.has(key) || key.startsWith("x-")) return "literal";
   if (key === "examples") return Array.isArray(value) ? "literal" : "examples";
+  if (key === "components") return "components";
+  if (key === "links") return "links";
+  if (key === "paths" || key === "responses") return "extNames";
   return NAME_MAPS.has(key) ? "names" : "node";
+}
+
+/** How the value under `key` of a map read in `mode` is read (null: `mode` is not a map). */
+function entryMode(mode: Mode, key: string, value: JsonValue): Mode | null {
+  switch (mode) {
+    case "names":
+      return "node";
+    case "extNames":
+      return key.startsWith("x-") ? "literal" : "node";
+    case "components":
+      if (key.startsWith("x-")) return "literal";
+      if (key === "examples" || key === "links") return key;
+      return "names";
+    case "examples":
+      return "example";
+    case "links":
+      return "link";
+    case "link":
+      return key === "parameters" || key === "requestBody" ? "literal" : childMode(key, value);
+    default:
+      return null;
+  }
 }
 
 class Dereferencer {
@@ -91,54 +152,68 @@ class Dereferencer {
   /** The targets being expanded, by identity. */
   private readonly expanding: JsonValue[] = [];
 
-  /** `resource` is the schema resource a fragment resolves in: the document, or the nearest `$id`. */
-  copy(value: JsonValue, mode: Mode, resource: JsonValue): JsonValue {
+  /** `inline`: replace references by their targets (dereference) or only respell them (relocate). */
+  constructor(private readonly inline: boolean) {}
+
+  /**
+   * `resource` is the schema resource a fragment resolves in: the document, or the nearest `$id`.
+   * `at` is where `value` sits in the document, as a URI-fragment JSON pointer.
+   */
+  copy(value: JsonValue, mode: Mode, resource: Resource, at: string): JsonValue {
     this.nodes += 1;
     if (this.nodes > MAX_EXPANDED_SPEC_NODES) {
       throw new DereferenceError(`the $refs expand to more than ${MAX_EXPANDED_SPEC_NODES} nodes`);
     }
-    if (Array.isArray(value)) return value.map((item) => this.copy(item, mode === "names" ? "node" : mode, resource));
+    if (Array.isArray(value)) {
+      const itemMode = mode === "names" || mode === "extNames" ? "node" : mode;
+      return value.map((item, index) => this.copy(item, itemMode, resource, `${at}/${index}`));
+    }
     if (!isRecord(value)) return value;
-    // Checked in literal data too: the validator follows every `$ref`, so one that leaves the
-    // document is refused before the validator could read a file or URL for it.
+    // Literal data is copied as data; the validator's copy drops its `$ref` keys (see relocate).
+    if (mode === "literal") return this.copyRecord(value, () => "literal", resource, at, this.inline ? undefined : "$ref");
     if (typeof value.$ref === "string" && !value.$ref.startsWith("#")) throw outside(value.$ref);
-    if (mode === "literal") return this.copyRecord(value, () => "literal", resource);
-    if (mode === "names") return this.copyRecord(value, () => "node", resource);
-    if (mode === "examples") return this.copyRecord(value, () => "example", resource);
-    if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, resource);
-    if (mode === "example") return this.copyRecord(value, () => "literal", resource);
-    const own = typeof value.$id === "string" ? value : resource;
-    return this.copyRecord(value, (key, item) => childMode(key, item), own);
+    const isMap = mode === "names" || mode === "extNames" || mode === "components" || mode === "examples" || mode === "links";
+    if (isMap) return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
+    if (typeof value.$ref === "string") return this.expand(value.$ref, value, mode, resource, at);
+    if (mode === "example") return this.copyRecord(value, () => "literal", resource, at);
+    if (mode === "link") return this.copyRecord(value, (key, item) => entryMode(mode, key, item) as Mode, resource, at);
+    const own = typeof value.$id === "string" ? { node: value, pointer: at } : resource;
+    return this.copyRecord(value, (key, item) => childMode(key, item), own, at);
   }
 
   private copyRecord(
     value: Record<string, JsonValue>,
     modeOf: (key: string, item: JsonValue) => Mode,
-    resource: JsonValue,
+    resource: Resource,
+    at: string,
     skip?: string
   ): JsonObject {
     const result: JsonObject = {};
     for (const [key, item] of Object.entries(value)) {
-      if (key !== skip) setOwn(result, key, this.copy(item, modeOf(key, item), resource));
+      if (key !== skip) setOwn(result, key, this.copy(item, modeOf(key, item), resource, `${at}/${encodeToken(key)}`));
     }
     return result;
   }
 
-  private expand(ref: string, value: Record<string, JsonValue>, mode: Mode, resource: JsonValue): JsonValue {
+  private expand(ref: string, value: Record<string, JsonValue>, mode: Mode, resource: Resource, at: string): JsonValue {
     const siblingMode = (key: string, item: JsonValue): Mode => (mode === "example" ? "literal" : childMode(key, item));
-    const found = resolve(resource, ref);
-    if (this.expanding.includes(found.target)) {
-      return this.copyRecord(value, siblingMode, resource);
+    // The validator's copy resolves nothing itself: the validator reports a reference that does
+    // not resolve from the document root.
+    const found = !this.inline && resource.pointer === "" ? null : resolve(resource, ref);
+    if (found === null || this.expanding.includes(found.target)) {
+      // Kept as a reference, spelled from the document root when it resolves inside a resource.
+      const kept = this.copyRecord(value, siblingMode, resource, at, "$ref");
+      return { $ref: found === null || resource.pointer === "" ? ref : `#${found.pointer}`, ...kept };
     }
     this.expanding.push(found.target);
-    const target = this.copy(found.target, mode, found.resource);
+    const target = this.copy(found.target, mode, found.resource, found.pointer);
     this.expanding.pop();
-    const siblings = this.copyRecord(value, siblingMode, resource, "$ref");
+    const siblings = this.copyRecord(value, siblingMode, resource, at, "$ref");
     if (Object.keys(siblings).length === 0) return target;
     if (!isRecord(target)) {
       throw new DereferenceError(`$ref '${ref}' has sibling keys but its target is not an object`);
     }
-    return conjoin(target, siblings, ref);
+    return conjoin(target, siblings, ref, true);
   }
 }
 
@@ -146,15 +221,20 @@ function outside(ref: string): DereferenceError {
   return new DereferenceError(`$ref '${ref}' points outside the document, which apifn check does not follow`);
 }
 
-/** The target of a fragment `ref` in `resource`, and the schema resource that holds the target. */
-function resolve(resource: JsonValue, ref: string): { target: JsonValue; resource: JsonValue } {
-  let current = resource;
+/**
+ * The target of a fragment `ref` in `resource`, where it sits in the document, and the schema
+ * resource that holds it.
+ */
+function resolve(resource: Resource, ref: string): { target: JsonValue; pointer: string; resource: Resource } {
+  let current = resource.node;
+  let pointer = resource.pointer;
   let holder = resource;
   for (const token of pointerTokens(ref)) {
-    holder = current !== resource && isRecord(current) && typeof current.$id === "string" ? current : holder;
+    if (current !== resource.node && isRecord(current) && typeof current.$id === "string") holder = { node: current, pointer };
     current = step(current, token, ref);
+    pointer += `/${encodeToken(token)}`;
   }
-  return { target: current, resource: holder };
+  return { target: current, pointer, resource: holder };
 }
 
 /** Annotations: they constrain nothing, so the keys beside the `$ref` replace the target's. */
@@ -181,8 +261,9 @@ const SCOPED: ReadonlyArray<readonly [keyword: string, partners: readonly string
   ["else", ["if"]],
 ];
 /**
- * `unevaluated*` beside a `$ref` already sees what the target evaluates (`$ref` applies in place),
- * so on the sibling side the conjunction keeps its scope.
+ * `unevaluated*` directly beside a `$ref` already sees what the target evaluates (`$ref` applies
+ * in place), so on the sibling side of that conjunction it keeps its scope. Two property schemas
+ * merged under one name are evaluated independently: there it does not.
  */
 const SEES_TARGET = new Set(["unevaluatedProperties", "unevaluatedItems"]);
 
@@ -230,9 +311,10 @@ function closedNames(side: JsonObject, other: JsonObject): Set<string> | null {
  * tighter one and `type` keeps the types both allow (`integer` is a `number`). Keyword scope is
  * kept on both sides (see SCOPED and closedNames). Any other keyword present on both sides with
  * different values, or a change of scope, has no exact single-schema form, so it throws
- * DereferenceError (exit 2).
+ * DereferenceError (exit 2). `direct` is true for the keys directly beside the `$ref`, false for
+ * two property schemas merged under one name (see SEES_TARGET).
  */
-function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObject {
+function conjoin(target: JsonObject, siblings: JsonObject, ref: string, direct: boolean): JsonObject {
   const result: JsonObject = { ...target };
   for (const [key, value] of Object.entries(siblings)) {
     const current = own(result, key);
@@ -254,7 +336,7 @@ function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObj
     setOwn(result, "properties", kept);
   }
   assertScopeKept(target, closed[0] !== null, false, result, ref);
-  assertScopeKept(siblings, closed[1] !== null, true, result, ref);
+  assertScopeKept(siblings, closed[1] !== null, direct, result, ref);
   return result;
 }
 
@@ -312,7 +394,7 @@ function combineProperties(a: JsonValue, b: JsonValue, ref: string): JsonValue |
   for (const [name, schema] of Object.entries(b)) {
     const existing = own(merged, name);
     let value: JsonValue = schema;
-    if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref);
+    if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref, false);
     else if (existing !== undefined && canonicalJson(existing) !== canonicalJson(schema)) return undefined;
     setOwn(merged, name, value);
   }

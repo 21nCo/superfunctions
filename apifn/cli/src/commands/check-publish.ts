@@ -3,8 +3,10 @@
  *
  * - No output may land on a file the run read (spec, base file, router module, config file) or
  *   on the other output. Two paths are one file when they lead, after symlinks, to the same name
- *   (NFC and case folded) in the same directory (device and inode, so a symlinked or bind-mounted
- *   directory counts), or to the same existing inode (a hard link). The directory each output was
+ *   in the same directory (device and inode, so a symlinked or bind-mounted directory counts), or
+ *   to the same existing inode (a hard link). Names that differ only in case or Unicode
+ *   normalization are one name only where that directory folds them (see foldsNames). The
+ *   directory each output was
  *   observed in is bound for the run: it must still be that directory at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
  *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
@@ -29,6 +31,7 @@ import {
   closeSync,
   copyFileSync,
   constants,
+  existsSync,
   fchmodSync,
   fstatSync,
   fsyncSync,
@@ -36,6 +39,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readSync,
   renameSync,
   rmdirSync,
@@ -104,14 +108,75 @@ function stillAnchored(anchor: Anchor): boolean {
 }
 
 interface Location {
-  dev: bigint;
-  ino: bigint;
+  anchor: Anchor;
+  /** The destination's path below the anchor, as spelled. */
   rest: string;
   leaf: FileState;
 }
 
 function locationOf(anchor: Anchor, destination: string, leaf: FileState): Location {
-  return { dev: anchor.dev, ino: anchor.ino, rest: foldPath(path.relative(anchor.dir, destination)), leaf };
+  return { anchor, rest: path.relative(anchor.dir, destination), leaf };
+}
+
+/** The other-case spelling of `name` (null when it has no cased letter). */
+function otherCase(name: string): string | null {
+  const lower = name.toLowerCase();
+  const upper = name.toUpperCase();
+  if (lower === upper) return null;
+  return name === lower ? upper : lower;
+}
+
+/**
+ * Whether `variant` (the other-case spelling of `file`) finds the same inode as `file`: false when
+ * it is missing or another file, null when that cannot be told.
+ */
+function sameEntry(file: string, variant: string): boolean | null {
+  let original: BigIntStats;
+  try {
+    original = lstatSync(file, BIG);
+  } catch {
+    return null;
+  }
+  try {
+    const found = lstatSync(variant, BIG);
+    return found.dev === original.dev && found.ino === original.ino;
+  } catch (error) {
+    return isMissingPath(error) ? false : null;
+  }
+}
+
+/**
+ * True when the directory `anchor` treats names that differ only in case (and, with it, Unicode
+ * normalization) as one, told by looking up an existing name in the other case: one of its own
+ * entries, else its own name in its parent on the same device. When nothing can tell, the answer
+ * is true, so a possible alias is refused rather than overwritten.
+ */
+function foldsNames(anchor: Anchor): boolean {
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(anchor.dir);
+  } catch {
+    // Unreadable: fall through to the parent.
+  }
+  for (const name of entries) {
+    const variant = otherCase(name);
+    if (variant === null) continue;
+    const same = sameEntry(path.join(anchor.dir, name), path.join(anchor.dir, variant));
+    if (same !== null) return same;
+  }
+  const parent = path.dirname(anchor.dir);
+  const variant = otherCase(path.basename(anchor.dir));
+  if (parent !== anchor.dir && variant !== null) {
+    try {
+      if (statSync(parent, BIG).dev === anchor.dev) {
+        const same = sameEntry(anchor.dir, path.join(parent, variant));
+        if (same !== null) return same;
+      }
+    } catch {
+      // Fall through.
+    }
+  }
+  return true;
 }
 
 function locate(file: string): Location {
@@ -126,8 +191,10 @@ function locate(file: string): Location {
 }
 
 function sameFile(a: Location, b: Location): boolean {
-  if (a.dev === b.dev && a.ino === b.ino && a.rest === b.rest) return true;
-  return a.leaf !== null && b.leaf !== null && a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino;
+  if (a.leaf !== null && b.leaf !== null && a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino) return true;
+  if (a.anchor.dev !== b.anchor.dev || a.anchor.ino !== b.anchor.ino) return false;
+  if (a.rest === b.rest) return true;
+  return foldPath(a.rest) === foldPath(b.rest) && foldsNames(a.anchor);
 }
 
 export interface NamedFile {
@@ -184,8 +251,9 @@ export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Obser
   }
 }
 
-/** A step of the publisher, for tests that change the filesystem between steps. */
-export type PublishStep = "backup" | "rename" | "rollback";
+/** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
+ * the run created one directory for a destination, named in place of the destination). */
+export type PublishStep = "mkdir" | "backup" | "rename" | "rollback";
 export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
@@ -240,13 +308,21 @@ function removeCreatedDirs(staged: Staged): void {
   }
 }
 
-/** The directories `mkdir -p` created for `dir`, from `first` (the shallowest) down, deepest first. */
-function createdChain(dir: string, first: string | undefined): Anchor[] {
-  if (first === undefined) return [];
-  const chain: Anchor[] = [];
-  for (let current = dir; ; current = path.dirname(current)) {
-    chain.push(anchorOf(current));
-    if (current === first || path.dirname(current) === current) return chain;
+/**
+ * Creates the missing directories above the destination one at a time, shallowest first, and
+ * records each in `staged.created` (deepest first) as soon as it exists, so a failure at any later
+ * point leaves a record of every directory this run made. A directory that appears meanwhile
+ * (EEXIST) is someone else's: the run stops.
+ */
+function makeParents(staged: Staged, hook: PublishHook | undefined): void {
+  const missing: string[] = [];
+  for (let dir = path.dirname(staged.destination); !existsSync(dir) && path.dirname(dir) !== dir; dir = path.dirname(dir)) {
+    missing.unshift(dir);
+  }
+  for (const dir of missing) {
+    mkdirSync(dir);
+    staged.created.unshift(anchorOf(dir));
+    hook?.("mkdir", dir);
   }
 }
 
@@ -277,10 +353,9 @@ function changed(staged: Staged): CheckUsageError {
   return new CheckUsageError(`${staged.destination} changed while apifn check ran; ${staged.output.option} wrote nothing.`);
 }
 
-function stage(staged: Staged): void {
+function stage(staged: Staged, hook: PublishHook | undefined): void {
   if (!stillAnchored(staged.anchor)) throw changed(staged);
-  const first = mkdirSync(path.dirname(staged.destination), { recursive: true });
-  staged.created = createdChain(path.dirname(staged.destination), first);
+  makeParents(staged, hook);
   if (!placeHolds(staged)) throw changed(staged);
   staged.parent = anchorOf(path.dirname(staged.destination));
   const temp = tempName(staged.destination);
@@ -431,7 +506,7 @@ export async function publish(
 async function publishAll(all: Staged[], emit: () => void | Promise<void>, hook: PublishHook | undefined): Promise<void> {
   for (const staged of all) {
     try {
-      stage(staged);
+      stage(staged, hook);
     } catch (error) {
       throw rollBackAll(all, writeFailure(staged, error), hook);
     }

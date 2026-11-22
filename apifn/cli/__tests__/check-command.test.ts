@@ -1094,9 +1094,18 @@ describe("apifn check: --report never writes the spec", () => {
     await expectRejected(dir, "report.md");
   });
 
-  it("through a case alias of the missing spec, on every filesystem", async () => {
+  it("through a case alias of the missing spec where the filesystem folds case; a distinct file elsewhere", async () => {
     const dir = await missingSpec();
-    await expectRejected(dir, path.join(".apifn", "OpenAPI.yml"));
+    const report = path.join(".apifn", "OpenAPI.yml");
+    if (CASE_INSENSITIVE_FS) {
+      await expectRejected(dir, report);
+      return;
+    }
+    // A case-sensitive filesystem keeps the two names apart: both files are written.
+    const result = await run(["check", "--write", "--report", report], dir);
+    expect(result.code).toBe(0);
+    expect(await readFile(path.join(dir, report), "utf8")).toBe(result.stdout);
+    expect(parseYaml(await readFile(path.join(dir, SPEC), "utf8"))).toHaveProperty("openapi");
   });
 
   it("a report beside the spec is written normally", async () => {
@@ -1123,7 +1132,8 @@ describe("apifn check: no write lands on the base spec", () => {
 
   it("--write with --base-spec naming the spec exits 2 and leaves it unchanged", async () => {
     const { dir, baseText } = await staleService();
-    for (const baseSpec of [SPEC, path.join(".apifn", "OpenAPI.yml")]) {
+    // The case alias names the spec only where the filesystem folds case.
+    for (const baseSpec of CASE_INSENSITIVE_FS ? [SPEC, path.join(".apifn", "OpenAPI.yml")] : [SPEC]) {
       const result = await run(["check", "--write", "--base-spec", baseSpec], dir);
       expect({ baseSpec, code: result.code, stdout: result.stdout }).toEqual({ baseSpec, code: 2, stdout: "" });
       expect(result.stderr).toContain("--base-spec");
@@ -1133,7 +1143,7 @@ describe("apifn check: no write lands on the base spec", () => {
 
   it("--report naming the --base-spec file exits 2 and leaves it unchanged", async () => {
     const { dir, baseText } = await staleService();
-    for (const report of ["base.yml", "BASE.yml", "./out/../base.yml"]) {
+    for (const report of CASE_INSENSITIVE_FS ? ["base.yml", "BASE.yml", "./out/../base.yml"] : ["base.yml", "./out/../base.yml"]) {
       const result = await run(["check", "--base-spec", "base.yml", "--report", report], dir);
       expect({ report, code: result.code, stdout: result.stdout }).toEqual({ report, code: 2, stdout: "" });
       expect(result.stderr).toContain("--base-spec");
@@ -1379,7 +1389,8 @@ describe("apifn check: the base is validated and both sides are dereferenced", (
     const dir = path.join(root, "base");
     await commitSpec(dir);
     const doc = parseYaml(await readFile(path.join(dir, SPEC), "utf8")) as Record<string, unknown>;
-    await writeFile(path.join(dir, "ext.yml"), toYaml({ ...doc, "x-ext": { $ref: "other.yml#/x" } }));
+    const components = { ...(doc.components as Record<string, unknown>), schemas: { Ext: { $ref: "other.yml#/x" } } };
+    await writeFile(path.join(dir, "ext.yml"), toYaml({ ...doc, components }));
     const result = await run(["check", "--base-spec", "ext.yml"], dir);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("outside the document");
@@ -2347,8 +2358,10 @@ describe("apifn check: effective schemas resolve references and keep literal dat
     expect((schemasOf(merged).R.properties as Record<string, unknown>).x).toEqual({ type: "string", minLength: 2 });
   });
 
-  it("a $ref that leaves the document is refused even inside literal data (the validator would follow it)", () => {
-    expect(() => comparable(doc({ B: { type: "object", example: { $ref: "other.yml#/x" } } }))).toThrow("outside the document");
+  it("a $ref that leaves the document is refused where it is a reference, and is data inside literal data", () => {
+    expect(() => comparable(doc({ B: { $ref: "other.yml#/x" } }))).toThrow("outside the document");
+    const literal = comparable(doc({ B: { type: "object", example: { $ref: "other.yml#/x" } } }));
+    expect(schemasOf(literal).B.example).toEqual({ $ref: "other.yml#/x" });
   });
 });
 
@@ -2738,5 +2751,223 @@ describe("apifn check: Markdown keeps every line ending inside its field (round 
     expect(outputs.markdown).not.toContain("\r");
     expect(outputs.markdown.split("\n").some((line) => line.startsWith("## injected"))).toBe(false);
     expect((JSON.parse(outputs.json) as CheckReport).versions.head).toBe(version);
+  });
+});
+
+describe("apifn check: scope, resources and literal data hold on base and head alike (round 5)", () => {
+  const GET_SCHEMA = "#/paths/~1users/get/responses/200/content/application~1json/schema";
+
+  /** GET /users answers `response`; POST /users takes `body` (both TypeScript object literals). */
+  async function usersService(response: string, body: string): Promise<string> {
+    const dir = await tempDir("apifn-check-round5-");
+    await writeFile(
+      path.join(dir, "router.ts"),
+      `export default { getRoutes() { return [
+  { method: "GET", path: "/users", handler: async () => Response.json({}), meta: { operationId: "listUsers", responses: { 200: { description: "ok", schema: ${response} } } } },
+  { method: "POST", path: "/users", handler: async () => Response.json({}), meta: { operationId: "createUser", body: ${body}, responses: { 200: { description: "ok" } } } },
+]; } };
+`
+    );
+    await writeFile(
+      path.join(dir, "apifn.config.ts"),
+      `export default { router: "./router.ts", openapi: { info: { title: "Round 5", version: "1.0.0" } } };\n`
+    );
+    await commitSpec(dir);
+    return dir;
+  }
+
+  const TARGET = `{ type: "object", properties: { x: { type: "object", properties: { a: { type: "string" } } } } }`;
+
+  it("unevaluatedProperties in a nested property merged under a $ref does not see the target's properties", async () => {
+    // The inline request accepts {"x":{"a":"v"}}; the $ref form rejects it (x's sibling schema
+    // evaluates no property of its own), so the same-version change must not pass.
+    const base = await usersService(
+      TARGET,
+      `{ type: "object", properties: { x: { type: "object", properties: { a: { type: "string" } }, unevaluatedProperties: false } } }`
+    );
+    const head = await usersService(TARGET, `{ $ref: "${GET_SCHEMA}", properties: { x: { unevaluatedProperties: false } } }`);
+    const result = await run(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("changes what 'unevaluatedProperties' applies to");
+  });
+
+  it("unevaluatedProperties directly beside a $ref still sees the target's properties", async () => {
+    const base = await usersService(
+      TARGET,
+      `{ type: "object", properties: { x: { type: "object", properties: { a: { type: "string" } } } }, unevaluatedProperties: false }`
+    );
+    const head = await usersService(TARGET, `{ $ref: "${GET_SCHEMA}", unevaluatedProperties: false }`);
+    const { code, report } = await runJson(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect({ code, status: report.base.status, breaking: report.breaking }).toEqual({ code: 0, status: "compared", breaking: [] });
+  });
+
+  const RESOURCE = `{ $id: "https://example.com/schemas/user", type: "object", $defs: { Name: { type: "string", minLength: 2 } }, properties: { name: { $ref: "#/$defs/Name" } } }`;
+
+  it("an unchanged contract with a resource-relative $ref validates without a base and against itself", async () => {
+    const dir = await usersService(RESOURCE, `{ type: "object" }`);
+    const alone = await runJson(["check"], dir);
+    expect({ code: alone.code, valid: alone.report.valid }).toEqual({ code: 0, valid: true });
+    const self = await runJson(["check", "--base-spec", SPEC], dir);
+    expect({ code: self.code, status: self.report.base.status, breaking: self.report.breaking }).toEqual({
+      code: 0,
+      status: "compared",
+      breaking: [],
+    });
+  });
+
+  it("a resource-relative $ref is diffed against its target in that resource", async () => {
+    const base = await usersService(RESOURCE, `{ type: "object" }`);
+    const head = await usersService(RESOURCE.replace("minLength: 2", "minLength: 2, maxLength: 8"), `{ $ref: "${GET_SCHEMA}/properties/name" }`);
+    const result = await run(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect(result.stderr).toBe("");
+    expect([0, 1]).toContain(result.code);
+  });
+
+  it("extension entries, Link Object payloads and Example values are data: never followed, never refused", async () => {
+    const dir = await usersService(`{ type: "object" }`, `{ type: "object" }`);
+    const doc = parseYaml(await readFile(path.join(dir, SPEC), "utf8")) as Record<string, any>;
+    const external = { $ref: "missing-file.yml#/x" };
+    doc.paths["x-sample"] = external;
+    doc.paths["/users"].get.responses["200"].links = {
+      Create: { operationId: "createUser", parameters: { p: "$request.body#/id" }, requestBody: external },
+    };
+    doc.components = { examples: { E: { summary: "e", value: external } } };
+    await writeFile(path.join(dir, "literal.yml"), toYaml(doc));
+    const { code, report } = await runJson(["check", "--base-spec", "literal.yml"], dir);
+    expect({ code, status: report.base.status, breaking: report.breaking }).toEqual({ code: 0, status: "compared", breaking: [] });
+    // A genuine reference that leaves the document is still refused before anything reads it.
+    doc.paths["/users"].get.responses["200"].links.Create = external;
+    await writeFile(path.join(dir, "literal.yml"), toYaml(doc));
+    const refused = await run(["check", "--base-spec", "literal.yml"], dir);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("outside the document");
+  });
+});
+
+describe("apifn check: Responses extensions and Link payloads are copied as data (round 5)", () => {
+  it("a $ref in a Responses extension or a Link Object payload is not resolved; a Link Object $ref is", () => {
+    const dangling = { $ref: "#/nowhere" };
+    const merged = comparable({
+      openapi: "3.1.0",
+      info: { title: "S", version: "1.0.0" },
+      paths: {
+        "/u": {
+          get: {
+            responses: {
+              "x-sample": dangling,
+              "200": { description: "ok", links: { L: { operationId: "getU", requestBody: dangling }, M: { $ref: "#/components/links/M" } } },
+            },
+          },
+        },
+      },
+      components: { links: { M: { operationId: "getU", parameters: { p: "$request.path.id" } } } },
+    } as never) as unknown as Record<string, any>;
+    const responses = merged.paths["/u"].get.responses;
+    expect(responses["x-sample"]).toEqual(dangling);
+    expect(responses["200"].links).toEqual({
+      L: { operationId: "getU", requestBody: dangling },
+      M: { operationId: "getU", parameters: { p: "$request.path.id" } },
+    });
+  });
+});
+
+describe("apifn check: directory requirements and created directories survive binding (round 5)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  it.skipIf(POSIX_ONLY).each([["/"], ["/."]])(
+    "a spec link to the committed spec followed by %s is never read or repaired",
+    async (suffix) => {
+      const root = await fixtures();
+      const dir = path.join(root, "base");
+      await commitSpec(dir);
+      const before = await readFile(path.join(dir, SPEC), "utf8");
+      await symlink(`${SPEC}${suffix}`, path.join(dir, "alias.yml"));
+      for (const extra of [[], ["--write"]]) {
+        const result = await run(["check", "--spec", "alias.yml", ...extra], dir);
+        expect(result.code).toBe(2);
+        expect(result.stderr).toContain("not a directory");
+      }
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(before);
+      const operand = await run(["check", "--spec", `${SPEC}${suffix}`, "--write"], dir);
+      expect(operand.code).toBe(2);
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(before);
+    }
+  );
+
+  it.skipIf(POSIX_ONLY)("a stable dangling spec link to a missing file stays repairable", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await symlink("real.yml", path.join(dir, SPEC));
+    expect((await run(["check"], dir)).code).toBe(1);
+    expect((await run(["check", "--write"], dir)).code).toBe(0);
+    expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
+    expect((await run(["check"], dir)).code).toBe(0);
+  });
+
+  async function stagedFailure(onMkdir: (created: string, dir: string) => void): Promise<{ dir: string; code: number; errors: string }> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      specPath: path.join("new", "deep", "openapi.yml"),
+      write: true,
+      writeStdout: () => {},
+      publishHook: (step, created) => {
+        if (step === "mkdir") onMkdir(created, dir);
+      },
+    });
+    return { dir, code, errors: errors.join("\n") };
+  }
+
+  it("a failure while staging removes every directory the run created so far", async () => {
+    const { dir, code, errors } = await stagedFailure((created) => {
+      if (path.basename(created) === "deep") throw new Error("injected staging failure");
+    });
+    expect(code).toBe(2);
+    expect(errors).toContain("injected staging failure");
+    expect(existsSync(path.join(dir, "new"))).toBe(false);
+  });
+
+  it("a failure while staging keeps a directory another process put in place of one the run created", async () => {
+    const { dir, code } = await stagedFailure((created, root) => {
+      if (path.basename(created) !== "deep") return;
+      renameSync(path.join(root, "new"), path.join(root, "moved"));
+      execFileSync("mkdir", [path.join(root, "new")]);
+      throw new Error("injected staging failure");
+    });
+    expect(code).toBe(2);
+    expect(statSync(path.join(dir, "new")).isDirectory()).toBe(true);
+  });
+});
+
+describe("apifn check: output names compare by case only where the directory folds case (round 5)", () => {
+  it("a report whose name differs from the spec only in case is the spec exactly where the filesystem folds case", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const before = await readFile(path.join(dir, SPEC), "utf8");
+    const report = path.join(".apifn", "OpenAPI.yml");
+    const result = await run(["check", "--report", report], dir);
+    if (CASE_INSENSITIVE_FS) {
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("is the spec itself");
+    } else {
+      expect(result.code).toBe(0);
+      expect(await readFile(path.join(dir, report), "utf8")).toContain("apifn check");
+    }
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(before);
+  });
+
+  it("a report naming the spec itself is still refused", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const result = await run(["check", "--report", SPEC], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("is the spec itself");
   });
 });
