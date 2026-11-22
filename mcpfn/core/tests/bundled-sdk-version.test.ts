@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -12,6 +12,10 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 const pinned: string = manifest.dependencies["@modelcontextprotocol/sdk"];
 const built = existsSync(join(packageRoot, "dist", "index.js.map"));
+const runOnBuild = it.runIf(built || Boolean(process.env.CI));
+// Each built-artifact case parses both ~560 KB bundles; size the timeout for a
+// loaded CI runner rather than the 5 s default.
+const BUILT_TIMEOUT = 60_000;
 
 const fixtures: string[] = [];
 afterEach(() => {
@@ -73,30 +77,44 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
 
   // The build script runs the same check after tsup; CI builds before this
   // test, so a missing dist only skips it in a local unbuilt checkout.
-  it.runIf(built || Boolean(process.env.CI))("inlines only the pinned SDK into the built ESM and CJS bundles", () => {
+  runOnBuild("inlines only the pinned SDK into the built ESM and CJS bundles", () => {
     const report = verifyBundledSdk(packageRoot);
     expect(report.pinned).toBe(pinned);
     expect(report.bundles.map(({ bundle, stamped, versions }) => [bundle, stamped, versions])).toEqual([
       ["index.js", pinned, [pinned]],
       ["index.cjs", pinned, [pinned]],
     ]);
-  });
+  }, BUILT_TIMEOUT);
 
-  it.runIf(built || Boolean(process.env.CI))("rejects a copy of the built bundle whose stamp names an older SDK", () => {
-    // Same installed SDK and pin as the real build; only the bundled bytes are
-    // stale, as in a dist built from 1.29.0 and never rebuilt.
+  // The built dist is read once; each case writes its own copy, whose source
+  // maps keep pointing at the SDK this package was built from (absolute
+  // sourceRoot), with one change applied.
+  let builtDist: Record<string, string> | undefined;
+  function builtCopy(change: (dist: Record<string, string>) => void): string {
+    builtDist ??= Object.fromEntries(["index.js", "index.cjs"].flatMap((file) => [
+      [file, readFileSync(join(packageRoot, "dist", file), "utf8")],
+      [`${file}.map`, JSON.stringify({ ...JSON.parse(readFileSync(join(packageRoot, "dist", `${file}.map`), "utf8")), sourceRoot: join(packageRoot, "dist") })],
+    ]));
+    const dist = { ...builtDist };
+    change(dist);
     const dir = mkdtempSync(join(tmpdir(), "mcpfn-core-bundled-sdk-"));
     fixtures.push(dir);
-    cpSync(join(packageRoot, "dist"), join(dir, "dist"), { recursive: true });
-    for (const file of ["index.js", "index.cjs"]) {
-      const path = join(dir, "dist", file);
-      writeFileSync(path, readFileSync(path, "utf8").replace(`@modelcontextprotocol/sdk@${pinned} */`, "@modelcontextprotocol/sdk@1.29.0 */"));
-      const sourceMap = JSON.parse(readFileSync(`${path}.map`, "utf8"));
-      writeFileSync(`${path}.map`, JSON.stringify({ ...sourceMap, sourceRoot: join(packageRoot, "dist") }));
-    }
+    mkdirSync(join(dir, "dist"));
+    for (const [file, content] of Object.entries(dist)) writeFileSync(join(dir, "dist", file), content);
     writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+    return dir;
+  }
+
+  runOnBuild("rejects a copy of the built bundle whose stamp names an older SDK", () => {
+    // Same installed SDK and pin as the real build; only the bundled bytes are
+    // stale, as in a dist built from 1.29.0 and never rebuilt.
+    const dir = builtCopy((dist) => {
+      for (const file of ["index.js", "index.cjs"]) {
+        dist[file] = dist[file].replace(`@modelcontextprotocol/sdk@${pinned} */`, "@modelcontextprotocol/sdk@1.29.0 */");
+      }
+    });
     expect(() => verifyBundledSdk(dir)).toThrow(`dist/index.js bundles @modelcontextprotocol/sdk 1.29.0 but package.json pins ${pinned}`);
-  });
+  }, BUILT_TIMEOUT);
 
   // MCP-13: the import scan reads tokens, not lines, on the real ESM and CJS bundles.
   const executableLoads = [
@@ -115,6 +133,11 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nconst mod = module; var sdk = mod.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module?.require(\"@modelcontextprotocol/sdk/types.js\");\n",
     "\nvar sdk = module[\"require\"](\"@modelcontextprotocol/sdk\");\n",
+    // A require method on any receiver with an SDK specifier fails closed: in a
+    // bundle it cannot be told apart from an aliased module.require, and a
+    // wrapper such as { require: (id) => require(id) } really loads the SDK.
+    "\nvar helper = { require: (id) => id };\nvar sdk = helper.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    "\nvar loader = { require: (id) => require(id) };\nvar sdk = loader.require(\"@modelcontextprotocol/sdk/types.js\");\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
@@ -124,29 +147,29 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     // Division after a function expression, a regex in a template substitution
     // or after a class body, and an escaped CRLF line continuation in a string.
     "\nvar n = function () {} / 2;\nvar s = `${/[\"]/.test(\"x\")}`;\nclass C {}\n/[\"]/.test(\"z\");\nvar c = \"a\\\r\nb\";\n",
+    // A require method call with another specifier or a non-literal argument.
+    "\nvar obj = { require: (id) => id };\nvar name = \"x\";\nobj.require(\"other-pkg\");\nobj.require(name);\n",
   ];
-  function appendToBuiltBundle(file: string, code: string): string {
-    const dir = mkdtempSync(join(tmpdir(), "mcpfn-core-bundled-sdk-"));
-    fixtures.push(dir);
-    cpSync(join(packageRoot, "dist"), join(dir, "dist"), { recursive: true });
-    for (const map of ["index.js.map", "index.cjs.map"]) {
-      const path = join(dir, "dist", map);
-      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), sourceRoot: join(packageRoot, "dist") }));
-    }
-    writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
-    writeFileSync(join(dir, "dist", file), readFileSync(join(dir, "dist", file), "utf8") + code);
-    return dir;
-  }
+  const artifacts = ["index.js", "index.cjs"];
+  const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
+    dist[file] += code;
+  });
 
-  it.runIf(built || Boolean(process.env.CI)).each(["index.js", "index.cjs"])("rejects SDK imports split across lines or comments, or with escaped specifiers, in the built %s", (file) => {
-    for (const code of executableLoads) {
+  runOnBuild.each(artifacts.flatMap((file) => executableLoads.map((code, index) => ({ file, index, code }))))(
+    "rejects SDK loads split across lines or comments, escaped, or through a require method, in the built $file (case $index)",
+    ({ file, code }) => {
       expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).toThrow(`dist/${file} imports @modelcontextprotocol/sdk instead of bundling it`);
-    }
-  });
+    },
+    BUILT_TIMEOUT,
+  );
 
-  it.runIf(built || Boolean(process.env.CI)).each(["index.js", "index.cjs"])("accepts valid code and SDK import text in strings, templates, regexes and comments of the built %s", (file) => {
-    for (const code of inertText) expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).not.toThrow();
-  });
+  runOnBuild.each(artifacts.flatMap((file) => inertText.map((code, index) => ({ file, index, code }))))(
+    "accepts valid code and SDK import text in strings, templates, regexes and comments of the built $file (case $index)",
+    ({ file, code }) => {
+      expect(() => verifyBundledSdk(appendToBuiltBundle(file, code))).not.toThrow();
+    },
+    BUILT_TIMEOUT,
+  );
 
   it("fails closed on a bundle it cannot scan", () => {
     expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(

@@ -79,8 +79,12 @@ const isSdkSpecifier = (node) =>
   (node.text === SDK_NAME || node.text.startsWith(`${SDK_NAME}/`));
 
 // The loader a call names: `require`/`__require`, or a `require` method on any
-// receiver. The receiver is not checked: `module` can be aliased, and a bundle
-// whose code calls some object's `require` with an SDK specifier fails closed.
+// receiver. Contract (MCP-13): the receiver is not checked, because in a bundle
+// an aliased `module.require` cannot be told apart from another object's
+// `require` method, and a wrapper such as `{ require: (id) => require(id) }`
+// really loads the SDK, so `helper.require("<sdk>")` fails closed. A `require`
+// method called with any other specifier or a non-literal argument, such as
+// `obj.require("other-pkg")` or `obj.require(name)`, passes.
 function loaderName(callee) {
   if (ts.isIdentifier(callee)) return SDK_LOADERS.has(ts.idText(callee)) ? ts.idText(callee) : undefined;
   let member;
