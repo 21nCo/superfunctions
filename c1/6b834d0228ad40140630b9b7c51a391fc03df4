@@ -1,0 +1,29 @@
+clifn/core/CHANGELOG.md
+  s_124319b903d839::t_edc27311a25f07 6
+clifn/core/src/diagnostics.ts
+  s_124319b903d839::t_ee342ba156b281 1-2,83
+clifn/core/src/document-output.ts
+  s_124319b903d839::t_63af9a50926e95 1-9,18-22,45-51,57-60,62-66,79-83,85,87-90,92-95,97,112-117,126,129-130,137,139,194-195,198-201,203,205-206,209-210,213-215,224-226,238,242,254
+clifn/core/src/errors.ts
+  s_124319b903d839::t_581d5c06b510aa 1-2,10-13,108-112,115-118,120-121,123,128,132-146,159,174-175
+clifn/core/src/json-value.ts
+  s_124319b903d839::t_3e964f1d176c97 57,60,62,66-69,71-80,101-102,108-115,180,205,224-226,230,233-234,236-238,246,249,251-252,273-277,279,288,292
+clifn/core/tests/runner-document.test.ts
+  s_124319b903d839::t_acc4aecd826f9f 1,7-9,869-870,878,892,1037,1039,1043,1059,1061-1077,1080-1081,1112-1113,1115,1117,1119,1123-1132,1135-1140,1142-1176,1316-1417
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c16b834d0228ad40140630b9b7c51a391fc03df4",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
