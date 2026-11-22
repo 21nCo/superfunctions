@@ -490,6 +490,126 @@ describe("document mode resolves each member to JSON once", () => {
     expect(Object.hasOwn(document, "data")).toBe(true);
     expect(document).toEqual({ ok: true, data: null });
   });
+
+  // A class whose prototype serializer leaves out a private field and emits a sensitive key.
+  class Account {
+    user = "ada";
+    privateNote = "internal-only-note";
+    toJSON() {
+      return { user: this.user, password: "test-password" };
+    }
+  }
+  const classDetails = () => ({ when: new Date(0), account: new Account() });
+  const classDetailsPrinted = {
+    when: "1970-01-01T00:00:00.000Z",
+    account: { user: "ada", password: "[REDACTED]" },
+  };
+
+  it.each([
+    [
+      "added on success",
+      (ctx: RunnerContext): RunnerActionResult => {
+        ctx.diagnostics.add({ code: "D", severity: "warning", message: "m", details: classDetails() });
+        return { data: 1 };
+      },
+      { ok: true, data: 1 },
+      0,
+    ],
+    [
+      "returned on success",
+      (): RunnerActionResult => ({
+        data: 1,
+        diagnostics: [{ code: "D", severity: "warning", message: "m", details: classDetails() }],
+      }),
+      { ok: true, data: 1 },
+      0,
+    ],
+    [
+      "added on failure",
+      (ctx: RunnerContext): RunnerActionResult => {
+        ctx.diagnostics.add({ code: "D", severity: "warning", message: "m", details: classDetails() });
+        throw Object.assign(new Error("failed"), { code: "TASK_FAILED", exitCode: 4 });
+      },
+      { ok: false, error: { code: "TASK_FAILED", message: "failed" } },
+      4,
+    ],
+  ])("serializes diagnostic details through their own toJSON, then redacts them: %s", async (_label, act, base, exit) => {
+    const result = await runDocument(async (_options, ctx) => act(ctx));
+
+    expect(result.exitCode).toBe(exit);
+    expect(result.out).not.toContain("internal-only-note");
+    expect(result.out).not.toContain("test-password");
+    expect(parseOnlyDocument(result)).toEqual({
+      ...base,
+      diagnostics: [{ code: "D", severity: "warning", message: "m", details: classDetailsPrinted }],
+    });
+  });
+
+  // An ordinary object serializer that answers only for one key, and ones that echo the key they receive.
+  const onlyFor = (wanted: string) => ({ toJSON: (key: string) => (key === wanted ? { keyed: wanted } : undefined) });
+  const echoKey = () => ({ toJSON: (key: string) => `key:${key}` });
+
+  it("passes the member key data to an ordinary object's toJSON, returned or from json()", async () => {
+    const returned = await runDocument(async () => ({ data: onlyFor("data") }));
+    expect(parseOnlyDocument(returned)).toEqual({ ok: true, data: { keyed: "data" } });
+
+    const fallback = await runDocument(async (_options, ctx) => {
+      ctx.output.json(onlyFor("data"));
+    });
+    expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: { keyed: "data" } });
+  });
+
+  it("passes nested keys and array indices to toJSON in data, error details and diagnostics", async () => {
+    const nested = () => ({ inner: echoKey(), list: [echoKey(), echoKey()], big: 5n });
+
+    const success = await runDocument(async (_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: nested() });
+      return { data: nested() };
+    });
+    const printed = { inner: "key:inner", list: ["key:0", "key:1"], big: "5" };
+    expect(parseOnlyDocument(success)).toEqual({
+      ok: true,
+      data: printed,
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: printed }],
+    });
+
+    const failure = await runDocument(async () => {
+      throw Object.assign(new Error("conflict"), { code: "CONFLICT", exitCode: 9, details: nested() });
+    });
+    expect(failure.exitCode).toBe(9);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "CONFLICT", message: "conflict", details: printed },
+    });
+  });
+
+  it("keeps bigint strings and marks cycles in data, error details and diagnostics", async () => {
+    const cyclic = () => {
+      const value: Record<string, unknown> = { id: 1n, list: [2n] };
+      value.self = value;
+      (value.list as unknown[]).push(value);
+      return value;
+    };
+    const printed = { id: "1", list: ["2", "[Circular]"], self: "[Circular]" };
+
+    const success = await runDocument(async (_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: cyclic() });
+      return { data: cyclic() };
+    });
+    expect(parseOnlyDocument(success)).toEqual({
+      ok: true,
+      data: printed,
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: printed }],
+    });
+
+    const failure = await runDocument(async () => {
+      throw Object.assign(new Error("cyclic"), { code: "CYCLIC", details: cyclic() });
+    });
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "CYCLIC", message: "cyclic", details: printed },
+    });
+  });
 });
 
 describe("document mode exec streaming", () => {

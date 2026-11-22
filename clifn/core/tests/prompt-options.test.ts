@@ -54,6 +54,17 @@ describe("createPrompt options", () => {
     expect(new PromptInputError("x").code).toBe("CLIFN_PROMPT_INPUT_ERROR");
   });
 
+  it("keeps the default instanceof behaviour for the class, subclasses and other errors", () => {
+    class LabelledError extends PromptInputError {}
+    const sub = new LabelledError("x");
+    expect(sub).toBeInstanceOf(PromptInputError);
+    expect(sub).toBeInstanceOf(LabelledError);
+    expect(sub).toBeInstanceOf(Error);
+    expect(new PromptInputError("x") instanceof LabelledError).toBe(false);
+    expect(new Error("x") instanceof PromptInputError).toBe(false);
+    expect(null instanceof PromptInputError).toBe(false);
+  });
+
   it("writes the question of the default asker to the given output stream", async () => {
     const output = new PassThrough();
     const written: string[] = [];

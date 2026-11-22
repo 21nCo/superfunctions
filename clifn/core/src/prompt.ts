@@ -2,13 +2,28 @@ import readline from "node:readline";
 
 export type PromptErrorCode = "CLIFN_PROMPT_INPUT_ERROR" | "CLIFN_PROMPT_NON_INTERACTIVE";
 
+/** The code may be left out only for the default `CLIFN_PROMPT_INPUT_ERROR`; any other code must be passed. */
+type PromptErrorCodeArgs<TCode extends PromptErrorCode> = TCode extends "CLIFN_PROMPT_INPUT_ERROR"
+  ? [code?: TCode]
+  : [code: TCode];
+
+/**
+ * `new PromptInputError(message)` keeps the literal type `code: "CLIFN_PROMPT_INPUT_ERROR"`; a non-default code must
+ * be passed, so the type always matches the runtime code. `error instanceof PromptInputError` on an unknown value
+ * narrows `code` to `PromptErrorCode` (TypeScript 5.3 and later), not `any`.
+ */
 export class PromptInputError<TCode extends PromptErrorCode = "CLIFN_PROMPT_INPUT_ERROR"> extends Error {
   readonly code: TCode;
 
-  constructor(message: string, code?: TCode) {
+  constructor(message: string, ...[code]: PromptErrorCodeArgs<TCode>) {
     super(message);
     this.name = "PromptInputError";
-    this.code = code ?? ("CLIFN_PROMPT_INPUT_ERROR" as TCode);
+    this.code = (code ?? "CLIFN_PROMPT_INPUT_ERROR") as TCode;
+  }
+
+  // The default instanceof check; declared so narrowing infers the code from its constraint instead of `any`.
+  static [Symbol.hasInstance]<T>(this: abstract new (...args: never) => T, value: unknown): value is T {
+    return Function.prototype[Symbol.hasInstance].call(this, value);
   }
 }
 

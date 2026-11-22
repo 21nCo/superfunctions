@@ -28,7 +28,8 @@ function isTty(stream: TerminalStream | undefined): boolean {
   return stream?.isTTY === true;
 }
 
-function resolveColor(env: Readonly<Record<string, string | undefined>>, stderr: TerminalStream | undefined): boolean {
+/** The colour the environment sets (`NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`), or undefined when it leaves it to the streams. */
+function colorFromEnv(env: Readonly<Record<string, string | undefined>>): boolean | undefined {
   const noColor = env.NO_COLOR;
   if (noColor !== undefined && noColor !== "") {
     return false;
@@ -46,8 +47,12 @@ function resolveColor(env: Readonly<Record<string, string | undefined>>, stderr:
     return false;
   }
 
+  return undefined;
+}
+
+function resolveColor(env: Readonly<Record<string, string | undefined>>, stderr: TerminalStream | undefined): boolean {
   // Logs, prompts and spinners go to stderr, so colour follows stderr rather than stdout.
-  return isTty(stderr);
+  return colorFromEnv(env) ?? isTty(stderr);
 }
 
 function isCi(env: Readonly<Record<string, string | undefined>>): boolean {
@@ -103,7 +108,9 @@ export type ResolvedRunnerOptions = Required<
 /**
  * Turns parsed global flags and the terminal rules (D9) into runner options: `--json` selects `mode: 'json'` with
  * `jsonStyle: 'document'`, `--yes`/`--non-interactive` or a non-interactive terminal sets `nonInteractive`, and
- * `--color`/`--no-color` override the colour rules. Parser-agnostic: pass the flags your parser produced.
+ * `--color`/`--no-color` override the colour rules. Text mode writes `debug`, `info`, `success` and `warn` to stdout
+ * with the same colour setting, so automatic colour there also needs stdout to be a TTY; a piped stdout never gets
+ * ANSI escapes unless `--color` or `FORCE_COLOR` asks for them. Parser-agnostic: pass the flags your parser produced.
  */
 export function resolveRunnerOptions(
   flags: RunnerFlags = {},
@@ -118,7 +125,14 @@ export function resolveRunnerOptions(
     ...("stdout" in streams ? { stdout: streams.stdout } : {}),
     ...("stderr" in streams ? { stderr: streams.stderr } : {}),
   });
-  const color = flags.color === true || flags.color === false ? flags.color : terminal.color;
+  const stdout = "stdout" in streams ? streams.stdout : process.stdout;
+  const env = context.env ?? process.env;
+  let color = terminal.color;
+  if (flags.color === true || flags.color === false) {
+    color = flags.color;
+  } else if (!json && colorFromEnv(env) === undefined) {
+    color = terminal.color && isTty(stdout);
+  }
 
   return {
     mode: json ? "json" : "text",

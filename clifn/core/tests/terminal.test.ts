@@ -1,3 +1,4 @@
+import { runAction } from "../src/runner.js";
 import { resolveRunnerOptions, resolveTerminal, type ResolveTerminalOptions } from "../src/terminal.js";
 
 const tty = { isTTY: true };
@@ -105,5 +106,63 @@ describe("resolveRunnerOptions", () => {
     expect(
       resolveRunnerOptions({}, { env: {}, streams: { stdin: undefined, stdout: undefined, stderr: undefined } })
     ).toMatchObject({ color: false, nonInteractive: true });
+  });
+
+  const ANSI = /\u001b\[/;
+  const mixed = { stdin: tty, stdout: pipe, stderr: tty };
+
+  async function runText(options: ReturnType<typeof resolveRunnerOptions>) {
+    let stdout = "";
+    let stderr = "";
+    await runAction(
+      async (_options, ctx) => {
+        ctx.output.info("info line");
+        ctx.output.success("success line");
+        ctx.output.warn("warn line");
+        ctx.output.error("error line");
+      },
+      {},
+      { ...options, stdout: (text) => (stdout += text), stderr: (text) => (stderr += text) }
+    );
+    return { stdout, stderr };
+  }
+
+  it("keeps ANSI off a piped stdout in text mode when stderr is a TTY", async () => {
+    const options = resolveRunnerOptions({}, { env: {}, streams: mixed });
+    expect(options.color).toBe(false);
+    const result = await runText(options);
+    expect(result.stdout).toContain("info line");
+    expect(result.stdout).not.toMatch(ANSI);
+    expect(result.stderr).toContain("error line");
+  });
+
+  it.each<[string, boolean | "auto" | undefined, Record<string, string>, typeof mixed, boolean]>([
+    ["both streams TTYs", "auto", {}, { ...mixed, stdout: tty }, true],
+    ["--color on a piped stdout", true, {}, mixed, true],
+    ["FORCE_COLOR=1 on a piped stdout", "auto", { FORCE_COLOR: "1" }, mixed, true],
+    ["NO_COLOR beats FORCE_COLOR on TTYs", undefined, { NO_COLOR: "1", FORCE_COLOR: "1" }, { ...mixed, stdout: tty }, false],
+    ["--no-color on TTYs", false, {}, { ...mixed, stdout: tty }, false],
+  ])("uses colour in text mode for %s as the flags and environment decide", async (_label, color, env, streams, expected) => {
+    const options = resolveRunnerOptions({ color }, { env, streams });
+    expect(options.color).toBe(expected);
+    const result = await runText(options);
+    expect(ANSI.test(result.stdout)).toBe(expected);
+    expect(ANSI.test(result.stderr)).toBe(expected);
+  });
+
+  it("keeps the stderr-following colour for --json, whose stdout carries only the document", () => {
+    expect(resolveRunnerOptions({ json: true }, { env: {}, streams: mixed }).color).toBe(true);
+  });
+
+  it("leaves the runner's own colour default unchanged when its options are not resolved", async () => {
+    let stdout = "";
+    await runAction(
+      async (_options, ctx) => {
+        ctx.output.info("plain default");
+      },
+      {},
+      { stdout: (text) => (stdout += text), stderr: () => {} }
+    );
+    expect(stdout).toMatch(ANSI);
   });
 });

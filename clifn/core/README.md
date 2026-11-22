@@ -281,7 +281,7 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - symlinks or directories that another program plants under these paths are not defended against yet
 - `@clifn/core/terminal`
   - `resolveTerminal({ env?, stdin?, stdout?, stderr?, json? })` -> `{ color, interactive, ci }`: a non-empty `NO_COLOR` disables colour; `FORCE_COLOR` `0`/`false` disables and `1`/`2`/`3`/`true` enables it; `TERM=dumb` disables it; otherwise colour follows whether stderr is a TTY. `ci` is `CI` set to anything but empty, `0` or `false`; `interactive` needs TTY stdin and stderr, no CI and no JSON
-  - `resolveRunnerOptions({ json?, quiet?, verbose?, color?, yes?, nonInteractive? }, { env?, streams? })` -> runner options (`mode`, `jsonStyle: 'document'` with `json`, `color`, `quiet`, `verbose`, `nonInteractive`) from the flags your parser produced; `color: true`/`false` overrides the rules and `'auto'` uses them (commander and cac give a lone `--no-color` a default of `true`, so pass `color: opts.color === false ? false : 'auto'`)
+  - `resolveRunnerOptions({ json?, quiet?, verbose?, color?, yes?, nonInteractive? }, { env?, streams? })` -> runner options (`mode`, `jsonStyle: 'document'` with `json`, `color`, `quiet`, `verbose`, `nonInteractive`) from the flags your parser produced; `color: true`/`false` overrides the rules and `'auto'` uses them; in text mode, automatic colour also needs a TTY stdout, because `info`, `success` and `warn` print there, unless `FORCE_COLOR` enables it (commander and cac give a lone `--no-color` a default of `true`, so pass `color: opts.color === false ? false : 'auto'`)
 
 ## Adoption boundary
 

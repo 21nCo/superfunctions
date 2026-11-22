@@ -1,4 +1,4 @@
-import { createDiagnostic, redactValue, type Diagnostic } from "./diagnostics.js";
+import { redactValue, type Diagnostic } from "./diagnostics.js";
 import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
 import { resolveJsonMember } from "./json-value.js";
 import { createOutput, type OutputService, type Spinner } from "./output.js";
@@ -47,11 +47,20 @@ function toDocumentData(data: unknown): unknown {
 
 /**
  * Resolves a diagnostic to the JSON value the document prints, then redacts its details, so a `toJSON` in the
- * details cannot bring a redacted field back. Details that do not resolve to an object are left out. Throws when
- * the diagnostic is not an object or cannot be serialized.
+ * details cannot bring a redacted field back. It keeps the members `createDiagnostic` keeps, but reads them from the
+ * original diagnostic without cloning, so each value in the details serializes through its own `toJSON` (a Date
+ * prints its ISO string, a class prints only what its serializer returns). Details that do not resolve to an object
+ * are left out. Throws when the diagnostic is not an object or cannot be serialized.
  */
 function toDocumentDiagnostic(diagnostic: Diagnostic, index: number): Record<string, unknown> {
-  const resolved = resolveJsonMember(String(index), createDiagnostic(diagnostic));
+  const { code, severity, message, path, details } = diagnostic;
+  const resolved = resolveJsonMember(String(index), {
+    code,
+    severity,
+    message,
+    path,
+    details: details || undefined,
+  });
   if (!isJsonObject(resolved)) {
     throw new TypeError("diagnostic did not resolve to an object");
   }
