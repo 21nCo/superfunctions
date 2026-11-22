@@ -120,7 +120,7 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, a symlinked directory on the way not followed) is then walked in that commit's tree, and a tracked symbolic link met on the way is followed inside the same tree. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read with `git show <commit>:<path>`. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
+- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, keeping the spelling of a symlinked directory on the way, even one back to the root) is then walked in that commit's tree one component at a time, as the kernel would: a tracked symbolic link met on the way is followed inside the same tree from the directory that holds it, and `..` returns to the directory actually walked. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read with `git show <commit>:<path>`. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
 - `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`); one 30-second deadline covers the request and the whole response body
 - `--allow-breaking` — report breaking changes without failing
 - `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing, in the committed file's format: a file starting with `{` stays JSON, a YAML file stays the YAML `generate` writes, and a missing or unreadable file follows its suffix (`.json` is JSON)
@@ -134,17 +134,24 @@ run.
 
 The base must pass the same validator as the generated spec (a base it rejects, such as one with
 `paths: []`, exits `2`), and both sides are compared with every local `$ref` replaced by its
-target, so a change behind a shared schema counts like the same change written inline. A `$ref`
-that leaves the document or does not resolve exits `2`.
+target, so a change behind a shared schema counts like the same change written inline. Keys
+beside a `$ref` apply together with its target (`required` lists and `properties` combine, bounds
+keep the tighter one); a `$ref` that leaves the document, does not resolve, or has a sibling with
+no exact combined form exits `2`.
 
 Writes are safe: nothing is written until every exit-`2` path has passed. No output may land on a
 file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on
 the other output; paths are compared after symlinks, by directory identity and, conservatively,
 ignoring case and Unicode normalization, so `--report router.ts` exits `2`. The report and the
 repaired spec are written to temp files beside their destinations and renamed into place (a spec
-symlink keeps pointing at its target, which is replaced). If a destination changed while the check
-ran, nothing is written. If stdout then fails, both are rolled back, unless another writer changed
-them in the meantime, in which case their bytes are kept and the error says so.
+symlink keeps pointing at its target, which is replaced). The directory and the destination are
+checked again right before each rename: if either changed while the check ran, nothing is written.
+stdout is part of the same transaction: if writing it fails, even after the write returned (a
+closed pipe), the check exits `2` and both are rolled back, unless another writer replaced them in
+the meantime, in which case their bytes are kept and the error says so. `--write` keeps the
+committed format: text `JSON.parse` accepts stays JSON, other YAML stays YAML (flow style
+included), and a missing or unreadable spec follows its suffix. POSIX has no compare-and-swap
+rename, so a replacement made between the last check and the rename itself is not detected.
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 `check` accepts only this grammar: a second positional (for example a ref given without

@@ -37,7 +37,7 @@ import { MAX_SPEC_BYTES, canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
 import { CheckUsageError, errorMessage, isMissingPath } from "./check-paths.js";
 import { assertSeparateFiles, observe, publish } from "./check-publish.js";
-import type { FileState, NamedFile, PlannedOutput } from "./check-publish.js";
+import type { FileState, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
 import type { CheckFormat, CheckReport, CheckVerdict, DriftState } from "./check-report.js";
 
@@ -67,7 +67,10 @@ export interface CheckCommandOptions {
   /** The config file `config` was loaded from; no output may land on it. */
   configFile?: string;
   output: Output;
-  writeStdout?: (text: string) => void;
+  /** Writes the report to stdout; a returned promise must settle once the write has completed. */
+  writeStdout?: (text: string) => void | Promise<void>;
+  /** Called between the publisher's steps (tests change the filesystem there). */
+  publishHook?: PublishHook;
   /** Total time for an HTTP(S) --base-spec, body included (default 30 s). */
   httpTimeoutMs?: number;
 }
@@ -197,8 +200,13 @@ async function generate(options: CheckCommandOptions, cwd: string): Promise<RunI
   };
 }
 
+interface Targets {
+  spec: Observed;
+  report?: Observed;
+}
+
 /** No output of the run may land on a file it reads or on the other output. */
-function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, cwd: string): void {
+function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, targets: Targets, cwd: string): void {
   const shown = (file: string) => path.relative(cwd, file) || file;
   const spec: NamedFile = { role: "the spec itself", file: inputs.specPath };
   const sources: NamedFile[] = [{ role: `the router module ${shown(inputs.routerFile)}`, file: inputs.routerFile }];
@@ -208,12 +216,14 @@ function assertOutputsSeparate(options: CheckCommandOptions, inputs: RunInputs, 
   if (inputs.baseSpecFile !== undefined) {
     sources.push({ role: `the --base-spec file ${options.baseSpec}`, file: inputs.baseSpecFile });
   }
-  const checks: Array<{ output: NamedFile; others: NamedFile[] }> = [];
-  if (inputs.reportPath !== undefined) {
-    checks.push({ output: { role: `--report ${options.reportPath}`, file: inputs.reportPath }, others: [spec, ...sources] });
+  const checks: Parameters<typeof assertSeparateFiles>[0] = [];
+  if (inputs.reportPath !== undefined && targets.report !== undefined) {
+    const output = { role: `--report ${options.reportPath}`, file: inputs.reportPath };
+    checks.push({ output, at: targets.report, others: [spec, ...sources] });
   }
   if (options.write) {
-    checks.push({ output: { role: `--write (spec ${inputs.specLabel})`, file: inputs.specPath }, others: sources });
+    const output = { role: `--write (spec ${inputs.specLabel})`, file: inputs.specPath };
+    checks.push({ output, at: targets.spec, others: sources });
   }
   assertSeparateFiles(checks);
 }
@@ -328,15 +338,25 @@ function driftOf(committed: CommittedSpec, head: Head): DriftState {
 }
 
 /**
- * `--write` keeps the committed file's format: text starting with `{` is JSON, a spec that parsed
- * as YAML stays YAML, and anything else (missing, too large, unreadable) follows the suffix.
+ * `--write` keeps the committed file's format, told by its content: text that JSON.parse accepts
+ * is JSON (flow-style YAML such as `{openapi: 3.1.0}` is not), other text that parsed is YAML, and
+ * anything else (missing, too large, neither) follows the suffix.
  */
 function repairText(head: Head, specPath: string, committed: CommittedSpec): string {
   return repairAsJson(specPath, committed) ? `${JSON.stringify(head.doc, null, 2)}\n` : head.yaml;
 }
 
+function isJsonText(raw: string): boolean {
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function repairAsJson(specPath: string, committed: CommittedSpec): boolean {
-  if (committed.state !== "missing" && committed.raw?.trimStart().startsWith("{")) return true;
+  if (committed.state !== "missing" && typeof committed.raw === "string" && isJsonText(committed.raw)) return true;
   if (committed.state === "present") return false;
   return /\.json$/i.test(specPath);
 }
@@ -438,17 +458,38 @@ function evaluate(
 // Command
 // ---------------------------------------------------------------------------
 
+/**
+ * Writes to process.stdout and settles once the write has completed or failed: a closed pipe
+ * (EPIPE) is reported through the callback or an 'error' event after write() returned.
+ */
+function writeProcessStdout(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stream = process.stdout;
+    // Stays attached after a failure, so a later 'error' event is not an uncaught exception.
+    const onError = (error: Error) => reject(error);
+    stream.on("error", onError);
+    stream.write(text, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      stream.off("error", onError);
+      resolve();
+    });
+  });
+}
+
 export async function runCheckCommand(options: CheckCommandOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
-  const writeStdout = options.writeStdout ?? ((text: string) => process.stdout.write(text));
+  const writeStdout = options.writeStdout ?? writeProcessStdout;
 
   try {
     const format = checkedFormat(options);
     // 1. Generate in memory through the `apifn generate` code path.
     const inputs = await generate(options, cwd);
-    assertOutputsSeparate(options, inputs, cwd);
     const reportTarget = inputs.reportPath === undefined ? undefined : observe(inputs.reportPath);
     const specTarget = observe(inputs.specPath);
+    assertOutputsSeparate(options, inputs, { spec: specTarget, report: reportTarget }, cwd);
 
     const base = await loadBase(options, inputs);
     const committed = readCommittedSpec(inputs.specPath);
@@ -463,7 +504,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
         option: `--report ${options.reportPath}`,
         noun: "report",
         file: inputs.reportPath as string,
-        destination: reportTarget.destination,
+        target: reportTarget,
         observed: reportTarget.state,
         text: rendered,
       });
@@ -473,12 +514,12 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
         option: "--write",
         noun: "spec",
         file: inputs.specPath,
-        destination: specTarget.destination,
+        target: specTarget,
         observed: committed.observed,
         text: repair,
       });
     }
-    publish(outputs, () => writeStdout(rendered));
+    await publish(outputs, () => writeStdout(rendered), options.publishHook);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {

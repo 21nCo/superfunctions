@@ -8,8 +8,9 @@
  *   nodes and MAX_EXPANDED_SPEC_BYTES of scalar text (measured before anything is converted);
  * - no duplicate or colliding mapping keys (`1` and `"1"`, an alias key naming a literal key
  *   beside it), no merge keys, no collection keys, no alias cycles;
- * - numbers finite, and each integer literal the double it reads as (exactly, or as its shortest
- *   round-trip decimal), so no value changes on the way to JSON;
+ * - numbers finite, and each literal naming an integer (`9007199254740993`, `9007199254740993.0`,
+ *   `9.007199254740993e15`) the double it reads as (exactly, or as its shortest round-trip
+ *   decimal), so no value changes on the way to JSON;
  * - only strings, numbers, booleans, null, sequences and mappings (no binary, sets or dates).
  *
  * Any violation throws ContractParseError; each caller decides what it means (committed: drift,
@@ -147,7 +148,7 @@ class Converter {
   value(node: unknown, at: string): JsonValue {
     if (node === null || node === undefined) return null;
     if (isAlias(node)) return this.value(this.anchors.get(node), at);
-    if (isScalar(node)) return scalarValue(node.value, at);
+    if (isScalar(node)) return scalarValue(node.value, at, node.source);
     const known = this.done.get(node as YamlNode);
     if (known !== undefined) return known;
     let result: JsonValue;
@@ -192,31 +193,57 @@ class Converter {
     if (!isAlias(node) && target.type === "PLAIN" && target.value === "<<") {
       throw new ContractParseError(`${at} has a YAML merge key (<<), which is not supported`);
     }
-    const value = scalarValue(target.value, `${at} key`);
+    const value = scalarValue(target.value, `${at} key`, target.source);
     if (typeof value === "string") return { text: value, via };
     if (typeof value === "number") return { text: String(value), via };
     throw new ContractParseError(`${at} has a ${value === null ? "null" : typeof value} key, which JSON cannot represent`);
   }
 }
 
-function scalarValue(value: unknown, at: string): JsonValue {
+/** The exact integer a decimal literal names, or null when it names no integer (or is no decimal). */
+function integerOf(literal: string): bigint | null {
+  const match = /^([-+]?)(\d*)(?:\.(\d*))?(?:[eE]([-+]?\d+))?$/.exec(literal);
+  if (!match) return null;
+  const [, sign, whole, fraction = "", exponent = "0"] = match;
+  const digits = `${whole}${fraction}`.replace(/^0+/, "");
+  if (digits === "") return 0n;
+  const significant = digits.replace(/0+$/, "");
+  const scale = Number(exponent) - fraction.length + (digits.length - significant.length);
+  // A finite double is below 10^309, so a larger scale cannot name one.
+  if (scale < 0 || scale > 400) return null;
+  const value = BigInt(significant) * 10n ** BigInt(scale);
+  return sign === "-" ? -value : value;
+}
+
+/**
+ * True when the integer `exact` is the double `number` reads as: exactly, or as that double's
+ * shortest round-trip decimal (what JSON.stringify and `apifn generate` write, such as
+ * 9223372036854776000 for 2^63 or 1e+23). 9007199254740993 names neither, so readers disagree on it.
+ */
+function holdsInteger(exact: bigint, number: number): boolean {
+  return BigInt(number) === exact || integerOf(String(number)) === exact;
+}
+
+function scalarValue(value: unknown, at: string, source?: string): JsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return value;
   }
   if (typeof value === "bigint") {
-    // An integer literal must name the double it reads as: exactly, or as that double's shortest
-    // round-trip decimal (what JSON.stringify and `apifn generate` write, such as
-    // 9223372036854776000 for 2^63). 9007199254740993 names neither, so readers disagree on it.
     const number = Number(value);
-    if (!Number.isFinite(number) || (BigInt(number) !== value && String(number) !== value.toString())) {
+    if (!Number.isFinite(number) || !holdsInteger(value, number)) {
       throw new ContractParseError(`${at} is the integer ${value}, which a JSON number does not hold exactly`);
     }
     return number;
   }
   if (typeof value === "number") {
-    // A float literal reads as the same double in every JSON reader.
     if (!Number.isFinite(value)) {
       throw new ContractParseError(`${at} is ${value}, which JSON cannot represent`);
+    }
+    // A float literal naming an integer (9007199254740993.0) follows the integer rule; any other
+    // float literal reads as the same double in every JSON reader.
+    const exact = source === undefined ? null : integerOf(source);
+    if (exact !== null && !holdsInteger(exact, value)) {
+      throw new ContractParseError(`${at} is the integer ${exact} (written ${source}), which a JSON number does not hold exactly`);
     }
     return value;
   }

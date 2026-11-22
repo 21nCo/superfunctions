@@ -6,7 +6,7 @@
 
 import { parseOpenAPI, validateOpenAPI } from "@apifn/core";
 import type { OpenAPIDocument } from "@apifn/core";
-import { MAX_EXPANDED_SPEC_NODES } from "./check-parse.js";
+import { MAX_EXPANDED_SPEC_NODES, canonicalJson } from "./check-parse.js";
 import type { JsonObject, JsonValue } from "./check-parse.js";
 
 export class DereferenceError extends Error {}
@@ -49,10 +49,12 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
 }
 
 /**
- * Returns a copy of `doc` with every local `$ref` replaced by its target (sibling keys kept on top
- * of it, as OpenAPI 3.1 reads them). A reference back into a schema being expanded (a recursive
- * schema) stays a `$ref`, so the comparison still sees its name. A reference that leaves the
- * document, does not resolve, or expands past MAX_EXPANDED_SPEC_NODES throws DereferenceError.
+ * Returns a copy of `doc` with every local `$ref` replaced by its target. Keys beside a `$ref` apply
+ * together with the target, as OpenAPI 3.1 reads them, so they are conjoined with it (see
+ * `conjoin`). A reference back into a schema being expanded (a recursive schema) stays a `$ref`,
+ * so the comparison still sees its name. A reference that leaves the document, does not resolve,
+ * expands past MAX_EXPANDED_SPEC_NODES or has siblings that cannot be conjoined exactly throws
+ * DereferenceError.
  */
 export function dereference(doc: JsonObject): JsonObject {
   return new Dereferencer(doc).copy(doc) as JsonObject;
@@ -98,7 +100,7 @@ class Dereferencer {
     if (!isRecord(target)) {
       throw new DereferenceError(`$ref '${ref}' has sibling keys but its target is not an object`);
     }
-    return { ...target, ...siblings };
+    return conjoin(target, siblings, ref);
   }
 
   private resolve(ref: string): JsonValue {
@@ -108,6 +110,67 @@ class Dereferencer {
     }
     return current;
   }
+}
+
+/** Annotations: they constrain nothing, so the keys beside the `$ref` replace the target's. */
+const ANNOTATIONS = new Set(["title", "description", "summary", "example", "examples", "default", "$comment", "externalDocs"]);
+/** Lower bounds (the larger one wins) and upper bounds (the smaller one wins). */
+const LOWER_BOUNDS = new Set(["minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties", "minContains"]);
+const UPPER_BOUNDS = new Set(["maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties", "maxContains"]);
+
+/**
+ * The schema both `target` and `siblings` describe, written with the keywords the differ reads:
+ * `required` and `enum` combine exactly, `properties` combine per property, bounds keep the
+ * tighter one and `type` keeps the types both allow. Any other keyword present on both sides with
+ * different values has no exact single-schema form, so it throws DereferenceError (exit 2).
+ */
+function conjoin(target: JsonObject, siblings: JsonObject, ref: string): JsonObject {
+  const result: JsonObject = { ...target };
+  for (const [key, value] of Object.entries(siblings)) {
+    const current = Object.hasOwn(result, key) ? result[key] : undefined;
+    let combined: JsonValue | undefined;
+    if (current === undefined || canonicalJson(current) === canonicalJson(value)) combined = value;
+    else if (ANNOTATIONS.has(key) || key.startsWith("x-")) combined = value;
+    else combined = combineKeyword(key, current, value, ref);
+    if (combined === undefined) {
+      throw new DereferenceError(`$ref '${ref}' has a sibling '${key}' that apifn check cannot combine with its target`);
+    }
+    Object.defineProperty(result, key, { value: combined, enumerable: true, writable: true, configurable: true });
+  }
+  return result;
+}
+
+function combineKeyword(key: string, a: JsonValue, b: JsonValue, ref: string): JsonValue | undefined {
+  if (typeof a === "number" && typeof b === "number") {
+    if (LOWER_BOUNDS.has(key)) return Math.max(a, b);
+    if (UPPER_BOUNDS.has(key)) return Math.min(a, b);
+    return undefined;
+  }
+  if (key === "required" && Array.isArray(a) && Array.isArray(b)) {
+    return [...a, ...b.filter((item) => !a.includes(item))];
+  }
+  if (key === "enum" && Array.isArray(a) && Array.isArray(b)) {
+    const allowed = new Set(b.map((item) => canonicalJson(item)));
+    return a.filter((item) => allowed.has(canonicalJson(item)));
+  }
+  if (key === "type") {
+    const allowed = new Set(Array.isArray(b) ? b : [b]);
+    const both = (Array.isArray(a) ? a : [a]).filter((type) => allowed.has(type));
+    if (both.length === 0) return undefined;
+    return both.length === 1 ? both[0] : both;
+  }
+  if (key === "properties" && isRecord(a) && isRecord(b)) {
+    const merged: JsonObject = { ...a };
+    for (const [name, schema] of Object.entries(b)) {
+      const existing = Object.hasOwn(merged, name) ? merged[name] : undefined;
+      let value: JsonValue = schema;
+      if (isRecord(existing) && isRecord(schema)) value = conjoin(existing, schema, ref);
+      else if (existing !== undefined && canonicalJson(existing) !== canonicalJson(schema)) return undefined;
+      Object.defineProperty(merged, name, { value, enumerable: true, writable: true, configurable: true });
+    }
+    return merged;
+  }
+  return undefined;
 }
 
 function step(current: JsonValue, token: string, ref: string): JsonValue {

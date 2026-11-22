@@ -2,24 +2,28 @@
  * `apifn check`: drift, validation, diff against a base and the version rule (API-5, D7).
  */
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { access, chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/index.js";
 import {
   CHECK_REPORT_MARKER,
   canonicalJson,
+  parseContract,
   parseSemver,
   runCheckCommand,
   versionCoversBreaking,
 } from "../src/commands/check.js";
+import { comparable } from "../src/commands/check-compare.js";
+import type { PublishStep } from "../src/commands/check-publish.js";
 import type { Output } from "../src/utils/output.js";
 import type { CheckReport } from "../src/commands/check.js";
 import { tempDir } from "./temp-dirs.js";
@@ -1396,6 +1400,32 @@ describe("apifn check: one strict, bounded parser for every document", () => {
     expect((await runJson(["check"], dir)).report.drift).toBe(false);
   });
 
+  it.each(["9007199254740993.0", "9.007199254740993e15", "90071992547409930e-1"])(
+    "an integer written %s is held to the same rule: drift when committed, a load error as the base",
+    async (spelling) => {
+      const dir = await service(`{ type: "integer", maximum: 9007199254740992 }`);
+      await commitSpec(dir);
+      const generated = await readFile(path.join(dir, SPEC), "utf8");
+      const misspelled = generated.replace("9007199254740992", spelling);
+      await writeFile(path.join(dir, "base.yml"), misspelled);
+      await writeFile(path.join(dir, SPEC), misspelled);
+
+      const stale = await runJson(["check"], dir);
+      expect({ code: stale.code, driftState: stale.report.driftState }).toEqual({ code: 1, driftState: "unparseable" });
+      await writeFile(path.join(dir, SPEC), generated);
+      const base = await run(["check", "--base-spec", "base.yml"], dir);
+      expect(base.code).toBe(2);
+      expect(base.stderr).toContain("does not hold exactly");
+    }
+  );
+
+  it.each(["9007199254740992.0", "9.007199254740992e15", "1e+23", "1e21", "-0.0", "2.5", "1e-7"])(
+    "%s reads as the double it names",
+    (spelling) => {
+      expect(parseContract(`openapi: 3.1.0\nx: ${spelling}\n`).x).toBe(Number(spelling));
+    }
+  );
+
   it.each([
     ["int64 bounds", `{ type: "integer", minimum: -9223372036854775808, maximum: 9223372036854775807 }`],
     ["2^64 and an exponent float", `{ type: "number", minimum: 18446744073709551616, maximum: 1e21 }`],
@@ -1721,6 +1751,8 @@ describe("apifn check: Markdown escaping and usage errors", () => {
     [["check", "--help=1"], "--help takes no value"],
     [["check", "--spec", "--help"], "--spec takes one value"],
     [["check", "a", "b", "--help"], "at most one [routerPath]"],
+    [["check", "--base", "HEAD", "--base-spec", "base.yml", "--help"], "only one of --base and --base-spec"],
+    [["check", "--format", "xml", "--help"], "Unknown --format 'xml'"],
   ])("%j is a usage error (exit 2) even with --help", async (args, message) => {
     const root = await fixtures();
     const result = await run(args, path.join(root, "base"));
@@ -1757,6 +1789,314 @@ describe("apifn check: Markdown escaping and usage errors", () => {
       const result = await run([command, "--help"], path.join(root, "base"));
       // cac prints help to the console; the run itself writes no error.
       expect({ command, code: result.code, stderr: result.stderr }).toEqual({ command, code: 0, stderr: "" });
+    }
+  });
+});
+
+describe("apifn check: the git baseline is resolved component by component", () => {
+  /** A git repository holding the fixtures, with the breaking service's head spec and the base contract. */
+  async function gitService(): Promise<{ root: string; service: string; baseText: string; headText: string }> {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await commitSpec(path.join(root, "base"));
+    await commitSpec(service);
+    const baseText = await readFile(path.join(root, "base", SPEC), "utf8");
+    return { root, service, baseText, headText: await readFile(path.join(service, SPEC), "utf8") };
+  }
+
+  function commitAll(root: string, message: string): void {
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", message);
+  }
+
+  async function expectCompared(args: string[], service: string): Promise<void> {
+    const { code, report } = await runJson(["check", "--base", "HEAD", ...args], service);
+    expect(report.drift).toBe(false);
+    expect(report.base).toEqual({ source: "git", ref: "HEAD", status: "compared" });
+    expect(report.breaking.length).toBeGreaterThan(0);
+    expect(code).toBe(1);
+  }
+
+  it.skipIf(POSIX_ONLY)("`..` in a link target returns to the directory a preceding directory link resolved to", async () => {
+    // .apifn/openapi.yml -> ../alias/../contract.yml and alias -> deep/child: git (like the kernel)
+    // reads deep/contract.yml, the base contract; collapsing alias/.. first would read the decoy.
+    const { root, service, baseText, headText } = await gitService();
+    await mkdir(path.join(service, "deep", "child"), { recursive: true });
+    await writeFile(path.join(service, "deep", "child", "keep.txt"), "keep\n");
+    await writeFile(path.join(service, "deep", "contract.yml"), baseText);
+    await writeFile(path.join(service, "contract.yml"), headText);
+    await symlink("deep/child", path.join(service, "alias"));
+    await rm(path.join(service, SPEC));
+    await symlink("../alias/../contract.yml", path.join(service, SPEC));
+    commitAll(root, "spec behind a directory link");
+    await rm(path.join(service, SPEC));
+    await writeFile(path.join(service, SPEC), headText);
+
+    await expectCompared([], service);
+  });
+
+  it.skipIf(POSIX_ONLY)("a tracked spec directory that is a link through a directory link and `..` is walked in order", async () => {
+    // .apifn -> alias/.. and alias -> deep/child: the spec directory at the base is deep/.
+    const { root, service, baseText, headText } = await gitService();
+    await mkdir(path.join(service, "deep", "child"), { recursive: true });
+    await writeFile(path.join(service, "deep", "child", "keep.txt"), "keep\n");
+    await writeFile(path.join(service, "deep", "openapi.yml"), baseText);
+    await writeFile(path.join(service, "openapi.yml"), headText);
+    await symlink("deep/child", path.join(service, "alias"));
+    await rm(path.join(service, ".apifn"), { recursive: true });
+    await symlink("alias/..", path.join(service, ".apifn"));
+    commitAll(root, "spec directory behind links");
+    await rm(path.join(service, ".apifn"));
+    await mkdir(path.join(service, ".apifn"));
+    await writeFile(path.join(service, SPEC), headText);
+
+    await expectCompared([], service);
+  });
+
+  it.skipIf(POSIX_ONLY)("a spec path through an in-repository link back to the root keeps the link's tracked spelling", async () => {
+    // At the base, self/ is a directory holding the base contract; in the working tree self -> .
+    const { root, service, baseText } = await gitService();
+    await mkdir(path.join(root, "self", "breaking", ".apifn"), { recursive: true });
+    await writeFile(path.join(root, "self", "breaking", SPEC), baseText);
+    commitAll(root, "self is a directory");
+    await rm(path.join(root, "self"), { recursive: true });
+    await symlink(".", path.join(root, "self"));
+
+    await expectCompared(["--spec", path.join("..", "self", "breaking", SPEC)], service);
+  });
+
+  it.skipIf(POSIX_ONLY).each([
+    ["climbs above the repository root", [["openapi.yml", "../../../outside.yml"]], "leaves the repository"],
+    ["forms a loop", [["openapi.yml", "loop.yml"], ["loop.yml", "openapi.yml"]], "Too many symbolic links"],
+  ])("a tracked spec link that %s exits 2", async (_label, links, message) => {
+    const { root, service, headText } = await gitService();
+    await rm(path.join(service, SPEC));
+    for (const [name, target] of links) await symlink(target, path.join(service, ".apifn", name));
+    commitAll(root, "spec link");
+    await rm(path.join(service, SPEC));
+    await writeFile(path.join(service, SPEC), headText);
+
+    const result = await run(["check", "--base", "HEAD"], service);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(message);
+  });
+});
+
+describe("apifn check: keys beside a $ref apply together with its target", () => {
+  /** POST /users takes GET /users' response schema through a $ref with a sibling `required`. */
+  async function siblingService(target: string[], sibling: string[]): Promise<string> {
+    const dir = await tempDir("apifn-check-sibling-");
+    const schema = `{ type: "object", properties: { kind: { type: "string" }, name: { type: "string" } }, required: ${JSON.stringify(target)} }`;
+    const body = `{ $ref: "#/paths/~1users/get/responses/200/content/application~1json/schema", required: ${JSON.stringify(sibling)} }`;
+    await writeFile(
+      path.join(dir, "router.ts"),
+      `export default { getRoutes() { return [
+  { method: "GET", path: "/users", handler: async () => Response.json({}), meta: { operationId: "listUsers", responses: { 200: { description: "ok", schema: ${schema} } } } },
+  { method: "POST", path: "/users", handler: async () => Response.json({}), meta: { operationId: "createUser", body: ${body}, responses: { 200: { description: "ok" } } } },
+]; } };
+`
+    );
+    await writeFile(
+      path.join(dir, "apifn.config.ts"),
+      `export default { router: "./router.ts", openapi: { info: { title: "Siblings", version: "1.0.0" } } };\n`
+    );
+    await commitSpec(dir);
+    return dir;
+  }
+
+  it.each([
+    ["the target newly requires a field beside a sibling required list", [["kind"], ["kind"]], [["kind", "name"], ["kind"]], 1],
+    ["the sibling list newly requires a field", [["kind"], ["kind"]], [["kind"], ["kind", "name"]], 1],
+    ["nothing changes", [["kind"], ["kind"]], [["kind"], ["kind"]], 0],
+  ])("%s at an unchanged version", async (_label, before, after, expected) => {
+    const base = await siblingService(before[0], before[1]);
+    const head = await siblingService(after[0], after[1]);
+    const { code, report } = await runJson(["check", "--base-spec", path.join(base, SPEC)], head);
+    expect(report.drift).toBe(false);
+    expect(report.base.status).toBe("compared");
+    expect({ code, breaking: report.breaking.length > 0 }).toEqual({ code: expected, breaking: expected === 1 });
+  });
+
+  function doc(schemas: Record<string, unknown>): Record<string, never> {
+    return { openapi: "3.1.0", info: { title: "S", version: "1.0.0" }, paths: {}, components: { schemas } } as never;
+  }
+
+  it("bounds keep the tighter one, and a sibling without an exact combined form is refused", () => {
+    const target = { type: "string", maxLength: 10, pattern: "^a" };
+    const merged = comparable(doc({ A: target, B: { $ref: "#/components/schemas/A", maxLength: 5, minLength: 1 } }));
+    expect((merged.components?.schemas as Record<string, unknown>).B).toEqual({ ...target, maxLength: 5, minLength: 1 });
+    expect(() => comparable(doc({ A: target, C: { $ref: "#/components/schemas/A", pattern: "^b" } }))).toThrow(
+      "cannot combine"
+    );
+  });
+});
+
+describe("apifn check: publication re-checks each step and stdout completes the transaction", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  async function staleService(): Promise<string> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    await writeFile(path.join(dir, "report.md"), "previous report\n");
+    return dir;
+  }
+
+  async function checkWithHook(
+    dir: string,
+    extra: { baseSpec?: string },
+    hook: (step: PublishStep, destination: string) => void,
+    stdout: (text: string) => void = () => {}
+  ): Promise<{ code: number; errors: string[] }> {
+    const errors: string[] = [];
+    const output = { error: (message: string) => errors.push(message) } as unknown as Output;
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output,
+      write: true,
+      reportPath: "report.md",
+      ...extra,
+      writeStdout: stdout,
+      publishHook: hook,
+    });
+    return { code, errors };
+  }
+
+  async function allLeftovers(dir: string): Promise<string[]> {
+    return [...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))];
+  }
+
+  it("a spec replaced after the check and before the rename is kept, and nothing is published", async () => {
+    const dir = await staleService();
+    const specFile = path.join(dir, SPEC);
+    const { code, errors } = await checkWithHook(dir, {}, (step, destination) => {
+      if (step === "rename" && destination.endsWith("openapi.yml")) {
+        writeFileSync(`${specFile}.other`, "other: 1\n");
+        renameSync(`${specFile}.other`, specFile);
+      }
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("changed while apifn check ran");
+    expect(await readFile(specFile, "utf8")).toBe("other: 1\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+    expect(await allLeftovers(dir)).toEqual([]);
+  });
+
+  it("an output replaced right after its rename is not rolled back over, and the error names it", async () => {
+    const dir = await staleService();
+    const reportFile = path.join(dir, "report.md");
+    const { code, errors } = await checkWithHook(
+      dir,
+      {},
+      (step, destination) => {
+        // The report was renamed into place; another writer replaces it before the spec's turn.
+        if (step === "backup" && destination.endsWith("openapi.yml")) {
+          writeFileSync(`${reportFile}.other`, "other report\n");
+          renameSync(`${reportFile}.other`, reportFile);
+        }
+      },
+      () => {
+        throw new Error("stdout closed");
+      }
+    );
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain(`${reportFile} changed after apifn check wrote it`);
+    expect(await readFile(reportFile, "utf8")).toBe("other report\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+  });
+
+  it.skipIf(POSIX_ONLY)("a spec directory swapped for a link to the base's directory before the rename writes nothing", async () => {
+    const dir = await staleService();
+    await mkdir(path.join(dir, "bases"));
+    await commitSpec(dir);
+    const generated = await readFile(path.join(dir, SPEC), "utf8");
+    await writeFile(path.join(dir, "bases", "openapi.yml"), generated);
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+
+    const { code, errors } = await checkWithHook(dir, { baseSpec: path.join("bases", "openapi.yml") }, (step, destination) => {
+      if (step === "rename" && destination.endsWith("openapi.yml")) {
+        renameSync(path.join(dir, ".apifn"), path.join(dir, ".apifn-moved"));
+        symlinkSync("bases", path.join(dir, ".apifn"));
+      }
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("changed while apifn check ran");
+    expect(await readFile(path.join(dir, "bases", "openapi.yml"), "utf8")).toBe(generated);
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+  });
+
+  it("a stdout writer that rejects after the renames rolls back the spec and the report", async () => {
+    const dir = await staleService();
+    let stderr = "";
+    const code = await runCli(["check", "--write", "--report", "report.md"], {
+      cwd: dir,
+      stdout: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        throw new Error("stdout closed later");
+      },
+      stderr: (text) => {
+        stderr += text;
+      },
+    });
+    expect(code).toBe(2);
+    expect(stderr).toContain("stdout closed later");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+    expect(await allLeftovers(dir)).toEqual([]);
+  });
+
+  it("a closed stdout pipe makes the CLI process exit 2 and roll back the spec and the report", async () => {
+    const dir = await staleService();
+    const jiti = path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
+    const bin = path.join(import.meta.dirname, "..", "src", "bin.ts");
+    const child = spawn(
+      process.execPath,
+      [jiti, bin, "check", "--write", "--report", "report.md", "--format", "markdown"],
+      { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }
+    );
+    // The reader goes away before the CLI writes its report.
+    child.stdout.destroy();
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const code = await new Promise<number | null>((resolve) => child.on("close", (exit) => resolve(exit)));
+    expect({ code, stderr }).toEqual({ code: 2, stderr: expect.stringContaining("Failed to write the report to stdout") });
+    expect(stderr).not.toContain("Unhandled");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+    expect(await allLeftovers(dir)).toEqual([]);
+  }, 30_000);
+});
+
+describe("apifn check: --write keeps the committed format, told by content", () => {
+  it.each([
+    ["flow-style YAML at .apifn/openapi.yml", SPEC, "{openapi: 3.1.0}\n", "yaml"],
+    ["flow-style YAML at a .json path", "contract.json", "{openapi: 3.1.0, info: {title: x}}\n", "yaml"],
+    ["block YAML at a .json path", "contract.json", "openapi: 3.1.0\n", "yaml"],
+    ["JSON at an extensionless path", "contract", '{"openapi": "3.1.0"}\n', "json"],
+    ["JSON at a .yml path", "contract.yml", '{"openapi": "3.1.0"}\n', "json"],
+    ["a missing spec at a .json path", "contract.json", null, "json"],
+    ["a missing spec at a .yml path", "contract.yml", null, "yaml"],
+    ["unreadable text at a .json path", "contract.json", "{ [\n", "json"],
+  ])("--write repairs %s in its own format", async (_label, name, text, format) => {
+    const dir = path.join(await fixtures(), "base");
+    const file = path.join(dir, name);
+    if (text !== null) {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, text);
+    }
+
+    expect((await run(["check", "--spec", name, "--write"], dir)).code).toBe(0);
+    const repaired = await readFile(file, "utf8");
+    if (format === "json") {
+      expect((JSON.parse(repaired) as { openapi: string }).openapi).toBe("3.1.0");
+    } else {
+      expect(() => JSON.parse(repaired)).toThrow();
+      expect((parseYaml(repaired) as { openapi: string }).openapi).toBe("3.1.0");
     }
   });
 });

@@ -4,14 +4,21 @@
  * - No output may land on a file the run read (spec, base file, router module, config file) or
  *   on the other output. Two paths are one file when they lead, after symlinks, to the same name
  *   (NFC and case folded) in the same directory (device and inode, so a symlinked or bind-mounted
- *   directory counts), or to the same existing inode (a hard link).
+ *   directory counts), or to the same existing inode (a hard link). The directory each output was
+ *   observed in is bound for the run: it must still be that directory at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
- *   (a symlinked spec keeps its link: the rename lands on the link's target).
- * - Before the renames, each destination must still be the file the run observed (the same
- *   inode, size and times, or still absent); otherwise nothing is published.
- * - After the renames the caller writes stdout. If that or a later rename fails, every published
- *   output is rolled back, but only while the destination is still exactly what this run put
- *   there; bytes another writer put there are left alone and the error names the conflict.
+ *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
+ *   what this run installed is the staged file's own (rename keeps the inode), never a lookup of
+ *   the destination after the rename.
+ * - Immediately before the backup, the rename and each rollback step, the directory and the
+ *   destination are checked again: the destination must still be the file the run observed (or
+ *   still absent) before publishing, and still exactly what this run installed before a rollback.
+ * - stdout is part of the transaction: the backups are kept until the stdout write has completed
+ *   (its callback, not its return). If that or a later step fails, every published output is
+ *   rolled back; bytes another writer put there are left alone and the error names the conflict.
+ *
+ * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
+ * and the rename (a window of one system call) is not detected.
  */
 
 import {
@@ -19,6 +26,7 @@ import {
   copyFileSync,
   constants,
   fchmodSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -44,7 +52,13 @@ export function stateOf(stats: Stats): FileState {
 
 function sameState(a: FileState, b: FileState): boolean {
   if (a === null || b === null) return a === b;
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+  return sameContent(a, b) && a.ctimeMs === b.ctimeMs;
+}
+
+/** Same inode with the same size and modification time (a new link or a rename changes ctime only). */
+function sameContent(a: FileState, b: FileState): boolean {
+  if (a === null || b === null) return a === b;
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 }
 
 /** The current state of `file` (not following a final symlink). */
@@ -57,6 +71,28 @@ function currentState(file: string): FileState {
   }
 }
 
+/** A directory bound for the run: its path and the device and inode it had when observed. */
+export interface Anchor {
+  dir: string;
+  dev: number;
+  ino: number;
+}
+
+function anchorOf(dir: string): Anchor {
+  const stats = statSync(dir);
+  return { dir, dev: stats.dev, ino: stats.ino };
+}
+
+/** True while `anchor.dir` is still the directory it was bound to. */
+function stillAnchored(anchor: Anchor): boolean {
+  try {
+    const stats = statSync(anchor.dir);
+    return stats.dev === anchor.dev && stats.ino === anchor.ino;
+  } catch {
+    return false;
+  }
+}
+
 interface Location {
   dev: number;
   ino: number;
@@ -64,17 +100,19 @@ interface Location {
   leaf: FileState;
 }
 
+function locationOf(anchor: Anchor, destination: string, leaf: FileState): Location {
+  return { dev: anchor.dev, ino: anchor.ino, rest: foldPath(path.relative(anchor.dir, destination)), leaf };
+}
+
 function locate(file: string): Location {
   const destination = writeDestination(file);
-  const dir = nearestExistingDir(destination);
-  const anchor = statSync(dir);
   let leaf: FileState = null;
   try {
     leaf = stateOf(statSync(destination));
   } catch (error) {
     if (!isMissingPath(error)) throw error;
   }
-  return { dev: anchor.dev, ino: anchor.ino, rest: foldPath(path.relative(dir, destination)), leaf };
+  return locationOf(anchorOf(nearestExistingDir(destination)), destination, leaf);
 }
 
 function sameFile(a: Location, b: Location): boolean {
@@ -88,6 +126,13 @@ export interface NamedFile {
   file: string;
 }
 
+/** Where a write to a file lands, the state it was in and the directory bound for the run. */
+export interface Observed {
+  destination: string;
+  state: FileState;
+  anchor: Anchor;
+}
+
 export interface PlannedOutput {
   /** The option that names the output, such as "--report report.md" or "--write". */
   option: string;
@@ -95,47 +140,58 @@ export interface PlannedOutput {
   noun: string;
   /** The path as the user gave it (for messages). */
   file: string;
-  /** Where the write lands (observe). */
-  destination: string;
+  /** Where the write lands and the directory bound for it (observe). */
+  target: Observed;
   text: string;
   /** The state the destination was in when the run observed or read it. */
   observed: FileState;
 }
 
 /**
- * Where a write to `file` lands (symlinks followed) and the state it is in now. An existing
- * destination must be a regular file.
+ * Where a write to `file` lands (symlinks followed), the state it is in now and its nearest
+ * existing directory, bound for the run. An existing destination must be a regular file.
  */
-export function observe(file: string): { destination: string; state: FileState } {
+export function observe(file: string): Observed {
   const destination = writeDestination(file);
   const state = currentState(destination);
   if (state !== null && (state.mode & constants.S_IFMT) !== constants.S_IFREG) {
     throw new CheckUsageError(`${file} is not a regular file.`);
   }
-  return { destination, state };
+  return { destination, state, anchor: anchorOf(nearestExistingDir(destination)) };
 }
+
+/**
+ * Rejects an output that may land on one of the files listed beside it (see the module comment).
+ * The output is compared at the location `observe` bound, the one the publisher later re-checks.
+ */
+export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Observed; others: NamedFile[] }>): void {
+  for (const { output, at, others } of checks) {
+    const location = locationOf(at.anchor, at.destination, at.state);
+    const clash = others.find((other) => sameFile(location, locate(other.file)));
+    if (clash) {
+      throw new CheckUsageError(`${output.role} is ${clash.role}; pick another file.`);
+    }
+  }
+}
+
+/** A step of the publisher, for tests that change the filesystem between steps. */
+export type PublishStep = "backup" | "rename" | "rollback";
+export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
   output: PlannedOutput;
   destination: string;
   before: FileState;
+  anchor: Anchor;
+  /** The destination's own directory once it exists. */
+  parent?: Anchor;
   temp?: string;
+  /** The staged file's identity, which the destination holds once this run renamed it there. */
+  installed?: FileState;
   createdDir?: string;
   backup?: string;
-  published?: FileState;
-}
-
-/**
- * Rejects an output that may land on one of the files listed beside it (see the module comment).
- */
-export function assertSeparateFiles(checks: Array<{ output: NamedFile; others: NamedFile[] }>): void {
-  for (const { output, others } of checks) {
-    const at = locate(output.file);
-    const clash = others.find((other) => sameFile(at, locate(other.file)));
-    if (clash) {
-      throw new CheckUsageError(`${output.role} is ${clash.role}; pick another file.`);
-    }
-  }
+  backupState?: FileState;
+  published: boolean;
 }
 
 function tempName(destination: string): string {
@@ -167,8 +223,20 @@ function removeCreatedDirs(staged: Staged): void {
   }
 }
 
+/** True while the directories bound for this output are still the ones the run observed. */
+function placeHolds(staged: Staged): boolean {
+  return stillAnchored(staged.anchor) && (staged.parent === undefined || stillAnchored(staged.parent));
+}
+
+function changed(staged: Staged): CheckUsageError {
+  return new CheckUsageError(`${staged.destination} changed while apifn check ran; ${staged.output.option} wrote nothing.`);
+}
+
 function stage(staged: Staged): void {
+  if (!stillAnchored(staged.anchor)) throw changed(staged);
   staged.createdDir = mkdirSync(path.dirname(staged.destination), { recursive: true });
+  if (!stillAnchored(staged.anchor)) throw changed(staged);
+  staged.parent = anchorOf(path.dirname(staged.destination));
   const temp = tempName(staged.destination);
   const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
   staged.temp = temp;
@@ -176,6 +244,7 @@ function stage(staged: Staged): void {
     if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
     writeFileSync(fd, staged.output.text, "utf8");
     fsyncSync(fd);
+    staged.installed = stateOf(fstatSync(fd));
   } finally {
     closeSync(fd);
   }
@@ -190,21 +259,42 @@ function backUp(staged: Staged): void {
     copyFileSync(staged.destination, backup, constants.COPYFILE_EXCL);
   }
   staged.backup = backup;
+  staged.backupState = currentState(backup);
+  // A link made by name must name the observed file; a copy must have copied it.
+  const linked = sameContent(staged.backupState, staged.before);
+  if (!linked && !sameContent(currentState(staged.destination), staged.before)) throw changed(staged);
 }
 
-/** Undoes one published output while the destination still holds exactly what this run wrote. */
-function rollBack(staged: Staged): string | null {
-  if (staged.published === undefined) {
+/** Renames the staged file over the destination, re-checking the place before each step. */
+function install(staged: Staged, hook: PublishHook | undefined): void {
+  hook?.("backup", staged.destination);
+  if (!placeHolds(staged) || !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
+  backUp(staged);
+  hook?.("rename", staged.destination);
+  // The backup link changed the destination's ctime only.
+  if (!placeHolds(staged) || !sameContent(currentState(staged.destination), staged.before)) throw changed(staged);
+  if (!sameContent(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
+  renameSync(staged.temp as string, staged.destination);
+  staged.temp = undefined;
+  staged.published = true;
+}
+
+/** Undoes one published output while the destination still holds exactly what this run installed. */
+function rollBack(staged: Staged, hook: PublishHook | undefined): string | null {
+  if (!staged.published) {
     removeQuietly(staged.temp);
     removeQuietly(staged.backup);
     removeCreatedDirs(staged);
     return null;
   }
-  if (!sameState(currentState(staged.destination), staged.published)) {
-    const kept = staged.backup ? ` Its previous bytes are in ${staged.backup}.` : "";
-    return `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
+  hook?.("rollback", staged.destination);
+  const kept = staged.backup ? ` Its previous bytes are in ${staged.backup}.` : "";
+  const conflict = `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
+  if (!placeHolds(staged) || !sameContent(currentState(staged.destination), staged.installed as FileState)) {
+    return conflict;
   }
   if (staged.backup) {
+    if (!sameContent(currentState(staged.backup), staged.backupState as FileState)) return conflict;
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);
@@ -213,59 +303,59 @@ function rollBack(staged: Staged): string | null {
   return null;
 }
 
-function rollBackAll(all: Staged[], error: unknown): CheckUsageError {
+function rollBackAll(all: Staged[], error: CheckUsageError, hook: PublishHook | undefined): CheckUsageError {
   const problems: string[] = [];
   for (const staged of [...all].reverse()) {
     try {
-      const conflict = rollBack(staged);
+      const conflict = rollBack(staged, hook);
       if (conflict) problems.push(conflict);
     } catch (restoreError) {
       problems.push(`Failed to restore ${staged.destination}: ${errorMessage(restoreError)}`);
     }
   }
-  return new CheckUsageError([errorMessage(error), ...problems].join(" "));
+  return new CheckUsageError([error.message, ...problems].join(" "));
+}
+
+function writeFailure(staged: Staged, error: unknown): CheckUsageError {
+  if (error instanceof CheckUsageError) return error;
+  return new CheckUsageError(`Failed to write ${staged.output.noun} ${staged.output.file}: ${errorMessage(error)}`);
 }
 
 /**
- * Publishes the outputs (in order), then runs `emit` (stdout). Any failure rolls back what was
- * published and throws a CheckUsageError.
+ * Publishes the outputs (in order), then awaits `emit` (stdout). Any failure, including one stdout
+ * reports after its write returned, rolls back what was published and throws a CheckUsageError.
  */
-export function publish(outputs: PlannedOutput[], emit: () => void): void {
+export async function publish(
+  outputs: PlannedOutput[],
+  emit: () => void | Promise<void>,
+  hook?: PublishHook
+): Promise<void> {
   const all: Staged[] = outputs.map((output) => ({
     output,
-    destination: output.destination,
+    destination: output.target.destination,
     before: output.observed,
+    anchor: output.target.anchor,
+    published: false,
   }));
 
   for (const staged of all) {
     try {
       stage(staged);
     } catch (error) {
-      throw rollBackAll(all, new CheckUsageError(`Failed to write ${staged.output.noun} ${staged.output.file}: ${errorMessage(error)}`));
-    }
-  }
-  for (const staged of all) {
-    if (!sameState(currentState(staged.destination), staged.before)) {
-      throw rollBackAll(
-        all,
-        new CheckUsageError(`${staged.destination} changed while apifn check ran; ${staged.output.option} wrote nothing.`)
-      );
+      throw rollBackAll(all, writeFailure(staged, error), hook);
     }
   }
   for (const staged of all) {
     try {
-      backUp(staged);
-      renameSync(staged.temp as string, staged.destination);
-      staged.temp = undefined;
-      staged.published = currentState(staged.destination);
+      install(staged, hook);
     } catch (error) {
-      throw rollBackAll(all, new CheckUsageError(`Failed to write ${staged.output.noun} ${staged.output.file}: ${errorMessage(error)}`));
+      throw rollBackAll(all, writeFailure(staged, error), hook);
     }
   }
   try {
-    emit();
+    await emit();
   } catch (error) {
-    throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(error)}`));
+    throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(error)}`), hook);
   }
   for (const staged of all) removeQuietly(staged.backup);
 }

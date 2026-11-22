@@ -2,11 +2,14 @@
  * The `apifn check` grammar, read from the raw argv. cac drops extra positionals and arguments
  * after `--`, accepts `--flag=value` on boolean flags and turns number-looking values into
  * numbers (`1.10` -> 1.1, `0123` -> 123), so `check` reads its arguments here and rejects
- * anything outside this grammar as a usage error (exit 2):
+ * anything outside this grammar, or options that cannot go together, as a usage error (exit 2),
+ * even when --help is also given:
  *
  *   apifn [global options] check [routerPath] [--spec <path>] [--base <ref> | --base-spec <pathOrUrl>]
  *     [--allow-breaking] [--write] [--format <type>] [--report <path>]
  */
+
+import { CHECK_FORMATS } from "./check-report.js";
 
 export class CheckArgsError extends Error {}
 
@@ -121,6 +124,12 @@ export function parseCheckArgv(argv: string[]): CheckArgs {
     );
   }
   args.routerPath = operands[0];
+  if (args.base !== undefined && args.baseSpec !== undefined) {
+    throw new CheckArgsError("Pass only one of --base and --base-spec.");
+  }
+  if (args.format !== undefined && !(CHECK_FORMATS as readonly string[]).includes(args.format)) {
+    throw new CheckArgsError(`Unknown --format '${args.format}'. Supported: ${CHECK_FORMATS.join(", ")}.`);
+  }
   return args;
 }
 

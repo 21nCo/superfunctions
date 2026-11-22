@@ -6,14 +6,18 @@
  *   locations), never a `git` found through the inherited PATH;
  * - git resolves the ref once (`rev-parse --verify <ref>^{commit}`); every later call names that
  *   commit;
- * - the path is walked one tree at a time; a tracked symbolic link met on the way is followed
- *   inside the same tree (never through the working tree), and one leaving the tree is an error;
+ * - the path is walked one component at a time, as the kernel resolves a path: a tracked symbolic
+ *   link met on the way is followed inside the same tree (never through the working tree) from
+ *   the directory that holds it, and `..` returns to the directory the walk actually resolved
+ *   (never a lexical parent); a link leaving the tree, more than MAX_TREE_LINKS links or a
+ *   submodule on the way is an error;
  * - only when the walk proves a component missing is the spec a new contract; when the
  *   repository ignores case (core.ignorecase, which must be readable), a missing component is
  *   matched under NFC and case folding first, and two matches are an error;
- * - the path tried first is the spec as given relative to the repository root (an in-repository
- *   symlinked directory not followed); only when it is proven absent is the file a write to the
- *   spec lands on (an untracked spec symlink followed) tried;
+ * - the path tried first is the spec as given relative to the repository root, keeping the tracked
+ *   spelling of an in-repository symlinked directory (even one back to the root); only when it is
+ *   proven absent is the file a write to the spec lands on (an untracked spec symlink followed)
+ *   tried;
  * - every git failure is an error (exit 2), never a new contract.
  */
 
@@ -157,100 +161,87 @@ function findEntry(git: Git, tree: string, name: string, at: string): TreeEntry 
   return matches[0];
 }
 
-/** Joins a symlink target onto its directory inside the tree; null when it leaves the tree. */
-function joinInTree(dir: string[], target: string): string[] | null {
-  if (target.startsWith("/")) return null;
-  const parts = [...dir];
-  for (const part of target.split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      if (parts.length === 0) return null;
-      parts.pop();
-    } else {
-      parts.push(part);
-    }
-  }
-  return parts;
+/** A directory the walk resolved: its entry name and tree object. */
+interface Frame {
+  name: string;
+  tree: string;
 }
-
-type Step =
-  | { kind: "missing" }
-  | { kind: "found"; path: string; entry: TreeEntry }
-  | { kind: "link"; pending: string[] }
-  | { kind: "tree"; tree: string; done: string[]; pending: string[] };
 
 function entryKind(entry: TreeEntry): string {
   return entry.type === "tree" ? "directory" : entry.type;
 }
 
-/** Resolves one path component of the walk in `tree`. */
-function walkStep(git: Git, tree: string, done: string[], pending: string[], ref: string): Step {
-  const entry = findEntry(git, tree, pending[0], done.join("/"));
-  if (!entry) return { kind: "missing" };
-  const here = [...done, entry.name].join("/");
-  const rest = pending.slice(1);
-  if (entry.mode === "120000") {
-    const target = git.ok(["cat-file", "blob", entry.object]);
-    const next = joinInTree(done, target);
-    if (next === null) {
-      throw new CheckUsageError(`${here} at ${ref} is a symbolic link that leaves the repository (${target}).`);
-    }
-    return { kind: "link", pending: [...next, ...rest] };
-  }
-  if (rest.length === 0) {
-    if (entry.type !== "blob") throw new CheckUsageError(`${here} at ${ref} is a ${entryKind(entry)}, not a spec file.`);
-    return { kind: "found", path: here, entry };
-  }
-  // A file where the path needs a directory: nothing is tracked at the path.
-  if (entry.type === "blob") return { kind: "missing" };
-  if (entry.type !== "tree") {
-    throw new CheckUsageError(`${here} at ${ref} is a ${entry.type}; apifn check does not read into it.`);
-  }
-  return { kind: "tree", tree: entry.object, done: [...done, entry.name], pending: rest };
+/** True when nothing but `.` and empty components is left: the component just read is the last. */
+function isLast(pending: string[]): boolean {
+  return pending.every((part) => part === "" || part === ".");
 }
 
-/** Walks `relative` in the commit's tree, following tracked symlinks inside that tree. */
+/**
+ * Walks `relative` in the commit's tree component by component, following tracked symlinks from
+ * the directory that holds them and resolving `..` against the directories actually walked.
+ */
 function walkTree(git: Git, commit: string, relative: string, ref: string): Lookup {
   const rootTree = `${commit}^{tree}`;
-  let state = { tree: rootTree, done: [] as string[], pending: relative.split("/") };
+  const frames: Frame[] = [];
+  const at = () => frames.map((frame) => frame.name).join("/");
+  let pending = relative.split("/");
   let links = 0;
-  while (state.pending.length > 0) {
-    const step = walkStep(git, state.tree, state.done, state.pending, ref);
-    if (step.kind === "missing") return { found: false };
-    if (step.kind === "found") return { found: true, path: step.path, entry: step.entry };
-    if (step.kind === "tree") {
-      state = step;
+  while (pending.length > 0) {
+    const part = pending[0];
+    pending = pending.slice(1);
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (frames.length === 0) throw new CheckUsageError(`The spec path ${relative} at ${ref} leaves the repository.`);
+      frames.pop();
       continue;
     }
-    links += 1;
-    if (links > MAX_TREE_LINKS) throw new CheckUsageError(`Too many symbolic links in ${relative} at ${ref}.`);
-    state = { tree: rootTree, done: [], pending: step.pending };
+    const entry = findEntry(git, frames.at(-1)?.tree ?? rootTree, part, at());
+    if (!entry) return { found: false };
+    const here = at() ? `${at()}/${entry.name}` : entry.name;
+    if (entry.mode === "120000") {
+      links += 1;
+      if (links > MAX_TREE_LINKS) throw new CheckUsageError(`Too many symbolic links in ${relative} at ${ref}.`);
+      const target = git.ok(["cat-file", "blob", entry.object]);
+      if (target.startsWith("/")) {
+        throw new CheckUsageError(`${here} at ${ref} is a symbolic link that leaves the repository (${target}).`);
+      }
+      pending = [...target.split("/"), ...pending];
+      continue;
+    }
+    if (isLast(pending)) {
+      if (entry.type !== "blob") throw new CheckUsageError(`${here} at ${ref} is a ${entryKind(entry)}, not a spec file.`);
+      return { found: true, path: here, entry };
+    }
+    // A file where the path needs a directory: nothing is tracked at the path.
+    if (entry.type === "blob") return { found: false };
+    if (entry.type !== "tree") {
+      throw new CheckUsageError(`${here} at ${ref} is a ${entry.type}; apifn check does not read into it.`);
+    }
+    frames.push({ name: entry.name, tree: entry.object });
   }
-  throw new CheckUsageError(`The spec path ${relative} at ${ref} resolves to the repository root.`);
+  throw new CheckUsageError(`The spec path ${relative} at ${ref} resolves to a directory.`);
 }
 
 /**
  * The spec path as given (resolved, no symlink followed) relative to the logical repository root:
- * the deepest existing ancestor whose native realpath is the repository's. Null when no ancestor
+ * the shallowest ancestor whose native realpath is the repository's, so a path through an
+ * in-repository link back to the root keeps that link's tracked spelling. Null when no ancestor
  * is the repository root.
  */
 function literalRepoPath(target: string, root: string): string | null {
   const resolved = path.resolve(target);
-  let dir = path.dirname(resolved);
-  for (;;) {
+  let found: string | null = null;
+  for (let dir = path.dirname(resolved); ; dir = path.dirname(dir)) {
     let real: string | null;
     try {
       real = realpathSync.native(dir);
     } catch {
       real = null;
     }
-    if (real === root) {
-      return toRepoPath(path.relative(dir, resolved));
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+    if (real === root) found = dir;
+    if (path.dirname(dir) === dir) break;
   }
+  return found === null ? null : toRepoPath(path.relative(found, resolved));
 }
 
 function toRepoPath(relative: string): string | null {
