@@ -87,16 +87,17 @@ export async function runAction<TOptions>(
   const diagnostics: Diagnostic[] = [];
   const baseExec = createExec();
   const baseScaffold = createScaffold();
-  const document =
-    runnerOptions.mode === "json" && runnerOptions.jsonStyle === "document"
-      ? createDocumentOutput({
-          quiet: runnerOptions.quiet,
-          verbose: runnerOptions.verbose,
-          color: runnerOptions.color,
-          stdout: runnerOptions.stdout ?? ((text: string) => process.stdout.write(text)),
-          stderr: runnerOptions.stderr ?? ((text: string) => process.stderr.write(text)),
-        })
-      : undefined;
+  const documentMode = runnerOptions.mode === "json" && runnerOptions.jsonStyle === "document";
+  const documentStderr = runnerOptions.stderr ?? ((text: string) => process.stderr.write(text));
+  const document = documentMode
+    ? createDocumentOutput({
+        quiet: runnerOptions.quiet,
+        verbose: runnerOptions.verbose,
+        color: runnerOptions.color,
+        stdout: runnerOptions.stdout ?? ((text: string) => process.stdout.write(text)),
+        stderr: documentStderr,
+      })
+    : undefined;
   const output =
     document?.service ??
     createOutput({
@@ -124,11 +125,17 @@ export async function runAction<TOptions>(
     diagnostics: diagnosticSink,
     exec: {
       command(file, args, options) {
-        return baseExec.command(file, args, {
+        const execOptions = {
           ...options,
           cwd: options?.cwd ?? cwd,
           env: options?.env ?? env,
-        });
+        };
+        if (documentMode && options?.streamOutput) {
+          // stdout carries only the result document, so streamed child output without its own writer goes to stderr.
+          execOptions.stdout = options.stdout ?? documentStderr;
+          execOptions.stderr = options.stderr ?? documentStderr;
+        }
+        return baseExec.command(file, args, execOptions);
       },
     },
     scaffold: {

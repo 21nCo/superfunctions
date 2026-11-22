@@ -1,4 +1,5 @@
 import { redactValue } from "./diagnostics.js";
+import { resolveJsonMember } from "./json-value.js";
 
 /** Code used when a thrown value carries no usable code (D8). */
 export const RUNNER_FAILED_CODE = "CLIFN_RUNNER_FAILED";
@@ -55,23 +56,68 @@ interface ThrownFields {
   exitCode?: unknown;
 }
 
+function readProperty(record: Record<string, unknown>, key: keyof ThrownFields): unknown {
+  try {
+    return record[key];
+  } catch {
+    // A throwing getter or proxy trap leaves this field unusable; the others still count.
+    return undefined;
+  }
+}
+
 function readFields(error: unknown): ThrownFields {
   if ((typeof error !== "object" || error === null) && typeof error !== "function") {
     return {};
   }
   // Each property is read once, so a getter on the thrown value runs at most once.
   const record = error as Record<string, unknown>;
-  return { code: record.code, message: record.message, details: record.details, exitCode: record.exitCode };
+  return {
+    code: readProperty(record, "code"),
+    message: readProperty(record, "message"),
+    details: readProperty(record, "details"),
+    exitCode: readProperty(record, "exitCode"),
+  };
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }
 
 function plainMessage(error: unknown, message: unknown): string {
-  if (typeof message === "string" && message.length > 0) {
+  if (isNonEmptyString(message)) {
     return message;
   }
-  if (error instanceof Error) {
-    return error.name;
+  if (isNonEmptyString(error)) {
+    return error;
   }
-  return typeof error === "string" ? error : UNKNOWN_FAILURE_MESSAGE;
+  try {
+    if (error instanceof Error && isNonEmptyString(error.name)) {
+      return error.name;
+    }
+  } catch {
+    // A proxy whose traps throw has no usable name.
+  }
+  return UNKNOWN_FAILURE_MESSAGE;
+}
+
+/**
+ * Resolves plain-object details to the JSON value the document prints, then redacts that value, so a `toJSON`
+ * cannot bring a redacted field back. Details that cannot be read, serialized or redacted, or that do not resolve
+ * to an object, are omitted; the code, message and exit code still stand.
+ */
+function documentDetails(details: unknown): Record<string, unknown> | undefined {
+  try {
+    if (!isPlainObject(details)) {
+      return undefined;
+    }
+    const resolved = resolveJsonMember("details", details);
+    if (!isPlainObject(resolved)) {
+      return undefined;
+    }
+    return redactValue(resolved) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
@@ -86,8 +132,9 @@ function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
     payload = { code: RUNNER_FAILED_CODE, message: plainMessage(error, message) };
   }
 
-  if (isPlainObject(details)) {
-    payload.details = redactValue(details);
+  const usableDetails = documentDetails(details);
+  if (usableDetails !== undefined) {
+    payload.details = usableDetails;
   }
 
   return { error: payload, exitCode: readExitCode(fields.exitCode) };
@@ -98,8 +145,8 @@ function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
  * 1. a string `code` matching `^[A-Z][A-Z0-9_]{1,63}$` is used as the code;
  * 2. a `message` that is exactly `^CLIFN_[A-Z0-9_]+$` becomes the code, and the message a fixed description;
  * 3. anything else is `CLIFN_RUNNER_FAILED`.
- * `details` is kept only when it is a plain object, and is redacted. The exit code is an integer `exitCode`
- * from 1 to 125, else 1.
+ * `details` is kept only when it is a plain object that resolves to a JSON object, and is redacted after it is
+ * resolved. The message is always a non-empty string. The exit code is an integer `exitCode` from 1 to 125, else 1.
  */
 export function mapRunnerError(error: unknown): MappedRunnerError {
   try {

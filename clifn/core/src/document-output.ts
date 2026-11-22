@@ -1,6 +1,6 @@
-import { redactDiagnostics, type Diagnostic } from "./diagnostics.js";
+import { createDiagnostic, redactValue, type Diagnostic } from "./diagnostics.js";
 import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
-import { normalizeJsonValue } from "./json-value.js";
+import { resolveJsonMember } from "./json-value.js";
 import { createOutput, type OutputService, type Spinner } from "./output.js";
 
 export interface DocumentOutputOptions {
@@ -31,22 +31,36 @@ const SERIALIZATION_FAILURE = {
   error: { code: RUNNER_FAILED_CODE, message: "Unable to serialize the result document" },
 } as const;
 
-function serializeDocument(document: unknown): string | undefined {
-  try {
-    return JSON.stringify(normalizeJsonValue(document));
-  } catch {
-    return undefined;
-  }
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * The success document always has a `data` member: a value JSON drops (undefined, a function, a symbol, or a
- * `toJSON` that returns one of those) becomes null. A value that throws while it is serialized is rethrown so the
- * caller prints the serialization-failure document.
+ * The success document always has a `data` member: the value is resolved as the member `data` (see
+ * `resolveJsonMember`), and a value JSON drops (undefined, a function, a symbol, or a `toJSON` that returns one of
+ * those for that key) becomes null. A value that throws while it is resolved is rethrown so the caller prints the
+ * serialization-failure document.
  */
 function toDocumentData(data: unknown): unknown {
-  const normalized = normalizeJsonValue(data);
-  return JSON.stringify(normalized) === undefined ? null : normalized;
+  return resolveJsonMember("data", data) ?? null;
+}
+
+/**
+ * Resolves a diagnostic to the JSON value the document prints, then redacts its details, so a `toJSON` in the
+ * details cannot bring a redacted field back. Details that do not resolve to an object are left out. Throws when
+ * the diagnostic is not an object or cannot be serialized.
+ */
+function toDocumentDiagnostic(diagnostic: Diagnostic, index: number): Record<string, unknown> {
+  const resolved = resolveJsonMember(String(index), createDiagnostic(diagnostic));
+  if (!isJsonObject(resolved)) {
+    throw new TypeError("diagnostic did not resolve to an object");
+  }
+  if (isJsonObject(resolved.details)) {
+    resolved.details = redactValue(resolved.details);
+  } else {
+    delete resolved.details;
+  }
+  return resolved;
 }
 
 /**
@@ -98,13 +112,13 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     }
   };
 
-  // A diagnostic that cannot be redacted (not an object, or a throwing getter in its details) is dropped with a
-  // warning on stderr, so it cannot cost the run its result document.
-  const redactEach = (input: readonly Diagnostic[]): Diagnostic[] => {
-    const redacted: Diagnostic[] = [];
+  // A diagnostic that cannot be resolved or redacted (not an object, or a throwing getter or toJSON in its details)
+  // is dropped with a warning on stderr, so it cannot cost the run its result document.
+  const redactEach = (input: readonly Diagnostic[]): Array<Record<string, unknown>> => {
+    const redacted: Array<Record<string, unknown>> = [];
     input.forEach((diagnostic, index) => {
       try {
-        redacted.push(...redactDiagnostics([diagnostic]));
+        redacted.push(toDocumentDiagnostic(diagnostic, index));
       } catch {
         logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted`);
       }
@@ -141,7 +155,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         if (redacted.length > 0) {
           document.diagnostics = redacted;
         }
-        text = serializeDocument(document);
+        // Every member is already a plain JSON value, so this runs no user code and drops or restores nothing.
+        text = JSON.stringify(document);
       } catch {
         text = undefined;
       }

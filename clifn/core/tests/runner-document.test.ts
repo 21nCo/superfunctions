@@ -357,6 +357,174 @@ describe("runAction with jsonStyle 'document'", () => {
   });
 });
 
+describe("document mode resolves each member to JSON once", () => {
+  const leakingDetails = () => ({
+    status: "visible",
+    toJSON: () => ({ status: "visible", password: "test-password", nested: { token: "test-token-value" } }),
+  });
+  const redactedDetails = { status: "visible", password: "[REDACTED]", nested: { token: "[REDACTED]" } };
+
+  it("redacts error details after their toJSON runs", async () => {
+    const result = await runDocument(async () => {
+      throw Object.assign(new Error("rejected"), { code: "REQUEST_REJECTED", details: leakingDetails() });
+    });
+
+    expect(result.out).not.toContain("test-password");
+    expect(result.out).not.toContain("test-token-value");
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: false,
+      error: { code: "REQUEST_REJECTED", message: "rejected", details: redactedDetails },
+    });
+  });
+
+  it("redacts added and returned diagnostics after their toJSON runs, including nested ones", async () => {
+    const result = await runDocument(async (_options, ctx) => {
+      ctx.diagnostics.add({ code: "ADDED", severity: "info", message: "added", details: leakingDetails() });
+      return {
+        data: null,
+        diagnostics: [
+          {
+            code: "RETURNED",
+            severity: "warning",
+            message: "returned",
+            details: { outer: { toJSON: () => ({ apiKey: "test-api-key", kept: 1 }) } },
+          },
+        ],
+      };
+    });
+
+    expect(result.out).not.toContain("test-password");
+    expect(result.out).not.toContain("test-api-key");
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: null,
+      diagnostics: [
+        { code: "ADDED", severity: "info", message: "added", details: redactedDetails },
+        {
+          code: "RETURNED",
+          severity: "warning",
+          message: "returned",
+          details: { outer: { apiKey: "[REDACTED]", kept: 1 } },
+        },
+      ],
+    });
+  });
+
+  it.each([
+    [
+      "throws in a getter inside the details",
+      () => ({
+        get value() {
+          throw new Error("getter failed");
+        },
+      }),
+    ],
+    [
+      "throws in its toJSON",
+      () => ({
+        toJSON() {
+          throw new Error("toJSON failed");
+        },
+      }),
+    ],
+    ["resolves to a non-object", () => ({ toJSON: () => "text" })],
+  ])("keeps the code, message and exit code and omits details that %s", async (_label, makeDetails) => {
+    const result = await runDocument(async () => {
+      throw Object.assign(new Error("conflict"), { code: "CONFLICT", exitCode: 12, details: makeDetails() });
+    });
+
+    expect(result.exitCode).toBe(12);
+    expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "CONFLICT", message: "conflict" } });
+  });
+
+  it("keeps the code and exit code when reading the details property throws", async () => {
+    const thrown = Object.assign(new Error("conflict"), { code: "CONFLICT", exitCode: 12 });
+    Object.defineProperty(thrown, "details", {
+      get() {
+        throw new Error("unreadable");
+      },
+    });
+    const result = await runDocument(async () => {
+      throw thrown;
+    });
+
+    expect(result.exitCode).toBe(12);
+    expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "CONFLICT", message: "conflict" } });
+  });
+
+  it.each([
+    ["an Error whose name is undefined", Object.assign(new Error(), { code: "TASK_FAILED", name: undefined })],
+    ["an Error whose name is empty", Object.assign(new Error(), { code: "TASK_FAILED", name: "" })],
+  ])("prints a non-empty message for %s", async (_label, thrown) => {
+    const result = await runDocument(async () => {
+      throw thrown;
+    });
+
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: false,
+      error: { code: "TASK_FAILED", message: "Unknown runner failure" },
+    });
+  });
+
+  // toJSON(key) returns a value at the top level and undefined for the member key "data".
+  const keyedToJson = (key: string) => (key === "data" ? undefined : { leaked: true });
+  const keyedFunction = () => Object.assign(() => 1, { toJSON: keyedToJson });
+  class KeyedArray extends Array<number> {
+    toJSON(key: string) {
+      return keyedToJson(key);
+    }
+  }
+
+  it.each([
+    ["returned function data", undefined, keyedFunction],
+    ["a json() fallback", (ctx: RunnerContext) => ctx.output.json(keyedFunction()), undefined],
+    ["returned array-subclass data", undefined, () => KeyedArray.from([1, 2])],
+  ])("keeps the data member as null when toJSON drops it for the key data: %s", async (_label, call, makeData) => {
+    const result = await runDocument(async (_options, ctx) => {
+      call?.(ctx);
+      return makeData === undefined ? undefined : { data: makeData() };
+    });
+
+    expect(result.exitCode).toBe(0);
+    const document = parseOnlyDocument(result);
+    expect(Object.hasOwn(document, "data")).toBe(true);
+    expect(document).toEqual({ ok: true, data: null });
+  });
+});
+
+describe("document mode exec streaming", () => {
+  const childScript = 'process.stdout.write("child-out\\n"); process.stderr.write("child-err\\n");';
+
+  it("sends streamed child output to stderr so stdout holds only the document", async () => {
+    const result = await runDocument(async (_options, ctx) => {
+      const run = await ctx.exec.command(process.execPath, ["-e", childScript], { streamOutput: true });
+      return { data: { exitCode: run.exitCode, captured: run.stdout } };
+    });
+
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: { exitCode: 0, captured: "child-out\n" } });
+    expect(result.stderr).toContain("child-out\n");
+    expect(result.stderr).toContain("child-err\n");
+  });
+
+  it("keeps explicit per-command writers", async () => {
+    const childOut: string[] = [];
+    const childErr: string[] = [];
+    const result = await runDocument(async (_options, ctx) => {
+      await ctx.exec.command(process.execPath, ["-e", childScript], {
+        streamOutput: true,
+        stdout: (chunk) => childOut.push(chunk),
+        stderr: (chunk) => childErr.push(chunk),
+      });
+      return { data: "done" };
+    });
+
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+    expect(childOut.join("")).toBe("child-out\n");
+    expect(childErr.join("")).toBe("child-err\n");
+    expect(result.stderr).toBe("");
+  });
+});
+
 describe("document mode log routing", () => {
   const everyLevel: Action = async (_options, ctx) => {
     ctx.output.debug("d");
