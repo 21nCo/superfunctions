@@ -157,6 +157,13 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     "\nvar mcp13P = \"@modelcontextprotocol/sdk\"; mcp13P = mcp13P + \"\"; require(mcp13P);\n",
     "\nvar mcp13C = \"@modelcontextprotocol/\"; mcp13C = mcp13C + \"sdk\"; require(mcp13C);\n",
     "\nvar mcp13Q = \"@modelcontextprotocol/\"; mcp13Q += \"sdk\"; require(mcp13Q);\n",
+    // A helper that exposes itself, is called through a computed key that
+    // resolves to another method, or can be rebound by eval is not inert.
+    "\n{ const h4 = { require() { return this; } }; h4.require().require = require; h4.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\n{ const h5 = { require: (id) => id, change() { this.require = module.require.bind(module); } }; { const require = \"change\"; h5[require](); } h5.require(\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\nvar h6 = { require: (id) => id }; (eval)(\"h6 = module\"); h6.require(\"@modelcontextprotocol/sdk/types.js\");\n",
+    // A computed key that cannot be fully resolved (here a cycle) can name require.
+    "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
   ];
   const inertText = [
     "\nlet i = 0; console.log(i++ / 2, i-- / 2);\nif (i) /[\"]/.test(\"x\");\nvar o = { a: 1 } / 2; function f() {} /[\"]/.test(\"y\");\n",
@@ -175,7 +182,12 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     // Cyclic updates terminate, as call arguments and as computed member keys.
     "\n{ let msg = \"\"; msg = msg + \".\"; console.log(msg); }\n",
     "\n{ let tm = \"\"; tm = `${tm}.`; console.log(tm); }\n",
-    "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\n{ let ma = \"x\", mb = \"y\"; ma = mb + \"x\"; mb = ma + \"y\"; console.log(ma); const ko = { x: () => 0 }; ko[mb](\"other-pkg\"); }\n",
+    // Computed keys resolve like loader keys; a literal short-circuit is static.
+    "\n{ const k = \"require\"; const h7 = { require(id) { return id; } }; h7[k](\"@modelcontextprotocol/sdk/types.js\"); h7[(\"require\")](\"@modelcontextprotocol/sdk/types.js\"); }\n",
+    "\nrequire(\"node:path\" || \"@modelcontextprotocol/sdk/types.js\");\n",
+    // A known non-loader call spends no resolution budget on its arguments.
+    `\n{ let v0 = "a"; ${Array.from({ length: 14 }, (_, i) => `let v${i + 1} = v${i} + v${i};`).join(" ")} console.log(v14); }\n`,
   ];
   const artifacts = ["index.js", "index.cjs"];
   const appendToBuiltBundle = (file: string, code: string) => builtCopy((dist) => {
@@ -198,18 +210,25 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
     BUILT_TIMEOUT,
   );
 
+  // More candidate specifiers than the verifier folds fails instead of passing.
+  const overflow = `\nvar p65 = ${Array.from({ length: 64 }, (_, i) => `c${i} ? "a${i}" : `).join("")}"@modelcontextprotocol/";\nrequire(p65 + "sdk");\n`;
+  runOnBuild.each(artifacts)("fails closed on an SDK load with more candidate specifiers than it folds in the built %s", (file) => {
+    expect(() => verifyBundledSdk(appendToBuiltBundle(file, overflow))).toThrow("more than 64 candidate strings");
+  }, BUILT_TIMEOUT);
+
   it("fails closed on a bundle it cannot scan", () => {
     expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: "var broken = \"unterminated;\nexport { broken };\n" })).message).toContain(
       "cannot scan the bundle for @modelcontextprotocol/sdk imports: Unterminated string literal.",
     );
   });
 
-  it("fails closed when the values of a call cannot be resolved within the step budget", () => {
+  it("fails closed when the values of a loader call cannot be resolved within the step budget", () => {
     let chain = "var v0 = \"a\";\n";
     for (let i = 1; i <= 30; i++) chain += `var v${i} = v${i - 1} + v${i - 1};\n`;
-    expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}f(v30);\n` })).message).toContain(
+    expect(failure(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}require(v30);\n` })).message).toContain(
       "cannot resolve the values of a call in the bundle within 10000 steps",
     );
+    expect(() => verifyBundledSdk(fixture({ pin: "1.32.2", installedVersion: "1.32.2", esm: `${chain}f(v30);\n` }))).not.toThrow();
   });
 
   it("accepts a bundle whose SDK sources come from the pinned version", () => {
