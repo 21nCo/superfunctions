@@ -348,7 +348,8 @@ function repairText(head: Head, specPath: string, committed: CommittedSpec): str
 
 function isJsonText(raw: string): boolean {
   try {
-    JSON.parse(raw);
+    // A leading byte-order mark is not JSON whitespace, but editors write one.
+    JSON.parse(raw.replace(/^\uFEFF/, ""));
     return true;
   } catch {
     return false;

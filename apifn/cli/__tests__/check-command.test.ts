@@ -2078,6 +2078,7 @@ describe("apifn check: --write keeps the committed format, told by content", () 
     ["flow-style YAML at a .json path", "contract.json", "{openapi: 3.1.0, info: {title: x}}\n", "yaml"],
     ["block YAML at a .json path", "contract.json", "openapi: 3.1.0\n", "yaml"],
     ["JSON at an extensionless path", "contract", '{"openapi": "3.1.0"}\n', "json"],
+    ["JSON with a byte-order mark at a .json path", "contract.json", '\uFEFF{"openapi": "3.1.0"}\n', "json"],
     ["JSON at a .yml path", "contract.yml", '{"openapi": "3.1.0"}\n', "json"],
     ["a missing spec at a .json path", "contract.json", null, "json"],
     ["a missing spec at a .yml path", "contract.yml", null, "yaml"],
