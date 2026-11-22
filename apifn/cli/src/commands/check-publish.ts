@@ -32,13 +32,14 @@
  *   through that descriptor. An edit in place changes the change time, which no writer can set,
  *   and its bytes; size and modification time are not proof.
  * - stdout is part of the transaction: the backups are kept until the stdout write has completed
- *   (its callback, not its return). If that or a later step fails, every published output is
- *   rolled back; bytes another writer put there are left alone and the error names the conflict.
+ *   (its callback, not its return), which is the commit. If a step before it fails, every
+ *   published output is rolled back; bytes another writer put there are left alone and the error
+ *   names the conflict.
  * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal is recorded, every
  *   output is rolled back if it came before the commit (the end of the stdout write, which a
  *   signal does not wait for), and then the signal is raised again unless another listener (an
- *   embedding host's) already had it. A run that writes no file holds no signal.
- *   Each time the run yields to the event loop, every protected path is checked again.
+ *   embedding host's) already had it. A run that writes no file holds no signal. When the run
+ *   yields to the event loop before stdout, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. A run that cannot clean up (killed
@@ -602,9 +603,12 @@ function writeFailure(staged: Staged, error: unknown): CheckUsageError {
 
 const HELD_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-/** Lets the event loop run once, so a held signal reaches its listener. */
+/**
+ * Lets the event loop pass its poll phase once, so a held signal already raised reaches its
+ * listener (an immediate scheduled during the poll phase runs before the loop polls again).
+ */
 function nextTurn(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
 interface HeldSignals {
@@ -616,17 +620,22 @@ interface HeldSignals {
 }
 
 /**
- * Records SIGINT, SIGTERM and SIGHUP until `release`, which removes the recorder and, when no other
- * listener (an embedding host's) has had the signal, raises it again for its default action.
+ * Records SIGINT, SIGTERM and SIGHUP until `release`, which removes the recorder and raises again
+ * each signal that no other listener had (an embedding host's, a one-shot one included), so it
+ * keeps its default action.
  */
 function holdSignals(): HeldSignals {
   let received: NodeJS.Signals | undefined;
+  const unhandled = new Set<NodeJS.Signals>();
+  // Listeners present before the recorder: a one-shot one is gone by the time the recorder runs.
+  const hosted = new Set<NodeJS.Signals>(HELD_SIGNALS.filter((signal) => process.listenerCount(signal) > 0));
   let notify: (signal: NodeJS.Signals) => void = () => {};
   const arrived = new Promise<NodeJS.Signals>((resolve) => {
     notify = resolve;
   });
   const record = (signal: NodeJS.Signals) => {
     received ??= signal;
+    if (!hosted.has(signal) && process.listenerCount(signal) <= 1) unhandled.add(signal);
     notify(signal);
   };
   for (const signal of HELD_SIGNALS) process.on(signal, record);
@@ -635,7 +644,7 @@ function holdSignals(): HeldSignals {
     arrived,
     release: () => {
       for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
-      if (received !== undefined && process.listenerCount(received) === 0) process.kill(process.pid, received);
+      for (const signal of unhandled) process.kill(process.pid, signal);
     },
   };
 }
@@ -695,8 +704,8 @@ async function publishAll(
 ): Promise<void> {
   const interrupted = (signal: NodeJS.Signals) =>
     rollBackAll(all, new CheckUsageError(`apifn check received ${signal} while it wrote its outputs.`), hook);
-  // Whenever the run yields to the event loop, a held signal can arrive and another process can
-  // act: after each yield, roll back on a signal and check every protected path again.
+  // When the run yields to the event loop before stdout, a held signal can arrive and another
+  // process can act: after the yield, roll back on a signal and check every protected path again.
   const checkpoint = async () => {
     await nextTurn();
     const signal = signals.received();
@@ -728,6 +737,6 @@ async function publishAll(
   if ("error" in outcome) {
     throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(outcome.error)}`), hook);
   }
-  await checkpoint();
+  // Committed: the report is delivered, so nothing after this point undoes the outputs it names.
   for (const staged of all) removeQuietly(staged.backup);
 }

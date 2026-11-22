@@ -3440,7 +3440,7 @@ describe("apifn check: separation is established on the reserved destination bef
   });
 
   /** Runs check in a child process that sends itself SIGTERM at `step` for the report. */
-  async function interrupted(step: string, write: boolean, alias = false): Promise<{ dir: string; code: number | null; signal: string | null; stdout: string }> {
+  async function interrupted(step: string, write: boolean, alias = false, host = ""): Promise<{ dir: string; code: number | null; signal: string | null; stdout: string }> {
     const root = await fixtures();
     const dir = path.join(root, "base");
     await mkdir(path.join(dir, ".apifn"));
@@ -3451,7 +3451,10 @@ describe("apifn check: separation is established on the reserved destination bef
       [
         `import { symlinkSync } from "node:fs";`,
         `import { runCheckCommand } from ${JSON.stringify(check)};`,
-        `await runCheckCommand({`,
+        `let handled = 0;`,
+        host === "once" ? `process.once("SIGTERM", () => { handled += 1; });` : "",
+        host === "sigint" ? `process.on("SIGINT", () => { handled += 1; });` : "",
+        `const code = await runCheckCommand({`,
         `  cwd: ${JSON.stringify(dir)},`,
         `  config: ${JSON.stringify(CONFIG)},`,
         `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
@@ -3466,11 +3469,12 @@ describe("apifn check: separation is established on the reserved destination bef
         `  },`,
         `  publishHook: (step, destination) => {`,
         `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
+        host === "sigint" ? `    process.kill(process.pid, "SIGINT");` : "",
         `    process.kill(process.pid, "SIGTERM");`,
         alias ? `    symlinkSync(destination, ${JSON.stringify(path.join(dir, SPEC))});` : "",
         `  },`,
         `});`,
-        `process.stdout.write("survived\\n");`,
+        `process.stdout.write(\`survived handled=\${handled} code=\${code}\\n\`);`,
       ].join("\n")
     );
     const jiti = path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
@@ -3562,6 +3566,44 @@ describe("apifn check: separation is established on the reserved destination bef
     } finally {
       process.removeListener("SIGTERM", onTerm);
     }
+  });
+
+  it.skipIf(POSIX_ONLY)("a one-shot host SIGTERM handler is honoured: the host survives and the outputs are rolled back", async () => {
+    const { dir, code, signal, stdout } = await interrupted("installed", true, false, "once");
+    expect({ code, signal, stdout }).toEqual({ code: 0, signal: null, stdout: "survived handled=1 code=2\n" });
+    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+  }, 30_000);
+
+  it.skipIf(POSIX_ONLY)("an unhandled SIGTERM keeps its default action after a host-handled SIGINT came first", async () => {
+    const { dir, code, signal, stdout } = await interrupted("installed", false, false, "sigint");
+    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+    expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+  }, 30_000);
+
+  it("the delivered report is the commit: a guarded file edited while stdout completes does not undo it", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await cp(path.join(dir, SPEC), path.join(dir, "base.yml"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    let stdout = "";
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      write: true,
+      reportPath: "report.md",
+      baseSpec: "base.yml",
+      writeStdout: (text) => {
+        stdout += text;
+        appendFileSync(path.join(dir, "base.yml"), "\n");
+      },
+    });
+    expect({ code, errors }).toEqual({ code: 0, errors: [] });
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe(stdout);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
+    expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
   });
 
   it.skipIf(POSIX_ONLY)("SIGTERM that comes with an alias at 'reserved' is still raised after the rollback", async () => {
