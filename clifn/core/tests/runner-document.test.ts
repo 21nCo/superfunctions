@@ -1107,8 +1107,11 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     for (const text of ['plain', 'q"b\\', "\u0000\u001f\n\t", "\ud83d\ude00", "\ud800x\udc00", "end\ud83d"]) {
       const budget = createDocumentBudget();
       const before = budget.bytesLeft;
-      expect(resolveJsonMember("k", text, { budget })).toBe(text);
-      expect(before - budget.bytesLeft).toBe(JSON.stringify(text).length);
+      // An array and its item, or an object and its member, cost VALUE_BYTES each; the string adds its JSON length.
+      expect(resolveJsonMember("k", [text], { budget })).toEqual([text]);
+      expect(before - budget.bytesLeft).toBe(2 * VALUE_BYTES + JSON.stringify(text).length);
+      expect(resolveJsonMember("k", { [text]: 1 }, { budget })).toEqual({ [text]: 1 });
+      expect(before - budget.bytesLeft).toBe(4 * VALUE_BYTES + 2 * JSON.stringify(text).length);
     }
 
     // A sensitive member is "[REDACTED]" unless JSON drops it; nothing under it runs.
@@ -1156,6 +1159,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
           data: { ok: 1 },
           diagnostics: Array.from({ length: 60 }, (_, i) => ({ code: "D", severity: "info", message: String(i), details: { list: items(20_000, {}) } })),
         }),
+        // Seven retained 20 MiB ropes as details: rejected by length, never flattened, and the diagnostics stay.
+        ropes: () => {
+          const ropes = Array.from({ length: 7 }, (_, i) => ("x" + i).repeat(10 * 2 ** 20));
+          return {
+            data: 1,
+            diagnostics: ropes.map((rope, i) => ({ code: "ROPE", severity: "info", message: String(i), details: { toJSON: () => rope } })),
+            nested: ropes.map((rope) => ({ code: "NESTED", severity: "info", message: "n", details: { rope } })),
+          };
+        },
         records: () => ({ data: Array.from({ length: 1000 }, (_, id) => ({ id, tags: ["a"] })) }),
       };
       import(${JSON.stringify(pathToFileURL(runner).href)}).then(async ({ runAction }) => {
@@ -1167,6 +1179,9 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
             if (result.error) {
               for (const diagnostic of result.diagnostics) ctx.diagnostics.add(diagnostic);
               throw result.error;
+            }
+            if (result.nested) {
+              return { data: result.data, diagnostics: [...result.diagnostics, ...result.nested] };
             }
             return result;
           }, {}, {
@@ -1199,6 +1214,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         ok: false,
         error: { code: "EXPECTED", message: "nul" },
         diagnostics: [{ code: "NUL", severity: "info", message: "nul" }],
+      });
+      expect(results.ropes.exitCode).toBe(0);
+      expect(documentOf("ropes")).toEqual({
+        ok: true,
+        data: 1,
+        diagnostics: [
+          ...Array.from({ length: 7 }, (_, i) => ({ code: "ROPE", severity: "info", message: String(i) })),
+          ...Array.from({ length: 7 }, () => ({ code: "NESTED", severity: "info", message: "n" })),
+        ],
       });
       // The diagnostics share one budget: details that no longer fit are left out, and the outcome stands.
       const withDiagnostics = documentOf("diagnostics");

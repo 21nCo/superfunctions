@@ -113,11 +113,11 @@ function spend(walk: Walk, bytes: number): void {
 }
 
 /**
- * The length of the JSON string literal for `text`, counted without building it; the count stops once it passes
- * `limit`, so an oversized string costs no allocation before the budget rejects it.
+ * The length of the JSON string literal for `text`, counted without building it. A string longer than `limit` is
+ * rejected by its length alone, before any scan could flatten it, and the count stops once it passes `limit`.
  */
 function jsonStringLength(text: string, limit: number): number {
-  if (!ESCAPED.test(text)) {
+  if (text.length + 2 > limit || !ESCAPED.test(text)) {
     return text.length + 2;
   }
   let length = 2;
@@ -202,7 +202,9 @@ function serializeProperty(walk: Walk, holder: object, key: string): unknown {
     return serializeNode(walk, value, original);
   }
   const primitive = toJsonPrimitive(value);
-  if (typeof primitive === "string") {
+  // Only strings kept inside the result count: a member that is a string itself is printed as it is (data) or left
+  // out (details), so it is never scanned.
+  if (typeof primitive === "string" && walk.nodes.size > 0) {
     spend(walk, jsonStringLength(primitive, walk.budget.bytesLeft));
   }
   return primitive;
