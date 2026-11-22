@@ -48,7 +48,8 @@ export function isWin32AliasedSegment(segment: string): boolean {
   if (segment === "." || segment === "..") {
     return false;
   }
-  return /[. ]$/.test(segment) || WIN32_DEVICE_NAME.test((segment.split(".")[0] ?? "").trimEnd());
+  // Win32 strips only ASCII spaces (and dots) here; other whitespace, such as U+00A0, is part of the name.
+  return /[. ]$/.test(segment) || WIN32_DEVICE_NAME.test((segment.split(".")[0] ?? "").replace(/ +$/, ""));
 }
 
 /**
