@@ -14,11 +14,17 @@
 // Usage: node scripts/verify-mcpfn-bundled-sdk.mjs, run from the package
 // directory (the core and auth build scripts run it after tsup). The CLI only
 // accepts the McpFn packages that inline the SDK.
+//
+// The module imports only Node built-ins, so a tsup config can load
+// `bundledSdkBanner` anywhere. The release workflow installs each package on
+// its own (`npm install --workspaces=false` in the package directory), so the
+// repository root has no node_modules: TypeScript is loaded on first use from
+// the package being verified or built (see loadTypeScript).
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
 
 export const SDK_NAME = "@modelcontextprotocol/sdk";
 const SDK_SEGMENT = `node_modules/${SDK_NAME}/`;
@@ -64,6 +70,37 @@ export function bundledSdkBanner(packageRoot) {
   return `/*! bundled ${SDK_NAME}@${resolveInstalledSdk(packageRoot).version} */`;
 }
 
+let ts;
+let operators;
+
+// Loads TypeScript once, resolving it like the package would: from the
+// package being verified, then the current directory (the package whose build
+// or tests run, which may verify a copy elsewhere), then this script's own
+// location (a workspace install). None resolving fails closed.
+function loadTypeScript(packageRoot) {
+  if (ts !== undefined) return;
+  const bases = [packageRoot, process.cwd(), path.dirname(fileURLToPath(import.meta.url))];
+  for (const base of bases) {
+    try {
+      ts = createRequire(path.join(path.resolve(base), "package.json"))("typescript");
+      break;
+    } catch (error) {
+      if (error?.code !== "MODULE_NOT_FOUND") throw error;
+    }
+  }
+  if (ts === undefined) {
+    throw new BundledSdkError(`typescript is not installed for ${packageRoot}; install the package's devDependencies to scan its bundles`, { packageRoot });
+  }
+  const { SyntaxKind } = ts;
+  const logicalAssignments = [SyntaxKind.BarBarEqualsToken, SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.QuestionQuestionEqualsToken];
+  operators = {
+    sequence: new Set([SyntaxKind.CommaToken, SyntaxKind.EqualsToken]),
+    either: new Set([SyntaxKind.BarBarToken, SyntaxKind.AmpersandAmpersandToken, SyntaxKind.QuestionQuestionToken, ...logicalAssignments]),
+    value: new Set([SyntaxKind.EqualsToken, ...logicalAssignments]),
+    concat: new Set([SyntaxKind.PlusToken, SyntaxKind.PlusEqualsToken]),
+  };
+}
+
 // Data ban (MCP-13): the bundle inlines the SDK, so its executable code never
 // needs the SDK package name as data. Every string literal, template fragment
 // (cooked or raw text) and constant-folded string expression whose value
@@ -97,12 +134,6 @@ export function bundledSdkBanner(packageRoot) {
 // SDK_NAME.length - 1 characters and, once it contains the name, the window
 // where the name was completed. Each fold has a step budget and a cap on
 // distinct candidates, and exceeding either fails closed.
-const { SyntaxKind } = ts;
-const SEQUENCE_OPERATORS = new Set([SyntaxKind.CommaToken, SyntaxKind.EqualsToken]);
-const LOGICAL_ASSIGNMENTS = [SyntaxKind.BarBarEqualsToken, SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.QuestionQuestionEqualsToken];
-const EITHER_OPERATORS = new Set([SyntaxKind.BarBarToken, SyntaxKind.AmpersandAmpersandToken, SyntaxKind.QuestionQuestionToken, ...LOGICAL_ASSIGNMENTS]);
-const VALUE_ASSIGNMENTS = new Set([SyntaxKind.EqualsToken, ...LOGICAL_ASSIGNMENTS]);
-const CONCAT_OPERATORS = new Set([SyntaxKind.PlusToken, SyntaxKind.PlusEqualsToken]);
 const MAX_STRING_VALUES = 64;
 const MAX_RESOLUTION_STEPS = 10_000;
 const MAX_TEXT = 1024;
@@ -110,7 +141,7 @@ const EDGE = SDK_NAME.length - 1;
 const FOUND = SDK_NAME.length;
 const hasSdkName = (text) => typeof text === "string" && text.includes(SDK_NAME);
 const isTemplateFragment = (node) => ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node);
-const isConcat = (node) => ts.isBinaryExpression(node) && CONCAT_OPERATORS.has(node.operatorToken.kind);
+const isConcat = (node) => ts.isBinaryExpression(node) && operators.concat.has(node.operatorToken.kind);
 
 // The matching automaton of SDK_NAME (Knuth-Morris-Pratt): for each character
 // of the name, the next state from every state. Any other character returns
@@ -201,8 +232,8 @@ function indexBindings(file, source) {
     if (ts.isBinaryExpression(node) && ts.isIdentifier(ts.skipParentheses(node.left))) {
       const kind = node.operatorToken.kind;
       // `x = y` (or `||=`, `&&=`, `??=`) can make x y; `x += y` makes it `x + y`.
-      if (VALUE_ASSIGNMENTS.has(kind)) add(ts.skipParentheses(node.left), node.right);
-      else if (kind === SyntaxKind.PlusEqualsToken) add(ts.skipParentheses(node.left), node);
+      if (operators.value.has(kind)) add(ts.skipParentheses(node.left), node.right);
+      else if (kind === ts.SyntaxKind.PlusEqualsToken) add(ts.skipParentheses(node.left), node);
     }
     ts.forEachChild(node, visit);
   };
@@ -261,9 +292,9 @@ function stringValues(node, scope) {
   }
   if (!ts.isBinaryExpression(node)) return [];
   const kind = node.operatorToken.kind;
-  if (SEQUENCE_OPERATORS.has(kind)) return stringValues(node.right, scope);
-  if (EITHER_OPERATORS.has(kind)) return distinct([...stringValues(node.left, scope), ...stringValues(node.right, scope)]);
-  if (CONCAT_OPERATORS.has(kind)) return combine([stringValues(node.left, scope), stringValues(node.right, scope)], scope);
+  if (operators.sequence.has(kind)) return stringValues(node.right, scope);
+  if (operators.either.has(kind)) return distinct([...stringValues(node.left, scope), ...stringValues(node.right, scope)]);
+  if (operators.concat.has(kind)) return combine([stringValues(node.left, scope), stringValues(node.right, scope)], scope);
   return [];
 }
 
@@ -377,6 +408,7 @@ export function verifyBundledSdk(packageRoot) {
   const root = path.resolve(packageRoot);
   const manifest = readJson(path.join(root, "package.json"));
   const pinned = readPin(manifest);
+  loadTypeScript(root);
   const bundles = [];
   for (const { file, map } of BUNDLES) {
     const bundlePath = path.join(root, "dist", file);

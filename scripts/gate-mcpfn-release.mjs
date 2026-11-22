@@ -664,6 +664,11 @@ try {
   run("cloudflare:worker-startup", process.execPath, [
     "scripts/test-mcpfn-cloudflare-worker.mjs",
   ], { timeout: 90_000 });
+  // publish-tag.yml installs core and auth on their own (no root
+  // node_modules) before it builds, typechecks, tests and packs them.
+  run("release:isolated-pack", process.execPath, [
+    "scripts/test-mcpfn-isolated-release.mjs",
+  ], { timeout: 900_000 });
 
   const packageNames = ["@mcpfn/core", "@mcpfn/client", "@mcpfn/auth", "@mcpfn/testing", "@mcpfn/inspector", "@mcpfn/datafn", "@mcpfn/cli"];
   run("packages:esm-import", process.execPath, [

@@ -1,8 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { BundledSdkError, bundledSdkBanner, verifyBundledSdk } from "../../../scripts/verify-mcpfn-bundled-sdk.mjs";
 
@@ -325,6 +326,25 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
 
   it("stamps the SDK version installed for the package being built", () => {
     expect(bundledSdkBanner(fixture({ pin: "1.32.2", installedVersion: "1.32.2" }))).toBe("/*! bundled @modelcontextprotocol/sdk@1.32.2 */");
+  });
+
+  // The release workflow installs this package on its own, so the repository
+  // root has no node_modules: the verifier must load with Node built-ins only
+  // (the tsup banner) and fail closed when no TypeScript resolves.
+  it("loads without repository node_modules and fails closed without TypeScript", () => {
+    const dir = fixture({ pin: "1.32.2", installedVersion: "1.32.2" });
+    const isolated = mkdtempSync(join(tmpdir(), "mcpfn-isolated-verifier-"));
+    fixtures.push(isolated);
+    const verifier = join(isolated, "verify-mcpfn-bundled-sdk.mjs");
+    writeFileSync(verifier, readFileSync(new URL("../../../scripts/verify-mcpfn-bundled-sdk.mjs", import.meta.url)));
+    const script = [
+      `const verifier = await import(${JSON.stringify(pathToFileURL(verifier).href)});`,
+      `console.log(verifier.bundledSdkBanner(${JSON.stringify(dir)}));`,
+      `try { verifier.verifyBundledSdk(${JSON.stringify(dir)}); } catch (error) { console.log(error.name + ": " + error.message); }`,
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: isolated, encoding: "utf8" });
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(`/*! bundled @modelcontextprotocol/sdk@1.32.2 */\nBundledSdkError: typescript is not installed for ${dir}; install the package's devDependencies to scan its bundles\n`);
   });
 
   it("fails when the bundle imports the SDK instead of inlining it", () => {
