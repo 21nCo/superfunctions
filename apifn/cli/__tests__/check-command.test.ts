@@ -3200,7 +3200,8 @@ describe("apifn check: publication re-checks every protected path after each cha
     return { dir, code, errors: errors.join("\n"), stdout };
   }
 
-  for (const write of [false, true]) {
+  // With --write the missing spec's name is this run's own reservation by then (round 9 covers it).
+  for (const write of [false]) {
     it.skipIf(POSIX_ONLY)(`a missing spec name that comes to reach the report is rolled back: exit 2, the spec stays absent, nothing is left${write ? " (--write)" : ""}`, async () => {
       const { dir, code, errors, stdout } = await checkReaching(
         async () => {},
@@ -3372,4 +3373,122 @@ describe("apifn check: publication re-checks every protected path after each cha
     expect(after).toEqual(before);
     expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
   });
+});
+
+describe("apifn check: separation is established on the reserved destination before any bytes exist (round 9)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  for (const write of [false, true]) {
+    it.skipIf(POSIX_ONLY)(`a missing spec name that reaches the report's reservation stops the run before any temp file or byte exists${write ? " (--write)" : ""}`, async () => {
+      const root = await fixtures();
+      const dir = path.join(root, "base");
+      await mkdir(path.join(dir, ".apifn"));
+      const errors: string[] = [];
+      const steps: string[] = [];
+      let stdout = "";
+      let reservation = "";
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        reportPath: path.join(".apifn", "report.md"),
+        format: "json",
+        write,
+        writeStdout: (text) => {
+          stdout += text;
+        },
+        publishHook: (step, destination) => {
+          steps.push(step);
+          if (step !== "reserved") return;
+          // Stands in for a filesystem that joins the two names (a vfat short name, a case fold).
+          reservation = readFileSync(destination, "utf8");
+          symlinkSync(destination, path.join(dir, SPEC));
+        },
+      });
+      expect(code).toBe(2);
+      expect(stdout).toBe("");
+      expect(reservation).toBe("");
+      // The first reservation is checked before another output is reserved or any temp is staged.
+      expect(steps).toEqual(["reserved"]);
+      expect(errors.join("\n")).toContain(write ? "reached the output of --write" : "reached the spec .apifn/openapi.yml");
+      expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+      expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(["openapi.yml"]);
+      expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
+    });
+  }
+
+  it("a reservation another writer replaced is kept and named", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      reportPath: "report.md",
+      writeStdout: () => {},
+      publishHook: (step, destination) => {
+        if (step !== "reserved") return;
+        writeFileSync(destination, "another writer\n");
+        appendFileSync(path.join(dir, SPEC), "# reached\n");
+      },
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("changed after apifn check reserved it");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("another writer\n");
+  });
+
+  /** Runs check in a child process that sends itself SIGTERM at `step` for the report. */
+  async function interrupted(step: string, write: boolean, alias = false): Promise<{ dir: string; code: number | null; signal: string | null; stdout: string }> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    const script = path.join(root, "interrupt.ts");
+    const check = path.join(import.meta.dirname, "..", "src", "commands", "check.ts");
+    await writeFile(
+      script,
+      [
+        `import { symlinkSync } from "node:fs";`,
+        `import { runCheckCommand } from ${JSON.stringify(check)};`,
+        `await runCheckCommand({`,
+        `  cwd: ${JSON.stringify(dir)},`,
+        `  config: ${JSON.stringify(CONFIG)},`,
+        `  output: { error: (message) => process.stderr.write(message + "\\n") },`,
+        `  reportPath: ".apifn/report.md",`,
+        `  format: "json",`,
+        `  write: ${write},`,
+        `  publishHook: (step, destination) => {`,
+        `    if (step !== ${JSON.stringify(step)} || !destination.endsWith("report.md")) return;`,
+        `    process.kill(process.pid, "SIGTERM");`,
+        alias ? `    symlinkSync(destination, ${JSON.stringify(path.join(dir, SPEC))});` : "",
+        `  },`,
+        `});`,
+        `process.stdout.write("survived\\n");`,
+      ].join("\n")
+    );
+    const jiti = path.join(path.dirname(createRequire(import.meta.url).resolve("jiti/package.json")), "lib", "jiti-cli.mjs");
+    const child = spawn(process.execPath, [jiti, script], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => child.on("close", (exit, sig) => resolve([exit, sig])));
+    return { dir, code, signal, stdout };
+  }
+
+  for (const [step, write] of [["reserved", false], ["installed", false], ["installed", true]] as const) {
+    it.skipIf(POSIX_ONLY)(`SIGTERM at '${step}' rolls back every output and is raised again${write ? " (--write)" : ""}`, async () => {
+      const { dir, code, signal, stdout } = await interrupted(step, write);
+      expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+    }, 30_000);
+  }
+
+  it.skipIf(POSIX_ONLY)("SIGTERM that comes with an alias at 'reserved' is still raised after the rollback", async () => {
+    const { dir, code, signal, stdout } = await interrupted("reserved", false, true);
+    expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
+    expect((await readdir(path.join(dir, ".apifn"))).sort()).toEqual(["openapi.yml"]);
+    expect(existsSync(path.join(dir, ".apifn", "report.md"))).toBe(false);
+  }, 30_000);
 });

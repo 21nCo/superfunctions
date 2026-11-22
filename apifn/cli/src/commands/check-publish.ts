@@ -15,10 +15,15 @@
  *   or Unicode normalization where a probe entry built from them folds (or cannot tell). The
  *   directory each output was observed in is bound for the run: it must still be that directory
  *   at every later step.
+ * - Separation is established on the exact destination entries before any of them holds bytes:
+ *   each missing destination is first reserved as an empty file (O_EXCL) and every protected path
+ *   is checked again; only when every output is reserved and checked is any byte written. Each
+ *   temp file is created empty and checked the same way before its bytes are written through its
+ *   descriptor. A reservation is removed again only while it is still this run's empty file.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
- *   (a symlinked spec keeps its link: the rename lands on the link's target). The identity of
- *   what this run installed is the staged file's own (rename keeps the inode), never a lookup of
- *   the destination after the rename.
+ *   (or over its reservation; a symlinked spec keeps its link: the rename lands on the link's
+ *   target). The identity of what this run installed is the staged file's own (rename keeps the
+ *   inode), never a lookup of the destination after the rename.
  * - Immediately before the backup, the rename and each rollback step, the directory and the
  *   destination are checked again: the destination must still be the file the run observed (or
  *   still absent) before publishing. Before a rollback restores or unlinks an output, the run must
@@ -29,12 +34,15 @@
  * - stdout is part of the transaction: the backups are kept until the stdout write has completed
  *   (its callback, not its return). If that or a later step fails, every published output is
  *   rolled back; bytes another writer put there are left alone and the error names the conflict.
+ * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal is recorded, every
+ *   output is rolled back if it came before the commit (the end of the stdout write), and then the
+ *   handlers are restored and the signal raised again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
- * and the rename (a window of one system call) is not detected. Where a filesystem joins an
- * output's name with a protected one in a way no name or probe predicts, the output is reachable
- * through that name from its rename until the check that follows (one system call later) rolls it
- * back; a reader in that window, or a run killed inside it, can see it there.
+ * and the rename (a window of one system call) is not detected. A run that cannot clean up (killed
+ * by SIGKILL, a crash) can leave an empty reservation at an output's own name or a staged temp
+ * file beside it; output bytes never become reachable through a protected name, because every
+ * name that holds them was checked while it was still empty.
  */
 
 import {
@@ -285,14 +293,17 @@ export function guardOf(role: string, file: string): Guarded {
 
 /** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
  * the run created one directory for a destination, named in place of the destination;
+ * `reserved`: right after an empty reservation was created at a missing destination;
  * `installed`: right after an output was renamed into place). */
-export type PublishStep = "mkdir" | "backup" | "rename" | "installed" | "rollback";
+export type PublishStep = "mkdir" | "reserved" | "backup" | "rename" | "installed" | "rollback";
 export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
   output: PlannedOutput;
   destination: string;
   before: FileState;
+  /** The empty file this run created at a missing destination, until the rename replaces it. */
+  reserved?: FileState;
   anchor: Anchor;
   /** The destination's own directory once it exists. */
   parent?: Anchor;
@@ -394,7 +405,12 @@ function changed(staged: Staged): CheckUsageError {
  * file (with a backup link's change time) or absence. */
 function expectedNow(staged: Staged): FileState {
   if (staged.published) return staged.installed as FileState;
-  return staged.backup === undefined ? staged.before : expectedBeforeRename(staged);
+  return staged.backup === undefined ? heldNow(staged) : expectedBeforeRename(staged);
+}
+
+/** What the destination holds before this run publishes there: its reservation or the observed file. */
+function heldNow(staged: Staged): FileState {
+  return staged.reserved ?? staged.before;
 }
 
 /** Checks, after a change the run made for `staged`, that no protected path changed. */
@@ -419,15 +435,46 @@ function verifier(all: Staged[], guarded: Guarded[]): Verify {
   };
 }
 
-function stage(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
+/**
+ * Creates the destination's directories and, when the destination is missing, an empty
+ * reservation there (O_EXCL), then checks every protected path before any output holds bytes.
+ */
+function reserve(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   if (!stillAnchored(staged.anchor)) throw changed(staged);
   makeParents(staged, hook, verify);
   if (!placeHolds(staged)) throw changed(staged);
   staged.parent = anchorOf(path.dirname(staged.destination));
+  if (staged.before !== null) return;
+  const fd = openSync(staged.destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  try {
+    staged.reserved = stateOf(fstatSync(fd, BIG));
+  } finally {
+    closeSync(fd);
+  }
+  hook?.("reserved", staged.destination);
+  verify(staged);
+}
+
+/** Removes the reservation while it is still this run's empty file; another writer's is kept. */
+function releaseReservation(staged: Staged): string | null {
+  if (staged.reserved === undefined) return null;
+  const now = currentState(staged.destination);
+  if (now === null) return null;
+  if (!dirsHold(staged) || !sameState(now, staged.reserved)) {
+    return `${staged.destination} changed after apifn check reserved it, so it was left as it is.`;
+  }
+  unlinkSync(staged.destination);
+  return null;
+}
+
+/** Stages the output's bytes in a temp file that was checked while still empty. */
+function stage(staged: Staged, verify: Verify): void {
+  if (!placeHolds(staged)) throw changed(staged);
   const temp = tempName(staged.destination);
   const fd = openSync(temp, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o666);
   staged.temp = temp;
   staged.fd = fd;
+  verify(staged);
   if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
   writeFileSync(fd, staged.bytes);
   fsyncSync(fd);
@@ -482,13 +529,13 @@ function backUp(staged: Staged): void {
 /** What the destination must be right before the rename: the backup's inode (the link changed its
  * change time) or, after a copy, the observed file unchanged. */
 function expectedBeforeRename(staged: Staged): FileState {
-  return staged.linked ? (staged.backupState as FileState) : staged.before;
+  return staged.linked ? (staged.backupState as FileState) : heldNow(staged);
 }
 
 /** Renames the staged file over the destination, re-checking the place before each step. */
 function install(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   hook?.("backup", staged.destination);
-  if (!placeHolds(staged) || !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
+  if (!placeHolds(staged) || !sameState(currentState(staged.destination), heldNow(staged))) throw changed(staged);
   backUp(staged);
   verify(staged);
   hook?.("rename", staged.destination);
@@ -515,8 +562,9 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
   if (!staged.published) {
     removeQuietly(staged.temp);
     removeQuietly(staged.backup);
+    const conflict = releaseReservation(staged);
     removeCreatedDirs(staged);
-    return null;
+    return conflict;
   }
   hook?.("rollback", staged.destination);
   const kept = staged.backup ? ` Its previous bytes are in ${staged.backup}.` : "";
@@ -550,11 +598,35 @@ function writeFailure(staged: Staged, error: unknown): CheckUsageError {
   return new CheckUsageError(`Failed to write ${staged.output.noun} ${staged.output.file}: ${errorMessage(error)}`);
 }
 
+const HELD_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+/** Lets the event loop run once, so a held signal reaches its listener. */
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Records SIGINT, SIGTERM and SIGHUP until `release`, which restores the handlers and raises again. */
+function holdSignals(): { received: () => NodeJS.Signals | undefined; release: () => void } {
+  let received: NodeJS.Signals | undefined;
+  const record = (signal: NodeJS.Signals) => {
+    received ??= signal;
+  };
+  for (const signal of HELD_SIGNALS) process.on(signal, record);
+  return {
+    received: () => received,
+    release: () => {
+      for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
+      if (received !== undefined) process.kill(process.pid, received);
+    },
+  };
+}
+
 /**
  * Publishes the outputs (in order), then awaits `emit` (stdout). After every change it makes, the
  * guarded paths and the other outputs must be as expected (see the module comment). Any failure,
- * including one stdout reports after its write returned, rolls back what was published and
- * throws a CheckUsageError.
+ * including one stdout reports after its write returned, or a held signal that arrived before the
+ * commit, rolls back what was published and throws a CheckUsageError (a held signal is then
+ * raised again).
  */
 export async function publish(
   outputs: PlannedOutput[],
@@ -571,10 +643,25 @@ export async function publish(
     created: [],
     published: false,
   }));
+  const signals = holdSignals();
   try {
-    await publishAll(all, verifier(all, guarded), emit, hook);
+    await publishAll(all, verifier(all, guarded), emit, hook, signals.received);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
+    // A signal that came during the last synchronous steps (a failure path too) is recorded now.
+    await nextTurn();
+    signals.release();
+  }
+}
+
+/** Runs `step` for each output; a failure rolls back every output. */
+function eachOutput(all: Staged[], hook: PublishHook | undefined, step: (staged: Staged) => void): void {
+  for (const staged of all) {
+    try {
+      step(staged);
+    } catch (error) {
+      throw rollBackAll(all, writeFailure(staged, error), hook);
+    }
   }
 }
 
@@ -582,26 +669,27 @@ async function publishAll(
   all: Staged[],
   verify: Verify,
   emit: () => void | Promise<void>,
-  hook: PublishHook | undefined
+  hook: PublishHook | undefined,
+  received: () => NodeJS.Signals | undefined
 ): Promise<void> {
-  for (const staged of all) {
-    try {
-      stage(staged, hook, verify);
-    } catch (error) {
-      throw rollBackAll(all, writeFailure(staged, error), hook);
+  // A held signal is delivered on the event loop: let it run, then roll back if one came.
+  const interrupted = async () => {
+    await nextTurn();
+    const signal = received();
+    if (signal !== undefined) {
+      throw rollBackAll(all, new CheckUsageError(`apifn check received ${signal} while it wrote its outputs.`), hook);
     }
-  }
-  for (const staged of all) {
-    try {
-      install(staged, hook, verify);
-    } catch (error) {
-      throw rollBackAll(all, writeFailure(staged, error), hook);
-    }
-  }
+  };
+  eachOutput(all, hook, (staged) => reserve(staged, hook, verify));
+  await interrupted();
+  eachOutput(all, hook, (staged) => stage(staged, verify));
+  eachOutput(all, hook, (staged) => install(staged, hook, verify));
+  await interrupted();
   try {
     await emit();
   } catch (error) {
     throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(error)}`), hook);
   }
+  await interrupted();
   for (const staged of all) removeQuietly(staged.backup);
 }
