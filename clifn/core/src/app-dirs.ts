@@ -39,17 +39,20 @@ export class InvalidHomeDirectoryError extends Error {
 /** Win32 device names (any case), reserved as a path segment alone or before an extension (`nul`, `NUL.txt`). */
 const WIN32_DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
 
+/** Characters Win32 forbids in a file name: control characters and `<>"|?*` (`:` and separators are judged by callers). */
+const WIN32_FORBIDDEN_CHARACTER = /[\u0000-\u001f<>"|?*]/;
+
 /**
- * Whether Win32 opens something other than the segment as written: it drops trailing dots and spaces (`tool.` opens
- * `tool`), and a device name, also before an extension or trailing spaces, opens the device. `.` and `..` are not
- * judged here.
+ * Whether Win32 cannot open the segment as written: it drops trailing dots and spaces (`tool.` opens `tool`), a device
+ * name, also before an extension or trailing ASCII spaces, opens the device, and a forbidden character makes the name
+ * invalid. Other whitespace, such as U+00A0, is part of the name. `.` and `..` are not judged here.
  */
 export function isWin32AliasedSegment(segment: string): boolean {
   if (segment === "." || segment === "..") {
     return false;
   }
-  // Win32 strips only ASCII spaces (and dots) here; other whitespace, such as U+00A0, is part of the name.
-  return /[. ]$/.test(segment) || WIN32_DEVICE_NAME.test((segment.split(".")[0] ?? "").replace(/ +$/, ""));
+  const stem = (segment.split(".")[0] ?? "").replace(/ +$/, "");
+  return /[. ]$/.test(segment) || WIN32_FORBIDDEN_CHARACTER.test(segment) || WIN32_DEVICE_NAME.test(stem);
 }
 
 /**

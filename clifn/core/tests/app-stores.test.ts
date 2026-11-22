@@ -460,15 +460,16 @@ describe("store options shared by both factories", () => {
     expect(storeFilePath("/x/cfg.", posix)).toBe("/x/cfg.");
   });
 
-  it("judges a Windows device stem by trailing ASCII spaces only, in both validators", () => {
+  it("judges a Windows device stem by trailing ASCII spaces only and rejects forbidden characters, in both validators", () => {
     const nbsp = "aux\u00a0.json";
     expect(joinStoreFile("C:\\base", nbsp, win32)).toBe(`C:\\base\\${nbsp}`);
     expect(storeFilePath(`C:\\x\\${nbsp}`, win32)).toBe(`C:\\x\\${nbsp}`);
-    for (const name of ["aux .json", "aux  .json", "aux.json"]) {
+    for (const name of ["aux .json", "aux  .json", "aux.json", "aux\t.json", "aux\n.json", "nul\r", "cfg\u0001.json", "cfg?.json", "a<b>.json", 'c"d.json', "e|f.json", "g*.json"]) {
       expect(() => joinStoreFile("C:\\base", name, win32)).toThrow(InvalidStoreOptionsError);
       expect(() => storeFilePath(`C:\\x\\${name}`, win32)).toThrow(InvalidStoreOptionsError);
     }
-    for (const name of [nbsp, "aux .json", "aux.json"]) {
+    expect(() => joinStoreFile("C:\\base", "aux\t.json/child.json", win32)).toThrow(InvalidStoreOptionsError);
+    for (const name of [nbsp, "aux .json", "aux.json", "aux\t.json", "cfg?.json"]) {
       expect(joinStoreFile("/base", name, posix)).toBe(posix.join("/base", name));
       expect(storeFilePath(`/x/${name}`, posix)).toBe(`/x/${name}`);
     }
