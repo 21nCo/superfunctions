@@ -1,0 +1,21 @@
+mcpfn/core/tests/bundled-sdk-version.test.ts
+  s_7c9e7410b6c6b6::t_39ec5cfaad06bf 113,115
+scripts/verify-mcpfn-bundled-sdk.mjs
+  s_7c9e7410b6c6b6::t_da44adf65111ea 69-74,81-83,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03223b56313dd4a88183cf3e59a138154ad51352",
+  "prompts": {},
+  "sessions": {
+    "s_7c9e7410b6c6b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9047856b-8111-430a-823d-df0e4079f7ec",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
