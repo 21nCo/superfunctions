@@ -1,6 +1,6 @@
-import { redactValue, type Diagnostic } from "./diagnostics.js";
+import type { Diagnostic } from "./diagnostics.js";
 import { mapRunnerError, RUNNER_FAILED_CODE } from "./errors.js";
-import { resolveJsonMember } from "./json-value.js";
+import { createDocumentBudget, resolveJsonMember, type DocumentBudget } from "./json-value.js";
 import { createOutput, type OutputService, type Spinner } from "./output.js";
 
 export interface DocumentOutputOptions {
@@ -41,33 +41,26 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
  * those for that key) becomes null. A value that throws while it is resolved is rethrown so the caller prints the
  * serialization-failure document.
  */
-function toDocumentData(data: unknown): unknown {
-  return resolveJsonMember("data", data) ?? null;
+function toDocumentData(data: unknown, budget: DocumentBudget): unknown {
+  return resolveJsonMember("data", data, { budget }) ?? null;
 }
 
 /**
- * Resolves a diagnostic to the JSON value the document prints, then redacts its details, so a `toJSON` in the
- * details cannot bring a redacted field back. It keeps the members `createDiagnostic` keeps, but reads them from the
- * original diagnostic without cloning, so each value in the details serializes through its own `toJSON` (a Date
- * prints its ISO string, a class prints only what its serializer returns). Details that do not resolve to an object
- * are left out. Throws when the diagnostic is not an object or cannot be serialized.
+ * Resolves a diagnostic to the JSON value the document prints, redacting its details on the resolved value, so a
+ * `toJSON` in the details cannot bring a redacted field back. It keeps the members `createDiagnostic` keeps, but reads
+ * them from the original diagnostic without cloning, so each value in the details serializes through its own `toJSON`
+ * (a Date prints its ISO string, a class prints only what its serializer returns). Details that do not resolve to an
+ * object are left out. Throws when the diagnostic is not an object, cannot be serialized or does not fit `budget`.
  */
-function toDocumentDiagnostic(diagnostic: Diagnostic, index: number): Record<string, unknown> {
+function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budget: DocumentBudget): Record<string, unknown> {
   const { code, severity, message, path, details } = diagnostic;
-  const resolved = resolveJsonMember(String(index), {
-    code,
-    severity,
-    message,
-    path,
-    details: details || undefined,
-  });
+  const resolved = resolveJsonMember(String(index), { code, severity, message, path }, { budget });
   if (!isJsonObject(resolved)) {
     throw new TypeError("diagnostic did not resolve to an object");
   }
-  if (isJsonObject(resolved.details)) {
-    resolved.details = redactValue(resolved.details);
-  } else {
-    delete resolved.details;
+  const resolvedDetails = resolveJsonMember("details", details || undefined, { budget, redact: true });
+  if (isJsonObject(resolvedDetails)) {
+    resolved.details = resolvedDetails;
   }
   return resolved;
 }
@@ -121,14 +114,17 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     }
   };
 
-  // A diagnostic that cannot be resolved or redacted (not an object, or a throwing getter or toJSON in its details)
-  // is dropped with a warning on stderr, so it cannot cost the run its result document.
-  const redactEach = (input: readonly Diagnostic[]): Array<Record<string, unknown>> => {
+  // A diagnostic that cannot be resolved or redacted (not an object, a throwing getter or toJSON in its details, or
+  // more than is left of the document's budget) is dropped with a warning on stderr and gives back what it spent, so
+  // it cannot cost the run its result document.
+  const redactEach = (input: readonly Diagnostic[], budget: DocumentBudget): Array<Record<string, unknown>> => {
     const redacted: Array<Record<string, unknown>> = [];
     input.forEach((diagnostic, index) => {
+      const bytesLeft = budget.bytesLeft;
       try {
-        redacted.push(toDocumentDiagnostic(diagnostic, index));
+        redacted.push(toDocumentDiagnostic(diagnostic, index, budget));
       } catch {
+        budget.bytesLeft = bytesLeft;
         logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted`);
       }
     });
@@ -140,6 +136,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     finish(outcome, diagnostics) {
       let text: string | undefined;
       let exitCode = 1;
+      // One budget for the whole document: data or error details first, then each diagnostic in order.
+      const budget = createDocumentBudget();
       try {
         let document: Record<string, unknown>;
         if (outcome.ok) {
@@ -151,16 +149,16 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
             dropped = collected.filter((_, index) => index !== lastJson);
           }
           warnDropped(dropped);
-          document = { ok: true, data: toDocumentData(data) };
+          document = { ok: true, data: toDocumentData(data, budget) };
           exitCode = outcome.exitCode;
         } else {
-          const mapped = mapRunnerError(outcome.error);
+          const mapped = mapRunnerError(outcome.error, budget);
           warnDropped(collected);
           document = { ok: false, error: mapped.error };
           exitCode = mapped.exitCode;
         }
 
-        const redacted = redactEach(diagnostics);
+        const redacted = redactEach(diagnostics, budget);
         if (redacted.length > 0) {
           document.diagnostics = redacted;
         }

@@ -1,5 +1,4 @@
-import { redactValue } from "./diagnostics.js";
-import { resolveJsonMember } from "./json-value.js";
+import { createDocumentBudget, resolveJsonMember, type DocumentBudget } from "./json-value.js";
 
 /** Code used when a thrown value carries no usable code (D8). */
 export const RUNNER_FAILED_CODE = "CLIFN_RUNNER_FAILED";
@@ -101,26 +100,26 @@ function plainMessage(error: unknown, message: unknown): string {
 }
 
 /**
- * Resolves plain-object details to the JSON value the document prints, then redacts that value, so a `toJSON`
- * cannot bring a redacted field back. Details that cannot be read, serialized or redacted, or that do not resolve
- * to an object, are omitted; the code, message and exit code still stand.
+ * Resolves plain-object details to the redacted JSON value the document prints: sensitive keys are redacted on the
+ * resolved value, so a `toJSON` cannot bring a redacted field back. Details that cannot be read or serialized, that
+ * do not fit the document's budget, or that do not resolve to an object are omitted, and what they spent of the
+ * budget is restored; the code, message and exit code still stand.
  */
-function documentDetails(details: unknown): Record<string, unknown> | undefined {
+function documentDetails(details: unknown, budget: DocumentBudget): Record<string, unknown> | undefined {
+  const bytesLeft = budget.bytesLeft;
   try {
-    if (!isPlainObject(details)) {
-      return undefined;
+    const resolved = isPlainObject(details) ? resolveJsonMember("details", details, { budget, redact: true }) : undefined;
+    if (isPlainObject(resolved)) {
+      return resolved;
     }
-    const resolved = resolveJsonMember("details", details);
-    if (!isPlainObject(resolved)) {
-      return undefined;
-    }
-    return redactValue(resolved) as Record<string, unknown>;
   } catch {
-    return undefined;
+    // Omitted below.
   }
+  budget.bytesLeft = bytesLeft;
+  return undefined;
 }
 
-function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
+function mapFields(error: unknown, fields: ThrownFields, budget: DocumentBudget): MappedRunnerError {
   const { code, message, details } = fields;
   let payload: RunnerErrorPayload;
 
@@ -132,7 +131,7 @@ function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
     payload = { code: RUNNER_FAILED_CODE, message: plainMessage(error, message) };
   }
 
-  const usableDetails = documentDetails(details);
+  const usableDetails = documentDetails(details, budget);
   if (usableDetails !== undefined) {
     payload.details = usableDetails;
   }
@@ -145,12 +144,13 @@ function mapFields(error: unknown, fields: ThrownFields): MappedRunnerError {
  * 1. a string `code` matching `^[A-Z][A-Z0-9_]{1,63}$` is used as the code;
  * 2. a `message` that is exactly `^CLIFN_[A-Z0-9_]+$` becomes the code, and the message a fixed description;
  * 3. anything else is `CLIFN_RUNNER_FAILED`.
- * `details` is kept only when it is a plain object that resolves to a JSON object, and is redacted after it is
- * resolved. The message is always a non-empty string. The exit code is an integer `exitCode` from 1 to 125, else 1.
+ * `details` is kept only when it is a plain object that resolves to a JSON object within `budget`, and is redacted
+ * as it is resolved. The message is always a non-empty string. The exit code is an integer `exitCode` from 1 to 125,
+ * else 1.
  */
-export function mapRunnerError(error: unknown): MappedRunnerError {
+export function mapRunnerError(error: unknown, budget: DocumentBudget = createDocumentBudget()): MappedRunnerError {
   try {
-    return mapFields(error, readFields(error));
+    return mapFields(error, readFields(error), budget);
   } catch {
     // A throwing getter or proxy on the thrown value must not stop the runner from reporting the failure.
     return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1 };

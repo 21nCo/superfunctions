@@ -1,5 +1,7 @@
+import { constants } from "node:buffer";
 import { types } from "node:util";
 import { getHeapStatistics } from "node:v8";
+import { isSensitiveKey } from "./sensitive-keys.js";
 
 /** Turns a value into one `JSON.stringify` accepts: bigints become strings and cycles become "[Circular]". */
 export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -53,16 +55,29 @@ const CIRCULAR = "[Circular]";
  * chains up to this depth print exactly as JSON.stringify prints them.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
-/**
- * Heap bytes allowed per value the walk builds. Each array item, object member and container the result holds costs
- * one value (a few dozen bytes at most), so one value per 512 bytes of V8's heap limit keeps the result within about
- * an eighth of the heap: some 8 million values with a 4 GiB heap, some 160 thousand in an 80 MiB worker.
- */
-const HEAP_BYTES_PER_VALUE = 512;
+const REDACTED = "[REDACTED]";
+/** What one array item, object member or container of the result counts against the budget, in bytes. */
+export const VALUE_BYTES = 64;
+/** Characters that JSON.stringify escapes in a string. */
+const ESCAPED = /["\\\u0000-\u001f\ud800-\udfff]/;
 
-/** How many values one resolved member may hold in this isolate (see `HEAP_BYTES_PER_VALUE`). */
-export function documentValueLimit(): number {
-  return Math.floor(getHeapStatistics().heap_size_limit / HEAP_BYTES_PER_VALUE);
+/**
+ * What one result document may still build, shared by its data or error details and every diagnostic. Each value
+ * costs VALUE_BYTES and each kept string or key its JSON length, so the count bounds both the heap the resolved
+ * members hold and the length of the text printed from them.
+ */
+export interface DocumentBudget {
+  bytesLeft: number;
+}
+
+/**
+ * A budget of a sixteenth of V8's heap limit (about 256 MiB with a 4 GiB heap, 5 MiB in an 80 MiB worker), and never
+ * more than the engine's maximum string length less room for the document's own members, so the members and the
+ * printed text together stay within an eighth of the heap and the text can always be built.
+ */
+export function createDocumentBudget(): DocumentBudget {
+  const heapShare = Math.floor(getHeapStatistics().heap_size_limit / 16);
+  return { bytesLeft: Math.min(heapShare, constants.MAX_STRING_LENGTH - 2 ** 16) };
 }
 
 const booleanValueOf = Boolean.prototype.valueOf;
@@ -75,20 +90,26 @@ interface Walk {
   readonly originals: Map<unknown, number>;
   /** Originals that reached PROJECTION_REPEAT_LIMIT while still open: any further recurrence of them is marked. */
   readonly capped: Set<unknown>;
-  /** How many more values (array items, object members, containers) the result may hold. */
-  valuesLeft: number;
+  readonly budget: DocumentBudget;
+  /** Replace the value of every sensitive key, as `redactValue` would after the walk, without building it. */
+  readonly redact: boolean;
 }
 
 function isTracked(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
 }
 
-/** Counts `count` values towards the result; throws a RangeError, before they are built, when they do not fit. */
-function build(walk: Walk, count: number): void {
-  walk.valuesLeft -= count;
-  if (walk.valuesLeft < 0) {
+/** Counts `bytes` against the document's budget; throws a RangeError, before they are built, when they do not fit. */
+function spend(walk: Walk, bytes: number): void {
+  walk.budget.bytesLeft -= bytes;
+  if (walk.budget.bytesLeft < 0) {
     throw new RangeError("Value too large for a result document");
   }
+}
+
+/** The length of the JSON string literal for `text`. */
+function jsonStringLength(text: string): number {
+  return ESCAPED.test(text) ? JSON.stringify(text).length : text.length + 2;
 }
 
 /** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
@@ -135,8 +156,8 @@ function toJsonPrimitive(value: unknown): string | number | boolean | null | und
   return undefined;
 }
 
-/** SerializeJSONProperty: the JSON value of `holder[key]`, or undefined when JSON drops the member. */
-function serializeProperty(walk: Walk, holder: object, key: string): unknown {
+/** The first steps of SerializeJSONProperty: reads `holder[key]` once, applies its toJSON and unboxes the result. */
+function project(holder: object, key: string): { original: unknown; value: unknown } {
   const original: unknown = Reflect.get(holder, key);
   let value = original;
   if (isTracked(value) || typeof value === "bigint") {
@@ -145,13 +166,26 @@ function serializeProperty(walk: Walk, holder: object, key: string): unknown {
       value = Reflect.apply(toJSON, value, [key]);
     }
   }
-  if (typeof value === "object" && value !== null) {
-    value = unbox(value);
-  }
+  return { original, value: typeof value === "object" && value !== null ? unbox(value) : value };
+}
+
+/** SerializeJSONProperty: the JSON value of `holder[key]`, or undefined when JSON drops the member. */
+function serializeProperty(walk: Walk, holder: object, key: string): unknown {
+  const { original, value } = project(holder, key);
   if (typeof value === "object" && value !== null) {
     return serializeNode(walk, value, original);
   }
-  return toJsonPrimitive(value);
+  const primitive = toJsonPrimitive(value);
+  if (typeof primitive === "string") {
+    spend(walk, jsonStringLength(primitive));
+  }
+  return primitive;
+}
+
+/** A sensitive member: "[REDACTED]" unless JSON drops it; what it holds is never serialized. */
+function redactProperty(holder: object, key: string): unknown {
+  const { value } = project(holder, key);
+  return (typeof value === "object" && value !== null) || toJsonPrimitive(value) !== undefined ? REDACTED : undefined;
 }
 
 /** True when `node` must print as "[Circular]": it is being serialized, or its original recurs past the limit. */
@@ -177,7 +211,7 @@ function serializeNode(walk: Walk, node: object, original: unknown): unknown {
   if (isRecurrence(walk, node, original, open)) {
     return CIRCULAR;
   }
-  build(walk, 1);
+  spend(walk, VALUE_BYTES);
   walk.nodes.add(node);
   walk.originals.set(original, open + 1);
   try {
@@ -199,7 +233,7 @@ function serializeNode(walk: Walk, node: object, original: unknown): unknown {
  */
 function serializeArray(walk: Walk, array: object): unknown[] {
   const length = toLength(Reflect.get(array, "length"));
-  build(walk, length);
+  spend(walk, length * VALUE_BYTES);
   const items: unknown[] = [];
   for (let index = 0; index < length; index += 1) {
     const item = serializeProperty(walk, array, String(index));
@@ -212,9 +246,10 @@ function serializeArray(walk: Walk, array: object): unknown[] {
 function serializeObject(walk: Walk, record: object): Record<string, unknown> {
   const entries: Array<[string, unknown]> = [];
   for (const name of Object.keys(record)) {
-    const member = serializeProperty(walk, record, name);
+    const redacted = walk.redact && isSensitiveKey(name);
+    const member = redacted ? redactProperty(record, name) : serializeProperty(walk, record, name);
     if (member !== undefined) {
-      build(walk, 1);
+      spend(walk, VALUE_BYTES + jsonStringLength(name) + (redacted ? REDACTED.length + 2 : 0));
       entries.push([name, member]);
     }
   }
@@ -235,17 +270,24 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
  * - a toJSON that keeps returning fresh objects leading back to the same original value prints
  *   PROJECTION_REPEAT_LIMIT (64) nested projections and then "[Circular]" in place, and later recurrences of that
  *   value inside it are marked at once; a finite chain deeper than 64 projections of one value is cut the same way;
- * - a result that would hold more than `documentValueLimit()` values (array items, object members and containers;
- *   one per 512 bytes of the heap limit) throws a RangeError instead of exhausting the heap: an array is checked
- *   against what is left before its index 0 is read, so an oversized sparse or proxy array fails at once.
+ * - a value that does not fit what is left of `budget` (see `createDocumentBudget`) throws a RangeError instead of
+ *   exhausting the heap: an array is checked before its index 0 is read, so an oversized sparse or proxy array fails
+ *   at once. Nothing is refunded on a throw; the caller restores `budget.bytesLeft` when it drops the member.
+ *
+ * With `redact`, the value of every sensitive object key is "[REDACTED]" (unless JSON drops the member), exactly as
+ * `redactValue` would print the resolved value, and nothing under it is read or counted.
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a
  * bigint.
  */
-export function resolveJsonMember(key: string, value: unknown): unknown {
+export function resolveJsonMember(
+  key: string,
+  value: unknown,
+  { budget = createDocumentBudget(), redact = false }: { budget?: DocumentBudget; redact?: boolean } = {}
+): unknown {
   const holder = Object.create(null) as Record<string, unknown>;
   holder[key] = value;
-  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), valuesLeft: documentValueLimit() };
+  const walk: Walk = { nodes: new Set(), originals: new Map(), capped: new Set(), budget, redact };
   return serializeProperty(walk, holder, key);
 }
