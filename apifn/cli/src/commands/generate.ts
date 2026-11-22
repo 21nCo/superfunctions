@@ -4,7 +4,7 @@ import { stringify as toYaml } from "yaml";
 import { fromRouter } from "@apifn/core";
 import type { OpenAPIDocument } from "@apifn/core";
 import type { ApifnConfig } from "../config.js";
-import { loadRouter } from "../utils/router-loader.js";
+import { loadRouter, resolveRouterFile } from "../utils/router-loader.js";
 import type { Output } from "../utils/output.js";
 
 /** Resolves the spec path `apifn generate` writes and `apifn check` reads. */
@@ -31,7 +31,7 @@ export async function buildSpecFromRouter(options: {
   routerPath?: string;
   cwd: string;
   config: ApifnConfig;
-}): Promise<{ doc: OpenAPIDocument; routeCount: number }> {
+}): Promise<{ doc: OpenAPIDocument; routeCount: number; routerFile: string }> {
   const routerPath = options.routerPath ?? options.config.router;
 
   if (!routerPath) {
@@ -51,7 +51,7 @@ export async function buildSpecFromRouter(options: {
     servers: options.config.openapi?.servers,
   });
 
-  return { doc, routeCount: routes.length };
+  return { doc, routeCount: routes.length, routerFile: resolveRouterFile(routerPath, options.cwd) };
 }
 
 export async function runGenerateCommand(options: {

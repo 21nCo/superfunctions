@@ -120,28 +120,46 @@ apifn check --write   # rewrite a stale spec instead of failing
 
 - `[router]` — router module (default `config.router`)
 - `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
-- `--base <git-ref>` — base is the spec committed at that ref (`git show <ref>:<spec path>`). The spec is looked up under every path it may be tracked as: the path as given relative to the repository root (a symlinked directory on the way not followed), its canonical spelling and the file a write to it lands on (symlinks followed, dangling ones included), and, when the repository sets `core.ignorecase`, any tracked path equal to one of them under case folding and Unicode normalization. No entry for any of them means a new contract, so the diff is skipped and reported, not failed; several different matching files, a match that is not a regular file, a spec outside the repository or any other git error exits `2`
-- `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`)
+- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, a symlinked directory on the way not followed) is then walked in that commit's tree, and a tracked symbolic link met on the way is followed inside the same tree. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read with `git show <commit>:<path>`. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
+- `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`); one 30-second deadline covers the request and the whole response body
 - `--allow-breaking` — report breaking changes without failing
-- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing: formatted JSON for a `.json` path, otherwise the YAML `generate` writes. The spec is rewritten only after validation and the base diff, so a run that exits `2` (a base that cannot be loaded or diffed, a report that cannot be written) leaves it as it was
+- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing, in the committed file's format: a file starting with `{` stays JSON, a YAML file stays the YAML `generate` writes, and a missing or unreadable file follows its suffix (`.json` is JSON)
 - `--format <type>` — `text` (default), `json` or `markdown`
 - `--report <path>` — also write the report to a file
 
-No write may land on another file of the run: `--report` naming the spec or a local `--base-spec`
-file, or `--write` with a local `--base-spec` naming the spec, exits `2` before anything is written.
-Paths are compared after symlinks and, conservatively, ignoring case and Unicode normalization.
+git runs from one absolute path: `APIFN_GIT` when set (it must name an executable by absolute
+path), otherwise the first of `/usr/bin/git`, `/usr/local/bin/git`, `/opt/homebrew/bin/git` and
+`/bin/git` (`%ProgramFiles%\Git\cmd\git.exe` on Windows). A `git` found earlier on `PATH` is never
+run.
+
+The base must pass the same validator as the generated spec (a base it rejects, such as one with
+`paths: []`, exits `2`), and both sides are compared with every local `$ref` replaced by its
+target, so a change behind a shared schema counts like the same change written inline. A `$ref`
+that leaves the document or does not resolve exits `2`.
+
+Writes are safe: nothing is written until every exit-`2` path has passed. No output may land on a
+file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on
+the other output; paths are compared after symlinks, by directory identity and, conservatively,
+ignoring case and Unicode normalization, so `--report router.ts` exits `2`. The report and the
+repaired spec are written to temp files beside their destinations and renamed into place (a spec
+symlink keeps pointing at its target, which is replaced). If a destination changed while the check
+ran, nothing is written. If stdout then fails, both are rolled back, unless another writer changed
+them in the meantime, in which case their bytes are kept and the error says so.
 
 Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
 `check` accepts only this grammar: a second positional (for example a ref given without
-`--base`), any argument after `--`, a value on `--write` or `--allow-breaking`, or a repeated
-value option is a usage error.
+`--base`), any argument after `--`, a value on `--write`, `--allow-breaking` or `--help`, or a
+repeated value option is a usage error, also when `--help` is given.
 
-Committed and base specs are read by one strict parser (YAML, which contains JSON): a duplicate
-mapping key is an error, never a silently kept last value. They may use any number of YAML aliases; a document whose aliases expand
-past 5,000,000 nodes or form a cycle is rejected (an unparseable committed spec, or a base load
-error). So is a document with no faithful JSON form: a `.nan` or `.inf` value, a mapping key that
-is not a string or number (an alias or collection key included), or two keys that become the same
-JSON key (`200` and `"200"`).
+Committed, base and generated documents are read by one strict parser (YAML 1.2, which contains
+JSON): at most 32 MB of text, a mapping at the root, no duplicate mapping keys and no YAML merge
+keys. They may use any number of aliases, but a document whose aliases expand past 5,000,000 nodes
+or 64 MB of text, or form a cycle, is rejected. So is a document with no faithful JSON form: a
+`.nan` or `.inf` value, an integer a double cannot hold exactly, a collection used as a mapping
+key, or two keys that become the same JSON key (`200` and `"200"`, or an alias key naming a literal
+key beside it). A committed spec that fails is drift (`unparseable`, repaired by `--write`); a base
+that fails is a load error (exit `2`); a generated spec that fails is invalid (exit `1`, never
+written).
 
 Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
 canonical JSON (key order and formatting do not count).

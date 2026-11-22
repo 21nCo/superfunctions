@@ -53,7 +53,37 @@ function kebab(name: string): string {
   return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
-const own = (record: object, key: string) => Object.prototype.hasOwnProperty.call(record, key);
+/** Reads one `--name[=value]` token (and its separate value) into `args`; returns tokens consumed. */
+function readLongOption(argv: string[], i: number, args: CheckArgs, given: Set<string>): number {
+  const token = argv[i];
+  const eq = token.indexOf("=");
+  const name = kebab(eq === -1 ? token.slice(2) : token.slice(2, eq));
+  if (Object.hasOwn(VALUE_OPTIONS, name)) {
+    const next = argv[i + 1];
+    const separate = eq === -1 && next !== undefined && !next.startsWith("-");
+    let value: string | undefined;
+    if (eq !== -1) {
+      value = token.slice(eq + 1);
+    } else if (separate) {
+      value = next;
+    }
+    if (value === undefined || value === "" || given.has(name)) {
+      throw new CheckArgsError(`--${name} takes one value`);
+    }
+    given.add(name);
+    args[VALUE_OPTIONS[name]] = value;
+    return separate ? 2 : 1;
+  }
+  if (!Object.hasOwn(FLAGS, name)) {
+    throw new CheckArgsError(`Unknown option \`${token}\``);
+  }
+  if (eq !== -1) {
+    throw new CheckArgsError(`--${name} takes no value`);
+  }
+  const field = FLAGS[name];
+  if (field) args[field] = true;
+  return 1;
+}
 
 /** Parses `argv` (the arguments after the program name, command name included). */
 export function parseCheckArgv(argv: string[]): CheckArgs {
@@ -61,46 +91,21 @@ export function parseCheckArgv(argv: string[]): CheckArgs {
   const given = new Set<string>();
   const positionals: string[] = [];
 
-  for (let i = 0; i < argv.length; i += 1) {
+  let i = 0;
+  while (i < argv.length) {
     const token = argv[i];
     if (token === "--") {
-      throw new CheckArgsError(
-        "apifn check takes no arguments after '--'; pass the router as [routerPath]."
-      );
+      throw new CheckArgsError("apifn check takes no arguments after '--'; pass the router as [routerPath].");
     }
     if (token.startsWith("--")) {
-      const eq = token.indexOf("=");
-      const name = kebab(eq === -1 ? token.slice(2) : token.slice(2, eq));
-      if (own(VALUE_OPTIONS, name)) {
-        let value: string | undefined;
-        if (eq !== -1) {
-          value = token.slice(eq + 1);
-        } else if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
-          i += 1;
-          value = argv[i];
-        }
-        if (value === undefined || value === "" || given.has(name)) {
-          throw new CheckArgsError(`--${name} takes one value`);
-        }
-        given.add(name);
-        args[VALUE_OPTIONS[name]] = value;
-        continue;
-      }
-      if (own(FLAGS, name)) {
-        if (eq !== -1) {
-          throw new CheckArgsError(`--${name} takes no value`);
-        }
-        const field = FLAGS[name];
-        if (field) args[field] = true;
-        continue;
-      }
+      i += readLongOption(argv, i, args, given);
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-" && !SHORT_FLAGS.has(token)) {
       throw new CheckArgsError(`Unknown option \`${token}\``);
     }
-    if (token.startsWith("-") && token !== "-") {
-      if (SHORT_FLAGS.has(token)) continue;
-      throw new CheckArgsError(`Unknown option \`${token}\``);
-    }
-    positionals.push(token);
+    if (!token.startsWith("-") || token === "-") positionals.push(token);
+    i += 1;
   }
 
   // The first positional is the command name cac matched.
@@ -112,4 +117,23 @@ export function parseCheckArgv(argv: string[]): CheckArgs {
   }
   args.routerPath = operands[0];
   return args;
+}
+
+/**
+ * True when `argv` runs `apifn check`: its first positional (global options and their values
+ * skipped) is `check`. The check reads its arguments before cac does, so a malformed check
+ * invocation is a usage error (exit 2) even when it also asks for help.
+ */
+export function isCheckInvocation(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--") return false;
+    if (!token.startsWith("-") || token === "-") return token === "check";
+    const name = kebab(token.slice(2));
+    if (token.startsWith("--") && !token.includes("=") && Object.hasOwn(VALUE_OPTIONS, name)) {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("-")) i += 1;
+    }
+  }
+  return false;
 }

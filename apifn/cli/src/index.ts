@@ -8,7 +8,7 @@ import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
 import { runCheckCommand } from "./commands/check.js";
-import { parseCheckArgv } from "./commands/check-args.js";
+import { isCheckInvocation, parseCheckArgv } from "./commands/check-args.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
@@ -323,10 +323,11 @@ export async function runCli(
 
       let args;
       let config;
+      let configFile: string | undefined;
       try {
         const { configPath, ...checkArgs } = parseCheckArgv(argv);
         args = checkArgs;
-        ({ config } = await loadConfig({ cwd: runOptions.cwd, configPath }));
+        ({ config, path: configFile } = await loadConfig({ cwd: runOptions.cwd, configPath }));
       } catch (error) {
         output.error(error instanceof Error ? error.message : String(error));
         exitCode = 2;
@@ -337,6 +338,7 @@ export async function runCli(
         ...args,
         cwd: runOptions.cwd,
         config,
+        configFile,
         output,
         writeStdout: runOptions.stdout,
       });
@@ -495,6 +497,19 @@ export async function runCli(
 
   cli.help();
   cli.version("0.1.0");
+
+  // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
+  // check invocation that also names --help, instead of the usage error (exit 2).
+  if (isCheckInvocation(argv)) {
+    try {
+      parseCheckArgv(argv);
+    } catch (error) {
+      createOutput({ writeStdout: runOptions.stdout, writeStderr: runOptions.stderr, color: false }).error(
+        error instanceof Error ? error.message : String(error)
+      );
+      return 2;
+    }
+  }
 
   try {
     cli.parse(["node", "apifn", ...argv], { run: false });

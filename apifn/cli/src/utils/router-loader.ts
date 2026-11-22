@@ -1,5 +1,6 @@
 import { createJiti } from "jiti";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Router } from "@superfunctions/http";
 
 function isRouter(value: unknown): value is Router<unknown> {
@@ -28,4 +29,11 @@ export async function loadRouter(
   }
 
   return router;
+}
+
+/** The module file `loadRouter` loads for `routerPath` (an extensionless or directory operand resolved). */
+export function resolveRouterFile(routerPath: string, cwd = process.cwd()): string {
+  const resolved = path.isAbsolute(routerPath) ? routerPath : path.resolve(cwd, routerPath);
+  const url = createJiti(cwd).esmResolve(resolved);
+  return url.startsWith("file:") ? fileURLToPath(url) : url;
 }
