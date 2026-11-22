@@ -36,7 +36,8 @@
  *   rolled back; bytes another writer put there are left alone and the error names the conflict.
  * - SIGINT, SIGTERM and SIGHUP are held for the whole publication: a signal is recorded, every
  *   output is rolled back if it came before the commit (the end of the stdout write, which a
- *   signal does not wait for), and then the handlers are restored and the signal raised again.
+ *   signal does not wait for), and then the signal is raised again unless another listener (an
+ *   embedding host's) already had it. A run that writes no file holds no signal.
  *   Each time the run yields to the event loop, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
@@ -614,7 +615,10 @@ interface HeldSignals {
   release: () => void;
 }
 
-/** Records SIGINT, SIGTERM and SIGHUP until `release`, which restores the handlers and raises again. */
+/**
+ * Records SIGINT, SIGTERM and SIGHUP until `release`, which removes the recorder and, when no other
+ * listener (an embedding host's) has had the signal, raises it again for its default action.
+ */
 function holdSignals(): HeldSignals {
   let received: NodeJS.Signals | undefined;
   let notify: (signal: NodeJS.Signals) => void = () => {};
@@ -631,7 +635,7 @@ function holdSignals(): HeldSignals {
     arrived,
     release: () => {
       for (const signal of HELD_SIGNALS) process.removeListener(signal, record);
-      if (received !== undefined) process.kill(process.pid, received);
+      if (received !== undefined && process.listenerCount(received) === 0) process.kill(process.pid, received);
     },
   };
 }
@@ -658,7 +662,9 @@ export async function publish(
     created: [],
     published: false,
   }));
-  const signals = holdSignals();
+  // A run that writes no file has nothing to roll back: it leaves signals alone.
+  const signals: HeldSignals =
+    all.length > 0 ? holdSignals() : { received: () => undefined, arrived: new Promise(() => {}), release: () => {} };
   try {
     await publishAll(all, verifier(all, guarded), emit, hook, signals);
   } finally {

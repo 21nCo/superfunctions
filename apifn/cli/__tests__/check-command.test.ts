@@ -3520,6 +3520,50 @@ describe("apifn check: separation is established on the reserved destination bef
     expect((await lstat(path.join(dir, SPEC))).isSymbolicLink()).toBe(true);
   });
 
+  it.skipIf(POSIX_ONLY)("a host that listens for SIGTERM gets it once, keeps running, and the outputs are rolled back", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    let host = 0;
+    const onTerm = () => {
+      host += 1;
+    };
+    process.on("SIGTERM", onTerm);
+    const listening = process.listenerCount("SIGTERM");
+    const errors: string[] = [];
+    let duringStdoutOnly = -1;
+    try {
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: (message: string) => errors.push(message) } as unknown as Output,
+        reportPath: path.join(".apifn", "report.md"),
+        writeStdout: () => {},
+        publishHook: (step) => {
+          if (step === "installed") process.kill(process.pid, "SIGTERM");
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(code).toBe(2);
+      expect(host).toBe(1);
+      expect(errors.join("\n")).toContain("received SIGTERM");
+      expect(await readdir(path.join(dir, ".apifn"))).toEqual([]);
+      // A run that writes no file installs no listener.
+      await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: () => {} } as unknown as Output,
+        writeStdout: () => {
+          duringStdoutOnly = process.listenerCount("SIGTERM");
+        },
+      });
+      expect(duringStdoutOnly).toBe(listening);
+      expect(process.listenerCount("SIGTERM")).toBe(listening);
+    } finally {
+      process.removeListener("SIGTERM", onTerm);
+    }
+  });
+
   it.skipIf(POSIX_ONLY)("SIGTERM that comes with an alias at 'reserved' is still raised after the rollback", async () => {
     const { dir, code, signal, stdout } = await interrupted("reserved", false, true);
     expect({ code, signal, stdout }).toEqual({ code: null, signal: "SIGTERM", stdout: "" });
