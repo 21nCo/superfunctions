@@ -58,15 +58,11 @@ export const PROJECTION_REPEAT_LIMIT = 64;
 const REDACTED = "[REDACTED]";
 /** What one array item, object member or container of the result counts against the budget, in bytes. */
 export const VALUE_BYTES = 64;
-/** Code units JSON.stringify writes as a two-character escape: " \\ \b \t \n \f \r. */
-const SHORT_ESCAPES = new Set([0x22, 0x5c, 0x08, 0x09, 0x0a, 0x0c, 0x0d]);
-/** Characters that JSON.stringify escapes in a string. */
-const ESCAPED = /["\\\u0000-\u001f\ud800-\udfff]/;
 
 /**
  * What one result document may still build, shared by its data or error details and every diagnostic. Each value
- * costs VALUE_BYTES and each kept string or key its JSON length, so the count bounds both the heap the resolved
- * members hold and the length of the text printed from them.
+ * costs VALUE_BYTES and each kept string or key its length plus its quotes, so the count bounds the heap the resolved
+ * members hold and, escapes aside, the length of the text printed from them.
  */
 /** Thrown when a value does not fit what is left of a document's budget. */
 export class DocumentBudgetExceeded extends RangeError {}
@@ -78,7 +74,7 @@ export interface DocumentBudget {
 /**
  * A budget of a sixteenth of V8's heap limit (about 256 MiB with a 4 GiB heap, 5 MiB in an 80 MiB worker), and never
  * more than the engine's maximum string length less room for the document's own members, so the members and the
- * printed text together stay within an eighth of the heap and the text can always be built.
+ * printed text together stay within an eighth of the heap.
  */
 export function createDocumentBudget(): DocumentBudget {
   const heapShare = Math.floor(getHeapStatistics().heap_size_limit / 16);
@@ -113,29 +109,11 @@ function spend(walk: Walk, bytes: number): void {
 }
 
 /**
- * The length of the JSON string literal for `text`, counted without building it. A string longer than `limit` is
- * rejected by its length alone, before any scan could flatten it, and the count stops once it passes `limit`.
+ * The JSON length of `text` without its escapes: read from `length` alone, so no string is scanned or flattened. Escapes
+ * can only make the printed text longer; `createDocumentOutput` sheds optional members if the text then cannot be built.
  */
-function jsonStringLength(text: string, limit: number): number {
-  if (text.length + 2 > limit || !ESCAPED.test(text)) {
-    return text.length + 2;
-  }
-  let length = 2;
-  for (let index = 0; index < text.length && length <= limit; index += 1) {
-    const unit = text.charCodeAt(index);
-    if (SHORT_ESCAPES.has(unit)) {
-      length += 2;
-    } else if (unit < 0x20) {
-      length += 6;
-    } else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
-      length += 2;
-      index += 1;
-    } else {
-      // A lone surrogate prints as \uXXXX.
-      length += unit >= 0xd800 && unit <= 0xdfff ? 6 : 1;
-    }
-  }
-  return length;
+function jsonStringLength(text: string): number {
+  return text.length + 2;
 }
 
 /** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
@@ -202,10 +180,8 @@ function serializeProperty(walk: Walk, holder: object, key: string): unknown {
     return serializeNode(walk, value, original);
   }
   const primitive = toJsonPrimitive(value);
-  // Only strings kept inside the result count: a member that is a string itself is printed as it is (data) or left
-  // out (details), so it is never scanned.
-  if (typeof primitive === "string" && walk.nodes.size > 0) {
-    spend(walk, jsonStringLength(primitive, walk.budget.bytesLeft));
+  if (typeof primitive === "string") {
+    spend(walk, jsonStringLength(primitive));
   }
   return primitive;
 }
@@ -277,7 +253,7 @@ function serializeObject(walk: Walk, record: object): Record<string, unknown> {
     const redacted = walk.redact && isSensitiveKey(name);
     const member = redacted ? redactProperty(record, name) : serializeProperty(walk, record, name);
     if (member !== undefined) {
-      spend(walk, VALUE_BYTES + jsonStringLength(name, walk.budget.bytesLeft) + (redacted ? REDACTED.length + 2 : 0));
+      spend(walk, VALUE_BYTES + jsonStringLength(name) + (redacted ? REDACTED.length + 2 : 0));
       entries.push([name, member]);
     }
   }

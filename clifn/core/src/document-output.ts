@@ -36,6 +36,35 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Prints the document. Its members fit the budget, but escapes or a long data string or error message can still make
+ * the text longer than the engine allows; the diagnostics and then the error details are left out before the
+ * caller falls back to the serialization-failure document, so optional members never replace the outcome.
+ */
+function stringifyDocument(document: Record<string, unknown>, warn: (message: string) => void): string {
+  const shed = [
+    () => {
+      if (document.diagnostics !== undefined) {
+        delete document.diagnostics;
+        warn("diagnostics were dropped from the result document: it was too long to print");
+      }
+    },
+    () => {
+      if (isJsonObject(document.error)) {
+        delete document.error.details;
+      }
+    },
+  ];
+  for (const leaveOut of shed) {
+    try {
+      return JSON.stringify(document);
+    } catch {
+      leaveOut();
+    }
+  }
+  return JSON.stringify(document);
+}
+
+/**
  * The success document always has a `data` member: the value is resolved as the member `data` (see
  * `resolveJsonMember`), and a value JSON drops (undefined, a function, a symbol, or a `toJSON` that returns one of
  * those for that key) becomes null. A value that throws while it is resolved is rethrown so the caller prints the
@@ -174,7 +203,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           document.diagnostics = redacted;
         }
         // Every member is already a plain JSON value, so this runs no user code and drops or restores nothing.
-        text = JSON.stringify(document);
+        text = stringifyDocument(document, logs.warn);
       } catch {
         text = undefined;
       }

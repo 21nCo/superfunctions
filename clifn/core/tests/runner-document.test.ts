@@ -1103,15 +1103,15 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       ],
     });
 
-    // Strings and keys count their exact JSON length, escapes included.
+    // Strings and keys count their length and quotes, read without scanning them.
     for (const text of ['plain', 'q"b\\', "\u0000\u001f\n\t", "\ud83d\ude00", "\ud800x\udc00", "end\ud83d"]) {
       const budget = createDocumentBudget();
       const before = budget.bytesLeft;
       // An array and its item, or an object and its member, cost VALUE_BYTES each; the string adds its JSON length.
       expect(resolveJsonMember("k", [text], { budget })).toEqual([text]);
-      expect(before - budget.bytesLeft).toBe(2 * VALUE_BYTES + JSON.stringify(text).length);
+      expect(before - budget.bytesLeft).toBe(2 * VALUE_BYTES + text.length + 2);
       expect(resolveJsonMember("k", { [text]: 1 }, { budget })).toEqual({ [text]: 1 });
-      expect(before - budget.bytesLeft).toBe(4 * VALUE_BYTES + 2 * JSON.stringify(text).length);
+      expect(before - budget.bytesLeft).toBe(4 * VALUE_BYTES + 2 * (text.length + 2));
     }
 
     // A sensitive member is "[REDACTED]" unless JSON drops it; nothing under it runs.
@@ -1146,7 +1146,7 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         proxy: () => ({ data: items(2e8, 0) }),
         generated: () => ({ data: generated(5) }),
         strings: () => ({ data: Array.from({ length: 5000 }, () => ({ toJSON: () => "x".repeat(2 ** 20) })) }),
-        // Escaped, 12 MiB of NUL characters would need 72 MiB of text: counted, never built.
+        // 12 MiB of NUL characters: more than the budget by length alone, so never scanned or escaped.
         escaped: () => {
           const nul = "\\u0000".repeat(12 * 2 ** 20);
           return {
@@ -1168,6 +1168,14 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
             nested: ropes.map((rope) => ({ code: "NESTED", severity: "info", message: "n", details: { rope } })),
           };
         },
+        // Twenty distinct 4 MiB ropes, each within the budget, in details that resolve to an array: never flattened.
+        smallRopes: () => ({
+          data: 1,
+          diagnostics: Array.from({ length: 20 }, (_, i) => {
+            const rope = ("y" + i).repeat(2 * 2 ** 20);
+            return { code: "SMALL", severity: "info", message: String(i), details: { toJSON: () => [rope] } };
+          }),
+        }),
         records: () => ({ data: Array.from({ length: 1000 }, (_, id) => ({ id, tags: ["a"] })) }),
       };
       import(${JSON.stringify(pathToFileURL(runner).href)}).then(async ({ runAction }) => {
@@ -1223,6 +1231,12 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
           ...Array.from({ length: 7 }, (_, i) => ({ code: "ROPE", severity: "info", message: String(i) })),
           ...Array.from({ length: 7 }, () => ({ code: "NESTED", severity: "info", message: "n" })),
         ],
+      });
+      expect(results.smallRopes.exitCode).toBe(0);
+      expect(documentOf("smallRopes")).toEqual({
+        ok: true,
+        data: 1,
+        diagnostics: Array.from({ length: 20 }, (_, i) => ({ code: "SMALL", severity: "info", message: String(i) })),
       });
       // The diagnostics share one budget: details that no longer fit are left out, and the outcome stands.
       const withDiagnostics = documentOf("diagnostics");
