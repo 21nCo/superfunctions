@@ -45,71 +45,169 @@ export function normalizeJsonValue(value: unknown, seen = new WeakSet<object>())
 }
 
 const CIRCULAR = "[Circular]";
+/** How often one original value may recur on the active path before the first pass stops (see `resolveJsonMember`). */
+const REPEAT_LIMIT = 64;
+const booleanValueOf = Boolean.prototype.valueOf;
 const bigintValueOf = BigInt.prototype.valueOf;
 
-/** An object JSON.stringify is serializing, with the original member value and key it came from. */
-interface Frame {
-  readonly node: object;
-  readonly original: unknown;
-  readonly key: string;
+/** Thrown inside the first pass when a value keeps coming back through fresh toJSON projections. */
+class UnboundedProjection extends Error {}
+
+interface Walk {
+  /** The objects being serialized, as JSON.stringify's stack holds them. */
+  readonly nodes: Set<object>;
+  /** How many of those objects were produced from each original member value (before its toJSON ran). */
+  readonly originals: Map<unknown, number>;
+  /** The first pass allows REPEAT_LIMIT recurrences and then stops; the second pass marks the first one. */
+  readonly repeatLimit: number;
 }
 
-/** The member value as stored, read without running a getter; undefined when it cannot be read that way. */
-function storedValue(holder: object, key: string): unknown {
-  try {
-    const descriptor = Reflect.getOwnPropertyDescriptor(holder, key);
-    return descriptor && "value" in descriptor ? descriptor.value : undefined;
-  } catch {
+function isTracked(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+/** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
+function toLength(value: unknown): number {
+  const number = +(value as number);
+  if (Number.isNaN(number) || number <= 0) {
+    return 0;
+  }
+  return Math.min(Math.trunc(number), Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * Unwraps a boxed primitive by internal slot, in any realm, as JSON.stringify does: a Number box through ToNumber
+ * (unary plus, which throws when its valueOf returns a bigint), a String box through ToString, a Boolean box and a
+ * BigInt box from their slot. Any other object is returned unchanged.
+ */
+function unbox(value: object): unknown {
+  if (types.isNumberObject(value)) {
+    return +value;
+  }
+  if (types.isStringObject(value)) {
+    return String(value);
+  }
+  if (types.isBooleanObject(value)) {
+    return Reflect.apply(booleanValueOf, value, []);
+  }
+  if (types.isBigIntObject(value)) {
+    return Reflect.apply(bigintValueOf, value, []);
+  }
+  return value;
+}
+
+/** SerializeJSONProperty: the JSON value of `holder[key]`, or undefined when JSON drops the member. */
+function serializeProperty(walk: Walk, holder: object, key: string): unknown {
+  const original: unknown = Reflect.get(holder, key);
+  let value = original;
+  if (isTracked(value) || typeof value === "bigint") {
+    const toJSON: unknown = (value as { toJSON?: unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      value = Reflect.apply(toJSON, value, [key]);
+    }
+  }
+  if (typeof value === "object" && value !== null) {
+    value = unbox(value);
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value !== "object") {
     return undefined;
+  }
+  return serializeNode(walk, value, original);
+}
+
+/**
+ * Serializes an object or array with `node` on the active path. A node already on the path is "[Circular]" (where
+ * JSON.stringify throws a TypeError). A node produced again from an original value that is already on the path
+ * comes from a toJSON that returns fresh objects: the first pass lets it recur as JSON.stringify would, and the
+ * second pass marks it "[Circular]".
+ */
+function serializeNode(walk: Walk, node: object, original: unknown): unknown {
+  if (walk.nodes.has(node)) {
+    return CIRCULAR;
+  }
+  const repeats = walk.originals.get(original) ?? 0;
+  if (repeats >= walk.repeatLimit) {
+    if (walk.repeatLimit === 1) {
+      return CIRCULAR;
+    }
+    throw new UnboundedProjection();
+  }
+  walk.nodes.add(node);
+  walk.originals.set(original, repeats + 1);
+  try {
+    return Array.isArray(node) ? serializeArray(walk, node) : serializeObject(walk, node);
+  } finally {
+    walk.nodes.delete(node);
+    if (repeats === 0) {
+      walk.originals.delete(original);
+    } else {
+      walk.originals.set(original, repeats);
+    }
   }
 }
 
-/**
- * A JSON.stringify replacer that keeps the active path of the objects being serialized. It runs after the native
- * toJSON call, so it sees each projection with its real key; bigints and BigInt boxes become strings. An object is
- * "[Circular]" when it is already being serialized higher up (where JSON.stringify throws a TypeError), or when the
- * same original value is reached again under the same member key (a toJSON that keeps returning fresh copies, which
- * JSON.stringify would follow until its stack overflows).
- */
-function createReplacer(): (this: object, key: string, value: unknown) => unknown {
-  const path: Frame[] = [];
-  return function replacer(this: object, key: string, value: unknown): unknown {
-    while (path.length > 0 && path[path.length - 1].node !== this) {
-      path.pop();
+/** SerializeJSONArray: the length is converted once; each index is read once and a dropped item becomes null. */
+function serializeArray(walk: Walk, array: object): unknown[] {
+  const length = toLength(Reflect.get(array, "length"));
+  const items: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const item = serializeProperty(walk, array, String(index));
+    items.push(item === undefined ? null : item);
+  }
+  return items;
+}
+
+/** SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. */
+function serializeObject(walk: Walk, record: object): Record<string, unknown> {
+  const entries: Array<[string, unknown]> = [];
+  for (const name of Object.keys(record)) {
+    const member = serializeProperty(walk, record, name);
+    if (member !== undefined) {
+      entries.push([name, member]);
     }
-    if (typeof value === "bigint") {
-      return value.toString();
-    }
-    if (typeof value !== "object" || value === null) {
-      return value;
-    }
-    if (types.isBigIntObject(value)) {
-      return (Reflect.apply(bigintValueOf, value, []) as bigint).toString();
-    }
-    const original = storedValue(this, key);
-    const repeated = path.some(
-      (frame) => frame.node === value || (frame.key === key && frame.original === original && original !== undefined)
-    );
-    if (repeated) {
-      return CIRCULAR;
-    }
-    path.push({ node: value, original, key });
-    return value;
-  };
+  }
+  return Object.fromEntries(entries);
+}
+
+function resolveWith(repeatLimit: number, key: string, value: unknown): unknown {
+  const holder = Object.create(null) as Record<string, unknown>;
+  holder[key] = value;
+  return serializeProperty(createWalk(repeatLimit), holder, key);
+}
+
+function createWalk(repeatLimit: number): Walk {
+  return { nodes: new Set(), originals: new Map(), repeatLimit };
 }
 
 /**
- * Resolves a value to the plain JSON value that `JSON.stringify` writes for it as the member `key` of an object.
- * The walk is native `JSON.stringify` itself (toJSON calls with their real key or index, array lengths, boxed
- * primitives, dropped members), with two extensions: bigints (and BigInt boxes) become strings, and cycles become
- * "[Circular]", as in `normalizeJsonValue`. The result is parsed back into fresh plain objects and arrays, so
- * redacting it and serializing it again calls no user code. Returns undefined when JSON drops the member
- * (undefined, a function, a symbol, or a `toJSON` that returns one). Throws whatever `JSON.stringify` throws for the
- * value, such as a throwing getter or `toJSON`, or a boxed number whose `valueOf` returns a bigint.
+ * Resolves a value to the plain JSON value that `JSON.stringify` writes for it as the member `key` of an object,
+ * following its algorithm step by step: each member is read once, toJSON (on an object, function or bigint) runs
+ * with its real key or array index, an array length is converted once, boxed primitives are unwrapped by internal
+ * slot, and dropped members are left out or become null in arrays. Two extensions keep every value printable:
+ * bigints become strings, and cycles become "[Circular]", as in `normalizeJsonValue`. When a toJSON keeps returning
+ * fresh objects that lead back to the same original value (where JSON.stringify would recurse until its stack
+ * overflows), the walk stops and runs once more, marking the first recurrence "[Circular]"; only then do getters
+ * and toJSON methods run a second time. The result is built from fresh plain objects and arrays, so redacting it
+ * and serializing it again calls no user code. Returns undefined when JSON drops the member (undefined, a function,
+ * a symbol, or a `toJSON` that returns one). Throws what JSON.stringify throws, such as a throwing getter or
+ * `toJSON`, or a Number box whose `valueOf` returns a bigint.
  */
 export function resolveJsonMember(key: string, value: unknown): unknown {
-  const holder = Object.create(null) as Record<string, unknown>;
-  holder[key] = value;
-  const text = JSON.stringify(holder, createReplacer());
-  return (JSON.parse(text) as Record<string, unknown>)[key];
+  try {
+    return resolveWith(REPEAT_LIMIT, key, value);
+  } catch (error) {
+    if (!(error instanceof UnboundedProjection)) {
+      throw error;
+    }
+  }
+  return resolveWith(1, key, value);
 }

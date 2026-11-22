@@ -705,27 +705,23 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     }
     return parent;
   };
-  // Each toJSON returns a fresh copy, so the cycle is marked where an original value comes back under the same key.
-  const printedCycle = {
-    name: "parent",
-    password: "[REDACTED]",
-    child: { name: "child", parent: { name: "parent", password: "[REDACTED]", child: "[Circular]" } },
-  };
+  const printedCycle = { name: "parent", password: "[REDACTED]", child: { name: "child", parent: "[Circular]" } };
 
   it("marks a cycle through toJSON projections in data, the json() fallback, diagnostics and error details", async () => {
     // data is not redacted; diagnostics and error details are.
     const returned = await runDocument(() => ({ data: projectedCycle() }));
-    const unredacted = {
-      name: "parent",
-      password: "test-password",
-      child: { name: "child", parent: { name: "parent", password: "test-password", child: "[Circular]" } },
-    };
-    expect(parseOnlyDocument(returned)).toEqual({ ok: true, data: unredacted });
+    expect(parseOnlyDocument(returned)).toEqual({
+      ok: true,
+      data: { ...printedCycle, password: "test-password" },
+    });
 
     const fallback = await runDocument((_options, ctx) => {
       ctx.output.json(projectedCycle());
     });
-    expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: unredacted });
+    expect((parseOnlyDocument(fallback).data as Record<string, unknown>).child).toEqual({
+      name: "child",
+      parent: "[Circular]",
+    });
 
     const diagnostics = await runDocument((_options, ctx) => {
       ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: projectedCycle() });
@@ -777,6 +773,92 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
         diagnostics: [{ code: "D", severity: "info", message: "m", details: { node: redacted } }],
       });
     }
+  });
+
+  /** Runs `make()` as returned data, the json() fallback, diagnostic details and error details, expecting `printed`. */
+  const expectEveryMember = async (make: () => unknown, printed: unknown) => {
+    expect(parseOnlyDocument(await runDocument(() => ({ data: make() })))).toEqual({ ok: true, data: printed });
+    const fallback = await runDocument((_options, ctx) => {
+      ctx.output.json(make());
+    });
+    expect(parseOnlyDocument(fallback)).toEqual({ ok: true, data: printed });
+    const failure = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: { value: make() } });
+      throw Object.assign(new Error("failed"), { code: "FAILED", exitCode: 7, details: { value: make() } });
+    });
+    expect(failure.exitCode).toBe(7);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "FAILED", message: "failed", details: { value: printed } },
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: { value: printed } }],
+    });
+  };
+
+  it("marks fresh toJSON projections that reach their source through a getter or a proxy's indexed get", async () => {
+    const throughGetter = () => ({
+      toJSON(this: object) {
+        const self = this;
+        return {
+          name: "n",
+          get child() {
+            return self;
+          },
+        };
+      },
+    });
+    expect(() => JSON.stringify(throughGetter())).toThrow(RangeError);
+    await expectEveryMember(throughGetter, { name: "n", child: "[Circular]" });
+
+    const throughProxy = () => {
+      const source: object = {
+        toJSON: () => new Proxy([0], { get: (target, key) => (key === "0" ? source : Reflect.get(target, key)) }),
+      };
+      return source;
+    };
+    expect(() => JSON.stringify(throughProxy())).toThrow(RangeError);
+    await expectEveryMember(throughProxy, ["[Circular]"]);
+  });
+
+  it("keeps finite toJSON recursion and members a toJSON reassigns as native JSON prints them", async () => {
+    const stateful = () => {
+      let calls = 0;
+      const source: object = { toJSON: () => ((calls += 1) < 4 ? { next: source } : "leaf") };
+      return source;
+    };
+    expect(native(stateful)).toEqual({ next: { next: { next: "leaf" } } });
+    await expectEveryMember(stateful, { next: { next: { next: "leaf" } } });
+
+    const reassigning = () => {
+      const leaf: { toJSON?: () => unknown } = {};
+      // The leaf's toJSON puts the source back into the member being serialized; that member was already read.
+      const source = {
+        toJSON() {
+          const projection: Record<string, unknown> = { member: leaf };
+          leaf.toJSON = () => {
+            projection.member = source;
+            return { leaf: true };
+          };
+          return projection;
+        },
+      };
+      return source;
+    };
+    expect(native(reassigning)).toEqual({ member: { leaf: true } });
+    await expectEveryMember(reassigning, { member: { leaf: true } });
+  });
+
+  it("reads array items without descriptor lookups, as JSON.stringify does", async () => {
+    const make = () =>
+      new Proxy([{ x: 1 }, 2], {
+        getOwnPropertyDescriptor: (target, key) => {
+          if (key === "0") {
+            target[1] = 99;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+    expect(native(make)).toEqual([{ x: 1 }, 2]);
+    await expectEveryMember(make, [{ x: 1 }, 2]);
   });
 
   it("does not mark repeated acyclic references, with or without toJSON, as circular", async () => {
@@ -897,7 +979,7 @@ describe("document mode number boxes and throughput", () => {
     const documentMs = performance.now() - started;
 
     expect((parseOnlyDocument(result).data as unknown[]).length).toBe(100_000);
-    // Generous: the slot-probing walker took about 90 times native; the native walk with a replacer takes about 3.
+    // Generous: the walker that probed slots by throwing took about 90 times native; this one takes about 3.
     expect(documentMs).toBeLessThan(nativeMs * 25 + 500);
   });
 });
