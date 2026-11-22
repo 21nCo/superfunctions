@@ -95,7 +95,8 @@ function relocate(doc: JsonObject): JsonObject {
  * map from names to nodes, such as `properties`), `extNames` (a names map that also takes `x-`
  * extensions: Paths and Responses), `components`, `examples` (a map of Example Objects), `example`
  * (one Example Object or its `$ref`), `links` and `link` (Link Objects, whose `parameters` and
- * `requestBody` are data) or `literal` (data).
+ * `requestBody` are data) or `literal` (data). A Callback Object is a `node`: its `x-` keys are data
+ * and its expressions Path Items.
  */
 type Mode = "node" | "names" | "extNames" | "components" | "examples" | "example" | "links" | "link" | "literal";
 
@@ -200,8 +201,9 @@ class Dereferencer {
     // The validator's copy resolves nothing itself: the validator reports a reference that does
     // not resolve from the document root.
     const found = !this.inline && resource.pointer === "" ? null : resolve(resource, ref);
-    if (found === null || this.expanding.includes(found.target)) {
-      // Kept as a reference, spelled from the document root when it resolves inside a resource.
+    if (found === null || !this.inline || this.expanding.includes(found.target)) {
+      // Kept as a reference (never inlined or conjoined in the validator's copy), spelled from the
+      // document root when it resolves inside a resource.
       const kept = this.copyRecord(value, siblingMode, resource, at, "$ref");
       return { $ref: found === null || resource.pointer === "" ? ref : `#${found.pointer}`, ...kept };
     }

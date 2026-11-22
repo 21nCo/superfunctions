@@ -2815,6 +2815,16 @@ describe("apifn check: scope, resources and literal data hold on base and head a
     });
   });
 
+  it("a resource-relative $ref with siblings is only respelled for the validator; the comparison alone may refuse it", async () => {
+    const conflicting = `{ $id: "https://example.com/schemas/u", type: "object", $defs: { N: { type: "string", pattern: "^a" } }, properties: { n: { $ref: "#/$defs/N", pattern: "b$" } } }`;
+    const dir = await usersService(conflicting, `{ type: "object" }`);
+    const alone = await runJson(["check"], dir);
+    expect({ code: alone.code, valid: alone.report.valid }).toEqual({ code: 0, valid: true });
+    const self = await run(["check", "--base-spec", SPEC], dir);
+    expect(self.code).toBe(2);
+    expect(self.stderr).toContain("cannot combine");
+  });
+
   it("a resource-relative $ref is diffed against its target in that resource", async () => {
     const base = await usersService(RESOURCE, `{ type: "object" }`);
     const head = await usersService(RESOURCE.replace("minLength: 2", "minLength: 2, maxLength: 8"), `{ $ref: "${GET_SCHEMA}/properties/name" }`);
@@ -2862,6 +2872,26 @@ describe("apifn check: Responses extensions and Link payloads are copied as data
       },
       components: { links: { M: { operationId: "getU", parameters: { p: "$request.path.id" } } } },
     } as never) as unknown as Record<string, any>;
+    const withCallbacks = comparable({
+      openapi: "3.1.0",
+      info: { title: "S", version: "1.0.0" },
+      paths: {
+        "/u": {
+          post: {
+            responses: { "200": { description: "ok" } },
+            callbacks: { onEvent: { "x-sample": { $ref: "other.yml#/x" }, "{$request.body#/url}": { $ref: "#/components/pathItems/P" } }, onRef: { $ref: "#/components/callbacks/C" } },
+          },
+        },
+      },
+      components: {
+        pathItems: { P: { post: { responses: { "200": { description: "ok" } } } } },
+        callbacks: { C: { "x-note": dangling, "{$request.body#/url}": { $ref: "#/components/pathItems/P" } } },
+      },
+    } as never) as unknown as Record<string, any>;
+    const callbacks = withCallbacks.paths["/u"].post.callbacks;
+    const pathItem = { post: { responses: { "200": { description: "ok" } } } };
+    expect(callbacks.onEvent).toEqual({ "x-sample": { $ref: "other.yml#/x" }, "{$request.body#/url}": pathItem });
+    expect(callbacks.onRef).toEqual({ "x-note": dangling, "{$request.body#/url}": pathItem });
     const responses = merged.paths["/u"].get.responses;
     expect(responses["x-sample"]).toEqual(dangling);
     expect(responses["200"].links).toEqual({
@@ -2960,6 +2990,17 @@ describe("apifn check: output names compare by case only where the directory fol
       expect(await readFile(path.join(dir, report), "utf8")).toContain("apifn check");
     }
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(before);
+  });
+
+  it("names equal after NFC are one name on every filesystem, before either output is written", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    const spec = path.join(".apifn", "caf\u00e9.yml");
+    const report = path.join(".apifn", "cafe\u0301.yml");
+    const result = await run(["check", "--spec", spec, "--write", "--report", report], dir);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("is the spec itself");
+    expect(existsSync(path.join(dir, ".apifn"))).toBe(false);
   });
 
   it("a report naming the spec itself is still refused", async () => {

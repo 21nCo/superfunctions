@@ -4,8 +4,9 @@
  * - No output may land on a file the run read (spec, base file, router module, config file) or
  *   on the other output. Two paths are one file when they lead, after symlinks, to the same name
  *   in the same directory (device and inode, so a symlinked or bind-mounted directory counts), or
- *   to the same existing inode (a hard link). Names that differ only in case or Unicode
- *   normalization are one name only where that directory folds them (see foldsNames). The
+ *   to the same existing inode (a hard link). Names that differ only in Unicode normalization
+ *   are always one name; names that differ in case are one only where that directory folds
+ *   case (see foldsNames). The
  *   directory each output was
  *   observed in is bound for the run: it must still be that directory at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
@@ -146,8 +147,8 @@ function sameEntry(file: string, variant: string): boolean | null {
 }
 
 /**
- * True when the directory `anchor` treats names that differ only in case (and, with it, Unicode
- * normalization) as one, told by looking up an existing name in the other case: one of its own
+ * True when the directory `anchor` treats names that differ only in case as one, told by looking
+ * up an existing name in the other case: one of its own
  * entries, else its own name in its parent on the same device. When nothing can tell, the answer
  * is true, so a possible alias is refused rather than overwritten.
  */
@@ -193,7 +194,9 @@ function locate(file: string): Location {
 function sameFile(a: Location, b: Location): boolean {
   if (a.leaf !== null && b.leaf !== null && a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino) return true;
   if (a.anchor.dev !== b.anchor.dev || a.anchor.ino !== b.anchor.ino) return false;
-  if (a.rest === b.rest) return true;
+  // Names equal after NFC are one name wherever normalization folds (APFS, even case-sensitive),
+  // so they are always refused; a case-only difference is one name where the directory folds case.
+  if (a.rest.normalize("NFC") === b.rest.normalize("NFC")) return true;
   return foldPath(a.rest) === foldPath(b.rest) && foldsNames(a.anchor);
 }
 
