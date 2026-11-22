@@ -6,8 +6,9 @@
  *   in the same directory (device and inode, so a symlinked or bind-mounted directory counts), or
  *   to the same existing inode (a hard link). Two existing files are one only by inode; a missing
  *   name and an existing file are distinct (its lookup failed). Two missing names that differ only
- *   in case or Unicode normalization are one where their directory folds such names, judged from
- *   that directory's own entries (see aliasOf); with no such evidence the run refuses. The
+ *   in case or Unicode normalization are one where their directory folds those exact spellings,
+ *   judged by a probe entry made from them in that directory and removed again (see aliasOf);
+ *   when the probe cannot tell, the run refuses before writing anything. The
  *   directory each output was observed in is bound for the run: it must still be that directory
  *   at every later step.
  * - Each output is staged as a complete temp file beside its destination, then renamed over it
@@ -41,7 +42,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readSync,
   renameSync,
   rmdirSync,
@@ -131,76 +131,56 @@ function locate(file: string): Location {
   return locationOf(anchorOf(nearestExistingDir(destination)), destination, leaf);
 }
 
-/** The other-case spelling of `name` (null when it has none that keeps every letter in place). */
-function otherCase(name: string): string | null {
-  const lower = name.toLowerCase();
-  const upper = name.toUpperCase();
-  if (lower === upper || lower.length !== name.length || upper.length !== name.length) return null;
-  const variant = name === lower ? upper : lower;
-  return variant.toLowerCase() === lower ? variant : null;
-}
+type Alias = "same" | "distinct" | "unknown";
 
-/** The other Unicode normalization of `name` (null when NFC and NFD spell it alike). */
-function otherNormalization(name: string): string | null {
-  const nfd = name.normalize("NFD");
-  if (nfd !== name) return nfd;
-  const nfc = name.normalize("NFC");
-  return nfc === name ? null : nfc;
+/** True when `found` is the inode `own` names. */
+function sameInode(found: BigIntStats, own: BigIntStats): boolean {
+  return found.dev === own.dev && found.ino === own.ino;
 }
 
 /**
- * What the directory `anchor` itself shows about whether it treats `variantOf(name)` as `name`,
- * from its own entries (never its parent's policy, which can differ per directory):
- * - a variant listed as an entry of its own is a distinct name, even when both share an inode
- *   (hard links), so the directory does not fold;
- * - a variant the listing lacks and a lookup does not find is a distinct name too;
- * - a variant the listing lacks but a lookup finds as the same inode is a fold.
- * Null when no entry can tell (no entry with a variant, or the directory cannot be listed).
+ * Whether the directory `anchor` treats the entry names `a` and `b` as one name, from those exact
+ * spellings: the run creates a probe whose name ends in `a` (O_EXCL, so nothing is replaced) and
+ * looks up the same name ending in `b`. The same inode is a fold, a failed lookup a distinct name,
+ * anything else (no probe, another file, the directory moved) unknown. Folding is not uniform
+ * across characters (HFS+ leaves some unnormalized, vfat folds only ASCII case), so no other entry
+ * of the directory can stand in for these spellings. The probe is removed while it is still ours.
  */
-function foldsVariants(anchor: Anchor, variantOf: (name: string) => string | null): boolean | null {
-  let entries: string[];
+function probeNames(anchor: Anchor, a: string, b: string): Alias {
+  if (!stillAnchored(anchor)) return "unknown";
+  const prefix = `.apifn-probe-${process.pid}-${randomBytes(4).toString("hex")}-`;
+  const probe = path.join(anchor.dir, prefix + a);
+  let fd: number;
   try {
-    entries = readdirSync(anchor.dir);
+    fd = openSync(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
   } catch {
-    return null;
+    return "unknown";
   }
-  const listed = new Set(entries);
-  for (const name of entries) {
-    const variant = variantOf(name);
-    if (variant === null) continue;
-    if (listed.has(variant)) return false;
-    let original: BigIntStats;
+  const own = fstatSync(fd, BIG);
+  try {
+    const found = lstatSync(path.join(anchor.dir, prefix + b), BIG);
+    return sameInode(found, own) && stillAnchored(anchor) ? "same" : "unknown";
+  } catch (error) {
+    return isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
+  } finally {
     try {
-      original = lstatSync(path.join(anchor.dir, name), BIG);
+      if (sameInode(lstatSync(probe, BIG), own)) unlinkSync(probe);
     } catch {
-      continue;
+      // Already gone or replaced: another process's file is left alone.
     }
-    try {
-      const found = lstatSync(path.join(anchor.dir, variant), BIG);
-      // Another inode under an unlisted name appeared after the listing: no evidence either way.
-      if (found.dev === original.dev && found.ino === original.ino) return true;
-    } catch (error) {
-      if (isMissingPath(error)) return false;
-    }
+    closeSync(fd);
   }
-  return null;
 }
-
-/** Spelling with letter case folded and normalization kept, to tell whether two names differ in normalization. */
-function caseFolded(value: string): string {
-  return value.toUpperCase().toLowerCase();
-}
-
-type Alias = "same" | "distinct" | "unknown";
 
 /**
  * Whether two write locations are one file:
  * - both exist: inode identity alone decides (distinct inodes are never one file);
  * - exactly one exists: the failed lookup of the other already shows its name reaches no file
  *   there, so they are distinct;
- * - both missing: one file when bound to one directory under the same name, or names that differ
- *   only in case or Unicode normalization where that directory folds such names. The evidence
- *   comes from that directory's own entries (foldsVariants); with none, the answer is unknown.
+ * - both missing: one file when bound to one directory under the same name. Names that differ
+ *   only in case or Unicode normalization are judged by probing their first differing component
+ *   in that directory (probeNames). A difference below a directory that does not exist yet has
+ *   no directory to probe, so the answer is unknown.
  */
 function aliasOf(a: Location, b: Location): Alias {
   if (a.leaf !== null && b.leaf !== null) return a.leaf.dev === b.leaf.dev && a.leaf.ino === b.leaf.ino ? "same" : "distinct";
@@ -208,11 +188,12 @@ function aliasOf(a: Location, b: Location): Alias {
   if (a.anchor.dev !== b.anchor.dev || a.anchor.ino !== b.anchor.ino) return "distinct";
   if (a.rest === b.rest) return "same";
   if (foldPath(a.rest) !== foldPath(b.rest)) return "distinct";
-  const evidence: Array<boolean | null> = [];
-  if (a.rest.normalize("NFC") !== b.rest.normalize("NFC")) evidence.push(foldsVariants(a.anchor, otherCase));
-  if (caseFolded(a.rest) !== caseFolded(b.rest)) evidence.push(foldsVariants(a.anchor, otherNormalization));
-  if (evidence.includes(false)) return "distinct";
-  return evidence.includes(null) ? "unknown" : "same";
+  const partsA = a.rest.split(path.sep);
+  const partsB = b.rest.split(path.sep);
+  if (partsA.length !== partsB.length || partsA[0] === partsB[0]) return "unknown";
+  const first = probeNames(a.anchor, partsA[0], partsB[0]);
+  if (first !== "same") return first;
+  return partsA.slice(1).join(path.sep) === partsB.slice(1).join(path.sep) ? "same" : "unknown";
 }
 
 export interface NamedFile {
@@ -267,7 +248,7 @@ export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Obser
       if (alias === "same") throw new CheckUsageError(`${output.role} is ${other.role}; pick another file.`);
       if (alias === "unknown") {
         throw new CheckUsageError(
-          `${output.role} may be ${other.role}: its names differ only in case or Unicode normalization, and ${location.anchor.dir} has no entry that shows whether it folds such names; pick another file.`,
+          `${output.role} may be ${other.role}: its names differ only in case or Unicode normalization, and a probe in ${location.anchor.dir} cannot show whether the directory there folds them; pick another file.`,
         );
       }
     }
