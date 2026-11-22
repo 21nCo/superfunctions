@@ -244,14 +244,17 @@ export function parseTracesQuery(input: Record<string, string>): TracesQuery {
 function statusForLangFnCode(code: string): number {
   switch (code) {
     case "VALIDATION_ERROR":
+    case "ROUTE_RESTRICTION":
       return 400;
     case "TRACE_NOT_FOUND":
       return 404;
     case "PROVIDER_AUTH":
+    case "PROVIDER_REAUTH_REQUIRED":
       return 401;
     case "RATE_LIMITED":
     case "BUDGET_EXCEEDED":
     case "PROVIDER_RATE_LIMIT":
+    case "PROVIDER_QUOTA_EXCEEDED":
       return 429;
     default:
       return 500;

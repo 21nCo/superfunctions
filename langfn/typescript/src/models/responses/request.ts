@@ -1,7 +1,12 @@
 import { ContextLengthError, ValidationError } from "../../core/errors.js";
 import type { ToolCall, ToolSpec } from "../../core/types.js";
 import { parseMessageToolCalls } from "../openai.js";
-import { requireCapability, type CapabilityProfile } from "../profiles/types.js";
+import {
+  requireCapability,
+  RouteRestrictionError,
+  type CapabilityProfile,
+  type RouteRestriction,
+} from "../profiles/types.js";
 import { parseOutputItems, sameToolCalls } from "./response.js";
 import type {
   ResponsesChatRequest,
@@ -34,9 +39,11 @@ export function buildResponsesPayload(
 ): Record<string, unknown> {
   const { profile } = options;
   if (options.stream) requireCapability(profile, "streaming");
+  else if (profile.streamOnly) throw new RouteRestrictionError("streamOnly", "stream", profile.id);
   if (!request || !Array.isArray(request.messages) || request.messages.length === 0) {
     throw new ValidationError("Responses requests require at least one message");
   }
+  assertRouteRestrictions(request, profile);
 
   const payload: Record<string, unknown> = {
     model: options.model,
@@ -81,6 +88,11 @@ export function buildResponsesPayload(
 
   const maxOutputTokens = request.maxOutputTokens ?? options.maxOutputTokens;
   if (maxOutputTokens !== undefined) {
+    // A route that refuses the cap fails here rather than drop a limit the caller set.
+    if (profile.restrictions?.includes("outputTokenCap")) {
+      const option = request.maxOutputTokens !== undefined ? "maxOutputTokens" : "maxOutputTokens (model default)";
+      throw new RouteRestrictionError("outputTokenCap", option, profile.id);
+    }
     if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) {
       throw new ValidationError("maxOutputTokens must be a positive safe integer");
     }
@@ -98,7 +110,56 @@ export function buildResponsesPayload(
     }
     payload.max_output_tokens = maxOutputTokens;
   }
+  if (profile.restrictions?.includes("hostedTools")) {
+    (payload.input as Record<string, unknown>[]).forEach((item, index) => {
+      if (!STATELESS_INPUT_TYPES.has(item.type as string)) {
+        throw new RouteRestrictionError("hostedTools", `input[${index}] (${String(item.type)})`, profile.id);
+      }
+    });
+  }
   return payload;
+}
+
+/** Input item types that need no hosted tool; a replayed hosted tool call is anything else. */
+const STATELESS_INPUT_TYPES = new Set(["message", "function_call", "function_call_output", "reasoning"]);
+
+const present = (value: unknown) => value !== undefined && value !== null;
+
+/**
+ * Reject the options a profile's route refuses (see {@link CapabilityProfile.restrictions}).
+ * The request type has none of them, so they arrive only from untyped callers, which would
+ * otherwise see them dropped without notice.
+ */
+function assertRouteRestrictions(request: ResponsesChatRequest, profile: CapabilityProfile): void {
+  const restrictions = profile.restrictions;
+  if (!restrictions?.length) return;
+  const raw = request as unknown as Record<string, unknown>;
+  const refuse = (restriction: RouteRestriction, option: string) => {
+    if (restrictions.includes(restriction)) throw new RouteRestrictionError(restriction, option, profile.id);
+  };
+  for (const option of ["previous_response_id", "previousResponseId"]) {
+    if (present(raw[option])) refuse("previousResponseId", option);
+  }
+  if (present(raw.background) && raw.background !== false) refuse("background", "background");
+  if (present(raw.conversation)) refuse("hostedHistory", "conversation");
+  if (present(raw.store) && raw.store !== false) refuse("hostedHistory", "store");
+  if (present(raw.max_output_tokens)) refuse("outputTokenCap", "max_output_tokens");
+  if (Array.isArray(request.tools)) {
+    request.tools.forEach((tool, index) => {
+      const type = isObject(tool) ? tool.type : undefined;
+      if (present(type) && type !== "function") refuse("hostedTools", `tools[${index}]`);
+    });
+  }
+  const choice: unknown = request.tool_choice;
+  if (isObject(choice) && choice.type !== "function") {
+    const allowed = choice.type === "allowed_tools" && Array.isArray(choice.tools)
+      && choice.tools.every((tool) => isObject(tool) && tool.type === "function");
+    if (!allowed) refuse("hostedTools", "tool_choice");
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -133,7 +194,7 @@ function toResponsesInput(messages: ResponsesMessage[], profile: CapabilityProfi
     }
     switch (message.role) {
       case "system":
-        input.push({ type: "message", role: "system", content: message.content });
+        input.push({ type: "message", role: profile.systemRole ?? "system", content: message.content });
         return;
       case "user":
         input.push(toUserItem(message, index, profile));
