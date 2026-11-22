@@ -66,28 +66,27 @@ export function bundledSdkBanner(packageRoot) {
 
 // Executable loads of the SDK: `import ... from "<sdk>"`, `export ... from
 // "<sdk>"`, `import "<sdk>"`, and `import(`, `require(` or esbuild's
-// `__require(` with an SDK specifier, including CommonJS `module.require(`,
-// `module?.require(` and `module["require"](` (MCP-13). The bundle is parsed with the
-// TypeScript parser, so comments, strings, template text and regular
-// expressions are never mistaken for code, every ECMAScript line terminator
-// and escape is handled, and specifiers and identifiers are compared decoded.
-// A bundle that does not parse fails instead of passing.
+// `__require(` with an SDK specifier, including any `require` method call such
+// as `module.require(`, `mod?.require(` or `x["require"](` (MCP-13). The bundle
+// is parsed with the TypeScript parser, so comments, strings, template text and
+// regular expressions are never mistaken for code, every ECMAScript line
+// terminator and escape is handled, and specifiers and identifiers are compared
+// decoded. A bundle that does not parse fails instead of passing.
 const SDK_LOADERS = new Set(["require", "__require"]);
 const isSdkSpecifier = (node) =>
   node !== undefined &&
   (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
   (node.text === SDK_NAME || node.text.startsWith(`${SDK_NAME}/`));
 
-// The loader a call names: `require`/`__require`, or `require` read from
-// `module`; a `require` method of any other object is not a loader.
+// The loader a call names: `require`/`__require`, or a `require` method on any
+// receiver. The receiver is not checked: `module` can be aliased, and a bundle
+// whose code calls some object's `require` with an SDK specifier fails closed.
 function loaderName(callee) {
   if (ts.isIdentifier(callee)) return SDK_LOADERS.has(ts.idText(callee)) ? ts.idText(callee) : undefined;
   let member;
   if (ts.isPropertyAccessExpression(callee)) member = ts.idText(callee.name);
   else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) member = callee.argumentExpression.text;
-  if (member !== "require") return undefined;
-  const object = ts.skipParentheses(callee.expression);
-  return ts.isIdentifier(object) && ts.idText(object) === "module" ? "module.require" : undefined;
+  return member === "require" ? ".require" : undefined;
 }
 
 function sdkLoad(node) {
