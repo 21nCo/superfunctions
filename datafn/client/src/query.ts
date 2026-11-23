@@ -365,31 +365,32 @@ function stringTokens(value: unknown): string[] {
 const PUSHDOWN_OPERATORS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null".split(" "));
 
 /**
- * The server's classifyQuery for a plain list: `true` for FULL_PUSHDOWN, whose
- * projectFields omits top-level keys only; `false` when materializeSelect runs
- * (search, grouping, temporal, a relation or nested select token, a top-level
- * `$or` or dotted filter key, which its filter compiler rejects, or over
- * 30,000 `$in` values); `undefined` when only that compiler can tell.
+ * Whether the server's classifyQuery certainly gives a plain list to
+ * FULL_PUSHDOWN, whose projectFields omits top-level keys only. Search,
+ * grouping, temporal, a relation or nested select token, `$or`, a dotted,
+ * relation or quantified filter key, an operator outside the adapter map,
+ * over 30,000 `$in` values or a shareable resource (whose access filter the
+ * server adds) runs, or may run, materializeSelect.
  */
-function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): Truth {
+function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
   const resource = String(query.resource);
-  if ("temporal" in query || query.search || query.groupBy || query.having) return false;
+  const resourceSchema = schema.resources.find((entry) => entry.name === resource);
+  if (!resourceSchema || "temporal" in query || query.search || query.groupBy || query.having) return false;
+  if (resolveCapabilities(schema.capabilities as any, resourceSchema.capabilities as any)
+    .some((capability) => isPlainRecord(capability) && "shareable" in capability)) return false;
   if (stringTokens(query.select).some((token) => token !== "*"
     && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
   let values = 0;
-  const pushes = (filter: unknown, top: boolean): Truth => !isPlainRecord(filter) ? undefined
-    : allOf(Object.entries(filter).map(([key, value]): Truth => {
-      if (key === "$or" || key.includes(".")) return top ? false : undefined;
-      if (key === "$and") return Array.isArray(value) ? allOf(value.map((sub) => pushes(sub, false))) : undefined;
-      if (key.startsWith("$") || findRelationMatch(schema, resource, key)) return undefined;
-      const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
-      return allOf(Object.entries(ops).map(([op, operand]) => {
-        if (Array.isArray(operand)) values += operand.length;
-        return PUSHDOWN_OPERATORS.has(op.replace(/^\$/, "")) || undefined;
-      }));
-    }));
-  const pushed = query.filters === undefined || query.filters === null ? true : pushes(query.filters, true);
-  return values > 30_000 ? false : pushed;
+  const pushes = (filter: unknown): boolean => isPlainRecord(filter) && Object.entries(filter).every(([key, value]) => {
+    if (key === "$and") return Array.isArray(value) && value.every(pushes);
+    if (key.startsWith("$") || key.includes(".") || findRelationMatch(schema, resource, key)) return false;
+    const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
+    return Object.entries(ops).every(([op, operand]) => {
+      if (Array.isArray(operand)) values += operand.length;
+      return PUSHDOWN_OPERATORS.has(op.replace(/^\$/, ""));
+    });
+  });
+  return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
 }
 
 /**
@@ -695,12 +696,10 @@ async function replayedPageRow(
     schema.resources.find((entry) => entry.name === page.resource),
   );
   const shown: Record<string, unknown> = { ...page.row };
-  const pushdown = relationType ? false : serverPushesDown(schema, query);
+  const pushdown = !relationType && serverPushesDown(schema, query);
   for (const key of shownKeys) {
-    const masked = pushdown === true ? decoded[key] : applyServerOmit(decoded[key], stripped);
-    // A nested shape that depends on the server's plan keeps the server's value.
-    if (undecodable.has(key) || (pushdown === undefined && !sameValue(masked, decoded[key]))) continue;
-    if (key in decoded) shown[key] = masked;
+    if (undecodable.has(key)) continue;
+    if (key in decoded) shown[key] = pushdown ? decoded[key] : applyServerOmit(decoded[key], stripped);
     else delete shown[key];
   }
   return shown;
@@ -1088,10 +1087,11 @@ async function htreeRowsGone(
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
     const known = (page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path))
       || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
-    const parent = current[match.relation.fkField || match.relation.foreignKey || match.relation.inverse || "parentId"];
-    // An unproven path was built on an off-page parent as `<its unknown path>-<parent id>`:
-    // the row is a direct child exactly when its replayed parent is the anchor.
-    if (known ? !htreeMayHold(String(path ?? ""), anchorId, deep, prefix) : !deep && parent !== anchorId) gone.add(id);
+    // The writer builds an unproven path from the scratch path of the record
+    // it hangs the row under (and rewrites it when the anchor moves), so the
+    // row is a direct child exactly when it still extends the anchor's.
+    const underAnchor = path === joinPath(typeof anchorPath === "string" ? anchorPath : "", anchorId);
+    if (known ? !htreeMayHold(String(path ?? ""), anchorId, deep, prefix) : !deep && !underAnchor) gone.add(id);
   }
   return gone;
 }
