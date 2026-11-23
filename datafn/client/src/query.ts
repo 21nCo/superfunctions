@@ -793,15 +793,14 @@ function noteStateEvidence(evidence: Map<string, Set<string>>, guessed: Readonly
   evidence.set(key, new Set([...evidence.get(key) ?? [], ...fields]));
 }
 
-/** Note the set foreign and htree parent keys a merge-create filled from schema defaults (the server keeps its own record's) that no later merge named. */
+/** Note the set fields a merge-create filled itself, links and discriminators included (the server keeps its own record's), that no later merge sent. */
 async function noteGuessedKeys(scratch: DatafnStorageAdapter, schema: DatafnSchema, guessed: Map<string, string[]>, mutation: Record<string, unknown>, existed: boolean): Promise<void> {
   const { resource, id, operation, record } = mutation;
   if (!["merge", "insert", "replace"].includes(operation as string) || typeof resource !== "string" || typeof id !== "string") return;
   const after = operation === "merge" && !existed ? await scratch.getRecord(resource, id) : null;
-  const parents = (schema.relations ?? []).filter((relation) => relation.type === "htree" && endpointIncludes(relation.to, resource))
-    .map((relation) => relation.fkField || relation.foreignKey || relation.inverse || "parentId"); // the writer's htreeFkField
-  const keys = after ? [...heldForeignKeys(schema, resource), ...parents].filter((fk) => after[fk] != null) : guessed.get(JSON.stringify([resource, id])) ?? [];
-  guessed.set(JSON.stringify([resource, id]), operation === "merge" ? keys.filter((fk) => !(isPlainRecord(record) && fk in record)) : []);
+  const own = new Set(["id", ANCESTOR_INACTIVE_FIELD, ...STATE_FIELDS, ...declaredFields(schema, resource).system]);
+  const keys = after ? Object.keys(after).filter((key) => !own.has(key) && after[key] != null) : guessed.get(JSON.stringify([resource, id])) ?? [];
+  guessed.set(JSON.stringify([resource, id]), operation === "merge" ? keys.filter((key) => !isPlainRecord(record) || record[key] === undefined) : []); // JSON drops undefined
 }
 
 /** Htree paths a merge, replace or insert sets as given, or a replace resets (declared writable only, as buildReplaceRecord). */

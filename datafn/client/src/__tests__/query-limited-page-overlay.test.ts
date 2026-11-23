@@ -2885,6 +2885,24 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
       await offlineWrite(chain, chained, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
       expect((await page(chain, chained, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
     }
+    // Nor one through a key a merge sent as undefined (JSON drops it), or a polymorphic link whose resource the merge-create defaulted.
+    const owned = {
+      resources: [...cascading.resources.map((resource) => resource.name !== "projects" ? resource : { ...resource, fields: [...resource.fields,
+        { name: "ownerId", type: "string", required: false, nullable: true }, { name: "ownerResource", type: "string", required: false, nullable: true, default: "orgs" }] }),
+      { ...teams, fields: teams.fields.slice(0, 1) }],
+      relations: [...cascading.relations!.slice(0, 2),
+        { from: "projects", to: ["orgs", "teams"], type: "many-one", relation: "owner", inverse: "projects", fkField: "ownerId", fkResourceField: "ownerResource", onDelete: "cascade" }],
+    } as DatafnSchema;
+    for (const [schema, link] of [[defaultedOrg, { orgId: undefined }], [owned, { ownerId: "org:o" }]] as const) {
+      const storage = new MemoryStorageAdapter(["orgs", "teams", "projects", "goals"]);
+      await storage.setHydrationState("goals", "hydrating");
+      await offlineWrite(storage, schema, { resource: "orgs", operation: "merge", id: "org:o", record: { name: "O" } });
+      await offlineWrite(storage, schema, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P", ...link } });
+      await offlineWrite(storage, schema, { resource: "orgs", operation: "delete", id: "org:o" });
+      await offlineWrite(storage, schema, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P2" } });
+      await offlineWrite(storage, schema, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+      expect((await page(storage, schema, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+    }
   });
 
   it("hydration: relation metadata is judged as the sync engine sends it, stripped under a later forward name", async () => {
