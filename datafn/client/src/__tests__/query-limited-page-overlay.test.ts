@@ -2862,6 +2862,29 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(guessedLink, defaultedOrg, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P2" } });
     await offlineWrite(guessedLink, defaultedOrg, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
     expect((await page(guessedLink, defaultedOrg, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+    // Nor does one whose earlier hop went through a defaulted key: a team's org, or a project's htree parent.
+    const teams = { name: "teams", version: 1, fields: [{ name: "name", type: "string", required: false }, { name: "orgId", type: "string", required: false, nullable: true, default: "org:o" }] };
+    const chained = {
+      resources: [...cascading.resources.map((resource) => resource.name !== "projects" ? resource : { ...resource, fields: [
+        ...resource.fields, { name: "teamId", type: "string", required: false, nullable: true },
+        { name: "parentId", type: "string", required: false, nullable: true, default: "project:root" }, { name: "parentPath", type: "string", required: false, nullable: true },
+      ] }), teams],
+      relations: [...cascading.relations!.slice(0, 2),
+        { from: "projects", to: "teams", type: "many-one", relation: "team", inverse: "projects", fkField: "teamId", onDelete: "cascade" },
+        { from: "teams", to: "orgs", type: "many-one", relation: "org", inverse: "teams", fkField: "orgId", onDelete: "cascade" },
+        { from: "projects", to: "projects", type: "htree", relation: "subprojects", inverse: "parentProject", foreignKey: "parentId", pathField: "parentPath", onDelete: "cascade" }],
+    } as DatafnSchema;
+    for (const [resource, id] of [["orgs", "org:o"], ["projects", "project:root"]]) {
+      const chain = new MemoryStorageAdapter(["orgs", "teams", "projects", "goals"]);
+      await chain.setHydrationState("goals", "hydrating");
+      await offlineWrite(chain, chained, { resource, operation: "merge", id, record: { name: "Root" } });
+      await offlineWrite(chain, chained, { resource: "teams", operation: "merge", id: "team:t", record: { name: "T" } });
+      await offlineWrite(chain, chained, { resource: "projects", operation: "merge", id: "project:p", record: { teamId: "team:t" } });
+      await offlineWrite(chain, chained, { resource, operation: "delete", id });
+      await offlineWrite(chain, chained, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P2" } });
+      await offlineWrite(chain, chained, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+      expect((await page(chain, chained, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+    }
   });
 
   it("hydration: relation metadata is judged as the sync engine sends it, stripped under a later forward name", async () => {

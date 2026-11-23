@@ -780,7 +780,7 @@ const STATE_FIELDS = ["isArchived", "trashedAt"];
 const inactiveBy = (record: Record<string, unknown>, field: string): boolean => field === "isArchived" ? record.isArchived === true : (record.trashedAt ?? null) !== null;
 /**
  * Note the archived or trashed fields an applied entry decides: all for an insert or replace (the push adds writable defaults) or a
- * record it deletes (later writes create; by cascade, only unless a `guessed` key linked it); a state operation's; else those it writes.
+ * record it deletes (later writes create; by cascade, only if no record it deletes was linked by a `guessed` key); a state operation's; else those it writes.
  */
 function noteStateEvidence(evidence: Map<string, Set<string>>, guessed: ReadonlyMap<string, string[]>, mutation: Record<string, unknown>, deleted: readonly string[]): void {
   const { resource, id, operation, record } = mutation;
@@ -788,16 +788,19 @@ function noteStateEvidence(evidence: Map<string, Set<string>>, guessed: Readonly
   const fields = ["insert", "replace", "delete"].includes(operation as string) ? STATE_FIELDS
     : STATE_OPERATIONS.has(operation as string) ? [/^(trash|restore)$/.test(operation as string) ? "trashedAt" : "isArchived"]
       : STATE_FIELDS.filter((field) => isPlainRecord(record) && field in record);
-  for (const gone of deleted) if (gone === key || !guessed.get(gone)?.length) evidence.set(gone, new Set(STATE_FIELDS));
+  const linked = deleted.every((gone) => gone === key || !guessed.get(gone)?.length); // every hop of the cascade the server holds
+  for (const gone of deleted) if (gone === key || linked) evidence.set(gone, new Set(STATE_FIELDS));
   evidence.set(key, new Set([...evidence.get(key) ?? [], ...fields]));
 }
 
-/** Note the set foreign keys a merge-create filled from schema defaults (the server keeps its own record's) that no later merge named. */
+/** Note the set foreign and htree parent keys a merge-create filled from schema defaults (the server keeps its own record's) that no later merge named. */
 async function noteGuessedKeys(scratch: DatafnStorageAdapter, schema: DatafnSchema, guessed: Map<string, string[]>, mutation: Record<string, unknown>, existed: boolean): Promise<void> {
   const { resource, id, operation, record } = mutation;
   if (!["merge", "insert", "replace"].includes(operation as string) || typeof resource !== "string" || typeof id !== "string") return;
   const after = operation === "merge" && !existed ? await scratch.getRecord(resource, id) : null;
-  const keys = after ? [...heldForeignKeys(schema, resource)].filter((fk) => after[fk] != null) : guessed.get(JSON.stringify([resource, id])) ?? [];
+  const parents = (schema.relations ?? []).filter((relation) => relation.type === "htree" && endpointIncludes(relation.to, resource))
+    .map((relation) => relation.fkField || relation.foreignKey || relation.inverse || "parentId"); // the writer's htreeFkField
+  const keys = after ? [...heldForeignKeys(schema, resource), ...parents].filter((fk) => after[fk] != null) : guessed.get(JSON.stringify([resource, id])) ?? [];
   guessed.set(JSON.stringify([resource, id]), operation === "merge" ? keys.filter((fk) => !(isPlainRecord(record) && fk in record)) : []);
 }
 
