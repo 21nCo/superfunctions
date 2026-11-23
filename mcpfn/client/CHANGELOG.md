@@ -13,10 +13,13 @@
 - On Cloudflare Workers, and on other hosts that forbid runtime code
   generation, the client validates tool output schemas with the official SDK's
   `@cfworker/json-schema` validator instead of Ajv. An explicit
-  `clientOptions.jsonSchemaValidator` still takes precedence. Like the Ajv
-  default on Node.js, it applies keywords beside a `$ref` and draft-07 tuple
-  `items`; unlike the draft-07 Ajv, it also enforces later-draft keywords such
-  as `prefixItems` and `unevaluatedProperties`.
+  `clientOptions.jsonSchemaValidator` still takes precedence. It applies the
+  dialect each output schema's `$schema` declares (draft-04, draft-07, 2019-09
+  or 2020-12) and 2020-12 when none is declared, and fails calls to a tool that
+  declares any other dialect as unsupported. Verdicts can differ from the
+  draft-07 Ajv default on Node.js: a declared draft-07 schema ignores keywords
+  beside a `$ref`, which Ajv applies, and undeclared schemas also enforce
+  2020-12 keywords such as `prefixItems` and `unevaluatedProperties`.
 - Default request IDs use Web Crypto `crypto.randomUUID()` instead of
   `node:crypto`.
 

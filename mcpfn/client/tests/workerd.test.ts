@@ -16,7 +16,7 @@ import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core";
 
-import { runSchemaParityCases } from "./fixtures/schema-parity.mjs";
+import { declaredDialectTools, runSchemaParityCases } from "./fixtures/schema-parity.mjs";
 import { handleSchemaParityRequest } from "./fixtures/schema-parity-server.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -28,7 +28,7 @@ const builtFile = (file: string) =>
 const workerSource = `
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { createMcpFnClient, stdioTarget, streamableHttpTarget } from "@mcpfn/client";
-import { runSchemaParityCases } from "./tests/fixtures/schema-parity.mjs";
+import { declaredDialectCases, runSchemaParityCases } from "./tests/fixtures/schema-parity.mjs";
 
 async function run(endpoint) {
   const events = [];
@@ -92,6 +92,15 @@ export default {
       if (url.pathname === "/schemas") {
         return Response.json(
           await runSchemaParityCases({ createMcpFnClient, streamableHttpTarget }, endpoint),
+        );
+      }
+      if (url.pathname === "/dialects") {
+        return Response.json(
+          await runSchemaParityCases(
+            { createMcpFnClient, streamableHttpTarget },
+            endpoint,
+            declaredDialectCases,
+          ),
         );
       }
       return new Response("Not found", { status: 404 });
@@ -186,6 +195,8 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
   let endpoint: string;
   let parityServer: Server;
   let parityEndpoint: string;
+  let dialectServer: Server;
+  let dialectEndpoint: string;
 
   beforeAll(async () => {
     if (!existsSync(builtEntry)) {
@@ -197,6 +208,10 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
     endpoint = endpointOf(mcpServer.server);
     parityServer = await serveWebHandler(handleSchemaParityRequest);
     parityEndpoint = endpointOf(parityServer);
+    dialectServer = await serveWebHandler((request) =>
+      handleSchemaParityRequest(request, declaredDialectTools),
+    );
+    dialectEndpoint = endpointOf(dialectServer);
     miniflare = new Miniflare({
       compatibilityDate: "2025-11-01",
       compatibilityFlags: [],
@@ -208,7 +223,7 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
   afterAll(async () => {
     await miniflare?.dispose();
     await mcpServer?.mcp.close();
-    for (const server of [mcpServer?.server, parityServer]) {
+    for (const server of [mcpServer?.server, parityServer, dialectServer]) {
       await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
     }
   });
@@ -264,7 +279,7 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
     expect(result.message).toMatch(/Code generation from strings disallowed/);
   }, 30_000);
 
-  it("validates draft-07 tool output schemas on workerd as the Node.js default does", async () => {
+  it("validates undeclared-dialect output schemas with draft-07 features as the Node.js default does", async () => {
     type Verdict = { tool: string; value: unknown; accepted: boolean; message?: string };
     // Node.js: the same built entry with the SDK's default (Ajv) validator.
     const nodeClient = await import(builtEntry);
@@ -280,6 +295,29 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
     for (const result of [...onNode, ...onWorkerd].filter((entry) => !entry.accepted)) {
       expect(result.message).toMatch(/does not match the tool's output schema/);
     }
+  }, 30_000);
+
+  it("validates tool output schemas with the dialect their $schema declares", async () => {
+    type Verdict = { tool: string; value: unknown; accepted: boolean; message?: string };
+    const onWorkerd = await workerJson<Verdict[]>("/dialects", dialectEndpoint);
+    expect(onWorkerd.map(({ tool, value, accepted }) => ({ tool, value, accepted }))).toEqual([
+      // Draft-07 ignores the minLength beside the $ref; the $ref target still applies.
+      { tool: "draft07-ref-sibling", value: "a", accepted: true },
+      { tool: "draft07-ref-sibling", value: 5, accepted: false },
+      // Draft-04 boolean exclusiveMinimum excludes the minimum itself.
+      { tool: "draft04-exclusive-minimum", value: 5, accepted: false },
+      { tool: "draft04-exclusive-minimum", value: 6, accepted: true },
+      { tool: "draft2020-prefix-items", value: ["a"], accepted: true },
+      { tool: "draft2020-prefix-items", value: ["a", 1], accepted: false },
+      // An unsupported dialect fails explicitly instead of using another draft.
+      { tool: "draft06-unsupported", value: 1, accepted: false },
+    ]);
+    for (const result of onWorkerd.filter((entry) => !entry.accepted)) {
+      expect(result.message).toMatch(/does not match the tool's output schema/);
+    }
+    expect(onWorkerd.at(-1)!.message).toMatch(
+      /unsupported JSON Schema dialect "http:\/\/json-schema.org\/draft-06\/schema#"/,
+    );
   }, 30_000);
 
   it("fails the deprecated stdio compatibility target cleanly when opened", async () => {

@@ -16,12 +16,15 @@ export const stampFile = path.join("dist", ".build-stamp.json");
 const inputFiles = ["package.json", "tsconfig.json", "tsup.config.ts"];
 const inputDirectories = ["src"];
 
+/** Orders strings by UTF-16 code unit, like the default `sort()`. */
+const byCodeUnit = (a, b) => (a < b ? -1 : Number(a > b));
+
 function listFiles(root, relative) {
   const absolute = path.join(root, relative);
   if (!existsSync(absolute)) return [];
   if (!statSync(absolute).isDirectory()) return [relative];
   return readdirSync(absolute)
-    .sort()
+    .sort(byCodeUnit)
     .flatMap((entry) => listFiles(root, path.join(relative, entry)));
 }
 
@@ -75,7 +78,7 @@ export function requiredArtifacts(root) {
     }
   };
   collect([manifest.main, manifest.module, manifest.types, manifest.exports, manifest.imports]);
-  return [...targets].sort();
+  return [...targets].sort(byCodeUnit);
 }
 
 /** Digest of the client's build inputs under `root`. */

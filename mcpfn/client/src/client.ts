@@ -1,7 +1,6 @@
 import { Client, type ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import {
   CallToolResultSchema,
   CreateMessageRequestSchema,
@@ -28,6 +27,8 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { redactOAuthValue } from "@superfunctions/oauth-core";
+
+import { EdgeJsonSchemaValidator } from "./edge-schema-validator.js";
 
 import type {
   McpFnClientState,
@@ -122,33 +123,34 @@ function nextFallbackRequestSequence(): number {
  * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
  * only behind a flag; there, request IDs are correlation IDs built from the
  * time, a process-wide sequence shared by every loaded copy of the client
- * (so the ESM and CJS builds never repeat each other's IDs) and a random
- * component. */
+ * (so the ESM and CJS builds never repeat each other's IDs) and a component
+ * that tells processes apart: Web Crypto random bits when only `randomUUID` is
+ * missing, otherwise the process ID. They correlate diagnostics and are not
+ * secrets. */
 function defaultRequestId(): string {
-  const webCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  const webCrypto = (
+    globalThis as {
+      crypto?: { randomUUID?: () => string; getRandomValues?: (array: Uint32Array) => Uint32Array };
+    }
+  ).crypto;
   if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
   const sequence = nextFallbackRequestSequence();
-  const random = Math.floor(Math.random() * 0x100000000).toString(36);
-  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${random}`;
+  const origin =
+    typeof webCrypto?.getRandomValues === "function"
+      ? webCrypto.getRandomValues(new Uint32Array(1))[0]!
+      : ((globalThis as { process?: { pid?: unknown } }).process?.pid ?? 0);
+  const originId = typeof origin === "number" ? origin.toString(36) : "0";
+  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${originId}`;
 }
 
-/** Draft passed to `@cfworker/json-schema` on the edge, chosen to validate tool
- * output schemas the way the SDK's default Ajv validator does on Node.js. The
- * cfworker draft only changes `$ref` handling: drafts "4" and "7" ignore the
- * keywords beside a `$ref`. The SDK's Ajv (draft-07 vocabulary, Ajv v8 without
- * `ignoreKeywordsWithRef`) applies them, as cfworker does for "2019-09" and
- * "2020-12"; tuple `items` with `additionalItems` behave the same under every
- * cfworker draft. cfworker also enforces later-draft keywords such as
- * `prefixItems`, `unevaluatedProperties` and `dependentRequired`, which the
- * draft-07 Ajv ignores; pass `clientOptions.jsonSchemaValidator` to choose a
- * different validator. */
-const EDGE_SCHEMA_DRAFT = "2020-12";
 
 /** The SDK client defaults to Ajv, which compiles tool output schemas with
  * `new Function`. Cloudflare Workers (identified by `WebSocketPair`) and other
  * hosts that forbid code generation use the SDK's `@cfworker/json-schema`
- * validator instead, matching the engine selection in `@mcpfn/core`. An
- * explicit `clientOptions.jsonSchemaValidator` always wins. */
+ * validator instead (see `EdgeJsonSchemaValidator`: it applies the dialect
+ * each schema's `$schema` declares, 2020-12 when it declares none, and
+ * reports an unsupported dialect), matching the engine selection in
+ * `@mcpfn/core`. An explicit `clientOptions.jsonSchemaValidator` always wins. */
 function requiresEdgeSchemaValidator(): boolean {
   if ("WebSocketPair" in globalThis) return true;
   try {
@@ -627,7 +629,7 @@ export class McpFnClient {
         ...this.instrumentClientOptions(),
         ...(this.options.clientOptions?.jsonSchemaValidator || !requiresEdgeSchemaValidator()
           ? {}
-          : { jsonSchemaValidator: new CfWorkerJsonSchemaValidator({ draft: EDGE_SCHEMA_DRAFT }) }),
+          : { jsonSchemaValidator: new EdgeJsonSchemaValidator() }),
         capabilities: this.effectiveCapabilities(),
       },
     );

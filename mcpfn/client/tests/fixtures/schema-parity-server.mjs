@@ -5,14 +5,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 import { schemaParityTools } from "./schema-parity.mjs";
 
-/** A Streamable HTTP MCP server that returns the requested structured content
- * without validating it, so the client's validator alone decides. */
-export async function handleSchemaParityRequest(request) {
+/** A Streamable HTTP MCP server that lists `tools` (the parity tools by
+ * default) and returns the requested structured content without validating
+ * it, so the client's validator alone decides. */
+export async function handleSchemaParityRequest(request, tools = schemaParityTools) {
   const server = new Server(
     { name: "mcpfn-schema-parity-fixture", version: "1.0.0" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: schemaParityTools }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => ({
     content: [{ type: "text", text: JSON.stringify(params.arguments?.value) }],
     structuredContent: { value: params.arguments?.value },

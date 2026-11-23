@@ -33,12 +33,28 @@ describe("default request IDs", () => {
     for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+$/);
   });
 
+  it("use Web Crypto random bits, not Math.random, when only randomUUID is missing", async () => {
+    const getRandomValues = vi.fn((array: Uint32Array) => {
+      array[0] = 0xffffffff;
+      return array;
+    });
+    vi.stubGlobal("crypto", { getRandomValues });
+    const random = vi.spyOn(Math, "random");
+    try {
+      const ids = await failedConnectRequestIds();
+      expect(getRandomValues).toHaveBeenCalled();
+      expect(random).not.toHaveBeenCalled();
+      for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-1z141z3$/);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   it("do not collide across separately loaded copies of the client in one millisecond", async () => {
-    // An app can load both the ESM and the CJS build. With the time and the
-    // random component fixed, only the process-wide sequence keeps them apart.
+    // An app can load both the ESM and the CJS build. With the time fixed and
+    // one process ID, only the process-wide sequence keeps them apart.
     vi.stubGlobal("crypto", undefined);
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
     try {
       const ids: string[] = [];
       for (let copy = 0; copy < 2; copy++) {

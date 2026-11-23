@@ -48,7 +48,9 @@ stdio client transport, `cross-spawn`, `node:child_process` or other Node
 built-ins, so a Worker can bundle it without `nodejs_compat` and connect to a
 remote server over Streamable HTTP. It keeps the official SDK external, like
 before, and selects the SDK's `@cfworker/json-schema` validator for tool output
-schemas where runtime code generation is forbidden. Stdio targets live in the
+schemas where runtime code generation is forbidden, applying each schema's
+declared `$schema` dialect (2020-12 when none is declared) and failing calls to
+a tool that declares a dialect cfworker does not support. Stdio targets live in the
 Node-only `@mcpfn/client/stdio` subpath; the deprecated main-entry
 `stdioTarget` loads that subpath lazily on Node through the package's
 `#stdio-target` import and resolves to a stub without the `node` condition,
