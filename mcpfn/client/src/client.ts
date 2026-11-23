@@ -124,10 +124,11 @@ function nextFallbackRequestSequence(): number {
  * only behind a flag; there, request IDs are correlation IDs built from the
  * time, a process-wide sequence shared by every loaded copy of the client
  * (so the ESM and CJS builds never repeat each other's IDs) and a component
- * that tells processes and threads apart: Web Crypto random bits when only
- * `randomUUID` is missing, otherwise the process ID with the thread's
- * `performance.timeOrigin` in microseconds. They correlate diagnostics and are
- * not secrets. */
+ * that tells processes apart: Web Crypto random bits when only `randomUUID`
+ * is missing, otherwise the process ID with the process's
+ * `performance.timeOrigin` in microseconds (so container replicas that all run
+ * as PID 1 differ). Worker threads share both and each has its own sequence,
+ * so their IDs can repeat. They correlate diagnostics and are not secrets. */
 function defaultRequestId(): string {
   const webCrypto = (
     globalThis as {

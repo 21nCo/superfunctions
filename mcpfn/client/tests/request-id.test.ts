@@ -33,13 +33,14 @@ describe("default request IDs", () => {
     for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+_[0-9a-z]+$/);
   });
 
-  it("tell threads with one process ID apart by their time origin", async () => {
+  it("tell processes with one process ID apart by their time origin", async () => {
     vi.stubGlobal("crypto", undefined);
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     const ids: string[] = [];
     try {
       for (const timeOrigin of [1_700_000_000_000.25, 1_700_000_000_000.5]) {
-        // A fresh global sequence, as in a new worker thread or container.
+        // A fresh global sequence and start time, as in another container
+        // replica that also runs as PID 1.
         delete (globalThis as Record<symbol, unknown>)[
           Symbol.for("@mcpfn/client/fallback-request-sequence")
         ];
