@@ -73,3 +73,15 @@ deep imports into the package's source tree are not supported.
 BotFn's npm libraries live in the controlled `@superfunctions` organization.
 The npm user scope `@botfn` belongs to an unrelated account; old namespace
 references and release slugs are removed, not retained as aliases.
+
+## Operator administration
+
+`@superfunctions/botfn-admin` exposes BotFn's optional Super Console capability.
+Applications must inject a durable `BotFnOperatorStore` and a `verifyChannel`
+implementation that validates platform credentials through the real provider
+before a channel binding is persisted. The included `MemoryBotFnOperatorStore`
+is intended only for tests and local development.
+
+All records are owned by the active project scope. Channel credential references
+are accepted as write-only inputs and are never returned by the service, REST,
+MCP, or typed admin client surfaces.

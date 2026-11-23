@@ -1,24 +1,21 @@
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
-  StdioClientTransport,
-  type StdioServerParameters,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
-import {
   StreamableHTTPClientTransport,
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import type {
-  McpFnTarget,
-  McpFnTargetContext,
-  McpFnTargetDescriptor,
-  McpFnTransportHandle,
-} from "./types.js";
+import { customTarget } from "./custom-target.js";
+import { loadStdioTarget } from "./load-stdio-target.mjs";
+import {
+  stdioTargetDescriptor,
+  type McpFnStdioTargetOptions as StdioTargetOptions,
+} from "./stdio-options.js";
+import type { McpFnTarget, McpFnTargetDescriptor } from "./types.js";
 
-export interface McpFnStdioTargetOptions extends Omit<StdioServerParameters, "command"> {
-  command: string;
-}
+export { customTarget } from "./custom-target.js";
+/** @deprecated Import `McpFnStdioTargetOptions` from `@mcpfn/client/stdio`; removed in 0.2.0. */
+export type McpFnStdioTargetOptions = StdioTargetOptions;
 
 export interface McpFnStreamableHttpTargetOptions
   extends Omit<StreamableHTTPClientTransportOptions, "authProvider"> {
@@ -28,31 +25,6 @@ export interface McpFnStreamableHttpTargetOptions
 interface StateValidatingOAuthProvider extends OAuthClientProvider {
   validateAuthorizationState?(state: string | undefined): void | Promise<void>;
   invalidatePendingAuthorization?(): void | Promise<void>;
-}
-
-export function customTarget(options: {
-  kind: string;
-  descriptor?: Record<string, unknown>;
-  open(context: McpFnTargetContext): Promise<McpFnTransportHandle> | McpFnTransportHandle;
-  beginRedactionScope?(): () => void;
-  cleanup?(): Promise<void>;
-  redact?: NonNullable<McpFnTarget["redact"]>;
-  assertArtifactSafe?: NonNullable<McpFnTarget["assertArtifactSafe"]>;
-}): McpFnTarget {
-  const descriptor = Object.freeze({ kind: options.kind, ...options.descriptor });
-  return {
-    kind: options.kind,
-    describe: () => ({ ...descriptor }),
-    open: (context) => Promise.resolve(options.open(context)),
-    ...(options.beginRedactionScope
-      ? { beginRedactionScope: () => options.beginRedactionScope!() }
-      : {}),
-    ...(options.cleanup ? { cleanup: () => options.cleanup!() } : {}),
-    ...(options.redact ? { redact: options.redact } : {}),
-    ...(options.assertArtifactSafe
-      ? { assertArtifactSafe: options.assertArtifactSafe }
-      : {}),
-  };
 }
 
 export function transportTarget(
@@ -72,22 +44,53 @@ export function transportTarget(
   });
 }
 
-export function stdioTarget(options: McpFnStdioTargetOptions): McpFnTarget {
-  if (!options.command.trim()) throw new Error("McpFn stdio target command is required");
+/**
+ * @deprecated Import `stdioTarget` from `@mcpfn/client/stdio`. This main-entry
+ * compatibility export is removed in `@mcpfn/client` 0.2.0. It loads the stdio
+ * transport only when the target opens, and only where the `node` condition
+ * resolves `#stdio-target`; elsewhere (Cloudflare Workers, browsers) opening it
+ * fails with `MCPFN_TARGET_OPEN_FAILED` instead of bundling `child_process`.
+ */
+export function stdioTarget(options: StdioTargetOptions): McpFnTarget {
   return customTarget({
     kind: "stdio",
-    descriptor: {
-      command: options.command,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
-    },
-    open: () => {
-      const transport = new StdioClientTransport(options);
-      return {
-        transport,
-        close: () => transport.close(),
-      };
+    descriptor: stdioTargetDescriptor(options),
+    open: async (context) => {
+      // An already-cancelled open never starts the import. Otherwise settle as
+      // soon as the connect is aborted (for example by close()), so a pending
+      // import never holds the client in the closing state.
+      if (context.signal?.aborted) throw abortReason(context.signal);
+      const stdio = await untilAborted(loadStdioTarget(), context.signal);
+      // The import can resolve just before an abort that lands ahead of this
+      // continuation: a cancelled open still never spawns the server.
+      if (context.signal?.aborted) throw abortReason(context.signal);
+      return stdio.stdioTarget(options).open(context);
     },
   });
+}
+
+// The import's own outcome stays observed after an abort wins the race, so a
+// late loader rejection is never reported as unhandled.
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("McpFn stdio target open was aborted");
 }
 
 export function streamableHttpTarget(

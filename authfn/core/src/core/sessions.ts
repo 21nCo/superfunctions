@@ -33,7 +33,7 @@ import {
 } from './cookies.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { AUTHFN_ALL_SCOPES } from './scopes.js';
-import { findUserById } from './users.js';
+import { findUserById, isAuthFnUserDisabled } from './users.js';
 
 export interface IssueSessionInput {
   request?: Request;
@@ -63,6 +63,8 @@ export interface AuthenticatedRequestState {
   sessionToken?: string;
   csrfToken?: string;
   failureReason?: 'missing' | 'expired' | 'revoked';
+  /** Set with failureReason 'revoked' when the session is live but its user is disabled. */
+  disabled?: boolean;
 }
 
 let lastIssuedTimestampMs = 0;
@@ -193,6 +195,49 @@ export async function authenticateRequest(
   return authenticateApiKey(config, credential.secret);
 }
 
+/**
+ * The interactive session behind a request that changes the caller's own
+ * account, counting a session cookie only together with a valid CSRF token.
+ *
+ * - A cookie session with a valid `x-authfn-csrf` header is returned.
+ * - When the request carries the session cookie at all (even an empty,
+ *   duplicated, stale or unauthenticated one), nothing is returned: a
+ *   browser request is never treated as authenticated by a bearer token it
+ *   may have been given alongside.
+ * - Otherwise a bearer session token is checked. API keys never count.
+ */
+export async function authenticateAccountRequest(
+  config: AuthFnRuntimeConfig,
+  request: Request
+): Promise<AuthFnUserSession | null> {
+  const cookieState = await getCookieSessionState(config, request, { touch: false });
+  if (cookieState.session) {
+    try {
+      assertValidCsrf(request, cookieState);
+    } catch {
+      return null;
+    }
+    return cookieState.session.type === 'session' ? cookieState.session : null;
+  }
+  if (hasCookieNamed(request, cookieState.cookiePolicy.sessionCookieName)) {
+    return null;
+  }
+  const credential = readAuthorizationCredential(request);
+  if (credential?.scheme !== 'bearer') {
+    return null;
+  }
+  const session = await authenticateSessionToken(config, credential.secret, request);
+  return session?.type === 'session' ? session : null;
+}
+
+function hasCookieNamed(request: Request, name: string): boolean {
+  const header = request.headers.get('cookie');
+  if (!header) {
+    return false;
+  }
+  return header.split(';').some((part) => part.split('=')[0]?.trim() === name);
+}
+
 export async function getCookieSessionState(
   config: AuthFnRuntimeConfig,
   request: Request,
@@ -251,6 +296,17 @@ export async function getCookieSessionState(
       ...state,
       sessionRecord: record,
       failureReason: 'missing'
+    };
+  }
+  if (isAuthFnUserDisabled(user)) {
+    // Refused like a revoked session. The record is kept, so bearer tokens
+    // work again once the flag is cleared.
+    return {
+      ...state,
+      sessionRecord: record,
+      user,
+      failureReason: 'revoked',
+      disabled: true
     };
   }
 
@@ -478,7 +534,7 @@ export async function authenticateSessionToken(
   }
 
   const user = await findUserById(config, record.userId);
-  if (!user) {
+  if (!user || isAuthFnUserDisabled(user)) {
     return null;
   }
 

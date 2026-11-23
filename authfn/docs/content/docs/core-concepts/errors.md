@@ -59,6 +59,7 @@ interface AuthFnErrorEnvelope {
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | The region lookup yielded no record for the given identifier. |
 | `AUTHFN_ROUTING_ASSERTION_INVALID` | 401 | no | A cell rejected a missing, expired, replayed, or request-mismatched gateway assertion. |
 | `AUTHFN_ROUTING_CELL_UNAVAILABLE` | 503 | no | The selected private cell target was absent or dispatch failed. A generic retry is unsafe because execution may already have started. |
+| `AUTHFN_REAUTHENTICATION_REQUIRED` | 403 | no | Sensitive action needs a recent sign-in; sign in again, then retry. |
 | `AUTHFN_SESSION_EXPIRED` | 401 | no | Session past `expiresAt`. |
 | `AUTHFN_SESSION_REVOKED` | 401 | no | Session has `revokedAt` set. |
 | `AUTHFN_UNAUTHENTICATED` | 401 | no | No session at all. |

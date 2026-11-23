@@ -1,5 +1,9 @@
 import type { Memory, MemoryRelationship } from '../../core/types';
-import { requireScope, type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert } from '../adapter';
+import {
+  requireScope, requireSourceReplace, requireSourceScope, sameTagSet,
+  type StorageAdapter, type MemoryScope, type MemoryUpdate, type MemoryDelete, type MemoryInsert, type MemoryRelationshipInsert,
+  type SourceReplace, type SourceReplaceResult, type SourceReplaceSnapshot, type SourceScope, type SourceState,
+} from '../adapter';
 
 /** Reads through to the parent and stages only changed keys. */
 class StagedMap<K, V> extends Map<K, V> {
@@ -83,10 +87,13 @@ export class MemoryStorageAdapter implements StorageAdapter {
   private relationships = new Map<string, MemoryRelationship>();
   private sequence = 0;
   private mutationVersion = 0;
+  /** Fixed at construction: only the exact built-in class with its built-in search declares; a subclass opts in through the getter. */
+  private declared = Object.getPrototypeOf(this) === MemoryStorageAdapter.prototype && this.searchVectors === builtInMemorySearch;
 
   async transaction<T>(operation: (storage: StorageAdapter) => Promise<T>): Promise<T> {
     const version = this.mutationVersion;
     const staged = new MemoryStorageAdapter();
+    staged.declared = staged.declared && this.excludesSources === true;
     const memories = new StagedMap(this.memories);
     const relationships = new StagedMap(this.relationships);
     staged.memories = memories; staged.relationships = relationships;
@@ -100,27 +107,24 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return result;
   }
 
-  async insertMemories(inputs: MemoryInsert[]): Promise<Memory[]> {
-    if (!inputs.length) return [];
-    const now = Date.now();
-    const saved = inputs.map((input) => {
-      requireScope(input.tenantId, input.containerTags);
-      const memory: Memory = {
-        id: input.id ?? `memory-${now}-${++this.sequence}`,
-        tenantId: input.tenantId,
-        revision: 1,
-        deletedAt: null,
-        containerTags: [...input.containerTags],
-        type: input.type ?? 'conversational',
-        content: input.content ?? '',
-        embedding: input.embedding ? [...input.embedding] : null,
-        metadata: structuredClone(input.metadata ?? {}),
-        isLatest: input.isLatest ?? true,
-        createdAt: input.createdAt ?? now,
-        updatedAt: input.updatedAt ?? now,
-      };
-      return memory;
-    });
+  private buildMemory(input: MemoryInsert, now: number): Memory {
+    return {
+      id: input.id ?? `memory-${now}-${++this.sequence}`,
+      tenantId: input.tenantId,
+      revision: 1,
+      deletedAt: null,
+      containerTags: [...input.containerTags],
+      type: input.type ?? 'conversational',
+      content: input.content ?? '',
+      embedding: input.embedding ? [...input.embedding] : null,
+      metadata: structuredClone(input.metadata ?? {}),
+      isLatest: input.isLatest ?? true,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    };
+  }
+
+  private requireNewIds(saved: Memory[]): void {
     const ids = new Set<string>();
     for (const memory of saved) {
       if (ids.has(memory.id) || this.memories.has(memory.id)) {
@@ -128,6 +132,16 @@ export class MemoryStorageAdapter implements StorageAdapter {
       }
       ids.add(memory.id);
     }
+  }
+
+  async insertMemories(inputs: MemoryInsert[]): Promise<Memory[]> {
+    if (!inputs.length) return [];
+    const now = Date.now();
+    const saved = inputs.map((input) => {
+      requireScope(input.tenantId, input.containerTags);
+      return this.buildMemory(input, now);
+    });
+    this.requireNewIds(saved);
     this.mutationVersion++;
     for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
     return saved.map(cloneMemory);
@@ -166,6 +180,17 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return saved.map(cloneRelationship);
   }
 
+  /**
+   * Fixed for the adapter's lifetime: declared only by the built-in class
+   * whose searchVectors was the built-in one at construction. A subclass is
+   * undeclared and opts in by overriding this getter (and must then honour
+   * excludeSources). A staged adapter is declared only when its own search is
+   * the built-in one and its parent is declared when the transaction opens.
+   */
+  get excludesSources(): boolean {
+    return this.declared;
+  }
+
   async searchVectors(params: {
     tenantId: string;
     embedding: number[];
@@ -173,6 +198,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
     filters?: Record<string, unknown>;
     topK: number;
     threshold?: number;
+    excludeSources?: boolean;
   }): Promise<Memory[]> {
     requireScope(params.tenantId, params.containerTags);
     const requestedTags = new Set(params.containerTags);
@@ -180,6 +206,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
       .filter((memory) => (
         memory.tenantId === params.tenantId
         && memory.deletedAt == null && memory.isLatest
+        && !(params.excludeSources && memory.sourceKey != null)
         && ([...requestedTags].every(tag => memory.containerTags.includes(tag)))
         && metadataMatches(memory.metadata, params.filters)
       ))
@@ -205,8 +232,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
     // Recheck after the await: two competing revisions cannot both win.
     const current = this.memories.get(input.id)!;
     if (current.deletedAt != null || current.revision !== input.expectedRevision) throw new Error('MEMORY_REVISION_CONFLICT');
-    const updated = cloneMemory({ ...current, ...input.changes, metadata: input.changes.metadata ?? current.metadata, isLatest: input.changes.isLatest ?? current.isLatest, id: current.id, tenantId: current.tenantId,
-      containerTags: current.containerTags, revision: current.revision! + 1, updatedAt: Date.now() });
+    // Only the updatable fields are read from changes, as in the Postgres adapter:
+    // a Memory passed as changes cannot move this one into a source or tombstone it.
+    const { content, embedding, metadata, isLatest } = input.changes;
+    const updated = cloneMemory({ ...current,
+      ...(content === undefined ? {} : { content }),
+      ...(embedding === undefined ? {} : { embedding }),
+      metadata: metadata ?? current.metadata, isLatest: isLatest ?? current.isLatest,
+      revision: current.revision! + 1, updatedAt: Date.now() });
     this.mutationVersion++;
     this.memories.set(updated.id, updated);
     return cloneMemory(updated);
@@ -219,11 +252,74 @@ export class MemoryStorageAdapter implements StorageAdapter {
     if (current.deletedAt != null) return;
     if (input.expectedRevision !== undefined && current.revision !== input.expectedRevision) throw new Error('MEMORY_REVISION_CONFLICT');
     this.mutationVersion++;
-    this.memories.set(input.id, { ...current, content: '', embedding: null, metadata: {}, isLatest: false,
-      deletedAt: Date.now(), updatedAt: Date.now(), revision: current.revision! + 1 });
+    this.tombstone([current], Date.now());
+  }
+
+  /** Clears the content of each memory, marks it deleted and drops its relationships. */
+  private tombstone(targets: Memory[], now: number): void {
+    const ids = new Set(targets.map(memory => memory.id));
+    for (const current of targets) {
+      this.memories.set(current.id, { ...current, content: '', embedding: null, metadata: {}, isLatest: false,
+        deletedAt: now, updatedAt: now, revision: current.revision! + 1 });
+    }
     for (const [id, relation] of this.relationships) {
-      if (relation.fromId === input.id || relation.toId === input.id) this.relationships.delete(id);
+      if (ids.has(relation.fromId) || ids.has(relation.toId)) this.relationships.delete(id);
     }
   }
 
+  private liveSourceChunks(scope: SourceScope): Memory[] {
+    return [...this.memories.values()].filter(memory => memory.deletedAt == null
+      && memory.sourceKey === scope.sourceKey && memory.tenantId === scope.tenantId
+      && sameTagSet(memory.containerTags, scope.containerTags));
+  }
+
+  async getSourceState(input: SourceScope): Promise<SourceState | null> {
+    return this.sourceState(requireSourceScope(input).scope);
+  }
+
+  private sourceState(scope: SourceScope): SourceState | null {
+    const live = this.liveSourceChunks(scope);
+    if (!live.length) return null;
+    const hashes = new Set(live.map(memory => memory.contentHash ?? null));
+    return { contentHash: hashes.size === 1 ? [...hashes][0]! : null, chunkCount: live.length };
+  }
+
+  // replaceSource, replaceSourceIfChanged and deleteSource never await between
+  // reading and writing, so each call runs to completion before another call
+  // for any source can start.
+  async replaceSource(input: SourceReplace): Promise<Memory[]> {
+    return this.writeSource(requireSourceReplace(input));
+  }
+
+  async replaceSourceIfChanged(input: SourceReplace): Promise<SourceReplaceResult> {
+    const replacement = requireSourceReplace(input);
+    const state = this.sourceState(replacement.scope);
+    if (state && state.contentHash === replacement.contentHash) return { unchanged: true, state };
+    return { unchanged: false, memories: this.writeSource(replacement) };
+  }
+
+  private writeSource({ scope, contentHash, chunks }: SourceReplaceSnapshot): Memory[] {
+    const now = Date.now();
+    const live = this.liveSourceChunks(scope);
+    const saved = chunks.map((chunk, chunkIndex) => ({
+      ...this.buildMemory(chunk, now), sourceKey: scope.sourceKey, contentHash, chunkIndex,
+    }));
+    this.requireNewIds(saved);
+    if (!live.length && !saved.length) return [];
+    this.mutationVersion++;
+    this.tombstone(live, now);
+    for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
+    return saved.map(cloneMemory);
+  }
+
+  async deleteSource(input: SourceScope): Promise<number> {
+    const live = this.liveSourceChunks(requireSourceScope(input).scope);
+    if (!live.length) return 0;
+    this.mutationVersion++;
+    this.tombstone(live, Date.now());
+    return live.length;
+  }
 }
+
+/** The built-in search, captured once at module load; adapters compare against it when constructed. */
+const builtInMemorySearch = MemoryStorageAdapter.prototype.searchVectors;

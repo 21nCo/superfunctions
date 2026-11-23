@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import type { Adapter, TableSchema } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
+  AuthFnConfigError,
   type AuthFnRuntimeConfig,
   type AuthFnHookContext,
   type AuthFnHooks,
@@ -36,7 +37,8 @@ import {
   type AuthFnUserRecord
 } from 'authfn';
 import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
-import { issueSessionCookies } from 'authfn/core/cookies';
+import { issueSessionCookies, resolveCookiePolicy } from 'authfn/core/cookies';
+import { serializeSetCookie } from '@superfunctions/http';
 import { resolveEnvironment } from 'authfn/core/environment';
 import {
   beginTwoFactorChallenge,
@@ -53,14 +55,18 @@ import {
 import {
   AuthFnConflictError,
   AuthFnError,
+  AuthFnErrorWithCookies,
   AuthFnOAuthCallbackInvalidError,
+  AuthFnOAuthStateInvalidError,
+  AuthFnOAuthStateReplayedError,
+  AuthFnRegionMismatchError,
   AuthFnOAuthProviderUnsupportedError,
   AuthFnPluginAbortedError,
   AuthFnRedirectUriDisallowedError,
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -94,6 +100,12 @@ const SOCIAL_PROVIDER_METHODS = {
 
 const CALLBACK_METADATA_MODE = 'callbackMode';
 const CALLBACK_METADATA_HANDOFF = 'handoffMode';
+const CALLBACK_METADATA_BINDING = 'browserBindingHash';
+const CALLBACK_METADATA_HANDOFF_CHALLENGE = 'handoffChallenge';
+const SOCIAL_HANDOFF_STATE_PREFIX = 'social-handoff:';
+const SOCIAL_HANDOFF_KIND = 'social-handoff';
+const DEFAULT_SOCIAL_HANDOFF_CODE_TTL_SECONDS = 60;
+const HANDOFF_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const APPLE_JWKS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 
 interface SocialStartBody {
@@ -101,6 +113,12 @@ interface SocialStartBody {
   returnTo?: string;
   callbackMode?: 'redirect' | 'json';
   handoffMode?: AuthFnSocialHandoffMode;
+  handoffChallenge?: string;
+}
+
+interface SocialHandoffExchangeBody {
+  code?: string;
+  verifier?: string;
 }
 
 interface NativeAppleStartBody {
@@ -128,7 +146,7 @@ interface SocialCallbackCompletion {
   callbackMode: 'redirect' | 'json';
   handoffMode: AuthFnSocialHandoffMode;
   redirectTo?: string;
-  session: Awaited<ReturnType<typeof issueSession>>['session'];
+  session?: Awaited<ReturnType<typeof issueSession>>['session'];
   userId: string;
   oauthAccountId?: string;
   connectionId?: string;
@@ -157,13 +175,33 @@ interface ResolvedProviderSettings {
   profileResolver?: AuthFnSocialProfileResolver;
 }
 
+const MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS = 3600;
+
 export function authFnSocialOAuthPlugin(
   config: SocialOAuthPluginConfig = {}
 ): AuthFnPlugin<'socialOAuth', SocialOAuthPluginRuntimeConfig, true> {
+  const options: SocialOAuthPluginConfig = {
+    schema: config.schema,
+    defaultHandoffMode: config.defaultHandoffMode,
+    bindBrowserState: config.bindBrowserState,
+    allowWebSessionTokenHandoff: config.allowWebSessionTokenHandoff,
+    requireHandoffChallenge: config.requireHandoffChallenge,
+    handoffCodeTtlSeconds: config.handoffCodeTtlSeconds
+  };
+  const ttl = options.handoffCodeTtlSeconds;
+  if (
+    ttl !== undefined &&
+    (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl <= 0 || ttl > MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS)
+  ) {
+    throw new AuthFnConfigError(`socialOAuth handoffCodeTtlSeconds must be a positive whole number of seconds, at most ${MAX_SOCIAL_HANDOFF_CODE_TTL_SECONDS}`, {
+      option: 'handoffCodeTtlSeconds',
+      value: String(ttl)
+    });
+  }
   return {
     name: 'socialOAuth',
-    schema: () => createSocialSchema(config),
-    routes: (ctx) => createSocialRoutes(ctx, config)
+    schema: () => createSocialSchema(options),
+    routes: (ctx) => createSocialRoutes(ctx, options)
   };
 }
 
@@ -178,10 +216,18 @@ function createSocialRoutes(
   ctx: AuthFnPluginRuntimeContext,
   schemaConfig: SocialOAuthPluginConfig
 ): Route[] {
+  const runtimeConfig = readPluginRuntimeConfig<SocialOAuthPluginRuntimeConfig>(ctx, 'socialOAuth');
   const config: ResolvedSocialOAuthPluginConfig = {
     defaultHandoffMode: schemaConfig.defaultHandoffMode,
-    providers: {},
-    ...readPluginRuntimeConfig<SocialOAuthPluginRuntimeConfig>(ctx, 'socialOAuth')
+    bindBrowserState: schemaConfig.bindBrowserState,
+    allowWebSessionTokenHandoff: schemaConfig.allowWebSessionTokenHandoff,
+    requireHandoffChallenge: schemaConfig.requireHandoffChallenge,
+    handoffCodeTtlSeconds: schemaConfig.handoffCodeTtlSeconds,
+    providers: runtimeConfig?.providers ?? {},
+    fetcher: runtimeConfig?.fetcher,
+    tokenHttpClient: runtimeConfig?.tokenHttpClient,
+    diagnostics: runtimeConfig?.diagnostics,
+    now: runtimeConfig?.now
   };
   const routes: Route[] = [
     {
@@ -193,6 +239,14 @@ function createSocialRoutes(
       handler: async (request) => {
         const runtime = await resolveEnvironment(ctx.config, request);
         const body = await request.json() as SocialStartBody;
+        // The body is caller JSON. A non-string returnTo would otherwise pick
+        // JSON mode by inference (`false`, `0`) or skip the allowlist check
+        // when JSON mode is asked for, and still be stored with the flow.
+        if (body.returnTo !== undefined && body.returnTo !== null && typeof body.returnTo !== 'string') {
+          throw new AuthFnValidationError('returnTo must be a string', {
+            returnToType: Array.isArray(body.returnTo) ? 'array' : typeof body.returnTo
+          });
+        }
         const providerId = normalizeProviderId(body.provider);
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, providerId);
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, providerId, callbackUri);
@@ -218,6 +272,19 @@ function createSocialRoutes(
         );
 
         assertAllowedReturnTarget(providerSettings, returnTo, callbackMode);
+        const handoffChallenge = readHandoffChallenge(body.handoffChallenge);
+        assertAllowedHandoff(config, {
+          returnTo,
+          callbackMode,
+          handoffMode,
+          handoffChallenge
+        });
+        const usesHandoffCode = handoffMode === 'session-token'
+          && callbackMode === 'redirect'
+          && Boolean(handoffChallenge);
+        const browserBinding = config.bindBrowserState && !usesHandoffCode
+          ? createBrowserBindingNonce()
+          : undefined;
 
         const requestId = resolveRequestId(request);
         const flowService = createSocialFlowService(ctx.config, ctx.hooks, config, request, runtime, providerId);
@@ -232,7 +299,11 @@ function createSocialRoutes(
             returnTo,
             metadata: {
               [CALLBACK_METADATA_MODE]: callbackMode,
-              [CALLBACK_METADATA_HANDOFF]: handoffMode
+              [CALLBACK_METADATA_HANDOFF]: handoffMode,
+              ...(browserBinding ? { [CALLBACK_METADATA_BINDING]: hashBindingValue(browserBinding) } : {}),
+              ...(handoffChallenge && handoffMode === 'session-token'
+                ? { [CALLBACK_METADATA_HANDOFF_CHALLENGE]: handoffChallenge }
+                : {})
             }
           },
           requestId
@@ -257,6 +328,106 @@ function createSocialRoutes(
           redirectTo: result.authorizationUrl,
           stateId: result.stateId,
           expiresAt: result.expiresAt
+        }, browserBinding
+          ? {
+              setCookies: [
+                serializeBrowserBindingCookie(ctx, request, runtime, result.stateId, browserBinding, result.expiresAt)
+              ]
+            }
+          : undefined);
+      }
+    },
+    {
+      method: 'POST',
+      path: '/social/handoff/exchange',
+      meta: createAuthFnRouteMeta('exchangeSocialHandoff', 'Exchange a one-time social sign-in handoff code and its verifier for a bearer session', {
+        mode: 'none'
+      }),
+      handler: async (request) => {
+        const runtime = await resolveEnvironment(ctx.config, request);
+        const body = await request.json().catch(() => ({})) as SocialHandoffExchangeBody;
+        const code = readRequiredString(body.code, 'code');
+        const verifier = readRequiredString(body.verifier, 'verifier');
+        const stateStore = new DbAdapterOAuthStateStore(
+          withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+        );
+        const stateId = socialHandoffStateId(code);
+        const pending = await stateStore.get(stateId);
+        const metadata = pending?.subject?.kind === 'browser-auth' ? pending.subject.metadata : undefined;
+        if (!pending || metadata?.kind !== SOCIAL_HANDOFF_KIND) {
+          throw new AuthFnOAuthStateInvalidError('Social handoff code is invalid');
+        }
+        if (!verifierMatchesChallenge(verifier, readOptionalString(metadata.challenge))) {
+          throw new AuthFnOAuthStateInvalidError('Social handoff verifier does not match');
+        }
+        if (runtime.regionId && pending.regionId && pending.regionId !== runtime.regionId) {
+          throw new AuthFnRegionMismatchError('Social handoff code belongs to a different region', {
+            regionId: pending.regionId
+          });
+        }
+        if (Date.parse(pending.expiresAt) <= (config.now?.() ?? new Date()).getTime() || pending.consumedAt) {
+          throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
+        }
+        const userId = readRequiredString(metadata.userId, 'userId');
+        const user = await findUserById(ctx.config, userId);
+        if (!user) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
+        }
+        if (isAuthFnUserDisabled(user)) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
+        }
+        // The code was minted by a social sign-in through a linked provider
+        // account. If that link is gone (for example, the account was claimed
+        // by the owner of its mailbox since), the code no longer stands, even
+        // if the same provider has been linked again: the exact link row it
+        // was minted for must still exist.
+        // A code without that link id (minted before AUTH-32) is refused; it
+        // lives for minutes, and the user signs in again.
+        const mintedFor = readOptionalString(metadata.oauthAccountId);
+        const link = mintedFor
+          ? await ctx.config.database.findOne({
+              model: 'oauth_accounts',
+              where: [
+                { field: 'id', operator: 'eq', value: mintedFor },
+                { field: 'userId', operator: 'eq', value: user.id }
+              ],
+              namespace: ctx.config.namespace ?? 'authfn'
+            })
+          : null;
+        if (!link) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff account link no longer exists', { userId });
+        }
+        const methods = Array.isArray(metadata.methods)
+          ? metadata.methods.filter((method): method is string => typeof method === 'string')
+          : [];
+        const now = config.now?.() ?? new Date();
+        const consumed = await stateStore.consume(stateId, now.toISOString());
+        if (!consumed) {
+          throw new AuthFnOAuthStateReplayedError('Social handoff code was already used or has expired');
+        }
+        // The code is single use: if issuance is refused (for example by a
+        // placement hook), the client starts the sign-in again.
+        const issued = await issueSession(ctx.config, ctx.hooks, {
+          request,
+          userId: user.id,
+          primaryEmail: user.primaryEmail,
+          regionId: pending.regionId ?? runtime.regionId,
+          methods: methods as Parameters<typeof issueSession>[2]['methods']
+        });
+
+        await emitAuthEvent(ctx.config, {
+          type: 'authfn.handoff.exchanged',
+          requestId: resolveRequestId(request),
+          actorId: user.id,
+          userId: user.id,
+          sessionId: issued.session.id,
+          regionId: issued.session.regionId,
+          outcome: 'social-exchanged'
+        });
+
+        return jsonSuccess(request, {
+          session: issued.session,
+          handoff: buildSessionHandoffPayload(issued)
         });
       }
     },
@@ -280,7 +451,11 @@ function createSocialRoutes(
           providerSettings,
           stateId
         );
+        if (stateId.startsWith(SOCIAL_HANDOFF_STATE_PREFIX)) {
+          throw new AuthFnOAuthStateInvalidError('OAuth state is invalid');
+        }
         try {
+        await assertBrowserBinding(ctx, config, request, runtime, stateId);
         const formPostIdToken = readOptionalString(url.searchParams.get('id_token'));
         const callbackResult = providerId === 'apple' && formPostIdToken
           ? await handleAppleFormPostIdentityCallback(
@@ -336,6 +511,18 @@ function createSocialRoutes(
               buildHookContext(ctx.config, request, runtime, user.id),
               completion
             );
+            // As in the other branches: the hook may have changed the target,
+            // so it is checked, and the location built, before the flow is
+            // reported.
+            let challengeLocation: string | undefined;
+            if (completion.callbackMode === 'redirect') {
+              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+              challengeLocation = appendTwoFactorChallengeToReturnTarget(
+                completion.redirectTo as string,
+                pendingChallenge.challenge.id,
+                SOCIAL_PROVIDER_METHODS[providerId]
+              );
+            }
 
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
@@ -366,22 +553,101 @@ function createSocialRoutes(
               }
             });
 
-            if (completion.callbackMode === 'redirect') {
-              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+            if (challengeLocation !== undefined) {
               return redirectWithCookies(
                 request,
-                appendTwoFactorChallengeToReturnTarget(
-                  completion.redirectTo as string,
-                  pendingChallenge.challenge.id,
-                  SOCIAL_PROVIDER_METHODS[providerId]
-                ),
-                [],
+                challengeLocation,
+                config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
                 303
               );
             }
 
             throw challengeError;
           }
+        }
+
+        const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
+        if (readOptionalBoolean(resolvedIdentity.metadata?.linkedExistingUser)) {
+          await emitAccountLinkedEvent(ctx.config, {
+            request,
+            user,
+            method: SOCIAL_PROVIDER_METHODS[providerId],
+            provider: providerId,
+            regionId: runtime.regionId,
+            metadata: {
+              oauthAccountId,
+              connectionId: callbackResult.connectionId
+            }
+          });
+        }
+        const handoffChallenge = readOptionalString(
+          callbackResult.subject.metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE]
+        );
+        assertAllowedHandoff(config, {
+          returnTo: callbackResult.subject.returnTo,
+          callbackMode: readStoredCallbackMode(callbackResult),
+          handoffMode: readStoredHandoffMode(callbackResult, config.defaultHandoffMode),
+          handoffChallenge
+        });
+        if (handoffChallenge && isHandoffCodeFlow(callbackResult.subject.metadata, config.defaultHandoffMode)) {
+          const redirectTo = callbackResult.subject.returnTo;
+          assertAllowedReturnTarget(providerSettings, redirectTo, 'redirect');
+          const handoffCode = await createSocialHandoffCode(ctx, config, {
+            providerId,
+            redirectUri: callbackUri,
+            userId: user.id,
+            regionId: runtime.regionId,
+            methods: [SOCIAL_PROVIDER_METHODS[providerId]],
+            challenge: handoffChallenge,
+            oauthAccountId
+          });
+          const completion = {
+            provider: providerId,
+            linked: true,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            redirectTo,
+            userId: user.id,
+            oauthAccountId,
+            connectionId: callbackResult.connectionId,
+            handoffCodeIssued: true
+          } as Record<string, unknown>;
+          await ctx.hooks.afterOAuthCallback?.(
+            buildHookContext(ctx.config, request, runtime, user.id),
+            completion
+          );
+          // The hook may have changed the target, so it is checked again with
+          // the policies /social/start applied, before the flow is reported
+          // complete. A refused code never leaves the server.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo as string | undefined,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            handoffChallenge
+          });
+          // Built from the values just checked, before anything else is
+          // awaited, so later changes to the completion object do not apply.
+          const handoffLocation = appendHandoffCodeToReturnTarget(
+            completion.redirectTo as string,
+            handoffCode,
+            runtime.regionId
+          );
+          await emitAuthEvent(ctx.config, {
+            type: 'authfn.oauth.completed',
+            requestId,
+            actorId: user.id,
+            userId: user.id,
+            regionId: runtime.regionId,
+            provider: providerId,
+            outcome: 'handoff-code-issued',
+            metadata: {
+              callbackMode: 'redirect',
+              handoffMode: 'session-token',
+              connectionId: callbackResult.connectionId
+            }
+          });
+          return redirectWithCookies(request, handoffLocation, [], 303);
         }
 
         const issued = await issueSession(ctx.config, ctx.hooks, {
@@ -394,7 +660,9 @@ function createSocialRoutes(
         const cookies = Object.values(
           issueSessionCookies(issued.cookiePolicy!, issued.sessionToken, issued.csrfToken)
         );
-        const oauthAccountId = readOptionalString(resolvedIdentity.metadata?.oauthAccountId);
+        if (config.bindBrowserState) {
+          cookies.push(clearBrowserBindingCookie(ctx, request, runtime, stateId));
+        }
         const completion: SocialCallbackCompletion = {
           provider: providerId,
           linked: true,
@@ -411,6 +679,24 @@ function createSocialRoutes(
           buildHookContext(ctx.config, request, runtime, user.id, issued.session),
           completion as unknown as Record<string, unknown>
         );
+        let redirectLocation: string | undefined;
+        if (completion.callbackMode === 'redirect') {
+          // The hook may have changed the target, so the allowlist and the
+          // handoff policy are checked again before the flow is reported
+          // complete. A refused session's token and cookies never leave the
+          // server. The location is built from the checked values before
+          // anything else is awaited.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo,
+            callbackMode: completion.callbackMode,
+            handoffMode: completion.handoffMode,
+            handoffChallenge
+          });
+          redirectLocation = completion.handoffMode === 'session-token'
+            ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
+            : serializeReturnTarget(completion.redirectTo!);
+        }
 
         await emitAuthEvent(ctx.config, {
           type: 'authfn.oauth.completed',
@@ -428,30 +714,9 @@ function createSocialRoutes(
             connectionId: callbackResult.connectionId
           }
         });
-        if (readOptionalBoolean(resolvedIdentity.metadata?.linkedExistingUser)) {
-          await emitAccountLinkedEvent(ctx.config, {
-            request,
-            user,
-            method: SOCIAL_PROVIDER_METHODS[providerId],
-            provider: providerId,
-            regionId: runtime.regionId,
-            metadata: {
-              oauthAccountId,
-              connectionId: callbackResult.connectionId
-            }
-          });
-        }
 
-        if (completion.callbackMode === 'redirect') {
-          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
-          return redirectWithCookies(
-            request,
-            completion.handoffMode === 'session-token'
-              ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
-              : completion.redirectTo!,
-            cookies,
-            303
-          );
+        if (redirectLocation !== undefined) {
+          return redirectWithCookies(request, redirectLocation, cookies, 303);
         }
 
         return jsonSuccess(request, {
@@ -489,9 +754,14 @@ function createSocialRoutes(
             return redirectWithCookies(
               request,
               appendOAuthErrorToReturnTarget(errorRedirectTo, providerId, requestId, authError),
-              [],
+              config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
               303
             );
+          }
+          if (config.bindBrowserState) {
+            throw new AuthFnErrorWithCookies(error, [
+              clearBrowserBindingCookie(ctx, request, runtime, stateId)
+            ]);
           }
           throw error;
         }
@@ -596,6 +866,9 @@ function createSocialRoutes(
         const body = await request.json() as NativeAppleCompleteBody;
         const requestId = resolveRequestId(request);
         const stateId = readRequiredString(body.stateId, 'stateId');
+        if (stateId.startsWith(SOCIAL_HANDOFF_STATE_PREFIX)) {
+          throw new AuthFnOAuthStateInvalidError('OAuth state is invalid');
+        }
         const identityToken = readRequiredString(body.identityToken, 'identityToken');
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, 'apple');
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, 'apple', callbackUri);
@@ -1365,12 +1638,6 @@ async function verifyAppleIdentityToken(
   identityToken: string,
   audience: string | string[]
 ): Promise<JWTPayload> {
-  if (isUnsignedTestToken(identityToken)) {
-    const claims = parseRawIdTokenPayload(identityToken);
-    assertAppleTokenAudience(claims, audience);
-    return claims;
-  }
-
   try {
     const result = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: 'https://appleid.apple.com',
@@ -1381,60 +1648,6 @@ async function verifyAppleIdentityToken(
     throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
       provider: 'apple',
       reason: error instanceof Error ? error.message : 'verification_failed'
-    });
-  }
-}
-
-function assertAppleTokenAudience(claims: JWTPayload, audience: string | string[]): void {
-  const accepted = Array.isArray(audience) ? audience : [audience];
-  const tokenAudiences = Array.isArray(claims.aud)
-    ? claims.aud
-    : typeof claims.aud === 'string'
-      ? [claims.aud]
-      : [];
-  if (!tokenAudiences.some((aud) => accepted.includes(aud))) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
-      provider: 'apple',
-      reason: 'unexpected "aud" claim value'
-    });
-  }
-}
-
-function isUnsignedTestToken(identityToken: string): boolean {
-  if (!allowUnsignedAppleTokensForTests()) {
-    return false;
-  }
-  try {
-    const [header] = identityToken.split('.');
-    const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')) as Record<string, unknown>;
-    return parsed.alg === 'none';
-  } catch {
-    return false;
-  }
-}
-
-function allowUnsignedAppleTokensForTests(): boolean {
-  const env = (globalThis as unknown as {
-    process?: {
-      env?: Record<string, string | undefined>;
-    };
-  }).process?.env;
-  return env?.AUTHFN_ALLOW_UNSIGNED_APPLE_TOKENS === 'true' || env?.NODE_ENV === 'test';
-}
-
-function parseRawIdTokenPayload(identityToken: string): JWTPayload {
-  const parts = identityToken.split('.');
-  if (parts.length < 2) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token is malformed', {
-      provider: 'apple'
-    });
-  }
-
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as JWTPayload;
-  } catch {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token payload is malformed', {
-      provider: 'apple'
     });
   }
 }
@@ -1679,12 +1892,12 @@ function appendOAuthErrorToReturnTarget(
   requestId: string,
   error: AuthFnError
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('auth_error', 'oauth_callback_failed');
   url.searchParams.set('auth_error_code', error.code);
   url.searchParams.set('auth_provider', providerId);
   url.searchParams.set('auth_request_id', requestId);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function isDebugErrorLoggingEnabled(): boolean {
@@ -1823,6 +2036,10 @@ async function createFormPostCallbackRequest(request: Request): Promise<Request>
   if (requestId) {
     headers.set('x-request-id', requestId);
   }
+  const cookie = request.headers.get('cookie');
+  if (cookie) {
+    headers.set('cookie', cookie);
+  }
   return new Request(url.toString(), {
     method: 'GET',
     headers
@@ -1849,7 +2066,7 @@ function appendSessionHandoffToReturnTarget(
   returnTo: string,
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', issued.sessionToken);
   fragment.set('sessionId', issued.session.id);
@@ -1860,7 +2077,7 @@ function appendSessionHandoffToReturnTarget(
     fragment.set('expiresAt', issued.session.expiresAt.toISOString());
   }
   url.hash = fragment.toString();
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function appendTwoFactorChallengeToReturnTarget(
@@ -1868,11 +2085,11 @@ function appendTwoFactorChallengeToReturnTarget(
   challengeId: string,
   primaryMethod: string
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
   url.searchParams.set('challengeId', challengeId);
   url.searchParams.set('primaryMethod', primaryMethod);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function assertAllowedReturnTarget(
@@ -1898,16 +2115,93 @@ function assertAllowedReturnTarget(
   }
 }
 
-function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
-  if (allowlist.includes(returnTo)) {
-    return true;
-  }
+/** Schemes that run script or read local data and are never a return target. */
+const FORBIDDEN_RETURN_TARGET_SCHEMES = new Set([
+  'javascript:',
+  'vbscript:',
+  'data:',
+  'file:',
+  'blob:',
+  'about:',
+  'filesystem:'
+]);
 
+function isWebScheme(protocol: string): boolean {
+  return protocol === 'https:' || protocol === 'http:';
+}
+
+/** Placeholder base used only to edit a relative return target's query and fragment. */
+const RELATIVE_RETURN_TARGET_BASE = 'https://relative-return-target.invalid';
+
+/** Parses an allowlisted return target, which may be a same-site path. */
+function parseReturnTarget(returnTo: string): URL {
+  return isSameOriginPath(returnTo) ? new URL(returnTo, RELATIVE_RETURN_TARGET_BASE) : new URL(returnTo);
+}
+
+/**
+ * Returns an allowlisted target in the form a Location header accepts:
+ * characters outside ASCII (`/会員`) are percent-encoded, and a relative
+ * target stays relative.
+ */
+function serializeReturnTarget(returnTo: string): string {
+  return formatReturnTarget(returnTo, parseReturnTarget(returnTo));
+}
+
+/** Formats a target edited after parseReturnTarget, keeping a relative one relative. */
+function formatReturnTarget(returnTo: string, url: URL): string {
+  // href keeps an empty `?` or `#`; pathname + search + hash would drop
+  // them, and a target without its own `#` takes the callback URL's fragment.
+  return isSameOriginPath(returnTo) ? url.href.slice(url.origin.length) : url.href;
+}
+
+/**
+ * A path on the current site: starts with one `/` (not `//`, which a browser
+ * reads as another host) and has no backslash or control characters, which
+ * browsers may also turn into a host change.
+ */
+function isSameOriginPath(value: string): boolean {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
+    return false;
+  }
+  // Dot segments (`/.//host`, `/%2e//host`) collapse when the target is
+  // parsed and edited, and could leave a `//host` redirect, so the parsed
+  // path must still start with a single `/` too.
+  const resolved = new URL(value, RELATIVE_RETURN_TARGET_BASE);
+  return resolved.origin === new URL(RELATIVE_RETURN_TARGET_BASE).origin
+    && !resolved.pathname.startsWith('//');
+}
+
+/**
+ * An entry matches a target when the strings are equal, or when the entry is
+ * a bare origin (no path, query or fragment) that covers the target:
+ *
+ * - `http:`/`https:` entries cover targets with the same origin.
+ * - Other schemes have no URL origin (`new URL('myapp://x').origin` is the
+ *   string "null" for every one of them), so a bare entry such as
+ *   `myapp://oauthsignin` covers only targets with the same scheme, host and
+ *   port. An entry without a host (`myapp:`) only matches exactly.
+ *
+ * Script and local-data schemes are refused whatever the allowlist says.
+ */
+function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
+  // The body is caller JSON, so the declared type is not guaranteed.
+  if (typeof returnTo !== 'string') {
+    return false;
+  }
   let target: URL;
   try {
     target = new URL(returnTo);
   } catch {
+    // A relative target (resolved by the browser against the callback's
+    // origin) must be listed exactly and be a plain path.
+    return isSameOriginPath(returnTo) && allowlist.includes(returnTo);
+  }
+  if (FORBIDDEN_RETURN_TARGET_SCHEMES.has(target.protocol)) {
     return false;
+  }
+
+  if (allowlist.includes(returnTo)) {
+    return true;
   }
 
   return allowlist.some((entry) => {
@@ -1917,7 +2211,13 @@ function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boole
         (allowed.pathname === '/' || allowed.pathname === '')
         && !allowed.search
         && !allowed.hash;
-      return allowsOrigin && allowed.origin === target.origin;
+      if (!allowsOrigin || allowed.protocol !== target.protocol) {
+        return false;
+      }
+      if (isWebScheme(allowed.protocol)) {
+        return allowed.origin === target.origin;
+      }
+      return allowed.host !== '' && allowed.host === target.host;
     } catch {
       return false;
     }
@@ -2326,3 +2626,288 @@ type SocialTokenSet = {
   tokenType?: string;
   idToken?: string;
 };
+
+function readHandoffChallenge(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const challenge = typeof value === 'string' ? value : '';
+  if (!HANDOFF_CHALLENGE_PATTERN.test(challenge)) {
+    throw new AuthFnValidationError('handoffChallenge must be a base64url SHA-256 digest', {
+      field: 'handoffChallenge'
+    });
+  }
+  return challenge;
+}
+
+/**
+ * Applies the server-side handoff policy: session tokens are only delivered to
+ * web URLs when explicitly allowed, and native handoffs can be required to use
+ * the code-and-verifier exchange.
+ */
+function assertAllowedHandoff(
+  config: ResolvedSocialOAuthPluginConfig,
+  input: {
+    returnTo: string | undefined;
+    callbackMode: 'redirect' | 'json';
+    handoffMode: AuthFnSocialHandoffMode;
+    handoffChallenge: string | undefined;
+  }
+): void {
+  if (input.handoffMode !== 'session-token' || input.callbackMode !== 'redirect') {
+    return;
+  }
+  if (config.allowWebSessionTokenHandoff === false && isWebReturnTarget(input.returnTo)) {
+    throw new AuthFnValidationError('Session-token handoff is only available for native return targets', {
+      field: 'handoffMode'
+    });
+  }
+  if (config.requireHandoffChallenge && !input.handoffChallenge) {
+    throw new AuthFnValidationError('Session-token handoff requires handoffChallenge', {
+      field: 'handoffChallenge'
+    });
+  }
+}
+
+function isWebReturnTarget(returnTo: string | undefined): boolean {
+  if (!returnTo) {
+    return false;
+  }
+  try {
+    const protocol = new URL(returnTo).protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    // A relative target is a page on the web.
+    return isSameOriginPath(returnTo);
+  }
+}
+
+function createBrowserBindingNonce(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+function hashBindingValue(value: string): string {
+  return createHash('sha256').update(value).digest('base64url');
+}
+
+/**
+ * One binding cookie per pending sign-in, so overlapping sign-ins in the same
+ * browser do not overwrite each other. On https it is a `__Host-` cookie
+ * (Secure, Path=/, no Domain), so a sibling subdomain cannot plant it.
+ */
+function browserBindingCookieName(prefix: string, secure: boolean, stateId: string): string {
+  const suffix = createHash('sha256').update(stateId).digest('base64url').slice(0, 16);
+  return `${secure ? '__Host-' : ''}${prefix}.oauth_binding.${suffix}`;
+}
+
+/**
+ * The binding cookie only carries a random nonce, never a credential. Apple
+ * returns with a cross-site form POST, so on https it uses SameSite=None.
+ */
+function serializeBrowserBindingCookie(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string,
+  value: string,
+  expiresAt: string | undefined
+): string {
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const secure = bindingCookieSecure(policy.secure, runtime);
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  const maxAge = Number.isFinite(expiresAtMs)
+    ? Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000))
+    : 600;
+  return serializeSetCookie({
+    name: browserBindingCookieName(policy.prefix, secure, stateId),
+    value,
+    path: '/',
+    secure,
+    httpOnly: true,
+    sameSite: secure ? 'none' : 'lax',
+    maxAge
+  });
+}
+
+function clearBrowserBindingCookie(
+  ctx: AuthFnPluginRuntimeContext,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string
+): string {
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const secure = bindingCookieSecure(policy.secure, runtime);
+  return serializeSetCookie({
+    name: browserBindingCookieName(policy.prefix, secure, stateId),
+    value: '',
+    path: '/',
+    secure,
+    httpOnly: true,
+    sameSite: secure ? 'none' : 'lax',
+    maxAge: 0,
+    expires: new Date(0)
+  });
+}
+
+/**
+ * With `bindBrowserState`, refuses a callback unless this browser holds the
+ * binding cookie set when the sign-in started. The only unbound states allowed
+ * are code-and-verifier handoffs, whose callback sets no session cookies.
+ */
+async function assertBrowserBinding(
+  ctx: AuthFnPluginRuntimeContext,
+  config: ResolvedSocialOAuthPluginConfig,
+  request: Request,
+  runtime: AuthFnSocialOAuthEnvironment,
+  stateId: string
+): Promise<void> {
+  const stateStore = new DbAdapterOAuthStateStore(
+    withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+  );
+  const state = await stateStore.get(stateId);
+  const subject = state?.subject;
+  const metadata = subject?.kind === 'browser-auth' ? subject.metadata : undefined;
+  const expected = readOptionalString(metadata?.[CALLBACK_METADATA_BINDING]);
+  if (!expected) {
+    if (config.bindBrowserState && state && !isHandoffCodeFlow(metadata, config.defaultHandoffMode)) {
+      throw new AuthFnOAuthStateInvalidError('OAuth sign-in was not bound to a browser');
+    }
+    return;
+  }
+  const policy = resolveCookiePolicy(ctx.config, request, runtime);
+  const secure = bindingCookieSecure(policy.secure, runtime);
+  const provided = readCookie(request, browserBindingCookieName(policy.prefix, secure, stateId));
+  if (!provided || !safeEqual(hashBindingValue(provided), expected)) {
+    throw new AuthFnOAuthStateInvalidError('OAuth sign-in was started in a different browser');
+  }
+}
+
+/**
+ * The binding cookie must reach Apple's cross-site form POST, so it is Secure
+ * and SameSite=None whenever the public origin is https, even when the session
+ * cookie is configured without `secure` (for example behind a TLS proxy).
+ */
+function bindingCookieSecure(sessionCookieSecure: boolean, runtime: AuthFnSocialOAuthEnvironment): boolean {
+  return sessionCookieSecure || isHttpsOrigin(runtime.baseUrl);
+}
+
+function isHttpsOrigin(value: string | undefined): boolean {
+  try {
+    return value ? new URL(value).protocol === 'https:' : false;
+  } catch {
+    return false;
+  }
+}
+
+/** True for a redirect session-token start with a handoff challenge: its callback sets no cookies. */
+function isHandoffCodeFlow(
+  metadata: Record<string, unknown> | undefined,
+  defaultHandoffMode: AuthFnSocialHandoffMode | undefined
+): boolean {
+  if (!readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF_CHALLENGE])) {
+    return false;
+  }
+  const callbackMode = readOptionalString(metadata?.[CALLBACK_METADATA_MODE]);
+  const handoffMode = readOptionalString(metadata?.[CALLBACK_METADATA_HANDOFF]) ?? defaultHandoffMode;
+  return callbackMode === 'redirect' && handoffMode === 'session-token';
+}
+
+function readCookie(request: Request, name: string): string | undefined {
+  const header = request.headers.get('cookie');
+  if (!header) {
+    return undefined;
+  }
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) {
+      continue;
+    }
+    if (part.slice(0, separator).trim() === name) {
+      const value = part.slice(separator + 1).trim();
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function verifierMatchesChallenge(verifier: string, challenge: string | undefined): boolean {
+  if (!challenge || verifier.length < 43 || verifier.length > 128) {
+    return false;
+  }
+  return safeEqual(createHash('sha256').update(verifier).digest('base64url'), challenge);
+}
+
+function socialHandoffStateId(code: string): string {
+  return `${SOCIAL_HANDOFF_STATE_PREFIX}${createHash('sha256').update(code).digest('hex')}`;
+}
+
+/** Stores a one-time handoff code (hashed) that the verifier holder can exchange for a session. */
+async function createSocialHandoffCode(
+  ctx: AuthFnPluginRuntimeContext,
+  config: ResolvedSocialOAuthPluginConfig,
+  input: {
+    providerId: AuthFnSocialProviderId;
+    redirectUri: string;
+    userId: string;
+    regionId?: string;
+    methods: string[];
+    challenge: string;
+    /** The provider-account link the sign-in went through. */
+    oauthAccountId?: string;
+  }
+): Promise<string> {
+  const code = `shc_${randomBytes(24).toString('base64url')}`;
+  const now = config.now?.() ?? new Date();
+  const ttlSeconds = config.handoffCodeTtlSeconds ?? DEFAULT_SOCIAL_HANDOFF_CODE_TTL_SECONDS;
+  const stateStore = new DbAdapterOAuthStateStore(
+    withNamespace(ctx.config.database, ctx.config.namespace ?? 'authfn')
+  );
+  await stateStore.put({
+    stateId: socialHandoffStateId(code),
+    providerId: input.providerId,
+    redirectUri: input.redirectUri,
+    requestedScopes: [],
+    subject: {
+      kind: 'browser-auth',
+      intentId: createIdentifier('handoff'),
+      regionId: input.regionId,
+      metadata: {
+        kind: SOCIAL_HANDOFF_KIND,
+        userId: input.userId,
+        methods: input.methods,
+        challenge: input.challenge,
+        oauthAccountId: input.oauthAccountId
+      }
+    },
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + ttlSeconds * 1000).toISOString()
+  });
+  return code;
+}
+
+/**
+ * Sends the one-time code to the native return target. The code travels in the
+ * `token` fragment parameter so existing native shells forward it unchanged;
+ * `handoff=code` tells the client to exchange it with its verifier.
+ */
+function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionId: string | undefined): string {
+  const url = parseReturnTarget(returnTo);
+  const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+  fragment.set('token', code);
+  fragment.set('handoff', 'code');
+  if (regionId) {
+    fragment.set('regionId', regionId);
+  }
+  url.hash = fragment.toString();
+  return formatReturnTarget(returnTo, url);
+}

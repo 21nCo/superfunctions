@@ -1,12 +1,15 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
 import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
+import { readCookieValues, resolveCookiePolicy } from './cookies.js';
+import { resolveEnvironment } from './environment.js';
 import type {
   AuthFnRateLimitCategory,
   AuthFnRateLimitConfig,
   AuthFnRateLimitMode,
   AuthFnRuntimeConfig
 } from '../types.js';
+import { CANONICAL_CHALLENGE_ID } from './challenge-id.js';
 
 interface RateLimitCheck {
   /** Counter key: namespace, route scope, dimension, hashed value and window index. */
@@ -28,6 +31,7 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   'password-reset': { ipLimit: 20, identifierLimit: 5, windowSeconds: 300 },
   'social-start': { ipLimit: 60, windowSeconds: 60 },
   handoff: { ipLimit: 30, windowSeconds: 60 },
+  'two-factor': { ipLimit: 30, identifierLimit: 5, windowSeconds: 300 },
   'region-lookup': { ipLimit: 120, identifierLimit: 60, windowSeconds: 60 },
   account: { ipLimit: 120, windowSeconds: 60 },
 };
@@ -48,7 +52,9 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
     const path = new URL(request.url).pathname;
     const scope = scopeForPath(path);
     const policy = policyForScope(config, scope);
-    const identifier = await readIdentifier(request.clone());
+    const identifier = scope === 'two-factor'
+      ? await readTwoFactorIdentifier(request.clone(), config, normalizePath(path))
+      : await readIdentifier(request.clone());
     const ip = (await rateLimit.resolveClientIp?.(request))?.trim() || 'unknown';
     const identifierHash = identifier && policy.identifierLimit ? await hashIdentifier(identifier) : null;
     // One clock reading per request, taken after every asynchronous step, so
@@ -140,7 +146,12 @@ function assertValidWindows(config: AuthFnRuntimeConfig): void {
   }
 }
 
-function scopeForPath(path: string): AuthFnRateLimitScope {
+function normalizePath(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, '') : path;
+}
+
+function scopeForPath(rawPath: string): AuthFnRateLimitScope {
+  const path = normalizePath(rawPath);
   if (path.endsWith('/sign-in/password') || path.endsWith('/sign-up/password')) return 'password';
   if (path.endsWith('/otp/send')) return 'otp-send';
   if (path.endsWith('/otp/verify')) return 'otp-verify';
@@ -149,6 +160,11 @@ function scopeForPath(path: string): AuthFnRateLimitScope {
     || path.endsWith('/password/reset/complete')
   ) return 'password-reset';
   if (path.endsWith('/social/start')) return 'social-start';
+  if (
+    path.endsWith('/2fa/challenge')
+    || path.endsWith('/2fa/confirm')
+    || path.endsWith('/2fa/disable')
+  ) return 'two-factor';
   if (path.includes('/handoff/')) return 'handoff';
   if (path.endsWith('/regions/lookup')) return 'region-lookup';
   return 'account';
@@ -312,4 +328,36 @@ async function readIdentifier(request: Request): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Two-factor attempts are counted per sign-in challenge (`challengeId`,
+ * trimmed and lower-cased so differently spelled ids of one challenge share a
+ * counter) or, for `/2fa/confirm` and `/2fa/disable`, per session cookie,
+ * which is the only credential those routes accept. Other body fields and
+ * headers are ignored so a caller cannot change the counter by adding them.
+ */
+async function readTwoFactorIdentifier(
+  request: Request,
+  config: AuthFnRuntimeConfig,
+  path: string
+): Promise<string | null> {
+  if (path.endsWith('/2fa/challenge')) {
+    if (request.method !== 'POST') return null;
+    try {
+      const body = await request.json() as { challengeId?: unknown };
+      if (typeof body.challengeId !== 'string') return null;
+      const challengeId = body.challengeId.trim().toLowerCase();
+      if (!challengeId) return null;
+      // Ids are ASCII; anything else shares one counter so collation tricks gain nothing.
+      return CANONICAL_CHALLENGE_ID.test(challengeId)
+        ? `two-factor-challenge:${challengeId}`
+        : 'two-factor-challenge:non-canonical';
+    } catch {
+      return null;
+    }
+  }
+  const runtime = await resolveEnvironment(config, request);
+  const { sessionToken } = readCookieValues(request, resolveCookiePolicy(config, request, runtime));
+  return sessionToken ? `two-factor-session:${sessionToken}` : null;
 }

@@ -4,7 +4,7 @@ This dev adoption is based on next `b21477fc9a32ae425c38a2de810b5a8705fc711f` wi
 
 ## PostgreSQL and ownership
 
-Apply `migrations/0001-initial.sql` and `0002-memory-lifecycle.sql` in order, using a migration role against the intended application schema. Existing installations apply 0002 after confirming their baseline matches 0001. Migrations are additive and repeatable. They do not provision a database, grants, or Hyperdrive. The vector dimension is 1536. An approximate vector index is an operational choice after data loading; exact search works without one.
+Apply `migrations/0001-initial.sql`, `0002-memory-lifecycle.sql` and `0003-document-sources.sql` in order, using a migration role against the intended application schema. Existing installations apply 0002 after confirming their baseline matches 0001, and apply 0003 before upgrading to a release that includes it: the PostgreSQL adapter reads its columns. Migrations are additive and repeatable. They do not provision a database, grants, or Hyperdrive. The vector dimension is 1536. An approximate vector index is an operational choice after data loading; exact search works without one.
 
 ```ts
 import postgres from 'postgres';
@@ -30,6 +30,10 @@ Every operation requires an explicit tenant ID and tag array. All supplied tags 
 Rex must deny retrieval as soon as its authoritative DataFn record is forgotten, including while derived-store cleanup is pending. MemoryFn cannot infer the state of an external source of authority. Results must be intersected with current Rex permissions and authoritative deletion state. External indexes and replicas require equivalent tombstone checks and retryable cleanup; this package's Postgres vector lives in the same row as the tombstone.
 
 The HTTP router requires an `authorize(request)` callback returning trusted scope or null. Request bodies cannot choose a tenant. The MCP adapter requires a trusted scope at construction; instantiate it per authorized scope and revoke access at the host boundary.
+
+## Documents and sources
+
+`upsertDocument({ tenantId, containerTags, sourceKey, content, contentHash?, metadata?, type?, extract?, chunking? })` stores a document as embedded chunks of a source, identified by the tenant, the exact container tag set and `sourceKey`. It requires an embedder (`MEMORY_EMBEDDER_REQUIRED`). The content hash defaults to the hex SHA-256 of the content; when it equals the stored hash the call returns `unchanged: true` and embeds nothing. Otherwise the Markdown chunker splits the content at headings, then paragraphs, then hard splits (1,500-character target and 200-character overlap by default), and `replaceSourceIfChanged()` compares the hash again inside the storage write, then soft-deletes the previous chunks and inserts the new ones atomically, so concurrent identical calls write once. An invalid embedding batch, including a zero vector or one whose cosine overflows or vanishes in float32, fails with `MEMORY_EMBEDDING_INVALID` and leaves the previous chunks live; valid vectors are stored as the embedder returned them. Content with a NUL or an unpaired surrogate fails with `MEMORY_CONTENT_INVALID`, and storage without `replaceSourceIfChanged()` with `MEMORY_DOCUMENTS_UNSUPPORTED`, before any provider call. The OpenAI embedder keeps each request within 2,048 inputs and 300,000 tokens, bounding tokens by UTF-8 bytes. With `extract: true` the facts extracted from each chunk are stored instead, under the same source. `forgetBySource({ tenantId, containerTags, sourceKey })` soft-deletes every live chunk or fact of the source and returns how many it deleted. The HTTP router exposes them as `PUT /v1/documents` and `DELETE /v1/documents`. `add()` never deduplicates into or supersedes a source's records. Both methods are optional on `IMemoryFn`, so add/search-only implementations still fit the router (the document routes answer 501) and the MCP server. See the documents and sources page of the MemoryFn docs.
 
 ## Compatibility and limits
 
@@ -57,5 +61,5 @@ together. Both bundled adapters support this; custom adapters without transactio
 reject conflicts before writing. Memory storage uses optimistic conflict detection.
 
 CLI schema discovery is not supported. PostgreSQL hosts must apply the bundled
-`migrations/0001-initial.sql` and `0002-memory-lifecycle.sql`; in-memory storage
+`migrations/0001-initial.sql`, `0002-memory-lifecycle.sql` and `0003-document-sources.sql`; in-memory storage
 needs no migration. This package does not export the shared `getSchema` contract.

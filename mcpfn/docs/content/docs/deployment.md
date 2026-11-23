@@ -13,6 +13,6 @@ Initialization metadata is available only to sessionful client-profile hooks. St
 
 ## Cloudflare Workers
 
-`@mcpfn/core` and `@mcpfn/auth` ship self-contained SDK bundles. Enable Cloudflare's `nodejs_compat` flag because the SDK uses Node built-ins such as `node:crypto`. Serve the Web Standard handler from the Worker. Do not import the Node-oriented client, CLI, testing, or inspector packages into the edge bundle.
+`@mcpfn/core` and `@mcpfn/auth` ship self-contained SDK bundles. Enable Cloudflare's `nodejs_compat` flag because the SDK uses Node built-ins such as `node:crypto`. Serve the Web Standard handler from the Worker. To call remote MCP servers from a Worker, import the remote-only `@mcpfn/client` main entry; it does not need `nodejs_compat`. Do not import `@mcpfn/client/stdio` or the Node-oriented CLI, testing, or inspector packages into the edge bundle.
 
 Schema validation uses Ajv draft-07 on Node and `@cfworker/json-schema` in runtimes that forbid runtime code generation. The repository's `cloudflare:worker-startup` release-gate step boots this shape under `workerd` with a protected request. For the exact compatibility and bundling policy, see the [core reference](/docs/reference/core) and [architecture](/docs/reference/architecture).

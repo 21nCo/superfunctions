@@ -1,0 +1,15 @@
+{
+  "status": 429,
+  "headers": {
+    "content-type": "application/json",
+    "retry-after": "3600"
+  },
+  "body": {
+    "error": {
+      "message": "You have reached your ChatGPT plan's usage limit.",
+      "type": "usage_limit_reached",
+      "param": null,
+      "code": "usage_limit_reached"
+    }
+  }
+}

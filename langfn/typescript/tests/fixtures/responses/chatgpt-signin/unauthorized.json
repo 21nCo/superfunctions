@@ -1,0 +1,14 @@
+{
+  "status": 401,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "message": "Your authentication token has expired. Please sign in again.",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "token_expired"
+    }
+  }
+}

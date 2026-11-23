@@ -4,6 +4,7 @@
 
 ## Documentation
 
+- [Documents and sources](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/documents-and-sources.md) — Store a re-ingested document as embedded chunks keyed by a source, replace it when it changes, and forget it.
 - [Embeddings and extraction](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/embeddings-and-extraction.md) — Configure supported providers and understand ingestion and deduplication behavior.
 - [Getting started](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/getting-started.md) — Add, update, and forget scoped memories with the TypeScript package.
 - [HTTP adapter](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/http.md) — Mount the authorized MemoryFn router and understand its request boundary.

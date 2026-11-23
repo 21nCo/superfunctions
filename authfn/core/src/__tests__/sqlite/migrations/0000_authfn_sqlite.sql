@@ -27,6 +27,7 @@ CREATE TABLE `authfn_otp_challenges` (
 	`updated_at` integer NOT NULL
 );
 --> statement-breakpoint
+CREATE INDEX `idx_authfn_otp_challenges_email_created_at` ON `authfn_otp_challenges` (`email`,`created_at`,`id`);--> statement-breakpoint
 CREATE INDEX `idx_authfn_otp_challenges_email_purpose_created_at` ON `authfn_otp_challenges` (`email`,`purpose`,`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_authfn_otp_challenges_expires_at` ON `authfn_otp_challenges` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `authfn_password_credentials` (

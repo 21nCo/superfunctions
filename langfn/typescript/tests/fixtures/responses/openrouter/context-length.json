@@ -1,0 +1,15 @@
+{
+  "status": 400,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "code": 400,
+      "message": "This endpoint's maximum context length is 400000 tokens. However, you requested about 412000 tokens (404000 of text input, 8000 in the output). Please reduce the length of either one.",
+      "metadata": {
+        "provider_name": null
+      }
+    }
+  }
+}

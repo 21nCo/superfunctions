@@ -70,6 +70,20 @@ class InMemoryDatabaseAdapter:
                 return row
         raise AssertionError(f"row not found in {model}: {where}")
 
+    async def update_many(
+        self,
+        model: str,
+        where: List[Dict[str, Any]],
+        data: Dict[str, Any],
+        namespace: str,
+    ) -> int:
+        count = 0
+        for row in self.storage.get(model, []):
+            if _matches(row, where):
+                row.update(data)
+                count += 1
+        return count
+
     async def delete_many(
         self,
         model: str,
@@ -153,6 +167,8 @@ def _matches(row: Dict[str, Any], where: List[Dict[str, Any]]) -> bool:
         if operator == "eq" and candidate != value:
             return False
         if operator == "lt" and not (candidate < value):
+            return False
+        if operator == "gt" and not (candidate is not None and candidate > value):
             return False
         if operator == "contains":
             if not isinstance(candidate, list) or value not in candidate:

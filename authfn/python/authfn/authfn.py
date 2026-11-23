@@ -97,6 +97,8 @@ class AuthFn:
         self.database = self.config.database
         self.namespace = self.config.namespace
         self._provider = AuthFnProvider(self.database, self.namespace, self.config)
+        # Checks each plugin's requirements (validate_config) before any route
+        # is served.
         self.routes = create_authfn_routes(self.config)
         self.router = self.routes
 

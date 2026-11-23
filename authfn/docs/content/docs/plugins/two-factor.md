@@ -42,6 +42,8 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `window` | `1` | Skew tolerance — codes from the previous, current, and next window are accepted. |
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
+| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. A changed limit applies from the next check, and checks already counted in the current run stay counted (a run already past a lowered limit locks on its next check). Whole number from 1 to 1000. |
+| `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 60 to 31536000 (one year): a lock is dated just before it is written, so it must outlast a slow write. Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
 
@@ -60,7 +62,7 @@ The TOTP secret is encrypted at rest using AES-256-GCM with the key returned by 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, confirmedAt, createdAt, updatedAt }`. |
+| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, failedAttemptCount, lockedUntil, confirmedAt, createdAt, updatedAt }`. `failedAttemptCount` and `lockedUntil` were added for the failed-attempt limit, and the AuthFn schema version is now 3: add both columns before deploying this version, or every code check fails on them. Both are nullable: `failedAttemptCount` an integer, `lockedUntil` a timestamp (`failed_attempt_count` and `locked_until` with snake_case column names). `generate-migration` reads plugin calls statically and may leave plugin tables out, so check that its output adds them, or add them by hand, and regenerate your ORM schema before starting the new kernel. |
 | `authfn_two_factor_recovery_codes` | `{ id, enrollmentId, codeHash, usedAt, createdAt }` — one row per code. |
 | `authfn_two_factor_challenges` | `{ id, userId, primaryMethod, expiresAt, consumedAt, createdAt, updatedAt }` — one row per pending challenge. |
 
@@ -94,7 +96,17 @@ sequenceDiagram
   Kernel-->>Client: 200 OK + cookies
 ```
 
-Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use; a successful use marks the row as `usedAt: <now>`.
+Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use: a successful use marks the row as `usedAt: <now>` with a write that only applies while the code is unused, so two concurrent requests cannot both spend it, and a challenge can be finished only once. Recovery codes are 80 random bits (`XXXXX-XXXXX-XXXXX-XXXXX`), stored as a hash that includes the enrollment id; codes issued by earlier versions keep working.
+
+Every TOTP check counts against the enrollment's `maxFailedAttempts`, whichever challenge or route it comes through, and with or without the HTTP rate limiter. The attempt is counted before the code is compared, so concurrent requests cannot check more codes than the limit. The check that completes a run of `maxFailedAttempts` is still made, then the enrollment is locked for `lockoutSeconds`; a correct code ends the run, unless other checks were counted after it, which keep counting.
+
+Recovery codes are outside this limit and keep working while TOTP is locked: at 80 random bits (40 for codes issued by earlier versions) they cannot be guessed, and this way someone who knows the password cannot lock the owner out of every second factor. Someone who knows the password can still lock TOTP sign-in for `lockoutSeconds` at a time; the owner then signs in with a recovery code.
+
+A recovery code submitted to finish a sign-in challenge is spent only after that request has claimed the challenge, so two requests racing on one challenge spend at most one code. If the code turns out to have been spent elsewhere meanwhile, the challenge is given back; if the write fails with an unknown outcome, the challenge stays used and the user signs in again.
+
+During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port does not enforce `maxFailedAttempts` yet, and its route builder installs no rate limiter for the two-factor routes: a Python deployment must put its own rate limiting in front of `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable`. It also does not read a lock the TypeScript kernel set; on a shared database, serve 2FA from the TypeScript kernel. It verifies both hash formats, finishes a challenge only once, and spends a code only while it is unused; it needs a database adapter with `update_many`, which `AuthFn` checks at startup when the two-factor plugin is installed.
+
+A TOTP code is recorded as used only after its request has claimed the sign-in challenge, so a request that loses the challenge to another one leaves its code usable, and only a code that finished the challenge ends the run of attempts. When the same sign-in is submitted twice, a duplicate that read the challenge while it was still open counts an attempt (one that reads it after it was finished is refused without counting), and it never ends the run itself. An accepted code ends the run only if no attempt was counted after its own: a duplicate that counted before the accepted request is cleared with the run, one that counted after it stays counted. Charges left this way add up until a sign-in ends its run, so a client that keeps sending such duplicates can lock TOTP for `lockoutSeconds` even though each sign-in succeeds (a recovery code still works). Clients should not submit the same code twice: disable the submit button while a request is in flight. A schema override (`authFnTwoFactorPlugin({ schema })`) written for an earlier version gets the two new columns added with their default names.
 
 ## Disabling 2FA
 
@@ -121,6 +133,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
+| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. With `details.reason: 'attempt-not-recorded'`, this check could not be counted (concurrent requests, or a write the database could not confirm): retry shortly. Without a reason, the HTTP rate limiter refused the route. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 

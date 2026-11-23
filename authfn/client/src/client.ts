@@ -2,10 +2,13 @@ import { createAuthFnHttpClient } from './http-client.js';
 import { createAuthFnSessionTransportAuth } from './transport-auth-internal.js';
 import type {
   AuthFnClient,
-  AuthFnClientOptions
+  AuthFnClientOptions,
+  AuthFnSocialHandoffClient
 } from './types.js';
 
-export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnClient {
+export function createAuthFnClient(
+  options: AuthFnClientOptions = {}
+): AuthFnClient & AuthFnSocialHandoffClient {
   const http = createAuthFnHttpClient(options);
 
   return {
@@ -37,7 +40,9 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
       http.requestJson({
         method: 'POST',
         path: '/sign-up/password',
-        body: input
+        body: input,
+        // Adding a password to the signed-in account needs the CSRF token.
+        csrf: true
       }),
     signInWithPassword: (input) =>
       http.requestJson({
@@ -79,7 +84,11 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
       http.requestJson({
         method: 'POST',
         path: '/otp/verify',
-        body: input
+        body: input,
+        // A signed-in user verifying their own email proves they hold the
+        // account with the CSRF token; without it the code counts as a first
+        // proof of the mailbox by someone else.
+        csrf: true
       }),
     completePasswordReset: (input) =>
       http.requestJson({
@@ -98,6 +107,12 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
         method: 'POST',
         path: `/social/disconnect/${encodeURIComponent(input.provider)}`,
         csrf: true
+      }),
+    exchangeSocialHandoff: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/social/handoff/exchange',
+        body: input
       }),
     startNativeHandoff: () =>
       http.requestJson({

@@ -39,9 +39,40 @@ export interface EmailOtpPluginRuntimeConfig {
   challengeTtlSeconds?: number;
   /** Maximum verification attempts allowed before a challenge is rejected. */
   maxAttempts?: number;
+  /**
+   * Maximum wrong codes accepted for one email, across all of its challenges
+   * and purposes, within `emailAttemptWindowSeconds`. Further verifications
+   * for that email are refused with `AUTHFN_RATE_LIMITED` until older
+   * challenges leave the window. Defaults to 10.
+   */
+  maxFailedAttemptsPerEmail?: number;
+  /**
+   * Maximum challenges that can be created for one email, across purposes,
+   * within `emailAttemptWindowSeconds`; further sends are refused with
+   * `AUTHFN_RATE_LIMITED`. Defaults to 20.
+   */
+  maxChallengesPerEmail?: number;
+  /**
+   * Window, in seconds, for `maxFailedAttemptsPerEmail` and
+   * `maxChallengesPerEmail`, measured from each challenge's creation. A
+   * challenge that outlives the window keeps counting until it expires.
+   * Defaults to 3600.
+   */
+  emailAttemptWindowSeconds?: number;
 }
 export interface ApiKeyPluginConfig extends AuthFnBundledPluginConfig {
   secretPrefix?: string;
+  /**
+   * When set, creating a key needs a cookie session that was signed in within
+   * this many seconds. Sessions issued by a handoff from another session do
+   * not count as a fresh sign-in. Otherwise the request fails with
+   * `AUTHFN_REAUTHENTICATION_REQUIRED` (403).
+   */
+  recentAuthenticationSeconds?: number;
+  /** Expiry applied, in seconds from creation, when a create request omits `expiresAt`. */
+  defaultExpiresInSeconds?: number;
+  /** Longest allowed lifetime in seconds; later `expiresAt` values are rejected. */
+  maxExpiresInSeconds?: number;
 }
 export interface ApiKeyPluginRuntimeConfig {
   /** Clock source used for API key timestamps and expiry checks; primarily useful for tests. */
@@ -68,10 +99,34 @@ export interface TwoFactorPluginRuntimeConfig {
   encryptionKeyRef?: string;
   /** Resolves the encryption key used for two-factor secret storage. */
   encryptionKeyResolver?: (keyRef: string) => Promise<Buffer> | Buffer;
+  /**
+   * TOTP checks in a run for one enrollment, across challenges and routes,
+   * before TOTP codes are locked; a correct code ends the run. Recovery codes
+   * are outside this limit. Whole number from 1 to 1000; defaults to 10.
+   */
+  maxFailedAttempts?: number;
+  /**
+   * How long, in seconds, a locked enrollment refuses TOTP codes (recovery
+   * codes still work). Whole number from 60 to 31536000; defaults to 900.
+   */
+  lockoutSeconds?: number;
 }
 
 export interface NativeHandoffPluginConfig extends AuthFnBundledPluginConfig {
   codeTtlSeconds?: number;
+  /**
+   * Registers the native-to-web routes (`/handoff/web/start` and
+   * `/handoff/web/consume`). Defaults to true; turn off when no app opens web
+   * pages signed in as the native user.
+   */
+  webHandoff?: boolean;
+  /**
+   * Requires every web handoff to be bound to the app that started it:
+   * `/handoff/web/start` must send `verifierChallenge`, and consume refuses any
+   * code without one. Without this, the caller of `/handoff/web/start` (who
+   * may be an attacker using their own session) decides whether a code is bound.
+   */
+  requireWebHandoffVerifier?: boolean;
 }
 export interface NativeHandoffPluginRuntimeConfig {
   /** Clock source used for native handoff code timestamps and expiry checks; primarily useful for tests. */

@@ -1,7 +1,7 @@
 import { createObservabilityMiddleware, createRouter, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnRuntimeConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
-import { AuthFnValidationError } from '../core/errors.js';
+import { AuthFnValidationError, isAuthFnErrorWithCookies } from '../core/errors.js';
 import { clearSessionCookies, issueSessionCookies } from '../core/cookies.js';
 import {
   assertValidCsrf,
@@ -48,7 +48,8 @@ export function createAuthFnRouter(
     basePath: config.basePath ?? '/auth',
     middleware: middleware.length > 0 ? middleware : undefined,
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
-    onError: async (error, request) => {
+    onError: async (thrown, request) => {
+      const error = isAuthFnErrorWithCookies(thrown) ? thrown.original : thrown;
       const metadata = sanitizeErrorMetadata(describeRouteError(error, request));
       if (isDebugErrorLoggingEnabled()) {
         console.error('[authfn route error]', JSON.stringify(metadata));
@@ -64,10 +65,17 @@ export function createAuthFnRouter(
         // Error handling must still return the original auth response.
       }
 
-      return jsonError(request, error);
+      const response = jsonError(request, error);
+      if (isAuthFnErrorWithCookies(thrown)) {
+        for (const cookie of thrown.setCookies) {
+          response.headers.append('set-cookie', cookie);
+        }
+      }
+      return response;
     }
   });
 }
+
 
 function isDebugErrorLoggingEnabled(): boolean {
   const globalProcess = globalThis as unknown as {
@@ -224,7 +232,11 @@ export function createBaseRoutes(
         const state = await getCookieSessionState(config, request);
         const body = await readOptionalJson<{ allSessions?: boolean }>(request);
 
-        if (!state.session || !state.sessionRecord || !state.user) {
+        // A disabled user can still end their own session (state.disabled
+        // with the record and user), so a copy of the token does not come
+        // back to life when the flag is cleared.
+        const sessionId = state.session?.id ?? (state.disabled ? state.sessionRecord?.id : undefined);
+        if (!sessionId || !state.sessionRecord || !state.user) {
           const cookies = Object.values(clearSessionCookies(state.cookiePolicy));
           return jsonSuccess(request, {
             revoked: false,
@@ -239,7 +251,7 @@ export function createBaseRoutes(
         if (body.allSessions) {
           await revokeSessionsForUser(config, state.user.id);
         } else {
-          await revokeSessionById(config, state.session.id, {
+          await revokeSessionById(config, sessionId, {
             userId: state.user.id
           });
         }
@@ -248,9 +260,9 @@ export function createBaseRoutes(
           type: 'authfn.session.revoked',
           requestId: eventRequestId(request),
           actorId: state.user.id,
-          sessionId: body.allSessions ? undefined : state.session.id,
+          sessionId: body.allSessions ? undefined : sessionId,
           userId: state.user.id,
-          regionId: state.session.regionId,
+          regionId: state.session?.regionId ?? state.runtime.regionId,
           outcome: body.allSessions ? 'revoked-all' : 'revoked-current',
           metadata: {
             allSessions: Boolean(body.allSessions)

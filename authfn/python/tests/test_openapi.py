@@ -64,6 +64,7 @@ def _build_auth(*, secure: bool = True):
                 authfn_email_otp_plugin(EmailOtpPluginConfig(delivery=DeliveryStub())),
                 authfn_social_oauth_plugin(
                     SocialOAuthPluginConfig(
+                        encryption_key_resolver=lambda _ref: b"test-openapi-oauth-key-not-a-real-secret",
                         providers={
                             "google": SocialProviderConfig(
                                 client_id="google-client-id",
@@ -146,7 +147,7 @@ def test_authfn_openapi_wraps_missing_route_metadata_as_internal_error(monkeypat
             )
         ]
 
-    monkeypatch.setattr("authfn.http.create_authfn_routes", broken_routes)
+    monkeypatch.setattr("authfn.http._build_authfn_routes", broken_routes)
 
     with pytest.raises(InternalError) as exc_info:
         create_authfn_openapi(AuthFnConfig(database=InMemoryDatabaseAdapter(), namespace="authfn"))

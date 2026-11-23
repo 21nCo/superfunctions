@@ -8,7 +8,7 @@ import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { issueSession } from 'authfn/core/sessions';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
-import { sendOtpChallenge, verifyOtpChallenge } from 'authfn/core/verifications';
+import { assertOtpEmailBudgetConfig, sendOtpChallenge, verifyOtpChallenge } from 'authfn/core/verifications';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { emitAccountLinkedEvent } from 'authfn/core/account-linking';
 import { buildSessionResponse, type AuthFnSessionResponseMode } from 'authfn/core/session-responses';
@@ -30,6 +30,7 @@ export function authFnEmailOtpPlugin(
   return {
     name: 'emailOtp',
     schema: () => config.schema ?? createOtpSchema(),
+    validateConfig: (runtime) => assertOtpEmailBudgetConfig(runtime),
     routes: (ctx) => createOtpRoutes(ctx)
   };
 }
@@ -58,6 +59,12 @@ function createOtpSchema(): AuthFnSchemaDefinition['schemas'] {
         {
           name: 'idx_authfn_otp_challenges_expires_at',
           fields: ['expiresAt']
+        },
+        {
+          // The per-email budget reads an email's newest challenges across
+          // purposes.
+          name: 'idx_authfn_otp_challenges_email_created_at',
+          fields: ['email', 'createdAt', 'id']
         }
       ]
     }
@@ -106,13 +113,15 @@ function createOtpRoutes(ctx: AuthFnPluginRuntimeContext): Route[] {
           code?: string;
           profile?: Record<string, unknown>;
           sessionMode?: AuthFnSessionResponseMode;
+          requireAccountHolder?: boolean;
         }>(request);
         const verification = await verifyOtpChallenge(ctx.config, ctx.hooks, runtimeConfig, {
           request,
           purpose: body.purpose ?? 'verify-email',
           email: body.email ?? '',
           code: body.code ?? '',
-          profile: body.profile
+          profile: body.profile,
+          requireAccountHolder: body.requireAccountHolder === true
         });
 
         if ((body.purpose === 'sign-in' || body.purpose === 'sign-up') && verification.user) {

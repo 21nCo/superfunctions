@@ -112,7 +112,7 @@ export class MCPServer {
     return createMcpFnServer({
       info: {
         name: "langfn",
-        version: "0.1.1",
+        version: "0.1.0",
         instructions: "Execute LangFn tools with LangFn parsing and policy enforcement."
       },
       registry: this.registry,
