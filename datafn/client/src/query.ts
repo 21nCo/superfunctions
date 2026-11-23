@@ -221,6 +221,10 @@ function queryResultRows(result: unknown): unknown[] | null {
   return null;
 }
 
+/**
+ * Ids with pending changelog entries for `resource`, or for any resource when
+ * `resource` is null (a relation page holds target records, not the anchor).
+ */
 function pendingIdsForResource(
   changes: readonly DatafnChangelogEntry[],
   resource: unknown,
@@ -228,7 +232,10 @@ function pendingIdsForResource(
   const ids = new Set<string>();
   for (const change of changes) {
     const mutation = change.mutation;
-    if (mutation.resource === resource && typeof mutation.id === "string") {
+    if (
+      (resource === null || mutation.resource === resource) &&
+      typeof mutation.id === "string"
+    ) {
       ids.add(mutation.id);
     }
   }
@@ -255,7 +262,7 @@ async function overlayPendingRowsOnLimitedPage(
     if (!remoteData) return remoteResult;
     const pendingIds = pendingIdsForResource(
       await storage.changelogList(),
-      query.resource,
+      typeof query.relation === "string" ? null : query.resource,
     );
     const rowId = (record: unknown): unknown =>
       (record as { id?: unknown } | null)?.id;
@@ -272,13 +279,25 @@ async function overlayPendingRowsOnLimitedPage(
       ...unpaginatedQuery
     } = query;
     const localQuery = injectLocalCapabilityAutoFilters(unpaginatedQuery, schema);
+    // Local rows keep dates as epoch ms; decode them like the remote page.
     const localData = queryResultRows(
-      await executeLocalQuery(storage, schema, localQuery, schemaIndex, temporal),
+      parseQueryResultDates(
+        schema,
+        query.resource as string,
+        await executeLocalQuery(storage, schema, localQuery, schemaIndex, temporal),
+      ),
     );
     if (!localData) return remoteResult;
+    // The local engine does not apply `omit`; keep omitted fields off the page.
+    const omitted = Array.isArray(query.omit)
+      ? query.omit.filter((field): field is string => typeof field === "string")
+      : [];
     const localById = new Map<string, unknown>();
     for (const record of localData) {
-      if (isPending(record)) localById.set(rowId(record) as string, record);
+      if (!isPending(record)) continue;
+      const replacement = { ...(record as Record<string, unknown>) };
+      for (const field of omitted) delete replacement[field];
+      localById.set(rowId(record) as string, replacement);
     }
 
     const data: unknown[] = [];
@@ -419,7 +438,7 @@ async function overlayLocalQueryResult(
       ...unpaginatedQuery
     } = query;
     const localQuery = injectLocalCapabilityAutoFilters(unpaginatedQuery, schema);
-    const [localResult, pendingChanges] = await Promise.all([
+    const [rawLocalResult, pendingChanges] = await Promise.all([
       executeLocalQuery(
         storage,
         schema,
@@ -429,6 +448,11 @@ async function overlayLocalQueryResult(
       ),
       storage.changelogList(),
     ]);
+    const localResult = parseQueryResultDates(
+      schema,
+      query.resource as string,
+      rawLocalResult,
+    );
     const pendingLocalIds = pendingIdsForResource(pendingChanges, query.resource);
     return mergeQueryDataById(remoteResult, localResult, query, pendingLocalIds);
   } catch {

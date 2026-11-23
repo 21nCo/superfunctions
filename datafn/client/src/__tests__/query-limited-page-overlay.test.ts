@@ -9,10 +9,42 @@ const schema: DatafnSchema = {
     {
       name: "tasks",
       version: 1,
-      fields: [{ name: "title", type: "string", required: false }],
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "note", type: "string", required: false },
+        { name: "dueAt", type: "date", required: false },
+      ],
     },
   ],
   relations: [],
+};
+
+const relationSchema: DatafnSchema = {
+  resources: [
+    {
+      name: "folders",
+      version: 1,
+      fields: [{ name: "name", type: "string", required: false }],
+    },
+    {
+      name: "notes",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "folderId", type: "string", required: false },
+      ],
+    },
+  ],
+  relations: [
+    {
+      from: "notes",
+      to: "folders",
+      type: "many-one",
+      relation: "folder",
+      inverse: "notes",
+      fkField: "folderId",
+    },
+  ],
 };
 
 const remotePage = {
@@ -173,5 +205,86 @@ describe("Query overlay on a limited first page", () => {
       [],
       schema,
     )).resolves.toEqual(remotePage);
+  });
+
+  it("decodes local dates and keeps omitted fields off a replaced row", async () => {
+    const storage = await hydratingStorage();
+    const dueAt = Date.UTC(2026, 0, 2);
+    await storage.upsertRecord("tasks", {
+      id: "task:2",
+      title: "Open, edited",
+      note: "kept local only",
+      dueAt,
+    });
+    await pendingChange(storage, "mutation:edit", {
+      operation: "merge",
+      id: "task:2",
+      record: { title: "Open, edited", dueAt },
+    });
+
+    const result = (await executeQuery(
+      remoteReturning({
+        data: [
+          { id: "task:1", title: "Open", dueAt: Date.UTC(2026, 0, 1) },
+          { id: "task:2", title: "Open", dueAt: Date.UTC(2026, 0, 1) },
+        ],
+        nextCursor: "after-task:2",
+      }),
+      { resource: "tasks", omit: ["note"], sort: ["id:asc"], limit: 2 },
+      storage,
+      [],
+      schema,
+    )) as { data: Array<Record<string, unknown>>; nextCursor: unknown };
+
+    expect(result.nextCursor).toBe("after-task:2");
+    expect(result.data.map((row) => row.id)).toEqual(["task:1", "task:2"]);
+    expect(result.data[1]).not.toHaveProperty("note");
+    expect(result.data[1].title).toBe("Open, edited");
+    for (const row of result.data) expect(row.dueAt).toBeInstanceOf(Date);
+    expect((result.data[1].dueAt as Date).getTime()).toBe(dueAt);
+  });
+
+  it("matches pending changes on a limited relation page by the target record", async () => {
+    const storage = new MemoryStorageAdapter(["folders", "notes"]);
+    await storage.setHydrationState("folders", "hydrating");
+    await storage.upsertRecord("folders", { id: "folder:1", name: "Inbox" });
+    await storage.upsertRecord("notes", {
+      id: "note:1",
+      title: "Edited",
+      folderId: "folder:1",
+    });
+    await storage.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mutation:edit-note",
+      timestampMs: 1,
+      mutation: {
+        resource: "notes",
+        operation: "merge",
+        id: "note:1",
+        record: { title: "Edited" },
+      },
+    });
+
+    const result = await executeQuery(
+      remoteReturning({
+        data: [
+          { id: "note:1", title: "Remote", folderId: "folder:1" },
+          { id: "note:2", title: "Remote", folderId: "folder:1" },
+        ],
+        nextCursor: "after-note:2",
+      }),
+      { resource: "folders", relation: "notes", id: "folder:1", limit: 2 },
+      storage,
+      [],
+      relationSchema,
+    );
+
+    expect(result).toEqual({
+      data: [
+        { id: "note:1", title: "Edited", folderId: "folder:1" },
+        { id: "note:2", title: "Remote", folderId: "folder:1" },
+      ],
+      nextCursor: "after-note:2",
+    });
   });
 });
