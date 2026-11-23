@@ -1,0 +1,21 @@
+mcpfn/client/src/client.ts
+  s_d4b389f34268ee::t_84056fabcf4bf5 127-131
+mcpfn/client/tests/request-id.test.ts
+  s_d4b389f34268ee::t_efe24a471259f2 36,42-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "024318741f789ad24cdce0444dfd9624157e5eb2",
+  "prompts": {},
+  "sessions": {
+    "s_d4b389f34268ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fb3adb8-09fd-47ed-bc9a-7af46ddecd32",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
