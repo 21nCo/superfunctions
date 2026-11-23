@@ -1,0 +1,57 @@
+mcpfn/cli/src/index.ts
+  s_1fb8e7c343795e::t_96ea9bb48227e2 11
+mcpfn/client/src/client.ts
+  s_1fb8e7c343795e::t_bc52bddf827ebf 113-115,120-121,124-135,618
+mcpfn/client/src/targets.ts
+  s_1fb8e7c343795e::t_3635fd90993ea6 59-61,67-89
+mcpfn/client/tests/request-id.test.ts
+  s_1fb8e7c343795e::t_a9a60b2ecc5bc6 33-57
+mcpfn/client/tests/stdio-compat-abort.test.ts
+  s_1fb8e7c343795e::t_aabdb35b76e385 1-40
+mcpfn/client/package.json
+  s_8342faf0e8212a::t_63d5aea6c16584 22-37,45,47
+mcpfn/client/scripts/build-stamp.d.mts
+  s_8342faf0e8212a::t_e606b909ab69b4 1-5
+mcpfn/client/scripts/build-stamp.mjs
+  s_8342faf0e8212a::t_647b3e92b5b460 1-99
+mcpfn/client/tests/build-stamp.test.ts
+  s_8342faf0e8212a::t_56b31b54510d50 1-88
+mcpfn/client/tests/fixtures/schema-parity-server.mjs
+  s_8342faf0e8212a::t_d4bd795e123ed0 1-26
+mcpfn/client/tests/fixtures/schema-parity.mjs
+  s_8342faf0e8212a::t_12cfc7519e79e1 1-61
+mcpfn/client/tests/global-setup.ts
+  s_8342faf0e8212a::t_ca140ae9d5ee0d 2-5,9-10,14-19
+mcpfn/client/tests/workerd.test.ts
+  s_8342faf0e8212a::t_da770685b5a18c 9,19-21,31,92-96,149-153,175-179,187-188,197-199,211-213,216-219,221,223,267-284
+scripts/gate-mcpfn-release.mjs
+  s_8342faf0e8212a::t_0a7d5cef386a82 584-585,587
+mcpfn/client/CHANGELOG.md
+  s_8342faf0e8212a::t_7485062b64b231 16-19
+mcpfn/client/README.md
+  s_8342faf0e8212a::t_8b59fc181114a5 42-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "176ee8a90ce4f421de6cef3639a8a9acf0ded09c",
+  "prompts": {},
+  "sessions": {
+    "s_1fb8e7c343795e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b7fb36e-e48d-4aff-b6ca-f66e93d36c74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_8342faf0e8212a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87530c63-3b33-4f74-99e3-d43329e95bee",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
