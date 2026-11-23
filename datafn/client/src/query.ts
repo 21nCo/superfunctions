@@ -303,8 +303,10 @@ function declaredFields(
 
 /**
  * Whether the server's projection (materializeSelect, also used for relation
- * pages) returns `key` of `resource`: every declared field for no select or
- * `*`, a bare token, never a relation key (an id list or expansion the
+ * pages, where `*#` and `**` expand whole target rows as `*` does) returns
+ * `key` of `resource`: every declared field for no select or `*`, a bare
+ * token, and for a relation key only the scalar foreign key, when the token
+ * that wrote it last is a bare token or `*` (an id list or expansion the
  * overlay does not rebuild). Many-one foreign keys, which the server omits
  * unless named, are only changed where the server returned them.
  */
@@ -314,21 +316,28 @@ function serverProjectsField(
   resource: string,
   key: string,
   remoteRow: Record<string, unknown>,
+  isRelationPage: boolean,
 ): boolean {
   if (key === "id" || key === "$relation_metadata") return false;
   const omit = Array.isArray(query.omit) ? query.omit : [];
   if (omit.includes(key)) return false;
-  const select = Array.isArray(query.select) && query.select.length > 0 ? query.select : undefined;
-  if (findRelationMatch(schema, resource, key)) {
-    // A relation stored in a foreign key of its own name is that scalar id
-    // when the last token for it is bare; otherwise an id list or expansion.
-    const last = select?.filter((token) =>
-      typeof token === "string" && (token === key || token.startsWith(`${key}.`))).at(-1);
-    return last === key && heldForeignKeys(schema, resource).has(key);
-  }
-  if (select?.includes(key)) return true;
+  const tokens = Array.isArray(query.select) && query.select.length > 0
+    ? query.select.map((token) =>
+      isRelationPage && (token === "*#" || token === "**") ? "*" : token)
+    : undefined;
   const declared = declaredFields(schema, resource).fields.has(key);
-  if ((!declared && !(key in remoteRow)) || (select && !select.includes("*"))) return false;
+  if (findRelationMatch(schema, resource, key)) {
+    if (isPlainRecord(remoteRow[key]) || Array.isArray(remoteRow[key])) return false;
+    let scalar = false;
+    for (const token of tokens ?? ["*"]) {
+      if (token === key) scalar = heldForeignKeys(schema, resource).has(key);
+      else if (token === "*" && declared && key in remoteRow) scalar = true;
+      else if (typeof token === "string" && token.startsWith(`${key}.`)) scalar = false;
+    }
+    return scalar;
+  }
+  if (tokens?.includes(key)) return true;
+  if ((!declared && !(key in remoteRow)) || (tokens && !tokens.includes("*"))) return false;
   const foreignKey = (schema.relations ?? []).some((relation) =>
     relation.type === "many-one"
     && endpointIncludes(relation.from, resource)
@@ -365,55 +374,102 @@ function filterConjuncts(filter: unknown): Record<string, unknown>[] {
 }
 
 /**
- * A condition with `<relation>.id` on a forward many-one relation rewritten,
- * at any depth of its boolean groups, to the row's own foreign key; the
- * stored path of every field it reads, or `undefined` for a path through
- * another record, which the page cannot know.
+ * The stored path a filter key reads on the row: `<relation>.id` of a forward
+ * many-one relation is the row's own foreign key; any other path through a
+ * relation reads another record, which the page cannot know (`undefined`).
  */
-function onRowFields(
+function leafPath(schema: DatafnSchema, resource: string, key: string): string[] | undefined {
+  const [head, ...rest] = key.split(".");
+  const match = rest.length > 0 ? findRelationMatch(schema, resource, head) : undefined;
+  if (!match) return [head, ...rest];
+  if (
+    rest.length === 1 && rest[0] === "id"
+    && match.relation.type === "many-one" && match.direction === "forward"
+  ) {
+    return [relationFkFieldForManyOne(match.relation)];
+  }
+  return undefined;
+}
+
+/** Whether a filter reads a top-level field in `keys`. */
+function filterReads(
   schema: DatafnSchema,
   resource: string,
   filter: unknown,
-  paths: Array<string[] | undefined>,
-): unknown {
-  if (Array.isArray(filter)) return filter.map((sub) => onRowFields(schema, resource, sub, paths));
-  if (!isPlainRecord(filter)) return filter;
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(filter)) {
-    if (key.startsWith("$")) {
-      result[key] = onRowFields(schema, resource, value, paths);
-      continue;
-    }
-    const [head, ...rest] = key.split(".");
-    const match = rest.length > 0 ? findRelationMatch(schema, resource, head) : undefined;
-    if (!match) {
-      paths.push([head, ...rest]);
-      result[key] = value;
-    } else if (
-      rest.length === 1 && rest[0] === "id"
-      && match.relation.type === "many-one" && match.direction === "forward"
-    ) {
-      const foreignKey = relationFkFieldForManyOne(match.relation);
-      paths.push([foreignKey]);
-      result[foreignKey] = value;
-    } else {
-      paths.push(undefined);
-      result[key] = value;
-    }
-  }
-  return result;
+  keys: ReadonlySet<string>,
+): boolean {
+  if (Array.isArray(filter)) return filter.some((sub) => filterReads(schema, resource, sub, keys));
+  if (!isPlainRecord(filter)) return false;
+  return Object.entries(filter).some(([key, value]) => key.startsWith("$")
+    ? filterReads(schema, resource, value, keys)
+    : keys.has(leafPath(schema, resource, key)?.[0] ?? ""));
+}
+
+type Truth = boolean | undefined;
+
+function allOf(parts: readonly Truth[]): Truth {
+  if (parts.includes(false)) return false;
+  return parts.every((part) => part === true) ? true : undefined;
+}
+
+function anyOf(parts: readonly Truth[]): Truth {
+  if (parts.includes(true)) return true;
+  return parts.every((part) => part === false) ? false : undefined;
 }
 
 /**
- * Whether the replayed row settles `path`: it holds a value there, the
- * written field was cleared, or a written null or scalar ends the path. A
- * member missing from a written object is unknown (it may be hidden).
+ * Three-valued evaluation of a filter on the replayed row, one condition at
+ * a time: `undefined` where a condition reads a path the page cannot settle,
+ * so an $or is false only when every branch is, and an $and as soon as one
+ * part is.
  */
-function writtenPathKnown(current: Record<string, unknown>, path: readonly string[]): boolean {
+function judgeFilter(
+  schema: DatafnSchema,
+  resource: string,
+  filter: unknown,
+  current: Record<string, unknown>,
+  known: (path: readonly string[]) => boolean,
+): Truth {
+  if (!isPlainRecord(filter)) return undefined;
+  const parts: Truth[] = [];
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === "$and" || key === "$or") {
+      if (!Array.isArray(value)) return undefined;
+      const branches = value.map((sub) => judgeFilter(schema, resource, sub, current, known));
+      parts.push(key === "$and" ? allOf(branches) : anyOf(branches));
+      continue;
+    }
+    const path = key.startsWith("$") ? undefined : leafPath(schema, resource, key);
+    if (!path || !known(path)) {
+      parts.push(undefined);
+      continue;
+    }
+    try {
+      parts.push(evaluateFilter(current, normalizeFilterOps({ [path.join(".")]: value }), { resource }));
+    } catch {
+      // A condition the evaluator cannot read is unknown.
+      parts.push(undefined);
+    }
+  }
+  return allOf(parts);
+}
+
+/**
+ * Whether the replayed row settles `path`: it holds a value there, a written
+ * null or scalar ends the path, or the member is absent from a value the page
+ * holds whole (returned by the server, or written whole by a replace or by
+ * the one-level merge below its first level). A member missing from an
+ * object merged onto a value the server did not return is unknown.
+ */
+function writtenPathKnown(
+  current: Record<string, unknown>,
+  path: readonly string[],
+  whole: boolean,
+): boolean {
   let value: unknown = current;
   for (const [index, segment] of path.entries()) {
     if (!isPlainRecord(value)) return true;
-    if (!(segment in value)) return index === 0;
+    if (!(segment in value)) return index !== 1 || whole;
     value = value[segment];
   }
   return true;
@@ -428,11 +484,13 @@ function hasPath(row: Record<string, unknown>, path: readonly string[]): boolean
   return value !== undefined;
 }
 
+/** Top-level keys whose replayed value the page holds whole; `true` for all. */
+type WholeKeys = Set<string> | true;
+
 /**
- * The server returned the row, so it matched before the pending writes. It
- * stops matching when a condition that reads a field the replay changed, and
- * reads only fields the server returned or the replay wrote, fails on the
- * replayed row.
+ * The server returned the row, so each top-level condition matched before the
+ * pending writes. The row stops matching when a condition that reads a field
+ * the replay changed is false on the replayed row.
  */
 function pendingWritesStopMatch(
   schema: DatafnSchema,
@@ -441,24 +499,15 @@ function pendingWritesStopMatch(
   seeded: Record<string, unknown>,
   current: Record<string, unknown>,
   changedKeys: ReadonlySet<string>,
+  wholeKeys: WholeKeys,
 ): boolean {
-  for (const conjunct of filterConjuncts(filters)) {
-    const paths: Array<string[] | undefined> = [];
-    const condition = onRowFields(schema, resource, conjunct, paths);
-    const known = paths.every((path) =>
-      path !== undefined
-      && (hasPath(seeded, path)
-        || (changedKeys.has(path[0]) && writtenPathKnown(current, path))));
-    if (!known || !paths.some((path) => changedKeys.has(path![0]))) continue;
-    try {
-      if (!evaluateFilter(current, normalizeFilterOps(condition as Record<string, unknown>), { resource })) {
-        return true;
-      }
-    } catch {
-      // A condition the evaluator cannot read keeps the row.
-    }
-  }
-  return false;
+  const known = (path: readonly string[]): boolean =>
+    hasPath(seeded, path)
+    || (changedKeys.has(path[0])
+      && writtenPathKnown(current, path, wholeKeys === true || wholeKeys.has(path[0])));
+  return filterConjuncts(filters).some((conjunct) =>
+    filterReads(schema, resource, conjunct, changedKeys)
+    && judgeFilter(schema, resource, conjunct, current, known) === false);
 }
 
 async function pageMemberIds(
@@ -489,7 +538,7 @@ async function replayedPageRow(
   schema: DatafnSchema,
   query: Record<string, unknown>,
   id: string,
-  page: { resource: string; row: Record<string, unknown>; seeded: Record<string, unknown> },
+  page: PageRow,
   isRelationPage: boolean,
 ): Promise<Record<string, unknown> | null> {
   const current = await scratch.getRecord(page.resource, id);
@@ -523,11 +572,11 @@ async function replayedPageRow(
     },
     schema,
   ).filters;
-  if (pendingWritesStopMatch(schema, page.resource, filters, page.seeded, current, changedKeys)) {
+  if (pendingWritesStopMatch(schema, page.resource, filters, page.seeded, current, changedKeys, page.wholeKeys)) {
     return null;
   }
   const shownKeys = [...changedKeys].filter((key) =>
-    serverProjectsField(schema, query, page.resource, key, page.row));
+    serverProjectsField(schema, query, page.resource, key, page.row, isRelationPage));
   if (shownKeys.length === 0) return page.row;
   const patch: Record<string, unknown> = {};
   const undecodable = new Set<string>();
@@ -571,9 +620,15 @@ function heldForeignKeys(schema: DatafnSchema, resource: string): Set<string> {
   return keys;
 }
 
-/** The server's replace (buildReplaceRecord) of `before` by a replace or insert payload. */
+/**
+ * The server's replace (buildReplaceRecord) of `before` by a replace or insert
+ * payload. Only the timestamps and audit capabilities (`system`) keep
+ * createdAt and createdBy and stamp updatedAt and updatedBy; a plain field of
+ * the same name follows the ordinary rules.
+ */
 function serverReplacedRecord(
   fields: ReadonlyMap<string, DatafnFieldSchema>,
+  system: ReadonlySet<string>,
   before: Record<string, unknown>,
   written: Record<string, unknown>,
   record: Record<string, unknown>,
@@ -584,8 +639,9 @@ function serverReplacedRecord(
     if (!fields.has(key) && !(key in record)) result[key] = before[key];
   }
   for (const [key, field] of fields) {
-    if (key === "updatedAt" || key === "updatedBy") continue;
-    if (key === "createdAt" || key === "createdBy" || field.readonly) {
+    const capability = system.has(key);
+    if (capability && (key === "updatedAt" || key === "updatedBy")) continue;
+    if ((capability && (key === "createdAt" || key === "createdBy")) || field.readonly) {
       if (before[key] === undefined) delete result[key];
       else result[key] = before[key];
     } else if (key in record) {
@@ -633,7 +689,7 @@ async function replayPendingEntry(
   const { fields, system } = declaredFields(schema, resource as string);
   if (operation !== "merge") {
     const record = isPlainRecord(mutation.record) ? mutation.record : {};
-    await scratch.upsertRecord(resource as string, serverReplacedRecord(fields, before, after, record));
+    await scratch.upsertRecord(resource as string, serverReplacedRecord(fields, system, before, after, record));
     return;
   }
   let restored = false;
@@ -646,16 +702,154 @@ async function replayPendingEntry(
   if (restored) await scratch.upsertRecord(resource as string, after);
 }
 
+type PageRow = {
+  resource: string;
+  row: Record<string, unknown>;
+  seeded: Record<string, unknown>;
+  wholeKeys: WholeKeys;
+};
+
+/**
+ * The scratch store, recording how to undo each record and join-row write so
+ * an entry the writer rejects partway leaves nothing behind.
+ */
+function journaled(
+  scratch: MemoryStorageAdapter,
+  undo: Array<() => Promise<void>>,
+): DatafnStorageAdapter {
+  const saveRecord = async (resource: string, id: unknown): Promise<void> => {
+    if (typeof id !== "string") return;
+    const prior = await scratch.getRecord(resource, id);
+    const saved = prior ? structuredClone(prior) : null;
+    undo.push(() => saved ? scratch.upsertRecord(resource, saved) : scratch.deleteRecord(resource, id));
+  };
+  const saveJoin = async (relationKey: string, from: unknown, to: unknown): Promise<void> => {
+    const prior = (await scratch.listJoinRows(relationKey)).find((row) => row.from === from && row.to === to);
+    const saved = prior ? structuredClone(prior) : undefined;
+    undo.push(() => saved
+      ? scratch.upsertJoinRow(relationKey, saved)
+      : scratch.deleteJoinRow(relationKey, String(from), String(to)));
+  };
+  const writes: Record<string, (...args: any[]) => Promise<void>> = {
+    upsertRecord: (resource: string, record: Record<string, unknown>) => saveRecord(resource, record?.id),
+    deleteRecord: (resource: string, id: string) => saveRecord(resource, id),
+    mergeRecord: (resource: string, id: string) => saveRecord(resource, id),
+    upsertJoinRow: (key: string, row: Record<string, unknown>) => saveJoin(key, row?.from, row?.to),
+    deleteJoinRow: (key: string, from: string, to: string) => saveJoin(key, from, to),
+    setJoinRows: async (key: string, rows: Array<Record<string, unknown>>) => {
+      for (const row of rows) await saveJoin(key, row?.from, row?.to);
+    },
+  };
+  return new Proxy(scratch, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      const save = typeof property === "string" ? writes[property] : undefined;
+      if (!save) return value.bind(target);
+      return async (...args: unknown[]) => {
+        await save(...args);
+        return value.apply(target, args);
+      };
+    },
+  });
+}
+
+/** Top-level keys a pending entry for a tracked row writes whole. */
+function nextWholeKeys(
+  wholeKeys: WholeKeys,
+  mutation: Record<string, unknown>,
+  existed: boolean,
+): WholeKeys {
+  if (!existed || mutation.operation === "insert" || mutation.operation === "replace") return true;
+  if (wholeKeys === true || mutation.operation !== "merge" || !isPlainRecord(mutation.record)) {
+    return wholeKeys;
+  }
+  const next = new Set(wholeKeys);
+  for (const [key, value] of Object.entries(mutation.record)) {
+    if (!isPlainRecord(value)) next.add(key);
+  }
+  return next;
+}
+
+function htreePathField(relation: { pathField?: string }): string {
+  return relation.pathField || "parentPath";
+}
+
+function htreeParentField(relation: { fkField?: string; foreignKey?: string; inverse?: string }): string {
+  return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
+}
+
+/**
+ * Seed the membership a relation page reports, in the writer's own form. An
+ * htree ancestor page is the anchor's path, root first (by each ancestor's
+ * own path when the server returned it, otherwise in page order), so the
+ * anchor and every ancestor get the path and parent the chain implies.
+ * Other relations are one relate of every row onto the anchor.
+ */
+async function seedRelationPage(
+  scratch: DatafnStorageAdapter,
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  match: NonNullable<ReturnType<typeof findRelationMatch>>,
+  pageRows: ReadonlyMap<string, PageRow>,
+): Promise<Record<string, unknown>> {
+  const resource = query.resource as string;
+  const anchorId = query.id as string;
+  const relation = match.relation;
+  if (relation.type === "htree" && match.direction === "inverse") {
+    const pathField = htreePathField(relation);
+    const parentField = htreeParentField(relation);
+    const depth = (page: PageRow): number | undefined => {
+      const path = page.seeded[pathField];
+      return typeof path === "string" ? (path ? path.split("-").length : 0) : undefined;
+    };
+    const entries = [...pageRows.entries()];
+    const ordered = entries.every(([, page]) => depth(page) !== undefined)
+      ? entries.sort(([, left], [, right]) => depth(left)! - depth(right)!)
+      : entries;
+    const ids = ordered.map(([id]) => id);
+    for (const [index, [id, page]] of ordered.entries()) {
+      await scratch.upsertRecord(page.resource, {
+        ...page.seeded,
+        [pathField]: ids.slice(0, index).join("-"),
+        [parentField]: ids[index - 1] ?? null,
+      });
+    }
+    const anchor = { id: anchorId, [pathField]: ids.join("-"), [parentField]: ids.at(-1) ?? null };
+    await scratch.upsertRecord(resource, anchor);
+    return anchor;
+  }
+  const anchor = (await scratch.getRecord(resource, anchorId)) ?? { id: anchorId };
+  await scratch.upsertRecord(resource, anchor);
+  await applyOptimisticMutationToStorage(scratch, schema, {
+    resource,
+    id: anchorId,
+    operation: "relate",
+    relations: { [query.relation as string]: [...pageRows.keys()] },
+  }, 0);
+  return (await scratch.getRecord(resource, anchorId)) ?? anchor;
+}
+
+/** Keys whose replayed value differs from the seed, ancestor inactivity aside. */
+function changedKeysOf(seeded: Record<string, unknown>, current: Record<string, unknown>): Set<string> {
+  return new Set(
+    [...Object.keys(seeded), ...Object.keys(current)]
+      .filter((key) => key !== ANCESTOR_INACTIVE_FIELD && !sameValue(seeded[key], current[key])),
+  );
+}
+
 /**
  * A limited first page keeps its remote rows, order and cursor: adding local
  * rows would push remote rows past the remote nextCursor, so they would be
  * skipped. Pending local changes are replayed, in changelog order, by the
  * writer that applied them optimistically, onto a scratch store seeded with
- * the page as the server returned it (and, for a relation page, the edges the
- * server reported). A row leaves the page when the replay deletes it, removes
- * its edge, or makes a condition it can judge fail; otherwise it is the
- * remote row with the fields the replay changed. The cached local copy, which
- * already holds the pending writes, is never read.
+ * the page as the server returned it (and, for a relation page, the
+ * membership the server reported); an entry the writer rejects is rolled
+ * back whole. A relation page is emptied when the replay deletes its anchor
+ * or makes the anchor fail the query's filters. A row leaves the page when
+ * the replay deletes it, removes its membership, or makes a condition false;
+ * otherwise it is the remote row with the fields the replay changed. The
+ * cached local copy, which already holds the pending writes, is never read.
  */
 async function overlayPendingRowsOnLimitedPage(
   storage: DatafnStorageAdapter,
@@ -689,9 +883,11 @@ async function overlayPendingRowsOnLimitedPage(
     relation: query.relation,
     metadata: query.metadata,
   };
+  const wholeOnSeed = !(Array.isArray(query.omit) && query.omit.length > 0);
 
   const scratch = new MemoryStorageAdapter(schema.resources.map((entry) => entry.name));
-  const pageRows = new Map<string, { resource: string; row: Record<string, unknown>; seeded: Record<string, unknown> }>();
+  const pageRows = new Map<string, PageRow>();
+  let anchor: PageRow | undefined;
   let linkedBefore: Set<string> | undefined;
   try {
     for (const row of remoteData) {
@@ -700,20 +896,12 @@ async function overlayPendingRowsOnLimitedPage(
       if (id === undefined || !resource || !isPlainRecord(row) || pageRows.has(id)) continue;
       const seeded = seedRow(schema, resource, row);
       await scratch.upsertRecord(resource, seeded);
-      pageRows.set(id, { resource, row, seeded });
+      pageRows.set(id, { resource, row, seeded, wholeKeys: new Set(wholeOnSeed ? Object.keys(seeded) : []) });
     }
     if (pageRows.size === 0) return remoteResult;
     if (match) {
-      // The edges the server reported, written in the writer's own form.
-      if (!(await scratch.getRecord(queryResource, query.id as string))) {
-        await scratch.upsertRecord(queryResource, { id: query.id });
-      }
-      await applyOptimisticMutationToStorage(scratch, schema, {
-        resource: queryResource,
-        id: query.id,
-        operation: "relate",
-        relations: { [query.relation as string]: [...pageRows.keys()] },
-      }, 0);
+      const seeded = await seedRelationPage(scratch, schema, query, match, pageRows);
+      anchor = { resource: queryResource, row: seeded, seeded, wholeKeys: new Set() };
       linkedBefore = await pageMemberIds(scratch, schema, edgeQuery);
     }
     for (const [id, page] of pageRows) {
@@ -723,12 +911,27 @@ async function overlayPendingRowsOnLimitedPage(
     return remoteResult;
   }
 
+  const tracked = (mutation: Record<string, unknown>): PageRow | undefined => {
+    if (anchor && mutation.resource === queryResource && mutation.id === query.id) return anchor;
+    const page = typeof mutation.id === "string" ? pageRows.get(mutation.id) : undefined;
+    return page?.resource === mutation.resource ? page : undefined;
+  };
   for (const change of changes) {
+    const undo: Array<() => Promise<void>> = [];
     try {
-      await replayPendingEntry(scratch, schema, change);
+      const target = tracked(change.mutation);
+      const existed = target
+        ? Boolean(await scratch.getRecord(target.resource, change.mutation.id as string))
+        : false;
+      await replayPendingEntry(journaled(scratch, undo), schema, change);
+      if (target) target.wholeKeys = nextWholeKeys(target.wholeKeys, change.mutation, existed);
     } catch {
-      // An entry the writer cannot apply changes nothing else on the page.
+      // An entry the writer rejects changes nothing on the page.
+      for (const step of undo.reverse()) await step().catch(() => undefined);
     }
+  }
+  if (anchor && !(await anchorStillMatches(scratch, schema, query, anchor))) {
+    return Array.isArray(remoteResult) ? [] : { ...(remoteResult as Record<string, unknown>), data: [] };
   }
   const linkedAfter = match ? await pageMemberIds(scratch, schema, edgeQuery) : undefined;
   const data: unknown[] = [];
@@ -754,6 +957,33 @@ async function overlayPendingRowsOnLimitedPage(
   return Array.isArray(remoteResult)
     ? data
     : { ...(remoteResult as Record<string, unknown>), data };
+}
+
+/**
+ * The server reads a relation page through its anchor, queried with the
+ * page's filters and metadata: no anchor, or an anchor a pending write makes
+ * fail them, is an empty page.
+ */
+async function anchorStillMatches(
+  scratch: DatafnStorageAdapter,
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  anchor: PageRow,
+): Promise<boolean> {
+  try {
+    const current = await scratch.getRecord(anchor.resource, query.id as string);
+    if (!current) return false;
+    const filters = injectLocalCapabilityAutoFilters(
+      { resource: anchor.resource, metadata: query.metadata, filters: query.filters },
+      schema,
+    ).filters;
+    return !pendingWritesStopMatch(
+      schema, anchor.resource, filters, anchor.seeded, current,
+      changedKeysOf(anchor.seeded, current), anchor.wholeKeys,
+    );
+  } catch {
+    return true;
+  }
 }
 
 function mergeQueryDataById(

@@ -1252,3 +1252,217 @@ describe("Limited first page: pending changes replayed by the offline writer", (
     expect(result).toEqual({ data: [{ id: "task:1", title: "Edited" }], nextCursor: "next" });
   });
 });
+
+const treeSchema: DatafnSchema = {
+  resources: [
+    {
+      name: "goals",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "parentId", type: "string", required: false },
+        { name: "parentPath", type: "string", required: false },
+      ],
+    },
+  ],
+  relations: [
+    { from: "goals", to: "goals", type: "htree", relation: "children", inverse: "parent", foreignKey: "parentId", pathField: "parentPath" },
+  ],
+};
+
+const tagSchema: DatafnSchema = {
+  resources: [
+    { name: "tags", version: 1, fields: [{ name: "label", type: "string", required: false }] },
+    { name: "notes", version: 1, fields: [{ name: "title", type: "string", required: false }] },
+  ],
+  relations: [{ from: "notes", to: "tags", type: "many-many", relation: "tags", inverse: "notes" }],
+};
+
+describe("Limited first page: server membership, three-valued filters and isolated entries", () => {
+  it("hydration: a pending reparent removes every former ancestor from an inverse htree page", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:c", relations: { parent: "goal:other" },
+    });
+    // Sorted by id, the old parent goal:a comes before the root goal:z.
+    const rows = [
+      { id: "goal:a", title: "Parent", parentId: "goal:z", parentPath: "goal:z" },
+      { id: "goal:z", title: "Root", parentId: null, parentPath: "" },
+    ];
+    const data = await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"] }, rows);
+    expect(data).toEqual([]);
+  });
+
+  it("hydration: a pending detach removes every ancestor, and an untouched page keeps its order", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    const rows = [{ id: "goal:a", title: "Parent" }, { id: "goal:z", title: "Root" }];
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "merge", id: "goal:other", record: { title: "Elsewhere" },
+    });
+    const query = { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"] };
+    expect(await page(storage, treeSchema, query, rows)).toEqual(rows);
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "unrelate", id: "goal:c", relations: { parent: "goal:a" },
+    });
+    expect(await page(storage, treeSchema, query, rows)).toEqual([]);
+  });
+
+  it("filter-dependencies: a relation id and its foreign key in one branch are both judged", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { title: "Draft" },
+    });
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters: { $or: [{ "folder.id": "folder:2", folderId: "folder:1" }, { title: "Pinned" }] } },
+      [{ id: "note:1", title: "Pinned", folderId: "folder:1" }, { id: "note:2", title: "Pinned", folderId: "folder:1" }],
+    );
+    expect(data.map((row) => row.id)).toEqual(["note:2"]);
+  });
+
+  it("filter-dependencies: an $or whose branches are all false drops the row, even with a hidden path", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { title: "Done", profile: { status: "closed" } },
+    });
+    const filters = { $or: [{ title: "Open" }, { "profile.status": "open", "folder.name": "Inbox" }] };
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters, select: ["id", "title"] },
+      [{ id: "note:1", title: "Open" }, { id: "note:2", title: "Open" }],
+    );
+    expect(data.map((row) => row.id)).toEqual(["note:2"]);
+  });
+
+  it("filter-dependencies: a replaced nested object settles its members, a merged one does not", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "replace", id: "note:1", record: { title: "A", profile: { note: "x" } },
+    });
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:2", record: { profile: { note: "x" } },
+    });
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters: { "profile.status": "open" }, select: ["id", "title"] },
+      [{ id: "note:1", title: "A" }, { id: "note:2", title: "B" }],
+    );
+    expect(data.map((row) => row.id)).toEqual(["note:2"]);
+  });
+
+  it("filter-dependencies: a pending anchor write that fails the filter empties a relation page", async () => {
+    const storage = await hydrating("notes", "folders");
+    await offlineWrite(storage, folderSchema, {
+      resource: "folders", operation: "merge", id: "folder:1", record: { name: "Archive" },
+    });
+    const rows = [{ id: "note:1", title: "A" }];
+    expect(await page(
+      storage, folderSchema, { resource: "folders", id: "folder:1", relation: "notes", filters: { name: "Inbox" } }, rows,
+    )).toEqual([]);
+    expect(await page(
+      storage, folderSchema, { resource: "folders", id: "folder:1", relation: "notes", filters: { name: "Archive" } }, rows,
+    )).toEqual(rows);
+    await offlineWrite(storage, folderSchema, { resource: "folders", operation: "delete", id: "folder:1" });
+    expect(await page(storage, folderSchema, { resource: "folders", id: "folder:1", relation: "notes" }, rows)).toEqual([]);
+  });
+
+  it("projection-shape: a many-many page selected with *# shows target edits and keeps the metadata", async () => {
+    const storage = new MemoryStorageAdapter(["tags", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await offlineWrite(storage, tagSchema, {
+      resource: "tags", operation: "merge", id: "tag:1", record: { label: "New" },
+    });
+    const rows = [{ id: "tag:1", label: "Old", $relation_metadata: { from: "note:1", to: "tag:1" } }];
+    expect(await page(storage, tagSchema, { resource: "notes", id: "note:1", relation: "tags", select: ["*#"] }, rows))
+      .toEqual([{ ...rows[0], label: "New" }]);
+  });
+
+  it("projection-shape: a declared foreign key follows the token that wrote it last", async () => {
+    const ownerSchema: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "notes",
+          version: 1,
+          fields: [{ name: "title", type: "string", required: false }, { name: "owner", type: "string", required: false }],
+        },
+      ],
+      relations: [{ from: "notes", to: "users", type: "many-one", relation: "owner", fkField: "owner" }],
+    };
+    const storage = new MemoryStorageAdapter(["users", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:owner", timestampMs: 1,
+      mutation: { resource: "notes", operation: "relate", id: "note:1", relations: { owner: "user:2" } },
+    });
+    // The server's later "*" writes the scalar over the expansion.
+    expect(await page(storage, ownerSchema, { resource: "notes", select: ["owner.*", "*"] }, [{ id: "note:1", title: "A", owner: "user:1" }]))
+      .toEqual([{ id: "note:1", title: "A", owner: "user:2" }]);
+    const expanded = { id: "note:1", title: "A", owner: { id: "user:1", name: "Ada" } };
+    expect(await page(storage, ownerSchema, { resource: "notes", select: ["*", "owner.*"] }, [expanded]))
+      .toEqual([expanded]);
+  });
+
+  it("replace-discards-preserved-effects: plain createdBy and updatedAt fields follow the ordinary replace rules", async () => {
+    const plainSchema: DatafnSchema = {
+      resources: [
+        {
+          name: "notes",
+          version: 1,
+          fields: [
+            { name: "title", type: "string", required: false },
+            { name: "createdBy", type: "string", required: false },
+            { name: "updatedAt", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [],
+    };
+    const storage = new MemoryStorageAdapter(["notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await offlineWrite(storage, plainSchema, {
+      resource: "notes", operation: "replace", id: "note:1", record: { title: "B", createdBy: "user:2" },
+    });
+    expect(await page(
+      storage, plainSchema, { resource: "notes" },
+      [{ id: "note:1", title: "A", createdBy: "user:1", updatedAt: "2026-01-01" }],
+    )).toEqual([{ id: "note:1", title: "B", createdBy: "user:2" }]);
+  });
+
+  it("malformed-entry-disables-page: an entry the writer rejects partway leaves no edge or field behind", async () => {
+    const restrictSchema: DatafnSchema = {
+      resources: [
+        ...folderSchema.resources,
+        { name: "pins", version: 1, fields: [{ name: "folderId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...folderSchema.relations![0], onDelete: "setNull" },
+        { from: "pins", to: "folders", type: "many-one", relation: "folder", inverse: "pins", fkField: "folderId", onDelete: "restrict" },
+      ],
+    };
+    const storage = new MemoryStorageAdapter(["folders", "notes", "pins"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await offlineWrite(storage, restrictSchema, {
+      resource: "pins", operation: "insert", id: "pin:1", record: { folderId: "folder:1" },
+    });
+    // The server rejects the whole delete: a pin still references the folder.
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:delete-folder", timestampMs: 1,
+      mutation: { resource: "folders", operation: "delete", id: "folder:1" },
+    });
+    await offlineWrite(storage, restrictSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { title: "Edited" },
+    });
+    const data = await page(
+      storage, restrictSchema,
+      { resource: "notes", filters: { folderId: "folder:1" } },
+      [{ id: "note:1", title: "A", folderId: "folder:1" }, { id: "note:2", title: "B", folderId: "folder:1" }],
+    );
+    expect(data).toEqual([
+      { id: "note:1", title: "Edited", folderId: "folder:1" },
+      { id: "note:2", title: "B", folderId: "folder:1" },
+    ]);
+  });
+});
