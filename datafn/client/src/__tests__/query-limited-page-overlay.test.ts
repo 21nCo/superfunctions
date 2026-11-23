@@ -1668,4 +1668,129 @@ describe("Limited first page: server membership, three-valued filters and isolat
       [{ id: "note:1", title: "A" }],
     )).toEqual([{ id: "note:1", title: "Edited" }]);
   });
+  it("hydration: htree pages read paths of ids that contain the separator", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    const root = "goals:0000-root";
+    const parent = "goals:0000-parent";
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "unrelate", id: parent, relations: { parent: root },
+    });
+    const ancestors = [
+      { id: root, title: "Root", parentPath: "" },
+      { id: parent, title: "Parent", parentPath: root },
+    ];
+    expect(await page(
+      storage, treeSchema, { resource: "goals", id: "goals:0000-leaf", relation: "parent", select: ["id", "title", "parentPath"] }, ancestors,
+    )).toEqual([{ id: parent, title: "Parent", parentPath: "" }]);
+    const children = [
+      { id: parent, title: "Parent", parentPath: root },
+      { id: "goals:0000-other", title: "Other", parentPath: root },
+    ];
+    expect(await page(
+      storage, treeSchema, { resource: "goals", id: root, relation: "children", select: ["**"] }, children,
+    )).toEqual([children[1]]);
+  });
+
+  it("hydration: a direct-children page drops a row moved under a parent it does not hold, or detached with its path omitted", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:n" },
+    });
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "unrelate", id: "goal:y", relations: { parent: "goal:c" },
+    });
+    const rows = [
+      { id: "goal:x", title: "X", parentId: "goal:c" },
+      { id: "goal:y", title: "Y", parentId: "goal:c" },
+      { id: "goal:z", title: "Z", parentId: "goal:c" },
+    ];
+    expect(await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "children", omit: ["parentPath"] }, rows))
+      .toEqual([rows[2]]);
+  });
+
+  it("hydration: the last of * and ** decides between direct children and descendants", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:b", relations: { parent: "goal:a" },
+    });
+    const rows = [
+      { id: "goal:a", title: "A", parentId: "goal:r", parentPath: "goal:r" },
+      { id: "goal:b", title: "B", parentId: "goal:r", parentPath: "goal:r" },
+    ];
+    const ids = async (select: string[]) =>
+      (await page(storage, treeSchema, { resource: "goals", id: "goal:r", relation: "children", select }, rows)).map((row) => row.id);
+    expect(await ids(["**", "*"])).toEqual(["goal:a"]);
+    expect(await ids(["*", "**"])).toEqual(["goal:a", "goal:b"]);
+  });
+
+  it("filter-dependencies: an htree path a pending merge or replace writes as given decides the filter", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "merge", id: "goal:1", record: { parentId: "goal:new", parentPath: "goal:new" },
+    });
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "replace", id: "goal:2", record: { title: "Two" },
+    });
+    const rows = [
+      { id: "goal:1", title: "One", parentId: "goal:old", parentPath: "goal:old" },
+      { id: "goal:2", title: "Two", parentId: "goal:old", parentPath: "goal:old" },
+      { id: "goal:3", title: "Three", parentId: "goal:old", parentPath: "goal:old" },
+    ];
+    expect((await page(storage, treeSchema, { resource: "goals", filters: { parentPath: "goal:old" } }, rows)).map((row) => row.id))
+      .toEqual(["goal:3"]);
+  });
+
+  it("malformed-entry-disables-page: a declared required id never rejects a replace", async () => {
+    const idSchema: DatafnSchema = {
+      resources: [{
+        name: "notes",
+        version: 1,
+        fields: [{ name: "id", type: "string", required: true }, { name: "title", type: "string", required: false }],
+      }],
+      relations: [],
+    };
+    const storage = new MemoryStorageAdapter(["notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:replace", timestampMs: 1,
+      mutation: { resource: "notes", operation: "replace", id: "note:1", record: { title: "B" } },
+    });
+    expect(await page(storage, idSchema, { resource: "notes" }, [{ id: "note:1", title: "A" }]))
+      .toEqual([{ id: "note:1", title: "B" }]);
+  });
+
+  it("projection-shape: an htree page returns a pending polymorphic owner the server does not omit there", async () => {
+    const ownedTree: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        { name: "teams", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "goals",
+          version: 1,
+          fields: [
+            ...treeSchema.resources[0].fields,
+            { name: "ownerId", type: "string", required: false },
+            { name: "ownerResource", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        ...treeSchema.relations!,
+        { from: "goals", to: ["users", "teams"], type: "many-one", relation: "owner", fkField: "ownerId", fkResourceField: "ownerResource" },
+      ],
+    };
+    const storage = new MemoryStorageAdapter(["users", "teams", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:owner", timestampMs: 1,
+      mutation: { resource: "goals", operation: "relate", id: "goal:x", relations: { owner: "users:2" } },
+    });
+    const rows = [{ id: "goal:x", title: "X", parentId: "goal:c", parentPath: "goal:c" }];
+    expect(await page(storage, ownedTree, { resource: "goals", id: "goal:c", relation: "children" }, rows))
+      .toEqual([{ ...rows[0], ownerId: "users:2", ownerResource: "users" }]);
+  });
 });
