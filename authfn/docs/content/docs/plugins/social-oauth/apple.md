@@ -119,6 +119,8 @@ authfn takes the email, and whether it is verified, only from Apple's identity t
 
 The email counts as verified only when the token's `email_verified` claim is `true`; a missing claim counts as unverified. A new account gets `emailVerifiedAt` only for a verified email. Whether an unverified email may link to an existing account is set by `accountLinking.oauthByVerifiedEmail.requireProviderEmailVerified` (default `true`, which refuses the link).
 
+These guarantees cover the built-in Apple profile resolution. A custom `profileResolver` for Apple replaces it on the code-exchange path and receives the callback request, so it must take the email and its verified flag only from the identity token, never from the posted `user` value.
+
 When the token has no `email` claim:
 
 - the web callback rejects the sign-in;
