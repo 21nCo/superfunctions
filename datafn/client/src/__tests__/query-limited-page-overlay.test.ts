@@ -1279,7 +1279,7 @@ const tagSchema: DatafnSchema = {
 };
 
 describe("Limited first page: server membership, three-valued filters and isolated entries", () => {
-  it("hydration: a pending reparent keeps the ancestors, since the server rebuilds the anchor's path", async () => {
+  it("hydration: a pending reparent under a known root removes the ancestors the anchor leaves", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1291,7 +1291,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "goal:z", title: "Root", parentId: null, parentPath: "" },
     ];
     const data = await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"] }, rows);
-    expect(data).toEqual(rows);
+    expect(data).toEqual([rows[1]]);
   });
 
   it("hydration: a pending detach of a returned ancestor shows it detached and keeps the ancestors above it", async () => {
@@ -1324,7 +1324,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     )).toEqual(rows);
   });
 
-  it("hydration: a move inside the subtree keeps a row on a ** descendant page with the server's path; a detach removes it", async () => {
+  it("hydration: a move inside the subtree keeps a row on a ** descendant page; a detach removes it", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1337,7 +1337,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     ];
     expect(await page(storage, treeSchema, query, rows)).toEqual([
       rows[0],
-      { id: "goal:d", title: "D", parentId: "goal:x", parentPath: "goal:r-goal:y" },
+      { id: "goal:d", title: "D", parentId: "goal:x", parentPath: "goal:r-goal:x" },
     ]);
     await offlineWrite(storage, treeSchema, {
       resource: "goals", operation: "unrelate", id: "goal:d", relations: { parent: "goal:x" },
@@ -1715,7 +1715,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
-      resource: "goals", operation: "merge", id: "goal:b", record: { parentPath: "goal:r-goal:a" },
+      resource: "goals", operation: "relate", id: "goal:b", relations: { parent: "goal:a" },
     });
     const rows = [
       { id: "goal:a", title: "A", parentId: "goal:r", parentPath: "goal:r" },
@@ -2138,8 +2138,10 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     const written = await goals();
     await offlineWrite(written, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "a-goal:c" } });
     expect(await page(written, tree, childrenOf, [child])).toEqual([]);
-    // A later relink may rewrite a written path by cascade: the row stays.
+    // An unrelated relink leaves it known; one moving a record it lists may rewrite it by cascade.
     await offlineWrite(written, tree, { resource: "goals", operation: "relate", id: "goal:y", relations: { parent: "goal:q" } });
+    expect(await page(written, tree, childrenOf, [child])).toEqual([]);
+    await offlineWrite(written, tree, { resource: "goals", operation: "relate", id: "a", relations: { parent: "goal:q" } });
     expect(await page(written, tree, childrenOf, [child])).toEqual([child]);
 
     // A root another pending write creates proves no ancestry (the server keeps the row).
@@ -2402,5 +2404,74 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     // materializeSelect strips the many-one key `owner` at every depth; projectFields does not.
     expect(await page(storage, ownerSchema, { resource: "notes", omit: ["id"] }, [{ id: "note:1", title: "A" }]))
       .toEqual([{ id: "note:1", title: "B" }]);
+  });
+});
+
+describe("Limited first page: paths the server holds and the plan's nested omit (owner decision 2026-11-23, Option B)", () => {
+  const children = { resource: "goals", id: "goal:c", relation: "children" };
+  const ancestors = { resource: "goals", id: "goal:c", relation: "parent", select: ["id", "title"] };
+  const child = { id: "goal:x", title: "X", parentId: "goal:c", parentPath: "goal:c" };
+  const above = [{ id: "goal:r", title: "Root" }, { id: "goal:a", title: "A" }];
+  const withPath = (field: Record<string, unknown> | undefined): DatafnSchema => ({
+    resources: [{
+      name: "goals",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "parentId", type: "string", required: false, nullable: true },
+        ...(field ? [{ name: "parentPath", type: "string", required: false, nullable: true, ...field }] : []),
+      ],
+    }],
+    relations: treeSchema.relations,
+  } as DatafnSchema);
+  async function goals(): Promise<MemoryStorageAdapter> {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    return storage;
+  }
+
+  it("hydration: a relink with a malformed target is skipped alone, never the page", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:x", record: { title: "New" } });
+    await storage.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mutation:malformed-relink",
+      timestampMs: 1,
+      mutation: { resource: "goals", operation: "relate", id: "goal:y", relations: { parent: { id: { toString: null } } } },
+    });
+    expect(await page(storage, treeSchema, children, [child])).toEqual([{ ...child, title: "New" }]);
+  });
+
+  it("hydration: a replace resets only a declared writable path; readonly and undeclared paths keep the server's", async () => {
+    for (const schema of [withPath({ readonly: true }), withPath(undefined)]) {
+      const storage = await goals();
+      await offlineWrite(storage, schema, { resource: "goals", operation: "replace", id: "goal:c", record: { title: "C" } });
+      await offlineWrite(storage, schema, { resource: "goals", operation: "replace", id: "goal:x", record: { title: "X2" } });
+      expect(await page(storage, schema, ancestors, above)).toEqual(above);
+      expect((await page(storage, schema, children, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+    }
+    const writable = await goals();
+    await offlineWrite(writable, withPath({}), { resource: "goals", operation: "replace", id: "goal:c", record: { title: "C" } });
+    expect(await page(writable, withPath({}), ancestors, above)).toEqual([]);
+  });
+
+  it("hydration: a path written on the anchor decides its children against their returned paths", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:c", record: { parentPath: "goal:r" } });
+    expect(await page(storage, treeSchema, children, [child])).toEqual([]);
+    expect(await page(storage, treeSchema, { ...children, select: ["**"] }, [child])).toEqual([]);
+  });
+
+  it("projection-shape: a select naming a relation takes the mask; a nested stripped key on any row proves the plan kept them", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { folderId: "folder:9", note: "n" } },
+    });
+    const expanded = [{ id: "note:1", profile: { note: "old" }, folder: { id: "folder:1", name: "F" } }];
+    expect(await page(storage, folderSchema, { resource: "notes", select: ["profile", "folder.*"] }, expanded))
+      .toEqual([{ ...expanded[0], profile: { note: "n" } }]);
+    const rows = [{ id: "note:1", title: "A" }, { id: "note:2", title: "B", profile: { folderId: "folder:1" } }];
+    expect(await page(storage, folderSchema, { resource: "notes" }, rows))
+      .toEqual([{ ...rows[0], profile: { folderId: "folder:9", note: "n" } }, rows[1]]);
   });
 });
