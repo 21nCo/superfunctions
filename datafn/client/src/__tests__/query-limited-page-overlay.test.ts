@@ -275,25 +275,230 @@ describe("Query overlay on a limited first page", () => {
     });
   });
 
-  it("leaves a limited relation page to the remote result", async () => {
+});
+
+const effectsSchema: DatafnSchema = {
+  resources: [
+    {
+      name: "tasks",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "note", type: "string", required: false, nullable: true },
+        { name: "status", type: "string", required: false, default: "todo" },
+      ],
+    },
+  ],
+  relations: [],
+};
+
+async function limitedPage(
+  storage: MemoryStorageAdapter,
+  rows: Array<Record<string, unknown>>,
+  query: Record<string, unknown> = {},
+  querySchema: DatafnSchema = effectsSchema,
+): Promise<unknown> {
+  return executeQuery(
+    remoteReturning({ data: rows, nextCursor: "after-page" }),
+    { resource: "tasks", sort: ["id:asc"], limit: rows.length, ...query },
+    storage,
+    [],
+    querySchema,
+  );
+}
+
+describe("Limited first page: remote row plus pending mutation effects", () => {
+  it("shows a pending value for a field the server left unset, unless projected away", async () => {
+    const storage = await hydratingStorage();
+    await storage.upsertRecord("tasks", { id: "task:1", title: "Open", note: "new" });
+    await pendingChange(storage, "mutation:note", {
+      operation: "merge",
+      id: "task:1",
+      record: { note: "new" },
+    });
+    const row = { id: "task:1", title: "Open" };
+
+    await expect(limitedPage(storage, [row])).resolves.toEqual({
+      data: [{ id: "task:1", title: "Open", note: "new" }],
+      nextCursor: "after-page",
+    });
+    await expect(limitedPage(storage, [row], { omit: ["note"] })).resolves.toEqual({
+      data: [row],
+      nextCursor: "after-page",
+    });
+    await expect(limitedPage(storage, [row], { select: ["id", "title"] })).resolves.toEqual({
+      data: [row],
+      nextCursor: "after-page",
+    });
+  });
+
+  it("clears fields a pending replace leaves out and a pending null merge clears", async () => {
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:replace", {
+      operation: "replace",
+      id: "task:1",
+      record: { title: "Replaced" },
+    });
+    await pendingChange(storage, "mutation:clear", {
+      operation: "merge",
+      id: "task:2",
+      record: { note: null },
+    });
+
+    await expect(limitedPage(storage, [
+      { id: "task:1", title: "Open", note: "remote", status: "doing" },
+      { id: "task:2", title: "Open", note: "remote" },
+    ])).resolves.toEqual({
+      data: [
+        { id: "task:1", title: "Replaced", status: "todo" },
+        { id: "task:2", title: "Open", note: null },
+      ],
+      nextCursor: "after-page",
+    });
+  });
+
+  it("keeps a still-matching server row whose cached copy is partial or stale", async () => {
+    const storage = await hydratingStorage();
+    // A note-only merge before the clone leaves a partial row with defaults.
+    await storage.upsertRecord("tasks", { id: "task:1", note: "n1", status: "todo" });
+    await storage.upsertRecord("tasks", { id: "task:2", title: "Stale", note: "n2" });
+    await pendingChange(storage, "mutation:n1", {
+      operation: "merge",
+      id: "task:1",
+      record: { note: "n1" },
+    });
+    await pendingChange(storage, "mutation:n2", {
+      operation: "merge",
+      id: "task:2",
+      record: { note: "n2" },
+    });
+    const rows = [
+      { id: "task:1", title: "Open", status: "doing" },
+      { id: "task:2", title: "Open", status: "doing" },
+    ];
+    const expected = {
+      data: [
+        { id: "task:1", title: "Open", status: "doing", note: "n1" },
+        { id: "task:2", title: "Open", status: "doing", note: "n2" },
+      ],
+      nextCursor: "after-page",
+    };
+
+    await expect(limitedPage(storage, rows, { filters: { title: "Open" } }))
+      .resolves.toEqual(expected);
+    await expect(limitedPage(storage, rows, { filters: { status: "doing" } }))
+      .resolves.toEqual(expected);
+    await expect(limitedPage(storage, rows)).resolves.toEqual(expected);
+  });
+
+  it("drops a row only when its own pending writes stop it matching the filter", async () => {
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:status", {
+      operation: "merge",
+      id: "task:1",
+      record: { status: "done" },
+    });
+
+    await expect(limitedPage(
+      storage,
+      [{ id: "task:1", title: "Open", status: "doing" }, { id: "task:2", status: "doing" }],
+      { filters: { status: "doing" } },
+    )).resolves.toEqual({
+      data: [{ id: "task:2", status: "doing" }],
+      nextCursor: "after-page",
+    });
+  });
+
+  it("drops a row trashed locally unless the query includes trashed rows", async () => {
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:trash", { operation: "trash", id: "task:1" });
+    const trashSchema: DatafnSchema = {
+      ...effectsSchema,
+      resources: [{ ...effectsSchema.resources[0], capabilities: ["trash"] }],
+    };
+    const rows = [{ id: "task:1", title: "Open" }, { id: "task:2", title: "Open" }];
+
+    const hidden = (await limitedPage(storage, rows, {}, trashSchema)) as {
+      data: Array<Record<string, unknown>>;
+    };
+    expect(hidden.data.map((row) => row.id)).toEqual(["task:2"]);
+    const shown = (await limitedPage(
+      storage,
+      rows,
+      { metadata: { includeTrashed: true } },
+      trashSchema,
+    )) as { data: Array<Record<string, unknown>> };
+    expect(shown.data.map((row) => row.id)).toEqual(["task:1", "task:2"]);
+    expect(shown.data[0].trashedAt).toBe(1);
+  });
+
+  it("sets the row's own foreign key from a pending many-one relate or unrelate", async () => {
+    const storage = new MemoryStorageAdapter(["folders", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    const change = (mutationId: string, mutation: Record<string, unknown>) =>
+      storage.changelogAppend({ clientId: "client:1", mutationId, timestampMs: 1, mutation });
+    await change("mutation:relate", {
+      resource: "notes",
+      operation: "relate",
+      id: "note:1",
+      relations: { folder: "folder:2" },
+    });
+    await change("mutation:unrelate", {
+      resource: "notes",
+      operation: "unrelate",
+      id: "note:2",
+      relations: { folder: "folder:1" },
+    });
+
+    const result = await executeQuery(
+      remoteReturning({
+        data: [
+          { id: "note:1", title: "A", folderId: "folder:1" },
+          { id: "note:2", title: "B", folderId: "folder:1" },
+        ],
+        nextCursor: "after-note:2",
+      }),
+      { resource: "notes", filters: { folderId: "folder:1" }, sort: ["id:asc"], limit: 2 },
+      storage,
+      [],
+      relationSchema,
+    );
+
+    expect(result).toEqual({ data: [], nextCursor: "after-note:2" });
+  });
+
+  it("reads pending changes beyond the first 100 changelog entries", async () => {
+    const storage = await hydratingStorage();
+    for (let index = 0; index < 120; index += 1) {
+      await pendingChange(storage, `mutation:other-${index}`, {
+        operation: "merge",
+        id: `task:other-${index}`,
+        record: { note: "x" },
+      });
+    }
+    await pendingChange(storage, "mutation:delete", { operation: "delete", id: "task:1" });
+
+    await expect(limitedPage(storage, [{ id: "task:1" }, { id: "task:2" }]))
+      .resolves.toEqual({ data: [{ id: "task:2" }], nextCursor: "after-page" });
+  });
+
+  it("applies pending target edits, deletes and unrelates to a limited relation page", async () => {
     const storage = new MemoryStorageAdapter(["folders", "notes"]);
     await storage.setHydrationState("folders", "hydrating");
-    await storage.upsertRecord("folders", { id: "folder:1", name: "Inbox" });
-    await storage.upsertRecord("notes", {
+    const change = (mutationId: string, mutation: Record<string, unknown>) =>
+      storage.changelogAppend({ clientId: "client:1", mutationId, timestampMs: 1, mutation });
+    await change("mutation:edit", {
+      resource: "notes",
+      operation: "merge",
       id: "note:1",
-      title: "Edited",
-      folderId: "folder:1",
+      record: { title: "Edited" },
     });
-    await storage.changelogAppend({
-      clientId: "client:1",
-      mutationId: "mutation:edit-note",
-      timestampMs: 1,
-      mutation: {
-        resource: "notes",
-        operation: "merge",
-        id: "note:1",
-        record: { title: "Edited" },
-      },
+    await change("mutation:delete", { resource: "notes", operation: "delete", id: "note:2" });
+    await change("mutation:unrelate", {
+      resource: "folders",
+      operation: "unrelate",
+      id: "folder:1",
+      relations: { notes: "note:3" },
     });
 
     const result = await executeQuery(
@@ -301,10 +506,12 @@ describe("Query overlay on a limited first page", () => {
         data: [
           { id: "note:1", title: "Remote", folderId: "folder:1" },
           { id: "note:2", title: "Remote", folderId: "folder:1" },
+          { id: "note:3", title: "Remote", folderId: "folder:1" },
+          { id: "note:4", title: "Remote", folderId: "folder:1" },
         ],
-        nextCursor: "after-note:2",
+        nextCursor: "after-note:4",
       }),
-      { resource: "folders", relation: "notes", id: "folder:1", limit: 2 },
+      { resource: "folders", relation: "notes", id: "folder:1", limit: 4 },
       storage,
       [],
       relationSchema,
@@ -312,10 +519,10 @@ describe("Query overlay on a limited first page", () => {
 
     expect(result).toEqual({
       data: [
-        { id: "note:1", title: "Remote", folderId: "folder:1" },
-        { id: "note:2", title: "Remote", folderId: "folder:1" },
+        { id: "note:1", title: "Edited", folderId: "folder:1" },
+        { id: "note:4", title: "Remote", folderId: "folder:1" },
       ],
-      nextCursor: "after-note:2",
+      nextCursor: "after-note:4",
     });
   });
 });

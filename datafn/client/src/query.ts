@@ -17,16 +17,24 @@ import type {
 } from "@datafn/core";
 import {
   endpointIncludes,
+  evaluateFilter,
+  findRelationMatch,
   hasTemporalGrouping,
+  normalizeFilterOps,
+  normalizeRelationPayload,
   parseSortTerms,
+  relationTargetEndpoint,
   resolveCapabilities,
+  resolveEndpointResource,
   sortRecords,
+  stripNullsForNonNullableFields,
 } from "@datafn/core";
+import { sanitizeCapabilityReadonlyFields } from "./capability-fields.js";
 import { createClientError } from "./errors.js";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { executeLocalQuery } from "./offline/query.js";
 import { runBeforeQuery, runAfterQuery } from "./plugins/run-hooks.js";
-import { parseQueryResultDates } from "./codecs/date.js";
+import { parseDateFields, parseQueryResultDates } from "./codecs/date.js";
 import {
   assertRemoteQueryAllowedForE2ee,
   type DatafnE2eeConfig,
@@ -214,11 +222,17 @@ function resolveEmptyQueryResult(query: unknown): Record<string, unknown> | unde
 
 function queryResultRows(result: unknown): unknown[] | null {
   if (Array.isArray(result)) return result;
-  if (result && typeof result === "object") {
-    const data = (result as Record<string, unknown>).data;
-    if (Array.isArray(data)) return data;
-  }
+  if (isPlainRecord(result) && Array.isArray(result.data)) return result.data;
   return null;
+}
+
+/** The adapters return 100 changelog entries unless asked for more. */
+const ALL_CHANGELOG_ENTRIES = 0xffffffff;
+
+function listPendingChanges(
+  storage: DatafnStorageAdapter,
+): Promise<DatafnChangelogEntry[]> {
+  return storage.changelogList({ limit: ALL_CHANGELOG_ENTRIES });
 }
 
 function pendingIdsForResource(
@@ -236,80 +250,322 @@ function pendingIdsForResource(
 }
 
 /**
+ * The net effect of one record's pending mutations, folded in changelog
+ * order: `deleted`, or the fields they wrote (`undefined` = cleared).
+ */
+type PendingRowEffect = { deleted: boolean; written: Map<string, unknown> };
+
+/** Object field values (not Dates or class instances), merged one level deep. */
+function isObjectValue(value: unknown): value is Record<string, unknown> {
+  if (!isPlainRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+const STATE_FIELDS: Record<string, Record<string, unknown>> = {
+  restore: { trashedAt: null, trashedBy: null },
+  archive: { isArchived: true },
+  unarchive: { isArchived: false },
+};
+
+function foldPendingRowEffect(
+  schema: DatafnSchema,
+  remoteRow: Record<string, unknown>,
+  entries: readonly DatafnChangelogEntry[],
+): PendingRowEffect {
+  const effect: PendingRowEffect = { deleted: false, written: new Map() };
+  const resource = entries[0]?.mutation.resource as string;
+  const fields = schema.resources.find((entry) => entry.name === resource)?.fields ?? [];
+  for (const { mutation, timestampMs } of entries) {
+    const operation = mutation.operation;
+    const record = sanitizeCapabilityReadonlyFields(schema, mutation).record;
+    const written = isPlainRecord(record)
+      ? Object.entries(record).filter(
+          ([key]) => key !== "id" && !findRelationMatch(schema, resource, key),
+        )
+      : [];
+    if (operation === "delete") {
+      effect.deleted = true;
+      effect.written.clear();
+    } else if (operation === "insert" || operation === "replace") {
+      effect.deleted = false;
+      effect.written.clear();
+      // A replace keeps no unwritten declared field; defaults fill them.
+      for (const field of fields) {
+        const fallback = "default" in field ? structuredClone(field.default) : undefined;
+        effect.written.set(field.name, fallback);
+      }
+      for (const [key, value] of written) effect.written.set(key, value);
+    } else if (operation === "merge") {
+      effect.deleted = false;
+      for (const [key, value] of written) {
+        const current = effect.written.has(key) ? effect.written.get(key) : remoteRow[key];
+        // Storage adapters merge one level deep.
+        effect.written.set(
+          key,
+          isObjectValue(current) && isObjectValue(value) ? { ...current, ...value } : value,
+        );
+      }
+    } else if (operation === "trash") {
+      effect.written.set("trashedAt", timestampMs);
+      effect.written.set("trashedBy", null);
+    } else if (typeof operation === "string" && Object.prototype.hasOwnProperty.call(STATE_FIELDS, operation)) {
+      for (const [key, value] of Object.entries(STATE_FIELDS[operation])) {
+        effect.written.set(key, value);
+      }
+    } else if (operation === "relate" || operation === "unrelate") {
+      writeManyOneForeignKeys(schema, resource, mutation, effect.written);
+    }
+  }
+  return effect;
+}
+
+/** A relate or unrelate sets the row's own many-one foreign key. */
+function writeManyOneForeignKeys(
+  schema: DatafnSchema,
+  resource: string,
+  mutation: Record<string, unknown>,
+  written: Map<string, unknown>,
+): void {
+  if (!isPlainRecord(mutation.relations)) return;
+  for (const [relationName, payload] of Object.entries(mutation.relations)) {
+    const match = findRelationMatch(schema, resource, relationName);
+    if (match?.relation.type !== "many-one" || match.direction !== "forward") continue;
+    const { relation } = match;
+    const fkField = relation.fkField || relation.foreignKey || `${relationName}Id`;
+    const target = normalizeRelationPayload(payload)[0]?.toId;
+    if (mutation.operation === "unrelate") written.set(fkField, null);
+    else if (target !== undefined) written.set(fkField, target);
+  }
+}
+
+const WILDCARD_SELECT_TOKENS = new Set(["*", "#", "*#", "#*"]);
+
+function omitKeys(value: unknown, omit: readonly unknown[]): unknown {
+  if (!isObjectValue(value) || omit.length === 0) return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, member] of Object.entries(value)) {
+    if (!omit.includes(key)) result[key] = omitKeys(member, omit);
+  }
+  return result;
+}
+
+/**
+ * The written value as the remote projection would return it, or `undefined`
+ * when the projection hides the field. A field the select only reaches
+ * through nested tokens keeps the members the server returned.
+ */
+function projectWrittenField(
+  query: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  remoteRow: Record<string, unknown>,
+): { value: unknown } | undefined {
+  const omit = Array.isArray(query.omit) ? query.omit : [];
+  if (omit.includes(key)) return undefined;
+  const select = query.select;
+  const wholeField =
+    !Array.isArray(select)
+    || select.some((token) => token === key || WILDCARD_SELECT_TOKENS.has(token));
+  if (wholeField) return { value: omitKeys(value, omit) };
+  if (!(key in remoteRow)) return undefined;
+  const remoteValue = remoteRow[key];
+  if (isObjectValue(remoteValue) && isObjectValue(value)) {
+    const members: Record<string, unknown> = {};
+    for (const member of Object.keys(remoteValue)) {
+      members[member] = member in value ? value[member] : remoteValue[member];
+    }
+    return { value: omitKeys(members, omit) };
+  }
+  return { value: omitKeys(value, omit) };
+}
+
+function shownPendingRow(
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  resource: string,
+  remoteRow: Record<string, unknown>,
+  written: ReadonlyMap<string, unknown>,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const removed: string[] = [];
+  for (const [key, value] of written) {
+    const projected = projectWrittenField(query, key, value, remoteRow);
+    if (!projected) continue;
+    if (projected.value === undefined) removed.push(key);
+    else patch[key] = projected.value;
+  }
+  // Decode dates like the remote page; cleared non-nullable fields read absent.
+  const normalized = stripNullsForNonNullableFields(
+    parseDateFields(schema, resource, patch),
+    schema.resources.find((entry) => entry.name === resource),
+  );
+  for (const key of Object.keys(patch)) {
+    if (!(key in normalized)) removed.push(key);
+  }
+  const row = { ...remoteRow, ...normalized };
+  for (const key of removed) delete row[key];
+  return row;
+}
+
+function storedRepresentation(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const stored: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    stored[key] = value instanceof Date ? value.getTime() : value;
+  }
+  return stored;
+}
+
+/**
+ * True only when the row's own pending writes make a matching row stop
+ * matching. Fields the server did not project are filled from the cached
+ * copy for this check only; anything it cannot evaluate keeps the row.
+ */
+function pendingWritesStopMatch(
+  filters: Record<string, unknown> | undefined,
+  resource: string,
+  base: Record<string, unknown>,
+  written: ReadonlyMap<string, unknown>,
+): boolean {
+  if (!filters) return false;
+  const before = storedRepresentation(base);
+  const after = { ...before };
+  for (const [key, value] of written) {
+    if (value === undefined) delete after[key];
+    else after[key] = value instanceof Date ? value.getTime() : value;
+  }
+  try {
+    const normalized = normalizeFilterOps(filters);
+    return evaluateFilter(before, normalized, { resource })
+      && !evaluateFilter(after, normalized, { resource });
+  } catch {
+    return false;
+  }
+}
+
+/** Target ids a pending unrelate removed from the queried record's relation. */
+function pendingUnrelatedIds(
+  changes: readonly DatafnChangelogEntry[],
+  query: Record<string, unknown>,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const { mutation } of changes) {
+    const payload = isPlainRecord(mutation.relations)
+      ? mutation.relations[query.relation as string]
+      : undefined;
+    if (
+      mutation.resource !== query.resource
+      || mutation.id !== query.id
+      || payload === undefined
+    ) {
+      continue;
+    }
+    for (const { toId } of normalizeRelationPayload(payload)) {
+      if (mutation.operation === "unrelate") ids.add(toId);
+      else if (mutation.operation === "relate") ids.delete(toId);
+    }
+  }
+  return ids;
+}
+
+function pendingEntriesByRow(
+  changes: readonly DatafnChangelogEntry[],
+  rowResource: (id: string) => string | undefined,
+): Map<string, DatafnChangelogEntry[]> {
+  const byRow = new Map<string, DatafnChangelogEntry[]>();
+  for (const change of changes) {
+    const { resource, id } = change.mutation;
+    if (typeof id !== "string" || resource !== rowResource(id)) continue;
+    const entries = byRow.get(id);
+    if (entries) entries.push(change);
+    else byRow.set(id, [change]);
+  }
+  return byRow;
+}
+
+/** The shown row, or null when its pending changes remove it from the page. */
+function overlayPendingRow(
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  row: Record<string, unknown>,
+  entries: readonly DatafnChangelogEntry[],
+  cached: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const resource = entries[0].mutation.resource as string;
+  const { deleted, written } = foldPendingRowEffect(schema, row, entries);
+  if (deleted) return null;
+  // A relation page lists target records; only their capability filters apply.
+  const membershipQuery = injectLocalCapabilityAutoFilters(
+    {
+      resource,
+      metadata: query.metadata,
+      ...(typeof query.relation === "string" ? {} : { filters: query.filters }),
+    },
+    schema,
+  );
+  const filters = isPlainRecord(membershipQuery.filters) ? membershipQuery.filters : undefined;
+  if (pendingWritesStopMatch(filters, resource, { ...cached, ...row }, written)) return null;
+  return shownPendingRow(schema, query, resource, row, written);
+}
+
+function rowIdOf(row: unknown): string | undefined {
+  const id = isPlainRecord(row) ? row.id : undefined;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
  * A limited first page keeps its remote rows, order and cursor: adding local
  * rows would push remote rows past the remote nextCursor, so they would be
- * skipped. Only rows already on the page with pending local changes are
- * overlaid: their declared fields take the local values in place, and the row
- * is removed when it was deleted locally or no longer matches the query.
+ * skipped. A row on the page with pending local changes is shown as the
+ * remote row plus the effects of those changes in changelog order; it is
+ * removed only by a pending delete or unrelate, or when the fields those
+ * changes wrote make it stop matching the query. The cached local copy is
+ * never a source of shown values.
  */
 async function overlayPendingRowsOnLimitedPage(
   storage: DatafnStorageAdapter,
   schema: DatafnSchema,
   query: Record<string, unknown>,
   remoteResult: unknown,
-  schemaIndex?: SchemaIndex,
-  temporal?: DatafnTemporalConfig,
 ): Promise<unknown> {
-  // A relation page holds target records whose pending changes and edges
-  // are keyed elsewhere; it keeps the remote rows (deferred to SFNS-158).
-  if (typeof query.relation === "string") return remoteResult;
   try {
     const remoteData = queryResultRows(remoteResult);
     if (!remoteData) return remoteResult;
-    const pendingIds = pendingIdsForResource(
-      await storage.changelogList(),
-      query.resource,
-    );
-    const rowId = (record: unknown): unknown =>
-      (record as { id?: unknown } | null)?.id;
-    const isPending = (record: unknown): boolean => {
-      const id = rowId(record);
-      return typeof id === "string" && pendingIds.has(id);
-    };
-    if (!remoteData.some(isPending)) return remoteResult;
+    const isRelationPage = typeof query.relation === "string";
+    const match = isRelationPage
+      ? findRelationMatch(schema, query.resource as string, query.relation as string)
+      : undefined;
+    if (isRelationPage && !match) return remoteResult;
+    const rowResource = (id: string): string | undefined =>
+      match
+        ? resolveEndpointResource(relationTargetEndpoint(match.relation, match.direction), id, schema)
+        : (query.resource as string);
 
-    const {
-      limit: _limit,
-      offset: _offset,
-      cursor: _cursor,
-      ...unpaginatedQuery
-    } = query;
-    const localQuery = injectLocalCapabilityAutoFilters(unpaginatedQuery, schema);
-    // Local rows keep dates as epoch ms; decode them like the remote page.
-    const localData = queryResultRows(
-      parseQueryResultDates(
-        schema,
-        query.resource as string,
-        await executeLocalQuery(storage, schema, localQuery, schemaIndex, temporal),
-      ),
-    );
-    if (!localData) return remoteResult;
-    const localById = new Map<string, Record<string, unknown>>();
-    for (const record of localData) {
-      if (isPending(record)) {
-        localById.set(rowId(record) as string, record as Record<string, unknown>);
-      }
+    const changes = await listPendingChanges(storage);
+    const unrelated = isRelationPage ? pendingUnrelatedIds(changes, query) : new Set<string>();
+    const pendingByRow = pendingEntriesByRow(changes, rowResource);
+    const pendingRows = remoteData.filter((row) => pendingByRow.has(rowIdOf(row) ?? ""));
+    if (pendingRows.length === 0 && !remoteData.some((row) => unrelated.has(rowIdOf(row) ?? ""))) {
+      return remoteResult;
     }
-    const fields = new Set(
-      (schema.resources.find((resource) => resource.name === query.resource)
-        ?.fields ?? []).map((field) => field.name),
-    );
+    // Cached copies only fill fields the server did not project, for matching.
+    const cachedRows = new Map(await Promise.all(pendingRows.map(async (row) => {
+      const id = rowIdOf(row) as string;
+      const resource = pendingByRow.get(id)?.[0].mutation.resource as string;
+      return [id, await storage.getRecord(resource, id)] as const;
+    })));
 
     const data: unknown[] = [];
-    for (const record of remoteData) {
-      if (!isPending(record)) {
-        data.push(record);
-        continue;
-      }
-      const localRecord = localById.get(rowId(record) as string);
-      if (localRecord === undefined) continue;
-      // Keep the server's row shape (projection, omitted fields, expansions,
-      // relation metadata) and take only its declared fields from local.
-      const merged = { ...(record as Record<string, unknown>) };
-      for (const key of Object.keys(merged)) {
-        if (fields.has(key) && key in localRecord) merged[key] = localRecord[key];
-      }
-      data.push(merged);
+    for (const row of remoteData) {
+      const id = rowIdOf(row);
+      const entries = id === undefined ? undefined : pendingByRow.get(id);
+      if (id !== undefined && unrelated.has(id)) continue;
+      const shown = entries && isPlainRecord(row)
+        ? overlayPendingRow(schema, query, row, entries, cachedRows.get(id as string) ?? null)
+        : row;
+      if (shown !== null) data.push(shown);
     }
     return Array.isArray(remoteResult)
       ? data
@@ -416,14 +672,7 @@ async function overlayLocalQueryResult(
   const isFirstPage =
     !(typeof query.offset === "number" && query.offset > 0) && !hasActiveCursor;
   if (typeof query.limit === "number" && isFirstPage) {
-    return overlayPendingRowsOnLimitedPage(
-      storage,
-      schema,
-      query,
-      remoteResult,
-      schemaIndex,
-      temporal,
-    );
+    return overlayPendingRowsOnLimitedPage(storage, schema, query, remoteResult);
   }
   if (
     typeof query.limit === "number" ||
@@ -448,7 +697,7 @@ async function overlayLocalQueryResult(
         schemaIndex,
         temporal,
       ),
-      storage.changelogList(),
+      listPendingChanges(storage),
     ]);
     const pendingLocalIds = pendingIdsForResource(pendingChanges, query.resource);
     return mergeQueryDataById(remoteResult, localResult, query, pendingLocalIds);
