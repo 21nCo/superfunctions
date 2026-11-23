@@ -1,0 +1,21 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_124319b903d839::t_fcda7518f70850 3523-3566
+apifn/cli/src/commands/check-publish.ts
+  s_124319b903d839::t_7973a3c5898c61 39-40,618-621,638,665-667
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdff495114b3ba9b9573c0e8a48d9a61faf82914",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
