@@ -362,43 +362,12 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null".split(" "));
-
-/**
- * Whether classifyQuery certainly gives a plain list FULL_PUSHDOWN (top-level
- * omit only) through its plain filter converter: no search, grouping, temporal,
- * relation or nested select token, `$or`, dotted, relation or quantified key,
- * operator outside the adapter map (emptiness goes through the filter compiler),
- * object operand, over 30,000 `$in` values or private shareable resource.
- * Anything else keeps materializeSelect's mask.
- */
-function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
-  const resource = String(query.resource);
-  const resourceSchema = schema.resources.find((entry) => entry.name === resource);
-  if (!resourceSchema || "temporal" in query || query.search || query.groupBy || query.having) return false;
-  if (resolveCapabilities(schema.capabilities as any, resourceSchema.capabilities as any)
-    .some((entry) => isPlainRecord(entry) && (entry.shareable as any)?.default === "private")) return false;
-  if (stringTokens(query.select).some((token) => token !== "*"
-    && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
-  let values = 0;
-  const pushes = (filter: unknown): boolean => isPlainRecord(filter) && Object.entries(filter).every(([key, value]) => {
-    if (key === "$and") return Array.isArray(value) && value.every(pushes);
-    if (key.startsWith("$") || key.includes(".") || findRelationMatch(schema, resource, key)) return false;
-    const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
-    return Object.entries(ops).every(([op, operand]) => {
-      if (Array.isArray(operand)) values += operand.length;
-      const name = op.replace(/^\$/, "");
-      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (name !== "in" || Array.isArray(operand));
-    });
-  });
-  return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
-}
-
 /**
  * Keys materializeSelect's final omit pass strips at every depth: the query's
  * omit plus the row resource's auto-omitted keys its select does not name
  * and, on a relation page, the anchor's own pass (its select is
- * `<relation>.<token>`). A FULL_PUSHDOWN list keeps nested keys.
+ * `<relation>.<token>`). A FULL_PUSHDOWN list keeps nested keys, so a plain
+ * list's nested omit depends on the server's plan.
  */
 function serverStrippedKeys(
   schema: DatafnSchema,
@@ -648,11 +617,10 @@ async function replayedPageRow(
   id: string,
   page: PageRow,
   relationType: string | undefined,
-  chains: ReadonlySet<string>,
 ): Promise<Record<string, unknown> | null> {
   const current = await scratch.getRecord(page.resource, id);
   if (!current) return null;
-  const unproven = await unprovenPathKeys(scratch, schema, page, current, chains);
+  const unproven = unwrittenPathKeys(schema, page, current);
   // Ancestor inactivity comes from records the scratch store does not hold;
   // a cleared declared field is the server's null column.
   let normalized = false;
@@ -692,11 +660,20 @@ async function replayedPageRow(
     schema.resources.find((entry) => entry.name === page.resource),
   );
   const shown: Record<string, unknown> = { ...page.row };
-  const pushdown = !relationType && serverPushesDown(schema, query);
+  // A relation page always takes materializeSelect's mask. On a plain list a
+  // returned nested value holding a stripped key proves the plan kept nested
+  // keys; with no proof, a value the mask would change keeps the server's.
+  const unmasked = !relationType && Object.entries(page.row).some(([key, value]) =>
+    key !== "$relation_metadata" && !sameValue(applyServerOmit(value, stripped), value));
   for (const key of shownKeys) {
     if (undecodable.has(key)) continue;
-    if (key in decoded) shown[key] = pushdown ? decoded[key] : applyServerOmit(decoded[key], stripped);
-    else delete shown[key];
+    if (!(key in decoded)) {
+      delete shown[key];
+      continue;
+    }
+    const masked = applyServerOmit(decoded[key], stripped);
+    if (unmasked) shown[key] = decoded[key];
+    else if (relationType || sameValue(masked, decoded[key])) shown[key] = masked;
   }
   return shown;
 }
@@ -857,17 +834,42 @@ function journaled(
 
 /**
  * Htree paths a pending merge, replace or insert of a tracked row sets as
- * given; a relate or unrelate leaves the writer to rebuild them.
+ * given, or a replace clears (buildReplaceRecord, modelled by the replay).
  */
-function notePathWrites(schema: DatafnSchema, target: PageRow, mutation: Record<string, unknown>): void {
+function notePathWrites(
+  schema: DatafnSchema,
+  target: PageRow,
+  mutation: Record<string, unknown>,
+  after: Record<string, unknown> | null,
+): void {
+  if (!["merge", "replace", "insert"].includes(mutation.operation as string)) return;
+  const record = isPlainRecord(mutation.record) ? mutation.record : {};
   for (const pathField of htreePathFields(schema, target.resource)) {
-    if (["merge", "replace", "insert"].includes(mutation.operation as string)) {
-      const record = isPlainRecord(mutation.record) ? mutation.record : {};
-      if (pathField in record) (target.explicitPaths ??= new Map()).set(pathField, record[pathField]);
-    } else if (mutation.operation === "relate" || mutation.operation === "unrelate") {
+    const cleared = mutation.operation !== "merge" && (after?.[pathField] ?? null) === null;
+    if (pathField in record || cleared) {
+      (target.explicitPaths ??= new Map()).set(pathField, pathField in record ? record[pathField] : null);
+    } else if (mutation.operation !== "merge") {
       target.explicitPaths?.delete(pathField);
     }
   }
+}
+
+/**
+ * Ids an htree relate or unrelate moves or reads (the server cascades it to
+ * the moved row's descendants), or undefined for any other entry.
+ */
+function htreeRelinkIds(schema: DatafnSchema, mutation: Record<string, unknown>): string[] | undefined {
+  const { resource, relations } = mutation;
+  if (!["relate", "unrelate"].includes(mutation.operation as string) || typeof resource !== "string") return undefined;
+  let ids: string[] | undefined;
+  for (const [name, payload] of Object.entries(isPlainRecord(relations) ? relations : {})) {
+    if (findRelationMatch(schema, resource, name)?.relation.type !== "htree") continue;
+    ids ??= [String(mutation.id)];
+    for (const member of Array.isArray(payload) ? payload : [payload]) {
+      ids.push(String(isPlainRecord(member) ? member.id : member));
+    }
+  }
+  return ids;
 }
 
 /** What an entry writes whole: top-level keys, or JSON segment tuples (`members`; keys hold dots); `true`: all. */
@@ -891,18 +893,11 @@ function htreePathField(relation: { pathField?: string }): string {
   return relation.pathField || "parentPath";
 }
 
-/** A path no record matches: ancestry the page does not show. */
-const UNKNOWN_HTREE_PATH = "\u0000unknown";
-
 /** Path fields of the htree relations whose tree holds `resource`. */
 function htreePathFields(schema: DatafnSchema, resource: string): string[] {
   return (schema.relations ?? [])
     .filter((relation) => relation.type === "htree" && endpointIncludes(relation.from, resource))
     .map(htreePathField);
-}
-
-function joinPath(path: string, id: string): string {
-  return path ? `${path}-${id}` : id;
 }
 
 /** Whether `path` lists `id` (ids may themselves contain the separator). */
@@ -926,48 +921,57 @@ function pathExtends(path: string, prefix: string): boolean {
 }
 
 /**
- * Whether an htree path value is real: cleared or empty (written as given),
- * or extending a known chain (a returned path, or a root the scratch store
- * holds). The writer builds a path on an off-page parent as if it were a
- * root; one through a row whose path was not returned holds UNKNOWN_HTREE_PATH.
+ * The htree path the server holds for a replayed record: one a pending merge,
+ * replace or insert wrote as given and the replay still holds, or the empty
+ * path, which only the server's own value or a detach gives (both writers
+ * build any other relink on the parent's path). Any other path needs ancestry
+ * only the server knows.
  */
-async function provenHtreePath(
-  scratch: DatafnStorageAdapter,
-  resource: string,
+function writtenHtreePath(
+  page: PageRow,
   pathField: string,
-  value: unknown,
-  chains: ReadonlySet<string>,
-): Promise<boolean> {
-  if (typeof value !== "string") return true;
-  if (value.includes(UNKNOWN_HTREE_PATH)) return false;
-  if (value === "" || [...chains].some((chain) => pathExtends(value, chain))) return true;
-  return (await scratch.listRecords(resource)).some((record) =>
-    record[pathField] === "" && typeof record.id === "string" && pathExtends(value, record.id));
+  current: Record<string, unknown> | null | undefined,
+): { path: string | null } | undefined {
+  if (!current) return undefined;
+  if (current[pathField] === "") return { path: "" };
+  const value = page.explicitPaths?.get(pathField);
+  if (!page.explicitPaths?.has(pathField) || (typeof value !== "string" && value !== null)) return undefined;
+  return sameValue(value, current[pathField] ?? null) ? { path: value } : undefined;
 }
 
-/** Htree path fields of a replayed record whose value is not proven. */
-async function unprovenPathKeys(
-  scratch: DatafnStorageAdapter,
-  schema: DatafnSchema,
-  page: PageRow,
-  current: Record<string, unknown>,
-  chains: ReadonlySet<string>,
-): Promise<Set<string>> {
-  const keys = new Set<string>();
-  for (const pathField of htreePathFields(schema, page.resource)) {
-    const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), current[pathField]);
-    if (!explicit && !(await provenHtreePath(scratch, page.resource, pathField, current[pathField], chains))) {
-      keys.add(pathField);
-    }
-  }
-  return keys;
+/** Htree path fields of a replayed record the page keeps as the server returned them. */
+function unwrittenPathKeys(schema: DatafnSchema, page: PageRow, current: Record<string, unknown>): Set<string> {
+  return new Set(htreePathFields(schema, page.resource)
+    .filter((pathField) => !writtenHtreePath(page, pathField, current)));
+}
+
+/** Whether the last of `*` and `**` is `**` (descendants, not direct children). */
+function selectsDescendants(query: Record<string, unknown>): boolean {
+  return stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
+}
+
+/**
+ * The anchor's child path on a children page, from the server's returned
+ * paths: every one is it (or, for descendants, lies below it). Ids may hold
+ * the separator, so only a prefix every returned path agrees on counts.
+ */
+function returnedChildPath(
+  query: Record<string, unknown>,
+  pageRows: ReadonlyMap<string, PageRow>,
+  pathField: string,
+): string | undefined {
+  const paths = [...pageRows.values()].map((page) => page.row[pathField]);
+  if (paths.length === 0 || !paths.every((path): path is string => typeof path === "string")) return undefined;
+  const deep = selectsDescendants(query);
+  const prefixes = anchorPrefixes(paths[0], query.id as string)
+    .filter((prefix) => paths.every((path) => deep ? pathExtends(path, prefix) : path === prefix));
+  return prefixes.length === 1 ? prefixes[0] : undefined;
 }
 
 /**
  * Seed a relation page's reported membership in the writer's form: for htree,
- * the anchor path the returned paths prove (an ancestor page's deepest chain,
- * unknown-tailed when truncated; a children page's agreed prefix), else
- * unknown; otherwise one relate of every row onto the anchor.
+ * the anchor alone, with the path its children page's returned paths fix;
+ * otherwise one relate of every row onto the anchor.
  */
 async function seedRelationPage(
   scratch: DatafnStorageAdapter,
@@ -975,32 +979,14 @@ async function seedRelationPage(
   query: Record<string, unknown>,
   match: NonNullable<ReturnType<typeof findRelationMatch>>,
   pageRows: ReadonlyMap<string, PageRow>,
-  truncated: boolean,
 ): Promise<Record<string, unknown>> {
   const resource = query.resource as string;
   const anchorId = query.id as string;
   if (match.relation.type === "htree") {
     const pathField = htreePathField(match.relation);
-    const returned = [...pageRows].flatMap(([id, page]) =>
-      typeof page.row[pathField] === "string" ? [{ id, path: page.row[pathField] as string }] : []);
-    let anchorPath = UNKNOWN_HTREE_PATH;
-    if (match.direction === "inverse") {
-      const deepest = [...returned].sort((left, right) => right.path.length - left.path.length)[0];
-      const chain = deepest ? joinPath(deepest.path, deepest.id) : undefined;
-      if (chain && returned.every(({ id }) => pathLists(chain, id))) {
-        anchorPath = returned.length === pageRows.size && !truncated ? chain : `${chain}-${UNKNOWN_HTREE_PATH}`;
-      }
-    } else {
-      // Every returned path is the anchor's child prefix (or, with `**`, lies
-      // below it); ids may hold the separator, so use only an agreed prefix.
-      const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
-      const prefixes = returned.length === 0 ? [] : anchorPrefixes(returned[0].path, anchorId)
-        .filter((prefix) => returned.every(({ path }) => deep ? pathExtends(path, prefix) : path === prefix));
-      if (prefixes.length === 1) {
-        anchorPath = prefixes[0] === anchorId ? "" : prefixes[0].slice(0, prefixes[0].length - anchorId.length - 1);
-      }
-    }
-    const anchor = { id: anchorId, [pathField]: anchorPath };
+    const childPath = match.direction === "inverse" ? undefined : returnedChildPath(query, pageRows, pathField);
+    const anchor: Record<string, unknown> = { id: anchorId };
+    if (childPath !== undefined) anchor[pathField] = childPath.slice(0, Math.max(childPath.length - anchorId.length - 1, 0));
     await scratch.upsertRecord(resource, anchor);
     return anchor;
   }
@@ -1016,12 +1002,14 @@ async function seedRelationPage(
 }
 
 /**
- * Rows of an htree relation page the replay proves gone, judged by path as
- * the server does. An ancestor page lists the anchor's known path (none once
- * a write clears it); a row it placed there leaves when that path no longer
- * lists it. Children pages (descendants when the last of `*` and `**` is
- * `**`) follow htreeMayHold; an inheriting one drops a row the replay marks
- * ancestor-inactive (only a record it holds can).
+ * Rows of an htree relation page a pending write proves gone, judged by path
+ * as the server does, and only from paths it certainly holds. An ancestor
+ * page lists the ids of the anchor's path; a children page holds the rows
+ * whose path is the anchor's child path (descendants: lies below it), known
+ * only while the anchor keeps the path its returned children fix and no
+ * relink touches a record off the page. With no relink at all, an inheriting
+ * children page drops a returned row the replay marks ancestor-inactive.
+ * Anything else needs ancestry only the server knows: the row stays.
  */
 async function htreeRowsGone(
   scratch: DatafnStorageAdapter,
@@ -1029,77 +1017,47 @@ async function htreeRowsGone(
   query: Record<string, unknown>,
   pageRows: ReadonlyMap<string, PageRow>,
   anchor: PageRow,
-  chains: ReadonlySet<string>,
+  relinks: { any: boolean; offPage: boolean },
 ): Promise<Set<string>> {
   const gone = new Set<string>();
-  const resource = query.resource as string;
   const anchorId = query.id as string;
   const pathField = htreePathField(match.relation);
-  const anchorRecord = await scratch.getRecord(resource, anchorId);
-  const anchorPath = anchorRecord?.[pathField];
-  // The seed's path is the prefix the returned paths agree on.
-  const anchorProven = typeof anchorPath === "string"
-    && ((anchor.explicitPaths?.has(pathField) && anchor.explicitPaths.get(pathField) === anchorPath)
-      || (anchorPath === anchor.seeded[pathField] && !anchorPath.includes(UNKNOWN_HTREE_PATH))
-      || (await provenHtreePath(scratch, resource, pathField, anchorPath, chains)));
+  const anchorRecord = await scratch.getRecord(anchor.resource, anchorId);
+  const anchorWritten = writtenHtreePath(anchor, pathField, anchorRecord);
   if (match.direction === "inverse") {
-    // The seed holds a string path, so a missing one is a write's clear.
-    if (anchorRecord && (anchorPath === null || anchorPath === undefined)) return new Set(pageRows.keys());
-    if (typeof anchorPath !== "string") return gone;
-    const cut = anchorPath.indexOf(UNKNOWN_HTREE_PATH);
-    const known = cut < 0 ? anchorPath : anchorPath.slice(0, Math.max(cut - 1, 0));
-    if (cut === 0 || !(cut < 0 ? anchorProven : await provenHtreePath(scratch, resource, pathField, known, chains))) {
-      return gone;
-    }
-    for (const [id, page] of pageRows) {
-      if (!pathLists(known, id) && (cut < 0 || typeof page.row[pathField] === "string")) gone.add(id);
-    }
+    if (!anchorWritten) return gone;
+    const path = anchorWritten.path;
+    for (const id of pageRows.keys()) if (path === null || !pathLists(path, id)) gone.add(id);
     return gone;
   }
+  // The server skips an anchor without a path (hasHtreePath).
   const wildcardOnly = !Array.isArray(query.select)
     || query.select.every((token) => token === "*" || token === "**");
-  if (anchorRecord && wildcardOnly && (anchorPath === null || anchorPath === undefined)) {
-    return new Set(pageRows.keys());
-  }
+  if (anchorWritten?.path === null && wildcardOnly) return new Set(pageRows.keys());
   const metadata = isPlainRecord(query.metadata) ? query.metadata : {};
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
-  const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
-  const prefix = anchorProven ? joinPath(anchorPath, anchorId) : undefined;
+  const seededPath = anchor.seeded[pathField];
+  const prefix = typeof seededPath === "string" && !relinks.offPage && sameValue(anchorRecord?.[pathField], seededPath)
+    ? (seededPath ? `${seededPath}-${anchorId}` : anchorId)
+    : undefined;
+  const deep = selectsDescendants(query);
   for (const [id, page] of pageRows) {
     const current = await scratch.getRecord(page.resource, id);
     if (!current) continue;
-    if (inheriting && page.seeded[ANCESTOR_INACTIVE_FIELD] !== true && current[ANCESTOR_INACTIVE_FIELD] === true) {
+    const returnedPath = typeof page.row[pathField] === "string" && sameValue(current[pathField], page.row[pathField]);
+    if (inheriting && !relinks.any && returnedPath && page.seeded[ANCESTOR_INACTIVE_FIELD] !== true
+      && current[ANCESTOR_INACTIVE_FIELD] === true) {
       gone.add(id);
       continue;
     }
-    const path = current[pathField];
-    // An unknown, unknown-tailed or malformed path decides nothing.
-    if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
-    const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path);
-    const known = explicit || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
-    if (known) {
-      if (!htreeMayHold(String(path ?? ""), anchorId, deep, prefix)) gone.add(id);
-    } else if (!deep && typeof path === "string") {
-      // The writer built this path on an off-page record, so it is a tail of
-      // the real one: the row leaves when no ancestry completes it to the
-      // anchor's child path (known, or `<unknown>-<anchor id>`).
-      const full = prefix ?? anchorId;
-      if (full !== path && !full.endsWith(`-${path}`) && !(prefix === undefined && path.endsWith(`-${anchorId}`))) {
-        gone.add(id);
-      }
+    // An empty path (a root) is under no anchor, whatever its path.
+    const path = writtenHtreePath(page, pathField, current)?.path;
+    if (path === undefined || (path && (prefix === undefined || (deep ? pathExtends(path, prefix) : path === prefix)))) {
+      continue;
     }
+    gone.add(id);
   }
   return gone;
-}
-
-/**
- * Whether the server, comparing whole paths, can still list a row whose
- * known path is `path` on the anchor's children page (`deep`: anywhere below
- * it); `prefix` is the anchor's child path when its own path is proven.
- */
-function htreeMayHold(path: string, anchor: string, deep: boolean, prefix?: string): boolean {
-  if (deep) return prefix === undefined ? pathLists(path, anchor) : pathExtends(path, prefix);
-  return prefix === undefined ? path === anchor || path.endsWith(`-${anchor}`) : path === prefix;
 }
 
 /** Keys whose replayed value differs from the seed, ancestor inactivity aside. */
@@ -1149,7 +1107,6 @@ async function overlayPendingRowsOnLimitedPage(
 
   const scratch = new MemoryStorageAdapter(schema.resources.map((entry) => entry.name));
   const pageRows = new Map<string, PageRow>();
-  const chains = new Set<string>();
   let anchor: PageRow | undefined;
   let linkedBefore: Set<string> | undefined;
   try {
@@ -1158,22 +1115,12 @@ async function overlayPendingRowsOnLimitedPage(
       const resource = id === undefined ? undefined : rowResource(id);
       if (id === undefined || !resource || !isPlainRecord(row) || pageRows.has(id)) continue;
       const seeded = seedRow(schema, resource, row);
-      for (const pathField of htreePathFields(schema, resource)) {
-        if (typeof seeded[pathField] === "string") {
-          // The server's path, and the row's own chain, are real.
-          if (seeded[pathField]) chains.add(seeded[pathField] as string);
-          chains.add(joinPath(seeded[pathField] as string, id));
-        } else {
-          seeded[pathField] = UNKNOWN_HTREE_PATH;
-        }
-      }
       await scratch.upsertRecord(resource, seeded);
       pageRows.set(id, { resource, row, seeded, wholeKeys: new Set(Object.keys(seeded)), rewritten: new Set() });
     }
     if (pageRows.size === 0) return remoteResult;
     if (match) {
-      const truncated = typeof query.limit === "number" && remoteData.length >= query.limit;
-      const seeded = await seedRelationPage(scratch, schema, query, match, pageRows, truncated);
+      const seeded = await seedRelationPage(scratch, schema, query, match, pageRows);
       anchor = { resource: queryResource, row: seeded, seeded, wholeKeys: new Set(), rewritten: new Set() };
       if (match.relation.type !== "htree") linkedBefore = await pageMemberIds(scratch, schema, edgeQuery);
     }
@@ -1189,8 +1136,17 @@ async function overlayPendingRowsOnLimitedPage(
     const page = typeof mutation.id === "string" ? pageRows.get(mutation.id) : undefined;
     return page?.resource === mutation.resource ? page : undefined;
   };
+  const relinks = { any: false, offPage: false };
   for (const change of changes) {
     const undo: Array<() => Promise<void>> = [];
+    const moved = htreeRelinkIds(schema, change.mutation);
+    if (moved) {
+      // Its cascade can rewrite any path written so far, and the writer cannot
+      // follow it through records the page does not hold.
+      relinks.any = true;
+      relinks.offPage ||= moved.some((id) => id !== query.id && !pageRows.has(id));
+      for (const page of [...pageRows.values(), ...(anchor ? [anchor] : [])]) page.explicitPaths?.clear();
+    }
     try {
       const target = tracked(change.mutation);
       const existed = target
@@ -1200,19 +1156,19 @@ async function overlayPendingRowsOnLimitedPage(
       if (target && applied) {
         target.wholeKeys = nextWhole(target.wholeKeys, change.mutation, existed, false);
         target.rewritten = nextWhole(target.rewritten, change.mutation, existed, true);
-        notePathWrites(schema, target, change.mutation);
+        notePathWrites(schema, target, change.mutation, await scratch.getRecord(target.resource, change.mutation.id as string));
       }
     } catch {
       // An entry the writer rejects changes nothing on the page.
       for (const step of undo.reverse()) await step().catch(() => undefined);
     }
   }
-  if (anchor && !(await anchorStillMatches(scratch, schema, query, anchor, chains))) {
+  if (anchor && !(await anchorStillMatches(scratch, schema, query, anchor))) {
     return Array.isArray(remoteResult) ? [] : { ...(remoteResult as Record<string, unknown>), data: [] };
   }
   const unlinked = new Set<string>();
   if (match?.relation.type === "htree" && anchor) {
-    for (const id of await htreeRowsGone(scratch, match, query, pageRows, anchor, chains)) unlinked.add(id);
+    for (const id of await htreeRowsGone(scratch, match, query, pageRows, anchor, relinks)) unlinked.add(id);
   } else if (linkedBefore) {
     const linkedAfter = await pageMemberIds(scratch, schema, edgeQuery);
     for (const id of linkedBefore) if (linkedAfter && !linkedAfter.has(id)) unlinked.add(id);
@@ -1230,7 +1186,7 @@ async function overlayPendingRowsOnLimitedPage(
     try {
       shown = unlinked.has(id)
         ? null
-        : await replayedPageRow(scratch, schema, query, id, page, match?.relation.type, chains);
+        : await replayedPageRow(scratch, schema, query, id, page, match?.relation.type);
     } catch {
       // A row the overlay cannot read stays as the server returned it.
     }
@@ -1253,7 +1209,6 @@ async function anchorStillMatches(
   schema: DatafnSchema,
   query: Record<string, unknown>,
   anchor: PageRow,
-  chains: ReadonlySet<string>,
 ): Promise<boolean> {
   try {
     const current = await scratch.getRecord(anchor.resource, query.id as string);
@@ -1261,7 +1216,7 @@ async function anchorStillMatches(
     const changedKeys = changedKeysOf(anchor.seeded, current);
     const { undecodable } = decodeChangedKeys(
       schema, anchor.resource, current, changedKeys,
-      await unprovenPathKeys(scratch, schema, anchor, current, chains),
+      unwrittenPathKeys(schema, anchor, current),
     );
     const filters = injectLocalCapabilityAutoFilters(
       { resource: anchor.resource, metadata: query.metadata, filters: query.filters },

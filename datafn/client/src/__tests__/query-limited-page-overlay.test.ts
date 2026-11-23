@@ -728,9 +728,10 @@ describe("Limited first page: remote row plus pending mutation effects", () => {
       data: [{ ...row, note: "n", profile: { items: [{ label: "A", secret: "hidden" }] } }],
       nextCursor: "after-page",
     });
-    // A plain list is FULL_PUSHDOWN: projectFields omits top-level keys only.
+    // Whether a plain list's omit reaches nested keys depends on the server's
+    // plan (projectFields or materializeSelect): the remote value stays.
     await expect(limitedPage(storage, [row], { omit: ["secret"] })).resolves.toEqual({
-      data: [{ ...row, note: "n", profile: { items: [{ label: "A", secret: "hidden" }] } }],
+      data: [{ ...row, note: "n" }],
       nextCursor: "after-page",
     });
   });
@@ -945,20 +946,18 @@ describe("Limited first page: pending changes replayed by the offline writer", (
     expect(data).toEqual([{ id: "note:1" }]);
   });
 
-  it("projection-shape: omit on a plain list keeps nested keys, as the server's projectFields does", async () => {
+  it("projection-shape: omit on a plain list never strips nested ids, and keeps the remote value where the plan decides", async () => {
     const storage = await hydrating("notes");
     await offlineWrite(storage, folderSchema, {
       resource: "notes", operation: "merge", id: "note:1",
       record: { profile: { id: "profile:1", owner: { id: "user:1", name: "A" } } },
     });
-    const data = await page(
-      storage, folderSchema,
-      { resource: "notes", omit: ["id", "name"] },
-      [{ id: "note:1", title: "A" }],
-    );
-    expect(data).toEqual([
+    const rows = [{ id: "note:1", title: "A" }];
+    expect(await page(storage, folderSchema, { resource: "notes", omit: ["id"] }, rows)).toEqual([
       { id: "note:1", title: "A", profile: { id: "profile:1", owner: { id: "user:1", name: "A" } } },
     ]);
+    // projectFields keeps nested `name`, materializeSelect strips it: the plan decides.
+    expect(await page(storage, folderSchema, { resource: "notes", omit: ["id", "name"] }, rows)).toEqual(rows);
   });
 
   it("replace-discards-preserved-effects: a replace clears a declared foreign key, as the server's buildReplaceRecord does", async () => {
@@ -1280,7 +1279,7 @@ const tagSchema: DatafnSchema = {
 };
 
 describe("Limited first page: server membership, three-valued filters and isolated entries", () => {
-  it("hydration: a pending reparent under a known root removes the ancestors the anchor leaves", async () => {
+  it("hydration: a pending reparent keeps the ancestors, since the server rebuilds the anchor's path", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1292,10 +1291,10 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "goal:z", title: "Root", parentId: null, parentPath: "" },
     ];
     const data = await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"] }, rows);
-    expect(data).toEqual([rows[1]]);
+    expect(data).toEqual(rows);
   });
 
-  it("hydration: a pending detach of a returned ancestor removes the ancestors above it", async () => {
+  it("hydration: a pending detach of a returned ancestor shows it detached and keeps the ancestors above it", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1306,7 +1305,8 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "goal:b", title: "Parent", parentPath: "goal:a" },
     ];
     const data = await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "parent", select: ["id", "title", "parentPath"] }, rows);
-    expect(data).toEqual([{ id: "goal:b", title: "Parent", parentPath: "" }]);
+    // The anchor's path follows by the server's cascade, which the page does not run.
+    expect(data).toEqual([rows[0], { id: "goal:b", title: "Parent", parentPath: "" }]);
   });
 
   it("hydration: a parent that only a pending merge created is not a known root", async () => {
@@ -1324,7 +1324,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     )).toEqual(rows);
   });
 
-  it("hydration: a move inside the subtree keeps a row on a ** descendant page; a detach removes it", async () => {
+  it("hydration: a move inside the subtree keeps a row on a ** descendant page with the server's path; a detach removes it", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1337,7 +1337,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     ];
     expect(await page(storage, treeSchema, query, rows)).toEqual([
       rows[0],
-      { id: "goal:d", title: "D", parentId: "goal:x", parentPath: "goal:r-goal:x" },
+      { id: "goal:d", title: "D", parentId: "goal:x", parentPath: "goal:r-goal:y" },
     ]);
     await offlineWrite(storage, treeSchema, {
       resource: "goals", operation: "unrelate", id: "goal:d", relations: { parent: "goal:x" },
@@ -1683,7 +1683,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     ];
     expect(await page(
       storage, treeSchema, { resource: "goals", id: "goals:0000-leaf", relation: "parent", select: ["id", "title", "parentPath"] }, ancestors,
-    )).toEqual([{ id: parent, title: "Parent", parentPath: "" }]);
+    )).toEqual([ancestors[0], { id: parent, title: "Parent", parentPath: "" }]);
     const children = [
       { id: parent, title: "Parent", parentPath: root },
       { id: "goals:0000-other", title: "Other", parentPath: root },
@@ -1693,7 +1693,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     )).toEqual([children[1]]);
   });
 
-  it("hydration: a direct-children page drops a row moved under a parent it does not hold, or detached with its path omitted", async () => {
+  it("hydration: a direct-children page keeps a row moved under a parent it does not hold, and drops one detached with its path omitted", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1708,14 +1708,14 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "goal:z", title: "Z", parentId: "goal:c" },
     ];
     expect(await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "children", omit: ["parentPath"] }, rows))
-      .toEqual([rows[2]]);
+      .toEqual([{ ...rows[0], parentId: "goal:n" }, rows[2]]);
   });
 
   it("hydration: the last of * and ** decides between direct children and descendants", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
-      resource: "goals", operation: "relate", id: "goal:b", relations: { parent: "goal:a" },
+      resource: "goals", operation: "merge", id: "goal:b", record: { parentPath: "goal:r-goal:a" },
     });
     const rows = [
       { id: "goal:a", title: "A", parentId: "goal:r", parentPath: "goal:r" },
@@ -2128,10 +2128,31 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     return storage;
   }
 
-  it("(a) hydration: a child moved under a parent whose id ends in -<anchor> leaves; one moved back stays", async () => {
+  it("(a) hydration: a child relinked under an off-page parent stays; one whose path is written elsewhere leaves", async () => {
+    // The server builds the new path on the parent's, which the page does not hold.
     const moved = await goals();
     await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
-    expect(await page(moved, tree, childrenOf, [child])).toEqual([]);
+    expect(await page(moved, tree, childrenOf, [child])).toEqual([{ ...child, parentId: "a-goal:c" }]);
+
+    // A path written as given is the server's; `a-goal:c` is not the child path `goal:c`.
+    const written = await goals();
+    await offlineWrite(written, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "a-goal:c" } });
+    expect(await page(written, tree, childrenOf, [child])).toEqual([]);
+    // A later relink may rewrite a written path by cascade: the row stays.
+    await offlineWrite(written, tree, { resource: "goals", operation: "relate", id: "goal:y", relations: { parent: "goal:q" } });
+    expect(await page(written, tree, childrenOf, [child])).toEqual([child]);
+
+    // A root another pending write creates proves no ancestry (the server keeps the row).
+    const deep = { ...child, parentPath: "goal:r-goal:s-goal:c" };
+    for (const relink of [
+      { id: "goal:x", relations: { parent: "goal:c" } },
+      { id: "goal:c", relations: { parent: "goal:s" } },
+    ]) {
+      const seededRoot = await goals();
+      await offlineWrite(seededRoot, tree, { resource: "goals", operation: "insert", id: "goal:s", record: { title: "S", parentPath: "" } });
+      await offlineWrite(seededRoot, tree, { resource: "goals", operation: "relate", ...relink });
+      expect((await page(seededRoot, tree, childrenOf, [deep])).map((row) => row.id)).toEqual(["goal:x"]);
+    }
 
     const back = await goals();
     await offlineWrite(back, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
@@ -2231,16 +2252,19 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
       .map((row) => row.id)).toEqual(["task:1"]);
   });
 
-  it("(i) projection-shape: a plain list shows a pending nested value whole, as the server's top-level omit does", async () => {
+  it("(i) projection-shape: a plain list keeps the remote nested value the plan decides, unless the response proves the plan", async () => {
     const storage = await hydrating("notes");
     await offlineWrite(storage, folderSchema, {
       resource: "notes", operation: "merge", id: "note:1", record: { profile: { folderId: "folder:9", note: "n" } },
     });
     const rows = [{ id: "note:1", title: "A" }];
-    expect(await page(storage, folderSchema, { resource: "notes", select: ["*"] }, rows))
-      .toEqual([{ ...rows[0], profile: { folderId: "folder:9", note: "n" } }]);
-    expect(await page(storage, folderSchema, { resource: "notes", omit: ["note"] }, rows))
-      .toEqual([{ ...rows[0], profile: { folderId: "folder:9", note: "n" } }]);
+    // projectFields keeps the nested foreign key, materializeSelect strips it.
+    expect(await page(storage, folderSchema, { resource: "notes", select: ["*"] }, rows)).toEqual(rows);
+    expect(await page(storage, folderSchema, { resource: "notes", omit: ["note"] }, rows)).toEqual(rows);
+    // A returned nested value holding it shows the plan kept nested keys.
+    const shown = [{ id: "note:1", title: "A", profile: { folderId: "folder:1", note: "old" } }];
+    expect(await page(storage, folderSchema, { resource: "notes", select: ["*"] }, shown))
+      .toEqual([{ ...shown[0], profile: { folderId: "folder:9", note: "n" } }]);
   });
 
   it("(j) projection-shape: a relation page strips the anchor's omit set from target values", async () => {
@@ -2267,12 +2291,12 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(storage, ownedGoals, query, [child])).toEqual([{ ...child, title: "Y" }]);
   });
 
-  it("(a) hydration: with the anchor's ancestry omitted, a moved child stays only while some ancestry can still list it", async () => {
+  it("(a) hydration: with the anchor's ancestry omitted, a relinked child stays", async () => {
     const outer = { resource: "goals", id: "goal:outer-goal:c", relation: "children", omit: ["parentPath"] };
     const row = { id: "goal:x", title: "X", parentId: "goal:outer-goal:c" };
     const moved = await goals();
     await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
-    expect(await page(moved, tree, outer, [row])).toEqual([]);
+    expect(await page(moved, tree, outer, [row])).toEqual([{ ...row, parentId: "goal:p" }]);
 
     // `<unknown>-goal:c` can equal the anchor's child path `<unknown>-goal:outer-goal:c`: the
     // server compares whole path strings, and the page does not show the ancestry that decides it.
@@ -2286,48 +2310,41 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(back, tree, outer, [row])).toEqual([row]);
   });
 
-  it("(i) projection-shape: the nested omit follows the server's plan", async () => {
+  it("(i) projection-shape: a nested value the mask leaves alone shows whatever the plan; one it changes keeps the remote value", async () => {
     const storage = await hydrating("notes");
     await offlineWrite(storage, folderSchema, {
       resource: "notes", operation: "merge", id: "note:1", record: { profile: { folderId: "folder:9", note: "n" } },
     });
-    const rows = [{ id: "note:1", title: "A" }];
-    const shown = async (filters: Record<string, unknown>) =>
-      (await page(storage, folderSchema, { resource: "notes", filters }, rows))[0].profile;
-    // FULL_PUSHDOWN keeps nested keys. `$or` at any depth, an operator outside
-    // the adapter map and an oversized `$in` run in memory, where
-    // materializeSelect strips them.
-    expect(await shown({ title: "A", $and: [{ title: { $in: ["A", "B"] } }] })).toEqual({ folderId: "folder:9", note: "n" });
-    expect(await shown({ $or: [{ title: "A" }, { title: "B" }] })).toEqual({ note: "n" });
-    expect(await shown({ $and: [{ $or: [{ title: "A" }, { title: "B" }] }] })).toEqual({ note: "n" });
-    expect(await shown({ title: { between: ["A", "B"] } })).toEqual({ note: "n" });
-    // The planner counts `in` lists inside an object operand.
-    expect(await shown({ title: { $ne: { in: ["x"] } } })).toEqual({ note: "n" });
-    // Only the plain converter's path is certain. Emptiness goes through the filter compiler,
-    // whose branch budget and operator mix (it declines `$like`) the page does not mirror, so
-    // such a read keeps materializeSelect's mask, as before this round.
-    expect(await shown({ title: { $like: "A%" } })).toEqual({ folderId: "folder:9", note: "n" });
-    expect(await shown({ title: { $like: "A%", $is_not_empty: true } })).toEqual({ note: "n" });
-    expect(await shown({ title: { $in: "A" } })).toEqual({ note: "n" });
-    expect(await shown({ title: { $in: ["A", ...Array.from({ length: 30_000 }, (_, index) => `t${index}`)] } }))
-      .toEqual({ note: "n" });
-    // The server adds a shareable resource's access filter, which can keep the read in memory.
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:2", record: { profile: { note: "m" } },
+    });
+    const rows = [{ id: "note:1", title: "A" }, { id: "note:2", title: "A" }];
+    const shown = async (filters: Record<string, unknown>, schema: DatafnSchema = folderSchema) =>
+      (await page(storage, schema, { resource: "notes", filters }, rows)).map((row) => row.profile);
+    // The page cannot tell FULL_PUSHDOWN from an in-memory read by its filters.
+    for (const filters of [
+      { title: "A" },
+      { $or: [{ title: "A" }, { title: "B" }] },
+      { title: { between: ["A", "B"] } },
+      { title: { $like: "A%", $is_not_empty: true } },
+    ]) {
+      expect(await shown(filters)).toEqual([undefined, { note: "m" }]);
+    }
+    // Nor a shareable resource's access filter.
     const shared = {
       ...folderSchema,
       resources: [folderSchema.resources[0], { ...folderSchema.resources[1], capabilities: [{ shareable: { default: "private" } }] }],
     } as DatafnSchema;
-    expect((await page(storage, shared, { resource: "notes" }, rows))[0].profile).toEqual({ note: "n" });
-    const open = { ...shared, resources: [shared.resources[0], { ...shared.resources[1], capabilities: [{ shareable: { default: "shared" } }] }] } as DatafnSchema;
-    expect((await page(storage, open, { resource: "notes" }, rows))[0].profile).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown({}, shared)).toEqual([undefined, { note: "m" }]);
   });
 
-  it("(a) hydration: an unproven path decides membership, never a later parent-key-only merge", async () => {
+  it("(a) hydration: only a path the server certainly holds decides membership, never a parent-key-only merge", async () => {
     const pathless = { ...childrenOf, omit: ["parentPath"] };
     const row = { id: "goal:x", title: "X", parentId: "goal:c" };
     const movedAway = await goals();
     await offlineWrite(movedAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
     await offlineWrite(movedAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:c" } });
-    expect(await page(movedAway, tree, pathless, [row])).toEqual([]);
+    expect(await page(movedAway, tree, pathless, [row])).toEqual([row]);
 
     const keyAway = await goals();
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
@@ -2335,15 +2352,18 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
     expect((await page(keyAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
-    // A destination root whose id ends in -<anchor>: `a-goal:c` is the anchor's child path when the
-    // anchor's omitted parent is `a`, so the row stays; with the anchor's path known it leaves.
-    const provenAway = await goals();
-    await offlineWrite(provenAway, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
-    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
-    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
-    expect(await page(provenAway, tree, childrenOf, [child])).toEqual([]);
-    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
-    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
+    // A root written as given is the server's, but the child's path is built on it by the server.
+    const underRoot = await goals();
+    await offlineWrite(underRoot, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
+    await offlineWrite(underRoot, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
+    expect(await page(underRoot, tree, pathless, [row])).toEqual([{ ...row, parentId: "a-goal:c" }]);
+    expect(await page(underRoot, tree, childrenOf, [child])).toEqual([{ ...child, parentId: "a-goal:c" }]);
+
+    // A detach makes a root, which no children page lists, whatever the anchor's path.
+    const detached = await goals();
+    await offlineWrite(detached, tree, { resource: "goals", operation: "unrelate", id: "goal:x", relations: { parent: "goal:c" } });
+    expect(await page(detached, tree, pathless, [row])).toEqual([]);
+    expect(await page(detached, tree, childrenOf, [child])).toEqual([]);
 
     // An off-page destination whose unknown ancestry can complete its path to the anchor's child path.
     const collision = await goals();
@@ -2358,7 +2378,7 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(anchorMoved, tree, { ...childrenOf, omit: ["parentId"] }, [keyless])).toEqual([keyless]);
   });
 
-  it("(l) projection-shape: a deep select keeps only its leaf, omit id keeps nested ids, and expansions stay", async () => {
+  it("(l) projection-shape: a deep select keeps only its leaf, a nested relation key the plan decides stays remote, and expansions stay", async () => {
     const ownerSchema: DatafnSchema = {
       resources: [
         { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
@@ -2379,7 +2399,8 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     });
     const expanded = { id: "note:1", owner: { name: "Ada" } };
     expect(await page(storage, ownerSchema, { resource: "notes", select: ["id", "owner.name"] }, [expanded])).toEqual([expanded]);
+    // materializeSelect strips the many-one key `owner` at every depth; projectFields does not.
     expect(await page(storage, ownerSchema, { resource: "notes", omit: ["id"] }, [{ id: "note:1", title: "A" }]))
-      .toEqual([{ id: "note:1", title: "B", profile: { id: "profile:1", owner: { id: "user:1", name: "Ada" } } }]);
+      .toEqual([{ id: "note:1", title: "B" }]);
   });
 });
