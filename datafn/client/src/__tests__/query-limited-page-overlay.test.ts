@@ -244,7 +244,38 @@ describe("Query overlay on a limited first page", () => {
     expect((result.data[1].dueAt as Date).getTime()).toBe(dueAt);
   });
 
-  it("matches pending changes on a limited relation page by the target record", async () => {
+  it("keeps the remote row shape and untouched fields when it overlays local fields", async () => {
+    const storage = await hydratingStorage();
+    // A partial local row: the pending merge reached storage before the clone.
+    await storage.upsertRecord("tasks", { id: "task:2", note: "edited note" });
+    await pendingChange(storage, "mutation:edit", {
+      operation: "merge",
+      id: "task:2",
+      record: { note: "edited note" },
+    });
+    const remoteRow = {
+      id: "task:2",
+      title: "Open",
+      note: "remote note",
+      project: { id: "project:1", name: "Server-visible" },
+      $relation_metadata: { role: "owner" },
+    };
+
+    const result = await executeQuery(
+      remoteReturning({ data: [remoteRow], nextCursor: "after-task:2" }),
+      { resource: "tasks", select: ["*", "project.*"], limit: 1 },
+      storage,
+      [],
+      schema,
+    );
+
+    expect(result).toEqual({
+      data: [{ ...remoteRow, note: "edited note" }],
+      nextCursor: "after-task:2",
+    });
+  });
+
+  it("leaves a limited relation page to the remote result", async () => {
     const storage = new MemoryStorageAdapter(["folders", "notes"]);
     await storage.setHydrationState("folders", "hydrating");
     await storage.upsertRecord("folders", { id: "folder:1", name: "Inbox" });
@@ -281,7 +312,7 @@ describe("Query overlay on a limited first page", () => {
 
     expect(result).toEqual({
       data: [
-        { id: "note:1", title: "Edited", folderId: "folder:1" },
+        { id: "note:1", title: "Remote", folderId: "folder:1" },
         { id: "note:2", title: "Remote", folderId: "folder:1" },
       ],
       nextCursor: "after-note:2",
