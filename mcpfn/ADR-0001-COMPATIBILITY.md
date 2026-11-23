@@ -7,9 +7,10 @@
 ## Decision
 
 All seven McpFn packages support Node.js 18.18 or newer. The guarded release
-and official conformance environment is Node.js 22. `@mcpfn/core` and
-`@mcpfn/auth` additionally support web-standard edge runtimes such as Cloudflare
-Workers (see "Edge and Cloudflare Workers" below). The remaining top-level
+and official conformance environment is Node.js 22. `@mcpfn/core`,
+`@mcpfn/auth` and the remote-only `@mcpfn/client` main entry additionally
+support web-standard edge runtimes such as Cloudflare Workers (see "Edge and
+Cloudflare Workers" below). The remaining top-level
 package entries are Node runtimes: stdio, cryptography, module loading, and
 local fixture tools are not advertised as browser or edge bundles. Desktop and
 native products may consume a remote Streamable HTTP target or run the Node
@@ -42,11 +43,23 @@ Cloudflare deployments must enable the `nodejs_compat` compatibility flag.
 The self-contained bundles still use Node built-ins required by the official
 MCP SDK, including `node:crypto`; the package does not shim those platform APIs.
 
-`@mcpfn/client`, `@mcpfn/cli`, `@mcpfn/testing`, and `@mcpfn/inspector` remain
-Node-targeted. `@mcpfn/client` re-exports the stdio client transport, which
-depends on `child_process`; it is not offered as an edge bundle. Edge consumers
-serve MCP with `@mcpfn/core` and, when they need OAuth resource-server behavior,
-`@mcpfn/auth`.
+The `@mcpfn/client` main entry is remote-only (since 0.1.0): it never loads the
+stdio client transport, `cross-spawn`, `node:child_process` or other Node
+built-ins, so a Worker can bundle it without `nodejs_compat` and connect to a
+remote server over Streamable HTTP. It keeps the official SDK external, like
+before, and selects the SDK's `@cfworker/json-schema` validator for tool output
+schemas where runtime code generation is forbidden. Stdio targets live in the
+Node-only `@mcpfn/client/stdio` subpath; the deprecated main-entry
+`stdioTarget` loads that subpath lazily on Node through the package's
+`#stdio-target` import and resolves to a stub without the `node` condition,
+until its removal in 0.2.0. The `@mcpfn/client` tests bundle the main entry
+from the built package, assert from the esbuild metafile that no stdio module
+or Node built-in is in the Worker graph, and run `listTools` and `callTool`
+against a Streamable HTTP server from `workerd`.
+
+`@mcpfn/cli`, `@mcpfn/testing`, `@mcpfn/inspector` and `@mcpfn/client/stdio`
+remain Node-targeted. Edge consumers serve MCP with `@mcpfn/core` and, when
+they need OAuth resource-server behavior, `@mcpfn/auth`.
 
 A representative Cloudflare Worker startup check is part of the guarded release.
 `npm run gate:mcpfn-release` bundles a worker that imports `@mcpfn/core` and

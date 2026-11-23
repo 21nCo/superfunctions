@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-
 import { Client, type ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import {
   CallToolResultSchema,
   CreateMessageRequestSchema,
@@ -106,6 +105,34 @@ export interface McpFnBoundedInventory<T> {
 }
 
 const redactionOmissions = new WeakSet<object>();
+
+let fallbackRequestSequence = 0;
+
+/** Web Crypto UUIDs work on Node.js 19+, Cloudflare Workers and browsers
+ * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
+ * only behind a flag; there, request IDs are process-unique correlation IDs. */
+function defaultRequestId(): string {
+  const webCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+  fallbackRequestSequence += 1;
+  return `mcpfn-${Date.now().toString(36)}-${fallbackRequestSequence.toString(36)}`;
+}
+
+/** The SDK client defaults to Ajv, which compiles tool output schemas with
+ * `new Function`. Cloudflare Workers (identified by `WebSocketPair`) and other
+ * hosts that forbid code generation use the SDK's `@cfworker/json-schema`
+ * validator instead, matching the engine selection in `@mcpfn/core`. An
+ * explicit `clientOptions.jsonSchemaValidator` always wins. */
+function requiresEdgeSchemaValidator(): boolean {
+  if ("WebSocketPair" in globalThis) return true;
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function("return true");
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 export class McpFnClient {
   private readonly options: McpFnClientOptions;
@@ -571,6 +598,9 @@ export class McpFnClient {
       this.options.info ?? { name: "mcpfn-client", version: "0.0.1" },
       {
         ...this.instrumentClientOptions(),
+        ...(this.options.clientOptions?.jsonSchemaValidator || !requiresEdgeSchemaValidator()
+          ? {}
+          : { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() }),
         capabilities: this.effectiveCapabilities(),
       },
     );
@@ -1057,7 +1087,7 @@ export class McpFnClient {
   }
 
   private requestId(): string {
-    return this.options.requestId?.() ?? randomUUID();
+    return this.options.requestId?.() ?? defaultRequestId();
   }
 
   private beginTargetRedactionScope(): () => void {

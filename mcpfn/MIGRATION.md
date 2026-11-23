@@ -56,10 +56,11 @@ Node built-ins such as `node:crypto`, so a Worker without that flag will fail
 module startup even though schema validation itself is edge-safe.
 
 Serve MCP over the Web Standard handler (Streamable HTTP) and wrap it with
-`@mcpfn/auth` when the endpoint is protected. Do not import `@mcpfn/client`,
-`@mcpfn/cli`, `@mcpfn/testing`, or `@mcpfn/inspector` from an edge bundle; those
-packages depend on Node-only capabilities such as the stdio transport's
-`child_process`. Tool and prompt schema validation switches to
+`@mcpfn/auth` when the endpoint is protected. Do not import
+`@mcpfn/client/stdio`, `@mcpfn/cli`, `@mcpfn/testing`, or `@mcpfn/inspector`
+from an edge bundle; those entries depend on Node-only capabilities such as the
+stdio transport's `child_process`. The remote-only `@mcpfn/client` main entry
+can be bundled into a Worker to call remote MCP servers over Streamable HTTP. Tool and prompt schema validation switches to
 `@cfworker/json-schema` automatically on runtimes that forbid runtime code
 generation, so no configuration is required. The `cloudflare:worker-startup`
 step of `npm run gate:mcpfn-release` exercises this exact deployment shape under
