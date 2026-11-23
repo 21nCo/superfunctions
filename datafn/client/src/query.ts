@@ -362,21 +362,21 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_empty is_not_empty".split(" "));
+const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_not_empty".split(" "));
 
 /**
  * Whether classifyQuery certainly gives a plain list FULL_PUSHDOWN (top-level
  * omit only): no search, grouping, temporal, relation or nested select token,
  * `$or`, dotted, relation or quantified key, operator the filter compiler cannot
- * push (emptiness on scalar fields only), object operand (whose `in` lists the
- * planner counts), over 30,000 `$in` values or shareable resource (access filter).
+ * push (`$is_not_empty` on scalar fields only), object operand (whose `in` lists the
+ * planner counts), over 30,000 `$in` values or private shareable resource (access filter).
  */
 function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
   const resource = String(query.resource);
   const resourceSchema = schema.resources.find((entry) => entry.name === resource);
   if (!resourceSchema || "temporal" in query || query.search || query.groupBy || query.having) return false;
   if (resolveCapabilities(schema.capabilities as any, resourceSchema.capabilities as any)
-    .some((capability) => isPlainRecord(capability) && "shareable" in capability)) return false;
+    .some((entry) => isPlainRecord(entry) && (entry.shareable as any)?.default === "private")) return false;
   if (stringTokens(query.select).some((token) => token !== "*"
     && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
   let values = 0;
@@ -388,7 +388,7 @@ function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>):
     return Object.entries(ops).every(([op, operand]) => {
       if (Array.isArray(operand)) values += operand.length;
       const name = op.replace(/^\$/, "");
-      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (scalar || !name.endsWith("empty"));
+      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (scalar || name !== "is_not_empty");
     });
   });
   return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
@@ -598,11 +598,7 @@ function pendingWritesStopMatch(
     && judgeFilter(schema, resource, conjunct, current, known) === false);
 }
 
-/**
- * The changed values decoded as the page returns them; a path built on
- * ancestry the page does not know, or a value the date codec rejects,
- * decides nothing and leaves the server's value in place.
- */
+/** Changed values decoded as the page returns them; unproven paths and undecodable values keep the server's. */
 function decodeChangedKeys(
   schema: DatafnSchema,
   resource: string,
@@ -642,9 +638,8 @@ function rowIdOf(row: unknown): string | undefined {
 }
 
 /**
- * The page row after the replay, or null when it leaves the page. On a
- * relation page the query's filters apply to the anchor, so targets are only
- * held to their capability auto-filters.
+ * The page row after the replay, or null when it leaves the page. A relation
+ * page's filters are its anchor's, so targets meet only capability auto-filters.
  */
 async function replayedPageRow(
   scratch: DatafnStorageAdapter,
@@ -818,10 +813,7 @@ type PageRow = {
   explicitPaths?: Map<string, unknown>;
 };
 
-/**
- * The scratch store, recording how to undo each record and join-row write so
- * an entry the writer rejects partway leaves nothing behind.
- */
+/** The scratch store, journaling record and join-row writes so a rejected entry is undone whole. */
 function journaled(
   scratch: MemoryStorageAdapter,
   undo: Array<() => Promise<void>>,
@@ -1049,8 +1041,10 @@ async function htreeRowsGone(
   const pathField = htreePathField(match.relation);
   const anchorRecord = await scratch.getRecord(resource, anchorId);
   const anchorPath = anchorRecord?.[pathField];
+  // The seed's path is the prefix the returned paths agree on.
   const anchorProven = typeof anchorPath === "string"
     && ((anchor.explicitPaths?.has(pathField) && anchor.explicitPaths.get(pathField) === anchorPath)
+      || (anchorPath === anchor.seeded[pathField] && !anchorPath.includes(UNKNOWN_HTREE_PATH))
       || (await provenHtreePath(scratch, resource, pathField, anchorPath, chains)));
   if (match.direction === "inverse") {
     // The seed holds a string path, so a missing one is a write's clear.
@@ -1075,6 +1069,7 @@ async function htreeRowsGone(
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
   const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
   const prefix = anchorProven ? joinPath(anchorPath, anchorId) : undefined;
+  const anchorChild = joinPath(String(anchorPath ?? ""), anchorId);
   for (const [id, page] of pageRows) {
     const current = await scratch.getRecord(page.resource, id);
     if (!current) continue;
@@ -1086,11 +1081,13 @@ async function htreeRowsGone(
     // An unknown, unknown-tailed or malformed path decides nothing.
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
     const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path);
-    // The writer rebuilds a path from the scratch path of the record it hangs
-    // the row under (or of the moved anchor), so a rebuilt direct child is one
-    // whose path still extends the anchor's scratch path.
+    // The writer rebuilds a path on the scratch path of the record it hangs the
+    // row under: a rebuilt child extends the anchor's, or, built on an off-page
+    // record, is a tail its unknown ancestry can complete to the known prefix.
     if (!deep && !explicit && !sameValue(path, page.seeded[pathField])) {
-      if (path !== joinPath(typeof anchorPath === "string" ? anchorPath : "", anchorId)) gone.add(id);
+      const tail = prefix !== undefined && typeof path === "string"
+        && !(await provenHtreePath(scratch, page.resource, pathField, path, chains));
+      if (tail ? prefix !== path && !prefix.endsWith(`-${path}`) : path !== anchorChild) gone.add(id);
     } else if (explicit || (await provenHtreePath(scratch, page.resource, pathField, path, chains))) {
       if (!htreeMayHold(String(path ?? ""), anchorId, deep, prefix)) gone.add(id);
     }
