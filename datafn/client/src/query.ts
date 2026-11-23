@@ -843,67 +843,65 @@ function notePathWrites(
   }
 }
 
-/** Ids an htree relate or unrelate moves (`parent`: the record; `children`: the targets, as the writer normalizes them). */
-function htreeRelinkIds(schema: DatafnSchema, mutation: Record<string, unknown>): string[] | undefined {
+/** A relinked record's path, known only to end in its new parent's id. */
+class RelinkTail { constructor(readonly parentId: string) {} }
+type Relink = [id: string, pathField: string, relation: NonNullable<DatafnSchema["relations"]>[number]];
+
+/** What an htree relate or unrelate moves (`parent`: the record; `children`: the targets, as the writer normalizes them). */
+function htreeRelinks(schema: DatafnSchema, mutation: Record<string, unknown>): Relink[] | undefined {
   const { resource, relations } = mutation;
   if (!["relate", "unrelate"].includes(mutation.operation as string) || typeof resource !== "string") return undefined;
-  let ids: string[] | undefined;
+  const moved = new Map<string, Relink>();
   for (const [name, payload] of Object.entries(isPlainRecord(relations) ? relations : {})) {
     const match = findRelationMatch(schema, resource, name);
     if (match?.relation.type !== "htree") continue;
     const items = normalizeRelationPayload(payload).map((item) => item.toId);
-    const moved = match.direction === "inverse" ? items.slice(0, 1).map(() => mutation.id) : items;
-    ids = [...new Set([...(ids ?? []), ...moved.filter((id): id is string => typeof id === "string")])];
+    for (const id of match.direction === "inverse" ? items.slice(0, 1).map(() => mutation.id) : items) {
+      if (typeof id === "string") moved.set(JSON.stringify([id, htreePathField(match.relation)]), [id, htreePathField(match.relation), match.relation]);
+    }
   }
-  return ids;
+  return [...moved.values()];
+}
+
+/** A known path after the server's cascade moves `id` from its held `old` path to its held `now` path; undefined when unknown. */
+function cascadedPath(path: string, id: string, old: { path: string | null } | undefined, now: { path: string | null } | undefined): string | undefined {
+  const from = joinPath(old?.path ?? "", id);
+  if (!old || !now) return undefined;
+  return pathExtends(path, from) ? joinPath(now.path ?? "", id) + path.slice(from.length) : path;
 }
 
 /** Rewrite known paths listing a moved record as the server's cascade does if its old (`prior`) and new paths are held, else forget them. */
-async function cascadeMovedPaths(
-  scratch: DatafnStorageAdapter,
-  pages: Iterable<[string, PageRow]>,
-  moved: readonly string[],
-  prior: ReadonlyMap<string, [PageRow, Record<string, unknown> | null]>,
-  tracked: (id: string) => PageRow | undefined,
-): Promise<void> {
+async function cascadeMovedPaths(scratch: DatafnStorageAdapter, pages: Iterable<[string, PageRow]>, moved: readonly Relink[],
+  prior: ReadonlyMap<string, [PageRow, Record<string, unknown> | null]>, tracked: (id: string) => PageRow | undefined): Promise<void> {
   for (const [pageId, page] of pages) {
-    for (const [pathField, path] of moved.includes(pageId) ? [] : page.knownPaths ?? []) {
-      const listed = moved.filter((id) => typeof path === "string" && pathLists(path, id));
-      if (listed.length === 0) continue;
-      const [before, record] = prior.get(listed[0]) ?? [];
-      const mover = tracked(listed[0]);
-      const old = before && heldHtreePath(before, pathField, record);
-      const now = mover && heldHtreePath(mover, pathField, await scratch.getRecord(mover.resource, listed[0]));
-      const from = joinPath(old?.path ?? "", listed[0]);
-      if (listed.length > 1 || !old || !now) page.knownPaths?.delete(pathField);
-      else if (pathExtends(path as string, from)) page.knownPaths?.set(pathField, joinPath(now.path ?? "", listed[0]) + (path as string).slice(from.length));
+    for (const [pathField, path] of page.knownPaths ?? []) {
+      const listed = moved.filter(([id, field]) => field === pathField && typeof path === "string" && pathLists(path, id));
+      if (listed.length === 0 || moved.some(([id, field]) => id === pageId && field === pathField)) continue;
+      const [id] = listed[0];
+      const [before, record] = prior.get(id) ?? [];
+      const mover = tracked(id);
+      const now = mover && heldHtreePath(mover, pathField, await scratch.getRecord(mover.resource, id));
+      const next = listed.length === 1 ? cascadedPath(path as string, id, before && heldHtreePath(before, pathField, record), now) : undefined;
+      if (next === undefined) page.knownPaths?.delete(pathField);
+      else page.knownPaths?.set(pathField, next);
     }
   }
 }
 
 /** Record the path a relink gave a page record under a held parent (not in a polymorphic tree), else its last segment. */
-async function noteRelinkedPaths(
-  scratch: DatafnStorageAdapter,
-  schema: DatafnSchema,
-  moved: readonly string[],
-  tracked: (id: string) => PageRow | undefined,
-): Promise<void> {
-  for (const id of moved) {
+async function noteRelinkedPaths(scratch: DatafnStorageAdapter, moved: readonly Relink[], tracked: (id: string) => PageRow | undefined): Promise<void> {
+  for (const [id, pathField, relation] of moved) {
     const page = tracked(id);
     const current = page && await scratch.getRecord(page.resource, id);
-    if (!page || !current) continue;
-    for (const relation of schema.relations ?? []) {
-      const to = relation.to as unknown;
-      if (relation.type !== "htree" || !endpointIncludes(relation.from, page.resource) || (Array.isArray(to) && to.length > 1)) continue;
-      const pathField = htreePathField(relation);
-      const { fkField, foreignKey, inverse } = relation as { fkField?: string; foreignKey?: string; inverse?: string };
-      const parentId = current[fkField || foreignKey || inverse || "parentId"]; // the writer's htreeFkField
-      const parent = typeof parentId === "string" ? tracked(parentId) : undefined;
-      const held = parent && heldHtreePath(parent, pathField, await scratch.getRecord(parent.resource, parentId as string));
-      if (held && current[pathField] === joinPath(held.path ?? "", parentId as string)) {
-        (page.knownPaths ??= new Map()).set(pathField, current[pathField]);
-      } else if (typeof parentId === "string") (page.knownPaths ??= new Map()).set(pathField, { tail: parentId });
-    }
+    const to = relation.to as unknown;
+    if (!page || !current || (Array.isArray(to) && to.length > 1)) continue;
+    const { fkField, foreignKey, inverse } = relation as { fkField?: string; foreignKey?: string; inverse?: string };
+    const parentId = current[fkField || foreignKey || inverse || "parentId"]; // the writer's htreeFkField
+    const parent = typeof parentId === "string" ? tracked(parentId) : undefined;
+    const held = parent && heldHtreePath(parent, pathField, await scratch.getRecord(parent.resource, parentId as string));
+    if (held && current[pathField] === joinPath(held.path ?? "", parentId as string)) {
+      (page.knownPaths ??= new Map()).set(pathField, current[pathField]);
+    } else if (typeof parentId === "string") (page.knownPaths ??= new Map()).set(pathField, new RelinkTail(parentId));
   }
 }
 
@@ -1071,19 +1069,19 @@ async function htreeRowsGone(
     if (!current) continue;
     // A relink can leave a guessed path the writer's cascade marks by.
     const path = heldHtreePath(page, pathField, current)?.path;
-    const tail = (page.knownPaths?.get(pathField) as { tail?: unknown } | undefined)?.tail;
+    const tail = page.knownPaths?.get(pathField);
     const inactive = page.seeded[ANCESTOR_INACTIVE_FIELD] !== true && current[ANCESTOR_INACTIVE_FIELD] === true;
     if (inheriting && inactive && (!relinked || path !== undefined || await inactiveOffTree(scratch, schema, page.resource, current))) {
       gone.add(id);
       continue;
     }
-    const tailGone = !deep && typeof tail === "string" && !fits(tail);
+    const tailGone = !deep && tail instanceof RelinkTail && !fits(tail.parentId);
     if (path === undefined ? tailGone : !(path && holds(path))) gone.add(id);
   }
   return gone;
 }
 
-/** Whether an inheriting many-one or one-many edge makes a record inactive (the writer's resolveAncestorInactive less htree). */
+/** Whether a parent an inheriting many-one or one-many edge names is itself archived or trashed (its own inheritance rests on scratch state). */
 async function inactiveOffTree(scratch: DatafnStorageAdapter, schema: DatafnSchema, resource: string, record: Record<string, unknown>): Promise<boolean> {
   for (const relation of schema.relations ?? []) {
     if (relation.inheritsInactive !== true || (relation.type !== "many-one" && relation.type !== "one-many")) continue;
@@ -1092,7 +1090,7 @@ async function inactiveOffTree(scratch: DatafnStorageAdapter, schema: DatafnSche
     const parentId = endpointIncludes(dependent, resource) ? record[fk] : undefined;
     const parent = typeof parentId === "string" && parentId
       && await scratch.getRecord(resolveEndpointResource(endpoint, parentId, schema) ?? firstEndpoint(endpoint), parentId);
-    if (parent && (parent.isArchived === true || (parent.trashedAt ?? null) !== null || parent[ANCESTOR_INACTIVE_FIELD] === true)) return true;
+    if (parent && (parent.isArchived === true || (parent.trashedAt ?? null) !== null)) return true;
   }
   return false;
 }
@@ -1186,9 +1184,9 @@ async function overlayPendingRowsOnLimitedPage(
     try {
       const target = tracked(change.mutation);
       // A relink's moved records, with the paths held before it.
-      const moved = htreeRelinkIds(schema, change.mutation);
+      const moved = htreeRelinks(schema, change.mutation);
       const prior = new Map<string, [PageRow, Record<string, unknown> | null]>();
-      for (const [id, page] of (moved ?? []).map((id) => [id, trackedId(id)] as const)) {
+      for (const [id, page] of (moved ?? []).map(([id]) => [id, trackedId(id)] as const)) {
         if (page) prior.set(id, [{ ...page, knownPaths: new Map(page.knownPaths) }, await scratch.getRecord(page.resource, id)]);
       }
       const existed = target
@@ -1198,14 +1196,15 @@ async function overlayPendingRowsOnLimitedPage(
       if (target && applied) {
         target.wholeKeys = nextWhole(target.wholeKeys, change.mutation, existed, false);
         target.rewritten = nextWhole(target.rewritten, change.mutation, existed, true);
+        if (!existed) target.knownPaths?.clear(); // a recreated record holds no earlier path
         notePathWrites(schema, target, change.mutation, await scratch.getRecord(target.resource, change.mutation.id as string));
       }
       // The server's cascade can rewrite paths below a moved record, and the
       // writer cannot follow it through records the page does not hold.
       if (applied && moved?.length) {
         relinked = true;
-        for (const id of moved) trackedId(id)?.knownPaths?.clear();
-        await noteRelinkedPaths(scratch, schema, moved, trackedId);
+        for (const [id, pathField] of moved) trackedId(id)?.knownPaths?.delete(pathField);
+        await noteRelinkedPaths(scratch, moved, trackedId);
         await cascadeMovedPaths(scratch, [...pageRows, ...(anchor ? [[query.id as string, anchor] as [string, PageRow]] : [])], moved, prior, trackedId);
       }
     } catch {

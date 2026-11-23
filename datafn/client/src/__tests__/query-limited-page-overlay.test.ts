@@ -2592,6 +2592,64 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     expect((await page(storage, archivable, { ...omitted, metadata: { includeArchived: true } }, rows)).map((row) => row.id)).toEqual(["goal:x"]);
   });
 
+  it("hydration: relink evidence is the replay's own: never a malformed path, another tree's relink or a deleted record's", async () => {
+    const malformed = await goals();
+    await malformed.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mutation:object-path",
+      timestampMs: 1,
+      mutation: { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: { tail: "goal:q" } } },
+    });
+    expect((await page(malformed, treeSchema, children, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+
+    // The server's merge patches a key, never a path, and a relink rewrites only its own tree.
+    const twoTrees = {
+      resources: [{ name: "goals", version: 1, fields: [...treeSchema.resources[0].fields, { name: "managerId", type: "string", required: false }, { name: "managerPath", type: "string", required: false }] }],
+      relations: [...treeSchema.relations!, { from: "goals", to: "goals", type: "htree", relation: "reports", inverse: "manager", foreignKey: "managerId", pathField: "managerPath" }],
+    } as DatafnSchema;
+    const both = { ...child, managerId: "goal:c", managerPath: "goal:c" };
+    for (const [key, relink, query] of [
+      [{ parentId: "goal:q" }, { manager: "goal:m" }, children],
+      [{ managerId: "goal:n" }, { parent: "goal:p" }, { ...children, relation: "reports" }],
+    ] as const) {
+      const storage = await goals();
+      await offlineWrite(storage, twoTrees, { resource: "goals", operation: "merge", id: "goal:x", record: key });
+      await offlineWrite(storage, twoTrees, { resource: "goals", operation: "relate", id: "goal:x", relations: relink });
+      expect((await page(storage, twoTrees, query, [both])).map((row) => row.id)).toEqual(["goal:x"]);
+    }
+
+    // A recreated record takes the default path, which a relink before its delete does not decide.
+    const recreated = await goals();
+    const defaulted = withPath({ default: "goal:c" });
+    await offlineWrite(recreated, defaulted, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:q" } });
+    await offlineWrite(recreated, defaulted, { resource: "goals", operation: "delete", id: "goal:x" });
+    await offlineWrite(recreated, defaulted, { resource: "goals", operation: "merge", id: "goal:x", record: { title: "New" } });
+    expect((await page(recreated, defaulted, children, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+  });
+
+  it("hydration: after a relink, inactivity a parent inherits through scratch-only state keeps the row", async () => {
+    const chain = {
+      resources: [
+        { name: "teams", version: 1, capabilities: ["archivable"], fields: [{ name: "name", type: "string", required: false }] },
+        { name: "projects", version: 1, fields: [{ name: "name", type: "string", required: false }, { name: "teamId", type: "string", required: false, default: "team:b" }] },
+        { name: "goals", version: 1, fields: [...withPath({}).resources[0].fields, { name: "projectId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "teams", to: "projects", type: "one-many", relation: "projects", inverse: "team", fkField: "teamId", inheritsInactive: true },
+        { from: "projects", to: "goals", type: "one-many", relation: "goals", inverse: "project", fkField: "projectId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["teams", "projects", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, chain, { resource: "teams", operation: "insert", id: "team:b", record: { name: "B" } });
+    await offlineWrite(storage, chain, { resource: "teams", operation: "archive", id: "team:b" });
+    await offlineWrite(storage, chain, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P" } });
+    await offlineWrite(storage, chain, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    const rows = [{ id: "goal:y", title: "Y", parentId: "goal:c", projectId: "project:p" }];
+    expect((await page(storage, chain, { ...children, omit: ["parentPath"] }, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+  });
+
   it("projection-shape: a search or temporal read takes the mask", async () => {
     const storage = await hydrating("notes");
     await offlineWrite(storage, folderSchema, {
