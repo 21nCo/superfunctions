@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { Client, type ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -29,6 +27,8 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { redactOAuthValue } from "@superfunctions/oauth-core";
+
+import { EdgeJsonSchemaValidator } from "./edge-schema-validator.js";
 
 import type {
   McpFnClientState,
@@ -107,6 +107,88 @@ export interface McpFnBoundedInventory<T> {
 
 const redactionOmissions = new WeakSet<object>();
 
+// One sequence per realm, shared through the global symbol registry by every
+// copy of the client (the ESM and CJS builds, or two installed versions).
+const fallbackSequenceKey = Symbol.for("@mcpfn/client/fallback-request-sequence");
+
+// One token per realm (the main thread or a worker thread), drawn on first use
+// and shared by every copy of the client in that realm.
+const fallbackRealmTokenKey = Symbol.for("@mcpfn/client/fallback-realm-token");
+
+function fallbackRealmToken(): string {
+  const registry = globalThis as { [fallbackRealmTokenKey]?: unknown };
+  const current = registry[fallbackRealmTokenKey];
+  if (typeof current === "string" && current.length > 0) return current;
+  // Reached only without Web Crypto (Node.js 18 default). The token only keeps
+  // diagnostic correlation IDs of worker threads apart; it is not a secret,
+  // credential or OAuth value, so a non-cryptographic source is safe here.
+  const token = Math.floor(Math.random() * 4294967296).toString(36); // NOSONAR
+  registry[fallbackRealmTokenKey] = token;
+  return token;
+}
+
+function nextFallbackRequestSequence(): number {
+  const registry = globalThis as { [fallbackSequenceKey]?: unknown };
+  const current = registry[fallbackSequenceKey];
+  const next = (typeof current === "number" && Number.isSafeInteger(current) ? current : 0) + 1;
+  registry[fallbackSequenceKey] = next;
+  return next;
+}
+
+/** Web Crypto UUIDs work on Node.js 19+, Cloudflare Workers and browsers
+ * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
+ * only behind a flag; there, request IDs are correlation IDs built from the
+ * time, a sequence shared by every loaded copy of the client in a realm (so
+ * the ESM and CJS builds never repeat each other's IDs) and a component that
+ * tells realms apart: Web Crypto random bits when only `randomUUID` is
+ * missing, otherwise the process ID, the process's `performance.timeOrigin` in
+ * microseconds (so container replicas that all run as PID 1 differ) and a
+ * token drawn once per realm (worker threads share the process ID and time
+ * origin and each has its own sequence). They correlate diagnostics and are
+ * not secrets. */
+function defaultRequestId(): string {
+  const webCrypto = (
+    globalThis as {
+      crypto?: { randomUUID?: () => string; getRandomValues?: (array: Uint32Array) => Uint32Array };
+    }
+  ).crypto;
+  if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+  const sequence = nextFallbackRequestSequence();
+  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${fallbackOriginId(webCrypto)}`;
+}
+
+function fallbackOriginId(webCrypto?: {
+  getRandomValues?: (array: Uint32Array) => Uint32Array;
+}): string {
+  if (typeof webCrypto?.getRandomValues === "function") {
+    return webCrypto.getRandomValues(new Uint32Array(1))[0]!.toString(36);
+  }
+  const host = globalThis as { process?: { pid?: unknown }; performance?: { timeOrigin?: unknown } };
+  const pid = host.process?.pid;
+  const timeOrigin = host.performance?.timeOrigin;
+  const startedAt = typeof timeOrigin === "number" ? Math.round(timeOrigin * 1000) : 0;
+  return `${typeof pid === "number" ? pid.toString(36) : "0"}_${startedAt.toString(36)}_${fallbackRealmToken()}`;
+}
+
+
+/** The SDK client defaults to Ajv, which compiles tool output schemas with
+ * `new Function`. Cloudflare Workers (identified by `WebSocketPair`) and other
+ * hosts that forbid code generation use the SDK's `@cfworker/json-schema`
+ * validator instead (see `EdgeJsonSchemaValidator`: it applies the dialect
+ * each schema's `$schema` declares, 2020-12 when it declares none, and
+ * reports an unsupported dialect), matching the engine selection in
+ * `@mcpfn/core`. An explicit `clientOptions.jsonSchemaValidator` always wins. */
+function requiresEdgeSchemaValidator(): boolean {
+  if ("WebSocketPair" in globalThis) return true;
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function("return true");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export class McpFnClient {
   private readonly options: McpFnClientOptions;
   private readonly listeners = new Set<McpFnDiagnosticSink>();
@@ -116,7 +198,8 @@ export class McpFnClient {
   private handle?: McpFnTransportHandle;
   private readonly pendingCleanup = new Set<McpFnTransportHandle>();
   private readonly pendingProtocols = new Set<Client>();
-  private cleanupDrain?: Promise<void>;
+  /** Resolves true when the drain skipped target cleanup for a pending open. */
+  private cleanupDrain?: Promise<boolean>;
   private cleanupFailure?: McpFnClientError;
   private connectPromise?: Promise<void>;
   private targetCleanupPending = false;
@@ -571,6 +654,9 @@ export class McpFnClient {
       this.options.info ?? { name: "mcpfn-client", version: "0.0.1" },
       {
         ...this.instrumentClientOptions(),
+        ...(this.options.clientOptions?.jsonSchemaValidator || !requiresEdgeSchemaValidator()
+          ? {}
+          : { jsonSchemaValidator: new EdgeJsonSchemaValidator() }),
         capabilities: this.effectiveCapabilities(),
       },
     );
@@ -758,8 +844,15 @@ export class McpFnClient {
     if (protocol || handle) this.targetCleanupPending = true;
   }
 
-  private drainCleanup(retryFailed = false): Promise<void> {
-    if (this.cleanupDrain) return this.cleanupDrain;
+  private async drainCleanup(retryFailed = false): Promise<void> {
+    const skippedForPendingOpen = await (this.cleanupDrain ?? this.startCleanupDrain(retryFailed));
+    // A drain that skipped target cleanup because an open was still pending is
+    // re-run, not joined, once no open is pending: the open may have settled
+    // (for example cancelled by close()) while the drain was in flight.
+    if (skippedForPendingOpen && !this.pendingTargetOpens) await this.drainCleanup();
+  }
+
+  private startCleanupDrain(retryFailed: boolean): Promise<boolean> {
     if (this.cleanupFailure && !retryFailed) return Promise.reject(this.cleanupFailure);
     this.cleanupFailure = undefined;
     const drain = Promise.resolve().then(async () => {
@@ -775,10 +868,12 @@ export class McpFnClient {
           this.pendingCleanup.delete(handle);
         }
       }
-      // Opens and live sessions may still need peer state/credentials. Their
-      // eventual owner registration will request another drain without awaiting open.
-      if (this.pendingTargetOpens || this._protocol || this.handle) return;
+      // Opens and live sessions may still need peer state/credentials. A
+      // pending open's settlement requests another drain (see drainCleanup).
+      if (this.pendingTargetOpens) return true;
+      if (this._protocol || this.handle) return false;
       if (this.targetCleanupPending) await this.cleanupTarget();
+      return false;
     }).catch((error) => {
       this._state = "closing";
       this.cleanupFailure = new McpFnClientError("MCPFN_OPERATION_FAILED", "MCP target cleanup failed; retry close", {
@@ -1057,7 +1152,7 @@ export class McpFnClient {
   }
 
   private requestId(): string {
-    return this.options.requestId?.() ?? randomUUID();
+    return this.options.requestId?.() ?? defaultRequestId();
   }
 
   private beginTargetRedactionScope(): () => void {

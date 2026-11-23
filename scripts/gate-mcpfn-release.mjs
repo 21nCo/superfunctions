@@ -486,11 +486,8 @@ await server.serveStdio();
   writeFileSync(roundtrip, String.raw`
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import {
-  createMcpFnClient,
-  stdioTarget,
-  streamableHttpTarget,
-} from "@mcpfn/client";
+import { createMcpFnClient, streamableHttpTarget } from "@mcpfn/client";
+import { stdioTarget } from "@mcpfn/client/stdio";
 import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core";
 
 async function call(target) {
@@ -581,8 +578,10 @@ try {
   }
 
   npmStep("client:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/client"]);
-  npmStep("client:test", ["run", "test", "--workspace", "@mcpfn/client"]);
+  // Build before testing the client: its workerd and packed-package tests read
+  // dist, and its test setup rejects a dist whose build stamp is stale.
   npmStep("client:build", ["run", "build", "--workspace", "@mcpfn/client"]);
+  npmStep("client:test", ["run", "test", "--workspace", "@mcpfn/client"]);
 
   npmStep("auth:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/auth"]);
   npmStep("auth:build", ["run", "build", "--workspace", "@mcpfn/auth"]);

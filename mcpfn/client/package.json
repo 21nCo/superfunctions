@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/client",
-  "version": "0.0.6",
+  "version": "0.1.0",
   "description": "Production MCP client, target, session, lifecycle, and diagnostic engine for McpFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -10,24 +10,57 @@
     ".": {
       "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
       "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    },
+    "./stdio": {
+      "import": { "types": "./dist/stdio.d.ts", "default": "./dist/stdio.js" },
+      "require": { "types": "./dist/stdio.d.cts", "default": "./dist/stdio.cjs" }
+    },
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#stdio-target": {
+      "workerd": {
+        "import": "./dist/stdio-unavailable.js",
+        "require": "./dist/stdio-unavailable.cjs"
+      },
+      "worker": {
+        "import": "./dist/stdio-unavailable.js",
+        "require": "./dist/stdio-unavailable.cjs"
+      },
+      "edge-light": {
+        "import": "./dist/stdio-unavailable.js",
+        "require": "./dist/stdio-unavailable.cjs"
+      },
+      "browser": {
+        "import": "./dist/stdio-unavailable.js",
+        "require": "./dist/stdio-unavailable.cjs"
+      },
+      "node": { "import": "./dist/stdio.js", "require": "./dist/stdio.cjs" },
+      "default": {
+        "import": "./dist/stdio-unavailable.js",
+        "require": "./dist/stdio-unavailable.cjs"
+      }
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "!dist/.build-stamp.json", "README.md", "CHANGELOG.md"],
   "scripts": {
-    "build": "tsup",
+    "build": "node scripts/build.mjs",
     "clean": "node --input-type=module -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.2",
-    "@superfunctions/oauth-core": "0.1.1"
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/sdk": "1.32.2"
   },
   "devDependencies": {
     "@hono/node-server": "2.1.11",
     "@mcpfn/core": "0.0.7",
+    "@superfunctions/oauth-core": "0.1.1",
     "@types/node": "^20.0.0",
+    "esbuild": "0.21.5",
+    "miniflare": "4.20251113.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

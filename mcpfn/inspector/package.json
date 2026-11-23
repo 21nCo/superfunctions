@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/inspector",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Headless McpFn inspector built on the production client and target engine",
   "type": "module",
   "main": "dist/index.cjs",
@@ -21,8 +21,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpfn/client": "0.0.6",
-    "@mcpfn/testing": "0.0.8",
+    "@mcpfn/client": "0.1.0",
+    "@mcpfn/testing": "0.0.9",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@superfunctions/oauth-core": "0.1.1"
   },

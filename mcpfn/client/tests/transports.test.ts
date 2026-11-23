@@ -9,10 +9,11 @@ import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core"
 
 import {
   createMcpFnClient,
-  stdioTarget,
+  stdioTarget as deprecatedStdioTarget,
   streamableHttpTarget,
   transportTarget,
 } from "../src/index.js";
+import { stdioTarget } from "../src/stdio.js";
 
 describe("McpFn first-class transports", () => {
   const closeables: Array<() => Promise<void>> = [];
@@ -20,15 +21,31 @@ describe("McpFn first-class transports", () => {
     for (const close of closeables.splice(0).reverse()) await close();
   });
 
-  it("runs a real stdio child-process round trip", async () => {
-    const fixture = fileURLToPath(new URL("./fixtures/stdio-server.mjs", import.meta.url));
+  const stdioFixture = fileURLToPath(new URL("./fixtures/stdio-server.mjs", import.meta.url));
+
+  it("runs a real stdio child-process round trip through @mcpfn/client/stdio", async () => {
     const client = createMcpFnClient({
-      target: stdioTarget({ command: process.execPath, args: [fixture] }),
+      target: stdioTarget({ command: process.execPath, args: [stdioFixture] }),
     });
     closeables.push(() => client.close());
     await client.connect();
     await expect(client.tools.call("echo", { transport: "stdio" })).resolves.toMatchObject({
       structuredContent: { transport: "stdio" },
+    });
+  }, 15_000);
+
+  it("keeps the deprecated main-entry stdioTarget working on Node.js", async () => {
+    const options = { command: process.execPath, args: [stdioFixture], cwd: process.cwd() };
+    const target = deprecatedStdioTarget(options);
+    expect(target.describe()).toEqual(stdioTarget(options).describe());
+    expect(() => deprecatedStdioTarget({ command: " " })).toThrow(
+      "McpFn stdio target command is required",
+    );
+    const client = createMcpFnClient({ target });
+    closeables.push(() => client.close());
+    await client.connect();
+    await expect(client.tools.call("echo", { transport: "compat" })).resolves.toMatchObject({
+      structuredContent: { transport: "compat" },
     });
   }, 15_000);
 
