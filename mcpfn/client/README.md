@@ -39,7 +39,10 @@ A Cloudflare Worker can bundle it without the `nodejs_compat` flag and connect
 to a remote server with `streamableHttpTarget()`. On Workers, and on other hosts
 that forbid runtime code generation, tool output schemas are validated with the
 official SDK's `@cfworker/json-schema` validator instead of Ajv; an explicit
-`clientOptions.jsonSchemaValidator` takes precedence.
+`clientOptions.jsonSchemaValidator` takes precedence. Like the SDK's Ajv default
+on Node.js, it applies keywords beside a `$ref` and draft-07 tuple `items`; it
+also enforces later-draft keywords such as `prefixItems` and
+`unevaluatedProperties`, which the draft-07 Ajv ignores.
 
 Stdio targets spawn a child process and are Node.js-only. Import them from the
 `@mcpfn/client/stdio` subpath:

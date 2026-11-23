@@ -581,8 +581,10 @@ try {
   }
 
   npmStep("client:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/client"]);
-  npmStep("client:test", ["run", "test", "--workspace", "@mcpfn/client"]);
+  // Build before testing the client: its workerd and packed-package tests read
+  // dist, and its test setup rejects a dist whose build stamp is stale.
   npmStep("client:build", ["run", "build", "--workspace", "@mcpfn/client"]);
+  npmStep("client:test", ["run", "test", "--workspace", "@mcpfn/client"]);
 
   npmStep("auth:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/auth"]);
   npmStep("auth:build", ["run", "build", "--workspace", "@mcpfn/auth"]);

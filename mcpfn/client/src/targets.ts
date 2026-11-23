@@ -56,10 +56,35 @@ export function stdioTarget(options: StdioTargetOptions): McpFnTarget {
     kind: "stdio",
     descriptor: stdioTargetDescriptor(options),
     open: async (context) => {
-      const stdio = await loadStdioTarget();
+      // Settle as soon as the connect is aborted (for example by close()), so
+      // a pending import never holds the client in the closing state.
+      const stdio = await untilAborted(loadStdioTarget(), context.signal);
       return stdio.stdioTarget(options).open(context);
     },
   });
+}
+
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("McpFn stdio target open was aborted");
 }
 
 export function streamableHttpTarget(

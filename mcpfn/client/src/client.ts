@@ -110,13 +110,28 @@ let fallbackRequestSequence = 0;
 
 /** Web Crypto UUIDs work on Node.js 19+, Cloudflare Workers and browsers
  * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
- * only behind a flag; there, request IDs are process-unique correlation IDs. */
+ * only behind a flag; there, request IDs are correlation IDs built from the
+ * time, a per-bundle sequence and a random component, so the ESM and CJS
+ * copies of the client loaded in one process do not repeat each other's IDs. */
 function defaultRequestId(): string {
   const webCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
   fallbackRequestSequence += 1;
-  return `mcpfn-${Date.now().toString(36)}-${fallbackRequestSequence.toString(36)}`;
+  const random = Math.floor(Math.random() * 0x100000000).toString(36);
+  return `mcpfn-${Date.now().toString(36)}-${fallbackRequestSequence.toString(36)}-${random}`;
 }
+
+/** Draft passed to `@cfworker/json-schema` on the edge, chosen to validate tool
+ * output schemas the way the SDK's default Ajv validator does on Node.js. The
+ * cfworker draft only changes `$ref` handling: drafts "4" and "7" ignore the
+ * keywords beside a `$ref`. The SDK's Ajv (draft-07 vocabulary, Ajv v8 without
+ * `ignoreKeywordsWithRef`) applies them, as cfworker does for "2019-09" and
+ * "2020-12"; tuple `items` with `additionalItems` behave the same under every
+ * cfworker draft. cfworker also enforces later-draft keywords such as
+ * `prefixItems`, `unevaluatedProperties` and `dependentRequired`, which the
+ * draft-07 Ajv ignores; pass `clientOptions.jsonSchemaValidator` to choose a
+ * different validator. */
+const EDGE_SCHEMA_DRAFT = "2020-12";
 
 /** The SDK client defaults to Ajv, which compiles tool output schemas with
  * `new Function`. Cloudflare Workers (identified by `WebSocketPair`) and other
@@ -600,7 +615,7 @@ export class McpFnClient {
         ...this.instrumentClientOptions(),
         ...(this.options.clientOptions?.jsonSchemaValidator || !requiresEdgeSchemaValidator()
           ? {}
-          : { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() }),
+          : { jsonSchemaValidator: new CfWorkerJsonSchemaValidator({ draft: EDGE_SCHEMA_DRAFT }) }),
         capabilities: this.effectiveCapabilities(),
       },
     );

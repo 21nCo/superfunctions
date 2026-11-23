@@ -13,7 +13,10 @@
 - On Cloudflare Workers, and on other hosts that forbid runtime code
   generation, the client validates tool output schemas with the official SDK's
   `@cfworker/json-schema` validator instead of Ajv. An explicit
-  `clientOptions.jsonSchemaValidator` still takes precedence.
+  `clientOptions.jsonSchemaValidator` still takes precedence. Like the Ajv
+  default on Node.js, it applies keywords beside a `$ref` and draft-07 tuple
+  `items`; unlike the draft-07 Ajv, it also enforces later-draft keywords such
+  as `prefixItems` and `unevaluatedProperties`.
 - Default request IDs use Web Crypto `crypto.randomUUID()` instead of
   `node:crypto`.
 

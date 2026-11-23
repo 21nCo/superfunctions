@@ -6,7 +6,7 @@
 // main entry imported the SDK stdio transport, so this bundle pulled in
 // `cross-spawn` and `child_process` and could not be built for workerd.
 import { existsSync, realpathSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,9 @@ import { build, type Metafile } from "esbuild";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core";
+
+import { runSchemaParityCases } from "./fixtures/schema-parity.mjs";
+import { handleSchemaParityRequest } from "./fixtures/schema-parity-server.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const builtEntry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -25,6 +28,7 @@ const builtFile = (file: string) =>
 const workerSource = `
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { createMcpFnClient, stdioTarget, streamableHttpTarget } from "@mcpfn/client";
+import { runSchemaParityCases } from "./tests/fixtures/schema-parity.mjs";
 
 async function run(endpoint) {
   const events = [];
@@ -85,6 +89,11 @@ export default {
       if (url.pathname === "/remote") return Response.json(await run(endpoint));
       if (url.pathname === "/ajv") return Response.json(await runWithAjv(endpoint));
       if (url.pathname === "/stdio") return Response.json(await runDeprecatedStdio());
+      if (url.pathname === "/schemas") {
+        return Response.json(
+          await runSchemaParityCases({ createMcpFnClient, streamableHttpTarget }, endpoint),
+        );
+      }
       return new Response("Not found", { status: 404 });
     } catch (error) {
       return Response.json({ error: String(error?.stack ?? error) }, { status: 500 });
@@ -137,6 +146,11 @@ async function startMcpServer() {
       }),
   });
   const handler = await mcp.createWebStandardHandler({ enableJsonResponse: true });
+  return { mcp, server: await serveWebHandler(handler) };
+}
+
+/** Serves a Web-standard request handler over Node.js HTTP on a free port. */
+async function serveWebHandler(handler: (request: Request) => Promise<Response>) {
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -158,7 +172,11 @@ async function startMcpServer() {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  return { mcp, server };
+  return server;
+}
+
+function endpointOf(server: Server): string {
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
 }
 
 describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
@@ -166,6 +184,8 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
   let miniflare: Miniflare;
   let mcpServer: Awaited<ReturnType<typeof startMcpServer>>;
   let endpoint: string;
+  let parityServer: Server;
+  let parityEndpoint: string;
 
   beforeAll(async () => {
     if (!existsSync(builtEntry)) {
@@ -174,7 +194,9 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
     const bundle = await bundleWorker();
     metafile = bundle.metafile;
     mcpServer = await startMcpServer();
-    endpoint = `http://127.0.0.1:${(mcpServer.server.address() as AddressInfo).port}/mcp`;
+    endpoint = endpointOf(mcpServer.server);
+    parityServer = await serveWebHandler(handleSchemaParityRequest);
+    parityEndpoint = endpointOf(parityServer);
     miniflare = new Miniflare({
       compatibilityDate: "2025-11-01",
       compatibilityFlags: [],
@@ -186,16 +208,19 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
   afterAll(async () => {
     await miniflare?.dispose();
     await mcpServer?.mcp.close();
-    await new Promise<void>((resolve) =>
-      mcpServer ? mcpServer.server.close(() => resolve()) : resolve(),
-    );
+    for (const server of [mcpServer?.server, parityServer]) {
+      await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+    }
   });
 
-  async function workerJson(path: string): Promise<Record<string, unknown>> {
+  async function workerJson<T = Record<string, unknown>>(
+    path: string,
+    target = endpoint,
+  ): Promise<T> {
     const url = new URL(path, "http://worker.test");
-    url.searchParams.set("endpoint", endpoint);
+    url.searchParams.set("endpoint", target);
     const response = await miniflare.dispatchFetch(url);
-    const body = (await response.json()) as Record<string, unknown>;
+    const body = (await response.json()) as T;
     expect(response.status, JSON.stringify(body)).toBe(200);
     return body;
   }
@@ -237,6 +262,24 @@ describe("@mcpfn/client on Cloudflare Workers (workerd)", () => {
     const result = await workerJson("/ajv");
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/Code generation from strings disallowed/);
+  }, 30_000);
+
+  it("validates draft-07 tool output schemas on workerd as the Node.js default does", async () => {
+    type Verdict = { tool: string; value: unknown; accepted: boolean; message?: string };
+    // Node.js: the same built entry with the SDK's default (Ajv) validator.
+    const nodeClient = await import(builtEntry);
+    const onNode = (await runSchemaParityCases(nodeClient, parityEndpoint)) as Verdict[];
+    const onWorkerd = await workerJson<Verdict[]>("/schemas", parityEndpoint);
+    const verdicts = (results: Verdict[]) =>
+      results.map(({ tool, value, accepted }) => ({ tool, value, accepted }));
+
+    expect(verdicts(onWorkerd)).toEqual(verdicts(onNode));
+    // The maximum beside the $ref applies (a draft-7 cfworker validator would
+    // ignore it and accept 50), and the tuple rejects a wrong or extra item.
+    expect(onNode.map((result) => result.accepted)).toEqual([true, false, true, false, false]);
+    for (const result of [...onNode, ...onWorkerd].filter((entry) => !entry.accepted)) {
+      expect(result.message).toMatch(/does not match the tool's output schema/);
+    }
   }, 30_000);
 
   it("fails the deprecated stdio compatibility target cleanly when opened", async () => {
