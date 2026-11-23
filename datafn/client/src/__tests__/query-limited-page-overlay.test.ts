@@ -2672,4 +2672,69 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     expect(await page(storage, folderSchema, { resource: "notes" }, rows))
       .toEqual([{ ...rows[0], profile: { folderId: "folder:9", note: "n" } }, rows[1]]);
   });
+
+  it("hydration: a later cascade that can rewrite a relink tail's last segment forgets the tail", async () => {
+    // Server: goal:x lands under the root goal:p-goal:q at path "goal:p-goal:q"; detaching goal:q
+    // from goal:p rewrites that prefix to "goal:q", so goal:x is goal:q's direct child.
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p-goal:q" } });
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:q", relations: { parent: "goal:p" } });
+    const row = { id: "goal:x", title: "X", parentId: "goal:q", parentPath: "goal:p-goal:q" };
+    const query = { resource: "goals", id: "goal:q", relation: "children" };
+    expect((await page(storage, treeSchema, query, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
+    // A cascade that cannot reach the tail's last segment keeps the ordinary exclusion.
+    const kept = await goals();
+    await offlineWrite(kept, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
+    await offlineWrite(kept, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:q", relations: { parent: "goal:r" } });
+    expect(await page(kept, treeSchema, query, [{ ...row, parentPath: "goal:r-goal:q" }])).toEqual([]);
+  });
+
+  it("hydration: relink evidence is bound to the tree resource the writer updates", async () => {
+    const twoResources = {
+      resources: [treeSchema.resources[0], { ...treeSchema.resources[0], name: "otherGoals" }],
+      relations: [...treeSchema.relations!, { ...treeSchema.relations![0], from: "otherGoals", to: "otherGoals" }],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["goals", "otherGoals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, twoResources, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
+    await offlineWrite(storage, twoResources, { resource: "otherGoals", operation: "relate", id: "goal:x", relations: { parent: "goal:n" } });
+    await offlineWrite(storage, twoResources, { resource: "otherGoals", operation: "relate", id: "goal:n", relations: { children: ["goal:c"] } });
+    const deep = { ...child, id: "goal:z", parentId: "goal:x", parentPath: "goal:c-goal:x" };
+    expect((await page(storage, twoResources, children, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+    expect((await page(storage, twoResources, { ...children, select: ["**"] }, [child, deep])).map((row) => row.id))
+      .toEqual(["goal:x", "goal:z"]);
+  });
+
+  it("hydration: off-tree inactivity counts only a parent state the replay wrote, never a merge-create default", async () => {
+    const defaulted = {
+      resources: [
+        { name: "projects", version: 1, fields: [{ name: "name", type: "string", required: false }, { name: "isArchived", type: "boolean", required: false, default: true }] },
+        { name: "goals", version: 1, fields: [...withPath({}).resources[0].fields, { name: "projectId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "projects", type: "many-one", relation: "project", inverse: "goals", fkField: "projectId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const rows = [{ id: "goal:y", title: "Y", parentId: "goal:c", projectId: "project:p" }];
+    const omitted = { ...children, omit: ["parentPath"] };
+    const storage = new MemoryStorageAdapter(["projects", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, defaulted, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P" } });
+    await offlineWrite(storage, defaulted, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect((await page(storage, defaulted, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+    // An explicit pending archive of the parent still decides it.
+    await offlineWrite(storage, defaulted, { resource: "projects", operation: "merge", id: "project:p", record: { isArchived: true } });
+    expect(await page(storage, defaulted, omitted, rows)).toEqual([]);
+  });
+
+  it("hydration: a relink whose relation metadata the server rejects moves nothing; metadata the push strips still moves", async () => {
+    const rejected = await goals();
+    await offlineWrite(rejected, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: { $ref: "goal:q", unknownMeta: true } } });
+    expect(await page(rejected, treeSchema, children, [child])).toEqual([child]);
+    // The sync engine strips undeclared metadata from a forward relation name before /push.
+    const stripped = await goals();
+    await offlineWrite(stripped, treeSchema, { resource: "goals", operation: "relate", id: "goal:q", relations: { children: [{ $ref: "goal:x", unknownMeta: true }] } });
+    expect(await page(stripped, treeSchema, children, [child])).toEqual([]);
+  });
 });
