@@ -815,17 +815,12 @@ function rejectedMetadata(schema: DatafnSchema, resource: unknown, name: string,
   return items.some((item) => Object.keys(item.metadata).some((key) => !allowed.has(key)));
 }
 
-/** Whether an entry sets a record's archived or trashed state: a create, a state operation or an explicit write. */
-const writesState = ({ operation, record }: Record<string, unknown>): boolean => operation === "insert"
+/** Whether an entry sets a record's archived or trashed state: an insert or replace (the push adds writable defaults), a state operation or a write. */
+const writesState = ({ operation, record }: Record<string, unknown>): boolean => operation === "insert" || operation === "replace"
   || STATE_OPERATIONS.has(operation as string) || (isPlainRecord(record) && ("isArchived" in record || "trashedAt" in record));
 
 /** Htree paths a merge, replace or insert sets as given, or a replace resets (declared writable only, as buildReplaceRecord). */
-function notePathWrites(
-  schema: DatafnSchema,
-  target: PageRow,
-  mutation: Record<string, unknown>,
-  after: Record<string, unknown> | null,
-): void {
+function notePathWrites(schema: DatafnSchema, target: PageRow, mutation: Record<string, unknown>, after: Record<string, unknown> | null): void {
   if (!["merge", "replace", "insert"].includes(mutation.operation as string)) return;
   const record = isPlainRecord(mutation.record) ? mutation.record : {};
   const { fields, system } = declaredFields(schema, target.resource);
@@ -873,7 +868,6 @@ function cascadedPath(path: string, id: string, old: { path: string | null } | u
  */
 async function cascadeMovedPaths(scratch: DatafnStorageAdapter, pages: ReadonlyArray<[string, PageRow]>, moved: readonly Relink[],
   prior: ReadonlyMap<Relink, [PageRow, Record<string, unknown> | null]>, tracked: (tree: Endpoint, id: string) => PageRow | undefined): Promise<void> {
-  forgetRewrittenTails(pages, moved);
   for (const [pageId, page] of pages) {
     for (const [pathField, path] of page.knownPaths ?? []) {
       const tree = moved.filter(([, field, , endpoint]) => field === pathField && endpointIncludes(endpoint, page.resource));
@@ -890,19 +884,22 @@ async function cascadeMovedPaths(scratch: DatafnStorageAdapter, pages: ReadonlyA
   }
 }
 
-/** Forget relink tails whose last segment a cascade moving one of `moved` (same tree) can rewrite: the tail's parent id lists the mover. */
+/** Whether the cascade of a move in the page's tree can rewrite a tail ending in `parentId`: a separator-prefix of it ends in `-<mover>`. */
+const rewritesTail = ([id, field, , tree]: Relink, page: PageRow, pathField: string, parentId: string): boolean =>
+  field === pathField && endpointIncludes(tree, page.resource) && `${parentId}-`.includes(`-${id}-`);
+
+/** Forget the relink tails held before an entry whose last segment one of its moves can rewrite. */
 function forgetRewrittenTails(pages: ReadonlyArray<[string, PageRow]>, moved: readonly Relink[]): void {
   for (const [, page] of pages) {
     for (const [pathField, tail] of page.knownPaths ?? []) {
-      const rewrites = ([id, field, , tree]: Relink): boolean => field === pathField && endpointIncludes(tree, page.resource) && id !== (tail as RelinkTail).parentId;
-      if (tail instanceof RelinkTail && moved.some((relink) => rewrites(relink) && pathLists(tail.parentId, relink[0]))) page.knownPaths?.delete(pathField);
+      if (tail instanceof RelinkTail && moved.some((relink) => rewritesTail(relink, page, pathField, tail.parentId))) page.knownPaths?.delete(pathField);
     }
   }
 }
 
 /** Record the path a relink gave a page record under a held parent (not in a polymorphic tree), else its last segment. */
 async function noteRelinkedPaths(scratch: DatafnStorageAdapter, moved: readonly Relink[], tracked: (tree: Endpoint, id: string) => PageRow | undefined): Promise<void> {
-  for (const [id, pathField, relation, tree] of moved) {
+  for (const [index, [id, pathField, relation, tree]] of moved.entries()) {
     const page = tracked(tree, id);
     const current = page && await scratch.getRecord(page.resource, id);
     const to = relation.to as unknown;
@@ -913,7 +910,9 @@ async function noteRelinkedPaths(scratch: DatafnStorageAdapter, moved: readonly 
     const held = parent && heldHtreePath(parent, pathField, await scratch.getRecord(parent.resource, parentId as string));
     if (held && current[pathField] === joinPath(held.path ?? "", parentId as string)) {
       (page.knownPaths ??= new Map()).set(pathField, current[pathField]);
-    } else if (typeof parentId === "string") (page.knownPaths ??= new Map()).set(pathField, new RelinkTail(parentId));
+    } else if (typeof parentId === "string" && !moved.slice(index + 1).some((later) => rewritesTail(later, page, pathField, parentId))) {
+      (page.knownPaths ??= new Map()).set(pathField, new RelinkTail(parentId)); // a later move in the entry can rewrite it
+    }
   }
 }
 
@@ -1071,7 +1070,7 @@ async function htreeRowsGone(scratch: DatafnStorageAdapter, schema: DatafnSchema
   return gone;
 }
 
-/** Whether a parent an inheriting many-one or one-many edge names is archived or trashed by an applied entry (scratch defaults and inheritance prove nothing). */
+/** Whether a parent an inheriting many-one or one-many edge names is returned or state-written archived or trashed (scratch defaults and inheritance prove nothing). */
 async function inactiveOffTree(scratch: DatafnStorageAdapter, schema: DatafnSchema, resource: string, record: Record<string, unknown>,
   stateWritten: (resource: string, id: string) => boolean): Promise<boolean> {
   for (const relation of schema.relations ?? []) {
@@ -1197,9 +1196,11 @@ async function overlayPendingRowsOnLimitedPage(
       // writer cannot follow it through records the page does not hold.
       if (applied && moved?.length) {
         relinked = true;
+        const pages = [...pageRows, ...(anchor ? [[query.id as string, anchor] as [string, PageRow]] : [])];
         for (const [id, pathField, , tree] of moved) trackedAt(tree, id)?.knownPaths?.delete(pathField);
+        forgetRewrittenTails(pages, moved);
         await noteRelinkedPaths(scratch, moved, trackedAt);
-        await cascadeMovedPaths(scratch, [...pageRows, ...(anchor ? [[query.id as string, anchor] as [string, PageRow]] : [])], moved, prior, trackedAt);
+        await cascadeMovedPaths(scratch, pages, moved, prior, trackedAt);
       }
       if (applied && writesState(change.mutation)) stateWritten.add(JSON.stringify([change.mutation.resource, change.mutation.id]));
     } catch {
@@ -1212,7 +1213,8 @@ async function overlayPendingRowsOnLimitedPage(
   }
   const unlinked = new Set<string>();
   if (match?.relation.type === "htree" && anchor) {
-    const backed = (resource: string, id: string): boolean => stateWritten.has(JSON.stringify([resource, id]));
+    // A returned row's state is the server's; any later state write is in `stateWritten`.
+    const backed = (resource: string, id: string): boolean => stateWritten.has(JSON.stringify([resource, id])) || pageRows.get(id)?.resource === resource;
     for (const id of await htreeRowsGone(scratch, schema, match, query, pageRows, anchor, relinked ? backed : undefined)) unlinked.add(id);
   } else if (linkedBefore) {
     const linkedAfter = await pageMemberIds(scratch, schema, edgeQuery);

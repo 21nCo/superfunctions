@@ -2687,6 +2687,17 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(kept, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
     await offlineWrite(kept, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:q", relations: { parent: "goal:r" } });
     expect(await page(kept, treeSchema, query, [{ ...row, parentPath: "goal:r-goal:q" }])).toEqual([]);
+    // A cascade on the tail's leading id keeps its last segment, and a move earlier in the entry ran before the tail.
+    const root = { ...child, parentPath: "goal:c" };
+    for (const relinks of [
+      [{ parent: "goal:p-goal:q" }, { parent: "goal:s" }, "goal:x", "goal:p"],
+      [{ children: ["goal:p"], parent: "goal:p-goal:q" }, undefined, "goal:x", ""],
+    ] as const) {
+      const storage = await goals();
+      await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: relinks[2], relations: relinks[0] });
+      if (relinks[1]) await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: relinks[3], relations: relinks[1] });
+      expect(await page(storage, treeSchema, children, [root])).toEqual([]);
+    }
   });
 
   it("hydration: relink evidence is bound to the tree resource the writer updates", async () => {
@@ -2723,9 +2734,36 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(storage, defaulted, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P" } });
     await offlineWrite(storage, defaulted, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
     expect((await page(storage, defaulted, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
-    // An explicit pending archive of the parent still decides it.
+    // An explicit pending archive of the parent still decides it, and so does a replace, whose writable defaults the push sends.
     await offlineWrite(storage, defaulted, { resource: "projects", operation: "merge", id: "project:p", record: { isArchived: true } });
     expect(await page(storage, defaulted, omitted, rows)).toEqual([]);
+    const replaced = new MemoryStorageAdapter(["projects", "goals"]);
+    await replaced.setHydrationState("goals", "hydrating");
+    await offlineWrite(replaced, defaulted, { resource: "projects", operation: "replace", id: "project:p", record: { name: "P" } });
+    await offlineWrite(replaced, defaulted, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect(await page(replaced, defaulted, omitted, rows)).toEqual([]);
+  });
+
+  it("hydration: off-tree inactivity counts a returned parent's archived state", async () => {
+    const siblings = {
+      resources: [{ name: "goals", version: 1, fields: [
+        ...withPath({}).resources[0].fields,
+        { name: "isArchived", type: "boolean", required: false },
+        { name: "blockerId", type: "string", required: false, nullable: true },
+      ] }],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "goals", type: "many-one", relation: "blocker", inverse: "blocking", fkField: "blockerId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const storage = await goals();
+    await offlineWrite(storage, siblings, { resource: "goals", operation: "merge", id: "goal:b", record: { blockerId: "goal:a" } });
+    await offlineWrite(storage, siblings, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    const rows = [{ id: "goal:a", title: "A", parentId: "goal:c", isArchived: true }, { id: "goal:b", title: "B", parentId: "goal:c" }];
+    const query = { ...children, omit: ["parentPath"], metadata: { includeArchived: true } };
+    expect((await page(storage, siblings, query, rows)).map((row) => row.id)).toEqual(["goal:a"]);
+    expect((await page(storage, siblings, { ...query, metadata: { includeArchived: true, includeAncestorInactive: true } }, rows))
+      .map((row) => row.id)).toEqual(["goal:a", "goal:b"]);
   });
 
   it("hydration: a relink whose relation metadata the server rejects moves nothing; metadata the push strips still moves", async () => {
