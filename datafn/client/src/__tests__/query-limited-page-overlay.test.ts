@@ -2133,9 +2133,16 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     const moved = await goals();
     await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
     expect(await page(moved, tree, childrenOf, [child])).toEqual([]);
-    // A later parent-key-only merge leaves the tail unproven.
+    // The server's merge patches the key, never the path, so the tail still decides.
     await offlineWrite(moved, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:c" } });
-    expect((await page(moved, tree, childrenOf, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+    expect(await page(moved, tree, childrenOf, [child])).toEqual([]);
+    // An htree entry with no targets moves nothing.
+    for (const operation of ["relate", "unrelate"]) {
+      const keyed = await goals();
+      await offlineWrite(keyed, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
+      await offlineWrite(keyed, tree, { resource: "goals", operation, id: "goal:x", relations: { parent: [] } });
+      expect((await page(keyed, tree, childrenOf, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+    }
 
     // A path written as given is the server's; `a-goal:c` is not the child path `goal:c`.
     const written = await goals();
@@ -2349,7 +2356,7 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     const movedAway = await goals();
     await offlineWrite(movedAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
     await offlineWrite(movedAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:c" } });
-    expect(await page(movedAway, tree, pathless, [row])).toEqual([row]);
+    expect(await page(movedAway, tree, pathless, [row])).toEqual([]);
 
     const keyAway = await goals();
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
@@ -2535,6 +2542,10 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(detached, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:b", relations: { parent: "goal:a" } });
     await offlineWrite(detached, treeSchema, { resource: "goals", operation: "merge", id: "goal:c", record: { title: "C2" } });
     expect(await page(detached, treeSchema, descendants, rows)).toEqual([rows[0]]);
+    // A target listed twice moves once.
+    const twice = await goals();
+    await offlineWrite(twice, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:a", relations: { children: ["goal:b", { $ref: "goal:b" }] } });
+    expect(await page(twice, treeSchema, descendants, rows)).toEqual([rows[0]]);
 
     const kept = await goals();
     await offlineWrite(kept, treeSchema, { resource: "goals", operation: "relate", id: "goal:b", relations: { parent: "goal:d" } });
@@ -2575,6 +2586,10 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     expect((await page(storage, inheriting, omitted, rows)).map((row) => row.id)).toEqual(["goal:x"]);
     expect((await page(storage, inheriting, { ...omitted, metadata: { includeAncestorInactive: true } }, rows))
       .map((row) => row.id)).toEqual(["goal:x", "goal:y"]);
+    // The edge proves it whatever the tree parent; inactivity resting on the tree parent alone stays undecided.
+    const archivable = { ...inheriting, resources: [inheriting.resources[0], { ...inheriting.resources[1], capabilities: ["archivable"] }] } as DatafnSchema;
+    await offlineWrite(storage, archivable, { resource: "goals", operation: "archive", id: "goal:c" });
+    expect((await page(storage, archivable, { ...omitted, metadata: { includeArchived: true } }, rows)).map((row) => row.id)).toEqual(["goal:x"]);
   });
 
   it("projection-shape: a search or temporal read takes the mask", async () => {
