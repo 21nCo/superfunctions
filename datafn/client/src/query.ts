@@ -11,6 +11,7 @@ import type {
 import type { DatafnChangelogEntry, DatafnStorageAdapter } from "./storage.js";
 import type {
   DatafnPlugin,
+  DatafnRelationSchema,
   DatafnSchema,
   DatafnTemporalConfig,
   SchemaIndex,
@@ -23,6 +24,8 @@ import {
   normalizeFilterOps,
   normalizeRelationPayload,
   parseSortTerms,
+  relationFkFieldForManyOne,
+  relationFkFieldForOneMany,
   relationTargetEndpoint,
   resolveCapabilities,
   resolveEndpointResource,
@@ -251,7 +254,7 @@ function pendingIdsForResource(
 
 /**
  * The net effect of one record's pending mutations, folded in changelog
- * order: `deleted`, or the fields they wrote (`undefined` = cleared).
+ * order: `deleted`, or the fields they wrote (`null` = cleared).
  */
 type PendingRowEffect = { deleted: boolean; written: Map<string, unknown> };
 
@@ -267,6 +270,17 @@ const STATE_FIELDS: Record<string, Record<string, unknown>> = {
   archive: { isArchived: true },
   unarchive: { isArchived: false },
 };
+
+/** Fields a replace (or a merge recreating a deleted record) resets, like the server. */
+function resetDeclaredFields(
+  fields: readonly { name: string; default?: unknown; readonly?: boolean }[],
+  written: Map<string, unknown>,
+): void {
+  for (const field of fields) {
+    if (field.readonly || ["id", "createdAt", "createdBy"].includes(field.name)) continue;
+    written.set(field.name, field.default === undefined ? null : structuredClone(field.default));
+  }
+}
 
 function foldPendingRowEffect(
   schema: DatafnSchema,
@@ -284,20 +298,17 @@ function foldPendingRowEffect(
           ([key]) => key !== "id" && !findRelationMatch(schema, resource, key),
         )
       : [];
+    const recreates = effect.deleted && operation === "merge";
     if (operation === "delete") {
       effect.deleted = true;
       effect.written.clear();
-    } else if (operation === "insert" || operation === "replace") {
+    } else if (operation === "insert" || operation === "replace" || recreates) {
+      // A merge after a delete creates the record afresh, never from the old row.
       effect.deleted = false;
       effect.written.clear();
-      // A replace keeps no unwritten declared field; defaults fill them.
-      for (const field of fields) {
-        const fallback = "default" in field ? structuredClone(field.default) : undefined;
-        effect.written.set(field.name, fallback);
-      }
+      resetDeclaredFields(fields, effect.written);
       for (const [key, value] of written) effect.written.set(key, value);
     } else if (operation === "merge") {
-      effect.deleted = false;
       for (const [key, value] of written) {
         const current = effect.written.has(key) ? effect.written.get(key) : remoteRow[key];
         // Storage adapters merge one level deep.
@@ -313,30 +324,85 @@ function foldPendingRowEffect(
       for (const [key, value] of Object.entries(STATE_FIELDS[operation])) {
         effect.written.set(key, value);
       }
-    } else if (operation === "relate" || operation === "unrelate") {
-      writeManyOneForeignKeys(schema, resource, mutation, effect.written);
     }
   }
   return effect;
 }
 
-/** A relate or unrelate sets the row's own many-one foreign key. */
-function writeManyOneForeignKeys(
+type RelationEdge = {
+  relation: DatafnRelationSchema;
+  /** Record on the relation's `from` side and on its `to` side. */
+  fromId: string;
+  toId: string;
+  linked: boolean;
+};
+
+/** The logical edges a pending relate or unrelate changes, whichever side spelled it. */
+function pendingRelationEdges(
   schema: DatafnSchema,
-  resource: string,
   mutation: Record<string, unknown>,
-  written: Map<string, unknown>,
-): void {
-  if (!isPlainRecord(mutation.relations)) return;
-  for (const [relationName, payload] of Object.entries(mutation.relations)) {
-    const match = findRelationMatch(schema, resource, relationName);
-    if (match?.relation.type !== "many-one" || match.direction !== "forward") continue;
-    const { relation } = match;
-    const fkField = relation.fkField || relation.foreignKey || `${relationName}Id`;
-    const target = normalizeRelationPayload(payload)[0]?.toId;
-    if (mutation.operation === "unrelate") written.set(fkField, null);
-    else if (target !== undefined) written.set(fkField, target);
+): RelationEdge[] {
+  const { operation, resource, id } = mutation;
+  if ((operation !== "relate" && operation !== "unrelate") || typeof id !== "string") return [];
+  if (typeof resource !== "string" || !isPlainRecord(mutation.relations)) return [];
+  const edges: RelationEdge[] = [];
+  for (const [name, payload] of Object.entries(mutation.relations)) {
+    const match = findRelationMatch(schema, resource, name);
+    if (!match) continue;
+    for (const { toId: otherId } of normalizeRelationPayload(payload)) {
+      const forward = match.direction === "forward";
+      edges.push({
+        relation: match.relation,
+        fromId: forward ? id : otherId,
+        toId: forward ? otherId : id,
+        linked: operation === "relate",
+      });
+    }
   }
+  return edges;
+}
+
+/** The record holding a many-one or one-many edge's foreign key, and the key's value. */
+function edgeForeignKeyWrite(
+  schema: DatafnSchema,
+  edge: RelationEdge,
+): DatafnChangelogEntry["mutation"] | undefined {
+  const { relation } = edge;
+  if (relation.type !== "many-one" && relation.type !== "one-many") return undefined;
+  const manyOne = relation.type === "many-one";
+  const holderId = manyOne ? edge.fromId : edge.toId;
+  const resource = resolveEndpointResource(manyOne ? relation.from : relation.to, holderId, schema);
+  if (!resource) return undefined;
+  const fkField = manyOne ? relationFkFieldForManyOne(relation) : relationFkFieldForOneMany(relation);
+  const value = edge.linked ? (manyOne ? edge.toId : edge.fromId) : null;
+  return { resource, id: holderId, operation: "merge", record: { [fkField]: value } };
+}
+
+/**
+ * Pending entries per record id of the row resource, in changelog order. A
+ * relate or unrelate also writes the foreign key of the record that holds it.
+ */
+function pendingEntriesByRow(
+  schema: DatafnSchema,
+  changes: readonly DatafnChangelogEntry[],
+  rowResource: (id: string) => string | undefined,
+): Map<string, DatafnChangelogEntry[]> {
+  const byRow = new Map<string, DatafnChangelogEntry[]>();
+  const add = (change: DatafnChangelogEntry) => {
+    const { resource, id } = change.mutation;
+    if (typeof id !== "string" || resource !== rowResource(id)) return;
+    const entries = byRow.get(id);
+    if (entries) entries.push(change);
+    else byRow.set(id, [change]);
+  };
+  for (const change of changes) {
+    add(change);
+    for (const edge of pendingRelationEdges(schema, change.mutation)) {
+      const mutation = edgeForeignKeyWrite(schema, edge);
+      if (mutation) add({ ...change, mutation });
+    }
+  }
+  return byRow;
 }
 
 const WILDCARD_SELECT_TOKENS = new Set(["*", "#", "*#", "#*"]);
@@ -353,7 +419,8 @@ function omitKeys(value: unknown, omit: readonly unknown[]): unknown {
 /**
  * The written value as the remote projection would return it, or `undefined`
  * when the projection hides the field. A field the select only reaches
- * through nested tokens keeps the members the server returned.
+ * through nested tokens keeps the members the server returned. Relation
+ * pages project their targets server-side, so only returned keys change.
  */
 function projectWrittenField(
   query: Record<string, unknown>,
@@ -364,13 +431,14 @@ function projectWrittenField(
   const omit = Array.isArray(query.omit) ? query.omit : [];
   if (omit.includes(key)) return undefined;
   const select = query.select;
-  const wholeField =
+  const wholeField = typeof query.relation !== "string" && (
     !Array.isArray(select)
-    || select.some((token) => token === key || WILDCARD_SELECT_TOKENS.has(token));
+    || select.some((token) => token === key || WILDCARD_SELECT_TOKENS.has(token))
+  );
   if (wholeField) return { value: omitKeys(value, omit) };
   if (!(key in remoteRow)) return undefined;
   const remoteValue = remoteRow[key];
-  if (isObjectValue(remoteValue) && isObjectValue(value)) {
+  if (Array.isArray(select) && isObjectValue(remoteValue) && isObjectValue(value)) {
     const members: Record<string, unknown> = {};
     for (const member of Object.keys(remoteValue)) {
       members[member] = member in value ? value[member] : remoteValue[member];
@@ -388,101 +456,94 @@ function shownPendingRow(
   written: ReadonlyMap<string, unknown>,
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
-  const removed: string[] = [];
   for (const [key, value] of written) {
     const projected = projectWrittenField(query, key, value, remoteRow);
-    if (!projected) continue;
-    if (projected.value === undefined) removed.push(key);
-    else patch[key] = projected.value;
+    if (projected) patch[key] = projected.value;
   }
   // Decode dates like the remote page; cleared non-nullable fields read absent.
   const normalized = stripNullsForNonNullableFields(
     parseDateFields(schema, resource, patch),
     schema.resources.find((entry) => entry.name === resource),
   );
-  for (const key of Object.keys(patch)) {
-    if (!(key in normalized)) removed.push(key);
-  }
   const row = { ...remoteRow, ...normalized };
-  for (const key of removed) delete row[key];
+  for (const key of Object.keys(patch)) {
+    if (!(key in normalized)) delete row[key];
+  }
   return row;
 }
 
-function storedRepresentation(
-  row: Record<string, unknown>,
-): Record<string, unknown> {
-  const stored: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(row)) {
-    stored[key] = value instanceof Date ? value.getTime() : value;
+/** Single conditions of a filter's top-level conjunction. */
+function filterConjuncts(filter: Record<string, unknown>): Record<string, unknown>[] {
+  const conjuncts: Record<string, unknown>[] = [];
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === "$and" && Array.isArray(value)) {
+      for (const sub of value) if (isPlainRecord(sub)) conjuncts.push(...filterConjuncts(sub));
+    } else {
+      conjuncts.push({ [key]: value });
+    }
   }
-  return stored;
+  return conjuncts;
+}
+
+function filterFieldNames(filter: unknown, names = new Set<string>()): Set<string> {
+  if (!isPlainRecord(filter)) return names;
+  for (const [key, value] of Object.entries(filter)) {
+    if ((key === "$and" || key === "$or") && Array.isArray(value)) {
+      for (const sub of value) filterFieldNames(sub, names);
+    } else {
+      names.add(key.split(".")[0]);
+    }
+  }
+  return names;
 }
 
 /**
- * True only when the row's own pending writes make a matching row stop
- * matching. Fields the server did not project are filled from the cached
- * copy for this check only; anything it cannot evaluate keeps the row.
+ * The server returned the row, so it matched before the pending writes. It
+ * stops matching only when a condition on a field those writes changed now
+ * fails. Fields the server did not project come from the cached copy for
+ * this check only; a condition it cannot evaluate keeps the row.
  */
 function pendingWritesStopMatch(
   filters: Record<string, unknown> | undefined,
   resource: string,
-  base: Record<string, unknown>,
+  row: Record<string, unknown>,
   written: ReadonlyMap<string, unknown>,
 ): boolean {
   if (!filters) return false;
-  const before = storedRepresentation(base);
-  const after = { ...before };
-  for (const [key, value] of written) {
-    if (value === undefined) delete after[key];
-    else after[key] = value instanceof Date ? value.getTime() : value;
+  const after: Record<string, unknown> = {};
+  for (const [key, value] of [...Object.entries(row), ...written]) {
+    after[key] = value instanceof Date ? value.getTime() : value;
   }
-  try {
-    const normalized = normalizeFilterOps(filters);
-    return evaluateFilter(before, normalized, { resource })
-      && !evaluateFilter(after, normalized, { resource });
-  } catch {
-    return false;
-  }
+  return filterConjuncts(normalizeFilterOps(filters)).some((conjunct) => {
+    if (![...filterFieldNames(conjunct)].some((name) => written.has(name))) return false;
+    try {
+      return !evaluateFilter(after, conjunct, { resource });
+    } catch {
+      return false;
+    }
+  });
 }
 
-/** Target ids a pending unrelate removed from the queried record's relation. */
-function pendingUnrelatedIds(
+/**
+ * Whether pending relates and unrelates leave each target linked to the
+ * queried record, in changelog order, whichever side recorded them.
+ */
+function pendingRelationLinks(
+  schema: DatafnSchema,
   changes: readonly DatafnChangelogEntry[],
   query: Record<string, unknown>,
-): Set<string> {
-  const ids = new Set<string>();
+  match: { relation: DatafnRelationSchema; direction: string },
+): Map<string, boolean> {
+  const links = new Map<string, boolean>();
   for (const { mutation } of changes) {
-    const payload = isPlainRecord(mutation.relations)
-      ? mutation.relations[query.relation as string]
-      : undefined;
-    if (
-      mutation.resource !== query.resource
-      || mutation.id !== query.id
-      || payload === undefined
-    ) {
-      continue;
-    }
-    for (const { toId } of normalizeRelationPayload(payload)) {
-      if (mutation.operation === "unrelate") ids.add(toId);
-      else if (mutation.operation === "relate") ids.delete(toId);
+    for (const edge of pendingRelationEdges(schema, mutation)) {
+      if (edge.relation !== match.relation) continue;
+      const forward = match.direction === "forward";
+      const [parentId, targetId] = forward ? [edge.fromId, edge.toId] : [edge.toId, edge.fromId];
+      if (parentId === query.id) links.set(targetId, edge.linked);
     }
   }
-  return ids;
-}
-
-function pendingEntriesByRow(
-  changes: readonly DatafnChangelogEntry[],
-  rowResource: (id: string) => string | undefined,
-): Map<string, DatafnChangelogEntry[]> {
-  const byRow = new Map<string, DatafnChangelogEntry[]>();
-  for (const change of changes) {
-    const { resource, id } = change.mutation;
-    if (typeof id !== "string" || resource !== rowResource(id)) continue;
-    const entries = byRow.get(id);
-    if (entries) entries.push(change);
-    else byRow.set(id, [change]);
-  }
-  return byRow;
+  return links;
 }
 
 /** The shown row, or null when its pending changes remove it from the page. */
@@ -492,17 +553,13 @@ function overlayPendingRow(
   row: Record<string, unknown>,
   entries: readonly DatafnChangelogEntry[],
   cached: Record<string, unknown> | null,
+  pageFilters: Record<string, unknown> | undefined,
 ): Record<string, unknown> | null {
   const resource = entries[0].mutation.resource as string;
   const { deleted, written } = foldPendingRowEffect(schema, row, entries);
   if (deleted) return null;
-  // A relation page lists target records; only their capability filters apply.
   const membershipQuery = injectLocalCapabilityAutoFilters(
-    {
-      resource,
-      metadata: query.metadata,
-      ...(typeof query.relation === "string" ? {} : { filters: query.filters }),
-    },
+    { resource, metadata: query.metadata, filters: pageFilters },
     schema,
   );
   const filters = isPlainRecord(membershipQuery.filters) ? membershipQuery.filters : undefined;
@@ -516,11 +573,29 @@ function rowIdOf(row: unknown): string | undefined {
 }
 
 /**
+ * The filter a relation page's targets must keep matching: a target whose
+ * own foreign key points at the queried record has to keep pointing at it.
+ */
+function relationPageFilters(
+  query: Record<string, unknown>,
+  match: { relation: DatafnRelationSchema; direction: string },
+): Record<string, unknown> | undefined {
+  const { relation, direction } = match;
+  if (relation.type === "many-one" && direction === "inverse") {
+    return { [relationFkFieldForManyOne(relation)]: query.id };
+  }
+  if (relation.type === "one-many" && direction === "forward") {
+    return { [relationFkFieldForOneMany(relation)]: query.id };
+  }
+  return undefined;
+}
+
+/**
  * A limited first page keeps its remote rows, order and cursor: adding local
  * rows would push remote rows past the remote nextCursor, so they would be
  * skipped. A row on the page with pending local changes is shown as the
  * remote row plus the effects of those changes in changelog order; it is
- * removed only by a pending delete or unrelate, or when the fields those
+ * removed only by a pending delete or unlink, or when the fields those
  * changes wrote make it stop matching the query. The cached local copy is
  * never a source of shown values.
  */
@@ -544,10 +619,10 @@ async function overlayPendingRowsOnLimitedPage(
         : (query.resource as string);
 
     const changes = await listPendingChanges(storage);
-    const unrelated = isRelationPage ? pendingUnrelatedIds(changes, query) : new Set<string>();
-    const pendingByRow = pendingEntriesByRow(changes, rowResource);
+    const links = match ? pendingRelationLinks(schema, changes, query, match) : new Map();
+    const pendingByRow = pendingEntriesByRow(schema, changes, rowResource);
     const pendingRows = remoteData.filter((row) => pendingByRow.has(rowIdOf(row) ?? ""));
-    if (pendingRows.length === 0 && !remoteData.some((row) => unrelated.has(rowIdOf(row) ?? ""))) {
+    if (pendingRows.length === 0 && !remoteData.some((row) => links.get(rowIdOf(row)) === false)) {
       return remoteResult;
     }
     // Cached copies only fill fields the server did not project, for matching.
@@ -556,14 +631,17 @@ async function overlayPendingRowsOnLimitedPage(
       const resource = pendingByRow.get(id)?.[0].mutation.resource as string;
       return [id, await storage.getRecord(resource, id)] as const;
     })));
+    const pageFilters = match
+      ? relationPageFilters(query, match)
+      : (isPlainRecord(query.filters) ? query.filters : undefined);
 
     const data: unknown[] = [];
     for (const row of remoteData) {
       const id = rowIdOf(row);
       const entries = id === undefined ? undefined : pendingByRow.get(id);
-      if (id !== undefined && unrelated.has(id)) continue;
+      if (id !== undefined && links.get(id) === false) continue;
       const shown = entries && isPlainRecord(row)
-        ? overlayPendingRow(schema, query, row, entries, cachedRows.get(id as string) ?? null)
+        ? overlayPendingRow(schema, query, row, entries, cachedRows.get(id as string) ?? null, pageFilters)
         : row;
       if (shown !== null) data.push(shown);
     }
