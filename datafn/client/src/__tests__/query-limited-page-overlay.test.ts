@@ -2792,4 +2792,75 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(stripped, treeSchema, { resource: "goals", operation: "relate", id: "goal:q", relations: { children: [{ $ref: "goal:x", unknownMeta: true }] } });
     expect(await page(stripped, treeSchema, children, [child])).toEqual([]);
   });
+
+  it("hydration: a relink through a polymorphic endpoint moves only the first resource the writer updates", async () => {
+    const polymorphic = {
+      resources: [treeSchema.resources[0], { ...treeSchema.resources[0], name: "otherGoals" }],
+      relations: [...treeSchema.relations!, { ...treeSchema.relations![0], from: ["otherGoals", "goals"], to: ["otherGoals", "goals"], relation: "subtasks", inverse: "owner" }],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["goals", "otherGoals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, polymorphic, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p-goal:q" } });
+    // The server writes and cascades otherGoals/goal:q only, so goals/goal:x keeps its tail.
+    await offlineWrite(storage, polymorphic, { resource: "otherGoals", operation: "relate", id: "goal:q", relations: { owner: "goal:c" } });
+    expect(await page(storage, polymorphic, children, [child])).toEqual([]);
+  });
+
+  it("hydration: a relink that keeps its record's held cascade prefix keeps the tails below it", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c-goal:q" } });
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: "goal:q", relations: { parent: "goal:c" } });
+    const sibling = { ...child, id: "goal:q", title: "Q" };
+    expect((await page(storage, treeSchema, children, [child, sibling])).map((row) => row.id)).toEqual(["goal:q"]);
+  });
+
+  it("hydration: a cascaded delete decides its record's later state; a write decides only the state field it names", async () => {
+    const cascading = {
+      resources: [
+        { name: "orgs", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        { name: "projects", version: 1, fields: [
+          { name: "name", type: "string", required: false },
+          { name: "orgId", type: "string", required: false, nullable: true },
+          { name: "isArchived", type: "boolean", required: false, default: true },
+          { name: "trashedAt", type: "string", required: false, nullable: true },
+        ] },
+        { name: "goals", version: 1, fields: [...withPath({}).resources[0].fields, { name: "projectId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "projects", type: "many-one", relation: "project", inverse: "goals", fkField: "projectId", inheritsInactive: true },
+        { from: "projects", to: "orgs", type: "many-one", relation: "org", inverse: "projects", fkField: "orgId", onDelete: "cascade" },
+      ],
+    } as DatafnSchema;
+    const rows = [{ id: "goal:y", title: "Y", parentId: "goal:c", projectId: "project:p" }];
+    const omitted = { ...children, omit: ["parentPath"] };
+    const fresh = async (): Promise<MemoryStorageAdapter> => {
+      const storage = new MemoryStorageAdapter(["orgs", "projects", "goals"]);
+      await storage.setHydrationState("goals", "hydrating");
+      return storage;
+    };
+    // Server: deleting org:o cascades to project:p, so the next merge creates it with isArchived defaulting to true.
+    const cascaded = await fresh();
+    await offlineWrite(cascaded, cascading, { resource: "orgs", operation: "merge", id: "org:o", record: { name: "O" } });
+    await offlineWrite(cascaded, cascading, { resource: "projects", operation: "merge", id: "project:p", record: { orgId: "org:o" } });
+    await offlineWrite(cascaded, cascading, { resource: "orgs", operation: "delete", id: "org:o" });
+    await offlineWrite(cascaded, cascading, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P2" } });
+    await offlineWrite(cascaded, cascading, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect(await page(cascaded, cascading, omitted, rows)).toEqual([]);
+    // Server: project:p exists and stays active; writing trashedAt says nothing about isArchived.
+    const trashedOnly = await fresh();
+    await offlineWrite(trashedOnly, cascading, { resource: "projects", operation: "merge", id: "project:p", record: { trashedAt: null } });
+    await offlineWrite(trashedOnly, cascading, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect((await page(trashedOnly, cascading, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+  });
+
+  it("hydration: relation metadata is judged as the sync engine sends it, stripped under a later forward name", async () => {
+    const shadowed = {
+      resources: treeSchema.resources,
+      relations: [...treeSchema.relations!, { from: "goals", to: "goals", type: "many-one", relation: "parent", inverse: "dependents", fkField: "dependsOnId" }],
+    } as DatafnSchema;
+    const storage = await goals();
+    await offlineWrite(storage, shadowed, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: { $ref: "goal:q", unknownMeta: true } } });
+    expect(await page(storage, shadowed, children, [child])).toEqual([]);
+  });
 });
