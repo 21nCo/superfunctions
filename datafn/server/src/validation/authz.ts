@@ -675,6 +675,12 @@ function findOwnForeignKeyField(
       ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
       : undefined;
   }
+  // many-one / one-many: a polymorphic endpoint makes link and unlink write a
+  // resource discriminator next to the FK, so the alias needs both endpoints
+  // to be a single resource; otherwise the relation name must be granted.
+  const singleEndpoints =
+    endpointList(relation.from).length === 1 && endpointList(relation.to).length === 1;
+  if (!singleEndpoints) return undefined;
   if (relation.type === "many-one" && direction === "forward") {
     return relationFkFieldForManyOne(relation);
   }

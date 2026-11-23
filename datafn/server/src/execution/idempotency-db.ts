@@ -20,18 +20,22 @@ import type { DatafnLogger } from "../logger.js";
  * Adapter-backed idempotency store for durable deduplication
  */
 export class DbIdempotencyStore implements IdempotencyStore {
-  private ensured = false;
+  /**
+   * Shared by every scoped view of the same adapter, so the table is ensured
+   * once per server rather than once per request-scoped view.
+   */
+  private readiness: { ensured: boolean };
   private logger?: DatafnLogger;
 
   constructor(
     private db: Adapter,
     private namespace: string = "datafn",
     logger?: DatafnLogger,
-    ensured = false,
+    ensured: boolean | { ensured: boolean } = false,
     private actorId?: string,
   ) {
     this.logger = logger;
-    this.ensured = ensured;
+    this.readiness = typeof ensured === "boolean" ? { ensured } : ensured;
   }
 
   withDb(db: Adapter): IdempotencyStore {
@@ -40,7 +44,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // transaction (which implicitly commits on MySQL).
     return carryIdempotencyScope(
       this,
-      new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured, this.actorId),
+      // A copy, not the shared state: a transaction-bound view that ensures
+      // the table could be rolled back, which must not mark the root ready.
+      new DbIdempotencyStore(db, this.namespace, this.logger, this.readiness.ensured, this.actorId),
     );
   }
 
@@ -50,7 +56,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
    */
   scoped(scope: IdempotencyScope): IdempotencyStore {
     return markIdempotencyScope(this, scope, () =>
-      new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.ensured, scope.actorId),
+      new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.readiness, scope.actorId),
     );
   }
 
@@ -59,9 +65,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
   }
 
   async ensureReady(): Promise<void> {
-    if (!this.ensured) {
+    if (!this.readiness.ensured) {
       await ensureInternalTable(this.db, "__datafn_idempotency");
-      this.ensured = true;
+      this.readiness.ensured = true;
     }
   }
 

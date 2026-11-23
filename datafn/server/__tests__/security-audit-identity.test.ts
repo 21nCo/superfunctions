@@ -3,7 +3,7 @@
  * DFN-01 (idempotency shared across tenants), DFN-04 (client-supplied actorId
  * on sync routes) and DFN-06 (relation write policy never enforced).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../src/server.js";
 import { DbIdempotencyStore } from "../src/execution/idempotency-db.js";
@@ -558,6 +558,33 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     await server.close();
   });
 
+  it("a many-one relation with a polymorphic target does not accept the FK field name as a relation grant", async () => {
+    const polymorphic = {
+      resources: [
+        {
+          name: "tasks",
+          version: 1,
+          fields: [
+            { name: "title", type: "string", required: true },
+            { name: "ownerId", type: "string", required: false, nullable: true },
+            { name: "ownerResource", type: "string", required: false, nullable: true },
+          ],
+          permissions: { read: { fields: ["title", "ownerId"] }, write: { fields: ["title", "ownerId"] } },
+        },
+        { name: "goals", version: 1, fields: [{ name: "name", type: "string", required: true }], permissions: { read: { fields: ["name"] }, write: { fields: ["name"] } } },
+        { name: "teams", version: 1, fields: [{ name: "name", type: "string", required: true }], permissions: { read: { fields: ["name"] }, write: { fields: ["name"] } } },
+      ],
+      relations: [{ from: "tasks", to: ["goals", "teams"], type: "many-one", relation: "owner", inverse: "tasks", fkField: "ownerId" }],
+    };
+    const { db, server, call } = await fkHarness(polymorphic);
+    await db.create({ model: "tasks", data: { __ns: "tenant:a", id: "t1", title: "T" } } as any);
+    await db.create({ model: "goals", data: { __ns: "tenant:a", id: "goals:g1", name: "G" } } as any);
+    const res = await call({ resource: "tasks", version: 1, operation: "relate", id: "t1", relations: { owner: "goals:g1" } });
+    // Linking also writes ownerResource, which a grant on ownerId alone does not cover.
+    expect(res.status).toBe(403);
+    await server.close();
+  });
+
   it("an htree parent relation is writable when write.fields lists its FK field", async () => {
     const { db, server, call } = await fkHarness(fkSchema);
     await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);
@@ -594,6 +621,17 @@ describe("Idempotency record ids and in-process search context", () => {
     expect(idempotencyRecordId("a", undefined, "c", "d")).not.toBe(idempotencyRecordId("a", "null", "c", "d"));
   });
 
+  it("scoped views of one DbIdempotencyStore ensure the table once", async () => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const ensureTable = vi.spyOn(db.internal, "ensureTable");
+    const root = new DbIdempotencyStore(db as any);
+    await root.scoped!({ namespace: "tenant:a", actorId: "alice" }).get("c", "m1");
+    await root.scoped!({ namespace: "tenant:b", actorId: "bob" }).get("c", "m2");
+    await root.get("c", "m3");
+    expect(ensureTable).toHaveBeenCalledTimes(1);
+  });
+
   it("server.search() without ctx uses a static configured context, and runs anonymous without one", async () => {
     const db = memoryAdapter();
     await db.initialize?.();
@@ -612,6 +650,21 @@ describe("Idempotency record ids and in-process search context", () => {
     });
     await expect(staticServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
     await staticServer.close();
+
+    // The static context's actor applies only to its own namespace.
+    const getActorId = vi.fn((ctx: Ctx & { userId?: string }) => ctx.userId);
+    const scopedServer = await createDatafnServer<Ctx & { userId?: string }>({
+      schema,
+      database: db,
+      searchProvider,
+      context: { ns: "tenant:a", userId: "alice" },
+      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId },
+    });
+    await scopedServer.search({ query: "x", namespace: "tenant:b" });
+    expect(getActorId).not.toHaveBeenCalled();
+    await scopedServer.search({ query: "x", namespace: "tenant:a" });
+    expect(getActorId).toHaveBeenCalledTimes(1);
+    await scopedServer.close();
 
     const fnServer = await createDatafnServer<Ctx & { userId?: string }>({
       schema,
