@@ -112,7 +112,7 @@ Apple sends the user's name on the very first authorization only — subsequent 
 
 ## Email and verification
 
-authfn takes the email, and whether it is verified, only from Apple's identity token, never from the `user` value. That value, which Apple posts on the first authorization (and the `user` object the native complete route accepts), is not signed, so authfn reads only the name from it and ignores any `email` in it. Where the token comes from decides how it is checked:
+authfn takes the email, and whether it is verified, only from Apple's identity token, never from the `user` value. That value, which Apple posts on the first authorization (and the `user` object the native complete route accepts), is not signed, so authfn never takes an email from it: the web `form_post` identity-token path and the native route read only the name from it, and the code-exchange path ignores it entirely. Where the token comes from decides how it is checked:
 
 - **Code exchange** (`/social/callback/apple` with a `code`): the token is the one Apple's token endpoint returns to the server over TLS for that code.
 - **Web `form_post` identity token** (`/social/callback/apple` with an `id_token`) and the **native route** (`/social/native/apple/complete`): the token arrives through the client, so authfn checks its signature against Apple's keys, its issuer and audience, and that its nonce matches the sign-in it started.
