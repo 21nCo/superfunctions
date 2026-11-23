@@ -106,19 +106,30 @@ export interface McpFnBoundedInventory<T> {
 
 const redactionOmissions = new WeakSet<object>();
 
-let fallbackRequestSequence = 0;
+// One sequence per process, shared through the global symbol registry by every
+// copy of the client (the ESM and CJS builds, or two installed versions).
+const fallbackSequenceKey = Symbol.for("@mcpfn/client/fallback-request-sequence");
+
+function nextFallbackRequestSequence(): number {
+  const registry = globalThis as { [fallbackSequenceKey]?: unknown };
+  const current = registry[fallbackSequenceKey];
+  const next = (typeof current === "number" && Number.isSafeInteger(current) ? current : 0) + 1;
+  registry[fallbackSequenceKey] = next;
+  return next;
+}
 
 /** Web Crypto UUIDs work on Node.js 19+, Cloudflare Workers and browsers
  * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
  * only behind a flag; there, request IDs are correlation IDs built from the
- * time, a per-bundle sequence and a random component, so the ESM and CJS
- * copies of the client loaded in one process do not repeat each other's IDs. */
+ * time, a process-wide sequence shared by every loaded copy of the client
+ * (so the ESM and CJS builds never repeat each other's IDs) and a random
+ * component. */
 function defaultRequestId(): string {
   const webCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
-  fallbackRequestSequence += 1;
+  const sequence = nextFallbackRequestSequence();
   const random = Math.floor(Math.random() * 0x100000000).toString(36);
-  return `mcpfn-${Date.now().toString(36)}-${fallbackRequestSequence.toString(36)}-${random}`;
+  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${random}`;
 }
 
 /** Draft passed to `@cfworker/json-schema` on the edge, chosen to validate tool

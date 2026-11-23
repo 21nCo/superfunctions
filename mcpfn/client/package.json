@@ -44,7 +44,7 @@
   },
   "files": ["dist", "!dist/.build-stamp.json", "README.md", "CHANGELOG.md"],
   "scripts": {
-    "build": "tsup && node scripts/build-stamp.mjs write",
+    "build": "node scripts/build.mjs",
     "clean": "node --input-type=module -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "lint": "tsc --noEmit",
     "test": "vitest run",

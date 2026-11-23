@@ -1,7 +1,7 @@
 // The workerd and packed-package tests read dist. These tests prove that the
 // dist they read was built from the current sources, and that a stale dist is
 // rebuilt or rejected rather than tested.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildWithStamp,
   distIsFresh,
   ensureFreshDist,
   requiredArtifacts,
@@ -165,6 +166,54 @@ describe("@mcpfn/client build stamp", () => {
     expect(distIsFresh(root)).toBe(true);
 
     unlinkSync(path.join(root, "dist", "stub-unavailable.cjs"));
+    expect(distIsFresh(root)).toBe(false);
+  });
+
+  it("treats a replaced, missing or extra emitted file as stale", () => {
+    const root = fixturePackage();
+    writeFileSync(path.join(root, "dist", "index.js"), "export const value = 1;\n");
+    writeFileSync(path.join(root, "dist", "index.js.map"), "{}\n");
+    writeBuildStamp(root);
+    expect(distIsFresh(root)).toBe(true);
+
+    writeFileSync(path.join(root, "dist", "index.js"), "export const value = 9;\n");
+    expect(distIsFresh(root)).toBe(false);
+    writeBuildStamp(root);
+
+    unlinkSync(path.join(root, "dist", "index.js.map"));
+    expect(distIsFresh(root)).toBe(false);
+    writeBuildStamp(root);
+
+    writeFileSync(path.join(root, "dist", "leftover.js"), "export {};\n");
+    expect(distIsFresh(root)).toBe(false);
+
+    // A stamp without recorded artifacts (an older stamp format) is stale too.
+    writeFileSync(
+      path.join(root, stampFile),
+      JSON.stringify({ sourceDigest: sourceDigest(root) }),
+    );
+    expect(distIsFresh(root)).toBe(false);
+  });
+
+  it("stamps a build with the inputs it started from", () => {
+    const root = fixturePackage();
+    buildWithStamp(root, () => {
+      writeFileSync(path.join(root, "dist", "index.js"), "export const value = 1;\n");
+    });
+    expect(distIsFresh(root)).toBe(true);
+  });
+
+  it("fails a build whose inputs changed while it ran and leaves no stamp", () => {
+    const root = fixturePackage();
+    writeBuildStamp(root);
+    expect(() =>
+      buildWithStamp(root, () => {
+        writeFileSync(path.join(root, "dist", "index.js"), "export const value = 1;\n");
+        // An edit saved while tsup is still emitting.
+        writeFileSync(path.join(root, "src", "index.ts"), "export const value = 2;\n");
+      }),
+    ).toThrow(/inputs changed during the build/);
+    expect(existsSync(path.join(root, stampFile))).toBe(false);
     expect(distIsFresh(root)).toBe(false);
   });
 

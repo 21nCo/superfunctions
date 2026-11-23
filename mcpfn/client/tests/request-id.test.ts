@@ -34,9 +34,11 @@ describe("default request IDs", () => {
   });
 
   it("do not collide across separately loaded copies of the client in one millisecond", async () => {
-    // An app can load both the ESM and the CJS build; each has its own sequence.
+    // An app can load both the ESM and the CJS build. With the time and the
+    // random component fixed, only the process-wide sequence keeps them apart.
     vi.stubGlobal("crypto", undefined);
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     try {
       const ids: string[] = [];
       for (let copy = 0; copy < 2; copy++) {

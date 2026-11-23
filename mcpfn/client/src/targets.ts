@@ -61,6 +61,9 @@ export function stdioTarget(options: StdioTargetOptions): McpFnTarget {
       // import never holds the client in the closing state.
       if (context.signal?.aborted) throw abortReason(context.signal);
       const stdio = await untilAborted(loadStdioTarget(), context.signal);
+      // The import can resolve just before an abort that lands ahead of this
+      // continuation: a cancelled open still never spawns the server.
+      if (context.signal?.aborted) throw abortReason(context.signal);
       return stdio.stdioTarget(options).open(context);
     },
   });

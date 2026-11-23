@@ -74,4 +74,23 @@ describe("deprecated main-entry stdioTarget", () => {
     ).rejects.toBe(reason);
     expect(loader.loadStdioTarget).not.toHaveBeenCalled();
   });
+
+  it("does not open the stdio target when the abort lands after the import resolves", async () => {
+    const controller = new AbortController();
+    const reason = new Error("aborted after the import resolved");
+    loader.loadStdioTarget.mockImplementationOnce(() => {
+      const loaded = Promise.resolve({ stdioTarget: () => ({ open: loader.open }) });
+      // Runs before the open's own reaction to the import, but aborts only
+      // after the import has already settled the race with the signal.
+      void loaded.then(() => queueMicrotask(() => controller.abort(reason)));
+      return loaded;
+    });
+    const target = stdioTarget({ command: process.execPath });
+
+    await expect(
+      target.open({ requestId: "req-late-abort", signal: controller.signal, diagnostic: () => {} }),
+    ).rejects.toBe(reason);
+    expect(loader.loadStdioTarget).toHaveBeenCalledTimes(1);
+    expect(loader.open).not.toHaveBeenCalled();
+  });
 });

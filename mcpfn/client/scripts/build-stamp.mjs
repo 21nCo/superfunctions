@@ -2,14 +2,14 @@
 //
 // The workerd and packed-package tests exercise the built package, so a dist
 // left over from older sources would let them pass against stale output.
-// `npm run build` writes dist/.build-stamp.json with a digest of every build
-// input; the test setup compares it with the current sources and rebuilds (or
-// fails) when they differ.
+// `npm run build` (scripts/build.mjs) writes dist/.build-stamp.json with a
+// digest of every build input, taken before tsup runs and checked again after
+// it, and a sha256 of every emitted file. The test setup compares the stamp with
+// the current sources and dist, and rebuilds (or fails) when they differ.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const stampFile = path.join("dist", ".build-stamp.json");
 
@@ -95,10 +95,51 @@ export function sourceDigest(root) {
   return hash.digest("hex");
 }
 
-export function writeBuildStamp(root) {
+function sha256(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+/** sha256 of every file under dist except the stamp, keyed by posix path. */
+export function distArtifacts(root) {
+  const stamp = stampFile.split(path.sep).join("/");
+  return Object.fromEntries(
+    listFiles(root, "dist")
+      .map((relative) => relative.split(path.sep).join("/"))
+      .filter((relative) => relative !== stamp)
+      .map((relative) => [relative, sha256(path.join(root, relative))]),
+  );
+}
+
+/** Records the build inputs' digest (by default the current one) and the
+ * emitted artifacts. */
+export function writeBuildStamp(root, digest = sourceDigest(root)) {
   writeFileSync(
     path.join(root, stampFile),
-    `${JSON.stringify({ sourceDigest: sourceDigest(root) }, null, 2)}\n`,
+    `${JSON.stringify({ sourceDigest: digest, artifacts: distArtifacts(root) }, null, 2)}\n`,
+  );
+}
+
+/** Runs `build` and stamps its output with the digest of the inputs it
+ * started from. If an input changed while it ran, the output may mix old and
+ * new sources: the build fails and leaves no stamp, so the dist counts as
+ * stale. */
+export function buildWithStamp(root, build) {
+  rmSync(path.join(root, stampFile), { force: true });
+  const before = sourceDigest(root);
+  build();
+  if (sourceDigest(root) !== before) {
+    rmSync(path.join(root, stampFile), { force: true });
+    throw new Error("@mcpfn/client build inputs changed during the build; run the build again");
+  }
+  writeBuildStamp(root, before);
+}
+
+function sameArtifacts(recorded, current) {
+  if (!recorded || typeof recorded !== "object") return false;
+  const names = Object.keys(current);
+  return (
+    Object.keys(recorded).length === names.length &&
+    names.every((name) => recorded[name] === current[name])
   );
 }
 
@@ -112,6 +153,9 @@ export function distIsFresh(root) {
   }
   // A digest failure (an inlined dependency that does not resolve) throws.
   if (stamp?.sourceDigest !== sourceDigest(root)) return false;
+  // The emitted files must be exactly the ones the build recorded: none
+  // changed, missing or added since.
+  if (!sameArtifacts(stamp.artifacts, distArtifacts(root))) return false;
   // A matching stamp is not enough if an emitted entry point is missing.
   return requiredArtifacts(root).every((relative) => existsSync(path.join(root, relative)));
 }
@@ -130,10 +174,3 @@ export function ensureFreshDist(root, build) {
   return "rebuilt";
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] !== "write") {
-    console.error("usage: node scripts/build-stamp.mjs write");
-    process.exit(2);
-  }
-  writeBuildStamp(process.cwd());
-}

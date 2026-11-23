@@ -486,11 +486,8 @@ await server.serveStdio();
   writeFileSync(roundtrip, String.raw`
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import {
-  createMcpFnClient,
-  stdioTarget,
-  streamableHttpTarget,
-} from "@mcpfn/client";
+import { createMcpFnClient, streamableHttpTarget } from "@mcpfn/client";
+import { stdioTarget } from "@mcpfn/client/stdio";
 import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core";
 
 async function call(target) {
