@@ -960,7 +960,7 @@ describe("Limited first page: pending changes replayed by the offline writer", (
     ]);
   });
 
-  it("replace-discards-preserved-effects: a replace keeps an earlier pending relate", async () => {
+  it("replace-discards-preserved-effects: a replace clears a declared foreign key, as the server's buildReplaceRecord does", async () => {
     const storage = await hydrating("notes");
     await storage.upsertRecord("notes", { id: "note:1", title: "A", folderId: "folder:1" });
     await offlineWrite(storage, folderSchema, {
@@ -969,13 +969,13 @@ describe("Limited first page: pending changes replayed by the offline writer", (
     await offlineWrite(storage, folderSchema, {
       resource: "notes", operation: "replace", id: "note:1", record: { title: "B" },
     });
-    // The server's replace changes the payload fields only; the relate's key stays.
+    // buildReplaceRecord resets every declared, writable field the payload leaves out.
     const data = await page(
       storage, folderSchema,
       { resource: "notes" },
       [{ id: "note:1", title: "A", folderId: "folder:1" }],
     );
-    expect(data).toEqual([{ id: "note:1", title: "B", folderId: "folder:2" }]);
+    expect(data).toEqual([{ id: "note:1", title: "B" }]);
   });
 
   it("replace-discards-preserved-effects: a replace after a pending trash keeps the row trashed", async () => {
@@ -1031,13 +1031,20 @@ describe("Limited first page: pending changes replayed by the offline writer", (
     expect(data[0].title).toBe("Edited");
   });
 
-  it("replace-discards-preserved-effects: a replace keeps a note on its folder's page", async () => {
+  it("replace-discards-preserved-effects: a replace keeps an undeclared foreign key and the note on its folder's page", async () => {
+    const generatedFkSchema: DatafnSchema = {
+      ...folderSchema,
+      resources: folderSchema.resources.map((resource) =>
+        resource.name === "notes"
+          ? { ...resource, fields: resource.fields.filter((field) => field.name !== "folderId") }
+          : resource),
+    };
     const storage = await hydrating("notes", "folders");
-    await offlineWrite(storage, folderSchema, {
+    await offlineWrite(storage, generatedFkSchema, {
       resource: "notes", operation: "replace", id: "note:1", record: { title: "Renamed" },
     });
     const data = await page(
-      storage, folderSchema,
+      storage, generatedFkSchema,
       { resource: "folders", id: "folder:1", relation: "notes" },
       [{ id: "note:1", title: "A" }],
     );
@@ -1164,5 +1171,84 @@ describe("Limited first page: pending changes replayed by the offline writer", (
       [{ id: "note:1", title: "A", folderId: "folder:1", isAncestorInactive: true }],
     );
     expect(data).toEqual([{ id: "note:1", title: "B", folderId: "folder:1", isAncestorInactive: true }]);
+  });
+
+  it("replace-discards-preserved-effects: a replace resets writable archive state and clears unselected filtered fields", async () => {
+    const archiveSchema: DatafnSchema = {
+      ...folderSchema,
+      resources: folderSchema.resources.map((resource) =>
+        resource.name === "notes"
+          ? {
+            ...resource,
+            capabilities: ["archivable"],
+            fields: [...resource.fields, { name: "note", type: "string", required: false }],
+          }
+          : resource),
+    };
+    const storage = await hydrating("notes");
+    await storage.upsertRecord("notes", { id: "note:1", title: "A" });
+    await offlineWrite(storage, archiveSchema, { resource: "notes", operation: "archive", id: "note:1" });
+    await offlineWrite(storage, archiveSchema, {
+      resource: "notes", operation: "replace", id: "note:1", record: { title: "B" },
+    });
+    const rows = [{ id: "note:1", title: "A" }, { id: "note:2", title: "C" }];
+    expect(await page(storage, archiveSchema, { resource: "notes" }, rows))
+      .toEqual([{ id: "note:1", title: "B", isArchived: false }, { id: "note:2", title: "C" }]);
+    // The server matched note:1 on its unselected note; the replace cleared it.
+    expect((await page(
+      storage, archiveSchema,
+      { resource: "notes", select: ["id", "title"], filters: { note: "open" } },
+      rows,
+    )).map((row) => row.id)).toEqual(["note:2"]);
+  });
+
+  it("filter-dependencies: an explicit nested $eq keeps a row a sibling merge leaves matching", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { note: "x" } },
+    });
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters: { "profile.status": { $eq: "open" } } },
+      [{ id: "note:1", title: "A", profile: { status: "open" } }],
+    );
+    expect(data).toEqual([{ id: "note:1", title: "A", profile: { status: "open", note: "x" } }]);
+  });
+
+  it("projection-shape: the last token decides between a scalar relation id and its expansion", async () => {
+    const ownerSchema: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        { name: "notes", version: 1, fields: [{ name: "title", type: "string", required: false }] },
+      ],
+      relations: [{ from: "notes", to: "users", type: "many-one", relation: "owner", fkField: "owner" }],
+    };
+    const storage = new MemoryStorageAdapter(["users", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:owner", timestampMs: 1,
+      mutation: { resource: "notes", operation: "relate", id: "note:1", relations: { owner: "user:2" } },
+    });
+    expect(await page(storage, ownerSchema, { resource: "notes", select: ["owner.*", "owner"] }, [{ id: "note:1", owner: "user:1" }]))
+      .toEqual([{ id: "note:1", owner: "user:2" }]);
+  });
+
+  it("malformed-entry-disables-page: an undecodable value leaves other edits to the same row", async () => {
+    const storage = new MemoryStorageAdapter(["tasks"]);
+    await storage.setHydrationState("tasks", "hydrating");
+    await pendingChange(storage, "mutation:bad-date", {
+      operation: "merge", id: "task:1", record: { dueAt: "not-a-date" },
+    });
+    await pendingChange(storage, "mutation:edit", {
+      operation: "merge", id: "task:1", record: { title: "Edited" },
+    });
+    const result = await executeQuery(
+      remoteReturning({ data: [{ id: "task:1", title: "A" }], nextCursor: "next" }),
+      { resource: "tasks", limit: 1 },
+      storage,
+      [],
+      schema,
+    );
+    expect(result).toEqual({ data: [{ id: "task:1", title: "Edited" }], nextCursor: "next" });
   });
 });
