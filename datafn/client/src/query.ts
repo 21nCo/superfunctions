@@ -362,14 +362,13 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_not_empty".split(" "));
+const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_empty is_not_empty".split(" "));
 
 /**
  * Whether classifyQuery certainly gives a plain list FULL_PUSHDOWN (top-level
  * omit only): no search, grouping, temporal, relation or nested select token,
- * `$or`, dotted, relation or quantified key, operator the filter compiler cannot
- * push (`$is_not_empty` on scalar fields only), object operand (whose `in` lists the
- * planner counts), over 30,000 `$in` values or private shareable resource (access filter).
+ * `$or`, dotted, relation or quantified key, unpushable operator or object
+ * operand, over 30,000 `$in` values, 16 branches or a private shareable resource.
  */
 function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
   const resource = String(query.resource);
@@ -380,18 +379,25 @@ function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>):
   if (stringTokens(query.select).some((token) => token !== "*"
     && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
   let values = 0;
+  let groups = 0;
   const pushes = (filter: unknown): boolean => isPlainRecord(filter) && Object.entries(filter).every(([key, value]) => {
     if (key === "$and") return Array.isArray(value) && value.every(pushes);
     if (key.startsWith("$") || key.includes(".") || findRelationMatch(schema, resource, key)) return false;
     const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
-    const scalar = /^(string|number|boolean)$/.test(String(declaredFields(schema, resource).fields.get(key)?.type));
+    const type = String(declaredFields(schema, resource).fields.get(key)?.type);
     return Object.entries(ops).every(([op, operand]) => {
       if (Array.isArray(operand)) values += operand.length;
       const name = op.replace(/^\$/, "");
-      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (scalar || name !== "is_not_empty");
+      const plain = !isPlainRecord(operand) && PUSHDOWN_OPS.has(name);
+      if (!name.endsWith("empty") || typeof operand !== "boolean") return plain;
+      // compileEmptiness: wanting a string empty is an OR group; numbers and booleans take one clause.
+      groups += Number(type === "string" && (name === "is_empty") === operand);
+      return /^(string|number|boolean)$/.test(type);
     });
   });
-  return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
+  // The first OR group leads, so five fit in 16 branches.
+  const pushed = query.filters === undefined || query.filters === null || pushes(query.filters);
+  return pushed && values <= 30_000 && groups <= 5;
 }
 
 /**
@@ -870,11 +876,7 @@ function notePathWrites(schema: DatafnSchema, target: PageRow, mutation: Record<
   }
 }
 
-/**
- * What a pending entry writes whole: top-level keys, or (`members`) JSON
- * segment tuples, since a key may hold a dot, with a merge setting an
- * object's members one level deep; `true` for all.
- */
+/** What an entry writes whole: top-level keys, or JSON segment tuples (`members`; keys hold dots); `true`: all. */
 function nextWhole(
   whole: WholeKeys,
   mutation: Record<string, unknown>,

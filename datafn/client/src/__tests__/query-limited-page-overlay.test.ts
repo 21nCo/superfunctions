@@ -2298,8 +2298,13 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     // Emptiness on a string field pushes down; the planner counts `in` lists inside an object operand.
     expect(await shown({ title: { $is_not_empty: true } })).toEqual({ folderId: "folder:9", note: "n" });
     expect(await shown({ title: { $ne: { in: ["x"] } } })).toEqual({ note: "n" });
-    // A string `$is_empty` is an OR group, limited by the compiler's branch budget.
-    expect(await shown({ title: { $is_empty: false } })).toEqual({ note: "n" });
+    // compileEmptiness: `$is_empty: false` on a string is two clauses and `$is_empty: true` one OR
+    // group; past five groups the 16-branch budget keeps the read in memory.
+    expect(await shown({ title: { $is_empty: false } })).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown({ title: { $is_empty: true } })).toEqual({ folderId: "folder:9", note: "n" });
+    const groups = (count: number) => ({ $and: Array.from({ length: count }, () => ({ title: { $is_not_empty: false } })) });
+    expect(await shown(groups(5))).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown(groups(6))).toEqual({ note: "n" });
     expect(await shown({ title: { $in: ["A", ...Array.from({ length: 30_000 }, (_, index) => `t${index}`)] } }))
       .toEqual({ note: "n" });
     // The server adds a shareable resource's access filter, which can keep the read in memory.
