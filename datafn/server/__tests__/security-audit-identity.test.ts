@@ -556,7 +556,7 @@ describe("Idempotency record ids and in-process search context", () => {
     const short = idempotencyRecordId("a", "b", "c", "d");
     const long = idempotencyRecordId("n".repeat(5000), "a".repeat(5000), "c", "d");
     expect(long).toMatch(/^v2:[0-9a-f]{64}$/);
-    expect(long.length).toBe(short.length);
+    expect(long).toHaveLength(short.length);
     expect(idempotencyRecordId("a", undefined, "c", "d")).not.toBe(idempotencyRecordId("a", "null", "c", "d"));
   });
 
