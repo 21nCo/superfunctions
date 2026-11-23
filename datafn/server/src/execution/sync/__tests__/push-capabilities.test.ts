@@ -1474,7 +1474,24 @@ describe("sync push capability injection", () => {
         },
       );
 
+      // Grant the same actor access, then retry with the same clientId and
+      // mutationId, so the retry reads the cached FORBIDDEN result.
       actorId = "owner";
+      const granted = await sendPush("client:auth-grant", [
+        {
+          resource: "captures",
+          version: 1,
+          operation: "share",
+          id: "capture:auth-change",
+          clientId: "client:auth-grant",
+          mutationId: "grant-auth-change",
+          shareWith: { userId: "user:other", level: "owner" },
+        },
+      ]);
+      expect(granted.res.status).toBe(200);
+      expect(granted.body.result.ok).toBe(true);
+
+      actorId = "other";
       const second = await sendPush("client:auth-change", [mutation]);
       expect(second.res.status).toBe(200);
       expect(second.body.ok).toBe(true);
