@@ -2852,6 +2852,16 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(trashedOnly, cascading, { resource: "projects", operation: "merge", id: "project:p", record: { trashedAt: null } });
     await offlineWrite(trashedOnly, cascading, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
     expect((await page(trashedOnly, cascading, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
+    // A cascade through a foreign key a merge-create took from its default proves nothing: the server's project keeps its own org.
+    const defaultedOrg = { ...cascading, resources: cascading.resources.map((resource) => resource.name !== "projects" ? resource
+      : { ...resource, fields: resource.fields.map((field) => field.name === "orgId" ? { ...field, default: "org:o" } : field) }) } as DatafnSchema;
+    const guessedLink = await fresh();
+    await offlineWrite(guessedLink, defaultedOrg, { resource: "orgs", operation: "merge", id: "org:o", record: { name: "O" } });
+    await offlineWrite(guessedLink, defaultedOrg, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P" } });
+    await offlineWrite(guessedLink, defaultedOrg, { resource: "orgs", operation: "delete", id: "org:o" });
+    await offlineWrite(guessedLink, defaultedOrg, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P2" } });
+    await offlineWrite(guessedLink, defaultedOrg, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect((await page(guessedLink, defaultedOrg, omitted, rows)).map((row) => row.id)).toEqual(["goal:y"]);
   });
 
   it("hydration: relation metadata is judged as the sync engine sends it, stripped under a later forward name", async () => {
@@ -2862,5 +2872,27 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     const storage = await goals();
     await offlineWrite(storage, shadowed, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: { $ref: "goal:q", unknownMeta: true } } });
     expect(await page(storage, shadowed, children, [child])).toEqual([]);
+    // The server rejects a nested array's index keys, stripped or not.
+    for (const parent of [[[{ $ref: "goal:q", unknownMeta: true }]], [["goal:q"]]]) {
+      const nested = await goals();
+      await nested.changelogAppend({ clientId: "client:1", mutationId: "mutation:nested", timestampMs: 1, mutation: { resource: "goals", operation: "relate", id: "goal:x", relations: { parent } } });
+      expect(await page(nested, shadowed, children, [child])).toEqual([child]);
+    }
+    // The writer replays the stripped payload: a stripped `from` never rewrites which join a relate writes.
+    const tagged = {
+      resources: [
+        { name: "projects", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        { name: "tags", version: 1, fields: [{ name: "label", type: "string", required: false }] },
+      ],
+      relations: [
+        { from: "projects", to: "tags", type: "many-many", relation: "tags", inverse: "projects" },
+        { from: "tags", to: "projects", type: "many-many", relation: "projects", inverse: "taggedBy" },
+      ],
+    } as DatafnSchema;
+    const tags = new MemoryStorageAdapter(["projects", "tags"]);
+    await tags.setHydrationState("projects", "hydrating");
+    await tags.changelogAppend({ clientId: "client:1", mutationId: "mutation:unlink", timestampMs: 1, mutation: { resource: "projects", operation: "unrelate", id: "project:1", relations: { tags: ["tag:1"] } } });
+    await tags.changelogAppend({ clientId: "client:1", mutationId: "mutation:relink", timestampMs: 2, mutation: { resource: "tags", operation: "relate", id: "tag:1", relations: { projects: { $ref: "project:2", from: "project:1" } } } });
+    expect(await page(tags, tagged, { resource: "projects", relation: "tags", id: "project:1" }, [{ id: "tag:1", label: "one" }])).toEqual([]);
   });
 });

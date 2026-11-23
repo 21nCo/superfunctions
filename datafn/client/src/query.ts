@@ -236,7 +236,7 @@ function queryResultRows(result: unknown): unknown[] | null {
 /** The adapters return 100 changelog entries unless asked for more. */
 const ALL_CHANGELOG_ENTRIES = 0xffffffff;
 
-function listPendingChanges(storage: DatafnStorageAdapter): Promise<DatafnChangelogEntry[]> {
+async function listPendingChanges(storage: DatafnStorageAdapter): Promise<DatafnChangelogEntry[]> {
   return storage.changelogList({ limit: ALL_CHANGELOG_ENTRIES });
 }
 
@@ -525,11 +525,7 @@ function decodeChangedKeys(schema: DatafnSchema, resource: string, current: Reco
   return { patch, undecodable };
 }
 
-async function pageMemberIds(
-  scratch: DatafnStorageAdapter,
-  schema: DatafnSchema,
-  membershipQuery: Record<string, unknown>,
-): Promise<Set<string> | undefined> {
+async function pageMemberIds(scratch: DatafnStorageAdapter, schema: DatafnSchema, membershipQuery: Record<string, unknown>): Promise<Set<string> | undefined> {
   try {
     const result = await executeLocalQuery(scratch, schema, membershipQuery);
     return new Set((result.data ?? []).map(rowIdOf).filter((id): id is string => id !== undefined));
@@ -547,15 +543,8 @@ function rowIdOf(row: unknown): string | undefined {
  * The page row after the replay, or null when it leaves the page. A relation
  * page's filters are its anchor's, so targets meet only capability auto-filters.
  */
-async function replayedPageRow(
-  scratch: DatafnStorageAdapter,
-  schema: DatafnSchema,
-  query: Record<string, unknown>,
-  id: string,
-  page: PageRow,
-  relationType: string | undefined,
-  nestedOmit: NestedOmit,
-): Promise<Record<string, unknown> | null> {
+async function replayedPageRow(scratch: DatafnStorageAdapter, schema: DatafnSchema, query: Record<string, unknown>, id: string, page: PageRow,
+  relationType: string | undefined, nestedOmit: NestedOmit): Promise<Record<string, unknown> | null> {
   const current = await scratch.getRecord(page.resource, id);
   if (!current) return null;
   const unproven = unwrittenPathKeys(schema, page, current);
@@ -652,13 +641,8 @@ function heldForeignKeys(schema: DatafnSchema, resource: string): Set<string> {
  * createdAt and createdBy and stamp updatedAt and updatedBy; a plain field of
  * the same name follows the ordinary rules.
  */
-function serverReplacedRecord(
-  fields: ReadonlyMap<string, DatafnFieldSchema>,
-  system: ReadonlySet<string>,
-  before: Record<string, unknown>,
-  written: Record<string, unknown>,
-  record: Record<string, unknown>,
-): Record<string, unknown> {
+function serverReplacedRecord(fields: ReadonlyMap<string, DatafnFieldSchema>, system: ReadonlySet<string>, before: Record<string, unknown>,
+  written: Record<string, unknown>, record: Record<string, unknown>): Record<string, unknown> {
   // Undeclared columns are outside the replace; the writer's stamps stay.
   const result: Record<string, unknown> = { ...written };
   for (const key of Object.keys(before)) {
@@ -691,23 +675,15 @@ function serverReplacedRecord(
  * record, a merge keeps readonly fields, a replace follows buildReplaceRecord.
  */
 async function replayPendingEntry(scratch: DatafnStorageAdapter, schema: DatafnSchema, change: DatafnChangelogEntry): Promise<boolean> {
-  const { mutation } = change;
+  const mutation = sentMutation(schema, change.mutation);
   const { resource, id, operation } = mutation;
   if (mutation.relations !== undefined) {
     if (!isPlainRecord(mutation.relations)) return false;
     for (const [name, payload] of Object.entries(mutation.relations)) if (rejectedMetadata(schema, resource, name, payload)) return false;
   }
-  const before = typeof resource === "string" && typeof id === "string"
-    ? await scratch.getRecord(resource, id)
-    : null;
+  const before = typeof resource === "string" && typeof id === "string" ? await scratch.getRecord(resource, id) : null;
   if (STATE_OPERATIONS.has(operation as string) && !before) return false;
-  await applyOptimisticMutationToStorage(
-    scratch,
-    schema,
-    mutation,
-    change.timestampMs,
-    change.actorId ?? change.clientId,
-  );
+  await applyOptimisticMutationToStorage(scratch, schema, mutation, change.timestampMs, change.actorId ?? change.clientId);
   if (!before || !["insert", "replace", "merge"].includes(operation as string)) return true;
   const after = await scratch.getRecord(resource as string, id as string);
   if (!after) return true;
@@ -778,26 +754,51 @@ function journaled(scratch: MemoryStorageAdapter, undo: Array<() => Promise<void
   });
 }
 
-/** Whether the server's mutation validator rejects the relation metadata the sync engine sends (it keeps a forward name's last declaration). */
+/** A mutation as the sync engine pushes it: `$ref` items under a forward name keep only that name's last declared metadata, at any depth. */
+function sentMutation(schema: DatafnSchema, mutation: Record<string, unknown>): Record<string, unknown> {
+  const { resource, relations } = mutation;
+  if (typeof resource !== "string" || !isPlainRecord(relations)) return mutation;
+  return { ...mutation, relations: Object.fromEntries(Object.entries(relations).map(([name, payload]) => {
+    const kept = schema.relations?.filter((relation) => relation.relation === name && endpointIncludes(relation.from, resource)).at(-1);
+    const strip = (item: unknown): unknown => Array.isArray(item) ? item.map(strip) : !kept || !isPlainRecord(item) || typeof item.$ref !== "string" ? item
+      : Object.fromEntries(Object.entries(item).filter(([key]) => key === "$ref" || kept.metadata?.some((entry) => entry.name === key)));
+    return [name, strip(payload)];
+  })) };
+}
+
+/** Whether the server's mutation validator rejects a sent relation payload: an object item (a nested array too) with a key besides `$ref` and the matched relation's metadata. */
 function rejectedMetadata(schema: DatafnSchema, resource: unknown, name: string, payload: unknown): boolean {
-  const items = normalizeRelationPayload(payload);
   const match = typeof resource === "string" ? findRelationMatch(schema, resource, name) : undefined;
-  if (match?.direction !== "inverse") return false;
-  const kept = schema.relations?.filter((relation) => relation.relation === name && endpointIncludes(relation.from, resource as string)).at(-1);
+  if (!match) return false;
   const { type, from, to, metadata } = match.relation;
   const many = (end: unknown, key: string): string[] => (type === "many-many" && Array.isArray(end) && end.length > 1 ? [key] : []);
-  const allowed = new Set([...(metadata ?? []).map((entry) => entry.name), ...many(from, "fromResource"), ...many(to, "toResource")]);
-  return items.some((item) => Object.keys(item.metadata).some((key) => (!kept || kept.metadata?.some((entry) => entry.name === key)) && !allowed.has(key)));
+  const allowed = new Set(["$ref", ...(metadata ?? []).map((entry) => entry.name), ...many(from, "fromResource"), ...many(to, "toResource")]);
+  return (Array.isArray(payload) ? payload : [payload]).some((item) => typeof item === "object" && item !== null && Object.keys(item).some((key) => !allowed.has(key)));
 }
 
 const STATE_FIELDS = ["isArchived", "trashedAt"];
 const inactiveBy = (record: Record<string, unknown>, field: string): boolean => field === "isArchived" ? record.isArchived === true : (record.trashedAt ?? null) !== null;
-/** Note the archived or trashed fields an applied entry decides: all for an insert or replace (the push adds writable defaults) or a record it deletes, cascades included (later writes create); a state operation's; else those it writes. */
-function noteStateEvidence(evidence: Map<string, Set<string>>, { resource, id, operation, record }: Record<string, unknown>, deleted: readonly string[]): void {
+/**
+ * Note the archived or trashed fields an applied entry decides: all for an insert or replace (the push adds writable defaults) or a
+ * record it deletes (later writes create; by cascade, only unless a `guessed` key linked it); a state operation's; else those it writes.
+ */
+function noteStateEvidence(evidence: Map<string, Set<string>>, guessed: ReadonlyMap<string, string[]>, mutation: Record<string, unknown>, deleted: readonly string[]): void {
+  const { resource, id, operation, record } = mutation;
+  const key = JSON.stringify([resource, id]);
   const fields = ["insert", "replace", "delete"].includes(operation as string) ? STATE_FIELDS
     : STATE_OPERATIONS.has(operation as string) ? [/^(trash|restore)$/.test(operation as string) ? "trashedAt" : "isArchived"]
       : STATE_FIELDS.filter((field) => isPlainRecord(record) && field in record);
-  for (const key of [...deleted, JSON.stringify([resource, id])]) evidence.set(key, new Set([...evidence.get(key) ?? [], ...(deleted.includes(key) ? STATE_FIELDS : fields)]));
+  for (const gone of deleted) if (gone === key || !guessed.get(gone)?.length) evidence.set(gone, new Set(STATE_FIELDS));
+  evidence.set(key, new Set([...evidence.get(key) ?? [], ...fields]));
+}
+
+/** Note the set foreign keys a merge-create filled from schema defaults (the server keeps its own record's) that no later merge named. */
+async function noteGuessedKeys(scratch: DatafnStorageAdapter, schema: DatafnSchema, guessed: Map<string, string[]>, mutation: Record<string, unknown>, existed: boolean): Promise<void> {
+  const { resource, id, operation, record } = mutation;
+  if (!["merge", "insert", "replace"].includes(operation as string) || typeof resource !== "string" || typeof id !== "string") return;
+  const after = operation === "merge" && !existed ? await scratch.getRecord(resource, id) : null;
+  const keys = after ? [...heldForeignKeys(schema, resource)].filter((fk) => after[fk] != null) : guessed.get(JSON.stringify([resource, id])) ?? [];
+  guessed.set(JSON.stringify([resource, id]), operation === "merge" ? keys.filter((fk) => !(isPlainRecord(record) && fk in record)) : []);
 }
 
 /** Htree paths a merge, replace or insert sets as given, or a replace resets (declared writable only, as buildReplaceRecord). */
@@ -1115,24 +1116,15 @@ async function overlayPendingRowsOnLimitedPage(
 ): Promise<unknown> {
   const remoteData = queryResultRows(remoteResult);
   if (!remoteData) return remoteResult;
-  let changes: DatafnChangelogEntry[];
-  try {
-    changes = await listPendingChanges(storage);
-  } catch {
-    return remoteResult;
-  }
-  if (changes.length === 0) return remoteResult;
+  const changes = await listPendingChanges(storage).catch(() => undefined);
+  if (!changes?.length) return remoteResult;
 
   const queryResource = query.resource as string;
   const isRelationPage = typeof query.relation === "string" && typeof query.id === "string";
-  const match = isRelationPage
-    ? findRelationMatch(schema, queryResource, query.relation as string)
-    : undefined;
+  const match = isRelationPage ? findRelationMatch(schema, queryResource, query.relation as string) : undefined;
   if (isRelationPage && !match) return remoteResult;
   const rowResource = (id: string): string | undefined =>
-    match
-      ? resolveEndpointResource(relationTargetEndpoint(match.relation, match.direction), id, schema)
-      : queryResource;
+    match ? resolveEndpointResource(relationTargetEndpoint(match.relation, match.direction), id, schema) : queryResource;
   const edgeQuery = { resource: queryResource, id: query.id, relation: query.relation, metadata: query.metadata };
 
   const scratch = new MemoryStorageAdapter(schema.resources.map((entry) => entry.name));
@@ -1175,6 +1167,7 @@ async function overlayPendingRowsOnLimitedPage(
   const trackedAt = (tree: Endpoint, id: string): PageRow | undefined =>
     [anchor && id === query.id ? anchor : undefined, pageRows.get(id)].find((page) => page && endpointIncludes(tree, page.resource));
   const stateWritten = new Map<string, Set<string>>(); // archived or trashed fields an applied entry decided, by record
+  const guessed = new Map<string, string[]>(); // foreign keys a merge-create defaulted, by record
   let relinked = false;
   for (const change of changes) {
     const undo: Array<() => Promise<void>> = [];
@@ -1183,9 +1176,8 @@ async function overlayPendingRowsOnLimitedPage(
       // A relink's moved records, with the paths held before it.
       const moved = htreeRelinks(schema, change.mutation);
       const prior = await snapshotMovers(scratch, moved ?? [], trackedAt);
-      const existed = target
-        ? Boolean(await scratch.getRecord(target.resource, change.mutation.id as string))
-        : false;
+      const { resource: written, id: writtenId } = change.mutation;
+      const existed = typeof written === "string" && typeof writtenId === "string" && Boolean(await scratch.getRecord(written, writtenId));
       const deleted: string[] = []; // records the entry deletes, cascades included: a later write creates them
       const applied = await replayPendingEntry(journaled(scratch, undo, deleted), schema, change);
       if (target && applied) {
@@ -1205,7 +1197,8 @@ async function overlayPendingRowsOnLimitedPage(
         await forgetRewrittenTails(scratch, pages, moved, held, trackedAt);
         await cascadeMovedPaths(scratch, pages, moved, prior, trackedAt);
       }
-      if (applied) noteStateEvidence(stateWritten, change.mutation, deleted);
+      if (applied) noteStateEvidence(stateWritten, guessed, change.mutation, deleted);
+      if (applied) await noteGuessedKeys(scratch, schema, guessed, change.mutation, existed);
     } catch {
       // An entry the writer rejects changes nothing on the page.
       for (const step of undo.reverse()) await step().catch(() => undefined);
