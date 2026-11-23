@@ -754,14 +754,14 @@ function journaled(scratch: MemoryStorageAdapter, undo: Array<() => Promise<void
   });
 }
 
-/** A mutation as the sync engine pushes it: `$ref` items under a forward name keep only that name's last declared metadata, at any depth. */
+/** A mutation as `/push` receives it: `$ref` items under a forward name keep only that name's last declared metadata, at any depth, and JSON drops undefined keys. */
 function sentMutation(schema: DatafnSchema, mutation: Record<string, unknown>): Record<string, unknown> {
   const { resource, relations } = mutation;
   if (typeof resource !== "string" || !isPlainRecord(relations)) return mutation;
   return { ...mutation, relations: Object.fromEntries(Object.entries(relations).map(([name, payload]) => {
     const kept = schema.relations?.filter((relation) => relation.relation === name && endpointIncludes(relation.from, resource)).at(-1);
-    const strip = (item: unknown): unknown => Array.isArray(item) ? item.map(strip) : !kept || !isPlainRecord(item) || typeof item.$ref !== "string" ? item
-      : Object.fromEntries(Object.entries(item).filter(([key]) => key === "$ref" || kept.metadata?.some((entry) => entry.name === key)));
+    const strip = (item: unknown): unknown => Array.isArray(item) ? item.map(strip) : !isPlainRecord(item) || typeof item.$ref !== "string" ? item
+      : Object.fromEntries(Object.entries(item).filter(([key, value]) => value !== undefined && (key === "$ref" || !kept || kept.metadata?.some((entry) => entry.name === key))));
     return [name, strip(payload)];
   })) };
 }

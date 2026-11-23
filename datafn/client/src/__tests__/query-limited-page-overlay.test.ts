@@ -2935,5 +2935,11 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await tags.changelogAppend({ clientId: "client:1", mutationId: "mutation:unlink", timestampMs: 1, mutation: { resource: "projects", operation: "unrelate", id: "project:1", relations: { tags: ["tag:1"] } } });
     await tags.changelogAppend({ clientId: "client:1", mutationId: "mutation:relink", timestampMs: 2, mutation: { resource: "tags", operation: "relate", id: "tag:1", relations: { projects: { $ref: "project:2", from: "project:1" } } } });
     expect(await page(tags, tagged, { resource: "projects", relation: "tags", id: "project:1" }, [{ id: "tag:1", label: "one" }])).toEqual([]);
+    // JSON drops a metadata key sent as undefined, so the server accepts the detach.
+    const annotated = { resources: treeSchema.resources, relations: [...treeSchema.relations!,
+      { from: "goals", to: "goals", type: "many-many", relation: "children", inverse: "annotatedBy", metadata: [{ name: "note", type: "string" }] }] } as DatafnSchema;
+    const detached = await goals();
+    await detached.changelogAppend({ clientId: "client:1", mutationId: "mutation:detach", timestampMs: 1, mutation: { resource: "goals", operation: "unrelate", id: "goal:c", relations: { children: [{ $ref: "goal:x", note: undefined }] } } });
+    expect(await page(detached, annotated, children, [child])).toEqual([]);
   });
 });
