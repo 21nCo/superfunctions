@@ -71,7 +71,7 @@ const store = new DbIdempotencyStore(adapter, "my-namespace");
 
 ### Upgrading from `@datafn/server` 0.2.x
 
-0.3.0 changed the record key from a fixed namespace to the request's namespace and actor. Records written by 0.2.x are never matched again (matching them could return another tenant's result), so a mutation applied before the upgrade and retried after it runs again: an `insert` returns `CONFLICT` on `id`, and other operations are re-applied. Deploy when client outboxes are drained, or accept that for retries in flight during the switch. Old records are removed by the usual retention pruning.
+0.3.0 changed the record key from a fixed namespace to the request's namespace and actor. Records written by 0.2.x are never matched again (matching them could return another tenant's result), so a mutation applied before the upgrade and retried after it runs again: an `insert` returns `CONFLICT` on `id`, and other operations are re-applied. Deploy when client outboxes are drained, or accept that for retries in flight during the switch. Old records are removed by the usual retention pruning. A custom persistent store without `scoped()` is wrapped instead: its keys become a JSON array of namespace, actor and `clientId`. Start such a store empty (or let its pre-0.3.0 records expire) when upgrading, since a pre-0.3.0 record whose raw `clientId` happens to equal a wrapped key would otherwise be matched.
 
 ### Pruning
 

@@ -575,8 +575,10 @@ export function validateMutationAuthz(
   const op = mutation.operation as string;
   if (op === "relate" || op === "modifyRelation" || op === "unrelate") {
     // `defaultPermissions.relationWrites: "all"` grants relation writes on
-    // resources that use the defaults, even when scalar write defaults are
-    // off. It applies to relation operations only.
+    // resources that use the defaults, even when the scalar write default is
+    // off. It applies to relation operations only, and only once the defaults
+    // resolve to a policy (read or write set to "allResourceFields"); with
+    // neither set the resource has no policy and is denied above.
     const relationGrants =
       !resource.permissions &&
       resource.defaultPermissions !== false &&
@@ -664,9 +666,12 @@ function findOwnForeignKeyField(
   const { relation, direction } = match;
   // htree: only the inverse (parent) direction writes an FK, on the model the
   // executor picks (the first `from` endpoint); the alias applies only when
-  // that is this resource, i.e. the write lands on the authorized record.
+  // that is this resource, i.e. the write lands on the authorized record. A
+  // polymorphic `from` also writes the parent-resource discriminator, which
+  // the FK field alone never granted, so it needs the relation name.
   if (relation.type === "htree" && direction === "inverse") {
-    return firstEndpoint(relation.from) === resourceName
+    const froms = endpointList(relation.from);
+    return froms.length === 1 && firstEndpoint(relation.from) === resourceName
       ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
       : undefined;
   }

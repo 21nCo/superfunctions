@@ -524,6 +524,40 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     await server.close();
   });
 
+  it("an htree with a polymorphic child endpoint does not accept the FK field name as a relation grant", async () => {
+    const folderFields = [
+      { name: "name", type: "string", required: true },
+      { name: "parentId", type: "string", required: false, nullable: true },
+      { name: "parentResource", type: "string", required: false, nullable: true },
+      { name: "parentPath", type: "string", required: false, nullable: true },
+    ];
+    const polymorphic = {
+      resources: [
+        {
+          name: "folders",
+          version: 1,
+          fields: folderFields,
+          permissions: { read: { fields: ["name", "parentId"] }, write: { fields: ["name", "parentId"] } },
+        },
+        {
+          name: "sections",
+          version: 1,
+          fields: folderFields,
+          permissions: { read: { fields: ["name", "parentId"] }, write: { fields: ["name", "parentId"] } },
+        },
+      ],
+      relations: [{ from: ["folders", "sections"], to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" }],
+    };
+    const { db, server, call } = await fkHarness(polymorphic);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "folders:f1", name: "root" } } as any);
+    await db.create({ model: "folders", data: { __ns: "tenant:a", id: "folders:f2", name: "child" } } as any);
+    const res = await call({ resource: "folders", version: 1, operation: "relate", id: "folders:f2", relations: { parent: "folders:f1" } });
+    // The executor would also write the parentResource discriminator, which
+    // a grant on parentId alone does not cover.
+    expect(res.status).toBe(403);
+    await server.close();
+  });
+
   it("an htree parent relation is writable when write.fields lists its FK field", async () => {
     const { db, server, call } = await fkHarness(fkSchema);
     await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);
