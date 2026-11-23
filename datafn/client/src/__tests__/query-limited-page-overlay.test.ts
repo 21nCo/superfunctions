@@ -2698,6 +2698,16 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
       if (relinks[1]) await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: relinks[3], relations: relinks[1] });
       expect(await page(storage, treeSchema, children, [root])).toEqual([]);
     }
+    // A mover whose held old prefix cannot reach the tail keeps it, across entries and within one.
+    const sibling = { ...root, id: "goal:q" };
+    for (const entries of [
+      [["goal:x", "relate", { parent: "goal:p-goal:q" }], ["goal:q", "unrelate", { parent: "goal:c" }]],
+      [["goal:x", "relate", { parent: "goal:p-goal:q", children: ["goal:q"] }]],
+    ] as const) {
+      const storage = await goals();
+      for (const [id, operation, relations] of entries) await offlineWrite(storage, treeSchema, { resource: "goals", operation, id, relations });
+      expect(await page(storage, treeSchema, children, [root, sibling])).toEqual([]);
+    }
   });
 
   it("hydration: relink evidence is bound to the tree resource the writer updates", async () => {
@@ -2742,6 +2752,13 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(replaced, defaulted, { resource: "projects", operation: "replace", id: "project:p", record: { name: "P" } });
     await offlineWrite(replaced, defaulted, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
     expect(await page(replaced, defaulted, omitted, rows)).toEqual([]);
+    // After a pending delete, the server's merge creates the record with its defaults too.
+    const recreated = new MemoryStorageAdapter(["projects", "goals"]);
+    await recreated.setHydrationState("goals", "hydrating");
+    await offlineWrite(recreated, defaulted, { resource: "projects", operation: "delete", id: "project:p" });
+    await offlineWrite(recreated, defaulted, { resource: "projects", operation: "merge", id: "project:p", record: { name: "P" } });
+    await offlineWrite(recreated, defaulted, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    expect(await page(recreated, defaulted, omitted, rows)).toEqual([]);
   });
 
   it("hydration: off-tree inactivity counts a returned parent's archived state", async () => {

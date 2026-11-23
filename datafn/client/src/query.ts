@@ -423,13 +423,8 @@ function anyOf(parts: readonly Truth[]): Truth {
  * so an $or is false only when every branch is, and an $and as soon as one
  * part is.
  */
-function judgeFilter(
-  schema: DatafnSchema,
-  resource: string,
-  filter: unknown,
-  current: Record<string, unknown>,
-  known: (path: readonly string[]) => boolean,
-): Truth {
+function judgeFilter(schema: DatafnSchema, resource: string, filter: unknown,
+  current: Record<string, unknown>, known: (path: readonly string[]) => boolean): Truth {
   if (!isPlainRecord(filter)) return undefined;
   const parts: Truth[] = [];
   for (const [key, value] of Object.entries(filter)) {
@@ -463,13 +458,7 @@ function judgeFilter(
  * unreturned value, or one the server strips at every depth, is unknown
  * unless the replay wrote a value containing it whole.
  */
-function writtenPathKnown(
-  current: Record<string, unknown>,
-  path: readonly string[],
-  whole: boolean,
-  hidden: ReadonlySet<unknown>,
-  rewritten: WholeKeys,
-): boolean {
+function writtenPathKnown(current: Record<string, unknown>, path: readonly string[], whole: boolean, hidden: ReadonlySet<unknown>, rewritten: WholeKeys): boolean {
   let value: unknown = current;
   for (const [index, segment] of path.entries()) {
     if (!isPlainRecord(value)) return true;
@@ -501,18 +490,8 @@ type WholeKeys = Set<string> | true;
  * A row written whole also settles the declared fields the page hid, except
  * readonly and capability fields, which the server's replace keeps.
  */
-function pendingWritesStopMatch(
-  schema: DatafnSchema,
-  resource: string,
-  filters: unknown,
-  seeded: Record<string, unknown>,
-  current: Record<string, unknown>,
-  changedKeys: ReadonlySet<string>,
-  wholeKeys: WholeKeys,
-  hidden: ReadonlySet<unknown>,
-  unknownKeys: ReadonlySet<string> = new Set(),
-  rewritten: WholeKeys = new Set(),
-): boolean {
+function pendingWritesStopMatch(schema: DatafnSchema, resource: string, filters: unknown, seeded: Record<string, unknown>, current: Record<string, unknown>,
+  changedKeys: ReadonlySet<string>, wholeKeys: WholeKeys, hidden: ReadonlySet<unknown>, unknownKeys: ReadonlySet<string> = new Set(), rewritten: WholeKeys = new Set()): boolean {
   const settled = new Set(changedKeys);
   if (wholeKeys === true) {
     const { fields, system } = declaredFields(schema, resource);
@@ -531,13 +510,8 @@ function pendingWritesStopMatch(
 }
 
 /** Changed values decoded as the page returns them; unproven paths and undecodable values keep the server's. */
-function decodeChangedKeys(
-  schema: DatafnSchema,
-  resource: string,
-  current: Record<string, unknown>,
-  changedKeys: ReadonlySet<string>,
-  unproven: ReadonlySet<string>,
-): { patch: Record<string, unknown>; undecodable: Set<string> } {
+function decodeChangedKeys(schema: DatafnSchema, resource: string, current: Record<string, unknown>,
+  changedKeys: ReadonlySet<string>, unproven: ReadonlySet<string>): { patch: Record<string, unknown>; undecodable: Set<string> } {
   const undecodable = new Set<string>(unproven);
   const patch: Record<string, unknown> = {};
   for (const key of changedKeys) {
@@ -815,8 +789,8 @@ function rejectedMetadata(schema: DatafnSchema, resource: unknown, name: string,
   return items.some((item) => Object.keys(item.metadata).some((key) => !allowed.has(key)));
 }
 
-/** Whether an entry sets a record's archived or trashed state: an insert or replace (the push adds writable defaults), a state operation or a write. */
-const writesState = ({ operation, record }: Record<string, unknown>): boolean => operation === "insert" || operation === "replace"
+/** Whether an entry decides a record's archived or trashed state: an insert or replace (the push adds writable defaults), a delete (later writes create), a state operation or a write. */
+const writesState = ({ operation, record }: Record<string, unknown>): boolean => ["insert", "replace", "delete"].includes(operation as string)
   || STATE_OPERATIONS.has(operation as string) || (isPlainRecord(record) && ("isArchived" in record || "trashedAt" in record));
 
 /** Htree paths a merge, replace or insert sets as given, or a replace resets (declared writable only, as buildReplaceRecord). */
@@ -834,7 +808,7 @@ function notePathWrites(schema: DatafnSchema, target: PageRow, mutation: Record<
 
 /** A relinked record's path, known only to end in its new parent's id. */
 class RelinkTail { constructor(readonly parentId: string) {} }
-type Relink = [id: string, pathField: string, relation: NonNullable<DatafnSchema["relations"]>[number], tree: Endpoint];
+type Relink = [id: string, pathField: string, relation: NonNullable<DatafnSchema["relations"]>[number], tree: Endpoint, from?: string];
 type Endpoint = NonNullable<DatafnSchema["relations"]>[number]["from"];
 
 /** What an htree relate or unrelate moves (`parent`: the record; `children`: the targets, as the writer normalizes them). */
@@ -884,9 +858,29 @@ async function cascadeMovedPaths(scratch: DatafnStorageAdapter, pages: ReadonlyA
   }
 }
 
-/** Whether the cascade of a move in the page's tree can rewrite a tail ending in `parentId`: a separator-prefix of it ends in `-<mover>`. */
-const rewritesTail = ([id, field, , tree]: Relink, page: PageRow, pathField: string, parentId: string): boolean =>
-  field === pathField && endpointIncludes(tree, page.resource) && `${parentId}-`.includes(`-${id}-`);
+/** Whether a move's cascade in the page's tree can rewrite a tail ending in `parentId`: a separator-prefix of it ends in `-<mover>`, agreeing with the mover's held old prefix. */
+function rewritesTail([id, field, , tree, from]: Relink, page: PageRow, pathField: string, parentId: string): boolean {
+  if (field !== pathField || !endpointIncludes(tree, page.resource)) return false;
+  for (let at = parentId.indexOf(`-${id}`); at >= 0; at = parentId.indexOf(`-${id}`, at + 1)) {
+    const cut = parentId.slice(0, at + id.length + 1);
+    if (`${parentId}-`[cut.length] === "-" && (from === undefined || from === cut || from.endsWith(`-${cut}`))) return true;
+  }
+  return false;
+}
+
+/** The page records a relink moves, as held before it; each mover's old prefix (`from`) when held and no other move of the entry can shift it. */
+async function snapshotMovers(scratch: DatafnStorageAdapter, moved: Relink[], tracked: (tree: Endpoint, id: string) => PageRow | undefined): Promise<Map<Relink, [PageRow, Record<string, unknown> | null]>> {
+  const prior = new Map<Relink, [PageRow, Record<string, unknown> | null]>();
+  for (const relink of moved) {
+    const page = tracked(relink[3], relink[0]);
+    const record = page ? await scratch.getRecord(page.resource, relink[0]) : null;
+    if (!page) continue;
+    prior.set(relink, [{ ...page, knownPaths: new Map(page.knownPaths) }, record]);
+    const held = heldHtreePath(page, relink[1], record)?.path;
+    if (held !== undefined && !moved.some((other) => other !== relink && pathLists(held ?? "", other[0]))) relink[4] = joinPath(held ?? "", relink[0]);
+  }
+  return prior;
+}
 
 /** Forget the relink tails held before an entry whose last segment one of its moves can rewrite. */
 function forgetRewrittenTails(pages: ReadonlyArray<[string, PageRow]>, moved: readonly Relink[]): void {
@@ -1177,11 +1171,7 @@ async function overlayPendingRowsOnLimitedPage(
       const target = tracked(change.mutation);
       // A relink's moved records, with the paths held before it.
       const moved = htreeRelinks(schema, change.mutation);
-      const prior = new Map<Relink, [PageRow, Record<string, unknown> | null]>();
-      for (const relink of moved ?? []) {
-        const page = trackedAt(relink[3], relink[0]);
-        if (page) prior.set(relink, [{ ...page, knownPaths: new Map(page.knownPaths) }, await scratch.getRecord(page.resource, relink[0])]);
-      }
+      const prior = await snapshotMovers(scratch, moved ?? [], trackedAt);
       const existed = target
         ? Boolean(await scratch.getRecord(target.resource, change.mutation.id as string))
         : false;
