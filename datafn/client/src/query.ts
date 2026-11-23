@@ -679,8 +679,8 @@ async function replayedPageRow(
 type NestedOmit = "kept" | "stripped" | "unknown";
 
 /**
- * A relation page, or a select naming a relation or nested token, takes
- * materializeSelect's mask; a stripped key nested in any returned row shows a
+ * A relation page, a search or temporal read, or a select naming a relation
+ * or nested token takes materializeSelect's mask; a stripped key nested in any returned row shows a
  * plain list's plan kept them (FULL_PUSHDOWN). Otherwise the page cannot tell.
  */
 function nestedOmitOf(
@@ -690,7 +690,7 @@ function nestedOmitOf(
   relation: boolean,
 ): NestedOmit {
   const resource = String(query.resource);
-  if (relation || stringTokens(query.select).some((token) => token.includes(".")
+  if (relation || query.search || "temporal" in query || stringTokens(query.select).some((token) => token.includes(".")
     || findRelationMatch(schema, resource, token.split(/[*#]/)[0]))) return "stripped";
   const stripped = serverStrippedKeys(schema, query, resource, undefined);
   return remoteData.some((row) => isPlainRecord(row) && Object.entries(row).some(([key, value]) =>
@@ -871,15 +871,16 @@ function notePathWrites(
   }
 }
 
-/** Ids an htree relate or unrelate moves or reads: undefined for any other entry, null for a target not a plain id. */
+/** Ids an htree relate or unrelate moves (`parent`: the record; `children`: the targets): undefined for any other entry, null for one not a plain id. */
 function htreeRelinkIds(schema: DatafnSchema, mutation: Record<string, unknown>): string[] | null | undefined {
   const { resource, relations } = mutation;
   if (!["relate", "unrelate"].includes(mutation.operation as string) || typeof resource !== "string") return undefined;
   let ids: string[] | null | undefined;
   for (const [name, payload] of Object.entries(isPlainRecord(relations) ? relations : {})) {
-    if (findRelationMatch(schema, resource, name)?.relation.type !== "htree") continue;
+    const match = findRelationMatch(schema, resource, name);
+    if (match?.relation.type !== "htree") continue;
     ids ??= [];
-    for (const member of [mutation.id, ...(Array.isArray(payload) ? payload : [payload])]) {
+    for (const member of match.direction === "inverse" ? [mutation.id] : [payload].flat()) {
       const id = isPlainRecord(member) ? member.id : member;
       if (typeof id !== "string") return null;
       ids.push(id);
@@ -1079,21 +1080,23 @@ async function htreeRowsGone(
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
   const prefix = typeof anchorHeld?.path === "string" ? joinPath(anchorHeld.path, anchorId) : undefined;
   const deep = selectsDescendants(query);
+  // An empty path (a root) is under no anchor; with the anchor's own path
+  // unknown, its child path still ends in its id.
+  const holds = (held: string): boolean => prefix !== undefined
+    ? (deep ? pathExtends(held, prefix) : held === prefix)
+    : (deep ? pathLists(held, anchorId) : held === anchorId || held.endsWith(`-${anchorId}`));
   const gone = new Set<string>();
   for (const [id, page] of pageRows) {
     const current = await scratch.getRecord(page.resource, id);
     if (!current) continue;
-    if (inheriting && !relinked && page.seeded[ANCESTOR_INACTIVE_FIELD] !== true
-      && current[ANCESTOR_INACTIVE_FIELD] === true) {
+    // A relink can leave a guessed path the writer's cascade marks by.
+    const path = heldHtreePath(page, pathField, current)?.path;
+    const inactive = page.seeded[ANCESTOR_INACTIVE_FIELD] !== true && current[ANCESTOR_INACTIVE_FIELD] === true;
+    if (inheriting && inactive && (!relinked || path !== undefined)) {
       gone.add(id);
       continue;
     }
-    // An empty path (a root) is under no anchor, whatever its path.
-    const path = heldHtreePath(page, pathField, current)?.path;
-    if (path === undefined || (path && (prefix === undefined || (deep ? pathExtends(path, prefix) : path === prefix)))) {
-      continue;
-    }
-    gone.add(id);
+    if (path !== undefined && !(path && holds(path))) gone.add(id);
   }
   return gone;
 }
@@ -1184,13 +1187,6 @@ async function overlayPendingRowsOnLimitedPage(
   let relinked = false;
   for (const change of changes) {
     const undo: Array<() => Promise<void>> = [];
-    // The server's cascade can rewrite paths below a moved record, and the
-    // writer cannot follow it through records the page does not hold.
-    const moved = htreeRelinkIds(schema, change.mutation);
-    if (moved !== undefined) {
-      relinked = true;
-      forgetMovedPaths([...pageRows.values(), ...(anchor ? [anchor] : [])], moved);
-    }
     try {
       const target = tracked(change.mutation);
       const existed = target
@@ -1202,7 +1198,14 @@ async function overlayPendingRowsOnLimitedPage(
         target.rewritten = nextWhole(target.rewritten, change.mutation, existed, true);
         notePathWrites(schema, target, change.mutation, await scratch.getRecord(target.resource, change.mutation.id as string));
       }
-      if (applied && moved) {
+      // The server's cascade can rewrite paths below a moved record, and the
+      // writer cannot follow it through records the page does not hold.
+      const moved = applied ? htreeRelinkIds(schema, change.mutation) : undefined;
+      if (moved !== undefined) {
+        relinked = true;
+        forgetMovedPaths([...pageRows.values(), ...(anchor ? [anchor] : [])], moved);
+      }
+      if (moved) {
         await noteRelinkedPaths(scratch, schema, moved, trackedId);
       }
     } catch {

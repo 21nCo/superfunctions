@@ -2462,6 +2462,59 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     expect(await page(storage, treeSchema, { ...children, select: ["**"] }, [child])).toEqual([]);
   });
 
+  it("hydration: a held path no anchor path can complete leaves, even with the anchor's ancestry omitted", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "goal:q" } });
+    const keyed = { id: "goal:x", title: "X", parentId: "goal:c" };
+    for (const select of [undefined, ["**"]]) {
+      expect(await page(storage, treeSchema, { ...children, select, omit: ["parentPath"] }, [keyed])).toEqual([]);
+    }
+  });
+
+  it("hydration: a relink forgets only the paths it can rewrite, and only when the writer applies it", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "goal:q" } });
+    // goal:y moves under goal:q, which stays put; goal:x's path lists neither move.
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: "goal:y", relations: { parent: "goal:q" } });
+    await storage.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mutation:rejected-relink",
+      timestampMs: 1,
+      mutation: { resource: "goals", operation: "relate", id: "goal:z", relations: { children: [{ id: { toString: null } }] } },
+    });
+    expect(await page(storage, treeSchema, children, [child])).toEqual([]);
+  });
+
+  it("hydration: an unrelated relink keeps an inactive row with a held path off an inheriting page", async () => {
+    const inheriting = {
+      resources: [
+        { name: "projects", version: 1, capabilities: ["archivable"], fields: [{ name: "name", type: "string", required: false }] },
+        { name: "goals", version: 1, fields: [...withPath({}).resources[0].fields, { name: "projectId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "projects", type: "many-one", relation: "project", inverse: "goals", fkField: "projectId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["projects", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, inheriting, { resource: "projects", operation: "insert", id: "project:q", record: { name: "Q" } });
+    await offlineWrite(storage, inheriting, { resource: "projects", operation: "archive", id: "project:q" });
+    await offlineWrite(storage, inheriting, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    const rows = [child, { ...child, id: "goal:y", projectId: "project:q" }];
+    expect((await page(storage, inheriting, children, rows)).map((row) => row.id)).toEqual(["goal:x"]);
+  });
+
+  it("projection-shape: a search or temporal read takes the mask", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { folderId: "folder:9", note: "n" } },
+    });
+    const rows = [{ id: "note:1", title: "A", profile: { note: "old" } }];
+    expect(await page(storage, folderSchema, { resource: "notes", search: { query: "A" } }, rows))
+      .toEqual([{ ...rows[0], profile: { note: "n" } }]);
+  });
+
   it("projection-shape: a select naming a relation takes the mask; a nested stripped key on any row proves the plan kept them", async () => {
     const storage = await hydrating("notes");
     await offlineWrite(storage, folderSchema, {
