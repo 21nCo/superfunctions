@@ -1,0 +1,29 @@
+datafn/client/src/query.ts
+  s_dcbf35c8622d8e::t_28ec2464516f36 20-21,23-24,26,28,30,32,37,225,229-237,252-517,521-525,536-551,553-558,561-568,675,700
+datafn/client/src/__tests__/query-limited-page-overlay.test.ts
+  s_4a7e07df4325e5::t_ef9fc31c60f000 278-435,437-442,444,446-473,475-501,509-510,512,514,522-523,525
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cf645353654d70841d0b2176fe5fff2d2a3def6",
+  "prompts": {},
+  "sessions": {
+    "s_4a7e07df4325e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c70902b1-f18e-44a5-b5e7-2acc308d0dd7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_dcbf35c8622d8e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab7c94c4-8404-4fd7-9e74-d02c281cbac6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
