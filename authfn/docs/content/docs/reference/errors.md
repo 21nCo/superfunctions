@@ -22,6 +22,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OTP_EXPIRED` | 401 | yes | OTP has aged past TTL. |
 | `AUTHFN_OTP_REPLAYED` | 401 | no | OTP was already consumed. |
 | `AUTHFN_API_KEY_REVOKED` | 401 | no | API key has been revoked. |
+| `AUTHFN_REAUTHENTICATION_REQUIRED` | 403 | no | A sensitive action (such as creating an API key with `recentAuthenticationSeconds` set) needs a session signed in more recently; sign in again, then retry. `details.recentAuthenticationSeconds`. |
 | `AUTHFN_SESSION_EXPIRED` | 401 | no | Session past its `expiresAt`. |
 | `AUTHFN_SESSION_REVOKED` | 401 | no | Session was revoked (sign-out, sign-out-everywhere). |
 | `AUTHFN_EMAIL_NOT_VERIFIED` | 403 | yes | Sign-in is gated behind verification; user must verify first. |
@@ -30,7 +31,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OAUTH_CALLBACK_INVALID` | 400 | no | OAuth callback parameters are wrong (missing code, error from provider, …). |
 | `AUTHFN_OAUTH_PROVIDER_UNSUPPORTED` | 400 | no | The configured plugin doesn't recognize the provider id. |
 | `AUTHFN_REDIRECT_URI_DISALLOWED` | 400 | no | `returnTo` (or `state.returnTo`) wasn't on the allowlist. |
-| `AUTHFN_RATE_LIMITED` | 429 | yes | Per-route rate limiter rejected the request. `details.retryAfter`. |
+| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor enrollment lock (`details.reason: 'enrollment-locked'`). `details.resetAt`, when present, is when to try again; some refusals (for example a compromised-password provider that is rate limiting) carry none. |
 | `AUTHFN_REGION_MISMATCH` | 409 | yes | Request landed on the wrong region. `details.redirectTo`. |
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | Identifier isn't registered to any region (anti-enumeration friendly: usually 200 with a fake answer is preferred — see plugin config). |
 | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | 503 | yes | Canonical identity placement could not be read or atomically updated. Gateway mode fails closed. |
@@ -75,7 +76,7 @@ The exhaustive type lives in `authfn/core/src/core/errors.ts`. The full error cl
 | `AUTHFN_INVALID_CREDENTIALS` | Generic "Invalid email or password" — never "user not found". |
 | `AUTHFN_2FA_REQUIRED` | Render the 2FA code input. |
 | `AUTHFN_OTP_INVALID` / `OTP_EXPIRED` / `OTP_REPLAYED` | "That code didn't work. Send a new one." |
-| `AUTHFN_RATE_LIMITED` | Disable the submit button for `details.retryAfter` seconds; show a countdown. |
+| `AUTHFN_RATE_LIMITED` | If `details.resetAt` is present, disable the submit button until then and show a countdown; otherwise show a generic "try again shortly". For the two-factor enrollment lock (`details.reason: 'enrollment-locked'`), keep recovery-code entry available: recovery codes still work during it. When the HTTP rate limiter refuses a two-factor route (`details.scope: 'two-factor'` with a `dimension`), recovery codes are refused too until `resetAt`. |
 | `AUTHFN_REGION_MISMATCH` | The regional client follows `details.redirectTo` automatically — usually invisible. |
 | `AUTHFN_VALIDATION_ERROR` | Render per-field errors from `details.fields`. |
 | `AUTHFN_INTERNAL_ERROR` | Generic apology; log the request id from the response. |

@@ -91,3 +91,4 @@ export * from './providers/types';
 export * from './storage/adapter';
 export * from './storage/memory/adapter';
 export { PostgresAdapter } from './storage/pg/adapter';
+export * from './chunking/markdown';

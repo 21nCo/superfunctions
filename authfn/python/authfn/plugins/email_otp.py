@@ -456,10 +456,17 @@ class EmailOtpService:
                 {"field": "purpose", "operator": "eq", "value": purpose},
                 {"field": "email", "operator": "eq", "value": email},
             ],
-            order_by=[{"field": "createdAt", "direction": "desc"}],
+            # The same order as the TypeScript kernel, id breaking ties.
+            order_by=[{"field": "createdAt", "direction": "desc"}, {"field": "id", "direction": "desc"}],
             namespace=self.config.namespace,
         )
-        return rows[0] if rows else None
+        # The TypeScript kernel creates a challenge expiring as it is created
+        # and only extends it once the email's budget admits it; a row that
+        # was never admitted (a refused send) is skipped, as it is there.
+        for row in rows:
+            if _is_admitted(row):
+                return row
+        return None
 
     async def _touch_attempt(self, challenge_id: str, attempt_count: int, updated_at: datetime) -> None:
         await self.config.database.update(
@@ -475,6 +482,25 @@ class EmailOtpService:
             where=[{"field": "primaryEmail", "operator": "eq", "value": email}],
             namespace=self.config.namespace,
         )
+
+
+def _is_admitted(row: Dict[str, Any]) -> bool:
+    expires_at = row.get("expiresAt")
+    created_at = row.get("createdAt")
+    if expires_at is None or created_at is None:
+        # Fail closed, as the TypeScript kernel does.
+        return False
+    return _as_utc(expires_at) > _as_utc(created_at)
+
+
+def _as_utc(value: Any) -> datetime:
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    # Compare instants, not wall times (a daylight-saving fall-back repeats an
+    # hour in the same zone).
+    return value.astimezone(timezone.utc)
 
 
 def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> AuthFnPlugin:
@@ -531,6 +557,12 @@ def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> Au
                     {
                         "name": "idx_authfn_otp_challenges_expires_at",
                         "fields": ["expiresAt"],
+                    },
+                    {
+                        # Same as the TypeScript kernel: the per-email budget
+                        # reads an email's newest challenges across purposes.
+                        "name": "idx_authfn_otp_challenges_email_created_at",
+                        "fields": ["email", "createdAt", "id"],
                     },
                 ],
             }

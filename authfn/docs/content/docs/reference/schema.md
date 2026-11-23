@@ -67,6 +67,8 @@ A signed session.
 | `attempts` | integer | Soft per-challenge attempt counter. |
 | `createdAt` / `updatedAt` | timestamp |  |
 
+Indexes: `(email, purpose, createdAt)` for the latest challenge of a purpose, `(expiresAt)`, and `(email, createdAt, id)` for the per-email budget across purposes.
+
 ## Social-OAuth plugin
 
 ### `authfn_oauth_states`
@@ -131,6 +133,8 @@ Tracking tables for consent records and (rare) provider revocation failures. Use
 | `userId` | text FK |  |
 | `secretEncrypted` | text | TOTP secret, encrypted at rest with `pluginRuntime.twoFactor.encryptionKeyResolver`. |
 | `lastUsedCounter` | number | Last accepted TOTP window; used for replay protection. |
+| `failedAttemptCount` | number, nullable | TOTP checks counted against the failed-attempt limit. Only ever increases; every `maxFailedAttempts`-th check locks the enrollment. |
+| `lockedUntil` | timestamp, nullable | While in the future, TOTP codes are refused; recovery codes still work. |
 | `confirmedAt` | timestamp | Set after successful `/2fa/confirm`. |
 | `createdAt` / `updatedAt` | timestamp |  |
 

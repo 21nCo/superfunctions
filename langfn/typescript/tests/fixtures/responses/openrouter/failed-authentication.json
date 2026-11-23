@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "gen-fixture-openrouter_failed_auth",
+    "object": "response",
+    "status": "failed",
+    "output": [],
+    "error": {
+      "code": "server_error",
+      "message": "Invalid credentials"
+    },
+    "error_type": "authentication"
+  }
+}

@@ -34,7 +34,10 @@ await client.close();
 entries while pagination continues, returning `droppedItems` and `complete`
 metadata without accumulating discarded pages in memory.
 
-`stdioTarget()` is Node-only. `streamableHttpTarget()` uses Web Standard
+The main `@mcpfn/client` entry is remote-only and runs on Cloudflare Workers
+without `nodejs_compat`. `stdioTarget()` is Node-only and is imported from
+`@mcpfn/client/stdio`; the deprecated main-entry `stdioTarget` remains until
+0.2.0. `streamableHttpTarget()` uses Web Standard
 requests through the official SDK. Authorization is supplied through an
 official `OAuthClientProvider`, including the McpFn provider from
 `@mcpfn/auth`. When an interactive flow is required, `connect()` reports

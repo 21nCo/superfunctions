@@ -15,8 +15,9 @@ import type {
 } from '../index.js';
 import { signInWithPassword } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
-import { getLatestOtpChallenge } from '../core/verifications.js';
+import { getLatestOtpChallenge, resolveOtpEmailBudget, sendOtpChallenge, verifyOtpChallenge } from '../core/verifications.js';
 import { getSchema } from '../schema.js';
+import { AuthFnOtpReplayedError } from '../core/errors.js';
 
 // Counts constant-time comparisons: in the verify-email flow the only caller
 // is the OTP code check, so this is the number of codes compared.
@@ -1039,5 +1040,557 @@ describe('authfn otp plugin', () => {
     const stored = await getLatestOtpChallenge(config, 'verify-email', 'ada@example.com');
     expect(stored?.attemptCount).toBe(0);
     expect(stored?.consumedAt).toBeNull();
+  });
+
+  describe('per-email limits across challenges', () => {
+    type LimitConfig = AuthFnRuntimeConfig & {
+      __clock: ReturnType<typeof createClock>;
+      __delivery: ReturnType<typeof createDeliveryRecorder>;
+    };
+
+    function setup(options: Record<string, unknown> = {}) {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, options);
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, options);
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(
+        new Request(`https://account.example.com/auth${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+      );
+      return { config, auth, post };
+    }
+
+    it('stops evaluating guesses once the email has used its failed-attempt budget, whatever new challenges are sent', async () => {
+      // Security audit AF-02: a new challenge every five guesses used to give
+      // an unlimited number of guesses against one email.
+      const { config, post } = setup();
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      let refused = 0;
+      codeComparisons.count = 0;
+      for (let round = 0; round < 6; round += 1) {
+        config.__clock.advance(1000);
+        const sent = await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+        expect(sent.status).toBe(200);
+        for (let guess = 0; guess < 5; guess += 1) {
+          const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+          const body = await response.json();
+          if (response.status === 429) {
+            expect(body.error.code).toBe('AUTHFN_RATE_LIMITED');
+            refused += 1;
+          } else {
+            expect(body.error.code).toBe('AUTHFN_OTP_INVALID');
+          }
+        }
+      }
+      expect(codeComparisons.count).toBe(10);
+      expect(refused).toBe(20);
+
+      // The correct code is refused too while the email is over its budget.
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      codeComparisons.count = 0;
+      const locked = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(locked.status).toBe(429);
+      const lockedBody = await locked.json();
+      expect(lockedBody.error.details).toMatchObject({ scope: 'otp-email', limit: 'failed-attempts' });
+      expect(codeComparisons.count).toBe(0);
+
+      // Once the window has passed the owner can sign in again.
+      config.__clock.advance(60 * 60 * 1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      const signedIn = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(signedIn.status).toBe(200);
+    });
+
+    it('counts failed guesses for one email across purposes, including password reset', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 4 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 2; guess += 1) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      }
+      config.__clock.advance(1000);
+      await post('/password/reset/start', { email: 'ada@example.com' });
+      for (let guess = 0; guess < 2; guess += 1) {
+        const response = await post('/password/reset/complete', {
+          email: 'ada@example.com',
+          code: '100000',
+          newPassword: 'An0therSecurePassphrase!'
+        });
+        expect(response.status).toBe(400);
+      }
+      const refused = await post('/password/reset/complete', {
+        email: 'ada@example.com',
+        code: '731942',
+        newPassword: 'An0therSecurePassphrase!'
+      });
+      expect(refused.status).toBe(429);
+      expect((await refused.json()).error.code).toBe('AUTHFN_RATE_LIMITED');
+
+      // Another email is not affected.
+      await createUser(config, { primaryEmail: 'bea@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'bea@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'bea@example.com', code: '731942' })).status).toBe(200);
+    });
+
+    it('does not count a correct code against the budget', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 2 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      for (let round = 0; round < 4; round += 1) {
+        config.__clock.advance(1000);
+        await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+        const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+        expect(response.status).toBe(200);
+      }
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(200);
+    });
+
+    it('refuses new challenges for an email once its challenge budget is used', async () => {
+      const { config, post } = setup({ maxChallengesPerEmail: 3 });
+      for (let round = 0; round < 3; round += 1) {
+        expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      }
+      const deliveriesBefore = config.__delivery.deliveries.length;
+      const refused = await post('/otp/send', { purpose: 'reset-password', email: 'ADA@example.com' });
+      expect(refused.status).toBe(429);
+      const body = await refused.json();
+      expect(body.error.code).toBe('AUTHFN_RATE_LIMITED');
+      expect(body.error.details).toMatchObject({
+        scope: 'otp-email',
+        limit: 'challenges',
+        resetAt: '2026-03-22T01:00:00.000Z'
+      });
+      expect((await post('/password/reset/start', { email: 'ada@example.com' })).status).toBe(429);
+      expect(config.__delivery.deliveries.length).toBe(deliveriesBefore);
+
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'bea@example.com' })).status).toBe(200);
+      config.__clock.advance(60 * 60 * 1000);
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+    });
+
+    it('keeps counting guesses for as long as a challenge lives when the window is shorter', async () => {
+      const { config, post } = setup({
+        maxFailedAttemptsPerEmail: 3,
+        emailAttemptWindowSeconds: 60,
+        challengeTtlSeconds: 600
+      });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 3; guess += 1) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+        config.__clock.advance(2 * 60 * 1000);
+      }
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(429);
+    });
+
+    it('compares at most the remaining budget when wrong codes for several challenges arrive concurrently', async () => {
+      const { config, post } = setup();
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 5; guess += 1) {
+        await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+      }
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 4; guess += 1) {
+        await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' });
+      }
+      // Nine failures so far; one guess is left. A fresh challenge per purpose
+      // allows five attempts each, so only the per-email count can stop this.
+      const purposes = ['sign-in', 'sign-up', 'verify-email', 'reset-password'];
+      for (const purpose of purposes) {
+        config.__clock.advance(1000);
+        expect((await post('/otp/send', { purpose, email: 'ada@example.com' })).status).toBe(200);
+      }
+      codeComparisons.count = 0;
+      const responses = await Promise.all(purposes.flatMap((purpose) => Array.from({ length: 5 }, () =>
+        post('/otp/verify', { purpose, email: 'ada@example.com', code: '100000' })
+      )));
+      expect(codeComparisons.count).toBeLessThanOrEqual(1);
+      expect(responses.every((response) => response.status === 400 || response.status === 429)).toBe(true);
+    });
+
+    it('keeps the challenge cap when sends arrive concurrently', async () => {
+      const { config, post } = setup({ maxChallengesPerEmail: 5 });
+      for (let round = 0; round < 4; round += 1) {
+        config.__clock.advance(1000);
+        expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      }
+      config.__clock.advance(1000);
+      const deliveriesBefore = config.__delivery.deliveries.length;
+      const responses = await Promise.all(Array.from({ length: 6 }, () =>
+        post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })
+      ));
+      expect(responses.filter((response) => response.status === 200).length).toBeLessThanOrEqual(1);
+      expect(config.__delivery.deliveries.length - deliveriesBefore).toBeLessThanOrEqual(1);
+      const rows = await config.database.findMany<{ createdAt: Date; expiresAt: Date }>({
+        model: 'otp_challenges',
+        where: [{ field: 'email', operator: 'eq', value: 'ada@example.com' }],
+        namespace: 'authfn'
+      });
+      // Refused sends leave their rows not admitted: they expire as they are
+      // created, so no code can be checked against them.
+      const admitted = rows.filter((row) => row.expiresAt.getTime() > row.createdAt.getTime());
+      expect(admitted.length).toBeLessThanOrEqual(5);
+    });
+
+    it('keeps the delivered code usable when a concurrent send is refused', async () => {
+      const { config, post } = setup({ maxChallengesPerEmail: 2 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      config.__clock.advance(1000);
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      config.__clock.advance(1000);
+      const responses = await Promise.all(Array.from({ length: 3 }, () =>
+        post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })
+      ));
+      expect(responses.filter((response) => response.status === 200).length).toBeLessThanOrEqual(1);
+      const latest = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      expect(latest?.expiresAt.getTime()).toBeGreaterThan(latest!.createdAt.getTime());
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(200);
+    });
+
+    it('hands back attempts refused by the per-email count, so a retry with the right code still works', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 3 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      for (let guess = 0; guess < 2; guess += 1) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      }
+      // One attempt left; the same correct code is submitted twice at once.
+      await Promise.all([
+        post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' }),
+        post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })
+      ]);
+      const latest = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      if (!latest?.consumedAt) {
+        expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(200);
+      }
+      // Either way only the two wrong codes count: one more wrong code is
+      // still compared on a new challenge.
+      config.__clock.advance(1000);
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+    });
+
+    it('hands back only the matching attempt when a hook ends a correct sign-up with a replay error', async () => {
+      const { config } = setup();
+      config.hooks = {
+        beforeUserCreate: async () => {
+          throw new AuthFnOtpReplayedError('test replay from a host hook');
+        }
+      };
+      const auth = createTestServer(config);
+      const send = (body: Record<string, unknown>, path: string) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await send({ purpose: 'sign-up', email: 'new@example.com' }, '/otp/send');
+      expect((await send({ purpose: 'sign-up', email: 'new@example.com', code: '100000' }, '/otp/verify')).status).toBe(400);
+      expect((await send({ purpose: 'sign-up', email: 'new@example.com', code: '731942' }, '/otp/verify')).status).toBe(409);
+      const latest = await getLatestOtpChallenge(config, 'sign-up', 'new@example.com');
+      // The wrong code stays counted; only the matching attempt was handed back.
+      expect(latest?.attemptCount).toBe(1);
+    });
+
+    it.each([
+      ['the consume write throws after committing', 'throw-after-commit'],
+      ['the consume write throws without committing', 'throw-before-commit'],
+      ['the consume write cannot be confirmed', 'unconfirmed']
+    ] as const)('keeps every attempt counted when %s', async (_label, mode) => {
+      const base = memoryAdapter({ debug: false });
+      let consumeAttempted = false;
+      // Writes to attemptCount after the consume: a release or a hand-back.
+      const countWritesAfterConsume: Array<Record<string, unknown>> = [];
+      const database = new Proxy(base, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if ((property !== 'update' && property !== 'updateMany') || typeof value !== 'function') {
+            return typeof value === 'function' ? value.bind(target) : value;
+          }
+          return async (params: { model: string; data: Record<string, unknown> }) => {
+            if (params.model === 'otp_challenges' && consumeAttempted && 'attemptCount' in params.data) {
+              countWritesAfterConsume.push(params.data);
+            }
+            if (property !== 'update' || params.model !== 'otp_challenges' || !params.data.consumedAt) {
+              return value.call(target, params);
+            }
+            consumeAttempted = true;
+            if (mode === 'throw-before-commit') {
+              throw new Error('test consume write failed');
+            }
+            await value.call(target, params);
+            if (mode === 'throw-after-commit') {
+              throw new Error('test consume write timed out');
+            }
+            return { id: 'test-other-row' };
+          };
+        }
+      }) as AuthFnDatabase;
+      const config = createConfig({ database }) as AuthFnRuntimeConfig & {
+        __delivery: ReturnType<typeof createDeliveryRecorder>;
+      };
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      // An earlier wrong code on the same challenge must stay counted.
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      const response = await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' });
+      expect(response.status).toBe(mode === 'unconfirmed' ? 400 : 500);
+      expect(consumeAttempted).toBe(true);
+      // Neither the matching attempt nor the earlier wrong one is released or
+      // handed back when the consume outcome is not a confirmed no-op.
+      expect(countWritesAfterConsume).toEqual([]);
+      const stored = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      expect(stored?.attemptCount).toBe(2);
+      if (mode === 'throw-before-commit') {
+        expect(stored?.consumedAt ?? null).toBeNull();
+      }
+    });
+
+    it('applies the strictest limit configured for either OTP plugin', async () => {
+      const { config, post } = setup();
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { maxFailedAttemptsPerEmail: 2 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' });
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '100000' })).status).toBe(400);
+      expect((await post('/otp/verify', { purpose: 'sign-in', email: 'ada@example.com', code: '731942' })).status).toBe(429);
+    });
+
+    it('keeps counting a challenge that outlives the window until it expires, across plugins', async () => {
+      const { config, post } = setup({ maxFailedAttemptsPerEmail: 3 });
+      // The email OTP plugin issues reset codes that live two hours; the
+      // password plugin, which completes resets, keeps its one-hour window.
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: 2 * 60 * 60 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'reset-password', email: 'ada@example.com' });
+      config.__clock.advance(70 * 60 * 1000);
+      for (let guess = 0; guess < 3; guess += 1) {
+        const response = await post('/password/reset/complete', {
+          email: 'ada@example.com',
+          code: '100000',
+          newPassword: 'An0therSecurePassphrase!'
+        });
+        expect(response.status).toBe(400);
+      }
+      const refused = await post('/password/reset/complete', {
+        email: 'ada@example.com',
+        code: '731942',
+        newPassword: 'An0therSecurePassphrase!'
+      });
+      expect(refused.status).toBe(429);
+      expect((await refused.json()).error.details.resetAt).toBe('2026-03-22T02:00:00.000Z');
+    });
+
+    it.each([
+      ['maxFailedAttemptsPerEmail', 0],
+      ['maxFailedAttemptsPerEmail', -1],
+      ['maxFailedAttemptsPerEmail', 1.5],
+      ['maxFailedAttemptsPerEmail', Number.NaN],
+      ['maxChallengesPerEmail', 0],
+      ['emailAttemptWindowSeconds', 1e12]
+    ])('refuses %s = %s when the server is set up', (field, value) => {
+      expect(() => setup({ [field]: value })).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
+    it('refuses a bad limit in the deprecated password factory options when the server is set up', () => {
+      const config = createConfig();
+      config.plugins = [
+        authFnEmailOtpPlugin(),
+        authFnPasswordPlugin({ otp: { maxChallengesPerEmail: 0 } })
+      ];
+      expect(() => createTestServer(config)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
+    it.each([
+      [{ maxFailedAttemptsPerEmail: 2 }, 3],
+      [{ maxFailedAttemptsPerEmail: 1000 }, 4]
+    ])('applies the deprecated password factory limits %j on the email OTP routes too, only to tighten', async (otp, refusedAt) => {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, { maxFailedAttemptsPerEmail: 3 });
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { maxFailedAttemptsPerEmail: 3 });
+      // A hook-only plugin with the same name, listed first, must not hide them.
+      config.plugins = [{ name: 'password', hooks: {} }, authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp })];
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await post('/otp/send', { purpose: 'reset-password', email: 'ada@example.com' });
+      let refused: number | null = null;
+      for (let guess = 1; guess <= 5 && refused === null; guess += 1) {
+        const response = await post('/otp/verify', { purpose: 'reset-password', email: 'ada@example.com', code: '100000' });
+        if (response.status === 429) {
+          refused = guess;
+        }
+      }
+      expect(refused).toBe(refusedAt);
+    });
+
+    it('lets a limit set for one plugin stand when the other plugin leaves it unset', async () => {
+      const config = createConfig() as LimitConfig;
+      Object.assign(config.pluginRuntime!.emailOtp as Record<string, unknown>, {
+        maxFailedAttemptsPerEmail: 30,
+        maxChallengesPerEmail: 40,
+        emailAttemptWindowSeconds: 600
+      });
+      // password.otp only supplies delivery.
+      const budget = resolveOtpEmailBudget(config, {});
+      expect(budget).toMatchObject({ maxFailedAttempts: 30, maxChallenges: 40, windowMs: 600_000 });
+      // With neither set, the defaults apply.
+      expect(resolveOtpEmailBudget(createConfig(), {})).toMatchObject({ maxFailedAttempts: 10, maxChallenges: 20, windowMs: 3_600_000 });
+    });
+
+    it('scans far enough back for reset codes whose lifetime is set in the deprecated factory options', () => {
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 4 * 60 * 60 } })];
+      expect(resolveOtpEmailBudget(config, {}).longestTtlMs).toBe(4 * 60 * 60 * 1000);
+    });
+
+    it('uses the factory reset lifetime only where the runtime config does not override it, and checks lifetimes at setup', () => {
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: Number.NaN } })];
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: 600 });
+      expect(() => createTestServer(config)).not.toThrow();
+      expect(Number.isFinite(resolveOtpEmailBudget(config, {}).scanLimit)).toBe(true);
+      // A runtime key set to undefined also replaces the factory value.
+      Object.assign((config.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, { challengeTtlSeconds: undefined });
+      expect(() => createTestServer(config)).not.toThrow();
+
+      // A non-enumerable runtime lifetime is skipped by the route's merge, so
+      // the factory lifetime is the one in use: the scan reaches it.
+      const hidden = createConfig() as LimitConfig;
+      hidden.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 12 * 60 * 60 } })];
+      Object.defineProperty((hidden.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, 'challengeTtlSeconds', {
+        value: 600,
+        enumerable: false
+      });
+      expect(resolveOtpEmailBudget(hidden, {}).longestTtlMs).toBe(12 * 60 * 60 * 1000);
+
+      // A runtime value the route never reads does not stop startup either.
+      const unread = createConfig() as LimitConfig;
+      unread.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: { challengeTtlSeconds: 12 * 60 * 60 } })];
+      Object.defineProperty((unread.pluginRuntime!.password as { otp: Record<string, unknown> }).otp, 'challengeTtlSeconds', {
+        value: Number.NaN,
+        enumerable: false
+      });
+      expect(() => createTestServer(unread)).not.toThrow();
+
+      // Factory options changed after the plugin is created are not picked up
+      // by any part of it.
+      const factoryOtp = { challengeTtlSeconds: 600 };
+      const later = createConfig() as LimitConfig;
+      later.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin({ otp: factoryOtp })];
+      factoryOtp.challengeTtlSeconds = 12 * 60 * 60;
+      expect(resolveOtpEmailBudget(later, {}).longestTtlMs).toBe(600 * 1000);
+    });
+
+    it('still reads a non-enumerable requireEmailVerifiedForSignIn from the password factory options', async () => {
+      const options = {};
+      Object.defineProperty(options, 'requireEmailVerifiedForSignIn', { value: true, enumerable: false });
+      const config = createConfig() as LimitConfig;
+      config.plugins = [authFnEmailOtpPlugin(), authFnPasswordPlugin(options)];
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await post('/sign-up/password', { email: 'unverified@example.com', password: 'test-password-long-enough' });
+      const signIn = await post('/sign-in/password', { email: 'unverified@example.com', password: 'test-password-long-enough' });
+      expect(signIn.status).toBe(403);
+
+      const invalid = createConfig() as LimitConfig;
+      Object.assign(invalid.pluginRuntime!.emailOtp as Record<string, unknown>, { challengeTtlSeconds: Number.NaN });
+      expect(() => createTestServer(invalid)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    });
+
+    it('retires a new challenge whose admission could not be confirmed even when reading it back fails', async () => {
+      const base = memoryAdapter({ debug: false });
+      let failAdmission = false;
+      let failReadBack = false;
+      const database = new Proxy(base, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if (property === 'update' && typeof value === 'function') {
+            return async (params: { model: string; data: Record<string, unknown> }) => {
+              const row = await value.call(target, params);
+              if (failAdmission && params.model === 'otp_challenges' && !('consumedAt' in params.data) && 'expiresAt' in params.data) {
+                failAdmission = false;
+                failReadBack = true;
+                throw new Error('test admission write timed out');
+              }
+              return row;
+            };
+          }
+          if (property === 'findOne' && typeof value === 'function') {
+            return async (params: { model: string }) => {
+              if (failReadBack && params.model === 'otp_challenges') {
+                failReadBack = false;
+                throw new Error('test read back failed');
+              }
+              return value.call(target, params);
+            };
+          }
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+      }) as AuthFnDatabase;
+      const config = createConfig({ database }) as LimitConfig;
+      const auth = createTestServer(config);
+      const post = (path: string, body: Record<string, unknown>) => auth.router.handle(new Request(`https://account.example.com/auth${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      }));
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).status).toBe(200);
+      const delivered = await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com');
+      config.__clock.advance(1000);
+      failAdmission = true;
+      expect((await post('/otp/send', { purpose: 'sign-in', email: 'ada@example.com' })).ok).toBe(false);
+      // The code the user received is still the one checked.
+      expect((await getLatestOtpChallenge(config, 'sign-in', 'ada@example.com'))?.id).toBe(delivered?.id);
+    });
+
+    it('lets a direct caller tighten the per-email limits but not loosen them', async () => {
+      const { config } = setup({ maxFailedAttemptsPerEmail: 3 });
+      await createUser(config, { primaryEmail: 'ada@example.com' });
+      await createUser(config, { primaryEmail: 'grace@example.com' });
+      const base = config.pluginRuntime!.emailOtp as Record<string, unknown>;
+      const guessUntilRefused = async (email: string, options: Record<string, unknown>) => {
+        await sendOtpChallenge(config, {}, { ...base, ...options }, { purpose: 'sign-in', email });
+        for (let guess = 1; guess <= 5; guess += 1) {
+          try {
+            await verifyOtpChallenge(config, {}, { ...base, ...options }, { purpose: 'sign-in', email, code: '100000' });
+          } catch (error) {
+            if ((error as { code?: string }).code === 'AUTHFN_RATE_LIMITED') {
+              return guess;
+            }
+            expect((error as { code?: string }).code).toBe('AUTHFN_OTP_INVALID');
+          }
+        }
+        return null;
+      };
+      // Tighter than the plugin's 3: the third wrong code is refused.
+      expect(await guessUntilRefused('ada@example.com', { maxFailedAttemptsPerEmail: 2 })).toBe(3);
+      // Looser than the plugin's 3: the plugin's limit still applies.
+      expect(await guessUntilRefused('grace@example.com', { maxFailedAttemptsPerEmail: 1000 })).toBe(4);
+    });
   });
 });

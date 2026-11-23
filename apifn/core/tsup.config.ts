@@ -1,7 +1,13 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/types.ts"],
+  // `testfn` is a separate entry so that only `@apifn/core/testfn` imports the
+  // optional `@testfn/core` peer; nothing reachable from `index` may import it.
+  entry: {
+    index: "src/index.ts",
+    types: "src/types.ts",
+    testfn: "src/integrations/testfn.ts",
+  },
   format: ["cjs", "esm"],
   external: ["@apifn/collections"],
   dts: true,

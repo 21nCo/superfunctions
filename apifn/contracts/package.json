@@ -36,10 +36,11 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "lint": "tsc --noEmit",
-    "verify:packed": "node scripts/verify-packed-consumer.mjs"
+    "verify:packed": "node scripts/verify-packed-consumer.mjs",
+    "verify:packed:registry": "node scripts/verify-packed-consumer.mjs --registry-core"
   },
   "dependencies": {
-    "@apifn/core": "0.0.4",
+    "@apifn/core": "0.1.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

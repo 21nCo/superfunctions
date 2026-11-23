@@ -39,10 +39,10 @@
     "test": "vitest run --config vitest.config.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.6",
+    "@mcpfn/core": "0.0.7",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/db": "0.2.0",
     "drizzle-orm": "^0.45.1",

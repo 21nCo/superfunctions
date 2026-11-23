@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // Packs @apifn/contracts, installs the tarball into a clean project outside the
 // monorepo and checks that every public export loads from the installed
-// package (ESM and CJS) without workspace or source paths. Run after build.
+// package (ESM and CJS) without workspace or source paths. Run after building
+// @apifn/contracts and @apifn/core.
+//
+// By default the consumer also installs the packed workspace @apifn/core, so the checks run
+// against the exact core this tree pins before that version is on npm. Pass --registry-core
+// (npm run verify:packed:registry) to install only the contracts tarball and take @apifn/core
+// from the registry, which checks the published dependency after release.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +18,8 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const repoRoot = path.resolve(packageDir, "../..");
 const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-contracts-consumer-")));
 const keep = process.argv.includes("--keep");
+const registryCore = process.argv.includes("--registry-core");
+const corePin = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).dependencies["@apifn/core"];
 
 function run(command, args, cwd) {
   console.log(`$ ${command} ${args.join(" ")}  (cwd: ${cwd})`);
@@ -53,7 +61,7 @@ assert.equal(failure.validateClientFailureEvent(require("@apifn/contracts/fixtur
 console.log(JSON.stringify({ cjs: Object.keys(contracts).sort().length, resolved: require.resolve("@apifn/contracts") }));
 `;
 
-// OpenAPI 3.0 upconversion (__tests__/upconvert-cases.json): the installed package (with the registry
+// OpenAPI 3.0 upconversion (__tests__/upconvert-cases.json): the installed package (with the installed
 // @apifn/core) and the workspace build must give the 3.1 form's whole result for 3.0 objects and text,
 // keeping literals, map keys and "__proto__" keys verbatim and turning nullable schemas into null types,
 // including schemas in objects reached through references (read by the type of the referencing position).
@@ -137,13 +145,28 @@ try {
   const consumer = path.join(workdir, "consumer");
   mkdirSync(consumer, { recursive: true });
   writeFileSync(path.join(consumer, "package.json"), JSON.stringify({ name: "contracts-consumer", private: true, version: "0.0.0" }));
-  run("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", tarball], consumer);
+  const tarballs = [tarball];
+  if (!registryCore) {
+    const corePacked = JSON.parse(run("npm", ["pack", "--workspace", "@apifn/core", "--pack-destination", workdir, "--json"], repoRoot));
+    if (corePacked[0].version !== corePin) {
+      throw new Error(`workspace @apifn/core is ${corePacked[0].version}, but @apifn/contracts pins ${corePin}`);
+    }
+    tarballs.push(path.join(workdir, corePacked[0].filename));
+  }
+  run("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", ...tarballs], consumer);
 
   const installed = realpathSync(path.join(consumer, "node_modules/@apifn/contracts"));
   if (!installed.startsWith(consumer)) throw new Error(`@apifn/contracts resolved outside the consumer: ${installed}`);
   const core = realpathSync(path.join(consumer, "node_modules/@apifn/core"));
   if (!core.startsWith(consumer)) throw new Error(`@apifn/core resolved outside the consumer: ${core}`);
-  console.log(`@apifn/core ${JSON.parse(readFileSync(path.join(core, "package.json"), "utf8")).version} installed from the registry`);
+  const coreVersion = JSON.parse(readFileSync(path.join(core, "package.json"), "utf8")).version;
+  if (coreVersion !== corePin) throw new Error(`expected @apifn/core ${corePin}, got ${coreVersion}`);
+  const coreSource = registryCore ? "the registry" : "the packed workspace tarball";
+  const coreResolved = JSON.parse(readFileSync(path.join(consumer, "package-lock.json"), "utf8")).packages["node_modules/@apifn/core"].resolved;
+  if (registryCore === coreResolved.startsWith("file:")) {
+    throw new Error(`@apifn/core ${coreVersion} was not installed from ${coreSource}: ${coreResolved}`);
+  }
+  console.log(`@apifn/core ${coreVersion} installed from ${coreSource}`);
 
   // The failure-event entry must stay runtime-neutral: no @apifn/core or Node built-ins.
   const neutral = new Set();

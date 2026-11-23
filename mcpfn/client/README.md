@@ -1,7 +1,7 @@
 # `@mcpfn/client`
 
-Production MCP client and headless session engine for Node.js 18.18 or newer.
-It delegates protocol lifecycle and transports to the official MCP SDK, while
+Production MCP client and headless session engine for Node.js 18.18 or newer
+and Cloudflare Workers. It delegates protocol lifecycle and transports to the official MCP SDK, while
 adding target descriptors, idempotent connection lifecycle, complete inventory
 pagination, typed capability facades, explicit reconnect/cancellation, and
 secret-redacted phase diagnostics.
@@ -31,8 +31,44 @@ await client.close();
 entries while pagination continues, returning `droppedItems` and `complete`
 metadata without accumulating discarded pages in memory.
 
-`stdioTarget()` is Node-only. `streamableHttpTarget()` uses Web Standard
-requests through the official SDK. Authorization is supplied through an
+## Entry points
+
+The main entry, `@mcpfn/client`, is remote-only: it never loads the SDK stdio
+transport, `cross-spawn`, `node:child_process` or other Node.js built-ins.
+A Cloudflare Worker can bundle it without the `nodejs_compat` flag and connect
+to a remote server with `streamableHttpTarget()`. On Workers, and on other hosts
+that forbid runtime code generation, tool output schemas are validated with the
+official SDK's `@cfworker/json-schema` validator instead of Ajv; an explicit
+`clientOptions.jsonSchemaValidator` takes precedence. It applies the dialect a
+schema's `$schema` declares (draft-04, draft-07, 2019-09 or 2020-12) and
+2020-12, MCP's default, when it declares none; a call whose tool declares any
+other dialect fails with an "unsupported JSON Schema dialect" error. Results
+can differ from the SDK's draft-07 Ajv default on Node.js: a draft-07 schema
+ignores keywords beside a `$ref` (Ajv applies them), draft-04 schemas are
+validated (Ajv cannot load them), and undeclared schemas get 2020-12 keywords
+such as `prefixItems` and `unevaluatedProperties`, which Ajv ignores.
+
+Stdio targets spawn a child process and are Node.js-only. Import them from the
+`@mcpfn/client/stdio` subpath:
+
+```ts
+import { createMcpFnClient } from "@mcpfn/client";
+import { stdioTarget } from "@mcpfn/client/stdio";
+
+const client = createMcpFnClient({
+  target: stdioTarget({ command: "node", args: ["./server.js"] }),
+});
+```
+
+`stdioTarget` exported from the main entry is deprecated and is removed in
+0.2.0. Until then it remains as a compatibility path: on Node.js it loads
+`@mcpfn/client/stdio` when the target opens. In runtimes without the `node`
+export condition, such as Workers, opening it fails with
+`MCPFN_TARGET_OPEN_FAILED`. See `CHANGELOG.md`.
+
+## Authorization
+
+`streamableHttpTarget()` uses Web Standard requests through the official SDK. Authorization is supplied through an
 official `OAuthClientProvider`, including the McpFn provider from
 `@mcpfn/auth`. When an interactive flow is required, `connect()` reports
 `MCPFN_AUTHORIZATION_REQUIRED`; pass the callback code to

@@ -3,14 +3,19 @@
 // repositories; `superfunctions.owners.next.json` exists only on `next` and lists the next-owned entries.
 // On public an unlisted path or package is an error; on `next` an unlisted path is public-owned.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PUBLIC_MANIFEST = "superfunctions.owners.json";
 export const NEXT_MANIFEST = "superfunctions.owners.next.json";
 export const REPOS = Object.freeze(["public", "next"]);
-export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MODULE_FILE = fileURLToPath(import.meta.url);
+/** The real path of this file: under `--preserve-symlinks-main` (or `--preserve-symlinks`) the module URL keeps a symlink. */
+const REAL_MODULE_FILE = realPathOr(MODULE_FILE);
+export const REPO_ROOT = path.resolve(path.dirname(REAL_MODULE_FILE), "..");
+/** CI a public release tag's commit must pass when the public manifest has no `ci` section (SFNS-124): .github/workflows/ci.yml. */
+export const DEFAULT_RELEASE_CI = Object.freeze({ kind: "workflow", name: "ci.yml", app: null });
 
 export class OwnersError extends Error {
   /**
@@ -91,8 +96,36 @@ function nameList(file, where, value) {
 }
 
 /**
+ * The optional `ci` section names the CI a release tag's commit must pass in the repository that reads this manifest
+ * (SFNS-124): `{"workflow": "<file under .github/workflows>"}` for a GitHub Actions workflow, identified by its file
+ * rather than its display name, or `{"checkRun": "<check run name>", "app": "<GitHub App slug>"}` for CI that reports
+ * check runs from another app, such as Depot on `next`; the app is required because any app can name a check run.
+ * Absent means null.
+ */
+function releaseCi(file, value) {
+  if (value === undefined) return null;
+  if (!isPlainObject(value)) throw malformed(file, "ci must be an object");
+  checkKeys(file, "ci", value, ["workflow", "checkRun", "app"]);
+  const nonEmpty = (key) => {
+    if (typeof value[key] !== "string" || value[key] === "" || value[key].trim() !== value[key]) {
+      throw malformed(file, `ci.${key} must be a non-empty string without surrounding spaces`);
+    }
+    return value[key];
+  };
+  if ((value.workflow === undefined) === (value.checkRun === undefined)) throw malformed(file, "ci needs exactly one of workflow or checkRun");
+  if (value.workflow !== undefined) {
+    if (value.app !== undefined) throw malformed(file, "ci.app applies only to checkRun");
+    if (!/^[A-Za-z0-9._-]+\.ya?ml$/.test(nonEmpty("workflow"))) throw malformed(file, "ci.workflow must be a workflow file name such as ci.yml");
+    return Object.freeze({ kind: "workflow", name: value.workflow, app: null });
+  }
+  if (value.app === undefined) throw malformed(file, "ci.checkRun needs ci.app, the slug of the GitHub App that reports it");
+  return Object.freeze({ kind: "check-run", name: nonEmpty("checkRun"), app: nonEmpty("app") });
+}
+
+/**
  * Validates a parsed manifest. The public manifest assigns "public" and classifies root files as public or
- * generated; the next manifest assigns "next" and lists next-owned root files. `python` is keyed by the PEP 503
+ * generated; the next manifest assigns "next" and lists next-owned root files. `ci` is the release CI (see
+ * releaseCi) or null. `python` is keyed by the PEP 503
  * canonical name (see canonicalPythonName); `pythonNames` maps each canonical name to its manifest spelling.
  * @param {unknown} data
  * @param {{ kind?: "public" | "next", file?: string }} [options]
@@ -100,7 +133,7 @@ function nameList(file, where, value) {
 export function parseManifest(data, { kind = "public", file = kind === "next" ? NEXT_MANIFEST : PUBLIC_MANIFEST } = {}) {
   if (!REPOS.includes(kind)) throw malformed(file, `manifest kind must be "public" or "next", not ${JSON.stringify(kind)}`);
   if (!isPlainObject(data)) throw malformed(file, "manifest must be a JSON object");
-  checkKeys(file, "the manifest", data, ["version", "paths", "rootFiles", "releases", "python"]);
+  checkKeys(file, "the manifest", data, ["version", "paths", "rootFiles", "releases", "python", "ci"]);
   if (data.version !== 1) throw malformed(file, `version must be 1, not ${JSON.stringify(data.version)}`);
   const owner = kind;
   if (kind === "public" && data.paths === undefined) throw malformed(file, "paths is required");
@@ -126,7 +159,7 @@ export function parseManifest(data, { kind = "public", file = kind === "next" ? 
   for (const name of rootFiles.keys()) {
     if (paths.has(name)) throw malformed(file, `${JSON.stringify(name)} is listed both as a path and as a root file`);
   }
-  return { kind, file, paths, rootFiles, releases, python, pythonNames };
+  return { kind, file, paths, rootFiles, releases, python, pythonNames, ci: releaseCi(file, data.ci) };
 }
 
 /** Reads and validates a manifest file; a missing optional file returns null. */
@@ -294,3 +327,157 @@ export function ownerOfRelease(slug, options) {
 export function ownerOfPython(project, options) {
   return defaultOwners().ownerOfPython(project, options);
 }
+
+const CLI_USAGE = "usage: node scripts/owners.mjs [--repo public|next] [--root <checkout>] <path>...";
+
+/**
+ * Command line lookup (SFNS-128): prints `<path>: <owner>` for each repository-relative path, where the owner is
+ * "public", "next" or "generated". Returns the exit status: 0 when every path has an owner, 1 when a manifest or
+ * a path is rejected (an unlisted path on public, or a `--repo next` lookup of a path the public manifest does not
+ * list in a checkout without the next manifest), 2 for a usage error.
+ * @param {string[]} argv
+ * @param {{ stdout?: (line: string) => void, stderr?: (line: string) => void }} [io]
+ */
+export function runOwnersCli(argv, { stdout = console.log, stderr = console.error } = {}) {
+  // Every diagnostic goes through one place: user- and path-derived text (an option, a --root value inside a
+  // manifest error, a path) must not put a raw line break on stderr, where it could read as a forged record.
+  const report = (message, { usage = false } = {}) => stderr(escapeControlCharacters(message) + (usage ? `\n${CLI_USAGE}` : ""));
+  const options = {};
+  const targets = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--") {
+      targets.push(...argv.slice(index + 1));
+      break;
+    }
+    if (arg === "-h" || arg === "--help") {
+      stdout(CLI_USAGE);
+      return 0;
+    }
+    if (arg.startsWith("-")) {
+      const [flag, inline] = arg.split(/=(.*)/s, 2);
+      if (flag !== "--repo" && flag !== "--root") {
+        report(`error: unknown option ${quoteForLine(arg)}`, { usage: true });
+        return 2;
+      }
+      const value = inline ?? argv[++index];
+      // A separate value that is itself an option (`--root --repo=next`) or `--` means the value is missing.
+      if (value === undefined || value === "" || (inline === undefined && value.startsWith("-"))) {
+        report(`error: ${flag} needs a value`, { usage: true });
+        return 2;
+      }
+      options[flag.slice(2)] = value;
+      continue;
+    }
+    targets.push(arg);
+  }
+  if (targets.length === 0) {
+    report("error: name at least one path", { usage: true });
+    return 2;
+  }
+  if (options.repo !== undefined && !REPOS.includes(options.repo)) {
+    report(`error: --repo must be "public" or "next", not ${quoteForLine(options.repo)}`, { usage: true });
+    return 2;
+  }
+  let owners;
+  try {
+    owners = loadOwners({ root: options.root ? path.resolve(options.root) : REPO_ROOT });
+  } catch (error) {
+    report(error instanceof OwnersError ? `error (${error.code}): ${error.message}` : `error: ${error.message}`);
+    return 1;
+  }
+  // Without the next manifest (a public checkout), a path the public manifest does not list cannot be classified
+  // under next's rules: it may be next-owned (NEXT.md, an unpublished function), so the command refuses to guess.
+  const guessesNext = (options.repo ?? owners.defaultRepo) === "next" && !owners.nextManifest;
+  let status = 0;
+  for (const target of targets) {
+    try {
+      // A Git path never holds NUL, and a filesystem path cannot: reject it rather than print a record for it.
+      if (target.includes("\0")) {
+        throw new OwnersError("invalid-path", `path ${JSON.stringify(target)} must not contain a NUL character`, { path: target });
+      }
+      if (guessesNext && !isPublicListed(owners, target)) {
+        report(
+          `error (next-manifest-needed): ${quoteForLine(normalizePath(target))} is not listed in ${PUBLIC_MANIFEST}, and ${NEXT_MANIFEST} ` +
+            "is not in this checkout; run the command in a next checkout to see whether next owns it",
+        );
+        status = 1;
+        continue;
+      }
+      stdout(`${displayPath(normalizePath(target))}: ${owners.ownerOfPath(target, { repo: options.repo })}`);
+    } catch (error) {
+      if (!(error instanceof OwnersError)) throw error;
+      report(`error (${error.code}): ${error.message}`);
+      status = 1;
+    }
+  }
+  return status;
+}
+
+/** C0/C1 control characters (including line breaks) and the Unicode line and paragraph separators. */
+function hasControlCharacter(value) {
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) return true;
+  }
+  return false;
+}
+
+/** Replaces each character hasControlCharacter matches with its `\uXXXX` escape, so `value` stays on one line. */
+function escapeControlCharacters(value) {
+  let escaped = "";
+  for (const char of value) {
+    escaped += hasControlCharacter(char) ? `\\u${char.codePointAt(0).toString(16).padStart(4, "0")}` : char;
+  }
+  return escaped;
+}
+
+/** JSON-quotes `value` and also escapes what JSON.stringify leaves raw (DEL, C1 controls, U+2028, U+2029). */
+function quoteForLine(value) {
+  return escapeControlCharacters(JSON.stringify(value));
+}
+
+/**
+ * A path as printed in a `<path>: <owner>` record. A Git path may hold a tab, a line break or another control
+ * character; printed raw, one argument could print a second, forged record. Such a path, and one that starts with
+ * a double quote (so it cannot be mistaken for a quoted one), is printed quoted as quoteForLine does instead.
+ */
+function displayPath(normalized) {
+  return hasControlCharacter(normalized) || normalized.startsWith('"') ? quoteForLine(normalized) : normalized;
+}
+
+/** Whether the public manifest lists `target` (as a top-level path or a root file); invalid paths throw. */
+function isPublicListed(owners, target) {
+  try {
+    owners.ownerOfPath(target, { repo: "public" });
+    return true;
+  } catch (error) {
+    if (error instanceof OwnersError && error.code === "unlisted-path") return false;
+    throw error;
+  }
+}
+
+function realPathOr(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+// Run the command only when this file is the entry module, never as a side effect of an import. Node 22.18+ and
+// 24.2+ set import.meta.main. Older Node: this instance is the entry when no code string is being evaluated (`-e`,
+// `-p`), its URL has no query or fragment, and argv[1] resolves to this file's real path, so a symlinked checkout
+// (macOS's /var -> /private/var, --preserve-symlinks[-main]) still runs the command, as in assert-release-owner.mjs.
+// Preloading this file (--import, --require, a loader) or evaluating it under a second URL is not supported.
+function isEntry() {
+  if (typeof import.meta.main === "boolean") return import.meta.main;
+  if (typeof process._eval === "string" || !process.argv[1] || /[?#]/.test(import.meta.url)) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(MODULE_FILE);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry()) process.exitCode = runOwnersCli(process.argv.slice(2));

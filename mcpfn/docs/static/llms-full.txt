@@ -71,7 +71,9 @@ try {
 }
 ```
 
-Use `stdioTarget({ command: "node", args: ["./server.js"] })` for a locally launched server on Node.js; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+The main `@mcpfn/client` entry is remote-only and also runs on Cloudflare Workers without `nodejs_compat`. For a locally launched server on Node.js, import `stdioTarget` from `@mcpfn/client/stdio` and use `stdioTarget({ command: "node", args: ["./server.js"] })`; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+
+`stdioTarget` exported from the main `@mcpfn/client` entry is deprecated and removed in 0.2.0. Until then it loads `@mcpfn/client/stdio` on Node.js when the target opens; on Workers, opening it fails with `MCPFN_TARGET_OPEN_FAILED`.
 
 ## Authorization and lifecycle
 
@@ -101,7 +103,7 @@ Initialization metadata is available only to sessionful client-profile hooks. St
 
 ## Cloudflare Workers
 
-`@mcpfn/core` and `@mcpfn/auth` ship self-contained SDK bundles. Enable Cloudflare's `nodejs_compat` flag because the SDK uses Node built-ins such as `node:crypto`. Serve the Web Standard handler from the Worker. Do not import the Node-oriented client, CLI, testing, or inspector packages into the edge bundle.
+`@mcpfn/core` and `@mcpfn/auth` ship self-contained SDK bundles. Enable Cloudflare's `nodejs_compat` flag because the SDK uses Node built-ins such as `node:crypto`. Serve the Web Standard handler from the Worker. To call remote MCP servers from a Worker, import the remote-only `@mcpfn/client` main entry; it does not need `nodejs_compat`. Do not import `@mcpfn/client/stdio` or the Node-oriented CLI, testing, or inspector packages into the edge bundle.
 
 Schema validation uses Ajv draft-07 on Node and `@cfworker/json-schema` in runtimes that forbid runtime code generation. The repository's `cloudflare:worker-startup` release-gate step boots this shape under `workerd` with a protected request. For the exact compatibility and bundling policy, see the [core reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/core.md) and [architecture](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/architecture.md).
 
@@ -515,6 +517,42 @@ receives the normalized MCP resource URL before trusted context is created. `aut
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.
 
+### Authorization endpoint errors
+
+Unknown clients and unregistered `redirect_uri` values always get a JSON error
+from the authorization server, never a redirect. Once the `redirect_uri`
+matches, later validation errors (for example a missing `code_challenge` or
+`state`, an unsupported `response_type`, or a disallowed `resource`) are
+redirected to that URI with `error`, `error_description`, and `state` (echoed
+only when the request supplied a single valid `state`), only for clients whose
+`source` is listed in
+`authorizationErrors.redirectSources`. The default is
+`["pre-registered", "enterprise"]`, the clients whose redirect URIs the operator
+provisioned.
+
+Dynamically registered and Client ID Metadata Document clients choose their
+own redirect URIs without authentication, so redirecting their errors would
+make the issuer an open redirector (RFC 9700 §4.11.2). For them the endpoint
+returns an HTTP 400 `text/html` page with `cache-control: no-store`, showing
+the HTML-escaped OAuth error code and description, with no link to the
+redirect URI and no reflected `state`. `renderMcpAuthorizationErrorPage(error)`
+builds that default page.
+
+```ts
+createMcpAuthorizationCompatibilityHandler({
+  // ...
+  authorizationErrors: {
+    // Optional: replace the default page for non-redirected errors.
+    render: ({ error, client, request }) => renderHostErrorPage(error, client, request),
+  },
+});
+```
+
+Since 0.0.7 this is the default; earlier versions redirected errors for every
+client source. To restore that behaviour, pass all four sources:
+`authorizationErrors: { redirectSources: ["pre-registered", "enterprise",
+"dynamic", "client-metadata-document"] }`.
+
 ---
 
 <!-- page:docs:reference/cli.md path:/docs/reference/cli -->
@@ -625,7 +663,10 @@ await client.close();
 entries while pagination continues, returning `droppedItems` and `complete`
 metadata without accumulating discarded pages in memory.
 
-`stdioTarget()` is Node-only. `streamableHttpTarget()` uses Web Standard
+The main `@mcpfn/client` entry is remote-only and runs on Cloudflare Workers
+without `nodejs_compat`. `stdioTarget()` is Node-only and is imported from
+`@mcpfn/client/stdio`; the deprecated main-entry `stdioTarget` remains until
+0.2.0. `streamableHttpTarget()` uses Web Standard
 requests through the official SDK. Authorization is supplied through an
 official `OAuthClientProvider`, including the McpFn provider from
 `@mcpfn/auth`. When an interactive flow is required, `connect()` reports

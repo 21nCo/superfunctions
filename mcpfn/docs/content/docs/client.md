@@ -22,7 +22,9 @@ try {
 }
 ```
 
-Use `stdioTarget({ command: "node", args: ["./server.js"] })` for a locally launched server on Node.js; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+The main `@mcpfn/client` entry is remote-only and also runs on Cloudflare Workers without `nodejs_compat`. For a locally launched server on Node.js, import `stdioTarget` from `@mcpfn/client/stdio` and use `stdioTarget({ command: "node", args: ["./server.js"] })`; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+
+`stdioTarget` exported from the main `@mcpfn/client` entry is deprecated and removed in 0.2.0. Until then it loads `@mcpfn/client/stdio` on Node.js when the target opens; on Workers, opening it fails with `MCPFN_TARGET_OPEN_FAILED`.
 
 ## Authorization and lifecycle
 

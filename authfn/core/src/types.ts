@@ -32,6 +32,7 @@ export {
   AuthFnPlacementMovingError,
   AuthFnPluginAbortedError,
   AuthFnRateLimitedError,
+  AuthFnReauthenticationRequiredError,
   AuthFnRedirectUriDisallowedError,
   AuthFnRegionMismatchError,
   AuthFnRegionNotFoundError,
@@ -173,6 +174,14 @@ export interface AuthFnTwoFactorEnrollmentRecord {
   userId: string;
   secretEncrypted: string;
   lastUsedCounter?: number | null;
+  /**
+   * TOTP checks counted against the failed-attempt limit. Only ever increases:
+   * every `maxFailedAttempts`-th check locks TOTP, and an accepted code moves
+   * it to the end of the current run.
+   */
+  failedAttemptCount?: number | null;
+  /** While in the future, TOTP codes are refused; recovery codes still work. */
+  lockedUntil?: Date | null;
   confirmedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -640,7 +649,10 @@ export interface AuthFnRateLimitConfig {
    * Use strict with an atomic store, best-effort with a shared cache, or local for process-local protection.
    */
   mode?: AuthFnRateLimitMode;
-  /** Per-category limits for password, OTP, OAuth, handoff, region lookup, and account routes. */
+  /**
+   * Per-category limits for password, OTP, OAuth, handoff, two-factor, region lookup, and account routes.
+   * The two-factor identifier limit counts attempts per sign-in challenge.
+   */
   policies?: Partial<Record<
     | 'password'
     | 'otp-send'
@@ -648,6 +660,7 @@ export interface AuthFnRateLimitConfig {
     | 'password-reset'
     | 'social-start'
     | 'handoff'
+    | 'two-factor'
     | 'region-lookup'
     | 'account',
     AuthFnRateLimitCategory

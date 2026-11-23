@@ -23,6 +23,7 @@ export type AuthFnErrorCode =
   | 'AUTHFN_OTP_INVALID'
   | 'AUTHFN_OTP_REPLAYED'
   | 'AUTHFN_PLUGIN_ABORTED'
+  | 'AUTHFN_REAUTHENTICATION_REQUIRED'
   | 'AUTHFN_RATE_LIMITED'
   | 'AUTHFN_REDIRECT_URI_DISALLOWED'
   | 'AUTHFN_REGION_MISMATCH'
@@ -281,6 +282,17 @@ export class AuthFnInsufficientScopeError extends AuthFnError {
       details
     });
     this.name = 'AuthFnInsufficientScopeError';
+  }
+}
+
+/** Raised when a sensitive action needs a session signed in more recently than the configured window. */
+export class AuthFnReauthenticationRequiredError extends AuthFnError {
+  constructor(message: string = 'Sign in again to continue', details?: Record<string, unknown>) {
+    super('AUTHFN_REAUTHENTICATION_REQUIRED', message, {
+      status: 403,
+      details
+    });
+    this.name = 'AuthFnReauthenticationRequiredError';
   }
 }
 
@@ -555,4 +567,38 @@ function resolveOAuthInternalMessage(code: string, message: string): string {
     default:
       return sanitizedMessage || 'OAuth request failed';
   }
+}
+
+/**
+ * Carries a route's error together with cookies its shared error response must
+ * still set (for example clearing an OAuth browser-binding cookie). A fresh
+ * wrapper per failure leaves the original error untouched.
+ */
+export class AuthFnErrorWithCookies extends Error {
+  readonly original: unknown;
+  readonly setCookies: string[];
+
+  constructor(original: unknown, setCookies: string[]) {
+    super(original instanceof Error ? original.message : 'AuthFn error');
+    this.name = 'AuthFnErrorWithCookies';
+    this.original = original;
+    this.setCookies = setCookies;
+  }
+}
+
+/**
+ * Recognises an `AuthFnErrorWithCookies` structurally, so it also works when a
+ * plugin throws one from a different copy of the `authfn` package.
+ */
+export function isAuthFnErrorWithCookies(
+  value: unknown
+): value is { original: unknown; setCookies: string[] } {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as { name?: unknown; original?: unknown; setCookies?: unknown };
+  return candidate.name === 'AuthFnErrorWithCookies'
+    && 'original' in candidate
+    && Array.isArray(candidate.setCookies)
+    && candidate.setCookies.every((cookie) => typeof cookie === 'string');
 }

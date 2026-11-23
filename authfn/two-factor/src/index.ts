@@ -11,6 +11,8 @@ import {
   confirmTwoFactorEnrollment,
   createTwoFactorEnrollment,
   disableTwoFactorEnrollment,
+  getTwoFactorPluginConfig,
+  resolveTwoFactorAttemptLimits,
   satisfyTwoFactorChallenge
 } from 'authfn/core/two-factor';
 import { assertValidCsrf, issueSession, requireCookieSession } from 'authfn/core/sessions';
@@ -30,9 +32,36 @@ export function authFnTwoFactorPlugin(
 ): AuthFnPlugin<'twoFactor', TwoFactorPluginRuntimeConfig, false> {
   return {
     name: 'twoFactor',
-    schema: () => config.schema ?? createTwoFactorSchema(),
+    schema: () => (config.schema ? withAttemptLimitFields(config.schema) : createTwoFactorSchema()),
+    // A bad limit fails when the server is set up, not on every code check.
+    validateConfig: (runtime) => {
+      resolveTwoFactorAttemptLimits(getTwoFactorPluginConfig(runtime) ?? {});
+    },
     routes: (ctx) => createTwoFactorRoutes(ctx)
   };
+}
+
+/**
+ * A schema override written for an earlier version has no attempt-limit
+ * columns, and every TOTP check would fail on them. The default definitions
+ * are added to the enrollments table where the override has none; the
+ * override's own fields, including custom column names, are kept.
+ */
+function withAttemptLimitFields(schemas: AuthFnSchemaDefinition['schemas']): AuthFnSchemaDefinition['schemas'] {
+  const defaults = createTwoFactorSchema().find((table) => table.modelName === 'two_factor_enrollments')!.fields;
+  return schemas.map((table) => {
+    if (table.modelName !== 'two_factor_enrollments') {
+      return table;
+    }
+    return {
+      ...table,
+      fields: {
+        failedAttemptCount: defaults.failedAttemptCount!,
+        lockedUntil: defaults.lockedUntil!,
+        ...table.fields
+      }
+    };
+  });
 }
 
 function createTwoFactorSchema(): AuthFnSchemaDefinition['schemas'] {
@@ -49,6 +78,8 @@ function createTwoFactorSchema(): AuthFnSchemaDefinition['schemas'] {
         },
         secretEncrypted: { type: 'string', required: true, fieldName: 'secret_encrypted' },
         lastUsedCounter: { type: 'number', required: false, fieldName: 'last_used_counter' },
+        failedAttemptCount: { type: 'number', required: false, fieldName: 'failed_attempt_count' },
+        lockedUntil: { type: 'date', required: false, fieldName: 'locked_until' },
         confirmedAt: { type: 'date', required: false, fieldName: 'confirmed_at' },
         createdAt: { type: 'date', required: true, fieldName: 'created_at' },
         updatedAt: { type: 'date', required: true, fieldName: 'updated_at' }

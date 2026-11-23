@@ -12,13 +12,19 @@ on:
       - next
       - main
   workflow_dispatch:
+  # Nightly full run of dev (the default branch).
+  schedule:
+    - cron: "17 2 * * *"
 
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run. Every other run (a push to dev/next/main, the nightly run, a
+# manual run) gets a group of its own and always finishes: the release CI gate needs a successful full push run on the
+# exact release commit.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -26,6 +32,7 @@ jobs:
     if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-latest
     outputs:
+      plan_mode: ${{ steps.plan.outputs.plan_mode }}
       base_ref: ${{ steps.plan.outputs.base_ref }}
       changed_files_count: ${{ steps.plan.outputs.changed_files_count }}
       run_js: ${{ steps.plan.outputs.run_js }}
@@ -94,8 +101,16 @@ jobs:
           node --test scripts/owners.test.mjs scripts/verify-owners.test.mjs
           node scripts/verify-owners.mjs --repo "$OWNERS_REPO"
 
+      # The dev-push notifier (SFNS-126): trigger, repository guard, environment, token permissions and payload.
+      - name: Verify next sync notifier workflow
+        run: node --test scripts/notify-next-sync-workflow.test.mjs
+
+      # Pull requests build, typecheck and test only the packages they change plus their dependents; pushes to
+      # dev/next/main (which the release CI gate reads), the nightly run and manual runs plan every job.
       - name: Build CI plan
         id: plan
+        env:
+          CI_PLAN_MODE: ${{ github.event_name == 'pull_request' && 'affected' || 'full' }}
         run: node scripts/ci-plan.mjs
 
   # uifn-version-bump-retarget.yml reruns this job when a PR is edited, which is how a PR retargeted to dev gets it.
@@ -174,6 +189,7 @@ jobs:
 
       - name: Show plan
         run: |
+          echo "mode: ${{ needs.plan.outputs.plan_mode }}"
           echo "base: ${{ needs.plan.outputs.base_ref }}"
           echo "changed files: ${{ needs.plan.outputs.changed_files_count }}"
           echo "full js: ${{ needs.plan.outputs.full_js }}"
@@ -353,6 +369,9 @@ jobs:
 
       - name: Workspace globs and npm release targets
         run: node --test scripts/workspaces.test.mjs scripts/resolve-release-tag.test.mjs
+
+      - name: Release owner and CI gates (SFNS-124)
+        run: node --test scripts/assert-release-owner.test.mjs scripts/assert-release-ci.test.mjs scripts/release-gate-workflows.test.mjs
 
       - name: Python release targets
         run: |

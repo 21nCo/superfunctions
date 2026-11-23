@@ -72,6 +72,7 @@ export {
   AuthFnPlacementMovingError,
   AuthFnPluginAbortedError,
   AuthFnRateLimitedError,
+  AuthFnReauthenticationRequiredError,
   AuthFnRedirectUriDisallowedError,
   AuthFnRegionMismatchError,
   AuthFnRegionNotFoundError,
