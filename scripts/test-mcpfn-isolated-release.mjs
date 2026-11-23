@@ -12,7 +12,7 @@
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -54,10 +54,14 @@ try {
     mkdirSync(path.dirname(path.join(isolatedRoot, file)), { recursive: true });
     copyFileSync(path.join(repoRoot, file), path.join(isolatedRoot, file));
   }
-  // pack-release-package.mjs records the commit it packs.
-  run("git", ["init", "--quiet"], isolatedRoot);
-  run("git", ["add", "--all"], isolatedRoot);
-  run("git", ["-c", "user.name=mcpfn-release-gate", "-c", "user.email=mcpfn-release-gate@example.invalid", "commit", "--quiet", "--no-verify", "-m", "isolated release"], isolatedRoot);
+  // pack-release-package.mjs records the commit it packs. The scratch
+  // repository ignores the caller's global and system Git config (commit
+  // signing, hooks, templates), so a signer that is unavailable here cannot
+  // stop the commit.
+  const scratchGit = { GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1" };
+  run("git", ["init", "--quiet"], isolatedRoot, scratchGit);
+  run("git", ["add", "--all"], isolatedRoot, scratchGit);
+  run("git", ["-c", "user.name=mcpfn-release-gate", "-c", "user.email=mcpfn-release-gate@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify", "--no-gpg-sign", "-m", "isolated release"], isolatedRoot, scratchGit);
   const packed = [];
   for (const [packagePath, slug] of PACKAGES) {
     const cwd = path.join(isolatedRoot, packagePath);

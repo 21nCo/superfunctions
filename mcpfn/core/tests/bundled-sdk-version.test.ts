@@ -342,7 +342,9 @@ describe("bundled @modelcontextprotocol/sdk version", () => {
       `console.log(verifier.bundledSdkBanner(${JSON.stringify(dir)}));`,
       `try { verifier.verifyBundledSdk(${JSON.stringify(dir)}); } catch (error) { console.log(error.name + ": " + error.message); }`,
     ].join("\n");
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: isolated, encoding: "utf8" });
+    // NODE_PATH and the global module folders must not supply TypeScript.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "NODE_PATH"));
+    const result = spawnSync(process.execPath, ["--no-global-search-paths", "--input-type=module", "-e", script], { cwd: isolated, encoding: "utf8", env });
     expect(result.stderr).toBe("");
     expect(result.stdout).toBe(`/*! bundled @modelcontextprotocol/sdk@1.32.2 */\nBundledSdkError: typescript is not installed for ${dir}; install the package's devDependencies to scan its bundles\n`);
   });
