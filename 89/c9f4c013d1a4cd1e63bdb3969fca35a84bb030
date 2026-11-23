@@ -1,0 +1,39 @@
+mcpfn/ADR-0001-COMPATIBILITY.md
+  s_d4b389f34268ee::t_98ef7b2616c587 51-53
+mcpfn/client/CHANGELOG.md
+  s_d4b389f34268ee::t_3a6b2edca9d72a 16-22
+mcpfn/client/README.md
+  s_d4b389f34268ee::t_0404b994ac10c9 42-49
+mcpfn/client/scripts/build-stamp.mjs
+  s_d4b389f34268ee::t_116e7322d3b4cd 19-21,27,81
+mcpfn/client/src/edge-schema-validator.ts
+  s_d4b389f34268ee::t_0aa05e6192bd3f 1-59
+mcpfn/client/tests/edge-schema-validator.test.ts
+  s_d4b389f34268ee::t_dd872f7565b9c1 1-62
+mcpfn/client/tests/fixtures/schema-parity-server.mjs
+  s_d4b389f34268ee::t_fa27a69dfeec68 8-11,16
+mcpfn/client/tests/fixtures/schema-parity.mjs
+  s_d4b389f34268ee::t_58145b6fad7e37 4-5,42-108,114,116-117
+mcpfn/client/tests/request-id.test.ts
+  s_d4b389f34268ee::t_290433da0ef05b 36-52,54-55
+mcpfn/client/tests/workerd.test.ts
+  s_d4b389f34268ee::t_0e25260b454adf 19,31,97-105,198-199,211-214,226,282,300-322
+mcpfn/client/src/client.ts
+  s_d4b389f34268ee::t_b62e002056214a 31-32,126-129,131-135,138-143,150-153,632
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89c9f4c013d1a4cd1e63bdb3969fca35a84bb030",
+  "prompts": {},
+  "sessions": {
+    "s_d4b389f34268ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fb3adb8-09fd-47ed-bc9a-7af46ddecd32",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
