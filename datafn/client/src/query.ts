@@ -337,16 +337,15 @@ function serverProjectsField(
     let scalar = false;
     for (const token of tokens ?? ["*"]) {
       if (token === key) scalar = heldForeignKeys(schema, resource).has(key);
-      // Htree pages return the raw tree record, so a pending scalar shows once set.
-      else if (token === "*" && declared && (key in remoteRow || relationType === "htree")) scalar = true;
+      else if (token === "*" && declared && key in remoteRow) scalar = true;
       else if (typeof token === "string" && token.startsWith(`${key}.`)) scalar = false;
     }
     return scalar;
   }
   if (tokens?.includes(key)) return true;
   if ((!declared && !(key in remoteRow)) || (tokens && !tokens.includes("*"))) return false;
-  // Htree pages (parent.*, children.*) return tree records without it.
-  return relationType === "htree" || !serverOmittedForeignKeys(schema, resource).has(key) || key in remoteRow;
+  // The server's final omit pass strips them from relation rows, htree ones included.
+  return !serverOmittedForeignKeys(schema, resource).has(key) || key in remoteRow;
 }
 
 /** The server's getFkFieldsToOmit: many-one foreign keys and polymorphic resource discriminators. */
@@ -480,8 +479,8 @@ function judgeFilter(
  * holds whole (returned by the server, or written whole by a replace or by
  * the one-level merge below its first level). A member missing from an
  * object merged onto a value the server did not return, or one the server
- * hides at every depth (the query's omit and, off htree pages, its
- * auto-omitted foreign keys), is unknown.
+ * hides at every depth (the query's omit and its auto-omitted foreign keys)
+ * is unknown, unless the replay wrote the top-level value whole.
  */
 function writtenPathKnown(
   current: Record<string, unknown>,
@@ -515,7 +514,8 @@ type WholeKeys = Set<string> | true;
  * pending writes. The row stops matching when a condition that reads a field
  * the replay changed is false on the replayed row. A row the replay wrote
  * whole (recreated after a delete, replaced or inserted) also settles every
- * declared field the page hid, since the server's value for it is gone.
+ * declared field the page hid, since the server's value for it is gone,
+ * except readonly and capability fields, which the server's replace keeps.
  */
 function pendingWritesStopMatch(
   schema: DatafnSchema,
@@ -527,16 +527,24 @@ function pendingWritesStopMatch(
   wholeKeys: WholeKeys,
   hidden: ReadonlySet<unknown>,
   unknownKeys: ReadonlySet<string> = new Set(),
+  rewritten: WholeKeys = new Set(),
 ): boolean {
   const settled = new Set(changedKeys);
   if (wholeKeys === true) {
-    for (const key of declaredFields(schema, resource).fields.keys()) if (!(key in seeded)) settled.add(key);
+    const { fields, system } = declaredFields(schema, resource);
+    for (const [key, field] of fields) {
+      if (!(key in seeded) && !field.readonly && !system.has(key)) settled.add(key);
+    }
   }
+  const noneHidden = new Set<unknown>();
   const known = (path: readonly string[]): boolean =>
     !unknownKeys.has(path[0])
     && (hasPath(seeded, path)
     || (settled.has(path[0])
-      && writtenPathKnown(current, path, wholeKeys === true || wholeKeys.has(path[0]), hidden)));
+      && writtenPathKnown(
+        current, path, wholeKeys === true || wholeKeys.has(path[0]),
+        rewritten === true || rewritten.has(path[0]) ? noneHidden : hidden,
+      )));
   return filterConjuncts(filters).some((conjunct) =>
     filterReads(schema, resource, conjunct, settled)
     && judgeFilter(schema, resource, conjunct, current, known) === false);
@@ -610,7 +618,7 @@ async function replayedPageRow(
     ? query.omit.filter((key): key is string => typeof key === "string")
     : [];
   const hidden = new Set<unknown>(omit);
-  if (relationType !== "htree") for (const key of serverOmittedForeignKeys(schema, page.resource)) hidden.add(key);
+  for (const key of serverOmittedForeignKeys(schema, page.resource)) hidden.add(key);
   // A path built on ancestry the page does not know, or a value the date
   // codec rejects, decides nothing and leaves the server's value in place.
   const undecodable = new Set<string>(unproven);
@@ -625,6 +633,7 @@ async function replayedPageRow(
   }
   if (pendingWritesStopMatch(
     schema, page.resource, filters, page.seeded, current, changedKeys, page.wholeKeys, hidden, undecodable,
+    page.rewritten,
   )) {
     return null;
   }
@@ -752,6 +761,8 @@ type PageRow = {
   row: Record<string, unknown>;
   seeded: Record<string, unknown>;
   wholeKeys: WholeKeys;
+  /** Top-level keys the replay itself wrote whole; `true` for all. */
+  rewritten: WholeKeys;
   /** Htree paths a pending merge, replace or insert wrote explicitly. */
   explicitPaths?: Map<string, unknown>;
 };
@@ -932,8 +943,12 @@ async function seedRelationPage(
         anchorPath = returned.length === pageRows.size && !truncated ? chain : `${chain}-${UNKNOWN_HTREE_PATH}`;
       }
     } else {
-      const at = returned.map(({ path }) => ({ path, index: `-${path}-`.indexOf(`-${anchorId}-`) }))
-        .find(({ index }) => index >= 0);
+      // A direct child's path ends in the anchor's full id; ids may hold the separator.
+      const direct = returned.find(({ path }) => path === anchorId || path.endsWith(`-${anchorId}`));
+      const at = direct
+        ? { path: direct.path, index: direct.path.length - anchorId.length }
+        : returned.map(({ path }) => ({ path, index: `-${path}-`.indexOf(`-${anchorId}-`) }))
+          .find(({ index }) => index >= 0);
       if (at) anchorPath = at.index === 0 ? "" : at.path.slice(0, at.index - 1);
     }
     const anchor = { id: anchorId, [pathField]: anchorPath };
@@ -1006,8 +1021,9 @@ async function htreeRowsGone(
       continue;
     }
     const path = current[pathField];
-    // A path the page never knew, or one ending in unknown ancestry, decides nothing.
-    if (typeof path === "string" && path.endsWith(UNKNOWN_HTREE_PATH)) continue;
+    // A path the page never knew, one ending in unknown ancestry, or a value
+    // the server would reject as a path decides nothing.
+    if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
     const parented = typeof path === "string" && (path === anchorId || path.endsWith(`-${anchorId}`));
     if (!deep && !parented) {
       gone.add(id);
@@ -1103,13 +1119,13 @@ async function overlayPendingRowsOnLimitedPage(
         }
       }
       await scratch.upsertRecord(resource, seeded);
-      pageRows.set(id, { resource, row, seeded, wholeKeys: new Set(Object.keys(seeded)) });
+      pageRows.set(id, { resource, row, seeded, wholeKeys: new Set(Object.keys(seeded)), rewritten: new Set() });
     }
     if (pageRows.size === 0) return remoteResult;
     if (match) {
       const truncated = typeof query.limit === "number" && remoteData.length >= query.limit;
       const seeded = await seedRelationPage(scratch, schema, query, match, pageRows, truncated);
-      anchor = { resource: queryResource, row: seeded, seeded, wholeKeys: new Set() };
+      anchor = { resource: queryResource, row: seeded, seeded, wholeKeys: new Set(), rewritten: new Set() };
       if (match.relation.type !== "htree") linkedBefore = await pageMemberIds(scratch, schema, edgeQuery);
     }
     for (const [id, page] of pageRows) {
@@ -1134,6 +1150,7 @@ async function overlayPendingRowsOnLimitedPage(
       const applied = await replayPendingEntry(journaled(scratch, undo), schema, change);
       if (target && applied) {
         target.wholeKeys = nextWholeKeys(target.wholeKeys, change.mutation, existed);
+        target.rewritten = nextWholeKeys(target.rewritten, change.mutation, existed);
         notePathWrites(schema, target, change.mutation);
       }
     } catch {

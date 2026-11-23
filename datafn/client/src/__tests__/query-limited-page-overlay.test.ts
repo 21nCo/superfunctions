@@ -1763,7 +1763,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
       .toEqual([{ id: "note:1", title: "B" }]);
   });
 
-  it("projection-shape: an htree page returns a pending polymorphic owner the server does not omit there", async () => {
+  it("projection-shape: an htree page hides a pending polymorphic owner, which the server omits from tree rows", async () => {
     const ownedTree: DatafnSchema = {
       resources: [
         { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
@@ -1790,8 +1790,9 @@ describe("Limited first page: server membership, three-valued filters and isolat
       mutation: { resource: "goals", operation: "relate", id: "goal:x", relations: { owner: "users:2" } },
     });
     const rows = [{ id: "goal:x", title: "X", parentId: "goal:c", parentPath: "goal:c" }];
+    // materializeSelect's final omit pass strips the anchor resource's many-one keys from relation rows.
     expect(await page(storage, ownedTree, { resource: "goals", id: "goal:c", relation: "children" }, rows))
-      .toEqual([{ ...rows[0], ownerId: "users:2", ownerResource: "users" }]);
+      .toEqual(rows);
   });
 });
 
@@ -1924,7 +1925,7 @@ describe("Limited first page: htree paths, hidden filter fields and undecodable 
       .toEqual([{ ...rows[0], dueAt: new Date(dueAt) }]);
   });
 
-  it("projection-shape: an htree page shows a pending foreign key named like its relation that the server row lacked", async () => {
+  it("projection-shape: an htree page hides a pending foreign key named like its relation, as the server's omit pass does", async () => {
     const ownedTree: DatafnSchema = {
       resources: [
         { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
@@ -1945,7 +1946,58 @@ describe("Limited first page: htree paths, hidden filter fields and undecodable 
       clientId: "client:1", mutationId: "mutation:owner", timestampMs: 1,
       mutation: { resource: "goals", operation: "relate", id: "goal:x", relations: { owner: "users:2" } },
     });
-    expect(await page(storage, ownedTree, childrenOf, [child])).toEqual([{ ...child, owner: "users:2" }]);
-    expect(await page(storage, ownedTree, { ...childrenOf, omit: ["owner"] }, [child])).toEqual([child]);
+    expect(await page(storage, ownedTree, childrenOf, [child])).toEqual([child]);
+    expect(await page(storage, ownedTree, { ...childrenOf, select: ["*", "**"] }, [child])).toEqual([child]);
+  });
+
+  it("hydration: a direct child's path names the anchor by its full id, and a malformed path proves nothing", async () => {
+    const storage = await hydratingGoals();
+    await offlineWrite(storage, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:x", record: { title: "Renamed" },
+    });
+    // The root goal:c-extra holds the anchor goal:c.
+    const rows = [{ id: "goal:x", title: "X", parentId: "goal:c", parentPath: "goal:c-extra-goal:c" }];
+    expect(await page(storage, nullableTree, childrenOf, rows)).toEqual([{ ...rows[0], title: "Renamed" }]);
+
+    const malformed = await hydratingGoals();
+    await malformed.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:bad-path", timestampMs: 1,
+      mutation: { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: 7 } },
+    });
+    expect((await page(malformed, nullableTree, childrenOf, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+  });
+
+  it("filter-dependencies: a replace keeps hidden readonly and capability fields unknown", async () => {
+    const stamped: DatafnSchema = {
+      resources: [{
+        name: "tasks",
+        version: 1,
+        capabilities: ["timestamps"],
+        fields: [
+          { name: "title", type: "string", required: false },
+          { name: "code", type: "string", required: false, readonly: true },
+        ],
+      }],
+      relations: [],
+    } as DatafnSchema;
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:replace-title", { operation: "replace", id: "task:1", record: { title: "x" } });
+    const rows = [{ id: "task:1", title: "a" }];
+    const query = { resource: "tasks", select: ["id", "title"] };
+    expect((await page(storage, stamped, { ...query, filters: { createdAt: { $gte: 0 } } }, rows)).map((row) => row.id))
+      .toEqual(["task:1"]);
+    expect((await page(storage, stamped, { ...query, filters: { code: "A" } }, rows)).map((row) => row.id))
+      .toEqual(["task:1"]);
+  });
+
+  it("filter-dependencies: a replaced nested value settles members the server also hides", async () => {
+    const storage = await hydrating("notes");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:replace-profile", timestampMs: 1,
+      mutation: { resource: "notes", operation: "replace", id: "note:1", record: { title: "A", profile: { note: "x" } } },
+    });
+    const rows = [{ id: "note:1", title: "A", profile: {} }];
+    expect(await page(storage, folderSchema, { resource: "notes", filters: { "profile.folderId": "folder:1" } }, rows))
+      .toEqual([]);
   });
 });
