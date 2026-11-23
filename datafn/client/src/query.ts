@@ -480,18 +480,23 @@ function judgeFilter(
  * the one-level merge below its first level). A member missing from an
  * object merged onto a value the server did not return, or one the server
  * hides at every depth (the query's omit and its auto-omitted foreign keys)
- * is unknown, unless the replay wrote the top-level value whole.
+ * is unknown, unless the replay wrote a value containing it whole.
  */
 function writtenPathKnown(
   current: Record<string, unknown>,
   path: readonly string[],
   whole: boolean,
   hidden: ReadonlySet<unknown>,
+  rewritten: WholeKeys,
 ): boolean {
   let value: unknown = current;
   for (const [index, segment] of path.entries()) {
     if (!isPlainRecord(value)) return true;
-    if (!(segment in value)) return !(index > 0 && hidden.has(segment)) && (index !== 1 || whole);
+    if (!(segment in value)) {
+      const rewrote = rewritten === true
+        || path.slice(0, index).some((_, end) => rewritten.has(path.slice(0, end + 1).join(".")));
+      return !(index > 0 && hidden.has(segment) && !rewrote) && (index !== 1 || whole);
+    }
     value = value[segment];
   }
   return true;
@@ -536,18 +541,39 @@ function pendingWritesStopMatch(
       if (!(key in seeded) && !field.readonly && !system.has(key)) settled.add(key);
     }
   }
-  const noneHidden = new Set<unknown>();
   const known = (path: readonly string[]): boolean =>
     !unknownKeys.has(path[0])
     && (hasPath(seeded, path)
     || (settled.has(path[0])
-      && writtenPathKnown(
-        current, path, wholeKeys === true || wholeKeys.has(path[0]),
-        rewritten === true || rewritten.has(path[0]) ? noneHidden : hidden,
-      )));
+      && writtenPathKnown(current, path, wholeKeys === true || wholeKeys.has(path[0]), hidden, rewritten)));
   return filterConjuncts(filters).some((conjunct) =>
     filterReads(schema, resource, conjunct, settled)
     && judgeFilter(schema, resource, conjunct, current, known) === false);
+}
+
+/**
+ * The changed values decoded as the page returns them; a path built on
+ * ancestry the page does not know, or a value the date codec rejects,
+ * decides nothing and leaves the server's value in place.
+ */
+function decodeChangedKeys(
+  schema: DatafnSchema,
+  resource: string,
+  current: Record<string, unknown>,
+  changedKeys: ReadonlySet<string>,
+  unproven: ReadonlySet<string>,
+): { patch: Record<string, unknown>; undecodable: Set<string> } {
+  const undecodable = new Set<string>(unproven);
+  const patch: Record<string, unknown> = {};
+  for (const key of changedKeys) {
+    if (current[key] === undefined || undecodable.has(key)) continue;
+    try {
+      Object.assign(patch, parseDateFields(schema, resource, { [key]: current[key] }));
+    } catch {
+      undecodable.add(key);
+    }
+  }
+  return { patch, undecodable };
 }
 
 async function pageMemberIds(
@@ -617,20 +643,9 @@ async function replayedPageRow(
   const omit = Array.isArray(query.omit)
     ? query.omit.filter((key): key is string => typeof key === "string")
     : [];
-  const hidden = new Set<unknown>(omit);
-  for (const key of serverOmittedForeignKeys(schema, page.resource)) hidden.add(key);
-  // A path built on ancestry the page does not know, or a value the date
-  // codec rejects, decides nothing and leaves the server's value in place.
-  const undecodable = new Set<string>(unproven);
-  const patch: Record<string, unknown> = {};
-  for (const key of changedKeys) {
-    if (current[key] === undefined || undecodable.has(key)) continue;
-    try {
-      Object.assign(patch, parseDateFields(schema, page.resource, { [key]: current[key] }));
-    } catch {
-      undecodable.add(key);
-    }
-  }
+  const foreignKeys = serverOmittedForeignKeys(schema, page.resource);
+  const hidden = new Set<unknown>([...omit, ...foreignKeys]);
+  const { patch, undecodable } = decodeChangedKeys(schema, page.resource, current, changedKeys, unproven);
   if (pendingWritesStopMatch(
     schema, page.resource, filters, page.seeded, current, changedKeys, page.wholeKeys, hidden, undecodable,
     page.rewritten,
@@ -644,10 +659,17 @@ async function replayedPageRow(
     patch,
     schema.resources.find((entry) => entry.name === page.resource),
   );
+  // The server's final omit pass strips auto-omitted keys at every depth,
+  // except those the select names (never on an htree page, whose select is
+  // the relation's own).
+  const named = new Set(relationType === "htree" || !Array.isArray(query.select)
+    ? []
+    : query.select.filter((token) => typeof token === "string" && token !== "*").map((token) => token.split(".")[0]));
+  const nestedOmit = [...omit, ...[...foreignKeys].filter((key) => !named.has(key))];
   const shown: Record<string, unknown> = { ...page.row };
   for (const key of shownKeys) {
     if (undecodable.has(key)) continue;
-    if (key in decoded) shown[key] = applyServerOmit(decoded[key], omit);
+    if (key in decoded) shown[key] = applyServerOmit(decoded[key], nestedOmit);
     else delete shown[key];
   }
   return shown;
@@ -761,7 +783,7 @@ type PageRow = {
   row: Record<string, unknown>;
   seeded: Record<string, unknown>;
   wholeKeys: WholeKeys;
-  /** Top-level keys the replay itself wrote whole; `true` for all. */
+  /** Dotted paths the replay itself wrote whole; `true` for all. */
   rewritten: WholeKeys;
   /** Htree paths a pending merge, replace or insert wrote explicitly. */
   explicitPaths?: Map<string, unknown>;
@@ -844,6 +866,22 @@ function nextWholeKeys(
   return next;
 }
 
+/** Dotted paths a pending entry writes whole: a merge sets its members one level deep. */
+function nextRewritten(
+  rewritten: WholeKeys,
+  mutation: Record<string, unknown>,
+  existed: boolean,
+): WholeKeys {
+  if (!existed || mutation.operation === "insert" || mutation.operation === "replace") return true;
+  if (rewritten === true || mutation.operation !== "merge" || !isPlainRecord(mutation.record)) return rewritten;
+  const next = new Set(rewritten);
+  for (const [key, value] of Object.entries(mutation.record)) {
+    if (!isPlainRecord(value)) next.add(key);
+    else for (const member of Object.keys(value)) next.add(`${key}.${member}`);
+  }
+  return next;
+}
+
 function htreePathField(relation: { pathField?: string }): string {
   return relation.pathField || "parentPath";
 }
@@ -865,6 +903,16 @@ function joinPath(path: string, id: string): string {
 /** Whether `path` lists `id` (ids may themselves contain the separator). */
 function pathLists(path: string, id: string): boolean {
   return `-${path}-`.includes(`-${id}-`);
+}
+
+/** Prefixes of `path` that end in `id` at a separator. */
+function anchorPrefixes(path: string, id: string): string[] {
+  const prefixes: string[] = [];
+  const padded = `-${path}-`;
+  for (let at = padded.indexOf(`-${id}-`); at >= 0; at = padded.indexOf(`-${id}-`, at + 1)) {
+    prefixes.push(path.slice(0, at + id.length));
+  }
+  return prefixes;
 }
 
 /** Whether `path` is `prefix` or lies below it. */
@@ -943,13 +991,15 @@ async function seedRelationPage(
         anchorPath = returned.length === pageRows.size && !truncated ? chain : `${chain}-${UNKNOWN_HTREE_PATH}`;
       }
     } else {
-      // A direct child's path ends in the anchor's full id; ids may hold the separator.
-      const direct = returned.find(({ path }) => path === anchorId || path.endsWith(`-${anchorId}`));
-      const at = direct
-        ? { path: direct.path, index: direct.path.length - anchorId.length }
-        : returned.map(({ path }) => ({ path, index: `-${path}-`.indexOf(`-${anchorId}-`) }))
-          .find(({ index }) => index >= 0);
-      if (at) anchorPath = at.index === 0 ? "" : at.path.slice(0, at.index - 1);
+      // Every returned path is the anchor's child prefix (or, with `**`, lies
+      // below it); ids may hold the separator, so use only an agreed prefix.
+      const levels = Array.isArray(query.select) ? query.select.filter((token) => token === "*" || token === "**") : [];
+      const deep = levels.at(-1) === "**";
+      const prefixes = returned.length === 0 ? [] : anchorPrefixes(returned[0].path, anchorId)
+        .filter((prefix) => returned.every(({ path }) => deep ? pathExtends(path, prefix) : path === prefix));
+      if (prefixes.length === 1) {
+        anchorPath = prefixes[0] === anchorId ? "" : prefixes[0].slice(0, prefixes[0].length - anchorId.length - 1);
+      }
     }
     const anchor = { id: anchorId, [pathField]: anchorPath };
     await scratch.upsertRecord(resource, anchor);
@@ -1008,6 +1058,11 @@ async function htreeRowsGone(
       if (!pathLists(known, id) && (cut < 0 || typeof page.row[pathField] === "string")) gone.add(id);
     }
     return gone;
+  }
+  const wildcardOnly = !Array.isArray(query.select)
+    || query.select.every((token) => token === "*" || token === "**");
+  if (anchorRecord && wildcardOnly && (anchorPath === null || anchorPath === undefined)) {
+    return new Set(pageRows.keys());
   }
   const metadata = isPlainRecord(query.metadata) ? query.metadata : {};
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
@@ -1150,7 +1205,7 @@ async function overlayPendingRowsOnLimitedPage(
       const applied = await replayPendingEntry(journaled(scratch, undo), schema, change);
       if (target && applied) {
         target.wholeKeys = nextWholeKeys(target.wholeKeys, change.mutation, existed);
-        target.rewritten = nextWholeKeys(target.rewritten, change.mutation, existed);
+        target.rewritten = nextRewritten(target.rewritten, change.mutation, existed);
         notePathWrites(schema, target, change.mutation);
       }
     } catch {
@@ -1209,14 +1264,18 @@ async function anchorStillMatches(
   try {
     const current = await scratch.getRecord(anchor.resource, query.id as string);
     if (!current) return false;
-    const unproven = await unprovenPathKeys(scratch, schema, anchor, current, chains);
+    const changedKeys = changedKeysOf(anchor.seeded, current);
+    const { undecodable } = decodeChangedKeys(
+      schema, anchor.resource, current, changedKeys,
+      await unprovenPathKeys(scratch, schema, anchor, current, chains),
+    );
     const filters = injectLocalCapabilityAutoFilters(
       { resource: anchor.resource, metadata: query.metadata, filters: query.filters },
       schema,
     ).filters;
     return !pendingWritesStopMatch(
       schema, anchor.resource, filters, anchor.seeded, current,
-      changedKeysOf(anchor.seeded, current), anchor.wholeKeys, new Set(), unproven,
+      changedKeys, anchor.wholeKeys, new Set(), undecodable, anchor.rewritten,
     );
   } catch {
     return true;

@@ -1990,6 +1990,85 @@ describe("Limited first page: htree paths, hidden filter fields and undecodable 
       .toEqual(["task:1"]);
   });
 
+  it("hydration: the anchor prefix is the one every returned path agrees on", async () => {
+    const storage = await hydratingGoals();
+    await offlineWrite(storage, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:b", record: { title: "Renamed" },
+    });
+    // goal:a lies below goal:c's child goal:d-goal:c; goal:b is goal:c's direct child.
+    const rows = [
+      { id: "goal:a", title: "A", parentId: "goal:d-goal:c", parentPath: "goal:c-goal:d-goal:c" },
+      { id: "goal:b", title: "B", parentId: "goal:c", parentPath: "goal:c" },
+    ];
+    expect(await page(storage, nullableTree, { ...childrenOf, select: ["**"], sort: ["id:asc"] }, rows))
+      .toEqual([rows[0], { ...rows[1], title: "Renamed" }]);
+  });
+
+  it("hydration: a wildcard children page is emptied when a pending write clears the anchor's path", async () => {
+    const storage = await hydratingGoals();
+    await offlineWrite(storage, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:c", record: { parentPath: null },
+    });
+    expect(await page(storage, nullableTree, childrenOf, [child])).toEqual([]);
+    expect(await page(storage, nullableTree, { ...childrenOf, select: ["**"] }, [child])).toEqual([]);
+  });
+
+  it("filter-dependencies: a hidden member of a nested value a merge replaces whole is known absent", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { address: { city: "Pune" } } },
+    });
+    const rows = [{ id: "note:1", title: "A", profile: { address: {} } }];
+    expect(await page(
+      storage, folderSchema, { resource: "notes", filters: { "profile.address.folderId": "folder:1" } }, rows,
+    )).toEqual([]);
+  });
+
+  it("filter-dependencies: an undecodable pending date never empties a relation page through its anchor", async () => {
+    const datedFolders: DatafnSchema = {
+      ...folderSchema,
+      resources: [
+        { name: "folders", version: 1, fields: [{ name: "name", type: "string", required: false }, { name: "dueAt", type: "date", required: false }] },
+        folderSchema.resources[1],
+      ],
+    };
+    const storage = await hydrating("notes");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:bad-anchor-date", timestampMs: 1,
+      mutation: { resource: "folders", operation: "merge", id: "folder:1", record: { dueAt: "not-a-date" } },
+    });
+    const rows = [{ id: "note:1", title: "A" }];
+    const query = { resource: "folders", id: "folder:1", relation: "notes", filters: { dueAt: "2026-01-01T00:00:00.000Z" } };
+    expect(await page(storage, datedFolders, query, rows)).toEqual(rows);
+  });
+
+  it("projection-shape: a pending nested value drops the keys the server omits at every depth", async () => {
+    const ownedTree: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "goals",
+          version: 1,
+          fields: [
+            ...treeSchema.resources[0].fields,
+            { name: "profile", type: "object", required: false },
+            { name: "ownerId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        ...treeSchema.relations!,
+        { from: "goals", to: "users", type: "many-one", relation: "owner", fkField: "ownerId" },
+      ],
+    };
+    const storage = new MemoryStorageAdapter(["users", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, ownedTree, {
+      resource: "goals", operation: "merge", id: "goal:x", record: { profile: { ownerId: "users:2", note: "n" } },
+    });
+    expect(await page(storage, ownedTree, childrenOf, [child])).toEqual([{ ...child, profile: { note: "n" } }]);
+  });
+
   it("filter-dependencies: a replaced nested value settles members the server also hides", async () => {
     const storage = await hydrating("notes");
     await storage.changelogAppend({
