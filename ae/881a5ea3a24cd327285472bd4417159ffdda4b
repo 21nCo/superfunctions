@@ -1,0 +1,19 @@
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_f83abd1645e076::t_6dca24682206d2 729-740
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae881a5ea3a24cd327285472bd4417159ffdda4b",
+  "prompts": {},
+  "sessions": {
+    "s_f83abd1645e076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f83abd1645e076",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

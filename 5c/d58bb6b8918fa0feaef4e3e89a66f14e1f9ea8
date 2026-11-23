@@ -1,0 +1,19 @@
+authfn/python/authfn/plugins/email_otp.py
+  s_e5ac07859c1bc9::t_9907f72eb4ea97 535-540
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cd58bb6b8918fa0feaef4e3e89a66f14e1f9ea8",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

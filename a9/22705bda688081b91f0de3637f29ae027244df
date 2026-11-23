@@ -1,0 +1,31 @@
+reviewfn/core/src/artifacts.ts
+  s_e4405039bb83fd::t_77a0028cc82ebd 92-97,101-106,109
+reviewfn/core/test/core.test.ts
+  s_e4405039bb83fd::t_2323e300c8b7bc 182-185,291,328-359,368,388
+reviewfn/docs/content/docs/reference/panel.md
+  s_e4405039bb83fd::t_918c256ea0f774 24
+reviewfn/docs/content/docs/reference/security.md
+  s_e4405039bb83fd::t_862c8a0c9be0ad 18
+reviewfn/docs/panel.md
+  s_e4405039bb83fd::t_9b8caf70619caf 21
+reviewfn/docs/security.md
+  s_e4405039bb83fd::t_c30a4e11d8fb0a 15
+reviewfn/docs/static/llms-full.txt
+  s_e4405039bb83fd::t_37c97bd3c4b07e 336,424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a922705bda688081b91f0de3637f29ae027244df",
+  "prompts": {},
+  "sessions": {
+    "s_e4405039bb83fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10445e47-a258-4f49-8566-26532e4ccacf",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

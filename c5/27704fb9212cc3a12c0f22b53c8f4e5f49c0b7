@@ -1,0 +1,21 @@
+memoryfn/typescript/src/http/router.ts
+  s_aad3da13d40b6e::t_10addf4ac1f876 45-46,51-52,55-57,82,88
+memoryfn/typescript/tests/http-documents.test.ts
+  s_aad3da13d40b6e::t_1d3ea47b311909 84-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c527704fb9212cc3a12c0f22b53c8f4e5f49c0b7",
+  "prompts": {},
+  "sessions": {
+    "s_aad3da13d40b6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e953412-56c2-471f-9f9c-49876f7b1782",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

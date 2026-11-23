@@ -1,0 +1,19 @@
+.github/workflows/storage-r2-minio.yml
+  s_c4e9ba02de45be::t_ca7f4669664fc1 37-41,53-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c8b28fd43a2493d701deaf8f2a4bd326212096c5",
+  "prompts": {},
+  "sessions": {
+    "s_c4e9ba02de45be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1915c820-c6cb-48ae-a37a-1b4bab34b4d3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

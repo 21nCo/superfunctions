@@ -1,0 +1,91 @@
+authfn/oauth-provider/README.md
+  s_3c92e41381bc2b::t_94be810860ac1e 8,12,54,80-113
+authfn/oauth-provider/package.json
+  s_3c92e41381bc2b::t_ea662c037c70ef 3
+authfn/oauth-provider/src/__tests__/device.test.ts
+  s_3c92e41381bc2b::t_1f784f63623c0a 1-913
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_3c92e41381bc2b::t_f5542d6fd9f0b6 13-14,73-77,81-86,88-90,93-103,113-120,124,128-131,133,136,142-145,150-159,161-168,226-227,240,248-254,389
+authfn/oauth-provider/src/device/index.ts
+  s_3c92e41381bc2b::t_aa7208ea6fb494 1-484
+authfn/oauth-provider/src/device/store.ts
+  s_3c92e41381bc2b::t_08e80212d7ded7 1-394
+authfn/oauth-provider/src/device/types.ts
+  s_3c92e41381bc2b::t_a969cf243fbd38 1-88
+authfn/oauth-provider/src/http.ts
+  s_3c92e41381bc2b::t_e840df686fde15 17-21
+authfn/oauth-provider/src/index.ts
+  s_3c92e41381bc2b::t_c060e0ec2a6e57 3,23-34,51-52,59-61,64-65,68-70,80-81
+authfn/oauth-provider/src/metadata/index.ts
+  s_3c92e41381bc2b::t_79dc3a33cfcdce 3,23,33,37
+authfn/oauth-provider/src/registration/document.ts
+  s_3c92e41381bc2b::t_ce5ac33d5e2017 81-83,85,89,99,106-118
+authfn/oauth-provider/src/registration/store.ts
+  s_3c92e41381bc2b::t_9d315cfd010b8d 198-202
+authfn/oauth-provider/src/runtime.ts
+  s_3c92e41381bc2b::t_8b146feb3b614f 261-263,284-286
+authfn/oauth-provider/src/store.ts
+  s_3c92e41381bc2b::t_c6eb536f70a128 9,140-141,161,182-183,190,196-197,201-206,210-211,215,221-238,252,315-317,388-389,402-409,420
+authfn/oauth-provider/src/token/index.ts
+  s_3c92e41381bc2b::t_e7a67d7623017e 6,26-27,31
+authfn/oauth-provider/src/types.ts
+  s_3c92e41381bc2b::t_29f2458164056c 2,80,146-147
+billfn/admin/package.json
+  s_3c92e41381bc2b::t_63445a1795a1d9 3,41
+billfn/admin/src/__tests__/admin.test.ts
+  s_3c92e41381bc2b::t_379ad3c81ec5bb 7-15,195-460
+billfn/admin/src/domain-service.ts
+  s_3c92e41381bc2b::t_27ba3e58ce48c7 44-51,53,55,57,60-69,73-91,256-289
+billfn/admin/src/index.ts
+  s_3c92e41381bc2b::t_e0e4dd1a3ed5b5 258-267,466,471,490-511,645-646,669,686,736-749,785,813,840
+billfn/client/package.json
+  s_3c92e41381bc2b::t_0efab14436b620 3,34
+billfn/core/package.json
+  s_3c92e41381bc2b::t_07d63d5f633933 3
+billfn/core/src/__tests__/import-subscription.test.ts
+  s_3c92e41381bc2b::t_f14a953978243c 1-1619
+billfn/core/src/errors.ts
+  s_3c92e41381bc2b::t_78f3b65beb2d8f 4-5,77-78,80,86-95
+billfn/core/src/index.ts
+  s_3c92e41381bc2b::t_d0b3d07cf97fe1 9-14,38-42
+billfn/core/src/service.ts
+  s_3c92e41381bc2b::t_5ec649251b6d22 1,32-34,109-125,203-219,1187-1325,1879,2101-2427,2499,2507,2522-2523,2893-2896,2903-2909,2945-2946,2950-2951,2962,2965-2975,3007-3009,3014-3015,3058-3067,3079-3088,3125-3136,3153-3154,3164,3168-3169,3173-3174,3238-3265,3390-3391,3603-3606,3823-3827,3857,3860-3861,4081-4084
+billfn/core/src/types.ts
+  s_3c92e41381bc2b::t_bedba70bd565e5 198,205-206,346,367-369,472-484,506-507,656-698,780-791,827,851-866
+billfn/docs/content/docs/server/administration.mdx
+  s_3c92e41381bc2b::t_3c0574bbea1aad 26,31,36-37
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_3c92e41381bc2b::t_025ced3d32986f 31,63-91
+billfn/provider-apple/package.json
+  s_3c92e41381bc2b::t_188934d3fab85c 3,34
+billfn/provider-apple/src/__tests__/provider.test.ts
+  s_3c92e41381bc2b::t_4ef4cb6a459b01 627-799
+billfn/provider-apple/src/index.ts
+  s_3c92e41381bc2b::t_c3881460306509 7,19,41-42,44-45,63-64,116-117,121-161,425-482,766-768
+billfn/provider-dodo/package.json
+  s_3c92e41381bc2b::t_fc015d85b4e455 3,34
+billfn/provider-dodo/src/__tests__/provider.test.ts
+  s_3c92e41381bc2b::t_205b98b20a66b0 681-781
+billfn/provider-dodo/src/index.ts
+  s_3c92e41381bc2b::t_1367c34294dba4 5,48-49,299-349
+billfn/svelte/package.json
+  s_3c92e41381bc2b::t_38668c136fd0ba 3,32-33,37-38
+package-lock.json
+  s_3c92e41381bc2b::t_d2f8aee9dc86d5 4624,4958,4961,4975,4978,4999,6033,6036,6056,6059,6080,6083-6084,6091-6092
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da73d3c7099764c594f7906b04770f5604b50687",
+  "prompts": {},
+  "sessions": {
+    "s_3c92e41381bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3c92e41381bc2b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

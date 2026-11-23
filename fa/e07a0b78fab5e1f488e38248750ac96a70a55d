@@ -1,0 +1,33 @@
+reviewfn/core/src/panel/validate.ts
+  s_7790ab1d9aa08c::t_cfd824011cbf46 330-332,337-342,344-345
+reviewfn/core/src/schema.ts
+  s_7790ab1d9aa08c::t_6d60d8c2a8109f 37,40-41
+reviewfn/core/test/panel.test.ts
+  s_7790ab1d9aa08c::t_33d63cdaabfc64 214-224,377,380-381,389-390,393-399
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_7790ab1d9aa08c::t_7ae90921b8788a 34,62,77
+reviewfn/docs/panel-report-schema.md
+  s_7790ab1d9aa08c::t_bb76ff9bc3fa8c 31,59,74
+reviewfn/docs/static/llms-full.txt
+  s_7790ab1d9aa08c::t_ad725c9e150dca 237,265,280
+reviewfn/harness-codex/src/adapter.ts
+  s_7790ab1d9aa08c::t_160a14eed6a4db 116-119,121,123-130,174-176,178,199-220
+reviewfn/harness-codex/test/output-schema.test.ts
+  s_7790ab1d9aa08c::t_d762e3af1a2e7f 139-146,154-162,164,169-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fae07a0b78fab5e1f488e38248750ac96a70a55d",
+  "prompts": {},
+  "sessions": {
+    "s_7790ab1d9aa08c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7790ab1d9aa08c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

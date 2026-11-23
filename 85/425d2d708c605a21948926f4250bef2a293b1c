@@ -1,0 +1,41 @@
+mcpfn/core/README.md
+  s_7b0035defb308e::t_14677941c1fd05 104-117,126-127,131
+mcpfn/core/src/openapi/from-openapi.ts
+  s_7b0035defb308e::t_8d0168a836842d 488-493,497-500,502-506,508-509,512,514-519,602,610,622-623,667-670
+mcpfn/core/src/openapi/schema.ts
+  s_7b0035defb308e::t_f60ade145b7343 70,141-160,176-177,312-320,328-332,334-335,445,488-502,504-557,560-601,650-652,654-671,673-692
+mcpfn/core/src/openapi/types.ts
+  s_7b0035defb308e::t_8fa9c2a2e3e590 96,98,159-170
+mcpfn/core/src/validation.ts
+  s_7b0035defb308e::t_3b242d3deabaf2 568-578,580,583-584,587,590,592,594,596,602,604,607,609,611-614,619,621-622,643-644,646-647
+mcpfn/core/tests/fixtures/openapi/skip-access-flag-conflicts.json
+  s_7b0035defb308e::t_b79aabcc1f4969 1-564
+mcpfn/core/tests/fixtures/openapi/skip-malformed-request-body.json
+  s_7b0035defb308e::t_fed137111448ab 1-119
+mcpfn/core/tests/validation.test.ts
+  s_7b0035defb308e::t_fbae48b870fb1f 676-706
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_7b0035defb308e::t_d64547e7f9d3cc 11-17
+mcpfn/core/tests/openapi-document-type.test.ts
+  s_7b0035defb308e::t_3b970f134aae0f 1-26
+mcpfn/core/tests/openapi-forms.test.ts
+  s_7b0035defb308e::t_ab8d9369864fb7 454-505,730-774,777-778
+mcpfn/core/tests/types/openapi-document.ts
+  s_7b0035defb308e::t_0e4df795287ea6 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85425d2d708c605a21948926f4250bef2a293b1c",
+  "prompts": {},
+  "sessions": {
+    "s_7b0035defb308e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "70479bec-2886-4fa5-83d1-07087eb4476f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

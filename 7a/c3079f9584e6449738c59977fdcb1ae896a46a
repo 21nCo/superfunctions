@@ -1,0 +1,33 @@
+packages/storage-r2/README.md
+  s_58ba8b98150718::t_9398bc735dad92 34-38,40-41
+packages/storage-r2/src/adapter.test.ts
+  s_58ba8b98150718::t_8ec4cff10cb049 54-72,349-356,413,467-510,583-606
+packages/storage-r2/src/adapter.ts
+  s_0d85e5b70dc887::t_e5910746f13295 48-53,145-150,234,238-240,247-249,253-263,266-268,278-285,287,289-290,296,299-300,306-307,313-316,318,343,348,363,404-409,411-414,418-420,462,483,500-504,509
+packages/storage-r2/src/index.ts
+  s_0d85e5b70dc887::t_caa0c26eadc7a7 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ac3079f9584e6449738c59977fdcb1ae896a46a",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_58ba8b98150718": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e1bba8b-b00f-495b-a241-ff0cfdcd9e27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

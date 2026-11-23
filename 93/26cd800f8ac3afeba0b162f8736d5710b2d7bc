@@ -1,0 +1,31 @@
+authfn/oauth-provider/src/__tests__/actors.test.ts
+  s_0d7e217a030e00::t_c7199d5936b5b2 4,430,440,470,472-500
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_0d7e217a030e00::t_74be93a4aaaa4a 124-134,150-153,157,197,201,343-349
+authfn/oauth-provider/src/__tests__/storage.test.ts
+  s_0d7e217a030e00::t_fc828ab7a63ae4 4,45-46,179-233
+authfn/oauth-provider/README.md
+  s_0d7e217a030e00::t_b6c6d7be571235 52,72
+authfn/oauth-provider/src/store.ts
+  s_0d7e217a030e00::t_7155f7a7dac339 1,125-126,265-275,368-369,396-397,511-514,518-522,525-526,530-532,536
+authfn/oauth-provider/src/token/code.ts
+  s_0d7e217a030e00::t_d58e7e039b88cb 7,61-62,74-78
+authfn/oauth-provider/src/token/refresh.ts
+  s_0d7e217a030e00::t_c544c3b8ae1de5 6,59-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9326cd800f8ac3afeba0b162f8736d5710b2d7bc",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e217a030e00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dde721c5-3187-4b07-85ad-bff7f78fd1eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

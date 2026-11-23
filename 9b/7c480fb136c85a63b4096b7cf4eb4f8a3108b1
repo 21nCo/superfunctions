@@ -1,0 +1,21 @@
+filefn/client/src/__tests__/file-ids.test.ts
+  s_3dec9135b4a571::t_0ce30a13375e4d 95,108,316-395
+filefn/client/src/offline/opfs-store.ts
+  s_3dec9135b4a571::t_af99d9cfc05345 42-59,372,375-376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b7c480fb136c85a63b4096b7cf4eb4f8a3108b1",
+  "prompts": {},
+  "sessions": {
+    "s_3dec9135b4a571": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3dec9135b4a571",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

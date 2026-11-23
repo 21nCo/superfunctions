@@ -1,0 +1,41 @@
+authfn/api-keys/src/index.ts
+  s_c2d6ef2e96fafa::t_50a6cb124a8ff6 17-21,33-35,237-248
+authfn/client/src/regional-client.ts
+  s_c2d6ef2e96fafa::t_93d543b3af6935 239
+authfn/client/src/types.ts
+  s_c2d6ef2e96fafa::t_faf17ee2277cb7 240
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_c2d6ef2e96fafa::t_4ccb448ca106bd 94-151,180-229,297-303,388,390-391,402-407,413-447
+authfn/core/src/core/rate-limit.ts
+  s_c2d6ef2e96fafa::t_1eef0e2616d96f 52-54,146-147,327-368
+authfn/core/src/plugin-types.ts
+  s_c2d6ef2e96fafa::t_e6fbf1d4fc1e3a 86-91
+authfn/docs/content/docs/core-concepts/rate-limiting.md
+  s_c2d6ef2e96fafa::t_57ffd8844769d3 37
+authfn/docs/content/docs/plugins/native-handoff.md
+  s_c2d6ef2e96fafa::t_403e33924b9ef6 95
+authfn/docs/content/docs/plugins/social-oauth/index.md
+  s_c2d6ef2e96fafa::t_4334c7b47849f9 84
+authfn/docs/static/llms-full.txt
+  s_c2d6ef2e96fafa::t_e13d2e2aa9387f 3130,6299,6981
+authfn/native-handoff/src/index.ts
+  s_c2d6ef2e96fafa::t_a28fad1e438938 1,98,102,182,184,193-194,219-229,268-294,383-384,423-424,558-561
+authfn/social-oauth/src/index.ts
+  s_c2d6ef2e96fafa::t_8c2eaa15e3ee47 248-251,300,391-393,395,549,565,2566-2573,2577-2578,2584,2594,2596,2607-2608,2612,2614,2624-2626,2630,2640-2641,2643-2646,2650
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddbab5b032454cf1b13db260bf949c67b98a9e34",
+  "prompts": {},
+  "sessions": {
+    "s_c2d6ef2e96fafa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06fe544c-d9eb-46b8-b581-824711a616bb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

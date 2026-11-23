@@ -1,0 +1,29 @@
+.github/workflows/publish-python.yml
+  s_b996deaa3d01f1::t_4839880a20bdee 53-54,56-63,67
+.github/workflows/publish-tag.yml
+  s_b996deaa3d01f1::t_87ab04e5042825 75-76,91
+README.md
+  s_b996deaa3d01f1::t_d601633dd653d9 76-78
+scripts/assert-release-ci.mjs
+  s_b996deaa3d01f1::t_ff6c996aa646ab 155-160
+scripts/assert-release-ci.test.mjs
+  s_b996deaa3d01f1::t_fdc3485fd1d16e 185-192
+scripts/release-gate-workflows.test.mjs
+  s_b996deaa3d01f1::t_ca3a1604ba8f4d 42-44,72-83,92,101,128,151-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf3100b199daaf28cd291e79d386e4656a37683d",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

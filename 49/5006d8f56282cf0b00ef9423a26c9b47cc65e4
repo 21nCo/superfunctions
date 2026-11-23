@@ -1,0 +1,19 @@
+billfn/docs/content/docs/recipes/multi-region-workers.mdx
+  s_4c491b0c21d986::t_c06578dbfceebd 355-357,366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "495006d8f56282cf0b00ef9423a26c9b47cc65e4",
+  "prompts": {},
+  "sessions": {
+    "s_4c491b0c21d986": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c820faac-8701-43aa-9b39-38c1fa18b725",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

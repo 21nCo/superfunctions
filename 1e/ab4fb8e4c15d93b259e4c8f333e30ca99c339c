@@ -1,0 +1,33 @@
+billfn/docs/content/docs/server/entitlements-and-quotas.mdx
+  s_f058f999ab46b7::t_1e2976539a6565 53
+billfn/core/src/__tests__/grants.test.ts
+  s_6f23f71781f394::t_3293cbed0a4444 526-627
+billfn/core/src/grants.ts
+  s_6f23f71781f394::t_2bf3d24d5227e7 83-90,96,98-103,110,113,115-133
+billfn/core/src/service.ts
+  s_6f23f71781f394::t_eb78729883d634 9,286-304,306,1398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eab4fb8e4c15d93b259e4c8f333e30ca99c339c",
+  "prompts": {},
+  "sessions": {
+    "s_6f23f71781f394": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c5f72e6-12e5-45c4-aa3e-965c59145845",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

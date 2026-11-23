@@ -1,0 +1,19 @@
+apifn/cli/src/commands/check-git.ts
+  s_124319b903d839::t_fe8a43f1c2b7b2 31,297-299,302-305,321-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe5c72fed2a0f67dd85bdb89bf1e3af91aa25a6d",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

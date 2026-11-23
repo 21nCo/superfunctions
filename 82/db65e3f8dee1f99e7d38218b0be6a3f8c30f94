@@ -1,0 +1,31 @@
+filefn/docs/content/docs/features/processing.md
+  s_69a23a3e672712::t_a7071da4a8a7ef 137
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_69a23a3e672712::t_b56bd7f3cd3aa5 115,117
+filefn/docs/content/docs/reference/events.md
+  s_69a23a3e672712::t_ad0d1e705f3f26 24
+filefn/docs/content/docs/reference/schema.md
+  s_69a23a3e672712::t_4e0486bad367b2 101,103-104
+filefn/docs/static/llms-full.txt
+  s_69a23a3e672712::t_ac7633fefc292d 4089,6556,6558,8006,8269,8271-8272
+filefn/server/src/files/service.ts
+  s_69a23a3e672712::t_c5aea8c6839331 292-301,723-728,730-746,753-770,777,780,784,786,811-813
+filefn/server/tests/processing-jobs.test.ts
+  s_69a23a3e672712::t_9e97ce83d54fcc 702-770
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82db65e3f8dee1f99e7d38218b0be6a3f8c30f94",
+  "prompts": {},
+  "sessions": {
+    "s_69a23a3e672712": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e27e4323-19ea-49c0-be54-854424f4927e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

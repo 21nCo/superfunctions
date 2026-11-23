@@ -1,0 +1,47 @@
+scripts/generate-uifn-phase-11.mjs
+  s_a28bbd336b809d::t_2e3168adbe866a 65-66
+scripts/generate-uifn-phase-12.mjs
+  s_a28bbd336b809d::t_8c5ee58f8ed2bb 75-76
+scripts/generate-uifn-phase-13.mjs
+  s_a28bbd336b809d::t_d6875bcb02f2e7 88-89
+scripts/verify-uifn-bundle-size.mjs
+  s_a28bbd336b809d::t_c52dc77ff898b8 67,69
+scripts/verify-uifn-bundle-size.test.mjs
+  s_a28bbd336b809d::t_c9cc7814918415 257-268
+uifn/evidence/generated/phase-11/phase-11-react-compounds.json
+  s_a28bbd336b809d::t_2711e1263c4290 7
+uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json
+  s_a28bbd336b809d::t_3a13819198fec6 7
+uifn/evidence/generated/phase-13/phase-13-solid-compounds.json
+  s_a28bbd336b809d::t_0c8cb50136d03b 7
+uifn/examples/size-fixtures/README.md
+  s_a28bbd336b809d::t_eca43748c0d789 23-25
+uifn/react/src/generated/angle-slider.tsx
+  s_a28bbd336b809d::t_a5d46d2abb34ed 23
+uifn/react/src/internal/compound.tsx
+  s_a28bbd336b809d::t_f2d09fa0d3b0f1 503
+uifn/solid/src/generated/angle-slider.tsx
+  s_a28bbd336b809d::t_ac0506267e28c1 20
+uifn/solid/src/internal/compound.tsx
+  s_a28bbd336b809d::t_52bc36824a42d3 665
+uifn/svelte/lib/generated/angle-slider/definition.ts
+  s_a28bbd336b809d::t_5e2e27710c9ccd 10
+uifn/svelte/lib/internal/PrimitiveRoot.svelte
+  s_a28bbd336b809d::t_d0c36347ce6723 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a215f6a4bf9a264ec6005f6a53b15702545d4bce",
+  "prompts": {},
+  "sessions": {
+    "s_a28bbd336b809d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a28bbd336b809d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

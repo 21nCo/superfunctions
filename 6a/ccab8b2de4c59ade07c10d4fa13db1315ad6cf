@@ -1,0 +1,43 @@
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_4fe1d4c05e6938::t_ecbd697b518977 339-548
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_4fe1d4c05e6938::t_93d904acbe805e 1-874
+datafn/server/__tests__/query-pushdown.test.ts
+  s_4fe1d4c05e6938::t_49d385ca1f0e03 565,573,670,677,713,720,749,756,767,784,791,836
+datafn/server/src/execution/db-store.ts
+  s_4fe1d4c05e6938::t_cb66bbc3cd6098 16,29,238,268,272,278-280,284,294,298,301-303,315,359,416,423,449,510,524-552,563,689-692,699-707,961-962,964-967,984,986,998-1000,1002-1003,1005-1060,1063-1067
+datafn/server/src/execution/query/execute.ts
+  s_4fe1d4c05e6938::t_731cd0309808ad 17-18,278-280,292,297-307
+datafn/server/src/execution/query/filter-plan.ts
+  s_4fe1d4c05e6938::t_aaba8f1264b335 1-819
+datafn/server/src/execution/query/planner.ts
+  s_4fe1d4c05e6938::t_aeada1b90a9018 13,16-17,175,233-285,368,485-492,519,530-538,543,546,548,564,678-681,685,691,696-722
+datafn/server/src/execution/query/pushdown.ts
+  s_4fe1d4c05e6938::t_ae5b64385577ad 22-24,227,234,280,329,352-374,377-391,422-462,517-526
+datafn/server/src/execution/query/select.ts
+  s_4fe1d4c05e6938::t_1584a182031761 505-517
+datafn/server/src/routes/query/execute.ts
+  s_4fe1d4c05e6938::t_0642438d309f88 13-19,256-269,277-278,283-292,294-305,307
+datafn/server/src/routes/query/validate.ts
+  s_4fe1d4c05e6938::t_4ee10557fb5a17 9-10,167-168,550-552,555,594-597
+datafn/server/src/validation/authz.ts
+  s_4fe1d4c05e6938::t_e4b3dbba8e1669 22,181-197,270-288,319,458,473,490-497,499-501
+datafn/server/src/validation/query.ts
+  s_4fe1d4c05e6938::t_81888d985c7922 24-27,955-957,959-965
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6accab8b2de4c59ade07c10d4fa13db1315ad6cf",
+  "prompts": {},
+  "sessions": {
+    "s_4fe1d4c05e6938": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4fe1d4c05e6938",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

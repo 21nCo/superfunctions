@@ -1,0 +1,19 @@
+catchfn/typescript/README.md
+  s_e9b94751bb0a83::t_16e8e6209d645c 77-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "899472788f6e3e7178b486f6c50f75b140983d8d",
+  "prompts": {},
+  "sessions": {
+    "s_e9b94751bb0a83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78b9c02f-8e59-4624-b4ec-9d2f3081bac4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

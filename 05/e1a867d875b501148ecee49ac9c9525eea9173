@@ -1,0 +1,31 @@
+datafn/docs/content/docs/documentation/security/payload-limits.mdx
+  s_df6686278ce1d2::t_85879f2648360a 21,30
+datafn/docs/content/docs/documentation/server/rest-api.mdx
+  s_df6686278ce1d2::t_73ddff62c3eb9a 126
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_df6686278ce1d2::t_b8787381672cb5 69-71
+datafn/server/__tests__/security-audit-hardening.test.ts
+  s_df6686278ce1d2::t_aa709d089f4137 101-109
+datafn/server/src/execution/sync/pull.ts
+  s_df6686278ce1d2::t_37b5e6284b45e6 721-722,724-729
+datafn/server/src/routes/query.ts
+  s_df6686278ce1d2::t_02fe029da8775a 40,675,677-688,694-701,705
+datafn/server/src/server.ts
+  s_df6686278ce1d2::t_c1c2886b0b4bf4 692,704-708,1667,1669-1671,1684
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05e1a867d875b501148ecee49ac9c9525eea9173",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

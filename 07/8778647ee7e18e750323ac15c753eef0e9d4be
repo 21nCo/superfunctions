@@ -1,0 +1,73 @@
+authfn/oauth-provider/src/token/refresh.ts
+  s_3dfae52b6eccb2::t_8ed61ce3946564 1-57
+authfn/oauth-provider/src/http.ts
+  s_7c4851e23b3e11::t_37d37ff7624888 1-184
+authfn/oauth-provider/src/introspection/index.ts
+  s_3dfae52b6eccb2::t_67da7a8302532c 1-59
+authfn/oauth-provider/src/token/code.ts
+  s_7c4851e23b3e11::t_e7c7543b83abd7 1-61
+authfn/oauth-provider/README.md
+  s_7c4851e23b3e11::t_5a15ee4f010d1c 1-67
+authfn/oauth-provider/package.json
+  s_7c4851e23b3e11::t_da8f25311500ea 1-38
+authfn/oauth-provider/src/__tests__/actors.test.ts
+  s_7c4851e23b3e11::t_6fead7d5d77e1a 1-207
+authfn/oauth-provider/src/__tests__/core-dependency.test.ts
+  s_7c4851e23b3e11::t_b36bfdb33e651c 1-4
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_7c4851e23b3e11::t_338e65c977ec8e 1-233
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_7c4851e23b3e11::t_1b7a2b7a62b602 1-215
+authfn/oauth-provider/src/authorize/index.ts
+  s_7c4851e23b3e11::t_1f587859833156 1-243
+authfn/oauth-provider/src/index.ts
+  s_7c4851e23b3e11::t_11f716c5fb0b94 1-50
+authfn/oauth-provider/src/metadata/index.ts
+  s_7c4851e23b3e11::t_f0f32f0b1e2ec0 1-40
+authfn/oauth-provider/src/pkce.ts
+  s_7c4851e23b3e11::t_bbbca2a212805b 1-19
+authfn/oauth-provider/src/revocation/index.ts
+  s_7c4851e23b3e11::t_22e7db188b7d01 1-36
+authfn/oauth-provider/src/runtime.ts
+  s_7c4851e23b3e11::t_8829dba9ceff46 1-185
+authfn/oauth-provider/src/store.ts
+  s_7c4851e23b3e11::t_a3cb360bdba34f 1-403
+authfn/oauth-provider/src/token/index.ts
+  s_7c4851e23b3e11::t_873b01227cd792 1-41
+authfn/oauth-provider/src/types.ts
+  s_7c4851e23b3e11::t_4c79bb108b73cb 1-180
+authfn/oauth-provider/tsconfig.json
+  s_7c4851e23b3e11::t_0ee1fd8c2f8eed 1-15
+authfn/oauth-provider/vitest.config.ts
+  s_7c4851e23b3e11::t_ebe663390bde59 1-7
+authfn/oauth-provider/vitest.global-setup.ts
+  s_7c4851e23b3e11::t_28459f7d07d927 1-5
+package-lock.json
+  s_7c4851e23b3e11::t_f8bd20d2d50aa2 4622-4660,25172-25175
+release-packages.json
+  s_7c4851e23b3e11::t_87182455d8e0bc 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "078778647ee7e18e750323ac15c753eef0e9d4be",
+  "prompts": {},
+  "sessions": {
+    "s_3dfae52b6eccb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54c17235-1cc7-43a8-95c4-8a33f218fac3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_7c4851e23b3e11": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "221c597d-02ea-44fb-b713-de93bd2e0f31",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

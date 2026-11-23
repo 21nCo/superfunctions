@@ -1,0 +1,119 @@
+.github/workflows/swift.yml
+  s_f35b422006faeb::t_f8e70ced2e7eec 143-150
+billfn/swift-bridge/package.json
+  s_f35b422006faeb::t_32f32cb71fd8d0 3
+billfn/swift-bridge/src/__tests__/storekit.test.ts
+  s_0b0647615a23f7::t_3f519344f9b445 1-184
+billfn/swift-bridge/src/index.ts
+  s_7c3b2299b1f2a6::t_7c47003065139a 23-28
+billfn/swift-bridge/src/nativeBackedClient.ts
+  s_7c3b2299b1f2a6::t_d5a22a73dca0da 12-13,51-78,159-176
+billfn/swift-bridge/src/protocol.ts
+  s_7c3b2299b1f2a6::t_c3962abf92e95a 11-12,28-31,39-40,107-152,177-182
+billfn/swift/Package.swift
+  s_a336358ed47a2d::t_0dea4eca3d3429 38-45,49-50
+billfn/swift/Sources/BillFnWebViewBridgeHost/BillFnStoreKitBridge.swift
+  s_45e3fcc563a06c::t_28067333a57469 1-121
+billfn/swift/StoreKitTesting/App/BillFnStoreKitTestHostApp.swift
+  s_7c3b2299b1f2a6::t_8ddca440a638a9 1-14
+billfn/swift/StoreKitTesting/Tests/BillFnStoreKitTests.swift
+  s_7c3b2299b1f2a6::t_8bf35922f2e114 1-332
+billfn/swift/Tests/BillFnStoreKitBackendTests/BillFnStoreKitBackendTests.swift
+  s_15bc06cb6bc29e::t_3e39d166265a58 1-187
+billfn/swift/Tests/BillFnWebViewBridgeHostTests/BillFnStoreKitBridgeTests.swift
+  s_b66d0e9dd4fae0::t_636e0fc25abccf 1-193
+package-lock.json
+  s_f35b422006faeb::t_08fe595c588f24 6117
+billfn/swift-bridge/README.md
+  s_b66d0e9dd4fae0::t_d8bf306c560911 11-32
+billfn/swift/README.md
+  s_b66d0e9dd4fae0::t_82e114218f8e4e 6,9-44,49,51-54
+billfn/swift/Sources/BillFnClient/BillFnClient.swift
+  s_b66d0e9dd4fae0::t_d51e8554ef1887 6-7,9-13,16,35-36,85-114
+billfn/swift/Sources/BillFnClient/BillFnJSONValue.swift
+  s_b66d0e9dd4fae0::t_03dfcbac3c2283 1-74
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKit.swift
+  s_b66d0e9dd4fae0::t_5f184852a7a8cf 3-225
+billfn/swift/Sources/BillFnStoreKit/BillFnStoreKitBackend.swift
+  s_b66d0e9dd4fae0::t_6bcfbc741de67d 1-179
+billfn/swift/Sources/BillFnWebViewBridgeHost/BillFnBridgeDispatcher.swift
+  s_b66d0e9dd4fae0::t_a7edb8c9f09338 19,21-23,25-37,56,65-66,72-76
+billfn/swift/Sources/BillFnWebViewBridgeHost/BillFnBridgeProtocol.swift
+  s_b66d0e9dd4fae0::t_46f24cdca1615d 1,20-29,38,74-75,104-105
+billfn/swift/StoreKitTesting/BillFnStoreKitTesting.xcodeproj/project.pbxproj
+  s_b66d0e9dd4fae0::t_d6f110dcd0006d 1-372
+billfn/swift/StoreKitTesting/BillFnStoreKitTesting.xcodeproj/xcshareddata/xcschemes/BillFnStoreKitTesting.xcscheme
+  s_b66d0e9dd4fae0::t_6365fb66cceed2 1-89
+billfn/swift/StoreKitTesting/Tests/BillFn.storekit
+  s_b66d0e9dd4fae0::t_e96536964704c8 1-85
+billfn/swift/StoreKitTesting/run-tests.sh
+  s_b66d0e9dd4fae0::t_649cd5c3db64ca 1-32
+billfn/swift/examples/embedded-web.swift
+  s_b66d0e9dd4fae0::t_3d58536d9b6c0d 1-2,6-9,13-14,17-18,29-41
+billfn/swift/examples/native-apple.swift
+  s_b66d0e9dd4fae0::t_880f96d183064d 10-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eaaabfd04f2aeae5918b62df8d954eba3e551a6a",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_15bc06cb6bc29e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a118743e-8ac6-4c6b-9290-8ad2f4493246",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_45e3fcc563a06c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e960-c04f-7210-a3c1-5ef17a66a89b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_7c3b2299b1f2a6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e960-c549-7b22-b6b4-b1c5a3f225a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a336358ed47a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "789e1551-d4ea-4217-a2de-fa1597f48ca6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f35b422006faeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "679baf05-05c3-434b-8d43-45dfc1b3d785",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

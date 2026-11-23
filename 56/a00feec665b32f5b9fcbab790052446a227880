@@ -1,0 +1,27 @@
+filefn/client/src/types.ts
+  s_0fab35cd0f441b::t_4a3431391c2c11 59-65,67-72
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_0fab35cd0f441b::t_4409d83eb37b5c 6,8,20,39,96,138-139,145-146,149-150,152-153,161,166-167,177-178,184-185,299-300,303-304,316-331,406,413,415,419-428,431-439,443-446,449-450,452-459,461-465,467-469,482,485,491,513-536,538-594,598-636,638-646,648-652
+filefn/server/src/files/service.ts
+  s_0fab35cd0f441b::t_853f0b6d710afa 194-197,690-693
+filefn/server/src/upload-sessions/file-id-reservations.ts
+  s_0fab35cd0f441b::t_009ca7749c5944 1,4-10,12,14-15,17-18,21-22,25,31-33,35-40,43-44,46-49,55-56,58-62,64-101,107
+filefn/server/src/upload-sessions/service.ts
+  s_0fab35cd0f441b::t_a120b1556da8f8 18,63-68,103,226-228,230-236,239,242,251-254,256-262,264-265,268-272,277-281,283-284,288-292,296-298,300-301,303-308,310,312,314,364,431-444,683,818,821-892,895,898,900-924,926-927,929-944,946-959,961,964-968,971-972,974,978-983,986-1009
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56a00feec665b32f5b9fcbab790052446a227880",
+  "prompts": {},
+  "sessions": {
+    "s_0fab35cd0f441b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0fab35cd0f441b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

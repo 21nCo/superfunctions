@@ -1,0 +1,41 @@
+filefn/client/src/__tests__/offline.test.ts
+  s_1d3cdf80253cb4::t_dc54e277b248ef 181-192
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_1d3cdf80253cb4::t_c27df52b3c73df 79,98,110
+filefn/client/src/index.ts
+  s_1d3cdf80253cb4::t_1596e5955a1d7e 2,274-280
+filefn/client/src/offline/opfs-store.ts
+  s_1d3cdf80253cb4::t_61a6e83c83a3ee 2,67-69,72
+filefn/client/src/types.ts
+  s_1d3cdf80253cb4::t_7dddf45357be2c 65-70,75-77
+filefn/client/src/upload-manager.ts
+  s_1d3cdf80253cb4::t_1ca2ffc84303c3 106-110
+filefn/client/tests/offline.test.ts
+  s_1d3cdf80253cb4::t_379879c79ffd8d 195-215,285,296,306
+filefn/docs/content/docs/reference/routes.md
+  s_1d3cdf80253cb4::t_cadeafa3ae8737 20-21
+filefn/docs/static/llms-full.txt
+  s_1d3cdf80253cb4::t_7011fea70a0cfb 8049-8050
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_1d3cdf80253cb4::t_1b5ce281bfd714 9,228-234,772-811,813-814,817-831,833-835,837-842,844-849,1004,1039,1044-1047,1049-1055,1058-1155
+filefn/server/src/upload-sessions/file-id-reservations.ts
+  s_1d3cdf80253cb4::t_658643b4f56e79 2,12-15,22-31,101-104,108,113-115,122-128,131-132,136-139,153-155,208
+filefn/server/src/upload-sessions/service.ts
+  s_1d3cdf80253cb4::t_b336b1dfaafd92 15,18,67-69,257,261-264,273-274,287-288,292,354-364,513-519,572,574-580,589-595,608-640,866-869,934-945,1225-1231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc04ec20c06c25442b92b6e443e0451f8ff279f6",
+  "prompts": {},
+  "sessions": {
+    "s_1d3cdf80253cb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1d3cdf80253cb4",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

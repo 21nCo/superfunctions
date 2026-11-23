@@ -1,0 +1,19 @@
+scripts/gate-mcpfn-release.mjs
+  s_6c05c96265070c::t_8c7eddac037d18 67-76,78,82,90,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba5b9d6f74e82402ffdbf51b15bb95c3b3250dfc",
+  "prompts": {},
+  "sessions": {
+    "s_6c05c96265070c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6c05c96265070c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+authfn/core/README.md
+  s_2409648105d207::t_4ac2f54f170cd6 34
+authfn/docs/content/docs/plugins/api-keys.md
+  s_2409648105d207::t_218208f3965d39 184
+authfn/docs/content/docs/recipes/placement-bound-auth-context.md
+  s_2409648105d207::t_8846b958f9029e 88,123
+authfn/docs/content/docs/sdk/python.md
+  s_2409648105d207::t_7a8686309ad341 127
+authfn/multi-region/package.json
+  s_2409648105d207::t_a8ba652e8f49d1 3
+package-lock.json
+  s_2409648105d207::t_2399c46f476d00 4530
+authfn/docs/static/llms-full.txt
+  s_2409648105d207::t_15431e325bf5c2 5308,9436,9471,11245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "964ac0ff7ffe96f35df5867feeb46b7f06a55eb3",
+  "prompts": {},
+  "sessions": {
+    "s_2409648105d207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70d3597-81a1-4d05-8bd3-05ad69afb585",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

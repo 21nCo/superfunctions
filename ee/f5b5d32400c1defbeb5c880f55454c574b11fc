@@ -1,0 +1,29 @@
+billfn/core/src/__tests__/lifecycle-events.test.ts
+  s_847ac44e7fd7db::t_9073934bf26b58 363-399,484-485,606,613,637-641,663,667-669,673-703
+billfn/core/src/lifecycle.ts
+  s_847ac44e7fd7db::t_9ac73388087523 26-30,65,158-160,178-186,203,411-415,447,449-453,456,458-460,464-477
+billfn/core/src/service.ts
+  s_847ac44e7fd7db::t_bcf9e779e742ad 3755,3781,3797-3800,3802-3812
+billfn/core/src/types.ts
+  s_847ac44e7fd7db::t_0e301a482b9a0e 803-806,1194-1196
+billfn/docs/content/docs/server/lifecycle-events.mdx
+  s_847ac44e7fd7db::t_8e05f4d82819b9 39,78,80
+billfn/provider-dodo/src/__tests__/lifecycle.test.ts
+  s_847ac44e7fd7db::t_8f216166f32db1 32-80,85,102-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eef5b5d32400c1defbeb5c880f55454c574b11fc",
+  "prompts": {},
+  "sessions": {
+    "s_847ac44e7fd7db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_847ac44e7fd7db",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_78bf271eadd5e9::t_095d4e11488368 463,602-658
+billfn/admin/src/domain-service.ts
+  s_78bf271eadd5e9::t_63d8a14aad73d8 155-156,163,291,295,301-305
+billfn/core/src/__tests__/grants.test.ts
+  s_78bf271eadd5e9::t_63db9cdfb8e502 86-87,91-92,449-512
+billfn/core/src/grants.ts
+  s_78bf271eadd5e9::t_b67e37d14dfd91 45-48,72-98,106-107,178-181,191,246-249
+billfn/core/src/service.ts
+  s_78bf271eadd5e9::t_8c214d21e41148 11-12,337-340,348-351,354,361,1358-1360
+billfn/docs/content/docs/server/administration.mdx
+  s_78bf271eadd5e9::t_542a1f6c976a87 40
+billfn/docs/content/docs/server/entitlements-and-quotas.mdx
+  s_78bf271eadd5e9::t_dac0267917a5d6 53
+billfn/python/billfn/__init__.py
+  s_78bf271eadd5e9::t_1d8860e8ec35f0 21,23,59,61
+billfn/python/billfn/types.py
+  s_78bf271eadd5e9::t_fc8eba44d84a7f 164-183,194,268
+billfn/python/tests/test_client.py
+  s_78bf271eadd5e9::t_45f1efba2debbf 12-14,40,44-50,55-74,143-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0af1f430585f6f7e07719d93b1e90a36e7b389d9",
+  "prompts": {},
+  "sessions": {
+    "s_78bf271eadd5e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_78bf271eadd5e9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

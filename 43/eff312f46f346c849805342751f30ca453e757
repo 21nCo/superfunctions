@@ -1,0 +1,23 @@
+catchfn/typescript/README.md
+  s_012628f773537d::t_e03739e3eecbfd 211-213,215-227
+catchfn/typescript/src/collectors/websocket.ts
+  s_012628f773537d::t_b564a513e2602c 21,330-333,335-339,345-350
+catchfn/typescript/test/websocket.test.ts
+  s_012628f773537d::t_f5ef86a185e651 391,395,440-461,471,480
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43eff312f46f346c849805342751f30ca453e757",
+  "prompts": {},
+  "sessions": {
+    "s_012628f773537d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d9d02f3-07c2-401f-905f-9eb0fb631a7d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

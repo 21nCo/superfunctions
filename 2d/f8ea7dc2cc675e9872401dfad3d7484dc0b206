@@ -1,0 +1,21 @@
+scripts/owners.mjs
+  s_077ee571d15fba::t_afea24bee3e0d6 8,467-477,483-484,490
+scripts/owners.test.mjs
+  s_077ee571d15fba::t_78a8a25fd996f9 376,382,384-385,387-393,395-398,401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2df8ea7dc2cc675e9872401dfad3d7484dc0b206",
+  "prompts": {},
+  "sessions": {
+    "s_077ee571d15fba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_077ee571d15fba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

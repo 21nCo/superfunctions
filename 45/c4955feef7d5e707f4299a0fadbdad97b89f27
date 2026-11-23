@@ -1,0 +1,23 @@
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_88c5d60f5bec7f::t_61ad9dc83acc5c 766-790,928-977
+filefn/server/src/upload-sessions/file-id-reservations.ts
+  s_88c5d60f5bec7f::t_41618c18ba6c61 107-119,140-151
+filefn/server/src/upload-sessions/service.ts
+  s_88c5d60f5bec7f::t_21541c83c86238 102-106,260,262-274,276-279,286,320-324,377-378,577,579,867,869,871-874,880,924,1133-1135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45c4955feef7d5e707f4299a0fadbdad97b89f27",
+  "prompts": {},
+  "sessions": {
+    "s_88c5d60f5bec7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d8d2bd3-896e-43ef-bc0a-9ad790585bc2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+authfn/oauth-provider/README.md
+  s_6350b3d1c6c47e::t_5429953cf2e33f 48,72
+authfn/oauth-provider/src/__tests__/actors.test.ts
+  s_6350b3d1c6c47e::t_d75c2605d68bb8 453-470,472
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_6350b3d1c6c47e::t_46f24e818295c5 126,154-164,423-426,440
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_6350b3d1c6c47e::t_e1cdc8c5596733 137-140,173
+authfn/oauth-provider/src/authorize/index.ts
+  s_6350b3d1c6c47e::t_dc2b4faac3c68e 19,121-122,124,126,152,154-155,166,180
+authfn/oauth-provider/src/runtime.ts
+  s_6350b3d1c6c47e::t_80f516baf4be05 121-129,140,147,177-180
+authfn/oauth-provider/src/store.ts
+  s_6350b3d1c6c47e::t_b0cd448eebe021 1,115-116,123-134,448-452,461,499-532,535,549,553,567
+authfn/oauth-provider/src/types.ts
+  s_6350b3d1c6c47e::t_6e5a4fa6f72fdc 167-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47a1593e98fdd509d4eabe8d542b95364f72f92b",
+  "prompts": {},
+  "sessions": {
+    "s_6350b3d1c6c47e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6350b3d1c6c47e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

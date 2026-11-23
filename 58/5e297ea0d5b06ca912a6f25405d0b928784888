@@ -1,0 +1,21 @@
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_f058f999ab46b7::t_8d73bfa2fb774f 543-560
+datafn/server/src/execution/query/filter-plan.ts
+  s_f058f999ab46b7::t_36b0710a0dd092 557
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "585e297ea0d5b06ca912a6f25405d0b928784888",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

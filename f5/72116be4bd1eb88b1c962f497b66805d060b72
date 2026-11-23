@@ -1,0 +1,25 @@
+.github/workflows/apifn-api-check.yml
+  s_62ed0a52b33a39::t_671b1024777f46 49-53,109-113
+apifn/README.md
+  s_62ed0a52b33a39::t_0c76c4e478c3ba 162
+scripts/verify-owners.mjs
+  s_62ed0a52b33a39::t_30af4ed5db5992 9,83-87,92,96-97,104,113-114,117-122,124,164-252,303-309,312,319-335,339-344,354-356,363-366
+scripts/verify-owners.test.mjs
+  s_62ed0a52b33a39::t_fe1f01ecb76c69 3,12-13,20,553-603,605-633,635-654,656-707,714,730-738,740-741
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f572116be4bd1eb88b1c962f497b66805d060b72",
+  "prompts": {},
+  "sessions": {
+    "s_62ed0a52b33a39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "49168099-a985-40b6-93f1-d25c7793ec29",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

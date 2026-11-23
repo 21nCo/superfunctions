@@ -1,0 +1,45 @@
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_7c3d8007fe9ee8::t_fe21efa6e2c90a 17-19,33
+filefn/docs/content/docs/reference/errors.md
+  s_7c3d8007fe9ee8::t_98f9d0a51dd1dd 66
+filefn/docs/content/docs/reference/routes.md
+  s_7c3d8007fe9ee8::t_1ceba3dec038d8 21-22,38-44
+filefn/docs/content/docs/reference/schema.md
+  s_7c3d8007fe9ee8::t_19bedf6ccc2c1e 15,30
+filefn/docs/content/docs/sdk/server.md
+  s_7c3d8007fe9ee8::t_bf308b9b5b3cf5 52
+filefn/docs/static/llms-full.txt
+  s_7c3d8007fe9ee8::t_93d2d6c3c30863 2932-2934,2948,8026,8166-8167,8183-8189,8292,8307,8910
+filefn/server/package.json
+  s_7c3d8007fe9ee8::t_9b25ff3254af67 3
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_7c3d8007fe9ee8::t_b559d41b0ce683 25,65,214,225,612,637,693,695,711-712,722-723,725-727,742-760,766-771,811-814,835-837,844-845,856,1933-1935,1937-1941,1998-2152
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_7c3d8007fe9ee8::t_af5b19f2757366 10-11
+filefn/server/src/index.ts
+  s_7c3d8007fe9ee8::t_76e8a204f046aa 79-83,173,277
+filefn/server/src/schema.ts
+  s_7c3d8007fe9ee8::t_0d780463e35a59 71
+filefn/server/src/upload-sessions/service.ts
+  s_7c3d8007fe9ee8::t_7aba3f7b34ac13 1,17,55-60,88-91,110-115,140-146,249,328-461,853-855,880-881,935-936,1029-1030,1074,1078-1104,1106,1108-1110,1112-1121,1123-1127,1129,1131-1132,1135-1151,1154-1189,1191-1222,1225-1234,1237-1244,1246-1272,1274-1282,1285-1295,1298-1328,1332-1347,1349-1375,1377-1399,1403,1405,1407,1410-1411,1417-1419,1421-1422,1424-1435,1437-1443,1445-1460,1462-1466,1468-1471,1473,1477-1479,1481-1488,1490-1503,1507,1511-1532,1616-1618
+filefn/server/tests/dedup.test.ts
+  s_7c3d8007fe9ee8::t_db3aa6ac9010dc 35-44
+package-lock.json
+  s_7c3d8007fe9ee8::t_283bd292250ebc 13379-13396,13425-13450,13469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "318dfdb8c18bdcf234ca96bc6f28192185163ab2",
+  "prompts": {},
+  "sessions": {
+    "s_7c3d8007fe9ee8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7c3d8007fe9ee8",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+datafn/server/__tests__/exe-phase06.test.ts
+  s_f5c39aa6f51789::t_dff04c07d7d5a0 382-384,399,417-452
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_f5c39aa6f51789::t_c5324e1ed2b313 16-17,229-251
+datafn/server/src/execution/query/filter-plan.ts
+  s_f5c39aa6f51789::t_83e3c484887aa2 40,246-250,263,461-470
+datafn/server/src/execution/query/planner.ts
+  s_f5c39aa6f51789::t_83de0c42f21094 485,490-496
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "156f4dbbddca8e071dd8d59c68422dcba6084d3f",
+  "prompts": {},
+  "sessions": {
+    "s_f5c39aa6f51789": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f5c39aa6f51789",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

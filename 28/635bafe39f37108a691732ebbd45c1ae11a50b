@@ -1,0 +1,65 @@
+authfn/api-keys/src/__tests__/core-dependency.test.ts
+  s_6422ff744fb7dd::t_842fc9d7cdcffa 2,4
+authfn/api-keys/src/index.ts
+  s_6422ff744fb7dd::t_cfbc237d5c62a8 97-100
+authfn/api-keys/vitest.global-setup.ts
+  s_6422ff744fb7dd::t_abc4cbceff0465 1,4
+authfn/client/package.json
+  s_6422ff744fb7dd::t_88fecd9b55194d 3
+authfn/client/src/__tests__/session-scopes.test-d.ts
+  s_6422ff744fb7dd::t_b93ea3dcd1dd78 1-8
+authfn/client/src/__tests__/session-scopes.test.ts
+  s_6422ff744fb7dd::t_34444a2e0cd9bf 1-29
+authfn/client/src/types.ts
+  s_6422ff744fb7dd::t_0515f2172aeece 33-39
+authfn/client/tsconfig.typecheck.json
+  s_6422ff744fb7dd::t_f868b223af68c8 1-9
+authfn/client/vitest.config.ts
+  s_6422ff744fb7dd::t_89222fba692269 6-11
+authfn/core/README.md
+  s_6422ff744fb7dd::t_97fdcfdf9526cc 26
+authfn/core/src/__tests__/scopes.test.ts
+  s_6422ff744fb7dd::t_c6f53f45d125d2 139-140,143-145
+authfn/core/src/types.ts
+  s_6422ff744fb7dd::t_3534a24b56092f 590-591
+authfn/docs/content/docs/plugins/api-keys.md
+  s_6422ff744fb7dd::t_4ca1acd9badf4d 82-83,185
+authfn/docs/content/docs/sdk/client.md
+  s_6422ff744fb7dd::t_8c717288b22ea7 213-214
+authfn/docs/content/docs/sdk/core.md
+  s_6422ff744fb7dd::t_502c066ad24b43 28
+authfn/docs/static/llms-full.txt
+  s_6422ff744fb7dd::t_122ce05a2659a4 5206-5207,5309,10881-10882,10940
+authfn/email-otp/src/__tests__/core-dependency.test.ts
+  s_6422ff744fb7dd::t_e55920a20fa187 7,10,12
+authfn/email-otp/vitest.global-setup.ts
+  s_6422ff744fb7dd::t_d07a06f90f1bda 1,4
+authfn/multi-region/src/__tests__/core-dependency.test.ts
+  s_6422ff744fb7dd::t_4ba40dbfcda7fe 2,7
+authfn/password/src/__tests__/core-dependency.test.ts
+  s_6422ff744fb7dd::t_b3ee886b5d4147 7,9,11
+authfn/password/vitest.global-setup.ts
+  s_6422ff744fb7dd::t_059beaa53d5d6b 1,4
+authfn/svelte/package.json
+  s_6422ff744fb7dd::t_0faa720def277d 3,32,36
+authfn/test-support/workspace-core.ts
+  s_6422ff744fb7dd::t_615c14be79d721 1-67
+package-lock.json
+  s_6422ff744fb7dd::t_9c4269c3592720 1575,4828,4831,4838
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28635bafe39f37108a691732ebbd45c1ae11a50b",
+  "prompts": {},
+  "sessions": {
+    "s_6422ff744fb7dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6422ff744fb7dd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

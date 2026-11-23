@@ -1,0 +1,23 @@
+datafn/server/__tests__/exe-phase06.test.ts
+  s_f058f999ab46b7::t_d6bf398b395d39 305,310,312,315,317-319,336,351,354,357-363
+datafn/server/src/execution/db-store.ts
+  s_f058f999ab46b7::t_0b9545c2492305 225-226,363-428,430,493,521,684-687,692-693,1014-1027
+datafn/server/src/routes/__tests__/query-owner-access.test.ts
+  s_f058f999ab46b7::t_fd22a7a9397e06 389-452
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd66ec71391ac13100ee70d6756c1f2d0bbb278a",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

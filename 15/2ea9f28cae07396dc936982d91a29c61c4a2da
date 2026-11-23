@@ -1,0 +1,25 @@
+.github/workflows/ci.yml
+  s_82751508460c0d::t_c9185f4eedfbea 281-282,312-317
+scripts/promote.md
+  s_82751508460c0d::t_048ae39fbf551c 1-70
+scripts/promote.mjs
+  s_82751508460c0d::t_ca6d693a132507 1-560
+scripts/promote.test.mjs
+  s_82751508460c0d::t_ae2aea7360540e 1-305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "152ea9f28cae07396dc936982d91a29c61c4a2da",
+  "prompts": {},
+  "sessions": {
+    "s_82751508460c0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e29e192a-56ad-4441-a2a0-6babe6a8224c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

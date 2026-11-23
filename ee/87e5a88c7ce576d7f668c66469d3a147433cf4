@@ -1,0 +1,55 @@
+packages/storage-r2/src/sigv4.ts
+  s_2edce3ab32cd40::t_a3fb20c1211991 1-202
+packages/storage-r2/tests/workers/workers.test.ts
+  s_d1b1e0b0066055::t_d3162e53dc50ee 1-111
+.github/workflows/storage-r2-minio.yml
+  s_2edce3ab32cd40::t_f4c0448ef5730b 1-93
+package-lock.json
+  s_2edce3ab32cd40::t_442c1ffb931ca3 59236,59243,59245-59246
+packages/storage-r2/README.md
+  s_2edce3ab32cd40::t_6221ca762e7c34 1-55
+packages/storage-r2/package.json
+  s_2edce3ab32cd40::t_9c59ce048d812f 3-4,17-20,23,38,40-41
+packages/storage-r2/src/adapter.test.ts
+  s_2edce3ab32cd40::t_b2902497df4e92 3,5-10,12-25,27-32,34-36,38-39,41-43,51-53,56-65,69-80,83-86,88-92,95-109,112-134,137-148,152-178,181-203,206-226,229-249,252-259,262-267,270-278
+packages/storage-r2/src/adapter.ts
+  s_2edce3ab32cd40::t_f93bf1b523b081 1-23,26,29,31,34-42,45-72,74-84,86-130,133-186,188-218,220-374
+packages/storage-r2/src/index.ts
+  s_2edce3ab32cd40::t_a4fbf53cab0b39 1
+packages/storage-r2/src/s3-server.integration.test.ts
+  s_2edce3ab32cd40::t_58852b5ae2a286 1-179
+packages/storage-r2/src/sigv4.test.ts
+  s_2edce3ab32cd40::t_2385c1dd82eb51 1-132
+packages/storage-r2/tests/workers/tsconfig.json
+  s_2edce3ab32cd40::t_1f891738f20a62 1-15
+packages/storage-r2/tests/workers/vitest.config.ts
+  s_2edce3ab32cd40::t_4842c9fd87e4f1 1-16
+packages/storage-r2/tests/workers/worker.ts
+  s_2edce3ab32cd40::t_f4354f4b883e64 1-103
+packages/storage-r2/vitest.config.ts
+  s_2edce3ab32cd40::t_31246490c1c57f 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee87e5a88c7ce576d7f668c66469d3a147433cf4",
+  "prompts": {},
+  "sessions": {
+    "s_2edce3ab32cd40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9316c43-1282-41cc-9ee5-d44b9dae9cda",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_d1b1e0b0066055": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2773a071-8b45-4f80-a08c-f2e5c03a00dc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

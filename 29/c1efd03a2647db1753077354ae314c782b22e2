@@ -1,0 +1,33 @@
+datafn/server/__tests__/kv-merge.test.ts
+  s_c719faa707762b::t_d9179177a7b3db 468,470-472,475-482,512-517,520,524,526-533,536-540,593-595,597-598,600,604,607-608,614-635,650-659
+datafn/server/src/execution/mutation/execute.ts
+  s_c719faa707762b::t_9c8bb179782eae 24,390-405
+datafn/server/src/execution/mutation/kv-merge.ts
+  s_c719faa707762b::t_2a164800c6be5d 48-92,177-181,278,284-286,293-298,302-311,320
+datafn/server/src/execution/mutation/merge-decision.ts
+  s_c719faa707762b::t_7df097c4fbb96d 14-18
+datafn/server/src/execution/sync/push.ts
+  s_c719faa707762b::t_ace92c1bee30d1 33,585-588
+datafn/docs/content/docs/documentation/client/kv.mdx
+  s_c719faa707762b::t_fbd184168d9f41 62
+datafn/docs/content/docs/reference/changelog.mdx
+  s_c719faa707762b::t_f373ff43bcc762 21
+datafn/docs/public/llms-full.txt
+  s_c719faa707762b::t_5e9188522a514e 9445,23692
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29c1efd03a2647db1753077354ae314c782b22e2",
+  "prompts": {},
+  "sessions": {
+    "s_c719faa707762b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0d229937-ba84-4ae8-ba85-eced28f5d576",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

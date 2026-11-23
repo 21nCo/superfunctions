@@ -1,0 +1,25 @@
+langfn/typescript/tests/responses-mapping.test.ts
+  s_566924df9e87a6::t_304a4bf6be822d 1503-1569
+langfn/typescript/src/models/responses/ledger.ts
+  s_566924df9e87a6::t_16ec7cadc7a94b 33-37,70-76,201,212-237,572,584-585,605,635-637,642-643,647-650,656,658,685-686
+langfn/typescript/src/models/stream-lines.ts
+  s_566924df9e87a6::t_6013fd2faa5b57 113-115
+langfn/typescript/tests/stream-lines.test.ts
+  s_566924df9e87a6::t_7ba9e342e30c13 50-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "682d8c110e372cb16a6f39d4468b5b0276aa3e3f",
+  "prompts": {},
+  "sessions": {
+    "s_566924df9e87a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "558c5c5a-1736-4fb7-8837-536a8d237818",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

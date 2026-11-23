@@ -1,0 +1,19 @@
+.github/workflows/swift.yml
+  s_56d9f635c6f582::t_a9d63bf1ee7379 149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "509a21dec5518002a1fafead1b9b7c89b41a8319",
+  "prompts": {},
+  "sessions": {
+    "s_56d9f635c6f582": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d5fe52a-41fd-4cc1-beed-cb993c392971",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_8a8d3de94909d8::t_ea4d440ccb6fd8 3758-3828
+billfn/core/src/service.ts
+  s_8a8d3de94909d8::t_4d6b9fc1c1830d 2493-2495,2497-2500,2504-2518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f527fb240b30a85f81b8fd2f9929cadb0371863",
+  "prompts": {},
+  "sessions": {
+    "s_8a8d3de94909d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfe86c31-27fb-47bb-9c9d-69cc79cefabf",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

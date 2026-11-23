@@ -1,0 +1,41 @@
+authfn/api-keys/src/__tests__/core-dependency.test.ts
+  s_2d2b004e2e5fbd::t_41e3f760d1b530 2
+authfn/api-keys/vitest.global-setup.ts
+  s_2d2b004e2e5fbd::t_7d5cfc98e0ac8b 1
+authfn/client/src/__tests__/session-scopes.test.ts
+  s_2d2b004e2e5fbd::t_d04a52636c32cc 13-16,18-19,27
+authfn/client/src/types.ts
+  s_2d2b004e2e5fbd::t_73671ffb93206c 34-37
+authfn/core/test-support/workspace-core.ts
+  s_2d2b004e2e5fbd::t_07d882b0d1050e 2-5,14
+authfn/docs/content/docs/sdk/client.md
+  s_2d2b004e2e5fbd::t_63589049805a45 213
+authfn/docs/static/llms-full.txt
+  s_2d2b004e2e5fbd::t_62d3971b0eaad4 10881
+authfn/email-otp/src/__tests__/core-dependency.test.ts
+  s_2d2b004e2e5fbd::t_50820155b646d8 7
+authfn/email-otp/vitest.global-setup.ts
+  s_2d2b004e2e5fbd::t_0b0f3cb1e16011 1
+authfn/multi-region/src/__tests__/core-dependency.test.ts
+  s_2d2b004e2e5fbd::t_22df571b566072 2
+authfn/password/src/__tests__/core-dependency.test.ts
+  s_2d2b004e2e5fbd::t_8aba826f879646 7
+authfn/password/vitest.global-setup.ts
+  s_2d2b004e2e5fbd::t_347f7a81af31a3 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0793c8ff9ba681d1191fd8b36aa703aa71dfa50",
+  "prompts": {},
+  "sessions": {
+    "s_2d2b004e2e5fbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4287e38d-e6c0-4f61-be71-5d372a5ca391",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

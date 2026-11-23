@@ -1,0 +1,41 @@
+catchfn/typescript/src/events.ts
+  s_b37e38b17f81cc::t_b2886cbf822b04 90-94
+catchfn/typescript/README.md
+  s_b37e38b17f81cc::t_14838739b7109f 179-183,202-211
+catchfn/typescript/test/websocket.test.ts
+  s_b37e38b17f81cc::t_523125f89c3f92 42,44-48,141-161,348
+catchfn/typescript/src/collectors/websocket.ts
+  s_b37e38b17f81cc::t_e40d53aaa27858 15-19,95-99,104,112,120-122,124,126-129,168-169,174-175,180-181,188-191,197-198,235-242,246
+catchfn/typescript/src/collectors/errors.ts
+  s_b37e38b17f81cc::t_cd46a7457c0e34 64-65,129
+catchfn/typescript/scripts/verify-packed.mjs
+  s_19abec75182420::t_a4980cf8eea287 38
+catchfn/typescript/test/errors.test.ts
+  s_b37e38b17f81cc::t_66ec78896bc238 93-94,105-106
+catchfn/typescript/src/utils/platform.ts
+  s_b37e38b17f81cc::t_534d498d2994bc 49-51,54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93f48e4165778d66fa6a9d53baf41ddd315cd352",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b37e38b17f81cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "708b8382-8b15-40c0-9069-46eb3f969813",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

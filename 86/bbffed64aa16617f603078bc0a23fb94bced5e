@@ -1,0 +1,49 @@
+filefn/server/src/upload-sessions/file-claims.ts
+  s_9d2644fc8ec6d8::t_d4cfd14782f446 1-296
+filefn/server/src/upload-sessions/part-keys.ts
+  s_9d2644fc8ec6d8::t_b6c45d89c5f9bd 1-23
+filefn/client/src/types.ts
+  s_5094774efed4fe::t_6b2239ea031982 59-64
+  s_9d2644fc8ec6d8::t_a37f5205c5b254 68-69
+filefn/server/src/files/service.ts
+  s_9d2644fc8ec6d8::t_d69ae79e5e8a38 10,687-692
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_9d2644fc8ec6d8::t_d98bca6c07919f 7,19-33,36-40,44-46,63-68,71-72,79-82,89-91,94,97-101,104-107,109,112,139-142,144-148,153-155,158-161,164-180,182-184,186,191,193-195,202-207,209-231,234,237-242,262-265,268-273,275-279,293-294,298-300,313-314,317-318,321-344,425-426,430-431,437,441-454,457-458,461-463,465-469,471,473-478,489-490,493-513,516-519,521-528,530-739,766,769-770,777,780-789
+filefn/server/src/errors.ts
+  s_9d2644fc8ec6d8::t_cf510a30309336 37,124-132
+filefn/server/src/upload-sessions/service.ts
+  s_9d2644fc8ec6d8::t_1f80bd7b98a255 18-19,55-58,108,213-214,218-229,260-265,308-316,318-325,327-329,332-454,456-475,477-486,602-604,728,763,812,847,895,939,988-995,1000,1003-1004,1006-1013,1015-1024,1027-1028,1030-1031,1033-1034,1037-1051,1053-1054,1056-1059,1061-1062,1064,1066-1067,1070-1073,1077-1082,1085,1131,1182-1185
+  s_eb94aa5e16f616::t_000d02c40c076d 69-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86bbffed64aa16617f603078bc0a23fb94bced5e",
+  "prompts": {},
+  "sessions": {
+    "s_5094774efed4fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5094774efed4fe",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_9d2644fc8ec6d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c3b5ac8-a7a0-4612-b13e-5bab90f662af",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_eb94aa5e16f616": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3cf302e8-2c8b-40f8-bc7d-74e69e6eea0f",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

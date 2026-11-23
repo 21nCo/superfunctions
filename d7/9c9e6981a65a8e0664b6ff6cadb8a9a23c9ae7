@@ -1,0 +1,21 @@
+authfn/docs/static/llms-full.txt
+  s_2409648105d207::t_858579e7c42c69 9436,9471-9472
+authfn/docs/content/docs/recipes/placement-bound-auth-context.md
+  s_2409648105d207::t_a4a1e71fe5be82 88,123-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d79c9e6981a65a8e0664b6ff6cadb8a9a23c9ae7",
+  "prompts": {},
+  "sessions": {
+    "s_2409648105d207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70d3597-81a1-4d05-8bd3-05ad69afb585",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

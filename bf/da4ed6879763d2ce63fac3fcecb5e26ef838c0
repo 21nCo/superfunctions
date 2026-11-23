@@ -1,0 +1,21 @@
+scripts/verify-public-boundary.mjs
+  s_c2991f44ec06a6::t_f332f109fbde7c 840-843,847-848,857-859,863,934
+scripts/verify-public-boundary.test.mjs
+  s_c2991f44ec06a6::t_bb4e20a04b5fd6 646,683-698,716
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfda4ed6879763d2ce63fac3fcecb5e26ef838c0",
+  "prompts": {},
+  "sessions": {
+    "s_c2991f44ec06a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5635cbc3-c7bc-4e23-93d6-0141acf0dc86",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

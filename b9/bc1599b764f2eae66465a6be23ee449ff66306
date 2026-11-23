@@ -1,0 +1,19 @@
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_8072ae6625dbfa::t_f3f245296159c0 1130,1172,1184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9bc1599b764f2eae66465a6be23ee449ff66306",
+  "prompts": {},
+  "sessions": {
+    "s_8072ae6625dbfa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e288-1fe4-7681-9dfb-885bd9cde28a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

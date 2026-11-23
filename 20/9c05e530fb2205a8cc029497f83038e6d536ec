@@ -1,0 +1,25 @@
+billfn/core/src/__tests__/lifecycle-events.test.ts
+  s_beac44b9d37399::t_2a14e9583ec3fd 5,1171-1277
+billfn/core/src/lifecycle.ts
+  s_beac44b9d37399::t_576950cf914046 125-128,351-360,366-391,396,401,410,412-424,427-428,432,434,440,445
+billfn/core/src/types.ts
+  s_beac44b9d37399::t_2ba8f16bbfe5b3 686-689,815
+billfn/docs/content/docs/server/lifecycle-events.mdx
+  s_beac44b9d37399::t_6fb117d705aab7 50,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "209c05e530fb2205a8cc029497f83038e6d536ec",
+  "prompts": {},
+  "sessions": {
+    "s_beac44b9d37399": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_beac44b9d37399",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

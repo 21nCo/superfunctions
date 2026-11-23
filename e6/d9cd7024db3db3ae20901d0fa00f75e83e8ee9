@@ -1,0 +1,43 @@
+langfn/typescript/package.json
+  s_b996deaa3d01f1::t_e3b870e75e2d40 3
+mcpfn/core/README.md
+  s_b996deaa3d01f1::t_ebb91e56ff89a3 124-134
+mcpfn/core/src/openapi/schema.ts
+  s_b996deaa3d01f1::t_7193f6a4863f3f 151-152,154,157-169,347-349,536-540,547,550-554,569-737,826,860,885-904,906-910,913-921,924,927,929-963,968-1104,1307-1349
+mcpfn/core/src/validation.ts
+  s_b996deaa3d01f1::t_3e4c13adac1dd8 568-570,612-614
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_b996deaa3d01f1::t_c94f3afe5433b8 37-45
+mcpfn/core/tests/fixtures/openapi/skip-access-flag-child-constraints.json
+  s_b996deaa3d01f1::t_999b2941aeb3db 1-368
+mcpfn/core/tests/fixtures/openapi/skip-access-flag-oneof-projection.json
+  s_b996deaa3d01f1::t_d522fa444a4ef8 1-284
+mcpfn/core/tests/openapi-forms.test.ts
+  s_b996deaa3d01f1::t_9fac4d3e9c6620 593-654
+mcpfn/core/tests/validation.test.ts
+  s_b996deaa3d01f1::t_055d9da23783bf 1,708-724
+memoryfn/typescript/package.json
+  s_b996deaa3d01f1::t_77a7afb0c37d1d 3
+package-lock.json
+  s_b996deaa3d01f1::t_44289d7dda74b0 15833,24994,59147,64876
+packages/admin/package.json
+  s_b996deaa3d01f1::t_99f6faa439d618 3
+superconsole/package.json
+  s_b996deaa3d01f1::t_4452ad280f904a 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6d9cd7024db3db3ae20901d0fa00f75e83e8ee9",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

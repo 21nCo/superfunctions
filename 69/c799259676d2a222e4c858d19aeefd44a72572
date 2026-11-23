@@ -1,0 +1,29 @@
+.github/workflows/storage-r2-minio.yml
+  s_c0e3d49b12ee94::t_07785b0fd2d556 10,12,20,22,37-39,51-52,85-89,92-102,105-106
+packages/storage-r2/package.json
+  s_c0e3d49b12ee94::t_24b53771d767c7 4
+packages/storage-r2/src/adapter.ts
+  s_c0e3d49b12ee94::t_9a76a63b70ab7a 74-76,95-97,111,115,124,167-172,179
+packages/storage-r2/src/s3-server.integration.test.ts
+  s_c0e3d49b12ee94::t_a0beb585d3cf96 31-37,72,107,113,127,129,134,162
+packages/storage-r2/src/sigv4.test.ts
+  s_c0e3d49b12ee94::t_23f66491711f1b 2,132-164
+packages/storage-r2/src/sigv4.ts
+  s_c0e3d49b12ee94::t_762b7a68fcf011 40,70-82,86,100,191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69c799259676d2a222e4c858d19aeefd44a72572",
+  "prompts": {},
+  "sessions": {
+    "s_c0e3d49b12ee94": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c0e3d49b12ee94",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+billfn/core/src/__tests__/import-subscription.test.ts
+  s_7acd160764572c::t_1a7386f783bd51 548-553,561,566,589,597,601,627-628
+billfn/core/src/service.ts
+  s_7acd160764572c::t_e2b648b66d5fba 1223-1225,1227-1244
+billfn/core/src/types.ts
+  s_7acd160764572c::t_572aa5d7cb9724 781-785
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_7acd160764572c::t_e0f971ddb12d8a 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6771bcb93e31deaafb9399a88c5e7978294f873a",
+  "prompts": {},
+  "sessions": {
+    "s_7acd160764572c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7acd160764572c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

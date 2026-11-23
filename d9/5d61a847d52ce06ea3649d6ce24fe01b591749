@@ -1,0 +1,19 @@
+README.md
+  s_08de60ae5437b3::t_137b36a70f8ac2 61-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d95d61a847d52ce06ea3649d6ce24fe01b591749",
+  "prompts": {},
+  "sessions": {
+    "s_08de60ae5437b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_08de60ae5437b3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

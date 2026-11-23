@@ -1,0 +1,21 @@
+scripts/ci-plan.mjs
+  s_936e2ce4dac00f::t_45da6c0451544d 29-30
+scripts/turbo-cache-config.test.mjs
+  s_936e2ce4dac00f::t_1d06efe4c35863 65-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0135f88f83dd0fd672ec512e1b20c53952f9e0c3",
+  "prompts": {},
+  "sessions": {
+    "s_936e2ce4dac00f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99a094fb-914c-4317-b517-ede034ce8d29",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+clifn/core/CHANGELOG.md
+  s_abd7087d721a13::t_a37bed3aa99abb 6
+clifn/core/package.json
+  s_17eb54060bf288::t_224a11318c49ed 96
+clifn/core/tests/consumer-contract.test-d.ts
+  s_abd7087d721a13::t_f9b302373d45f3 22,27-28,92-94,96-108,120-137,169-178
+package-lock.json
+  s_abd7087d721a13::t_249aee5992d54d 9099,9131-9133,9136
+clifn/core/tests/consumer-import-scanner.ts
+  s_abd7087d721a13::t_1f546c0ae5cbfd 11-16,18-22,24,28,35-45,55,57,59-61,63-64,81-88,92,99-103,106-110,113-117,119,122-124,127-169,171-177,179-186,188-191,193-211,219,255-259,261-264,266,268,272-274,276-278,280-284,286-290,292,308,326-327,331,333,338-340,342-343,346-355
+clifn/core/tests/consumer-scan.test.ts
+  s_abd7087d721a13::t_fd8ba8bc73ef53 2,110-111,139-140,145-152,154-208,210-217,221-243,280-291
+clifn/core/tests/fixtures/consumer-scan/fail-closed-forms.ts
+  s_abd7087d721a13::t_cbfab1e23ce385 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "530726f93b49944d48a69725833a949f3c289d45",
+  "prompts": {},
+  "sessions": {
+    "s_17eb54060bf288": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cfb093d3-3947-4ed9-bd6a-0cadfe843e6d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_abd7087d721a13": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43fe2cb7-feba-4134-b1de-b8eac22e2a07",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

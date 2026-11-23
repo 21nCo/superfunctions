@@ -1,0 +1,21 @@
+filefn/server/src/events.ts
+  s_238e3b0a7aba4d::t_6c14717ac3ef6c 157-159,166-172,179-181,184
+filefn/server/tests/processing-jobs.test.ts
+  s_238e3b0a7aba4d::t_0a507b7c7d6484 1032-1060
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6460162ff3d1e00d6ea53a80ead134303dd53c70",
+  "prompts": {},
+  "sessions": {
+    "s_238e3b0a7aba4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_238e3b0a7aba4d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

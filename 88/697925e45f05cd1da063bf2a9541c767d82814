@@ -1,0 +1,23 @@
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_b66d0e9dd4fae0::t_c69d495c0ed033 389-394,399,2535,2558-2561,2564-2565,2571,2599,2603,2605-2606,2612,2614,2648-2649,2653,2657,2659-2662,2665-2667,2669-2672,2674-2678,2682,2688-2708,2710-2714,2716-2718,2720,2723,2726-2729,2731-2733,2768-2790
+billfn/core/src/service.ts
+  s_b66d0e9dd4fae0::t_8174a8a98d0fd3 140-141,143,173-174,221,318-319,334-335,340-341,349-393,2414-2415,2636,2671-2672,2680,3348-3349,3353-3360,4069-4071,4076,4085,4089-4111
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_b66d0e9dd4fae0::t_88c52cf93f5c54 38,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88697925e45f05cd1da063bf2a9541c767d82814",
+  "prompts": {},
+  "sessions": {
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

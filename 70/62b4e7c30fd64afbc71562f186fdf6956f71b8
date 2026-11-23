@@ -1,0 +1,21 @@
+authfn/core/src/__tests__/otp.test.ts
+  s_4fd53e926b4a08::t_25b928c5d5e8bb 3,75-107,848-890
+authfn/core/src/core/verifications.ts
+  s_4fd53e926b4a08::t_84b37df64fe4ee 417-436,439-445,548-565,601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7062b4e7c30fd64afbc71562f186fdf6956f71b8",
+  "prompts": {},
+  "sessions": {
+    "s_4fd53e926b4a08": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4fd53e926b4a08",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

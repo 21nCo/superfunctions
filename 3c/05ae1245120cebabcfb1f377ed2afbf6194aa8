@@ -1,0 +1,23 @@
+authfn/docs/content/docs/sdk/python.md
+  s_0b0647615a23f7::t_3346fe31ccb71b 137
+authfn/docs/static/llms-full.txt
+  s_0b0647615a23f7::t_48e8c39edd23f5 11275
+authfn/python/CHANGELOG.md
+  s_0b0647615a23f7::t_bd62fd88e7c115 91-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c05ae1245120cebabcfb1f377ed2afbf6194aa8",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

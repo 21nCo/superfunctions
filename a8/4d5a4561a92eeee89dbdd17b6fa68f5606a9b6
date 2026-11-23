@@ -1,0 +1,27 @@
+datafn/docs/content/docs/documentation/client/kv.mdx
+  s_a76f79ef0d0532::t_2ebbacdedafabb 62
+datafn/docs/content/docs/reference/changelog.mdx
+  s_a76f79ef0d0532::t_823503e625a2da 21
+datafn/docs/public/llms-full.txt
+  s_a76f79ef0d0532::t_2f4d2b154eb906 9445,23692
+datafn/server/__tests__/kv-merge.test.ts
+  s_a76f79ef0d0532::t_57bad61b357d5b 461-462,464-465,469,472,477,491,508-509,512-513,516,521,530,532,556,569,596,607,609-612,614-628,630-642
+datafn/server/src/execution/mutation/kv-merge.ts
+  s_a76f79ef0d0532::t_bf4acba968a404 49-52,55-58,145-155,242-247,252,261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a84d5a4561a92eeee89dbdd17b6fa68f5606a9b6",
+  "prompts": {},
+  "sessions": {
+    "s_a76f79ef0d0532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2965445-2322-4d6a-b7b2-81c87420d32c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

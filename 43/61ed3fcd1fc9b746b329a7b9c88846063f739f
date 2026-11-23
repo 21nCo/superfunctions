@@ -1,0 +1,27 @@
+reviewfn/core/src/panel/render.ts
+  s_56ce6ca1d3bd6a::t_e437c11a457240 165-167
+reviewfn/docs/content/docs/reference/panel.md
+  s_56ce6ca1d3bd6a::t_5b8164c32f37d5 60
+reviewfn/docs/panel.md
+  s_56ce6ca1d3bd6a::t_4367bb467ff6cd 57
+reviewfn/core/test/panel-render.test.ts
+  s_56ce6ca1d3bd6a::t_90a310a7667896 109-117
+reviewfn/docs/static/llms-full.txt
+  s_56ce6ca1d3bd6a::t_3f56eac935e665 376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4361ed3fcd1fc9b746b329a7b9c88846063f739f",
+  "prompts": {},
+  "sessions": {
+    "s_56ce6ca1d3bd6a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7730528f-a6ef-4604-b95c-5db9f12d8b0f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

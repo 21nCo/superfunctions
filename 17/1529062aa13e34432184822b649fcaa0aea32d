@@ -1,0 +1,41 @@
+authfn/client/src/__tests__/client-password.test.ts
+  s_a4a9279b38a3d6::t_2eedf51e3e3925 6,152-195
+authfn/client/src/client.ts
+  s_e5ac07859c1bc9::t_f164e1ff6018fc 87-91
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_60c4ae8b1f0ab6 287-311,366-375,377-381,383-389,391
+authfn/core/src/core/account-claim.ts
+  s_e5ac07859c1bc9::t_2a32c9aa96756f 54-55
+authfn/core/src/core/sessions.ts
+  s_e5ac07859c1bc9::t_a6463a567b5ecf 66-67,307-309
+authfn/core/src/http/router.ts
+  s_e5ac07859c1bc9::t_4046c5baa7c513 235-251
+authfn/native-handoff/src/index.ts
+  s_e5ac07859c1bc9::t_5e6adefbce5cc0 33,450-455
+authfn/social-oauth/src/index.ts
+  s_a4a9279b38a3d6::t_a0bc877239ca87 69,368-384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "171529062aa13e34432184822b649fcaa0aea32d",
+  "prompts": {},
+  "sessions": {
+    "s_a4a9279b38a3d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1855ecfc-893f-4a3a-9ace-d8374583571f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

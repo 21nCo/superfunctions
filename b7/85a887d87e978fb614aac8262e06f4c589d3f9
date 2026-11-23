@@ -1,0 +1,31 @@
+authfn/admin/package.json
+  s_e753f4ab224de9::t_18642978518aff 3,42-43,46-47
+authfn/admin/src/__tests__/core-dependency.test.ts
+  s_e753f4ab224de9::t_31076a1a26a227 1-4
+authfn/admin/src/__tests__/operator-auth-owned-key.test.ts
+  s_e753f4ab224de9::t_9231ced4f35a4c 2-7,9-35,37,42,44-58
+authfn/admin/src/superconsole.ts
+  s_e753f4ab224de9::t_092d7b58c01dc7 165
+authfn/admin/vitest.config.ts
+  s_e753f4ab224de9::t_c78310687b2d2f 6-7
+authfn/admin/vitest.global-setup.ts
+  s_e753f4ab224de9::t_322a98992bdda7 1-5
+package-lock.json
+  s_e753f4ab224de9::t_da57d6f1935c3c 1386,1392,1395-1396
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b785a887d87e978fb614aac8262e06f4c589d3f9",
+  "prompts": {},
+  "sessions": {
+    "s_e753f4ab224de9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9b413bb-78e4-461c-b7a1-7e3598c6e221",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

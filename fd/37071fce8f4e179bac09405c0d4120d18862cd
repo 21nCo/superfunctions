@@ -1,0 +1,29 @@
+datafn/client/__tests__/signal-refresh-coalescing.test.ts
+  s_f058f999ab46b7::t_02fa422f407254 391-440
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_f058f999ab46b7::t_0e3fe5bb9ee763 75
+datafn/client/src/adapters/memoryStorage.ts
+  s_f058f999ab46b7::t_901c8d05368aca 28
+datafn/client/src/mutate.ts
+  s_f058f999ab46b7::t_e4617ae041d982 572,692,814,860,884,927,944,963-964,983
+datafn/client/src/offline/mutate.ts
+  s_f058f999ab46b7::t_254feb85c257c4 749-752,754,757-761,763-772,776-787,853-854,857-862
+datafn/client/src/storage.ts
+  s_f058f999ab46b7::t_5ccb18df73e85e 42-47,80-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd37071fce8f4e179bac09405c0d4120d18862cd",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

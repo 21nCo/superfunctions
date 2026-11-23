@@ -1,0 +1,19 @@
+filefn/server/tests/client-artifacts.test.ts
+  s_3c6903320faa64::t_951788743d909b 981-983,1467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af5bdace256cb31275bda60e26568a2516db4b7e",
+  "prompts": {},
+  "sessions": {
+    "s_3c6903320faa64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a08b2e75-4364-40af-a8d2-11b180f64adf",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

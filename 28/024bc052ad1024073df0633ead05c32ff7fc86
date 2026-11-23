@@ -1,0 +1,19 @@
+billfn/provider-apple/src/__tests__/provider-builtins.test.ts
+  s_15f59223bff3da::t_e78faf93154dce 464-481,488
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28024bc052ad1024073df0633ead05c32ff7fc86",
+  "prompts": {},
+  "sessions": {
+    "s_15f59223bff3da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_15f59223bff3da",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

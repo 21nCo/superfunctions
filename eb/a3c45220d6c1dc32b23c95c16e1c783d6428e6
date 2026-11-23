@@ -1,0 +1,25 @@
+billfn/docs/content/docs/providers/dodo.mdx
+  s_e389e24a318668::t_65df1b57a8df07 38,58
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_e389e24a318668::t_c3a470bc2bc88c 355-382,929,932-933,938,955,964-973
+billfn/provider-dodo/src/__tests__/lifecycle.test.ts
+  s_e389e24a318668::t_50149fc21a9a5e 38-42,79-96,110,127-133,244-291
+billfn/provider-dodo/src/index.ts
+  s_e389e24a318668::t_f489e8dddde9fa 47-48,119-129,133,136,1025-1028,1031-1033,1035,1037-1042,1048-1055
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eba3c45220d6c1dc32b23c95c16e1c783d6428e6",
+  "prompts": {},
+  "sessions": {
+    "s_e389e24a318668": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e389e24a318668",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

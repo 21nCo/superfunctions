@@ -1,0 +1,29 @@
+filefn/client/src/offline/opfs-store.ts
+  s_720869216771ca::t_7f61a853e1d12d 64-72,139,181,245,335
+filefn/client/src/types.ts
+  s_720869216771ca::t_c55b030e24df14 59-72
+filefn/client/tests/offline.test.ts
+  s_720869216771ca::t_201c305fa71d7b 195,210-211,215
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_720869216771ca::t_d63f8bcc3d93d8 149-151,155-164,189-190,211-213,218-221,227-228,766-784,822-823,848,856,866-868,876-880,882-884,887-904,906-911
+filefn/server/src/upload-sessions/file-id-reservations.ts
+  s_720869216771ca::t_22528c5710da56 11-13,88-92,95,100,107-112
+filefn/server/src/upload-sessions/service.ts
+  s_720869216771ca::t_e185d9887af919 66-67,264-273,541-547,549-552,558-559,561-570,858-870,1115-1117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a0ef0efbcbfa67ff0ea04ee65ba5fd8af1abc4c",
+  "prompts": {},
+  "sessions": {
+    "s_720869216771ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_720869216771ca",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
