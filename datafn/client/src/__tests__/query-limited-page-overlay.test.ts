@@ -2485,6 +2485,19 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     expect(await page(storage, treeSchema, children, [child])).toEqual([]);
   });
 
+  it("hydration: a relink forgets the moved row's own path even when the writer rebuilds the same text, never a known clear", async () => {
+    const storage = await goals();
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "goal:q" } });
+    await offlineWrite(storage, treeSchema, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:q" } });
+    // goal:q's real path may be goal:c, which keeps goal:x below the anchor.
+    expect((await page(storage, treeSchema, { ...children, select: ["**"] }, [child])).map((row) => row.id)).toEqual(["goal:x"]);
+
+    const cleared = await goals();
+    await offlineWrite(cleared, withPath({}), { resource: "goals", operation: "merge", id: "goal:c", record: { parentPath: null } });
+    await offlineWrite(cleared, withPath({}), { resource: "goals", operation: "relate", id: "goal:y", relations: { parent: "goal:q" } });
+    expect(await page(cleared, withPath({}), ancestors, above)).toEqual([]);
+  });
+
   it("hydration: an unrelated relink keeps an inactive row with a held path off an inheriting page", async () => {
     const inheriting = {
       resources: [

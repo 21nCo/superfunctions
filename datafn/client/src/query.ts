@@ -889,11 +889,11 @@ function htreeRelinkIds(schema: DatafnSchema, mutation: Record<string, unknown>)
   return ids;
 }
 
-/** Forget known paths a relink of `moved` (null: any record) can rewrite by cascade. */
-function forgetMovedPaths(pages: Iterable<PageRow>, moved: readonly string[] | null): void {
-  for (const page of pages) {
+/** Forget known paths a relink of `moved` (null: any record) rebuilds, or rewrites by cascade (a listing one). */
+function forgetMovedPaths(pages: Iterable<[string, PageRow]>, moved: readonly string[] | null): void {
+  for (const [pageId, page] of pages) {
     for (const [pathField, path] of page.knownPaths ?? []) {
-      if (moved === null || typeof path !== "string" || moved.some((id) => pathLists(path, id))) {
+      if (moved === null || moved.includes(pageId) || (typeof path === "string" && moved.some((id) => pathLists(path, id)))) {
         page.knownPaths?.delete(pathField);
       }
     }
@@ -1203,7 +1203,7 @@ async function overlayPendingRowsOnLimitedPage(
       const moved = applied ? htreeRelinkIds(schema, change.mutation) : undefined;
       if (moved !== undefined) {
         relinked = true;
-        forgetMovedPaths([...pageRows.values(), ...(anchor ? [anchor] : [])], moved);
+        forgetMovedPaths([...pageRows, ...(anchor ? [[query.id as string, anchor] as [string, PageRow]] : [])], moved);
       }
       if (moved) {
         await noteRelinkedPaths(scratch, schema, moved, trackedId);
