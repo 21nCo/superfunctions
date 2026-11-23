@@ -644,4 +644,120 @@ describe("Limited first page: remote row plus pending mutation effects", () => {
       tagSchema,
     )).resolves.toEqual({ data: [{ id: "tag:1", label: "one" }], nextCursor: "after-tag:2" });
   });
+
+  it("keeps a row when a changed condition also reads a field the server did not return", async () => {
+    const storage = await hydratingStorage();
+    await storage.upsertRecord("tasks", { id: "task:1", title: "Closed", status: "done" });
+    await pendingChange(storage, "mutation:status", {
+      operation: "merge",
+      id: "task:1",
+      record: { status: "done" },
+    });
+
+    await expect(limitedPage(
+      storage,
+      [{ id: "task:1" }],
+      { select: ["id"], filters: { $or: [{ status: "doing" }, { title: "Open" }] } },
+    )).resolves.toEqual({ data: [{ id: "task:1" }], nextCursor: "after-page" });
+  });
+
+  it("follows the folded foreign key, never recreating a deleted holder", async () => {
+    const storage = new MemoryStorageAdapter(["folders", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.setHydrationState("folders", "hydrating");
+    const change = (mutationId: string, mutation: Record<string, unknown>) =>
+      storage.changelogAppend({ clientId: "client:1", mutationId, timestampMs: 1, mutation });
+    await change("m1", { resource: "notes", operation: "relate", id: "note:1", relations: { folder: "folder:2" } });
+    await change("m2", { resource: "notes", operation: "delete", id: "note:2" });
+    await change("m3", { resource: "notes", operation: "relate", id: "note:2", relations: { folder: "folder:1" } });
+    await change("m4", { resource: "notes", operation: "unrelate", id: "note:3", relations: { folder: "folder:1" } });
+    await change("m5", { resource: "notes", operation: "merge", id: "note:3", record: { folderId: "folder:1" } });
+    const rows = [
+      { id: "note:1", title: "A", folderId: "folder:1" },
+      { id: "note:2", title: "B", folderId: "folder:1" },
+      { id: "note:3", title: "C", folderId: "folder:1" },
+    ];
+    const page = (query: Record<string, unknown>) => executeQuery(
+      remoteReturning({ data: rows, nextCursor: "after-note:3" }),
+      { limit: 3, ...query },
+      storage,
+      [],
+      relationSchema,
+    );
+
+    const expected = { data: [rows[2]], nextCursor: "after-note:3" };
+    await expect(page({ resource: "notes", filters: { "folder.id": "folder:1" } }))
+      .resolves.toEqual(expected);
+    await expect(page({ resource: "folders", relation: "notes", id: "folder:1" }))
+      .resolves.toEqual(expected);
+  });
+
+  it("drops a row whose pending write moves its local timestamp out of the filter", async () => {
+    const storage = await hydratingStorage();
+    await storage.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mutation:title",
+      timestampMs: 200,
+      mutation: { resource: "tasks", operation: "merge", id: "task:1", record: { title: "New" } },
+    });
+    const stampedSchema: DatafnSchema = {
+      ...effectsSchema,
+      resources: [{ ...effectsSchema.resources[0], capabilities: ["timestamps"] }],
+    };
+
+    await expect(limitedPage(
+      storage,
+      [{ id: "task:1", title: "Old", updatedAt: 100 }, { id: "task:2", updatedAt: 100 }],
+      { filters: { updatedAt: { $lt: 150 } } },
+      stampedSchema,
+    )).resolves.toEqual({ data: [{ id: "task:2", updatedAt: 100 }], nextCursor: "after-page" });
+  });
+
+  it("follows the effective projection for fields the server left unset", async () => {
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:edit", {
+      operation: "merge",
+      id: "task:1",
+      record: { note: "n", profile: { items: [{ label: "A", secret: "hidden" }] }, typoTitle: "x" },
+    });
+    const row = { id: "task:1", title: "Open" };
+
+    await expect(limitedPage(storage, [row], { select: [] })).resolves.toEqual({
+      data: [{ ...row, note: "n", profile: { items: [{ label: "A", secret: "hidden" }] } }],
+      nextCursor: "after-page",
+    });
+    await expect(limitedPage(storage, [row], { omit: ["secret"] })).resolves.toEqual({
+      data: [{ ...row, note: "n", profile: { items: [{ label: "A" }] } }],
+      nextCursor: "after-page",
+    });
+  });
+
+  it("shows foreign keys and relation-page fields only where the projection returns them", async () => {
+    const storage = new MemoryStorageAdapter(["folders", "notes"]);
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.setHydrationState("folders", "hydrating");
+    const change = (mutationId: string, mutation: Record<string, unknown>) =>
+      storage.changelogAppend({ clientId: "client:1", mutationId, timestampMs: 1, mutation });
+    await change("m1", { resource: "notes", operation: "relate", id: "note:1", relations: { folder: "folder:1" } });
+    await change("m2", { resource: "notes", operation: "merge", id: "note:1", record: { title: "Named" } });
+    const row = { id: "note:1", folder: { id: "folder:1" } };
+    const page = (query: Record<string, unknown>) => executeQuery(
+      remoteReturning({ data: [row], nextCursor: "after-note:1" }),
+      { limit: 1, ...query },
+      storage,
+      [],
+      relationSchema,
+    );
+
+    await expect(page({ resource: "notes", select: ["*", "folder.*"] })).resolves.toEqual({
+      data: [{ ...row, title: "Named" }],
+      nextCursor: "after-note:1",
+    });
+    await expect(page({ resource: "folders", relation: "notes", id: "folder:1" })).resolves.toEqual({
+      data: [row],
+      nextCursor: "after-note:1",
+    });
+    await expect(page({ resource: "folders", relation: "notes", id: "folder:1", select: ["title"] }))
+      .resolves.toEqual({ data: [{ ...row, title: "Named" }], nextCursor: "after-note:1" });
+  });
 });

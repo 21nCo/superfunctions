@@ -282,6 +282,9 @@ function resetDeclaredFields(
   }
 }
 
+/** Internal operation: a relate or unrelate updating the foreign key holder. */
+const RELATION_KEY_WRITE = "$relationKeyWrite";
+
 function foldPendingRowEffect(
   schema: DatafnSchema,
   remoteRow: Record<string, unknown>,
@@ -289,25 +292,49 @@ function foldPendingRowEffect(
 ): PendingRowEffect {
   const effect: PendingRowEffect = { deleted: false, written: new Map() };
   const resource = entries[0]?.mutation.resource as string;
-  const fields = schema.resources.find((entry) => entry.name === resource)?.fields ?? [];
-  for (const { mutation, timestampMs } of entries) {
+  const resourceSchema = schema.resources.find((entry) => entry.name === resource);
+  const fields = resourceSchema?.fields ?? [];
+  const declared = new Set(fields.map((field) => field.name));
+  const capabilities = resolveCapabilities(
+    schema.capabilities as any,
+    resourceSchema?.capabilities as any,
+  );
+  for (const { mutation, timestampMs, actorId } of entries) {
     const operation = mutation.operation;
+    if (operation === RELATION_KEY_WRITE) {
+      // Relation handlers update an existing holder; they never recreate one.
+      if (effect.deleted) continue;
+      for (const [key, value] of Object.entries(mutation.record as Record<string, unknown>)) {
+        effect.written.set(key, value);
+      }
+      continue;
+    }
     const record = sanitizeCapabilityReadonlyFields(schema, mutation).record;
+    // Declared fields, or keys the server row already carries (such as foreign keys).
     const written = isPlainRecord(record)
-      ? Object.entries(record).filter(
-          ([key]) => key !== "id" && !findRelationMatch(schema, resource, key),
-        )
+      ? Object.entries(record).filter(([key]) =>
+          key !== "id"
+          && (declared.has(key) || (key in remoteRow && !findRelationMatch(schema, resource, key))))
       : [];
     const recreates = effect.deleted && operation === "merge";
+    if (["insert", "replace", "merge"].includes(operation as string)) {
+      // The optimistic write stamps these like the server does.
+      if (capabilities.includes("timestamps")) effect.written.set("updatedAt", timestampMs);
+      if (capabilities.includes("audit")) effect.written.set("updatedBy", actorId ?? null);
+    }
     if (operation === "delete") {
       effect.deleted = true;
       effect.written.clear();
     } else if (operation === "insert" || operation === "replace" || recreates) {
       // A merge after a delete creates the record afresh, never from the old row.
+      const stamps = new Map(
+        ["updatedAt", "updatedBy"].filter((key) => effect.written.has(key))
+          .map((key) => [key, effect.written.get(key)] as const),
+      );
       effect.deleted = false;
       effect.written.clear();
       resetDeclaredFields(fields, effect.written);
-      for (const [key, value] of written) effect.written.set(key, value);
+      for (const [key, value] of [...stamps, ...written]) effect.written.set(key, value);
     } else if (operation === "merge") {
       for (const [key, value] of written) {
         const current = effect.written.has(key) ? effect.written.get(key) : remoteRow[key];
@@ -375,7 +402,7 @@ function edgeForeignKeyWrite(
   if (!resource) return undefined;
   const fkField = manyOne ? relationFkFieldForManyOne(relation) : relationFkFieldForOneMany(relation);
   const value = edge.linked ? (manyOne ? edge.toId : edge.fromId) : null;
-  return { resource, id: holderId, operation: "merge", record: { [fkField]: value } };
+  return { resource, id: holderId, operation: RELATION_KEY_WRITE, record: { [fkField]: value } };
 }
 
 /**
@@ -408,7 +435,9 @@ function pendingEntriesByRow(
 const WILDCARD_SELECT_TOKENS = new Set(["*", "#", "*#", "#*"]);
 
 function omitKeys(value: unknown, omit: readonly unknown[]): unknown {
-  if (!isObjectValue(value) || omit.length === 0) return value;
+  if (omit.length === 0) return value;
+  if (Array.isArray(value)) return value.map((member) => omitKeys(member, omit));
+  if (!isObjectValue(value)) return value;
   const result: Record<string, unknown> = {};
   for (const [key, member] of Object.entries(value)) {
     if (!omit.includes(key)) result[key] = omitKeys(member, omit);
@@ -416,29 +445,42 @@ function omitKeys(value: unknown, omit: readonly unknown[]): unknown {
   return result;
 }
 
+function isForeignKeyField(schema: DatafnSchema, resource: string, key: string): boolean {
+  return (schema.relations ?? []).some((relation) =>
+    (relation.type === "many-one"
+      && endpointIncludes(relation.from, resource)
+      && relationFkFieldForManyOne(relation) === key)
+    || (relation.type === "one-many"
+      && endpointIncludes(relation.to, resource)
+      && relationFkFieldForOneMany(relation) === key));
+}
+
 /**
  * The written value as the remote projection would return it, or `undefined`
  * when the projection hides the field. A field the select only reaches
  * through nested tokens keeps the members the server returned. Relation
- * pages project their targets server-side, so only returned keys change.
+ * pages, and foreign keys the server's relation-aware projection hides unless
+ * named, only change keys the server returned.
  */
 function projectWrittenField(
+  schema: DatafnSchema,
   query: Record<string, unknown>,
+  resource: string,
   key: string,
   value: unknown,
   remoteRow: Record<string, unknown>,
 ): { value: unknown } | undefined {
   const omit = Array.isArray(query.omit) ? query.omit : [];
   if (omit.includes(key)) return undefined;
-  const select = query.select;
-  const wholeField = typeof query.relation !== "string" && (
-    !Array.isArray(select)
-    || select.some((token) => token === key || WILDCARD_SELECT_TOKENS.has(token))
-  );
-  if (wholeField) return { value: omitKeys(value, omit) };
+  const select = Array.isArray(query.select) && query.select.length > 0 ? query.select : undefined;
+  const wildcard = !select || select.some((token) => WILDCARD_SELECT_TOKENS.has(token));
+  const returnedOnly = typeof query.relation === "string" || isForeignKeyField(schema, resource, key);
+  if (select?.includes(key) || (wildcard && !returnedOnly)) {
+    return { value: omitKeys(value, omit) };
+  }
   if (!(key in remoteRow)) return undefined;
   const remoteValue = remoteRow[key];
-  if (Array.isArray(select) && isObjectValue(remoteValue) && isObjectValue(value)) {
+  if (select && isObjectValue(remoteValue) && isObjectValue(value)) {
     const members: Record<string, unknown> = {};
     for (const member of Object.keys(remoteValue)) {
       members[member] = member in value ? value[member] : remoteValue[member];
@@ -457,7 +499,7 @@ function shownPendingRow(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   for (const [key, value] of written) {
-    const projected = projectWrittenField(query, key, value, remoteRow);
+    const projected = projectWrittenField(schema, query, resource, key, value, remoteRow);
     if (projected) patch[key] = projected.value;
   }
   // Decode dates like the remote page; cleared non-nullable fields read absent.
@@ -497,13 +539,28 @@ function filterFieldNames(filter: unknown, names = new Set<string>()): Set<strin
   return names;
 }
 
+/** A condition on a many-one relation's `id` is a condition on its foreign key. */
+function foreignKeyCondition(
+  schema: DatafnSchema,
+  resource: string,
+  conjunct: Record<string, unknown>,
+): Record<string, unknown> {
+  const [key, value] = Object.entries(conjunct)[0] ?? [];
+  const [relationName, member, ...rest] = typeof key === "string" ? key.split(".") : [];
+  if (member !== "id" || rest.length > 0) return conjunct;
+  const match = findRelationMatch(schema, resource, relationName);
+  if (match?.relation.type !== "many-one" || match.direction !== "forward") return conjunct;
+  return { [relationFkFieldForManyOne(match.relation)]: value };
+}
+
 /**
  * The server returned the row, so it matched before the pending writes. It
  * stops matching only when a condition on a field those writes changed now
- * fails. Fields the server did not project come from the cached copy for
- * this check only; a condition it cannot evaluate keeps the row.
+ * fails on the remote row plus the writes. A condition that also reads a
+ * field neither the server returned nor the writes set keeps the row.
  */
 function pendingWritesStopMatch(
+  schema: DatafnSchema,
   filters: Record<string, unknown> | undefined,
   resource: string,
   row: Record<string, unknown>,
@@ -514,8 +571,12 @@ function pendingWritesStopMatch(
   for (const [key, value] of [...Object.entries(row), ...written]) {
     after[key] = value instanceof Date ? value.getTime() : value;
   }
-  return filterConjuncts(normalizeFilterOps(filters)).some((conjunct) => {
-    if (![...filterFieldNames(conjunct)].some((name) => written.has(name))) return false;
+  return filterConjuncts(normalizeFilterOps(filters)).some((original) => {
+    const conjunct = foreignKeyCondition(schema, resource, original);
+    const names = [...filterFieldNames(conjunct)];
+    if (!names.some((name) => written.has(name)) || !names.every((name) => name in after)) {
+      return false;
+    }
     try {
       return !evaluateFilter(after, conjunct, { resource });
     } catch {
@@ -552,7 +613,6 @@ function overlayPendingRow(
   query: Record<string, unknown>,
   row: Record<string, unknown>,
   entries: readonly DatafnChangelogEntry[],
-  cached: Record<string, unknown> | null,
   pageFilters: Record<string, unknown> | undefined,
 ): Record<string, unknown> | null {
   const resource = entries[0].mutation.resource as string;
@@ -563,7 +623,7 @@ function overlayPendingRow(
     schema,
   );
   const filters = isPlainRecord(membershipQuery.filters) ? membershipQuery.filters : undefined;
-  if (pendingWritesStopMatch(filters, resource, { ...cached, ...row }, written)) return null;
+  if (pendingWritesStopMatch(schema, filters, resource, row, written)) return null;
   return shownPendingRow(schema, query, resource, row, written);
 }
 
@@ -619,21 +679,21 @@ async function overlayPendingRowsOnLimitedPage(
         : (query.resource as string);
 
     const changes = await listPendingChanges(storage);
-    const links = match ? pendingRelationLinks(schema, changes, query, match) : new Map();
-    const pendingByRow = pendingEntriesByRow(schema, changes, rowResource);
-    const pendingRows = remoteData.filter((row) => pendingByRow.has(rowIdOf(row) ?? ""));
-    if (pendingRows.length === 0 && !remoteData.some((row) => links.get(rowIdOf(row)) === false)) {
-      return remoteResult;
-    }
-    // Cached copies only fill fields the server did not project, for matching.
-    const cachedRows = new Map(await Promise.all(pendingRows.map(async (row) => {
-      const id = rowIdOf(row) as string;
-      const resource = pendingByRow.get(id)?.[0].mutation.resource as string;
-      return [id, await storage.getRecord(resource, id)] as const;
-    })));
     const pageFilters = match
       ? relationPageFilters(query, match)
       : (isPlainRecord(query.filters) ? query.filters : undefined);
+    // Foreign-key pages follow the folded key; other relation pages their edges.
+    const links = match && !pageFilters
+      ? pendingRelationLinks(schema, changes, query, match)
+      : new Map<string, boolean>();
+    const pendingByRow = pendingEntriesByRow(schema, changes, rowResource);
+    const affected = (row: unknown) => {
+      const id = rowIdOf(row) ?? "";
+      return pendingByRow.has(id) || links.get(id) === false;
+    };
+    if (!remoteData.some(affected)) {
+      return remoteResult;
+    }
 
     const data: unknown[] = [];
     for (const row of remoteData) {
@@ -641,7 +701,7 @@ async function overlayPendingRowsOnLimitedPage(
       const entries = id === undefined ? undefined : pendingByRow.get(id);
       if (id !== undefined && links.get(id) === false) continue;
       const shown = entries && isPlainRecord(row)
-        ? overlayPendingRow(schema, query, row, entries, cachedRows.get(id as string) ?? null, pageFilters)
+        ? overlayPendingRow(schema, query, row, entries, pageFilters)
         : row;
       if (shown !== null) data.push(shown);
     }
