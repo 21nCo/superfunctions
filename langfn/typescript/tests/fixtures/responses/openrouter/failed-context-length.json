@@ -1,0 +1,17 @@
+{
+  "status": 400,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "gen-fixture-openrouter_failed_context",
+    "object": "response",
+    "status": "failed",
+    "output": [],
+    "error": {
+      "code": "invalid_prompt",
+      "message": "Prompt rejected by provider."
+    },
+    "error_type": "context_length_exceeded"
+  }
+}

@@ -14,8 +14,9 @@ description: Map CliFn subpaths to their public functions, types, and errors.
 | `/env` | `readRequiredStringEnv`, `readStringEnv`, `readIntEnv`, `readBooleanEnv`, option types | Typed environment values |
 | `/exec` | `createExec`, `ExecOptions`, `ExecResult`, `ExecTimeoutError` | Subprocesses, capture, streams, timeout |
 | `/scaffold` | `createScaffold`, `ScaffoldOperation`, `ScaffoldResult`, `ScaffoldError` | Bounded directory and file writes |
-| `/credentials` | `createCredentialStore`, `CredentialStore`, `CredentialProfile`, `MissingProfileError` | Named INI credential profiles |
-| `/config` | `createProjectConfig`, `ProjectConfigStore`, `InvalidConfigError` | JSON project settings |
+| `/credentials` | `createCredentialStore`, `CredentialStore`, `CredentialStoreOptions`, `CredentialProfile`, `MissingProfileError`, `InvalidStoreOptionsError` | Named INI credential profiles, by path or app name |
+| `/config` | `createProjectConfig`, `ProjectConfigStore`, `ProjectConfigOptions`, `InvalidConfigError`, `InvalidStoreOptionsError` | JSON project settings, by path, app name or project-local file |
+| `/paths` | `resolveAppPaths`, `ensureAppDir`, `AppPaths`, `AppPathsOptions`, `InvalidAppNameError`, `InvalidHomeDirectoryError` | Per-app config, state and cache directories |
 | `/client` | `createApiClient`, `ApiClient`, `ApiClientConfig`, `ApiRequestOptions`, `ApiResponse`, HTTP errors | Authenticated HTTP requests |
 | `/ui` | `ui`, `Spinner` | Compatibility terminal helpers |
 | `/stdio` | `readJsonStdin`, `writeJsonStdout`, `InvalidJsonStdinError` | One-document JSON pipes |
