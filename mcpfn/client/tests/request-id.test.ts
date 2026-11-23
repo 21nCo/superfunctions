@@ -30,7 +30,26 @@ describe("default request IDs", () => {
     const ids = [...await failedConnectRequestIds(), ...await failedConnectRequestIds()];
     expect(ids.length).toBeGreaterThan(1);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+$/);
+    for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+_[0-9a-z]+$/);
+  });
+
+  it("tell threads with one process ID apart by their time origin", async () => {
+    vi.stubGlobal("crypto", undefined);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const ids: string[] = [];
+    try {
+      for (const timeOrigin of [1_700_000_000_000.25, 1_700_000_000_000.5]) {
+        // A fresh global sequence, as in a new worker thread or container.
+        delete (globalThis as Record<symbol, unknown>)[
+          Symbol.for("@mcpfn/client/fallback-request-sequence")
+        ];
+        vi.stubGlobal("performance", { timeOrigin });
+        ids.push((await failedConnectRequestIds())[0]!);
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
   it("use Web Crypto random bits, not Math.random, when only randomUUID is missing", async () => {

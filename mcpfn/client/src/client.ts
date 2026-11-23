@@ -124,9 +124,10 @@ function nextFallbackRequestSequence(): number {
  * only behind a flag; there, request IDs are correlation IDs built from the
  * time, a process-wide sequence shared by every loaded copy of the client
  * (so the ESM and CJS builds never repeat each other's IDs) and a component
- * that tells processes apart: Web Crypto random bits when only `randomUUID` is
- * missing, otherwise the process ID. They correlate diagnostics and are not
- * secrets. */
+ * that tells processes and threads apart: Web Crypto random bits when only
+ * `randomUUID` is missing, otherwise the process ID with the thread's
+ * `performance.timeOrigin` in microseconds. They correlate diagnostics and are
+ * not secrets. */
 function defaultRequestId(): string {
   const webCrypto = (
     globalThis as {
@@ -135,12 +136,20 @@ function defaultRequestId(): string {
   ).crypto;
   if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
   const sequence = nextFallbackRequestSequence();
-  const origin =
-    typeof webCrypto?.getRandomValues === "function"
-      ? webCrypto.getRandomValues(new Uint32Array(1))[0]!
-      : ((globalThis as { process?: { pid?: unknown } }).process?.pid ?? 0);
-  const originId = typeof origin === "number" ? origin.toString(36) : "0";
-  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${originId}`;
+  return `mcpfn-${Date.now().toString(36)}-${sequence.toString(36)}-${fallbackOriginId(webCrypto)}`;
+}
+
+function fallbackOriginId(webCrypto?: {
+  getRandomValues?: (array: Uint32Array) => Uint32Array;
+}): string {
+  if (typeof webCrypto?.getRandomValues === "function") {
+    return webCrypto.getRandomValues(new Uint32Array(1))[0]!.toString(36);
+  }
+  const host = globalThis as { process?: { pid?: unknown }; performance?: { timeOrigin?: unknown } };
+  const pid = host.process?.pid;
+  const timeOrigin = host.performance?.timeOrigin;
+  const startedAt = typeof timeOrigin === "number" ? Math.round(timeOrigin * 1000) : 0;
+  return `${typeof pid === "number" ? pid.toString(36) : "0"}_${startedAt.toString(36)}`;
 }
 
 
