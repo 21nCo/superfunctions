@@ -2295,6 +2295,9 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await shown({ $or: [{ title: "A" }, { title: "B" }] })).toEqual({ note: "n" });
     expect(await shown({ $and: [{ $or: [{ title: "A" }, { title: "B" }] }] })).toEqual({ note: "n" });
     expect(await shown({ title: { between: ["A", "B"] } })).toEqual({ note: "n" });
+    // Emptiness on a string field pushes down; the planner counts `in` lists inside an object operand.
+    expect(await shown({ title: { $is_not_empty: true } })).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown({ title: { $ne: { in: ["x"] } } })).toEqual({ note: "n" });
     expect(await shown({ title: { $in: ["A", ...Array.from({ length: 30_000 }, (_, index) => `t${index}`)] } }))
       .toEqual({ note: "n" });
     // The server adds a shareable resource's access filter, which can keep the read in memory.
@@ -2318,6 +2321,14 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
     expect((await page(keyAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
+
+    // A destination root that a pending merge put in the scratch store, with an id ending in -<anchor>.
+    const provenAway = await goals();
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
+    expect(await page(provenAway, tree, pathless, [row])).toEqual([]);
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
     // The anchor moves under an off-page parent; its child keeps its place, parent key or not.
     const anchorMoved = await goals();

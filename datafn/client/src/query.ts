@@ -362,15 +362,14 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-const PUSHDOWN_OPERATORS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null".split(" "));
+const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_empty is_not_empty".split(" "));
 
 /**
- * Whether the server's classifyQuery certainly gives a plain list to
- * FULL_PUSHDOWN, whose projectFields omits top-level keys only. Search,
- * grouping, temporal, a relation or nested select token, `$or`, a dotted,
- * relation or quantified filter key, an operator outside the adapter map,
- * over 30,000 `$in` values or a shareable resource (whose access filter the
- * server adds) runs, or may run, materializeSelect.
+ * Whether classifyQuery certainly gives a plain list FULL_PUSHDOWN (top-level
+ * omit only): no search, grouping, temporal, relation or nested select token,
+ * `$or`, dotted, relation or quantified key, operator the filter compiler cannot
+ * push (emptiness on scalar fields only), object operand (whose `in` lists the
+ * planner counts), over 30,000 `$in` values or shareable resource (access filter).
  */
 function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
   const resource = String(query.resource);
@@ -385,9 +384,11 @@ function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>):
     if (key === "$and") return Array.isArray(value) && value.every(pushes);
     if (key.startsWith("$") || key.includes(".") || findRelationMatch(schema, resource, key)) return false;
     const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
+    const scalar = /^(string|number|boolean)$/.test(String(declaredFields(schema, resource).fields.get(key)?.type));
     return Object.entries(ops).every(([op, operand]) => {
       if (Array.isArray(operand)) values += operand.length;
-      return PUSHDOWN_OPERATORS.has(op.replace(/^\$/, ""));
+      const name = op.replace(/^\$/, "");
+      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (scalar || !name.endsWith("empty"));
     });
   });
   return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
@@ -1082,16 +1083,17 @@ async function htreeRowsGone(
       continue;
     }
     const path = current[pathField];
-    // A path the page never knew, one ending in unknown ancestry, or a value
-    // the server would reject as a path decides nothing.
+    // An unknown, unknown-tailed or malformed path decides nothing.
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
-    const known = (page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path))
-      || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
-    // The writer builds an unproven path from the scratch path of the record
-    // it hangs the row under (and rewrites it when the anchor moves), so the
-    // row is a direct child exactly when it still extends the anchor's.
-    const underAnchor = path === joinPath(typeof anchorPath === "string" ? anchorPath : "", anchorId);
-    if (known ? !htreeMayHold(String(path ?? ""), anchorId, deep, prefix) : !deep && !underAnchor) gone.add(id);
+    const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path);
+    // The writer rebuilds a path from the scratch path of the record it hangs
+    // the row under (or of the moved anchor), so a rebuilt direct child is one
+    // whose path still extends the anchor's scratch path.
+    if (!deep && !explicit && !sameValue(path, page.seeded[pathField])) {
+      if (path !== joinPath(typeof anchorPath === "string" ? anchorPath : "", anchorId)) gone.add(id);
+    } else if (explicit || (await provenHtreePath(scratch, page.resource, pathField, path, chains))) {
+      if (!htreeMayHold(String(path ?? ""), anchorId, deep, prefix)) gone.add(id);
+    }
   }
   return gone;
 }
