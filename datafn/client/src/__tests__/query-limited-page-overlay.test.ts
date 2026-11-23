@@ -1794,3 +1794,158 @@ describe("Limited first page: server membership, three-valued filters and isolat
       .toEqual([{ ...rows[0], ownerId: "users:2", ownerResource: "users" }]);
   });
 });
+
+describe("Limited first page: htree paths, hidden filter fields and undecodable values", () => {
+  const nullableTree: DatafnSchema = {
+    resources: [{
+      name: "goals",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "parentId", type: "string", required: false, nullable: true },
+        { name: "parentPath", type: "string", required: false, nullable: true },
+      ],
+    }],
+    relations: treeSchema.relations,
+  };
+  const child = { id: "goal:x", title: "X", parentId: "goal:c", parentPath: "goal:c" };
+  const childrenOf = { resource: "goals", id: "goal:c", relation: "children" };
+  async function hydratingGoals(): Promise<MemoryStorageAdapter> {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    return storage;
+  }
+
+  it("hydration: a direct-children page judges a pending merge by the path, not the parent key", async () => {
+    const pathOnly = await hydratingGoals();
+    await offlineWrite(pathOnly, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "goal:other" },
+    });
+    expect(await page(pathOnly, nullableTree, childrenOf, [child])).toEqual([]);
+
+    const keyOnly = await hydratingGoals();
+    await offlineWrite(keyOnly, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:other" },
+    });
+    expect(await page(keyOnly, nullableTree, childrenOf, [child])).toEqual([{ ...child, parentId: "goal:other" }]);
+  });
+
+  it("hydration: a returned child whose nullable parent key is null stays after an unrelated merge", async () => {
+    const storage = await hydratingGoals();
+    await offlineWrite(storage, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:x", record: { title: "Renamed" },
+    });
+    const rows = [{ ...child, parentId: null }];
+    expect(await page(storage, nullableTree, childrenOf, rows)).toEqual([{ ...rows[0], title: "Renamed" }]);
+  });
+
+  it("hydration: an inverse page is emptied when a pending write clears the anchor's path", async () => {
+    const rows = [{ id: "goal:a", title: "Root", parentPath: "" }];
+    const query = { resource: "goals", id: "goal:c", relation: "parent", select: ["id", "title", "parentPath"] };
+    const replaced = await hydratingGoals();
+    await offlineWrite(replaced, nullableTree, {
+      resource: "goals", operation: "replace", id: "goal:c", record: { title: "C" },
+    });
+    expect(await page(replaced, nullableTree, query, rows)).toEqual([]);
+
+    const cleared = await hydratingGoals();
+    await offlineWrite(cleared, nullableTree, {
+      resource: "goals", operation: "merge", id: "goal:c", record: { parentPath: null },
+    });
+    expect(await page(cleared, nullableTree, query, rows)).toEqual([]);
+  });
+
+  it("hydration: a child the replay makes ancestor-inactive leaves an inheriting htree page", async () => {
+    const inheriting: DatafnSchema = {
+      resources: [
+        { name: "projects", version: 1, capabilities: ["archivable"], fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "goals",
+          version: 1,
+          fields: [...treeSchema.resources[0].fields, { name: "projectId", type: "string", required: false }],
+        },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "projects", type: "many-one", relation: "project", inverse: "goals", fkField: "projectId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["projects", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, inheriting, {
+      resource: "projects", operation: "merge", id: "project:p", record: { name: "P" },
+    });
+    await offlineWrite(storage, inheriting, { resource: "projects", operation: "archive", id: "project:p" });
+    const rows = [{ ...child, projectId: "project:p" }];
+    expect(await page(storage, inheriting, childrenOf, rows)).toEqual([]);
+    expect(await page(storage, inheriting, { ...childrenOf, metadata: { includeAncestorInactive: true } }, rows))
+      .toEqual(rows);
+  });
+
+  it("filter-dependencies: a nested filter field the server or the query omits stays unknown after a sibling merge", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { note: "x" } },
+    });
+    const rows = [{ id: "note:1", title: "A", profile: {} }];
+    // The server omits the many-one key folderId at every depth.
+    expect(await page(storage, folderSchema, { resource: "notes", filters: { "profile.folderId": "folder:1" } }, rows))
+      .toEqual([{ ...rows[0], profile: { note: "x" } }]);
+    expect(await page(
+      storage, folderSchema, { resource: "notes", filters: { "profile.status": "open" }, omit: ["status"] }, rows,
+    )).toEqual([{ ...rows[0], profile: { note: "x" } }]);
+  });
+
+  it("filter-dependencies: a row a pending delete and merge recreate is judged on fields the page hides", async () => {
+    const storage = await hydratingStorage();
+    await pendingChange(storage, "mutation:recreate-delete", { operation: "delete", id: "task:1" });
+    await pendingChange(storage, "mutation:recreate-merge", { operation: "merge", id: "task:1", record: { note: "x" } });
+    await pendingChange(storage, "mutation:sibling-merge", { operation: "merge", id: "task:2", record: { note: "y" } });
+    const result = (await executeQuery(
+      remoteReturning({ data: [{ id: "task:1" }, { id: "task:2" }], nextCursor: "next" }),
+      { resource: "tasks", limit: 2, select: ["id"], filters: { title: "Open" } },
+      storage,
+      [],
+      schema,
+    )) as { data: Array<Record<string, unknown>> };
+    expect(result.data.map((row) => row.id)).toEqual(["task:2"]);
+  });
+
+  it("filter-dependencies: a pending date the codec cannot read is unknown and keeps the server's value", async () => {
+    const storage = await hydratingStorage();
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:bad-date", timestampMs: 1,
+      mutation: { resource: "tasks", operation: "merge", id: "task:1", record: { dueAt: "not-a-date" } },
+    });
+    const dueAt = "2026-01-01T00:00:00.000Z";
+    const rows = [{ id: "task:1", title: "Open", dueAt }];
+    // The page is returned with its dates decoded.
+    expect(await page(storage, schema, { resource: "tasks", filters: { dueAt } }, rows))
+      .toEqual([{ ...rows[0], dueAt: new Date(dueAt) }]);
+  });
+
+  it("projection-shape: an htree page shows a pending foreign key named like its relation that the server row lacked", async () => {
+    const ownedTree: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "goals",
+          version: 1,
+          fields: [...treeSchema.resources[0].fields, { name: "owner", type: "string", required: false }],
+        },
+      ],
+      relations: [
+        ...treeSchema.relations!,
+        { from: "goals", to: "users", type: "many-one", relation: "owner", fkField: "owner" },
+      ],
+    };
+    const storage = new MemoryStorageAdapter(["users", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:owner", timestampMs: 1,
+      mutation: { resource: "goals", operation: "relate", id: "goal:x", relations: { owner: "users:2" } },
+    });
+    expect(await page(storage, ownedTree, childrenOf, [child])).toEqual([{ ...child, owner: "users:2" }]);
+    expect(await page(storage, ownedTree, { ...childrenOf, omit: ["owner"] }, [child])).toEqual([child]);
+  });
+});
