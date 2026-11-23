@@ -17,12 +17,15 @@ import type {
   SchemaIndex,
 } from "@datafn/core";
 import {
+  ANCESTOR_INACTIVE_FIELD,
   endpointIncludes,
   findRelationMatch,
   getCapabilityFields,
   hasTemporalGrouping,
+  normalizeRelationPayload,
   parseSortTerms,
   relationFkFieldForManyOne,
+  relationFkFieldForOneMany,
   relationTargetEndpoint,
   resolveCapabilities,
   resolveEndpointResource,
@@ -310,12 +313,20 @@ function serverProjectsField(
   key: string,
   remoteRow: Record<string, unknown>,
 ): boolean {
-  if (key === "id" || key === "$relation_metadata" || findRelationMatch(schema, resource, key)) {
-    return false;
-  }
+  if (key === "id" || key === "$relation_metadata") return false;
   const omit = Array.isArray(query.omit) ? query.omit : [];
   if (omit.includes(key)) return false;
   const select = Array.isArray(query.select) && query.select.length > 0 ? query.select : undefined;
+  const relation = findRelationMatch(schema, resource, key);
+  if (relation) {
+    // A bare token on a many-one relation stored in a key of its own name is
+    // that scalar id; any other relation key is an id list or expansion.
+    return select?.includes(key) === true
+      && !select.some((token) => typeof token === "string" && token.startsWith(`${key}.`))
+      && relation.relation.type === "many-one"
+      && relation.direction === "forward"
+      && relationFkFieldForManyOne(relation.relation) === key;
+  }
   if (select?.includes(key)) return true;
   const declared = declaredFields(schema, resource).fields.has(key);
   if ((!declared && !(key in remoteRow)) || (select && !select.includes("*"))) return false;
@@ -394,6 +405,21 @@ function onRowFields(
   return result;
 }
 
+/**
+ * Whether the replayed row settles `path`: it holds a value there, the
+ * written field was cleared, or a written null or scalar ends the path. A
+ * member missing from a written object is unknown (it may be hidden).
+ */
+function writtenPathKnown(current: Record<string, unknown>, path: readonly string[]): boolean {
+  let value: unknown = current;
+  for (const [index, segment] of path.entries()) {
+    if (!isPlainRecord(value)) return true;
+    if (!(segment in value)) return index === 0;
+    value = value[segment];
+  }
+  return true;
+}
+
 function hasPath(row: Record<string, unknown>, path: readonly string[]): boolean {
   let value: unknown = row;
   for (const segment of path) {
@@ -424,7 +450,7 @@ async function pendingWritesStopMatch(
     const known = paths.every((path) =>
       path !== undefined
       && (hasPath(seeded, path)
-        || (changedKeys.has(path[0]) && (path.length === 1 || hasPath(current, path)))));
+        || (changedKeys.has(path[0]) && writtenPathKnown(current, path))));
     if (!known || !paths.some((path) => changedKeys.has(path![0]))) continue;
     const ids = await pageMemberIds(scratch, schema, { resource, filters: condition });
     if (ids && !ids.has(current.id as string)) return true;
@@ -448,6 +474,142 @@ async function pageMemberIds(
 function rowIdOf(row: unknown): string | undefined {
   const id = isPlainRecord(row) ? row.id : undefined;
   return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * The page row after the replay, or null when it leaves the page. On a
+ * relation page the query's filters apply to the anchor, so targets are only
+ * held to their capability auto-filters.
+ */
+async function replayedPageRow(
+  scratch: DatafnStorageAdapter,
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  id: string,
+  page: { resource: string; row: Record<string, unknown>; seeded: Record<string, unknown> },
+  isRelationPage: boolean,
+): Promise<Record<string, unknown> | null> {
+  const current = await scratch.getRecord(page.resource, id);
+  if (!current) return null;
+  // Ancestor inactivity comes from records the scratch store does not hold;
+  // a cleared declared field is the server's null column.
+  let normalized = false;
+  if (!sameValue(page.seeded[ANCESTOR_INACTIVE_FIELD], current[ANCESTOR_INACTIVE_FIELD])) {
+    if (page.seeded[ANCESTOR_INACTIVE_FIELD] === undefined) delete current[ANCESTOR_INACTIVE_FIELD];
+    else current[ANCESTOR_INACTIVE_FIELD] = page.seeded[ANCESTOR_INACTIVE_FIELD];
+    normalized = true;
+  }
+  const { fields } = declaredFields(schema, page.resource);
+  for (const key of fields.keys()) {
+    if (key in page.seeded && current[key] === undefined) {
+      current[key] = null;
+      normalized = true;
+    }
+  }
+  if (normalized) await scratch.upsertRecord(page.resource, current);
+  const changedKeys = new Set(
+    [...Object.keys(page.seeded), ...Object.keys(current)]
+      .filter((key) => !sameValue(page.seeded[key], current[key])),
+  );
+  if (changedKeys.size === 0) return page.row;
+  const filters = injectLocalCapabilityAutoFilters(
+    {
+      resource: page.resource,
+      metadata: query.metadata,
+      ...(isRelationPage ? {} : { filters: query.filters }),
+    },
+    schema,
+  ).filters;
+  if (await pendingWritesStopMatch(scratch, schema, page.resource, filters, page.seeded, current, changedKeys)) {
+    return null;
+  }
+  const shownKeys = [...changedKeys].filter((key) =>
+    serverProjectsField(schema, query, page.resource, key, page.row));
+  if (shownKeys.length === 0) return page.row;
+  const patch: Record<string, unknown> = {};
+  for (const key of shownKeys) {
+    if (current[key] !== undefined) patch[key] = current[key];
+  }
+  const decoded = stripNullsForNonNullableFields(
+    parseDateFields(schema, page.resource, patch),
+    schema.resources.find((entry) => entry.name === page.resource),
+  );
+  const omit = Array.isArray(query.omit)
+    ? query.omit.filter((key): key is string => typeof key === "string")
+    : [];
+  const shown: Record<string, unknown> = { ...page.row };
+  for (const key of shownKeys) {
+    if (key in decoded) shown[key] = applyServerOmit(decoded[key], omit);
+    else delete shown[key];
+  }
+  return shown;
+}
+
+const STATE_OPERATIONS = new Set(["trash", "restore", "archive", "unarchive"]);
+
+/** Foreign keys a record of `resource` holds. */
+function heldForeignKeys(schema: DatafnSchema, resource: string): Set<string> {
+  const keys = new Set<string>();
+  for (const relation of schema.relations ?? []) {
+    if (relation.type === "many-one" && endpointIncludes(relation.from, resource)) {
+      keys.add(relationFkFieldForManyOne(relation));
+    } else if (relation.type === "one-many" && endpointIncludes(relation.to, resource)) {
+      keys.add(relationFkFieldForOneMany(relation));
+    }
+  }
+  return keys;
+}
+
+/**
+ * Apply one pending entry with the offline writer, as the server would see
+ * it: a malformed relation payload skips the whole entry, a trash, restore,
+ * archive or unarchive never revives a deleted record, a record write keeps
+ * declared readonly fields, and a replace also keeps what lies outside its
+ * payload on the server: foreign keys and trash, archive and creation state.
+ */
+async function replayPendingEntry(
+  scratch: DatafnStorageAdapter,
+  schema: DatafnSchema,
+  change: DatafnChangelogEntry,
+): Promise<void> {
+  const { mutation } = change;
+  const { resource, id, operation } = mutation;
+  if (mutation.relations !== undefined) {
+    if (!isPlainRecord(mutation.relations)) return;
+    for (const payload of Object.values(mutation.relations)) normalizeRelationPayload(payload);
+  }
+  const before = typeof resource === "string" && typeof id === "string"
+    ? await scratch.getRecord(resource, id)
+    : null;
+  if (STATE_OPERATIONS.has(operation as string) && !before) return;
+  await applyOptimisticMutationToStorage(
+    scratch,
+    schema,
+    mutation,
+    change.timestampMs,
+    change.actorId ?? change.clientId,
+  );
+  if (!before || !["insert", "replace", "merge"].includes(operation as string)) return;
+  const after = await scratch.getRecord(resource as string, id as string);
+  if (!after) return;
+  const { fields, system } = declaredFields(schema, resource as string);
+  const kept = new Set([...fields].filter(([key, field]) => field.readonly && !system.has(key)).map(([key]) => key));
+  if (operation !== "merge") {
+    const record = isPlainRecord(mutation.record) ? mutation.record : {};
+    const held = heldForeignKeys(schema, resource as string);
+    for (const key of Object.keys(before)) {
+      const state = system.has(key) && key !== "updatedAt" && key !== "updatedBy";
+      if (!(key in record) && (state || held.has(key))) kept.add(key);
+    }
+  }
+  let restored = false;
+  for (const key of kept) {
+    if (sameValue(before[key], after[key])) continue;
+    if (before[key] === undefined) delete after[key];
+    else after[key] = before[key];
+    restored = true;
+  }
+  if (restored) await scratch.upsertRecord(resource as string, after);
 }
 
 /**
@@ -509,7 +671,9 @@ async function overlayPendingRowsOnLimitedPage(
     if (pageRows.size === 0) return remoteResult;
     if (match) {
       // The edges the server reported, written in the writer's own form.
-      await scratch.upsertRecord(queryResource, { id: query.id });
+      if (!(await scratch.getRecord(queryResource, query.id as string))) {
+        await scratch.upsertRecord(queryResource, { id: query.id });
+      }
       await applyOptimisticMutationToStorage(scratch, schema, {
         resource: queryResource,
         id: query.id,
@@ -527,22 +691,12 @@ async function overlayPendingRowsOnLimitedPage(
 
   for (const change of changes) {
     try {
-      await applyOptimisticMutationToStorage(
-        scratch,
-        schema,
-        change.mutation,
-        change.timestampMs,
-        change.actorId ?? change.clientId,
-      );
+      await replayPendingEntry(scratch, schema, change);
     } catch {
       // An entry the writer cannot apply changes nothing else on the page.
     }
   }
   const linkedAfter = match ? await pageMemberIds(scratch, schema, edgeQuery) : undefined;
-  const omit = Array.isArray(query.omit)
-    ? query.omit.filter((key): key is string => typeof key === "string")
-    : [];
-
   const data: unknown[] = [];
   let changed = false;
   for (const row of remoteData) {
@@ -552,58 +706,15 @@ async function overlayPendingRowsOnLimitedPage(
       data.push(row);
       continue;
     }
-    const current = await scratch.getRecord(page.resource, id);
     const unlinked = linkedBefore?.has(id) === true && linkedAfter !== undefined && !linkedAfter.has(id);
-    if (!current || unlinked) {
-      changed = true;
-      continue;
+    let shown: Record<string, unknown> | null = page.row;
+    try {
+      shown = unlinked ? null : await replayedPageRow(scratch, schema, query, id, page, isRelationPage);
+    } catch {
+      // A row the overlay cannot read stays as the server returned it.
     }
-    // Clients never write a declared readonly field; the server keeps it.
-    const { fields, system } = declaredFields(schema, page.resource);
-    let restored = false;
-    for (const [key, field] of fields) {
-      if (field.readonly && !system.has(key) && !sameValue(page.seeded[key], current[key])) {
-        if (page.seeded[key] === undefined) delete current[key];
-        else current[key] = page.seeded[key];
-        restored = true;
-      }
-    }
-    if (restored) await scratch.upsertRecord(page.resource, current);
-    const changedKeys = new Set(
-      [...Object.keys(page.seeded), ...Object.keys(current)]
-        .filter((key) => !sameValue(page.seeded[key], current[key])),
-    );
-    if (changedKeys.size === 0) {
-      data.push(row);
-      continue;
-    }
-    const filters = injectLocalCapabilityAutoFilters(
-      { resource: page.resource, metadata: query.metadata, filters: query.filters },
-      schema,
-    ).filters;
-    if (await pendingWritesStopMatch(scratch, schema, page.resource, filters, page.seeded, current, changedKeys)) {
-      changed = true;
-      continue;
-    }
-    const patch: Record<string, unknown> = {};
-    const shownKeys = [...changedKeys].filter((key) =>
-      serverProjectsField(schema, query, page.resource, key, page.row));
-    for (const key of shownKeys) {
-      // A cleared declared field reads as the server's null column.
-      if (current[key] !== undefined) patch[key] = current[key];
-      else if (fields.has(key)) patch[key] = null;
-    }
-    const decoded = stripNullsForNonNullableFields(
-      parseDateFields(schema, page.resource, patch),
-      schema.resources.find((entry) => entry.name === page.resource),
-    );
-    const shown: Record<string, unknown> = { ...page.row };
-    for (const key of shownKeys) {
-      if (key in decoded) shown[key] = applyServerOmit(decoded[key], omit);
-      else delete shown[key];
-    }
-    changed ||= shownKeys.length > 0;
-    data.push(shown);
+    if (shown !== page.row) changed = true;
+    if (shown) data.push(shown);
   }
   if (!changed) return remoteResult;
   return Array.isArray(remoteResult)
