@@ -2267,12 +2267,18 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(storage, ownedGoals, query, [child])).toEqual([{ ...child, title: "Y" }]);
   });
 
-  it("(a) hydration: with paths omitted, a moved child follows its replayed parent, whatever the ids' suffixes", async () => {
+  it("(a) hydration: with the anchor's ancestry omitted, a moved child stays only while some ancestry can still list it", async () => {
     const outer = { resource: "goals", id: "goal:outer-goal:c", relation: "children", omit: ["parentPath"] };
     const row = { id: "goal:x", title: "X", parentId: "goal:outer-goal:c" };
     const moved = await goals();
-    await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
     expect(await page(moved, tree, outer, [row])).toEqual([]);
+
+    // `<unknown>-goal:c` can equal the anchor's child path `<unknown>-goal:outer-goal:c`: the
+    // server compares whole path strings, and the page does not show the ancestry that decides it.
+    const collision = await goals();
+    await offlineWrite(collision, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    expect((await page(collision, tree, outer, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
     const back = await goals();
     await offlineWrite(back, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
@@ -2295,16 +2301,14 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await shown({ $or: [{ title: "A" }, { title: "B" }] })).toEqual({ note: "n" });
     expect(await shown({ $and: [{ $or: [{ title: "A" }, { title: "B" }] }] })).toEqual({ note: "n" });
     expect(await shown({ title: { between: ["A", "B"] } })).toEqual({ note: "n" });
-    // Emptiness on a string field pushes down; the planner counts `in` lists inside an object operand.
-    expect(await shown({ title: { $is_not_empty: true } })).toEqual({ folderId: "folder:9", note: "n" });
+    // The planner counts `in` lists inside an object operand.
     expect(await shown({ title: { $ne: { in: ["x"] } } })).toEqual({ note: "n" });
-    // compileEmptiness: `$is_empty: false` on a string is two clauses and `$is_empty: true` one OR
-    // group; past five groups the 16-branch budget keeps the read in memory.
-    expect(await shown({ title: { $is_empty: false } })).toEqual({ folderId: "folder:9", note: "n" });
-    expect(await shown({ title: { $is_empty: true } })).toEqual({ folderId: "folder:9", note: "n" });
-    const groups = (count: number) => ({ $and: Array.from({ length: count }, () => ({ title: { $is_not_empty: false } })) });
-    expect(await shown(groups(5))).toEqual({ folderId: "folder:9", note: "n" });
-    expect(await shown(groups(6))).toEqual({ note: "n" });
+    // Only the plain converter's path is certain. Emptiness goes through the filter compiler,
+    // whose branch budget and operator mix (it declines `$like`) the page does not mirror, so
+    // such a read keeps materializeSelect's mask, as before this round.
+    expect(await shown({ title: { $like: "A%" } })).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown({ title: { $like: "A%", $is_not_empty: true } })).toEqual({ note: "n" });
+    expect(await shown({ title: { $in: "A" } })).toEqual({ note: "n" });
     expect(await shown({ title: { $in: ["A", ...Array.from({ length: 30_000 }, (_, index) => `t${index}`)] } }))
       .toEqual({ note: "n" });
     // The server adds a shareable resource's access filter, which can keep the read in memory.
@@ -2331,11 +2335,13 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
     expect((await page(keyAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
-    // A destination root that a pending merge put in the scratch store, with an id ending in -<anchor>.
+    // A destination root whose id ends in -<anchor>: `a-goal:c` is the anchor's child path when the
+    // anchor's omitted parent is `a`, so the row stays; with the anchor's path known it leaves.
     const provenAway = await goals();
     await offlineWrite(provenAway, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
     await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
-    expect(await page(provenAway, tree, pathless, [row])).toEqual([]);
+    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
+    expect(await page(provenAway, tree, childrenOf, [child])).toEqual([]);
     await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
     expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 

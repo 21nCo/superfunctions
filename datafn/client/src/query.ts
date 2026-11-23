@@ -362,13 +362,15 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null is_empty is_not_empty".split(" "));
+const PUSHDOWN_OPS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null".split(" "));
 
 /**
  * Whether classifyQuery certainly gives a plain list FULL_PUSHDOWN (top-level
- * omit only): no search, grouping, temporal, relation or nested select token,
- * `$or`, dotted, relation or quantified key, unpushable operator or object
- * operand, over 30,000 `$in` values, 16 branches or a private shareable resource.
+ * omit only) through its plain filter converter: no search, grouping, temporal,
+ * relation or nested select token, `$or`, dotted, relation or quantified key,
+ * operator outside the adapter map (emptiness goes through the filter compiler),
+ * object operand, over 30,000 `$in` values or private shareable resource.
+ * Anything else keeps materializeSelect's mask.
  */
 function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
   const resource = String(query.resource);
@@ -379,25 +381,17 @@ function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>):
   if (stringTokens(query.select).some((token) => token !== "*"
     && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
   let values = 0;
-  let groups = 0;
   const pushes = (filter: unknown): boolean => isPlainRecord(filter) && Object.entries(filter).every(([key, value]) => {
     if (key === "$and") return Array.isArray(value) && value.every(pushes);
     if (key.startsWith("$") || key.includes(".") || findRelationMatch(schema, resource, key)) return false;
     const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
-    const type = String(declaredFields(schema, resource).fields.get(key)?.type);
     return Object.entries(ops).every(([op, operand]) => {
       if (Array.isArray(operand)) values += operand.length;
       const name = op.replace(/^\$/, "");
-      const plain = !isPlainRecord(operand) && PUSHDOWN_OPS.has(name);
-      if (!name.endsWith("empty") || typeof operand !== "boolean") return plain;
-      // compileEmptiness: wanting a string empty is an OR group; numbers and booleans take one clause.
-      groups += Number(type === "string" && (name === "is_empty") === operand);
-      return /^(string|number|boolean)$/.test(type);
+      return !isPlainRecord(operand) && PUSHDOWN_OPS.has(name) && (name !== "in" || Array.isArray(operand));
     });
   });
-  // The first OR group leads, so five fit in 16 branches.
-  const pushed = query.filters === undefined || query.filters === null || pushes(query.filters);
-  return pushed && values <= 30_000 && groups <= 5;
+  return (query.filters === undefined || query.filters === null || pushes(query.filters)) && values <= 30_000;
 }
 
 /**
@@ -1071,7 +1065,6 @@ async function htreeRowsGone(
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
   const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
   const prefix = anchorProven ? joinPath(anchorPath, anchorId) : undefined;
-  const anchorChild = joinPath(String(anchorPath ?? ""), anchorId);
   for (const [id, page] of pageRows) {
     const current = await scratch.getRecord(page.resource, id);
     if (!current) continue;
@@ -1083,15 +1076,17 @@ async function htreeRowsGone(
     // An unknown, unknown-tailed or malformed path decides nothing.
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
     const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path);
-    // The writer rebuilds a path on the scratch path of the record it hangs the
-    // row under: a rebuilt child extends the anchor's, or, built on an off-page
-    // record, is a tail its unknown ancestry can complete to the known prefix.
-    if (!deep && !explicit && !sameValue(path, page.seeded[pathField])) {
-      const tail = prefix !== undefined && typeof path === "string"
-        && !(await provenHtreePath(scratch, page.resource, pathField, path, chains));
-      if (tail ? prefix !== path && !prefix.endsWith(`-${path}`) : path !== anchorChild) gone.add(id);
-    } else if (explicit || (await provenHtreePath(scratch, page.resource, pathField, path, chains))) {
+    const known = explicit || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
+    if (known) {
       if (!htreeMayHold(String(path ?? ""), anchorId, deep, prefix)) gone.add(id);
+    } else if (!deep && typeof path === "string") {
+      // The writer built this path on an off-page record, so it is a tail of
+      // the real one: the row leaves when no ancestry completes it to the
+      // anchor's child path (known, or `<unknown>-<anchor id>`).
+      const full = prefix ?? anchorId;
+      if (full !== path && !full.endsWith(`-${path}`) && !(prefix === undefined && path.endsWith(`-${anchorId}`))) {
+        gone.add(id);
+      }
     }
   }
   return gone;
