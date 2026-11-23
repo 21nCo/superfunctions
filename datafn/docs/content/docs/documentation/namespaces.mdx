@@ -148,6 +148,8 @@ Actor ID is resolved separately from namespace:
 1. **`namespaceProvider.getActorId(ctx)`** -- If configured. An error fails the request, so a broken identity lookup never runs a request as anonymous. An `actorId` in a request body is ignored.
 2. **`undefined`** -- No actor attribution.
 
+An in-process `server.search(params)` call without a context argument uses the configured `context` when it is a static object, and runs anonymous if `params.namespace` names a namespace other than that context's own. When `context` is a function, it calls `getActorId` with an empty object, and a resolver that throws on it fails the search, as above. To avoid that, pass the request's context as the second argument, or return `undefined` (anonymous) from the resolver when the context has no session.
+
 ### Example: Common Namespace Patterns
 
 ```typescript
