@@ -1,3 +1,5 @@
+import { Worker } from "node:worker_threads";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMcpFnClient, customTarget, type McpFnDiagnosticEvent } from "../src/index.js";
@@ -11,6 +13,34 @@ async function failedConnectRequestIds(): Promise<string[]> {
   await expect(client.connect()).rejects.toMatchObject({ code: "MCPFN_TARGET_OPEN_FAILED" });
   await client.close();
   return [...new Set(events.map((event) => event.requestId))];
+}
+
+// Runs the built client in a real worker thread with no global Web Crypto and
+// a frozen clock, and returns the request ID of its first failed connect.
+// Worker threads share the process ID and performance.timeOrigin of the main
+// thread, and each starts its own fallback sequence.
+function workerThreadRequestId(): Promise<string> {
+  const entry = new URL("../dist/index.js", import.meta.url).href;
+  const source = `
+    const { parentPort } = require("node:worker_threads");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    Date.now = () => 1700000000000;
+    import(${JSON.stringify(entry)}).then(async ({ createMcpFnClient, customTarget }) => {
+      const ids = [];
+      const client = createMcpFnClient({
+        target: customTarget({ kind: "custom", open: () => { throw new Error("offline"); } }),
+        diagnostics: (event) => { ids.push(event.requestId); },
+      });
+      await client.connect().catch(() => undefined);
+      await client.close();
+      parentPort.postMessage(ids[0]);
+    });
+  `;
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(source, { eval: true });
+    worker.once("message", (id: string) => { resolve(id); void worker.terminate(); });
+    worker.once("error", reject);
+  });
 }
 
 describe("default request IDs", () => {
@@ -30,7 +60,7 @@ describe("default request IDs", () => {
     const ids = [...await failedConnectRequestIds(), ...await failedConnectRequestIds()];
     expect(ids.length).toBeGreaterThan(1);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+_[0-9a-z]+$/);
+    for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+_[0-9a-z]+_[0-9a-z]+$/);
   });
 
   it("tell processes with one process ID apart by their time origin", async () => {
@@ -72,7 +102,7 @@ describe("default request IDs", () => {
 
   it("do not collide across separately loaded copies of the client in one millisecond", async () => {
     // An app can load both the ESM and the CJS build. With the time fixed and
-    // one process ID, only the process-wide sequence keeps them apart.
+    // one realm, only the shared sequence keeps them apart.
     vi.stubGlobal("crypto", undefined);
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     try {
@@ -93,5 +123,11 @@ describe("default request IDs", () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it("do not collide across worker threads in one millisecond without Web Crypto", async () => {
+    const ids = await Promise.all([workerThreadRequestId(), workerThreadRequestId()]);
+    for (const id of ids) expect(id).toMatch(/^mcpfn-/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 });

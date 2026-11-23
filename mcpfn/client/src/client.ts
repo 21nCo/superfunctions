@@ -107,9 +107,25 @@ export interface McpFnBoundedInventory<T> {
 
 const redactionOmissions = new WeakSet<object>();
 
-// One sequence per process, shared through the global symbol registry by every
+// One sequence per realm, shared through the global symbol registry by every
 // copy of the client (the ESM and CJS builds, or two installed versions).
 const fallbackSequenceKey = Symbol.for("@mcpfn/client/fallback-request-sequence");
+
+// One token per realm (the main thread or a worker thread), drawn on first use
+// and shared by every copy of the client in that realm.
+const fallbackRealmTokenKey = Symbol.for("@mcpfn/client/fallback-realm-token");
+
+function fallbackRealmToken(): string {
+  const registry = globalThis as { [fallbackRealmTokenKey]?: unknown };
+  const current = registry[fallbackRealmTokenKey];
+  if (typeof current === "string" && current.length > 0) return current;
+  // Reached only without Web Crypto (Node.js 18 default). The token only keeps
+  // diagnostic correlation IDs of worker threads apart; it is not a secret,
+  // credential or OAuth value, so a non-cryptographic source is safe here.
+  const token = Math.floor(Math.random() * 4294967296).toString(36); // NOSONAR
+  registry[fallbackRealmTokenKey] = token;
+  return token;
+}
 
 function nextFallbackRequestSequence(): number {
   const registry = globalThis as { [fallbackSequenceKey]?: unknown };
@@ -122,13 +138,14 @@ function nextFallbackRequestSequence(): number {
 /** Web Crypto UUIDs work on Node.js 19+, Cloudflare Workers and browsers
  * without importing `node:crypto`. Node.js 18 exposes Web Crypto on the global
  * only behind a flag; there, request IDs are correlation IDs built from the
- * time, a process-wide sequence shared by every loaded copy of the client
- * (so the ESM and CJS builds never repeat each other's IDs) and a component
- * that tells processes apart: Web Crypto random bits when only `randomUUID`
- * is missing, otherwise the process ID with the process's
- * `performance.timeOrigin` in microseconds (so container replicas that all run
- * as PID 1 differ). Worker threads share both and each has its own sequence,
- * so their IDs can repeat. They correlate diagnostics and are not secrets. */
+ * time, a sequence shared by every loaded copy of the client in a realm (so
+ * the ESM and CJS builds never repeat each other's IDs) and a component that
+ * tells realms apart: Web Crypto random bits when only `randomUUID` is
+ * missing, otherwise the process ID, the process's `performance.timeOrigin` in
+ * microseconds (so container replicas that all run as PID 1 differ) and a
+ * token drawn once per realm (worker threads share the process ID and time
+ * origin and each has its own sequence). They correlate diagnostics and are
+ * not secrets. */
 function defaultRequestId(): string {
   const webCrypto = (
     globalThis as {
@@ -150,7 +167,7 @@ function fallbackOriginId(webCrypto?: {
   const pid = host.process?.pid;
   const timeOrigin = host.performance?.timeOrigin;
   const startedAt = typeof timeOrigin === "number" ? Math.round(timeOrigin * 1000) : 0;
-  return `${typeof pid === "number" ? pid.toString(36) : "0"}_${startedAt.toString(36)}`;
+  return `${typeof pid === "number" ? pid.toString(36) : "0"}_${startedAt.toString(36)}_${fallbackRealmToken()}`;
 }
 
 
