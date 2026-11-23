@@ -1815,7 +1815,7 @@ export async function createDatafnServer<TContext = any>(
     const limit = Math.min(params.limit ?? 50, 10_000);
     const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
     // Without a context argument, use a static configured context like the
-    // executor does, or an empty one.
+    // executor does; with none, the namespace resolver gets an empty object.
     const staticCtx =
       _ctx === undefined && typeof config.context !== "function" ? config.context : undefined;
     const searchCtx = _ctx ?? staticCtx;
@@ -1831,18 +1831,20 @@ export async function createDatafnServer<TContext = any>(
         trustedInternal: true,
       });
     }
-    // The resolver runs with the same fallback context as the namespace (it
-    // may read request-local state); returning undefined means anonymous. The
-    // static context's actor belongs to its own namespace: a search the caller
-    // points at another namespace runs anonymous instead of inheriting it.
+    // The actor comes only from a real context: the caller's, or a static
+    // configured context searched in its own namespace. Without one the
+    // search runs anonymous and getActorId is not called, so a resolver that
+    // reads ambient request state can never lend its actor to a contextless
+    // (possibly cross-namespace) search.
     const staticActorOutOfScope =
       staticCtx !== undefined &&
       namespaceOverride !== undefined &&
       config.namespaceProvider?.getActorId !== undefined &&
       namespaceOverride !== (await ctxNamespace());
-    const actorId = staticActorOutOfScope
-      ? undefined
-      : await extractActorId((searchCtx ?? {}) as TContext);
+    const actorId =
+      searchCtx === undefined || staticActorOutOfScope
+        ? undefined
+        : await extractActorId(searchCtx as TContext);
 
     const searchParams = {
       ...params,

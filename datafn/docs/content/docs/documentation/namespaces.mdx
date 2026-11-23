@@ -148,7 +148,7 @@ Actor ID is resolved separately from namespace:
 1. **`namespaceProvider.getActorId(ctx)`** -- If configured. An error fails the request, so a broken identity lookup never runs a request as anonymous. An `actorId` in a request body is ignored.
 2. **`undefined`** -- No actor attribution.
 
-An in-process `server.search(params)` call without a context argument uses the configured `context` when it is a static object, and runs anonymous if `params.namespace` names a namespace other than that context's own. When `context` is a function, the resolvers receive an empty object instead: `getNamespace` is called with it unless `params.namespace` is set, then `getActorId`, and a resolver that throws on it fails the search. To avoid that, pass the request's context as the second argument; or set `params.namespace` (for example `server.search({ query, namespace: "org:acme" })`) and return `undefined` (anonymous) from `getActorId` when the context has no session.
+An in-process `server.search(params)` call without a context argument resolves an actor only from a static `context` object, and only when `params.namespace` is unset or names that context's own namespace. Otherwise (a function `context`, no `context`, or a static one aimed at another namespace) the search runs anonymous and `getActorId` is not called, so a resolver that reads ambient request state never lends its actor to such a search. Without a static context and without `params.namespace`, `getNamespace` is called with an empty object and must succeed. To search as a user, pass that request's context as the second argument: `server.search({ query }, ctx)`.
 
 ### Example: Common Namespace Patterns
 

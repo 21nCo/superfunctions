@@ -64,7 +64,7 @@ const store = new DbIdempotencyStore(adapter, "my-namespace");
 **Characteristics:**
 
 - Stores results in the `__datafn_idempotency` internal table.
-- Keyed by the request's namespace and actor plus `clientId` and `mutationId`. The server binds the store to each request (`store.scoped({ namespace, actorId })`), so the same `clientId` and `mutationId` from another tenant or another user is a new mutation, never a duplicate. The namespace passed to the constructor is not used for the server's records.
+- Keyed by the request's namespace and actor plus `clientId` and `mutationId`. The server binds the store to each request (`store.scoped({ namespace, actorId })`), so the same `clientId` and `mutationId` from another tenant or another user is a new mutation, never a duplicate. Per-user isolation needs `namespaceProvider.getActorId` to return a stable, distinct ID for each authenticated user: requests without a resolved actor (no `getActorId`, or one that returns `undefined`) share their namespace's anonymous scope, so two such callers with the same `clientId` and `mutationId` get the first one's result. The namespace passed to the constructor is not used for the server's records.
 - Results are JSON-serialized.
 - Survives server restarts.
 - Supports pruning by age.

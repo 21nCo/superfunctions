@@ -659,7 +659,7 @@ describe("Idempotency record ids and in-process search context", () => {
     expect(ensureTable).toHaveBeenCalledTimes(1);
   });
 
-  it("server.search() without ctx uses a static configured context, and runs anonymous without one", async () => {
+  it("server.search() without ctx uses a static configured context, and otherwise runs anonymous without calling getActorId", async () => {
     const db = memoryAdapter();
     await db.initialize?.();
     const searchProvider = {
@@ -708,29 +708,43 @@ describe("Idempotency record ids and in-process search context", () => {
     await expect(noActorServer.search({ query: "x", namespace: "tenant:b" })).resolves.toEqual({ results: [] });
     await noActorServer.close();
 
+    // With a function context and no ctx argument the search runs anonymous:
+    // getActorId is never called, so a resolver that reads ambient request
+    // identity cannot lend that actor to a (cross-namespace) search.
+    const ambientActor = "alice";
+    const ambientGetActorId = vi.fn(() => ambientActor);
     const fnServer = await createDatafnServer<Ctx & { userId?: string }>({
       schema,
       database: db,
       searchProvider,
       context: (request: Request) => ({ ns: "tenant:a", userId: request.headers.get("x-actor") ?? undefined }),
-      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId: (ctx) => ctx.userId },
+      namespaceProvider: { getNamespace: (ctx) => ctx.ns, getActorId: ambientGetActorId },
     });
+    await expect(fnServer.search({ query: "x", namespace: "tenant:b" })).resolves.toEqual({ results: [] });
     await expect(fnServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
+    expect(ambientGetActorId).not.toHaveBeenCalled();
+    // An explicit ctx still resolves the actor.
+    await fnServer.search({ query: "x" }, { ns: "tenant:a", userId: "bob" });
+    expect(ambientGetActorId).toHaveBeenCalledTimes(1);
     await fnServer.close();
 
-    // A resolver that throws on the fallback context still fails closed.
+    // With no configured context either, the search runs anonymous; a resolver
+    // that throws on an explicit ctx still fails closed.
+    const throwingGetActorId = vi.fn(() => {
+      throw new Error("no request scope");
+    });
     const throwingServer = await createDatafnServer<Ctx>({
       schema,
       database: db,
       searchProvider,
       namespaceProvider: {
         getNamespace: () => "tenant:a",
-        getActorId: () => {
-          throw new Error("no request scope");
-        },
+        getActorId: throwingGetActorId,
       },
     });
-    await expect(throwingServer.search({ query: "x" })).rejects.toThrow();
+    await expect(throwingServer.search({ query: "x" })).resolves.toEqual({ results: [] });
+    expect(throwingGetActorId).not.toHaveBeenCalled();
+    await expect(throwingServer.search({ query: "x" }, { ns: "tenant:a", actor: "alice" })).rejects.toThrow();
     await throwingServer.close();
   });
 });
