@@ -585,6 +585,33 @@ describe("DFN-06 follow-ups: FK-named policies and relationWrites", () => {
     await server.close();
   });
 
+  it("a many-one relation from a polymorphic source to one target accepts the FK field name", async () => {
+    const mixed = {
+      resources: [
+        {
+          name: "tasks",
+          version: 1,
+          fields: [{ name: "title", type: "string", required: true }, { name: "goalId", type: "string", required: false, nullable: true }],
+          permissions: { read: { fields: ["title", "goalId"] }, write: { fields: ["title", "goalId"] } },
+        },
+        {
+          name: "notes",
+          version: 1,
+          fields: [{ name: "body", type: "string", required: true }, { name: "goalId", type: "string", required: false, nullable: true }],
+          permissions: { read: { fields: ["body", "goalId"] }, write: { fields: ["body", "goalId"] } },
+        },
+        { name: "goals", version: 1, fields: [{ name: "name", type: "string", required: true }], permissions: { read: { fields: ["name"] }, write: { fields: ["name"] } } },
+      ],
+      relations: [{ from: ["tasks", "notes"], to: "goals", type: "many-one", relation: "goal", inverse: "items" }],
+    };
+    const { db, server, call } = await fkHarness(mixed);
+    await db.create({ model: "tasks", data: { __ns: "tenant:a", id: "t1", title: "T" } } as any);
+    await db.create({ model: "goals", data: { __ns: "tenant:a", id: "g1", name: "G" } } as any);
+    const res = await call({ resource: "tasks", version: 1, operation: "relate", id: "t1", relations: { goal: "g1" } });
+    expect(res.status).toBe(200);
+    await server.close();
+  });
+
   it("an htree parent relation is writable when write.fields lists its FK field", async () => {
     const { db, server, call } = await fkHarness(fkSchema);
     await db.create({ model: "folders", data: { __ns: "tenant:a", id: "f1", name: "root" } } as any);
@@ -665,6 +692,21 @@ describe("Idempotency record ids and in-process search context", () => {
     await scopedServer.search({ query: "x", namespace: "tenant:a" });
     expect(getActorId).toHaveBeenCalledTimes(1);
     await scopedServer.close();
+
+    // Without an actor resolver, an explicit namespace never consults the
+    // static context's namespace.
+    const getNamespace = vi.fn(() => {
+      throw new Error("no request scope");
+    });
+    const noActorServer = await createDatafnServer<Ctx & { userId?: string }>({
+      schema,
+      database: db,
+      searchProvider,
+      context: { ns: "tenant:a", userId: "alice" },
+      namespaceProvider: { getNamespace },
+    });
+    await expect(noActorServer.search({ query: "x", namespace: "tenant:b" })).resolves.toEqual({ results: [] });
+    await noActorServer.close();
 
     const fnServer = await createDatafnServer<Ctx & { userId?: string }>({
       schema,

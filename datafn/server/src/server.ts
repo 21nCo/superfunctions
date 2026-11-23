@@ -1838,6 +1838,7 @@ export async function createDatafnServer<TContext = any>(
     const staticActorOutOfScope =
       staticCtx !== undefined &&
       namespaceOverride !== undefined &&
+      config.namespaceProvider?.getActorId !== undefined &&
       namespaceOverride !== (await ctxNamespace());
     const actorId = staticActorOutOfScope
       ? undefined
