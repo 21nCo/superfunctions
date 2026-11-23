@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/auth",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Web Standard OAuth protected-resource middleware and enterprise-managed authorization helpers for MCP",
   "type": "module",
   "main": "dist/index.cjs",
@@ -14,14 +14,14 @@
   },
   "files": ["dist", "README.md"],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ../../scripts/verify-mcpfn-bundled-sdk.mjs",
     "clean": "node --input-type=module -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@superfunctions/oauth-core": "0.1.1",
     "@superfunctions/oauth-storage": "0.1.1"
   },
@@ -34,6 +34,7 @@
     }
   },
   "devDependencies": {
+    "@hono/node-server": "2.1.11",
     "@superfunctions/auth": "0.2.1",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",
