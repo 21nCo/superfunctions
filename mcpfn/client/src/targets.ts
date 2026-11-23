@@ -56,17 +56,20 @@ export function stdioTarget(options: StdioTargetOptions): McpFnTarget {
     kind: "stdio",
     descriptor: stdioTargetDescriptor(options),
     open: async (context) => {
-      // Settle as soon as the connect is aborted (for example by close()), so
-      // a pending import never holds the client in the closing state.
+      // An already-cancelled open never starts the import. Otherwise settle as
+      // soon as the connect is aborted (for example by close()), so a pending
+      // import never holds the client in the closing state.
+      if (context.signal?.aborted) throw abortReason(context.signal);
       const stdio = await untilAborted(loadStdioTarget(), context.signal);
       return stdio.stdioTarget(options).open(context);
     },
   });
 }
 
+// The import's own outcome stays observed after an abort wins the race, so a
+// late loader rejection is never reported as unhandled.
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(abortReason(signal));
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(abortReason(signal));
     signal.addEventListener("abort", onAbort, { once: true });

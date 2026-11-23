@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   distIsFresh,
   ensureFreshDist,
+  requiredArtifacts,
   sourceDigest,
   stampFile,
   writeBuildStamp,
@@ -84,5 +85,99 @@ describe("@mcpfn/client build stamp", () => {
     writeFileSync(path.join(root, "src", "index.ts"), "export const value = 3;\n");
 
     expect(() => ensureFreshDist(root, () => {})).toThrow(/does not match its sources/);
+  });
+
+  // Like the real package, the fixture dependency does not export
+  // ./package.json, so its root must be found through its exported entry.
+  function withInlinedOauthCore(root: string): string {
+    const dependency = path.join(root, "node_modules", "@superfunctions", "oauth-core");
+    mkdirSync(path.join(dependency, "dist", "chunks"), { recursive: true });
+    writeFileSync(
+      path.join(dependency, "package.json"),
+      JSON.stringify({
+        name: "@superfunctions/oauth-core",
+        version: "0.0.0",
+        exports: { ".": { import: "./dist/index.js", require: "./dist/index.cjs" } },
+      }),
+    );
+    writeFileSync(path.join(dependency, "dist", "index.js"), "export const redact = 1;\n");
+    writeFileSync(path.join(dependency, "dist", "index.cjs"), "exports.redact = 1;\n");
+    writeFileSync(path.join(dependency, "dist", "chunks", "index.js"), "export {};\n");
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        version: "0.0.0",
+        devDependencies: { "@superfunctions/oauth-core": "0.0.0" },
+      }),
+    );
+    return dependency;
+  }
+
+  it("hashes the inlined oauth-core dist, keyed by its path in the package", () => {
+    const root = fixturePackage();
+    const dependency = withInlinedOauthCore(root);
+    writeBuildStamp(root);
+    expect(distIsFresh(root)).toBe(true);
+
+    writeFileSync(path.join(dependency, "dist", "index.js"), "export const redact = 2;\n");
+    expect(distIsFresh(root)).toBe(false);
+    writeBuildStamp(root);
+
+    // Same basename and bytes moved to another directory: still a change.
+    const digest = sourceDigest(root);
+    rmSync(path.join(dependency, "dist", "chunks"), { recursive: true });
+    mkdirSync(path.join(dependency, "dist", "other"));
+    writeFileSync(path.join(dependency, "dist", "other", "index.js"), "export {};\n");
+    expect(sourceDigest(root)).not.toBe(digest);
+  });
+
+  it("fails instead of skipping a declared inlined dependency that does not resolve", () => {
+    const root = fixturePackage();
+    const dependency = withInlinedOauthCore(root);
+    writeBuildStamp(root);
+    rmSync(dependency, { recursive: true });
+    expect(() => distIsFresh(root)).toThrow(/@superfunctions\/oauth-core/);
+  });
+
+  it("treats a matching stamp with a missing entry-point artifact as stale", () => {
+    const root = fixturePackage();
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        version: "0.0.0",
+        main: "dist/index.cjs",
+        exports: { ".": { import: "./dist/index.js", require: "./dist/index.cjs" } },
+        imports: { "#stub": { node: "./dist/stub.js", default: "./dist/stub-unavailable.cjs" } },
+      }),
+    );
+    for (const file of ["index.js", "index.cjs", "stub.js", "stub-unavailable.cjs"]) {
+      writeFileSync(path.join(root, "dist", file), "\n");
+    }
+    writeBuildStamp(root);
+    expect(requiredArtifacts(root)).toEqual([
+      "dist/index.cjs",
+      "dist/index.js",
+      "dist/stub-unavailable.cjs",
+      "dist/stub.js",
+    ]);
+    expect(distIsFresh(root)).toBe(true);
+
+    unlinkSync(path.join(root, "dist", "stub-unavailable.cjs"));
+    expect(distIsFresh(root)).toBe(false);
+  });
+
+  it("the real package requires every published entry point", () => {
+    expect(requiredArtifacts(packageRoot)).toEqual(
+      expect.arrayContaining([
+        "dist/index.js",
+        "dist/index.cjs",
+        "dist/stdio.js",
+        "dist/stdio.cjs",
+        "dist/stdio-unavailable.js",
+        "dist/stdio-unavailable.cjs",
+      ]),
+    );
   });
 });

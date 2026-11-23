@@ -158,7 +158,8 @@ export class McpFnClient {
   private handle?: McpFnTransportHandle;
   private readonly pendingCleanup = new Set<McpFnTransportHandle>();
   private readonly pendingProtocols = new Set<Client>();
-  private cleanupDrain?: Promise<void>;
+  /** Resolves true when the drain skipped target cleanup for a pending open. */
+  private cleanupDrain?: Promise<boolean>;
   private cleanupFailure?: McpFnClientError;
   private connectPromise?: Promise<void>;
   private targetCleanupPending = false;
@@ -803,8 +804,15 @@ export class McpFnClient {
     if (protocol || handle) this.targetCleanupPending = true;
   }
 
-  private drainCleanup(retryFailed = false): Promise<void> {
-    if (this.cleanupDrain) return this.cleanupDrain;
+  private async drainCleanup(retryFailed = false): Promise<void> {
+    const skippedForPendingOpen = await (this.cleanupDrain ?? this.startCleanupDrain(retryFailed));
+    // A drain that skipped target cleanup because an open was still pending is
+    // re-run, not joined, once no open is pending: the open may have settled
+    // (for example cancelled by close()) while the drain was in flight.
+    if (skippedForPendingOpen && !this.pendingTargetOpens) await this.drainCleanup();
+  }
+
+  private startCleanupDrain(retryFailed: boolean): Promise<boolean> {
     if (this.cleanupFailure && !retryFailed) return Promise.reject(this.cleanupFailure);
     this.cleanupFailure = undefined;
     const drain = Promise.resolve().then(async () => {
@@ -820,10 +828,12 @@ export class McpFnClient {
           this.pendingCleanup.delete(handle);
         }
       }
-      // Opens and live sessions may still need peer state/credentials. Their
-      // eventual owner registration will request another drain without awaiting open.
-      if (this.pendingTargetOpens || this._protocol || this.handle) return;
+      // Opens and live sessions may still need peer state/credentials. A
+      // pending open's settlement requests another drain (see drainCleanup).
+      if (this.pendingTargetOpens) return true;
+      if (this._protocol || this.handle) return false;
       if (this.targetCleanupPending) await this.cleanupTarget();
+      return false;
     }).catch((error) => {
       this._state = "closing";
       this.cleanupFailure = new McpFnClientError("MCPFN_OPERATION_FAILED", "MCP target cleanup failed; retry close", {

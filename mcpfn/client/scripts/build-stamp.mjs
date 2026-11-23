@@ -25,21 +25,57 @@ function listFiles(root, relative) {
     .flatMap((entry) => listFiles(root, path.join(relative, entry)));
 }
 
-// `@superfunctions/oauth-core` is inlined into dist (tsup noExternal), so its
-// built output is a build input too.
-function inlinedDependencyFiles(root) {
-  let packageJson;
-  try {
-    packageJson = createRequire(path.join(root, "package.json")).resolve(
-      "@superfunctions/oauth-core/package.json",
-    );
-  } catch {
-    return [];
+// Packages tsup inlines into dist (tsup noExternal): their built output is a
+// build input too. A package listed here is hashed when the root's
+// package.json depends on it, and an unresolvable one fails the digest.
+const inlinedDependencies = ["@superfunctions/oauth-core"];
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+// Resolve the package root through its exported entry: the package does not
+// export `./package.json`, so resolving that subpath throws.
+function dependencyRoot(root, name) {
+  const entry = createRequire(path.resolve(root, "package.json")).resolve(name);
+  for (let directory = path.dirname(entry); ; directory = path.dirname(directory)) {
+    const manifest = path.join(directory, "package.json");
+    if (existsSync(manifest) && readJson(manifest).name === name) return directory;
+    if (path.dirname(directory) === directory) {
+      throw new Error(`Cannot find the package root of ${name} from ${entry}`);
+    }
   }
-  const dependencyRoot = path.dirname(packageJson);
-  return ["package.json", ...listFiles(dependencyRoot, "dist")].map((file) =>
-    path.join(dependencyRoot, file),
-  );
+}
+
+function inlinedDependencyFiles(root) {
+  const manifest = readJson(path.join(root, "package.json"));
+  const declared = { ...manifest.dependencies, ...manifest.devDependencies };
+  return inlinedDependencies
+    .filter((name) => name in declared)
+    .flatMap((name) => {
+      const directory = dependencyRoot(root, name);
+      return ["package.json", ...listFiles(directory, "dist")].map((relative) => ({
+        key: `${name}/${relative.split(path.sep).join("/")}`,
+        file: path.join(directory, relative),
+      }));
+    });
+}
+
+/** Files the package declares as entry points (`main`, `module`, `types`,
+ * `exports` and `imports` targets under dist): a fresh dist has all of them. */
+export function requiredArtifacts(root) {
+  const manifest = readJson(path.join(root, "package.json"));
+  const targets = new Set();
+  const collect = (value) => {
+    if (typeof value === "string") {
+      const relative = path.posix.normalize(value);
+      if (relative.startsWith("dist/")) targets.add(relative);
+    } else if (value && typeof value === "object") {
+      Object.values(value).forEach(collect);
+    }
+  };
+  collect([manifest.main, manifest.module, manifest.types, manifest.exports, manifest.imports]);
+  return [...targets].sort();
 }
 
 /** Digest of the client's build inputs under `root`. */
@@ -51,9 +87,9 @@ export function sourceDigest(root) {
     hash.update(readFileSync(path.join(root, relative)));
     hash.update("\0");
   }
-  for (const absolute of inlinedDependencyFiles(root)) {
-    hash.update(`@superfunctions/oauth-core:${path.basename(absolute)}\0`);
-    hash.update(readFileSync(absolute));
+  for (const { key, file } of inlinedDependencyFiles(root)) {
+    hash.update(`${key}\0`);
+    hash.update(readFileSync(file));
     hash.update("\0");
   }
   return hash.digest("hex");
@@ -68,12 +104,16 @@ export function writeBuildStamp(root) {
 
 /** Whether dist under `root` was built from the current build inputs. */
 export function distIsFresh(root) {
+  let stamp;
   try {
-    const stamp = JSON.parse(readFileSync(path.join(root, stampFile), "utf8"));
-    return stamp.sourceDigest === sourceDigest(root);
+    stamp = readJson(path.join(root, stampFile));
   } catch {
     return false;
   }
+  // A digest failure (an inlined dependency that does not resolve) throws.
+  if (stamp?.sourceDigest !== sourceDigest(root)) return false;
+  // A matching stamp is not enough if an emitted entry point is missing.
+  return requiredArtifacts(root).every((relative) => existsSync(path.join(root, relative)));
 }
 
 /** Rebuilds a missing or stale dist with `build`, then fails unless the
