@@ -2032,7 +2032,7 @@ describe("Limited first page: htree paths, hidden filter fields and undecodable 
         folderSchema.resources[1],
       ],
     };
-    const storage = await hydrating("notes");
+    const storage = await hydrating("notes", "folders");
     await storage.changelogAppend({
       clientId: "client:1", mutationId: "mutation:bad-anchor-date", timestampMs: 1,
       mutation: { resource: "folders", operation: "merge", id: "folder:1", record: { dueAt: "not-a-date" } },
