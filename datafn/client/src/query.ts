@@ -274,14 +274,14 @@ function sameValue(left: unknown, right: unknown): boolean {
   return false;
 }
 
-/** The server's omit: recursive into objects and arrays, never `id` or `$relation_metadata`. */
-function applyServerOmit(value: unknown, omit: readonly string[]): unknown {
-  if (omit.length === 0) return value;
+/** materializeSelect's omit: recursive into objects and arrays, never `id` or `$relation_metadata`. */
+function applyServerOmit(value: unknown, omit: ReadonlySet<string>): unknown {
+  if (omit.size === 0) return value;
   if (Array.isArray(value)) return value.map((member) => applyServerOmit(member, omit));
   if (!isObjectValue(value)) return value;
   const result: Record<string, unknown> = {};
   for (const [key, member] of Object.entries(value)) {
-    if (key !== "id" && omit.includes(key)) continue;
+    if (key !== "id" && omit.has(key)) continue;
     result[key] = key === "$relation_metadata" ? member : applyServerOmit(member, omit);
   }
   return result;
@@ -302,14 +302,11 @@ function declaredFields(
 }
 
 /**
- * Whether the server's projection (materializeSelect, also used for relation
- * pages, where `*#` (many-many) and `**` (htree) expand whole target rows
- * as `*` does) returns
- * `key` of `resource`: every declared field for no select or `*`, a bare
- * token, and for a relation key only the scalar foreign key, when the token
- * that wrote it last is a bare token or `*` (an id list or expansion the
- * overlay does not rebuild). Many-one foreign keys, which the server omits
- * unless named, are only changed where the server returned them.
+ * Whether the server's projection returns `key` of `resource`: every declared
+ * field for no select or `*` (`*#` and `**` on many-many and htree relation
+ * pages), a bare token, and for a relation key only the scalar foreign key
+ * when the token that wrote it last is bare or `*`. A key the page strips, or
+ * a many-one foreign key, is only changed where the server returned it.
  */
 function serverProjectsField(
   schema: DatafnSchema,
@@ -318,10 +315,10 @@ function serverProjectsField(
   key: string,
   remoteRow: Record<string, unknown>,
   relationType: string | undefined,
+  stripped: ReadonlySet<string>,
 ): boolean {
   if (key === "id" || key === "$relation_metadata") return false;
-  const omit = Array.isArray(query.omit) ? query.omit : [];
-  if (omit.includes(key)) return false;
+  if (stringTokens(query.omit).includes(key) || (stripped.has(key) && !(key in remoteRow))) return false;
   // `*#` expands many-many targets and `**` htree descendants; the server
   // ignores either on any other relation.
   const wildcard = (token: unknown): boolean =>
@@ -358,6 +355,43 @@ function serverOmittedForeignKeys(schema: DatafnSchema, resource: string): Set<s
       keys.add(relation.fkResourceField || `${(relation.relation || "target").replace(/Id$/, "")}Resource`);
     }
   }
+  return keys;
+}
+
+function stringTokens(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
+}
+
+/** The server's classifyQuery: a plain list projected by projectFields (FULL_PUSHDOWN). */
+function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
+  if ("temporal" in query || query.search || query.groupBy || query.having) return false;
+  const inMemory = (filter: unknown): boolean => Array.isArray(filter)
+    ? filter.some(inMemory)
+    : isPlainRecord(filter) && Object.entries(filter).some(([key, value]) =>
+      key.includes(".") || ["$any", "$all", "$none"].includes(key) || inMemory(value));
+  return !inMemory(query.filters) && stringTokens(query.select).every((token) => token === "*"
+    || (!token.includes(".") && !findRelationMatch(schema, query.resource as string, token.replace(/[*#]+$/, ""))));
+}
+
+/**
+ * Keys the server strips from a page row at every depth: none on a
+ * FULL_PUSHDOWN list, whose projectFields omits top-level keys only; else
+ * materializeSelect's final omit pass, the query's omit plus the row
+ * resource's auto-omitted keys its select does not name and, on a relation
+ * page, the anchor's own pass (the select there is `<relation>.<token>`).
+ */
+function serverStrippedKeys(
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  resource: string,
+  relationType: string | undefined,
+): Set<string> {
+  if (!relationType && serverPushesDown(schema, query)) return new Set();
+  const named = stringTokens(query.select).map((token) => token.split(".")[0]);
+  const keys = new Set(stringTokens(query.omit));
+  for (const key of serverOmittedForeignKeys(schema, resource)) if (!named.includes(key)) keys.add(key);
+  if (!relationType) return keys;
+  for (const key of serverOmittedForeignKeys(schema, String(query.resource))) if (key !== query.relation) keys.add(key);
   return keys;
 }
 
@@ -494,7 +528,7 @@ function writtenPathKnown(
     if (!isPlainRecord(value)) return true;
     if (!(segment in value)) {
       const rewrote = rewritten === true
-        || path.slice(0, index).some((_, end) => rewritten.has(path.slice(0, end + 1).join(".")));
+        || path.slice(0, index).some((_, end) => rewritten.has(JSON.stringify(path.slice(0, end + 1))));
       return !(index > 0 && hidden.has(segment) && !rewrote) && (index !== 1 || whole);
     }
     value = value[segment];
@@ -627,49 +661,32 @@ async function replayedPageRow(
     }
   }
   if (normalized) await scratch.upsertRecord(page.resource, current);
-  const changedKeys = new Set(
-    [...Object.keys(page.seeded), ...Object.keys(current)]
-      .filter((key) => !sameValue(page.seeded[key], current[key])),
-  );
+  // Ancestor inactivity was normalized to the seed above.
+  const changedKeys = changedKeysOf(page.seeded, current);
   if (changedKeys.size === 0) return page.row;
   const filters = injectLocalCapabilityAutoFilters(
-    {
-      resource: page.resource,
-      metadata: query.metadata,
-      ...(relationType ? {} : { filters: query.filters }),
-    },
+    { resource: page.resource, metadata: query.metadata, ...(relationType ? {} : { filters: query.filters }) },
     schema,
   ).filters;
-  const omit = Array.isArray(query.omit)
-    ? query.omit.filter((key): key is string => typeof key === "string")
-    : [];
-  const foreignKeys = serverOmittedForeignKeys(schema, page.resource);
-  const hidden = new Set<unknown>([...omit, ...foreignKeys]);
+  const stripped = serverStrippedKeys(schema, query, page.resource, relationType);
   const { patch, undecodable } = decodeChangedKeys(schema, page.resource, current, changedKeys, unproven);
   if (pendingWritesStopMatch(
-    schema, page.resource, filters, page.seeded, current, changedKeys, page.wholeKeys, hidden, undecodable,
+    schema, page.resource, filters, page.seeded, current, changedKeys, page.wholeKeys, stripped, undecodable,
     page.rewritten,
   )) {
     return null;
   }
   const shownKeys = [...changedKeys].filter((key) =>
-    serverProjectsField(schema, query, page.resource, key, page.row, relationType));
+    serverProjectsField(schema, query, page.resource, key, page.row, relationType, stripped));
   if (shownKeys.length === 0) return page.row;
   const decoded = stripNullsForNonNullableFields(
     patch,
     schema.resources.find((entry) => entry.name === page.resource),
   );
-  // The server's final omit pass strips auto-omitted keys at every depth,
-  // except those the select names (never on an htree page, whose select is
-  // the relation's own).
-  const named = new Set(relationType === "htree" || !Array.isArray(query.select)
-    ? []
-    : query.select.filter((token) => typeof token === "string" && token !== "*").map((token) => token.split(".")[0]));
-  const nestedOmit = [...omit, ...[...foreignKeys].filter((key) => !named.has(key))];
   const shown: Record<string, unknown> = { ...page.row };
   for (const key of shownKeys) {
     if (undecodable.has(key)) continue;
-    if (key in decoded) shown[key] = applyServerOmit(decoded[key], nestedOmit);
+    if (key in decoded) shown[key] = applyServerOmit(decoded[key], stripped);
     else delete shown[key];
   }
   return shown;
@@ -783,7 +800,7 @@ type PageRow = {
   row: Record<string, unknown>;
   seeded: Record<string, unknown>;
   wholeKeys: WholeKeys;
-  /** Dotted paths the replay itself wrote whole; `true` for all. */
+  /** Segment tuples the replay itself wrote whole; `true` for all. */
   rewritten: WholeKeys;
   /** Htree paths a pending merge, replace or insert wrote explicitly. */
   explicitPaths?: Map<string, unknown>;
@@ -849,35 +866,23 @@ function notePathWrites(schema: DatafnSchema, target: PageRow, mutation: Record<
   }
 }
 
-/** Top-level keys a pending entry for a tracked row writes whole. */
-function nextWholeKeys(
-  wholeKeys: WholeKeys,
+/**
+ * What a pending entry writes whole: top-level keys, or (`members`) JSON
+ * segment tuples, since a key may hold a dot, with a merge setting an
+ * object's members one level deep; `true` for all.
+ */
+function nextWhole(
+  whole: WholeKeys,
   mutation: Record<string, unknown>,
   existed: boolean,
+  members: boolean,
 ): WholeKeys {
   if (!existed || mutation.operation === "insert" || mutation.operation === "replace") return true;
-  if (wholeKeys === true || mutation.operation !== "merge" || !isPlainRecord(mutation.record)) {
-    return wholeKeys;
-  }
-  const next = new Set(wholeKeys);
+  if (whole === true || mutation.operation !== "merge" || !isPlainRecord(mutation.record)) return whole;
+  const next = new Set(whole);
   for (const [key, value] of Object.entries(mutation.record)) {
-    if (!isPlainRecord(value)) next.add(key);
-  }
-  return next;
-}
-
-/** Dotted paths a pending entry writes whole: a merge sets its members one level deep. */
-function nextRewritten(
-  rewritten: WholeKeys,
-  mutation: Record<string, unknown>,
-  existed: boolean,
-): WholeKeys {
-  if (!existed || mutation.operation === "insert" || mutation.operation === "replace") return true;
-  if (rewritten === true || mutation.operation !== "merge" || !isPlainRecord(mutation.record)) return rewritten;
-  const next = new Set(rewritten);
-  for (const [key, value] of Object.entries(mutation.record)) {
-    if (!isPlainRecord(value)) next.add(key);
-    else for (const member of Object.keys(value)) next.add(`${key}.${member}`);
+    if (!isPlainRecord(value)) next.add(members ? JSON.stringify([key]) : key);
+    else if (members) for (const member of Object.keys(value)) next.add(JSON.stringify([key, member]));
   }
   return next;
 }
@@ -993,8 +998,7 @@ async function seedRelationPage(
     } else {
       // Every returned path is the anchor's child prefix (or, with `**`, lies
       // below it); ids may hold the separator, so use only an agreed prefix.
-      const levels = Array.isArray(query.select) ? query.select.filter((token) => token === "*" || token === "**") : [];
-      const deep = levels.at(-1) === "**";
+      const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
       const prefixes = returned.length === 0 ? [] : anchorPrefixes(returned[0].path, anchorId)
         .filter((prefix) => returned.every(({ path }) => deep ? pathExtends(path, prefix) : path === prefix));
       if (prefixes.length === 1) {
@@ -1066,8 +1070,8 @@ async function htreeRowsGone(
   }
   const metadata = isPlainRecord(query.metadata) ? query.metadata : {};
   const inheriting = match.relation.inheritsInactive === true && metadata.includeAncestorInactive !== true;
-  const levels = Array.isArray(query.select) ? query.select.filter((token) => token === "*" || token === "**") : [];
-  const deep = levels.at(-1) === "**";
+  const deep = stringTokens(query.select).filter((token) => token === "*" || token === "**").at(-1) === "**";
+  const prefix = anchorProven ? joinPath(anchorPath, anchorId) : undefined;
   for (const [id, page] of pageRows) {
     const current = await scratch.getRecord(page.resource, id);
     if (!current) continue;
@@ -1079,24 +1083,25 @@ async function htreeRowsGone(
     // A path the page never knew, one ending in unknown ancestry, or a value
     // the server would reject as a path decides nothing.
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
-    const parented = typeof path === "string" && (path === anchorId || path.endsWith(`-${anchorId}`));
-    if (!deep && !parented) {
-      gone.add(id);
-      continue;
-    }
-    const explicit = page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path);
-    if (!explicit && !(await provenHtreePath(scratch, page.resource, pathField, path, chains))) continue;
-    if (!deep) {
-      if (anchorProven && path !== joinPath(anchorPath as string, anchorId)) gone.add(id);
-      continue;
-    }
-    const value = typeof path === "string" ? path : "";
-    const below = anchorProven
-      ? pathExtends(value, joinPath(anchorPath as string, anchorId))
-      : pathLists(value, anchorId);
-    if (!below) gone.add(id);
+    const known = (page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path))
+      || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
+    if (!htreeMayHold(typeof path === "string" ? path : "", known, anchorId, deep, prefix)) gone.add(id);
   }
   return gone;
+}
+
+/**
+ * Whether the server, comparing whole paths, can still list a row with
+ * `path` on the anchor's children page (`deep`: anywhere below the anchor).
+ * A known path is exact; an unproven one is the tail the writer built on a
+ * parent the page does not hold, so the real path is `<unknown>-<tail>`.
+ * `prefix` is the anchor's child path when the anchor's own path is proven.
+ */
+function htreeMayHold(path: string, known: boolean, anchorId: string, deep: boolean, prefix?: string): boolean {
+  const endsIn = (full: string, tail: string): boolean => full === tail || full.endsWith(`-${tail}`);
+  if (deep) return !known || (prefix === undefined ? pathLists(path, anchorId) : pathExtends(path, prefix));
+  if (prefix === undefined) return endsIn(path, anchorId) || (!known && endsIn(anchorId, path));
+  return known ? path === prefix : endsIn(prefix, path);
 }
 
 /** Keys whose replayed value differs from the seed, ancestor inactivity aside. */
@@ -1146,12 +1151,7 @@ async function overlayPendingRowsOnLimitedPage(
     match
       ? resolveEndpointResource(relationTargetEndpoint(match.relation, match.direction), id, schema)
       : queryResource;
-  const edgeQuery = {
-    resource: queryResource,
-    id: query.id,
-    relation: query.relation,
-    metadata: query.metadata,
-  };
+  const edgeQuery = { resource: queryResource, id: query.id, relation: query.relation, metadata: query.metadata };
 
   const scratch = new MemoryStorageAdapter(schema.resources.map((entry) => entry.name));
   const pageRows = new Map<string, PageRow>();
@@ -1204,8 +1204,8 @@ async function overlayPendingRowsOnLimitedPage(
         : false;
       const applied = await replayPendingEntry(journaled(scratch, undo), schema, change);
       if (target && applied) {
-        target.wholeKeys = nextWholeKeys(target.wholeKeys, change.mutation, existed);
-        target.rewritten = nextRewritten(target.rewritten, change.mutation, existed);
+        target.wholeKeys = nextWhole(target.wholeKeys, change.mutation, existed, false);
+        target.rewritten = nextWhole(target.rewritten, change.mutation, existed, true);
         notePathWrites(schema, target, change.mutation);
       }
     } catch {
