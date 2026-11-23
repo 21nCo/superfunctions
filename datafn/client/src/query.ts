@@ -362,23 +362,41 @@ function stringTokens(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((token): token is string => typeof token === "string") : [];
 }
 
-/** The server's classifyQuery: a plain list projected by projectFields (FULL_PUSHDOWN). */
-function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): boolean {
+const PUSHDOWN_OPERATORS = new Set("eq ne gt gte lt lte in like ilike is_null is_not_null".split(" "));
+
+/**
+ * The server's classifyQuery for a plain list: `true` for FULL_PUSHDOWN, whose
+ * projectFields omits top-level keys only; `false` when materializeSelect runs
+ * (search, grouping, temporal, a relation or nested select token, a top-level
+ * `$or` or dotted filter key, which its filter compiler rejects, or over
+ * 30,000 `$in` values); `undefined` when only that compiler can tell.
+ */
+function serverPushesDown(schema: DatafnSchema, query: Record<string, unknown>): Truth {
+  const resource = String(query.resource);
   if ("temporal" in query || query.search || query.groupBy || query.having) return false;
-  const inMemory = (filter: unknown): boolean => Array.isArray(filter)
-    ? filter.some(inMemory)
-    : isPlainRecord(filter) && Object.entries(filter).some(([key, value]) =>
-      key.includes(".") || ["$any", "$all", "$none"].includes(key) || inMemory(value));
-  return !inMemory(query.filters) && stringTokens(query.select).every((token) => token === "*"
-    || (!token.includes(".") && !findRelationMatch(schema, query.resource as string, token.replace(/[*#]+$/, ""))));
+  if (stringTokens(query.select).some((token) => token !== "*"
+    && (token.includes(".") || findRelationMatch(schema, resource, token.replace(/[*#]+$/, ""))))) return false;
+  let values = 0;
+  const pushes = (filter: unknown, top: boolean): Truth => !isPlainRecord(filter) ? undefined
+    : allOf(Object.entries(filter).map(([key, value]): Truth => {
+      if (key === "$or" || key.includes(".")) return top ? false : undefined;
+      if (key === "$and") return Array.isArray(value) ? allOf(value.map((sub) => pushes(sub, false))) : undefined;
+      if (key.startsWith("$") || findRelationMatch(schema, resource, key)) return undefined;
+      const ops = Array.isArray(value) ? { in: value } : isPlainRecord(value) ? value : { eq: value };
+      return allOf(Object.entries(ops).map(([op, operand]) => {
+        if (Array.isArray(operand)) values += operand.length;
+        return PUSHDOWN_OPERATORS.has(op.replace(/^\$/, "")) || undefined;
+      }));
+    }));
+  const pushed = query.filters === undefined || query.filters === null ? true : pushes(query.filters, true);
+  return values > 30_000 ? false : pushed;
 }
 
 /**
- * Keys the server strips from a page row at every depth: none on a
- * FULL_PUSHDOWN list, whose projectFields omits top-level keys only; else
- * materializeSelect's final omit pass, the query's omit plus the row
- * resource's auto-omitted keys its select does not name and, on a relation
- * page, the anchor's own pass (the select there is `<relation>.<token>`).
+ * Keys materializeSelect's final omit pass strips at every depth: the query's
+ * omit plus the row resource's auto-omitted keys its select does not name
+ * and, on a relation page, the anchor's own pass (its select is
+ * `<relation>.<token>`). A FULL_PUSHDOWN list keeps nested keys.
  */
 function serverStrippedKeys(
   schema: DatafnSchema,
@@ -386,7 +404,6 @@ function serverStrippedKeys(
   resource: string,
   relationType: string | undefined,
 ): Set<string> {
-  if (!relationType && serverPushesDown(schema, query)) return new Set();
   const named = stringTokens(query.select).map((token) => token.split(".")[0]);
   const keys = new Set(stringTokens(query.omit));
   for (const key of serverOmittedForeignKeys(schema, resource)) if (!named.includes(key)) keys.add(key);
@@ -459,13 +476,11 @@ function filterReads(
 type Truth = boolean | undefined;
 
 function allOf(parts: readonly Truth[]): Truth {
-  if (parts.includes(false)) return false;
-  return parts.every((part) => part === true) ? true : undefined;
+  return parts.includes(false) ? false : parts.every(Boolean) || undefined;
 }
 
 function anyOf(parts: readonly Truth[]): Truth {
-  if (parts.includes(true)) return true;
-  return parts.every((part) => part === false) ? false : undefined;
+  return parts.includes(true) || (parts.every((part) => part === false) ? false : undefined);
 }
 
 /**
@@ -509,12 +524,10 @@ function judgeFilter(
 
 /**
  * Whether the replayed row settles `path`: it holds a value there, a written
- * null or scalar ends the path, or the member is absent from a value the page
- * holds whole (returned by the server, or written whole by a replace or by
- * the one-level merge below its first level). A member missing from an
- * object merged onto a value the server did not return, or one the server
- * hides at every depth (the query's omit and its auto-omitted foreign keys)
- * is unknown, unless the replay wrote a value containing it whole.
+ * null or scalar ends it, or the member is absent from a value held whole
+ * (returned, or written whole). A member missing below a merge onto an
+ * unreturned value, or one the server strips at every depth, is unknown
+ * unless the replay wrote a value containing it whole.
  */
 function writtenPathKnown(
   current: Record<string, unknown>,
@@ -549,12 +562,10 @@ function hasPath(row: Record<string, unknown>, path: readonly string[]): boolean
 type WholeKeys = Set<string> | true;
 
 /**
- * The server returned the row, so each top-level condition matched before the
- * pending writes. The row stops matching when a condition that reads a field
- * the replay changed is false on the replayed row. A row the replay wrote
- * whole (recreated after a delete, replaced or inserted) also settles every
- * declared field the page hid, since the server's value for it is gone,
- * except readonly and capability fields, which the server's replace keeps.
+ * The server returned the row, so each top-level condition matched; the row
+ * stops matching when one reading a changed field is false after the replay.
+ * A row written whole also settles the declared fields the page hid, except
+ * readonly and capability fields, which the server's replace keeps.
  */
 function pendingWritesStopMatch(
   schema: DatafnSchema,
@@ -684,9 +695,12 @@ async function replayedPageRow(
     schema.resources.find((entry) => entry.name === page.resource),
   );
   const shown: Record<string, unknown> = { ...page.row };
+  const pushdown = relationType ? false : serverPushesDown(schema, query);
   for (const key of shownKeys) {
-    if (undecodable.has(key)) continue;
-    if (key in decoded) shown[key] = applyServerOmit(decoded[key], stripped);
+    const masked = pushdown === true ? decoded[key] : applyServerOmit(decoded[key], stripped);
+    // A nested shape that depends on the server's plan keeps the server's value.
+    if (undecodable.has(key) || (pushdown === undefined && !sameValue(masked, decoded[key]))) continue;
+    if (key in decoded) shown[key] = masked;
     else delete shown[key];
   }
   return shown;
@@ -747,11 +761,9 @@ function serverReplacedRecord(
 }
 
 /**
- * Apply one pending entry with the offline writer, as the server would see
- * it: a malformed relation payload skips the whole entry, a trash, restore,
- * archive or unarchive never revives a deleted record, a merge keeps
- * declared readonly fields, and a replace of an existing record follows the
- * server's buildReplaceRecord.
+ * Apply one pending entry with the offline writer as the server sees it: a
+ * malformed relation payload skips it, a state change never revives a deleted
+ * record, a merge keeps readonly fields, a replace follows buildReplaceRecord.
  */
 async function replayPendingEntry(
   scratch: DatafnStorageAdapter,
@@ -926,13 +938,10 @@ function pathExtends(path: string, prefix: string): boolean {
 }
 
 /**
- * Whether an htree path value is real. A cleared value is (the server's
- * replace and merge write it as given), as is an empty path or one that
- * extends a known chain: a path the server returned, with or without its
- * row, or a record the scratch store holds as a root. The writer builds a
- * path on a parent the page does not hold as if that parent were a root,
- * and a path through a row whose own path the server did not return holds
- * UNKNOWN_HTREE_PATH.
+ * Whether an htree path value is real: cleared or empty (written as given),
+ * or extending a known chain (a returned path, or a root the scratch store
+ * holds). The writer builds a path on an off-page parent as if it were a
+ * root; one through a row whose path was not returned holds UNKNOWN_HTREE_PATH.
  */
 async function provenHtreePath(
   scratch: DatafnStorageAdapter,
@@ -967,12 +976,10 @@ async function unprovenPathKeys(
 }
 
 /**
- * Seed the membership a relation page reports, in the writer's own form. An
- * htree page reports a set of rows with, where selected, their paths: the
- * anchor's path is what those paths prove (an ancestor page's deepest
- * returned row, with an unknown tail when deeper ancestors may be missing; a
- * descendant page's path above the anchor), else unknown. Other relations
- * are one relate of every row onto the anchor.
+ * Seed a relation page's reported membership in the writer's form: for htree,
+ * the anchor path the returned paths prove (an ancestor page's deepest chain,
+ * unknown-tailed when truncated; a children page's agreed prefix), else
+ * unknown; otherwise one relate of every row onto the anchor.
  */
 async function seedRelationPage(
   scratch: DatafnStorageAdapter,
@@ -1021,16 +1028,12 @@ async function seedRelationPage(
 }
 
 /**
- * Rows of an htree relation page the replay proves gone; the server judges
- * membership by path. On an ancestor page, an anchor path a write cleared
- * lists no ancestors, and the anchor's known path lists them: a row whose
- * returned path placed it there is gone when that path no longer lists it,
- * and any row is when the whole path is known. On a direct-children page a
- * row is gone when its path's last parent is not the anchor, or its proven
- * path is not the anchor's proven child prefix; when the last of `*` and
- * `**` is `**`, every descendant counts, and a row is gone when its proven
- * path no longer lies below the anchor. On an inheriting children page a row
- * the replay marks ancestor-inactive (only a record it holds can) is gone.
+ * Rows of an htree relation page the replay proves gone, judged by path as
+ * the server does. An ancestor page lists the anchor's known path (none once
+ * a write clears it); a row it placed there leaves when that path no longer
+ * lists it. Children pages (descendants when the last of `*` and `**` is
+ * `**`) follow htreeMayHold; an inheriting one drops a row the replay marks
+ * ancestor-inactive (only a record it holds can).
  */
 async function htreeRowsGone(
   scratch: DatafnStorageAdapter,
@@ -1085,23 +1088,22 @@ async function htreeRowsGone(
     if (typeof path === "string" ? path.endsWith(UNKNOWN_HTREE_PATH) : path !== null && path !== undefined) continue;
     const known = (page.explicitPaths?.has(pathField) && sameValue(page.explicitPaths.get(pathField), path))
       || (await provenHtreePath(scratch, page.resource, pathField, path, chains));
-    if (!htreeMayHold(typeof path === "string" ? path : "", known, anchorId, deep, prefix)) gone.add(id);
+    const parent = current[match.relation.fkField || match.relation.foreignKey || match.relation.inverse || "parentId"];
+    // An unproven path was built on an off-page parent as `<its unknown path>-<parent id>`:
+    // the row is a direct child exactly when its replayed parent is the anchor.
+    if (known ? !htreeMayHold(String(path ?? ""), anchorId, deep, prefix) : !deep && parent !== anchorId) gone.add(id);
   }
   return gone;
 }
 
 /**
- * Whether the server, comparing whole paths, can still list a row with
- * `path` on the anchor's children page (`deep`: anywhere below the anchor).
- * A known path is exact; an unproven one is the tail the writer built on a
- * parent the page does not hold, so the real path is `<unknown>-<tail>`.
- * `prefix` is the anchor's child path when the anchor's own path is proven.
+ * Whether the server, comparing whole paths, can still list a row whose
+ * known path is `path` on the anchor's children page (`deep`: anywhere below
+ * it); `prefix` is the anchor's child path when its own path is proven.
  */
-function htreeMayHold(path: string, known: boolean, anchorId: string, deep: boolean, prefix?: string): boolean {
-  const endsIn = (full: string, tail: string): boolean => full === tail || full.endsWith(`-${tail}`);
-  if (deep) return !known || (prefix === undefined ? pathLists(path, anchorId) : pathExtends(path, prefix));
-  if (prefix === undefined) return endsIn(path, anchorId) || (!known && endsIn(anchorId, path));
-  return known ? path === prefix : endsIn(prefix, path);
+function htreeMayHold(path: string, anchor: string, deep: boolean, prefix?: string): boolean {
+  if (deep) return prefix === undefined ? pathLists(path, anchor) : pathExtends(path, prefix);
+  return prefix === undefined ? path === anchor || path.endsWith(`-${anchor}`) : path === prefix;
 }
 
 /** Keys whose replayed value differs from the seed, ancestor inactivity aside. */
@@ -1113,17 +1115,13 @@ function changedKeysOf(seeded: Record<string, unknown>, current: Record<string, 
 }
 
 /**
- * A limited first page keeps its remote rows, order and cursor: adding local
- * rows would push remote rows past the remote nextCursor, so they would be
- * skipped. Pending local changes are replayed, in changelog order, by the
- * writer that applied them optimistically, onto a scratch store seeded with
- * the page as the server returned it (and, for a relation page, the
- * membership the server reported); an entry the writer rejects is rolled
- * back whole. A relation page is emptied when the replay deletes its anchor
- * or makes the anchor fail the query's filters. A row leaves the page when
- * the replay deletes it, removes its membership, or makes a condition false;
- * otherwise it is the remote row with the fields the replay changed. The
- * cached local copy, which already holds the pending writes, is never read.
+ * A limited first page keeps its remote rows, order and cursor (local rows
+ * would push remote ones past nextCursor). Pending changes are replayed in
+ * changelog order by the optimistic writer onto a scratch store seeded with
+ * the page and its reported membership, each rejected entry rolled back
+ * whole. A row leaves when the replay deletes it, unlinks it or makes a
+ * condition false, else shows the fields it changed; a relation page empties
+ * when its anchor goes or fails the filters. The cached row is never read.
  */
 async function overlayPendingRowsOnLimitedPage(
   storage: DatafnStorageAdapter,

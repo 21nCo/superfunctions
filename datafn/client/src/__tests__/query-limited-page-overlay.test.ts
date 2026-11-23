@@ -2267,6 +2267,41 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(storage, ownedGoals, query, [child])).toEqual([{ ...child, title: "Y" }]);
   });
 
+  it("(a) hydration: with paths omitted, a moved child follows its replayed parent, whatever the ids' suffixes", async () => {
+    const outer = { resource: "goals", id: "goal:outer-goal:c", relation: "children", omit: ["parentPath"] };
+    const row = { id: "goal:x", title: "X", parentId: "goal:outer-goal:c" };
+    const moved = await goals();
+    await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    expect(await page(moved, tree, outer, [row])).toEqual([]);
+
+    const back = await goals();
+    await offlineWrite(back, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    await offlineWrite(back, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:outer-goal:c" } });
+    expect(await page(back, tree, outer, [row])).toEqual([row]);
+  });
+
+  it("(i) projection-shape: the nested omit follows the server's plan, and an undecided plan keeps the server's value", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { folderId: "folder:9", note: "n" } },
+    });
+    const rows = [{ id: "note:1", title: "A" }];
+    const shown = async (filters: Record<string, unknown>) =>
+      (await page(storage, folderSchema, { resource: "notes", filters }, rows))[0].profile;
+    // FULL_PUSHDOWN keeps nested keys; `$or` and an oversized `$in` run in memory, where materializeSelect strips them.
+    expect(await shown({ title: "A" })).toEqual({ folderId: "folder:9", note: "n" });
+    expect(await shown({ $or: [{ title: "A" }, { title: "B" }] })).toEqual({ note: "n" });
+    expect(await shown({ title: { $in: ["A", ...Array.from({ length: 30_000 }, (_, index) => `t${index}`)] } }))
+      .toEqual({ note: "n" });
+    // Only the server's filter compiler decides an operator outside the pushdown set.
+    expect(await shown({ title: { $between: ["A", "B"] } })).toBeUndefined();
+
+    const plain = await hydrating("notes");
+    await offlineWrite(plain, folderSchema, { resource: "notes", operation: "merge", id: "note:1", record: { profile: { note: "n" } } });
+    expect(await page(plain, folderSchema, { resource: "notes", filters: { title: { $between: ["A", "B"] } } }, rows))
+      .toEqual([{ ...rows[0], profile: { note: "n" } }]);
+  });
+
   it("(l) projection-shape: a deep select keeps only its leaf, omit id keeps nested ids, and expansions stay", async () => {
     const ownerSchema: DatafnSchema = {
       resources: [
