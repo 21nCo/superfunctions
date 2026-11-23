@@ -1836,11 +1836,20 @@ export async function createDatafnServer<TContext = any>(
     // search runs anonymous and getActorId is not called, so a resolver that
     // reads ambient request state can never lend its actor to a contextless
     // (possibly cross-namespace) search.
+    // A static namespace that can't be resolved here (a resolver that needs
+    // an active request) counts as not matching: the search runs anonymous.
+    const staticNamespaceMatches = async (target: string): Promise<boolean> => {
+      try {
+        return (await ctxNamespace()) === target;
+      } catch {
+        return false;
+      }
+    };
     const staticActorOutOfScope =
       staticCtx !== undefined &&
       namespaceOverride !== undefined &&
       config.namespaceProvider?.getActorId !== undefined &&
-      namespaceOverride !== (await ctxNamespace());
+      !(await staticNamespaceMatches(namespaceOverride));
     const actorId =
       searchCtx === undefined || staticActorOutOfScope
         ? undefined

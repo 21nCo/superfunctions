@@ -708,6 +708,25 @@ describe("Idempotency record ids and in-process search context", () => {
     await expect(noActorServer.search({ query: "x", namespace: "tenant:b" })).resolves.toEqual({ results: [] });
     await noActorServer.close();
 
+    // A static namespace resolver that needs an active request counts as not
+    // matching: an explicit namespace runs anonymous instead of rejecting.
+    const requestOnlyGetActorId = vi.fn((ctx: Ctx & { userId?: string }) => ctx.userId);
+    const requestOnlyServer = await createDatafnServer<Ctx & { userId?: string }>({
+      schema,
+      database: db,
+      searchProvider,
+      context: { ns: "tenant:a", userId: "alice" },
+      namespaceProvider: {
+        getNamespace: () => {
+          throw new Error("no request scope");
+        },
+        getActorId: requestOnlyGetActorId,
+      },
+    });
+    await expect(requestOnlyServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
+    expect(requestOnlyGetActorId).not.toHaveBeenCalled();
+    await requestOnlyServer.close();
+
     // With a function context and no ctx argument the search runs anonymous:
     // getActorId is never called, so a resolver that reads ambient request
     // identity cannot lend that actor to a (cross-namespace) search.
