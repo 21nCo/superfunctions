@@ -785,6 +785,11 @@ describe("McpFn hosted authorization compatibility", () => {
     const compatibility = createMcpAuthorizationCompatibilityHandler({
       issuer,
       redirectPolicy,
+      // This test covers private-use error redirect formatting, so it opts
+      // dynamic clients back into error redirects.
+      authorizationErrors: {
+        redirectSources: ["pre-registered", "enterprise", "dynamic", "client-metadata-document"],
+      },
       clients: {
         resolve: async (clientId) =>
           registeredClient?.clientId === clientId ? registeredClient : null,

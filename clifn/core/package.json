@@ -1,6 +1,6 @@
 {
   "name": "@clifn/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Reusable CLI primitives runtime for the Superfunctions ecosystem",
   "type": "module",
   "main": "./dist/index.js",
@@ -61,6 +61,10 @@
     "./prompt": {
       "types": "./dist/prompt.d.ts",
       "import": "./dist/prompt.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js"
     }
   },
   "engines": {
@@ -88,6 +92,7 @@
     "scaffold",
     "credentials",
     "config",
+    "paths",
     "stdio"
   ],
   "author": "21n",

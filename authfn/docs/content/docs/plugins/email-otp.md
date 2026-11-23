@@ -52,6 +52,9 @@ authApp.createServer({
 | `now` | `pluginRuntime.emailOtp` | `() => new Date()` | Clock injection (for tests). |
 | `challengeTtlSeconds` | `pluginRuntime.emailOtp` | `600` | OTP lifetime. |
 | `maxAttempts` | `pluginRuntime.emailOtp` | `5` | Verification attempts per challenge before invalidation. |
+| `maxFailedAttemptsPerEmail` | `pluginRuntime.emailOtp` | `10` | Wrong codes accepted for one email across all of its challenges and purposes within the window. Further verifications for that email return `AUTHFN_RATE_LIMITED`, even with the right code, until older challenges leave the window. |
+| `maxChallengesPerEmail` | `pluginRuntime.emailOtp` | `20` | Challenges that can be sent to one email, across purposes, within the window. Further sends return `AUTHFN_RATE_LIMITED`. |
+| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. A challenge that outlives the window keeps counting until it expires. Both OTP plugins count the same challenges, so when `pluginRuntime.password.otp` also sets these limits, the strictest value of each applies to every route; a limit set for one plugin and left unset for the other applies as set, and the default applies only when neither sets it. Values set outside `pluginRuntime` can only tighten these limits (a lower count or a longer window applies, a looser one is ignored): the deprecated `authFnPasswordPlugin({ otp })` options on every OTP route, and the options of a direct `sendOtpChallenge`/`verifyOtpChallenge` call on that call only. Each limit, and `challengeTtlSeconds`, must be a whole number from 1 to 31536000; a bad value stops the server from starting with `AUTHFN_CONFIG_INVALID`. |
 
 ### Delivery provider
 
@@ -93,7 +96,7 @@ For `purpose: 'sign-in' | 'sign-up'`, a successful verify also issues a session 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. |
+| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. The index `idx_authfn_otp_challenges_email_created_at` (`email, createdAt, id`) serves the per-email budget; generate a migration to add it to an existing database. |
 
 The plaintext code is never stored. Verification compares `codeHash` against the supplied code.
 
@@ -132,8 +135,9 @@ sequenceDiagram
 | `AUTHFN_VALIDATION_ERROR` | Missing email/purpose. |
 | `AUTHFN_DELIVERY_FAILED` | `delivery.send` threw or returned `sent: false`. |
 | `AUTHFN_OTP_INVALID` | Code doesn't match. |
-| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`. |
+| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`, or (rarely) the challenge is older than the newest challenges the per-email count reads, after a flood of new ones. Either way, request a new code. |
 | `AUTHFN_OTP_REPLAYED` | Already consumed. |
+| `AUTHFN_RATE_LIMITED` | The email has used its per-email budget of wrong codes or challenges. `details.limit` is `failed-attempts` or `challenges`. `details.resetAt` is when enough counted challenges will have left the window (or expired) for a new request to pass; that is not always the oldest one. A refusal caused only by concurrent requests reports a retry about a second later. |
 | `AUTHFN_CONFLICT` | Sign-up but the email already exists (when `otpSignUpExistingUser` is `false`). |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: email is in another region. |
 
@@ -149,6 +153,8 @@ sequenceDiagram
 ## Account linking with OTP
 
 Set `accountLinking.otpSignUpExistingUser: true` to make OTP sign-up for an existing email succeed as a sign-in. The OTP itself is proof of email control, so this is safe for almost all consumer apps. See [Concepts → Account linking](../core-concepts/account-linking).
+
+A successful `sign-in` (or `sign-up` linked to an existing user), or a `verify-email` code entered by anyone other than a signed-in holder of the account, on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes everything set up on the account before (password, API keys, second factor, linked social accounts, handoff codes, OAuth client grants), revokes its sessions and marks the email verified, so access set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts). A `verify-email` request with `requireAccountHolder: true` is refused with `AUTHFN_UNAUTHENTICATED`, and its code stays unused, unless it comes from the account's own live session. Clients that only mean to verify a signed-in user's address send it, so an expired session cannot turn into a claim: the Swift client's `verifyOtp` and `verifyEmail` always do (`verifyEmail(email:code:claimAccount: true)` proves the mailbox without a session, on purpose), and the JavaScript client's `verifyOtp` takes `requireAccountHolder: true`.
 
 ## Email anti-enumeration
 

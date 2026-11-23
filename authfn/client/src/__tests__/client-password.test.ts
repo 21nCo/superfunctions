@@ -3,6 +3,7 @@ import { createTestServer } from './test-server.js';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import type { AuthFnRuntimeConfig } from 'authfn';
 import { authFnPasswordPlugin } from '@authfn/password';
+import { authFnEmailOtpPlugin } from '@authfn/email-otp';
 import { createAuthFnClient } from '../index.js';
 
 function createConfig(): AuthFnRuntimeConfig {
@@ -146,6 +147,61 @@ describe('@authfn/client password flows', () => {
 
     await client.signOut();
     expect(observedCsrfHeader).toMatch(/^csrf_/);
+  });
+
+  it('keeps the password and session when a signed-in user verifies their own email', async () => {
+    const codes = new Map<string, string>();
+    const delivery = {
+      async send(input: { purpose: string; email: string; code: string }) {
+        codes.set(`${input.purpose}:${input.email}`, input.code);
+        return { sent: true };
+      }
+    };
+    const auth = createTestServer({
+      ...createConfig(),
+      plugins: [authFnPasswordPlugin(), authFnEmailOtpPlugin()],
+      pluginRuntime: { emailOtp: { delivery }, password: { otp: { delivery } } }
+    });
+    const cookieJar = createCookieJar();
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      cookieAccessor: () => cookieJar.header(),
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        const url = typeof input === 'string' ? input : input.toString();
+        const cookieHeader = cookieJar.header();
+        if (cookieHeader) {
+          headers.set('cookie', cookieHeader);
+        }
+        const response = await auth.router.handle(new Request(url, { method: init?.method, headers, body: init?.body }));
+        cookieJar.applySetCookies(response.headers.getSetCookie());
+        return response;
+      }
+    });
+
+    expect((await client.signUpWithPassword({ email: 'ada@example.com', password: 'test-email-verification-password' })).ok).toBe(true);
+    expect((await client.sendOtp({ purpose: 'verify-email', email: 'ada@example.com' })).ok).toBe(true);
+    // The holder guard reaches the server in the request body.
+    let sentBody: Record<string, unknown> | undefined;
+    const capturing = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async (_input, init) => {
+        sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({ ok: false, error: { code: 'AUTHFN_UNAUTHENTICATED', message: 'test', retryable: false }, requestId: 'req_test' }, { status: 401 });
+      }
+    });
+    await capturing.verifyOtp({ purpose: 'verify-email', email: 'ada@example.com', code: '000000', requireAccountHolder: true });
+    expect(sentBody).toMatchObject({ purpose: 'verify-email', requireAccountHolder: true });
+    const verified = await client.verifyOtp({
+      purpose: 'verify-email',
+      email: 'ada@example.com',
+      code: codes.get('verify-email:ada@example.com')!
+    });
+    expect(verified.ok).toBe(true);
+
+    const session = await client.getSession();
+    expect(session.ok && session.data.session?.primaryEmail).toBe('ada@example.com');
+    expect((await client.signInWithPassword({ email: 'ada@example.com', password: 'test-email-verification-password' })).ok).toBe(true);
   });
 
   it('uses an explicit cookie prefix when the session cookie is httpOnly and hidden from the accessor', async () => {

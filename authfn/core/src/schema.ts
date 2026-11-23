@@ -3,7 +3,7 @@ import { AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH } from './core/limits.js';
 import { AuthFnConfigError, AuthFnConflictError } from './types.js';
 import type { AuthFnConfig, AuthFnSchemaDefinition } from './types.js';
 
-export const AUTHFN_SCHEMA_VERSION = 2;
+export const AUTHFN_SCHEMA_VERSION = 3;
 
 export function getSchema(config: AuthFnConfig): AuthFnSchemaDefinition {
   if (!Array.isArray(config.plugins)) {

@@ -1,0 +1,4 @@
+data: {"type":"response.created","sequence_number":0,"response":{"id":"gen-fixture-openrouter_stream_failed_credits","object":"response","status":"in_progress","output":[],"error":null,"incomplete_details":null}}
+
+data: {"type":"response.failed","sequence_number":1,"response":{"id":"gen-fixture-openrouter_stream_failed_credits","object":"response","status":"failed","output":[],"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits"},"incomplete_details":null}}
+

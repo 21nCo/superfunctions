@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "authfn": "0.8.0",
-    "@superfunctions/db": "0.2.0",
+    "@superfunctions/db": "0.3.4",
     "@superfunctions/http": "0.2.0",
     "@superfunctions/oauth-core": "0.1.1",
     "@superfunctions/oauth-flow": "0.1.1",

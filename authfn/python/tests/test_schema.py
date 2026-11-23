@@ -48,7 +48,7 @@ def test_schema_composition_is_deterministic() -> None:
     first = get_schema(_config())
     second = get_schema(_config())
 
-    assert first["version"] == 2
+    assert first["version"] == 3
     assert [table["modelName"] for table in first["schemas"]] == [
         "users",
         "sessions",

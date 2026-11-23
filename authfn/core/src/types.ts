@@ -174,6 +174,14 @@ export interface AuthFnTwoFactorEnrollmentRecord {
   userId: string;
   secretEncrypted: string;
   lastUsedCounter?: number | null;
+  /**
+   * TOTP checks counted against the failed-attempt limit. Only ever increases:
+   * every `maxFailedAttempts`-th check locks TOTP, and an accepted code moves
+   * it to the end of the current run.
+   */
+  failedAttemptCount?: number | null;
+  /** While in the future, TOTP codes are refused; recovery codes still work. */
+  lockedUntil?: Date | null;
   confirmedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;

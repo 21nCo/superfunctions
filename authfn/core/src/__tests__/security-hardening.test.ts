@@ -510,6 +510,26 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     ));
   }
 
+  /** A native sign-in whose callback minted a social handoff code. */
+  async function mintNativeHandoffCode() {
+    const config = createConfig({ requireHandoffChallenge: true });
+    const auth = createTestServer(config);
+    const verifier = 'test-verifier-'.padEnd(64, 'v');
+    const handoffChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await start(auth, { returnTo: 'nucleum://oauthsignin', handoffChallenge });
+    const completed = await callback(auth, (await started.json()).data.stateId as string);
+    const code = new URLSearchParams(new URL(completed.headers.get('location')!).hash.slice(1)).get('token')!;
+    return { config, auth, verifier, code };
+  }
+
+  function exchangeHandoff(auth: ReturnType<typeof createTestServer>, code: string, verifier: string) {
+    return auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, verifier })
+    }));
+  }
+
   it('rejects an invalid handoff code lifetime when the plugin is created', () => {
     for (const value of [Number.NaN, 0, -1, 1.5, 3601, Number.MAX_SAFE_INTEGER]) {
       expect(() => authFnSocialOAuthPlugin({ handoffCodeTtlSeconds: value })).toThrow(/positive whole number/);
@@ -636,11 +656,7 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     const misuse = await callback(auth, grantStateId);
     expect(misuse.ok).toBe(false);
 
-    const exchanged = await auth.router.handle(new Request('https://account.example.com/auth/social/handoff/exchange', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, verifier })
-    }));
+    const exchanged = await exchangeHandoff(auth, code, verifier);
     expect(exchanged.status).toBe(200);
   });
 
@@ -683,6 +699,54 @@ describe('social sign-in binding and handoff (F-08, F-10)', () => {
     );
     expect(exchanged.ok).toBe(false);
     expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_STATE_REPLAYED');
+  });
+
+  it('refuses a handoff code once the link it was minted for is gone, even after the provider is linked again', async () => {
+    const { config, auth, verifier, code } = await mintNativeHandoffCode();
+
+    // The mailbox owner claims the account (which removes the link), then
+    // links the same provider again.
+    const original = await config.database.findOne<Record<string, unknown>>({
+      model: 'oauth_accounts',
+      where: [{ field: 'provider', operator: 'ne', value: null }],
+      namespace: 'authfn'
+    });
+    await config.database.deleteMany({
+      model: 'oauth_accounts',
+      where: [{ field: 'id', operator: 'eq', value: original!.id }],
+      namespace: 'authfn'
+    });
+    await config.database.create({
+      model: 'oauth_accounts',
+      data: { ...original, id: 'oauth_test_relinked', providerAccountId: 'test-relinked-account' },
+      namespace: 'authfn'
+    });
+
+    const exchanged = await exchangeHandoff(auth, code, verifier);
+    expect(exchanged.status).toBe(400);
+    expect((await exchanged.json()).error.code).toBe('AUTHFN_OAUTH_CALLBACK_INVALID');
+  });
+
+  it('refuses a handoff code minted without the id of its link', async () => {
+    const { config, auth, verifier, code } = await mintNativeHandoffCode();
+    // As stored by a version before the link id was recorded.
+    const stateId = `social-handoff:${createHash('sha256').update(code).digest('hex')}`;
+    const stored = await config.database.findOne<{ subject_payload: string }>({
+      model: 'oauth_states',
+      where: [{ field: 'state_id', operator: 'eq', value: stateId }],
+      namespace: 'authfn'
+    });
+    const subject = JSON.parse(stored!.subject_payload) as { metadata: Record<string, unknown> };
+    expect(subject.metadata.oauthAccountId).toEqual(expect.any(String));
+    const { oauthAccountId: _linkId, ...legacyMetadata } = subject.metadata;
+    await config.database.updateMany({
+      model: 'oauth_states',
+      where: [{ field: 'state_id', operator: 'eq', value: stateId }],
+      data: { subject_payload: JSON.stringify({ ...subject, metadata: legacyMetadata }) },
+      namespace: 'authfn'
+    });
+    const exchanged = await exchangeHandoff(auth, code, verifier);
+    expect(exchanged.status).toBe(400);
   });
 
   it('returns a one-time code instead of a session token and exchanges it only with the verifier', async () => {

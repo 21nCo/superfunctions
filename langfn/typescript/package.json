@@ -101,7 +101,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.6",
+    "@mcpfn/core": "0.0.7",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/auth": "0.2.1",
     "@superfunctions/db": "0.2.0",

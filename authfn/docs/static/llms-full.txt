@@ -1507,7 +1507,7 @@ This is the policy you almost certainly want for OTP-first apps where users may 
 Allow a logged-in user to add a password credential through the password sign-up endpoint, when they don't already have one.
 
 - `false` (default): password sign-up always tries to create a new user.
-- `true`: when authenticated and no password credential exists, treat the request as "add password to my account".
+- `true`: when authenticated and no password credential exists, treat the request as "add password to my account". A session cookie counts only with a valid `x-authfn-csrf` header.
 - Object form: require the user's email to be verified before allowing the upgrade.
 
 This is how you wire "set a password" inside an OTP-only or OAuth-only sign-up flow.
@@ -3125,6 +3125,7 @@ This page also documents the logical replay protections the kernel already enfor
 A handful of routes have built-in protections that aren't traditional rate limits but serve a similar purpose:
 
 - **OTP attempt counter.** Each OTP challenge tracks `attemptCount`. After a small number of failed verifications (per the plugin's config), the challenge is invalidated.
+- **Per-email OTP budget** (TypeScript kernel). Wrong codes and new challenges are also counted per email across all challenges and purposes (by default 10 wrong codes and 20 challenges per hour). Requesting a new code does not reset the count. This is stored with the challenges, so it applies whether or not the HTTP rate limiter is enabled. Because the budget belongs to the email, anyone who knows an address can use it up and block that address's OTP sign-in and password reset until the window passes; enable the HTTP rate limiter as well, so a single client cannot do this cheaply. The Python port does not enforce this budget yet, only the per-challenge counter, and it has no `rateLimit` setting: a Python deployment must throttle OTP sends and verifications itself (at the edge, or in middleware in front of the AuthFn routes). On a database shared with the TypeScript kernel, compatibility is one-way: Python accepts codes the TypeScript kernel sent (it falls back to SHA-256 for hashes not in its own PBKDF2 format) and skips challenges the TypeScript kernel refused, but TypeScript does not accept Python's codes. So the Python OTP routes can check TypeScript-issued codes without the per-email budget: throttle them, or do not serve OTP verification from Python on a shared database.
 - **OAuth state replay.** OAuth states are one-shot. Replaying the same state returns `AUTHFN_OAUTH_STATE_REPLAYED` and the request is rejected without further processing.
 - **Native handoff codes.** One-time, short TTL.
 - **Two-factor attempts.** When `rateLimit` is enabled, `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable` use the `two-factor` policy: 30 requests per IP and 5 per challenge ID (for `/2fa/challenge`) or per session cookie (for `/2fa/confirm` and `/2fa/disable`, which only accept cookie sessions); challenge ids are trimmed and lower-cased before counting in a 5-minute window by default. Other body fields do not change the counter.
@@ -5192,7 +5193,7 @@ When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn`
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record). Such a key fails authentication (401) and no session is issued, and the key is not marked as used. Session cookies and bearer session tokens of a disabled user are refused the same way while the flag is set (including for placement contexts). The session records are kept, so clearing the flag restores bearer tokens; a browser whose cookies were cleared by a `GET /session` in the meantime signs in again.
 5. Updates `lastUsedAt`.
 6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, `scopes` set to the key's stored scopes that the registry can grant (`[]` when it has none), and `credential: { type: 'api-key', id: <keyId> }`.
 
@@ -5758,6 +5759,9 @@ authApp.createServer({
 | `now` | `pluginRuntime.emailOtp` | `() => new Date()` | Clock injection (for tests). |
 | `challengeTtlSeconds` | `pluginRuntime.emailOtp` | `600` | OTP lifetime. |
 | `maxAttempts` | `pluginRuntime.emailOtp` | `5` | Verification attempts per challenge before invalidation. |
+| `maxFailedAttemptsPerEmail` | `pluginRuntime.emailOtp` | `10` | Wrong codes accepted for one email across all of its challenges and purposes within the window. Further verifications for that email return `AUTHFN_RATE_LIMITED`, even with the right code, until older challenges leave the window. |
+| `maxChallengesPerEmail` | `pluginRuntime.emailOtp` | `20` | Challenges that can be sent to one email, across purposes, within the window. Further sends return `AUTHFN_RATE_LIMITED`. |
+| `emailAttemptWindowSeconds` | `pluginRuntime.emailOtp` | `3600` | Window for the two per-email limits, measured from each challenge's creation. A challenge that outlives the window keeps counting until it expires. Both OTP plugins count the same challenges, so when `pluginRuntime.password.otp` also sets these limits, the strictest value of each applies to every route; a limit set for one plugin and left unset for the other applies as set, and the default applies only when neither sets it. Values set outside `pluginRuntime` can only tighten these limits (a lower count or a longer window applies, a looser one is ignored): the deprecated `authFnPasswordPlugin({ otp })` options on every OTP route, and the options of a direct `sendOtpChallenge`/`verifyOtpChallenge` call on that call only. Each limit, and `challengeTtlSeconds`, must be a whole number from 1 to 31536000; a bad value stops the server from starting with `AUTHFN_CONFIG_INVALID`. |
 
 ### Delivery provider
 
@@ -5799,7 +5803,7 @@ For `purpose: 'sign-in' | 'sign-up'`, a successful verify also issues a session 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. |
+| `authfn_otp_challenges` | One row per active challenge: `{ id, purpose, email, codeHash, attemptCount, expiresAt, consumedAt, deliveryMetadata, createdAt, updatedAt }`. The index `idx_authfn_otp_challenges_email_created_at` (`email, createdAt, id`) serves the per-email budget; generate a migration to add it to an existing database. |
 
 The plaintext code is never stored. Verification compares `codeHash` against the supplied code.
 
@@ -5838,8 +5842,9 @@ sequenceDiagram
 | `AUTHFN_VALIDATION_ERROR` | Missing email/purpose. |
 | `AUTHFN_DELIVERY_FAILED` | `delivery.send` threw or returned `sent: false`. |
 | `AUTHFN_OTP_INVALID` | Code doesn't match. |
-| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`. |
+| `AUTHFN_OTP_EXPIRED` | Past `expiresAt`, or (rarely) the challenge is older than the newest challenges the per-email count reads, after a flood of new ones. Either way, request a new code. |
 | `AUTHFN_OTP_REPLAYED` | Already consumed. |
+| `AUTHFN_RATE_LIMITED` | The email has used its per-email budget of wrong codes or challenges. `details.limit` is `failed-attempts` or `challenges`. `details.resetAt` is when enough counted challenges will have left the window (or expired) for a new request to pass; that is not always the oldest one. A refusal caused only by concurrent requests reports a retry about a second later. |
 | `AUTHFN_CONFLICT` | Sign-up but the email already exists (when `otpSignUpExistingUser` is `false`). |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: email is in another region. |
 
@@ -5855,6 +5860,8 @@ sequenceDiagram
 ## Account linking with OTP
 
 Set `accountLinking.otpSignUpExistingUser: true` to make OTP sign-up for an existing email succeed as a sign-in. The OTP itself is proof of email control, so this is safe for almost all consumer apps. See [Concepts → Account linking](../core-concepts/account-linking).
+
+A successful `sign-in` (or `sign-up` linked to an existing user), or a `verify-email` code entered by anyone other than a signed-in holder of the account, on an account whose email is not verified yet is the first proof that the caller controls the mailbox. AuthFn then removes everything set up on the account before (password, API keys, second factor, linked social accounts, handoff codes, OAuth client grants), revokes its sessions and marks the email verified, so access set up by someone who signed up with the address beforehand stops working. See [Password → Unverified accounts](./password#unverified-accounts). A `verify-email` request with `requireAccountHolder: true` is refused with `AUTHFN_UNAUTHENTICATED`, and its code stays unused, unless it comes from the account's own live session. Clients that only mean to verify a signed-in user's address send it, so an expired session cannot turn into a claim: the Swift client's `verifyOtp` and `verifyEmail` always do (`verifyEmail(email:code:claimAccount: true)` proves the mailbox without a session, on purpose), and the JavaScript client's `verifyOtp` takes `requireAccountHolder: true`.
 
 ## Email anti-enumeration
 
@@ -6283,14 +6290,20 @@ Your iOS code parses the URL, calls `exchangeNativeHandoff`, and lands a bearer 
 
 ## Bridging through `WKScriptMessageHandler`
 
-When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge calls `exchangeNativeHandoff` for you and surfaces a typed credential:
+When you host a `WKWebView` inside your iOS app, install `AuthFnWebViewBridgeHost` to receive `postMessage` from the web side. The bridge exchanges native handoff codes, starts web handoffs and signs out for the pages you trust:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: authFnClient)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: authFnClient,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
+
+Messages are accepted only from the main frame of a page whose origin (scheme, host and port) is exactly one of `trustedOrigins`. Any other page the web view loads, from a link, a redirect or an embed, is ignored, so it cannot make the app exchange an attacker's handoff code (signing the app in as the attacker), start a web handoff or sign out. Hosts are compared as WebKit reports them. For `http(s)`, `ws(s)` and `ftp` origins, percent escapes are decoded, IPv4 and IPv6 literals are put in canonical form (`http://127.1` matches `127.0.0.1`) and default ports are dropped, as WebKit does; an entry whose host WebKit would refuse (`https://example.test%3A8443`, `http://256.1.1.1`) is ignored. For custom schemes the host is kept as given. Hosts may only use letters, digits, `-`, `.` and `_` (for `http(s)` once percent escapes are decoded): spellings with escapes, quotes or other characters, which Foundation and WebKit can serialize differently, are refused. Give internationalized domains in their ASCII (punycode) form, IPv6 literals in brackets (`http://[::1]:5173`), and serve bundled pages from a `WKURLSchemeHandler` with a host (`app://portal`) rather than `file:` URLs. WebKit reports the same port (0) for a default port and an explicit `:0`, so when it reports 0 the page's own URL must show the same scheme and host; a page whose URL does not (such as an `about:blank` popup that inherited its origin) is refused. A page that inherited a trusted origin with a non-default port (`https://portal.example:8443`) has that same origin and is accepted, like any page of that origin. Entries with userinfo (`user@`) or a backslash in the authority are refused, because Foundation and WebKit can read their host differently. Entries that are not usable origins are ignored with a warning that names only their position in the list, never the URL. The initializer without `trustedOrigins` has been removed (it is now a compile error).
 
 ## Web handoff (native → web)
 
@@ -6383,15 +6396,16 @@ authApp.createServer({
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
+| `pluginRuntime.password.otp.maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` | runtime | `10`, `20`, `3600` | Per-email limits for reset codes, with the same meaning as in [Email OTP](./email-otp). The count covers every challenge for the email, so reset codes and sign-in codes add up, and the strictest value set for either plugin applies. |
 
 ## Routes
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. |
+| `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. `profile` must be a JSON object of at most 4 KB; it becomes the user's `metadata` (see [Sign-up profile](#sign-up-profile)). |
 | `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. |
 | `POST` | `/auth/password/reset/start` | `startPasswordReset` | Send a password-reset OTP. Always returns `200 OK` regardless of email existence (anti-enumeration). |
-| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP and set a new password. |
+| `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP, set a new password and revoke every existing session of the user. |
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
 
@@ -6461,9 +6475,25 @@ sequenceDiagram
   Kernel-->>Client: 200 OK { ok, data: { reset: true } }
 ```
 
+A completed reset revokes all of the user's sessions (cookie and bearer) and any unfinished two-factor sign-in, including those started by someone who knew the old password. API keys are not revoked (on a verified account). On an account whose email was not verified yet, the reset also claims the account: see [Unverified accounts](#unverified-accounts).
+
 ## Account-linking interactions
 
-When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. See [Concepts → Account linking](../core-concepts/account-linking).
+When a user is already authenticated and `accountLinking.passwordForAuthenticatedUser` is `true`, calling `POST /auth/sign-up/password` with the user's own email **adds** a password credential to the existing account instead of creating a new user. A session cookie counts as authentication here only together with a valid `x-authfn-csrf` header (`@authfn/client` sends it); without it the request is treated as unauthenticated and returns `AUTHFN_CONFLICT`. A bearer session token works as before. See [Concepts → Account linking](../core-concepts/account-linking).
+
+## Unverified accounts
+
+Password sign-up does not verify the email, so anyone can sign up with an address they don't own, and with the session it returns add more ways in. The first proof of the mailbox claims the account for whoever made it. That proof is any of:
+
+- signing in (or up, with `otpSignUpExistingUser`) with an email code;
+- a `verify-email` code entered by anyone other than a signed-in holder of the account (a session cookie with its CSRF token, or a bearer session token). A request that carries a live session cookie of the same account without a valid CSRF token is refused with `AUTHFN_CSRF_INVALID` and the code stays unused, so a browser whose CSRF cookie expired before its session cannot wipe its own account. While the account is disabled (`metadata.disabled`), email codes for `sign-in`, linked `sign-up`, `verify-email`, and `reset-password` on an unverified account are refused with `AUTHFN_SESSION_REVOKED` and the code stays unused, so nothing is claimed or wiped;
+- a completed password reset.
+
+AuthFn then removes everything set up on the account before: the password (a reset keeps the new one), API keys, the second factor with its recovery codes and pending challenges, linked social accounts, native handoff codes and grants to OAuth clients (`@authfn/oauth-provider`). It revokes every session and marks the email verified before issuing the new session. Only installed plugins' data is touched: if a plugin is removed from the server and later added back against the same database, credentials it stored before a claim (API keys, linked accounts, second factors, OAuth client grants and remembered consents) become usable again. Before re-enabling a plugin, revoke what it holds for accounts claimed while it was off (for example, every OAuth grant and consent of a user whose email was verified after the plugin was removed). An account whose email is already verified is not affected.
+
+## Sign-up profile
+
+The `profile` sent to `/sign-up/password` (and to `/otp/verify` with purpose `sign-up`) becomes the new user's `metadata` unless a `beforeUserCreate` hook replaces it. It is data the caller chose: it must be a JSON object of at most 4 KB, and the `disabled` key, which AuthFn itself reads, is dropped. Don't read roles, plans, tenants or other authorization state from user metadata that came from a sign-up profile; set those from a `beforeUserCreate` hook or your own server code.
 
 ## Errors
 
@@ -6649,6 +6679,10 @@ Apple sends the user's name on the very first authorization only — subsequent 
 ## Email relay
 
 Apple optionally relays mail through a per-app email alias (e.g. `xxxxx@privaterelay.appleid.com`). authfn treats relay emails like any other email — they just won't match a "real" inbox. Display names should not assume a particular email format.
+
+## Signature checks in every environment
+
+An identity token that reaches the kernel through the client (a web `form_post` `id_token`, or the native complete route) is always checked against Apple's keys, whatever the environment: there is no setting that accepts unsigned (`alg: none`) tokens. Tests sign their tokens with a local key and serve its public key in place of Apple's key set. A token the kernel gets itself from Apple's token endpoint, in exchange for a `code`, arrives over TLS from Apple and is read without a signature check.
 
 ## Errors specific to Apple
 
@@ -7065,7 +7099,16 @@ By default, OAuth identities for an existing email are *not* automatically linke
 
 ## Allowlists
 
-Both `allowlistedRedirectUris` and `allowlistedReturnTo` are *exact-match* allowlists with no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+Both `allowlistedRedirectUris` and `allowlistedReturnTo` have no wildcard support. This is intentional — wildcards are the most common source of OAuth open-redirect vulnerabilities. To allow a family of return targets, list each one explicitly.
+
+`allowlistedRedirectUris` is exact-match. An `allowlistedReturnTo` entry matches a `returnTo` that is the same string, or, when the entry is a bare origin with no path, query or fragment:
+
+- `https://app.example.com` (or `http:`) matches any target with the same origin.
+- A custom scheme such as `myapp://oauthsignin` matches targets with the same scheme, host and port (`myapp://oauthsignin/done` matches; `otherapp://oauthsignin` and `myapp://other` don't). Custom-scheme URLs have no web origin, so they are never compared by origin.
+- An entry without a host, such as `myapp:callback`, matches only itself.
+- A relative path such as `/post-auth` matches only itself, and only when it is a plain path (one leading `/`, no `//`, backslash or control characters). The browser resolves it against the origin that serves the authfn callback, so use it only when the app and authfn share that origin. It counts as a web target: session tokens are never put in its fragment when `allowWebSessionTokenHandoff` is `false`.
+
+`javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, `about:` and `filesystem:` targets are refused even if listed.
 
 ## Errors
 
@@ -7144,6 +7187,8 @@ All of these options are `pluginRuntime.twoFactor` fields. The factory takes onl
 | `window` | `1` | Skew tolerance — codes from the previous, current, and next window are accepted. |
 | `challengeTtlSeconds` | `300` (5 min) | Lifetime of a challenge after primary sign-in. |
 | `recoveryCodeCount` | `10` | Number of recovery codes generated at enrollment. |
+| `maxFailedAttempts` | `10` | TOTP checks in a run for one enrollment, across challenges and the confirm, challenge and disable routes, before it is locked. A correct code that is accepted and recorded ends the run, unless another check was counted after it. A changed limit applies from the next check, and checks already counted in the current run stay counted (a run already past a lowered limit locks on its next check). Whole number from 1 to 1000. |
+| `lockoutSeconds` | `900` (15 min) | How long a locked enrollment refuses TOTP codes with `AUTHFN_RATE_LIMITED`. Whole number from 60 to 31536000 (one year): a lock is dated just before it is written, so it must outlast a slow write. Both limits are checked when the server starts; a bad value fails with `AUTHFN_CONFIG_INVALID`. |
 | `encryptionKeyRef` | `'default'` | Identifier passed to your `encryptionKeyResolver`. |
 | `encryptionKeyResolver` | required for production | Returns a `Buffer` used to encrypt the TOTP secret at rest. |
 
@@ -7162,7 +7207,7 @@ The TOTP secret is encrypted at rest using AES-256-GCM with the key returned by 
 
 | Table | Purpose |
 | --- | --- |
-| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, confirmedAt, createdAt, updatedAt }`. |
+| `authfn_two_factor_enrollments` | `{ id, userId, secretEncrypted, lastUsedCounter, failedAttemptCount, lockedUntil, confirmedAt, createdAt, updatedAt }`. `failedAttemptCount` and `lockedUntil` were added for the failed-attempt limit, and the AuthFn schema version is now 3: add both columns before deploying this version, or every code check fails on them. Both are nullable: `failedAttemptCount` an integer, `lockedUntil` a timestamp (`failed_attempt_count` and `locked_until` with snake_case column names). `generate-migration` reads plugin calls statically and may leave plugin tables out, so check that its output adds them, or add them by hand, and regenerate your ORM schema before starting the new kernel. |
 | `authfn_two_factor_recovery_codes` | `{ id, enrollmentId, codeHash, usedAt, createdAt }` — one row per code. |
 | `authfn_two_factor_challenges` | `{ id, userId, primaryMethod, expiresAt, consumedAt, createdAt, updatedAt }` — one row per pending challenge. |
 
@@ -7196,7 +7241,17 @@ sequenceDiagram
   Kernel-->>Client: 200 OK + cookies
 ```
 
-Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use; a successful use marks the row as `usedAt: <now>`.
+Within `challengeTtlSeconds`, the user must submit either a TOTP code or a recovery code. Recovery codes are single-use: a successful use marks the row as `usedAt: <now>` with a write that only applies while the code is unused, so two concurrent requests cannot both spend it, and a challenge can be finished only once. Recovery codes are 80 random bits (`XXXXX-XXXXX-XXXXX-XXXXX`), stored as a hash that includes the enrollment id; codes issued by earlier versions keep working.
+
+Every TOTP check counts against the enrollment's `maxFailedAttempts`, whichever challenge or route it comes through, and with or without the HTTP rate limiter. The attempt is counted before the code is compared, so concurrent requests cannot check more codes than the limit. The check that completes a run of `maxFailedAttempts` is still made, then the enrollment is locked for `lockoutSeconds`; a correct code ends the run, unless other checks were counted after it, which keep counting.
+
+Recovery codes are outside this limit and keep working while TOTP is locked: at 80 random bits (40 for codes issued by earlier versions) they cannot be guessed, and this way someone who knows the password cannot lock the owner out of every second factor. Someone who knows the password can still lock TOTP sign-in for `lockoutSeconds` at a time; the owner then signs in with a recovery code.
+
+A recovery code submitted to finish a sign-in challenge is spent only after that request has claimed the challenge, so two requests racing on one challenge spend at most one code. If the code turns out to have been spent elsewhere meanwhile, the challenge is given back; if the write fails with an unknown outcome, the challenge stays used and the user signs in again.
+
+During a rolling deploy, recovery codes issued by this version are not accepted by servers still on an earlier one; finish the deploy before users enroll. The Python port does not enforce `maxFailedAttempts` yet, and its route builder installs no rate limiter for the two-factor routes: a Python deployment must put its own rate limiting in front of `/2fa/challenge`, `/2fa/confirm` and `/2fa/disable`. It also does not read a lock the TypeScript kernel set; on a shared database, serve 2FA from the TypeScript kernel. It verifies both hash formats, finishes a challenge only once, and spends a code only while it is unused; it needs a database adapter with `update_many`, which `AuthFn` checks at startup when the two-factor plugin is installed.
+
+A TOTP code is recorded as used only after its request has claimed the sign-in challenge, so a request that loses the challenge to another one leaves its code usable, and only a code that finished the challenge ends the run of attempts. When the same sign-in is submitted twice, a duplicate that read the challenge while it was still open counts an attempt (one that reads it after it was finished is refused without counting), and it never ends the run itself. An accepted code ends the run only if no attempt was counted after its own: a duplicate that counted before the accepted request is cleared with the run, one that counted after it stays counted. Charges left this way add up until a sign-in ends its run, so a client that keeps sending such duplicates can lock TOTP for `lockoutSeconds` even though each sign-in succeeds (a recovery code still works). Clients should not submit the same code twice: disable the submit button while a request is in flight. A schema override (`authFnTwoFactorPlugin({ schema })`) written for an earlier version gets the two new columns added with their default names.
 
 ## Disabling 2FA
 
@@ -7223,6 +7278,7 @@ The recipe in [Recipes → Adding 2FA](../recipes/adding-2fa) walks through both
 | --- | --- |
 | `AUTHFN_2FA_INVALID_CODE` | Submitted code is wrong (TOTP or recovery). |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for the primary method; 2FA challenge needs to complete. |
+| `AUTHFN_RATE_LIMITED` | With `details.reason: 'enrollment-locked'`, the enrollment is locked after too many wrong codes; `details.resetAt` is when the lock ends, and recovery codes still work. With `details.reason: 'attempt-not-recorded'`, this check could not be counted (concurrent requests, or a write the database could not confirm): retry shortly. Without a reason, the HTTP rate limiter refused the route. |
 | `AUTHFN_NOT_FOUND` | `disable`/`challenge` for a non-enrolled user. |
 | `AUTHFN_VALIDATION_ERROR` | Missing fields, malformed code. |
 
@@ -7680,6 +7736,7 @@ from authfn import (
     authfn_social_oauth_plugin,
     create_authfn,
 )
+from authfn.plugins.social_oauth import SocialOAuthPluginConfig, SocialProviderConfig
 
 # Replace `my_database_adapter` with your real adapter; see Adapters > Database.
 auth = create_authfn(AuthFnConfig(
@@ -7690,18 +7747,23 @@ auth = create_authfn(AuthFnConfig(
         authfn_email_otp_plugin({
             "delivery": my_delivery_provider,
         }),
-        authfn_social_oauth_plugin({
-            "providers": {
-                "google": {
-                    "client_id": "...",
-                    "client_secret": "...",
-                    "allowlisted_return_to": ["https://app.example.com/post-auth"],
-                },
+        authfn_social_oauth_plugin(SocialOAuthPluginConfig(
+            providers={
+                "google": SocialProviderConfig(
+                    client_id="...",
+                    client_secret="...",
+                    allowlisted_return_to=["https://app.example.com/post-auth"],
+                ),
             },
-        }),
+            # Secret key (at least 32 bytes) that encrypts stored provider
+            # tokens. Required: sign-in fails with AUTHFN_CONFIG_INVALID without it.
+            encryption_key_resolver=lambda key_ref: load_secret(key_ref),
+        )),
     ],
 ))
 ```
+
+Upgrading from a release that stored social OAuth tokens without a configured key? Those tokens were encrypted with a key anyone can compute. Re-encrypt them once with `await SocialOAuthService(config, plugin_config).token_vault.migrate_legacy_tokens()`. If your resolver only knows a new key reference, configure the plugin with it (`SocialOAuthPluginConfig(encryption_key_ref="oauth-2026", ...)`) and pass the same reference to the migration: `migrate_legacy_tokens(destination_key_ref="oauth-2026")` re-encrypts every legacy row under it, and new sign-ins store tokens under it too.
 
 ## 3. Mount on FastAPI
 
@@ -8818,10 +8880,15 @@ Confirm that a newly signed-up user controls the email address they gave you. Un
 ```ts
 // 1. After sign-up:
 await client.sendOtp({ email, purpose: 'verify-email' });
-// 2. User receives email, enters code in your UI:
-await client.verifyOtp({ email, code, purpose: 'verify-email' });
+// 2. User receives email, enters code in your UI. requireAccountHolder makes
+//    this the signed-in user's own verification: if their session expired,
+//    the request is refused (AUTHFN_UNAUTHENTICATED) with the code left
+//    unused; ask them to sign in again and resubmit.
+await client.verifyOtp({ email, code, purpose: 'verify-email', requireAccountHolder: true });
 // 3. authfn marks emailVerifiedAt = now.
 ```
+
+Without `requireAccountHolder`, a code entered without the account's own session counts as someone proving the mailbox first, and removes everything set up on the account before (see [Password → Unverified accounts](../plugins/password#unverified-accounts)).
 
 The kernel sets `authfn_users.emailVerifiedAt` on a successful `verify-email` OTP. Read it from `getAccountDetails()`:
 
@@ -8834,13 +8901,20 @@ if (account.ok) {
 
 ## Gating routes by verification
 
-Use a hook to gate sign-in:
+Gate your application routes from your own code (below), so an unverified user can still sign in with their password and then submit the code with `requireAccountHolder`.
+
+You can also refuse password sign-in until the email is verified:
 
 ```ts
 authFnPasswordPlugin({ requireEmailVerifiedForSignIn: true })
 ```
 
-…or check yourself from your application code:
+With that setting, a user whose session expires before they verify cannot sign in with their password to get a new session for the guarded request. There are two ways back, and both are a first proof of the mailbox, so both claim the account (removing API keys, second factors, linked accounts and anything else set up before):
+
+- an email-code sign-in, which also removes the password. Adding a new one from that session needs `accountLinking.passwordForAuthenticatedUser`; without it, that request is refused with `AUTHFN_CONFLICT`, and a password reset (where configured) sets a new password instead;
+- a password reset, which installs the new password and keeps it, so they then sign in with it.
+
+To gate in your application code:
 
 ```ts
 const session = await auth.provider.authenticate(request);
@@ -10006,7 +10080,7 @@ Runtime dependencies keyed by plugin name. Schema and policy options stay on the
 
 | Plugin | Typical `pluginRuntime` keys |
 | --- | --- |
-| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts` |
+| `emailOtp` | `delivery` (required), `message`, `codeGenerator`, `now`, `challengeTtlSeconds`, `maxAttempts`, `maxFailedAttemptsPerEmail`, `maxChallengesPerEmail`, `emailAttemptWindowSeconds` |
 | `password` | `otp` (password-reset delivery and challenge settings) |
 | `socialOAuth` | `providers` (required), `fetcher`, `tokenHttpClient`, `now` |
 | `twoFactor` | `issuer`, `encryptionKeyRef`, `encryptionKeyResolver`, TOTP window/digits/period |
@@ -10210,7 +10284,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_OAUTH_CALLBACK_INVALID` | 400 | no | OAuth callback parameters are wrong (missing code, error from provider, …). |
 | `AUTHFN_OAUTH_PROVIDER_UNSUPPORTED` | 400 | no | The configured plugin doesn't recognize the provider id. |
 | `AUTHFN_REDIRECT_URI_DISALLOWED` | 400 | no | `returnTo` (or `state.returnTo`) wasn't on the allowlist. |
-| `AUTHFN_RATE_LIMITED` | 429 | yes | Per-route rate limiter rejected the request. `details.retryAfter`. |
+| `AUTHFN_RATE_LIMITED` | 429 | yes | A limit refused the request, such as the HTTP rate limiter or the two-factor enrollment lock (`details.reason: 'enrollment-locked'`). `details.resetAt`, when present, is when to try again; some refusals (for example a compromised-password provider that is rate limiting) carry none. |
 | `AUTHFN_REGION_MISMATCH` | 409 | yes | Request landed on the wrong region. `details.redirectTo`. |
 | `AUTHFN_REGION_NOT_FOUND` | 404 | no | Identifier isn't registered to any region (anti-enumeration friendly: usually 200 with a fake answer is preferred — see plugin config). |
 | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | 503 | yes | Canonical identity placement could not be read or atomically updated. Gateway mode fails closed. |
@@ -10255,7 +10329,7 @@ The exhaustive type lives in `authfn/core/src/core/errors.ts`. The full error cl
 | `AUTHFN_INVALID_CREDENTIALS` | Generic "Invalid email or password" — never "user not found". |
 | `AUTHFN_2FA_REQUIRED` | Render the 2FA code input. |
 | `AUTHFN_OTP_INVALID` / `OTP_EXPIRED` / `OTP_REPLAYED` | "That code didn't work. Send a new one." |
-| `AUTHFN_RATE_LIMITED` | Disable the submit button for `details.retryAfter` seconds; show a countdown. |
+| `AUTHFN_RATE_LIMITED` | If `details.resetAt` is present, disable the submit button until then and show a countdown; otherwise show a generic "try again shortly". For the two-factor enrollment lock (`details.reason: 'enrollment-locked'`), keep recovery-code entry available: recovery codes still work during it. When the HTTP rate limiter refuses a two-factor route (`details.scope: 'two-factor'` with a `dimension`), recovery codes are refused too until `resetAt`. |
 | `AUTHFN_REGION_MISMATCH` | The regional client follows `details.redirectTo` automatically — usually invisible. |
 | `AUTHFN_VALIDATION_ERROR` | Render per-field errors from `details.fields`. |
 | `AUTHFN_INTERNAL_ERROR` | Generic apology; log the request id from the response. |
@@ -10548,6 +10622,8 @@ A signed session.
 | `attempts` | integer | Soft per-challenge attempt counter. |
 | `createdAt` / `updatedAt` | timestamp |  |
 
+Indexes: `(email, purpose, createdAt)` for the latest challenge of a purpose, `(expiresAt)`, and `(email, createdAt, id)` for the per-email budget across purposes.
+
 ## Social-OAuth plugin
 
 ### `authfn_oauth_states`
@@ -10612,6 +10688,8 @@ Tracking tables for consent records and (rare) provider revocation failures. Use
 | `userId` | text FK |  |
 | `secretEncrypted` | text | TOTP secret, encrypted at rest with `pluginRuntime.twoFactor.encryptionKeyResolver`. |
 | `lastUsedCounter` | number | Last accepted TOTP window; used for replay protection. |
+| `failedAttemptCount` | number, nullable | TOTP checks counted against the failed-attempt limit. Only ever increases; every `maxFailedAttempts`-th check locks the enrollment. |
+| `lockedUntil` | timestamp, nullable | While in the future, TOTP codes are refused; recovery codes still work. |
 | `confirmedAt` | timestamp | Set after successful `/2fa/confirm`. |
 | `createdAt` / `updatedAt` | timestamp |  |
 
@@ -11349,7 +11427,7 @@ The output is byte-for-byte equivalent to the Node kernel's `auth.openApi()` for
 
 ## Cross-language deployments
 
-A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), they're interchangeable. The session cookie / bearer token works against either.
+A common pattern is a Python data-science backend that uses a Node-served authfn for sign-in. As long as both share the same database (and the same `namespace`), sessions are interchangeable: the session cookie / bearer token works against either. The sign-in routes are not all equivalent: the Python kernel does not enforce the TypeScript kernel's two-factor failed-attempt limit or its lock, nor the per-email OTP budget. On a database shared with the TypeScript kernel, serve 2FA and the OTP routes (both sending and verifying codes: the kernels hash codes differently, so a code sent by Python is not accepted by TypeScript) from the TypeScript kernel only: throttling the Python routes does not honour a lock the TypeScript kernel set. A Python-only deployment must throttle those routes itself.
 
 If you go this route, lock the kernel versions on both sides to versions that share the same wire contract. The [changelog](../reference/changelog) documents wire-contract bumps.
 
@@ -11646,16 +11724,20 @@ let credential = try await client.exchangeNativeHandoff(
 )
 ```
 
-For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridge`:
+For a `WKWebView`-hosted sign-in, install `AuthFnWebViewBridgeHost` with the origins of your own web pages:
 
 ```swift
 import AuthFnWebViewBridgeHost
 
-let bridge = AuthFnWebViewBridge(client: client, accountBaseURL: configuration.baseURL)
-bridge.attach(to: webView)
+let bridge = AuthFnWebViewBridgeHost(
+    webView: webView,
+    client: client,
+    trustedOrigins: [URL(string: "https://app.example.com")!]
+)
+bridge.install(on: webView.configuration.userContentController)
 ```
 
-The bridge listens for `postMessage` from the web side, exchanges the code, and updates `client.credentialStore`.
+The bridge listens for `postMessage` from the main frame of a trusted page, exchanges the code, and stores the credential. Messages from any other page are ignored; see [Native handoff](../plugins/native-handoff) for the origin rules.
 
 ## SwiftUI integration
 

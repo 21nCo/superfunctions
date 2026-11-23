@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fixture_chatgpt_stream","object":"response","created_at":1763683200,"model":"gpt-5.1-2025-11-13","store":false,"error":null,"incomplete_details":null,"status":"in_progress","output":[],"usage":null}}
+
+event: response.failed
+data: {"type":"response.failed","sequence_number":1,"response":{"id":"resp_fixture_chatgpt_stream","object":"response","created_at":1763683200,"model":"gpt-5.1-2025-11-13","store":false,"status":"failed","output":[],"usage":null,"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"You have reached the usage limit for your ChatGPT plan."},"incomplete_details":null}}
+

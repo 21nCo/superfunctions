@@ -68,12 +68,23 @@ export {
   MissingProfileError,
   type CredentialProfile,
   type CredentialStore,
+  type CredentialStoreOptions,
 } from "./credentials.js";
 export {
   createProjectConfig,
   InvalidConfigError,
+  type ProjectConfigOptions,
   type ProjectConfigStore,
 } from "./config.js";
+export {
+  ensureAppDir,
+  InvalidAppNameError,
+  InvalidHomeDirectoryError,
+  resolveAppPaths,
+  type AppPaths,
+  type AppPathsOptions,
+} from "./paths.js";
+export { InvalidStoreOptionsError } from "./store-options.js";
 export {
   createApiClient,
   HttpFailureError,

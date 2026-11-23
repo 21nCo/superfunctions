@@ -66,7 +66,7 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -239,6 +239,14 @@ function createSocialRoutes(
       handler: async (request) => {
         const runtime = await resolveEnvironment(ctx.config, request);
         const body = await request.json() as SocialStartBody;
+        // The body is caller JSON. A non-string returnTo would otherwise pick
+        // JSON mode by inference (`false`, `0`) or skip the allowlist check
+        // when JSON mode is asked for, and still be stored with the flow.
+        if (body.returnTo !== undefined && body.returnTo !== null && typeof body.returnTo !== 'string') {
+          throw new AuthFnValidationError('returnTo must be a string', {
+            returnToType: Array.isArray(body.returnTo) ? 'array' : typeof body.returnTo
+          });
+        }
         const providerId = normalizeProviderId(body.provider);
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, providerId);
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, providerId, callbackUri);
@@ -365,6 +373,30 @@ function createSocialRoutes(
         if (!user) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
         }
+        if (isAuthFnUserDisabled(user)) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
+        }
+        // The code was minted by a social sign-in through a linked provider
+        // account. If that link is gone (for example, the account was claimed
+        // by the owner of its mailbox since), the code no longer stands, even
+        // if the same provider has been linked again: the exact link row it
+        // was minted for must still exist.
+        // A code without that link id (minted before AUTH-32) is refused; it
+        // lives for minutes, and the user signs in again.
+        const mintedFor = readOptionalString(metadata.oauthAccountId);
+        const link = mintedFor
+          ? await ctx.config.database.findOne({
+              model: 'oauth_accounts',
+              where: [
+                { field: 'id', operator: 'eq', value: mintedFor },
+                { field: 'userId', operator: 'eq', value: user.id }
+              ],
+              namespace: ctx.config.namespace ?? 'authfn'
+            })
+          : null;
+        if (!link) {
+          throw new AuthFnOAuthCallbackInvalidError('Social handoff account link no longer exists', { userId });
+        }
         const methods = Array.isArray(metadata.methods)
           ? metadata.methods.filter((method): method is string => typeof method === 'string')
           : [];
@@ -479,6 +511,18 @@ function createSocialRoutes(
               buildHookContext(ctx.config, request, runtime, user.id),
               completion
             );
+            // As in the other branches: the hook may have changed the target,
+            // so it is checked, and the location built, before the flow is
+            // reported.
+            let challengeLocation: string | undefined;
+            if (completion.callbackMode === 'redirect') {
+              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+              challengeLocation = appendTwoFactorChallengeToReturnTarget(
+                completion.redirectTo as string,
+                pendingChallenge.challenge.id,
+                SOCIAL_PROVIDER_METHODS[providerId]
+              );
+            }
 
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
@@ -509,15 +553,10 @@ function createSocialRoutes(
               }
             });
 
-            if (completion.callbackMode === 'redirect') {
-              assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+            if (challengeLocation !== undefined) {
               return redirectWithCookies(
                 request,
-                appendTwoFactorChallengeToReturnTarget(
-                  completion.redirectTo as string,
-                  pendingChallenge.challenge.id,
-                  SOCIAL_PROVIDER_METHODS[providerId]
-                ),
+                challengeLocation,
                 config.bindBrowserState ? [clearBrowserBindingCookie(ctx, request, runtime, stateId)] : [],
                 303
               );
@@ -559,7 +598,8 @@ function createSocialRoutes(
             userId: user.id,
             regionId: runtime.regionId,
             methods: [SOCIAL_PROVIDER_METHODS[providerId]],
-            challenge: handoffChallenge
+            challenge: handoffChallenge,
+            oauthAccountId
           });
           const completion = {
             provider: providerId,
@@ -576,6 +616,23 @@ function createSocialRoutes(
             buildHookContext(ctx.config, request, runtime, user.id),
             completion
           );
+          // The hook may have changed the target, so it is checked again with
+          // the policies /social/start applied, before the flow is reported
+          // complete. A refused code never leaves the server.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo as string | undefined, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo as string | undefined,
+            callbackMode: 'redirect',
+            handoffMode: 'session-token',
+            handoffChallenge
+          });
+          // Built from the values just checked, before anything else is
+          // awaited, so later changes to the completion object do not apply.
+          const handoffLocation = appendHandoffCodeToReturnTarget(
+            completion.redirectTo as string,
+            handoffCode,
+            runtime.regionId
+          );
           await emitAuthEvent(ctx.config, {
             type: 'authfn.oauth.completed',
             requestId,
@@ -590,12 +647,7 @@ function createSocialRoutes(
               connectionId: callbackResult.connectionId
             }
           });
-          return redirectWithCookies(
-            request,
-            appendHandoffCodeToReturnTarget(completion.redirectTo as string, handoffCode, runtime.regionId),
-            [],
-            303
-          );
+          return redirectWithCookies(request, handoffLocation, [], 303);
         }
 
         const issued = await issueSession(ctx.config, ctx.hooks, {
@@ -627,6 +679,24 @@ function createSocialRoutes(
           buildHookContext(ctx.config, request, runtime, user.id, issued.session),
           completion as unknown as Record<string, unknown>
         );
+        let redirectLocation: string | undefined;
+        if (completion.callbackMode === 'redirect') {
+          // The hook may have changed the target, so the allowlist and the
+          // handoff policy are checked again before the flow is reported
+          // complete. A refused session's token and cookies never leave the
+          // server. The location is built from the checked values before
+          // anything else is awaited.
+          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
+          assertAllowedHandoff(config, {
+            returnTo: completion.redirectTo,
+            callbackMode: completion.callbackMode,
+            handoffMode: completion.handoffMode,
+            handoffChallenge
+          });
+          redirectLocation = completion.handoffMode === 'session-token'
+            ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
+            : serializeReturnTarget(completion.redirectTo!);
+        }
 
         await emitAuthEvent(ctx.config, {
           type: 'authfn.oauth.completed',
@@ -645,16 +715,8 @@ function createSocialRoutes(
           }
         });
 
-        if (completion.callbackMode === 'redirect') {
-          assertAllowedReturnTarget(providerSettings, completion.redirectTo, 'redirect');
-          return redirectWithCookies(
-            request,
-            completion.handoffMode === 'session-token'
-              ? appendSessionHandoffToReturnTarget(completion.redirectTo!, issued)
-              : completion.redirectTo!,
-            cookies,
-            303
-          );
+        if (redirectLocation !== undefined) {
+          return redirectWithCookies(request, redirectLocation, cookies, 303);
         }
 
         return jsonSuccess(request, {
@@ -1576,12 +1638,6 @@ async function verifyAppleIdentityToken(
   identityToken: string,
   audience: string | string[]
 ): Promise<JWTPayload> {
-  if (isUnsignedTestToken(identityToken)) {
-    const claims = parseRawIdTokenPayload(identityToken);
-    assertAppleTokenAudience(claims, audience);
-    return claims;
-  }
-
   try {
     const result = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: 'https://appleid.apple.com',
@@ -1592,60 +1648,6 @@ async function verifyAppleIdentityToken(
     throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
       provider: 'apple',
       reason: error instanceof Error ? error.message : 'verification_failed'
-    });
-  }
-}
-
-function assertAppleTokenAudience(claims: JWTPayload, audience: string | string[]): void {
-  const accepted = Array.isArray(audience) ? audience : [audience];
-  const tokenAudiences = Array.isArray(claims.aud)
-    ? claims.aud
-    : typeof claims.aud === 'string'
-      ? [claims.aud]
-      : [];
-  if (!tokenAudiences.some((aud) => accepted.includes(aud))) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token verification failed', {
-      provider: 'apple',
-      reason: 'unexpected "aud" claim value'
-    });
-  }
-}
-
-function isUnsignedTestToken(identityToken: string): boolean {
-  if (!allowUnsignedAppleTokensForTests()) {
-    return false;
-  }
-  try {
-    const [header] = identityToken.split('.');
-    const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')) as Record<string, unknown>;
-    return parsed.alg === 'none';
-  } catch {
-    return false;
-  }
-}
-
-function allowUnsignedAppleTokensForTests(): boolean {
-  const env = (globalThis as unknown as {
-    process?: {
-      env?: Record<string, string | undefined>;
-    };
-  }).process?.env;
-  return env?.AUTHFN_ALLOW_UNSIGNED_APPLE_TOKENS === 'true' || env?.NODE_ENV === 'test';
-}
-
-function parseRawIdTokenPayload(identityToken: string): JWTPayload {
-  const parts = identityToken.split('.');
-  if (parts.length < 2) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token is malformed', {
-      provider: 'apple'
-    });
-  }
-
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as JWTPayload;
-  } catch {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token payload is malformed', {
-      provider: 'apple'
     });
   }
 }
@@ -1890,12 +1892,12 @@ function appendOAuthErrorToReturnTarget(
   requestId: string,
   error: AuthFnError
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('auth_error', 'oauth_callback_failed');
   url.searchParams.set('auth_error_code', error.code);
   url.searchParams.set('auth_provider', providerId);
   url.searchParams.set('auth_request_id', requestId);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function isDebugErrorLoggingEnabled(): boolean {
@@ -2064,7 +2066,7 @@ function appendSessionHandoffToReturnTarget(
   returnTo: string,
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', issued.sessionToken);
   fragment.set('sessionId', issued.session.id);
@@ -2075,7 +2077,7 @@ function appendSessionHandoffToReturnTarget(
     fragment.set('expiresAt', issued.session.expiresAt.toISOString());
   }
   url.hash = fragment.toString();
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function appendTwoFactorChallengeToReturnTarget(
@@ -2083,11 +2085,11 @@ function appendTwoFactorChallengeToReturnTarget(
   challengeId: string,
   primaryMethod: string
 ): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
   url.searchParams.set('challengeId', challengeId);
   url.searchParams.set('primaryMethod', primaryMethod);
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
 
 function assertAllowedReturnTarget(
@@ -2113,16 +2115,93 @@ function assertAllowedReturnTarget(
   }
 }
 
-function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
-  if (allowlist.includes(returnTo)) {
-    return true;
-  }
+/** Schemes that run script or read local data and are never a return target. */
+const FORBIDDEN_RETURN_TARGET_SCHEMES = new Set([
+  'javascript:',
+  'vbscript:',
+  'data:',
+  'file:',
+  'blob:',
+  'about:',
+  'filesystem:'
+]);
 
+function isWebScheme(protocol: string): boolean {
+  return protocol === 'https:' || protocol === 'http:';
+}
+
+/** Placeholder base used only to edit a relative return target's query and fragment. */
+const RELATIVE_RETURN_TARGET_BASE = 'https://relative-return-target.invalid';
+
+/** Parses an allowlisted return target, which may be a same-site path. */
+function parseReturnTarget(returnTo: string): URL {
+  return isSameOriginPath(returnTo) ? new URL(returnTo, RELATIVE_RETURN_TARGET_BASE) : new URL(returnTo);
+}
+
+/**
+ * Returns an allowlisted target in the form a Location header accepts:
+ * characters outside ASCII (`/会員`) are percent-encoded, and a relative
+ * target stays relative.
+ */
+function serializeReturnTarget(returnTo: string): string {
+  return formatReturnTarget(returnTo, parseReturnTarget(returnTo));
+}
+
+/** Formats a target edited after parseReturnTarget, keeping a relative one relative. */
+function formatReturnTarget(returnTo: string, url: URL): string {
+  // href keeps an empty `?` or `#`; pathname + search + hash would drop
+  // them, and a target without its own `#` takes the callback URL's fragment.
+  return isSameOriginPath(returnTo) ? url.href.slice(url.origin.length) : url.href;
+}
+
+/**
+ * A path on the current site: starts with one `/` (not `//`, which a browser
+ * reads as another host) and has no backslash or control characters, which
+ * browsers may also turn into a host change.
+ */
+function isSameOriginPath(value: string): boolean {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) {
+    return false;
+  }
+  // Dot segments (`/.//host`, `/%2e//host`) collapse when the target is
+  // parsed and edited, and could leave a `//host` redirect, so the parsed
+  // path must still start with a single `/` too.
+  const resolved = new URL(value, RELATIVE_RETURN_TARGET_BASE);
+  return resolved.origin === new URL(RELATIVE_RETURN_TARGET_BASE).origin
+    && !resolved.pathname.startsWith('//');
+}
+
+/**
+ * An entry matches a target when the strings are equal, or when the entry is
+ * a bare origin (no path, query or fragment) that covers the target:
+ *
+ * - `http:`/`https:` entries cover targets with the same origin.
+ * - Other schemes have no URL origin (`new URL('myapp://x').origin` is the
+ *   string "null" for every one of them), so a bare entry such as
+ *   `myapp://oauthsignin` covers only targets with the same scheme, host and
+ *   port. An entry without a host (`myapp:`) only matches exactly.
+ *
+ * Script and local-data schemes are refused whatever the allowlist says.
+ */
+function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boolean {
+  // The body is caller JSON, so the declared type is not guaranteed.
+  if (typeof returnTo !== 'string') {
+    return false;
+  }
   let target: URL;
   try {
     target = new URL(returnTo);
   } catch {
+    // A relative target (resolved by the browser against the callback's
+    // origin) must be listed exactly and be a plain path.
+    return isSameOriginPath(returnTo) && allowlist.includes(returnTo);
+  }
+  if (FORBIDDEN_RETURN_TARGET_SCHEMES.has(target.protocol)) {
     return false;
+  }
+
+  if (allowlist.includes(returnTo)) {
+    return true;
   }
 
   return allowlist.some((entry) => {
@@ -2132,7 +2211,13 @@ function isReturnTargetAllowlisted(returnTo: string, allowlist: string[]): boole
         (allowed.pathname === '/' || allowed.pathname === '')
         && !allowed.search
         && !allowed.hash;
-      return allowsOrigin && allowed.origin === target.origin;
+      if (!allowsOrigin || allowed.protocol !== target.protocol) {
+        return false;
+      }
+      if (isWebScheme(allowed.protocol)) {
+        return allowed.origin === target.origin;
+      }
+      return allowed.host !== '' && allowed.host === target.host;
     } catch {
       return false;
     }
@@ -2592,7 +2677,8 @@ function isWebReturnTarget(returnTo: string | undefined): boolean {
     const protocol = new URL(returnTo).protocol.toLowerCase();
     return protocol === 'http:' || protocol === 'https:';
   } catch {
-    return false;
+    // A relative target is a page on the web.
+    return isSameOriginPath(returnTo);
   }
 }
 
@@ -2776,6 +2862,8 @@ async function createSocialHandoffCode(
     regionId?: string;
     methods: string[];
     challenge: string;
+    /** The provider-account link the sign-in went through. */
+    oauthAccountId?: string;
   }
 ): Promise<string> {
   const code = `shc_${randomBytes(24).toString('base64url')}`;
@@ -2797,7 +2885,8 @@ async function createSocialHandoffCode(
         kind: SOCIAL_HANDOFF_KIND,
         userId: input.userId,
         methods: input.methods,
-        challenge: input.challenge
+        challenge: input.challenge,
+        oauthAccountId: input.oauthAccountId
       }
     },
     createdAt: now.toISOString(),
@@ -2812,7 +2901,7 @@ async function createSocialHandoffCode(
  * `handoff=code` tells the client to exchange it with its verifier.
  */
 function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionId: string | undefined): string {
-  const url = new URL(returnTo);
+  const url = parseReturnTarget(returnTo);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', code);
   fragment.set('handoff', 'code');
@@ -2820,5 +2909,5 @@ function appendHandoffCodeToReturnTarget(returnTo: string, code: string, regionI
     fragment.set('regionId', regionId);
   }
   url.hash = fragment.toString();
-  return url.toString();
+  return formatReturnTarget(returnTo, url);
 }
