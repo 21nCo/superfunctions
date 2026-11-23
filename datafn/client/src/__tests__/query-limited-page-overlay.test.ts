@@ -1279,9 +1279,12 @@ const tagSchema: DatafnSchema = {
 };
 
 describe("Limited first page: server membership, three-valued filters and isolated entries", () => {
-  it("hydration: a pending reparent removes every former ancestor from an inverse htree page", async () => {
+  it("hydration: a pending reparent under a known root removes every former ancestor from an inverse htree page", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "insert", id: "goal:other", record: { title: "Other tree" },
+    });
     await offlineWrite(storage, treeSchema, {
       resource: "goals", operation: "relate", id: "goal:c", relations: { parent: "goal:other" },
     });
@@ -1292,6 +1295,28 @@ describe("Limited first page: server membership, three-valued filters and isolat
     ];
     const data = await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"] }, rows);
     expect(data).toEqual([]);
+  });
+
+  it("hydration: an inverse htree page keeps ancestors the replay does not prove gone", async () => {
+    const storage = new MemoryStorageAdapter(["goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    const query = { resource: "goals", id: "goal:c", relation: "parent", sort: ["id:asc"], select: ["id", "title"] };
+    const rows = [{ id: "goal:a", title: "Parent" }, { id: "goal:z", title: "Root" }];
+    // The real root moves under goal:q; goal:a stays goal:c's parent.
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:z", relations: { parent: "goal:q" },
+    });
+    expect(await page(storage, treeSchema, query, rows)).toEqual(rows);
+    // goal:a moves under goal:s, an off-page child of goal:z; both stay ancestors.
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:a", relations: { parent: "goal:s" },
+    });
+    expect(await page(storage, treeSchema, query, rows)).toEqual(rows);
+    // A reparent of goal:c itself under a parent the page does not hold proves nothing either.
+    await offlineWrite(storage, treeSchema, {
+      resource: "goals", operation: "relate", id: "goal:c", relations: { parent: "goal:s" },
+    });
+    expect(await page(storage, treeSchema, query, rows)).toEqual(rows);
   });
 
   it("hydration: a pending detach removes every ancestor, and an untouched page keeps its order", async () => {
@@ -1464,5 +1489,61 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "note:1", title: "Edited", folderId: "folder:1" },
       { id: "note:2", title: "B", folderId: "folder:1" },
     ]);
+  });
+  it("filter-dependencies: a nested member the query omits stays unknown after a sibling merge", async () => {
+    const storage = await hydrating("notes");
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { note: "x" } },
+    });
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters: { "profile.address.status": "open" }, omit: ["status"] },
+      [{ id: "note:1", title: "A", profile: { address: { city: "Pune" } } }],
+    );
+    expect(data).toEqual([{ id: "note:1", title: "A", profile: { address: { city: "Pune" }, note: "x" } }]);
+  });
+
+  it("filter-dependencies: an array value is $in, as on the server, for rows and relation anchors", async () => {
+    const storage = await hydrating("notes", "folders");
+    await offlineWrite(storage, folderSchema, {
+      resource: "folders", operation: "merge", id: "folder:1", record: { name: "Archive" },
+    });
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { title: "Draft" },
+    });
+    const rows = [{ id: "note:1", title: "Open" }];
+    expect(await page(
+      storage, folderSchema,
+      { resource: "folders", id: "folder:1", relation: "notes", filters: { name: ["Inbox", "Archive"] } }, rows,
+    )).toEqual([{ id: "note:1", title: "Draft" }]);
+    expect(await page(storage, folderSchema, { resource: "notes", filters: { title: ["Open", "Draft"] } }, rows))
+      .toEqual([{ id: "note:1", title: "Draft" }]);
+  });
+
+  it("projection-shape: *# adds nothing on a relation page that is not many-many", async () => {
+    const storage = await hydrating("notes", "folders");
+    await offlineWrite(storage, folderSchema, {
+      resource: "folders", operation: "merge", id: "folder:1", record: { name: "Renamed" },
+    });
+    const rows = [{ id: "folder:1" }];
+    expect(await page(storage, folderSchema, { resource: "notes", id: "note:1", relation: "folder", select: ["id", "*#"] }, rows))
+      .toEqual(rows);
+  });
+
+  it("malformed-entry-disables-page: a skipped replace does not settle fields for a later merge", async () => {
+    const storage = await hydrating("notes");
+    await storage.changelogAppend({
+      clientId: "client:1", mutationId: "mutation:bad-replace", timestampMs: 1,
+      mutation: { resource: "notes", operation: "replace", id: "note:1", record: { title: "A" }, relations: [] },
+    });
+    await offlineWrite(storage, folderSchema, {
+      resource: "notes", operation: "merge", id: "note:1", record: { profile: { note: "x" } },
+    });
+    const data = await page(
+      storage, folderSchema,
+      { resource: "notes", filters: { "profile.status": "open" }, select: ["id", "title"] },
+      [{ id: "note:1", title: "A" }],
+    );
+    expect(data).toEqual([{ id: "note:1", title: "A" }]);
   });
 });
