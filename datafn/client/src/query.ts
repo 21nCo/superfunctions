@@ -8,7 +8,7 @@ import type {
   DatafnNativeRemoteMode,
   DatafnRemoteAdapter,
 } from "./client.js";
-import type { DatafnStorageAdapter } from "./storage.js";
+import type { DatafnChangelogEntry, DatafnStorageAdapter } from "./storage.js";
 import type {
   DatafnPlugin,
   DatafnSchema,
@@ -212,6 +212,92 @@ function resolveEmptyQueryResult(query: unknown): Record<string, unknown> | unde
   };
 }
 
+function queryResultRows(result: unknown): unknown[] | null {
+  if (Array.isArray(result)) return result;
+  if (result && typeof result === "object") {
+    const data = (result as Record<string, unknown>).data;
+    if (Array.isArray(data)) return data;
+  }
+  return null;
+}
+
+function pendingIdsForResource(
+  changes: readonly DatafnChangelogEntry[],
+  resource: unknown,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const change of changes) {
+    const mutation = change.mutation;
+    if (mutation.resource === resource && typeof mutation.id === "string") {
+      ids.add(mutation.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * A limited first page keeps its remote rows, order and cursor: adding local
+ * rows would push remote rows past the remote nextCursor, so they would be
+ * skipped. Only rows already on the page with pending local changes are
+ * overlaid: the local copy replaces the remote row in place, and the row is
+ * removed when it was deleted locally or no longer matches the query.
+ */
+async function overlayPendingRowsOnLimitedPage(
+  storage: DatafnStorageAdapter,
+  schema: DatafnSchema,
+  query: Record<string, unknown>,
+  remoteResult: unknown,
+  schemaIndex?: SchemaIndex,
+  temporal?: DatafnTemporalConfig,
+): Promise<unknown> {
+  try {
+    const remoteData = queryResultRows(remoteResult);
+    if (!remoteData) return remoteResult;
+    const pendingIds = pendingIdsForResource(
+      await storage.changelogList(),
+      query.resource,
+    );
+    const rowId = (record: unknown): unknown =>
+      (record as { id?: unknown } | null)?.id;
+    const isPending = (record: unknown): boolean => {
+      const id = rowId(record);
+      return typeof id === "string" && pendingIds.has(id);
+    };
+    if (!remoteData.some(isPending)) return remoteResult;
+
+    const {
+      limit: _limit,
+      offset: _offset,
+      cursor: _cursor,
+      ...unpaginatedQuery
+    } = query;
+    const localQuery = injectLocalCapabilityAutoFilters(unpaginatedQuery, schema);
+    const localData = queryResultRows(
+      await executeLocalQuery(storage, schema, localQuery, schemaIndex, temporal),
+    );
+    if (!localData) return remoteResult;
+    const localById = new Map<string, unknown>();
+    for (const record of localData) {
+      if (isPending(record)) localById.set(rowId(record) as string, record);
+    }
+
+    const data: unknown[] = [];
+    for (const record of remoteData) {
+      if (!isPending(record)) {
+        data.push(record);
+        continue;
+      }
+      const localRecord = localById.get(rowId(record) as string);
+      if (localRecord !== undefined) data.push(localRecord);
+    }
+    return Array.isArray(remoteResult)
+      ? data
+      : { ...(remoteResult as Record<string, unknown>), data };
+  } catch {
+    return remoteResult;
+  }
+}
+
 function mergeQueryDataById(
   remoteResult: unknown,
   localResult: unknown,
@@ -306,6 +392,18 @@ async function overlayLocalQueryResult(
     cursor !== null &&
     ((cursor as Record<string, unknown>).after != null ||
       (cursor as Record<string, unknown>).before != null);
+  const isFirstPage =
+    !(typeof query.offset === "number" && query.offset > 0) && !hasActiveCursor;
+  if (typeof query.limit === "number" && isFirstPage) {
+    return overlayPendingRowsOnLimitedPage(
+      storage,
+      schema,
+      query,
+      remoteResult,
+      schemaIndex,
+      temporal,
+    );
+  }
   if (
     typeof query.limit === "number" ||
     (typeof query.offset === "number" && query.offset > 0) ||
@@ -331,16 +429,7 @@ async function overlayLocalQueryResult(
       ),
       storage.changelogList(),
     ]);
-    const pendingLocalIds = new Set<string>();
-    for (const change of pendingChanges) {
-      const mutation = change.mutation;
-      if (
-        mutation.resource === query.resource
-        && typeof mutation.id === "string"
-      ) {
-        pendingLocalIds.add(mutation.id);
-      }
-    }
+    const pendingLocalIds = pendingIdsForResource(pendingChanges, query.resource);
     return mergeQueryDataById(remoteResult, localResult, query, pendingLocalIds);
   } catch {
     return remoteResult;
