@@ -1693,7 +1693,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
     )).toEqual([children[1]]);
   });
 
-  it("hydration: a direct-children page keeps a row moved under a parent it does not hold, and drops one detached with its path omitted", async () => {
+  it("hydration: a direct-children page drops a row moved under a parent it does not hold, or detached with its path omitted", async () => {
     const storage = new MemoryStorageAdapter(["goals"]);
     await storage.setHydrationState("goals", "hydrating");
     await offlineWrite(storage, treeSchema, {
@@ -1708,7 +1708,7 @@ describe("Limited first page: server membership, three-valued filters and isolat
       { id: "goal:z", title: "Z", parentId: "goal:c" },
     ];
     expect(await page(storage, treeSchema, { resource: "goals", id: "goal:c", relation: "children", omit: ["parentPath"] }, rows))
-      .toEqual([{ ...rows[0], parentId: "goal:n" }, rows[2]]);
+      .toEqual([rows[2]]);
   });
 
   it("hydration: the last of * and ** decides between direct children and descendants", async () => {
@@ -2128,11 +2128,14 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     return storage;
   }
 
-  it("(a) hydration: a child relinked under an off-page parent stays; one whose path is written elsewhere leaves", async () => {
-    // The server builds the new path on the parent's, which the page does not hold.
+  it("(a) hydration: a child relinked under a parent whose id ends in -<anchor> leaves; one whose path is written elsewhere leaves", async () => {
+    // The server's new path ends in `a-goal:c`, which the child path `goal:c` cannot, whatever the parent's path.
     const moved = await goals();
     await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
-    expect(await page(moved, tree, childrenOf, [child])).toEqual([{ ...child, parentId: "a-goal:c" }]);
+    expect(await page(moved, tree, childrenOf, [child])).toEqual([]);
+    // A later parent-key-only merge leaves the tail unproven.
+    await offlineWrite(moved, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:c" } });
+    expect((await page(moved, tree, childrenOf, [child])).map((row) => row.id)).toEqual(["goal:x"]);
 
     // A path written as given is the server's; `a-goal:c` is not the child path `goal:c`.
     const written = await goals();
@@ -2293,12 +2296,12 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     expect(await page(storage, ownedGoals, query, [child])).toEqual([{ ...child, title: "Y" }]);
   });
 
-  it("(a) hydration: with the anchor's ancestry omitted, a relinked child stays", async () => {
+  it("(a) hydration: with the anchor's ancestry omitted, a moved child stays only while some ancestry can still list it", async () => {
     const outer = { resource: "goals", id: "goal:outer-goal:c", relation: "children", omit: ["parentPath"] };
     const row = { id: "goal:x", title: "X", parentId: "goal:outer-goal:c" };
     const moved = await goals();
     await offlineWrite(moved, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:p" } });
-    expect(await page(moved, tree, outer, [row])).toEqual([{ ...row, parentId: "goal:p" }]);
+    expect(await page(moved, tree, outer, [row])).toEqual([]);
 
     // `<unknown>-goal:c` can equal the anchor's child path `<unknown>-goal:outer-goal:c`: the
     // server compares whole path strings, and the page does not show the ancestry that decides it.
@@ -2354,12 +2357,15 @@ describe("Limited first page: one path model and one projection mask (round-5 ch
     await offlineWrite(keyAway, tree, { resource: "goals", operation: "merge", id: "goal:x", record: { parentId: "goal:q" } });
     expect((await page(keyAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
-    // A root written as given is the server's, but the child's path is built on it by the server.
-    const underRoot = await goals();
-    await offlineWrite(underRoot, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
-    await offlineWrite(underRoot, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
-    expect(await page(underRoot, tree, pathless, [row])).toEqual([{ ...row, parentId: "a-goal:c" }]);
-    expect(await page(underRoot, tree, childrenOf, [child])).toEqual([{ ...child, parentId: "a-goal:c" }]);
+    // A destination whose id ends in -<anchor>: `a-goal:c` is the anchor's child path when the
+    // anchor's omitted parent is `a`, so the row stays; with the anchor's path known it leaves.
+    const provenAway = await goals();
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "merge", id: "a-goal:c", record: { parentPath: "" } });
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "a-goal:c" } });
+    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
+    expect(await page(provenAway, tree, childrenOf, [child])).toEqual([]);
+    await offlineWrite(provenAway, tree, { resource: "goals", operation: "relate", id: "goal:x", relations: { parent: "goal:c" } });
+    expect((await page(provenAway, tree, pathless, [row])).map((entry) => entry.id)).toEqual(["goal:x"]);
 
     // A detach makes a root, which no children page lists, whatever the anchor's path.
     const detached = await goals();
@@ -2516,6 +2522,59 @@ describe("Limited first page: paths the server holds and the plan's nested omit 
     await offlineWrite(storage, inheriting, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
     const rows = [child, { ...child, id: "goal:y", projectId: "project:q" }];
     expect((await page(storage, inheriting, children, rows)).map((row) => row.id)).toEqual(["goal:x"]);
+  });
+
+  it("hydration: a relink whose old and new paths are held rewrites the held paths below it, as the server's cascade does", async () => {
+    const descendants = { resource: "goals", id: "goal:a", relation: "children", select: ["**"] };
+    const rows = [
+      { id: "goal:d", title: "D", parentId: "goal:a", parentPath: "goal:a" },
+      { id: "goal:b", title: "B", parentId: "goal:a", parentPath: "goal:a" },
+      { id: "goal:c", title: "C", parentId: "goal:b", parentPath: "goal:a-goal:b" },
+    ];
+    const detached = await goals();
+    await offlineWrite(detached, treeSchema, { resource: "goals", operation: "unrelate", id: "goal:b", relations: { parent: "goal:a" } });
+    await offlineWrite(detached, treeSchema, { resource: "goals", operation: "merge", id: "goal:c", record: { title: "C2" } });
+    expect(await page(detached, treeSchema, descendants, rows)).toEqual([rows[0]]);
+
+    const kept = await goals();
+    await offlineWrite(kept, treeSchema, { resource: "goals", operation: "relate", id: "goal:b", relations: { parent: "goal:d" } });
+    await offlineWrite(kept, treeSchema, { resource: "goals", operation: "merge", id: "goal:c", record: { title: "C2" } });
+    expect((await page(kept, treeSchema, descendants, rows)).map((row) => row.id)).toEqual(["goal:d", "goal:b", "goal:c"]);
+    expect((await page(kept, treeSchema, { ...descendants, id: "goal:d" }, [rows[1], rows[2]])).map((row) => row.id))
+      .toEqual(["goal:b", "goal:c"]);
+  });
+
+  it("hydration: a $ref relink moves only its targets and keeps paths it cannot rewrite", async () => {
+    for (const operation of ["relate", "unrelate"]) {
+      const storage = await goals();
+      await offlineWrite(storage, treeSchema, { resource: "goals", operation: "merge", id: "goal:x", record: { parentPath: "goal:q" } });
+      await offlineWrite(storage, treeSchema, { resource: "goals", operation, id: "goal:y", relations: { children: { $ref: "goal:z" } } });
+      await offlineWrite(storage, treeSchema, { resource: "goals", operation, id: "goal:y", relations: { children: [{ $ref: "goal:w" }] } });
+      expect(await page(storage, treeSchema, children, [child])).toEqual([]);
+    }
+  });
+
+  it("hydration: an unrelated relink drops a row a non-htree inheriting edge makes inactive, with its path omitted", async () => {
+    const inheriting = {
+      resources: [
+        { name: "projects", version: 1, capabilities: ["archivable"], fields: [{ name: "name", type: "string", required: false }] },
+        { name: "goals", version: 1, fields: [...withPath({}).resources[0].fields, { name: "projectId", type: "string", required: false }] },
+      ],
+      relations: [
+        { ...treeSchema.relations![0], inheritsInactive: true },
+        { from: "goals", to: "projects", type: "many-one", relation: "project", inverse: "goals", fkField: "projectId", inheritsInactive: true },
+      ],
+    } as DatafnSchema;
+    const storage = new MemoryStorageAdapter(["projects", "goals"]);
+    await storage.setHydrationState("goals", "hydrating");
+    await offlineWrite(storage, inheriting, { resource: "projects", operation: "insert", id: "project:q", record: { name: "Q" } });
+    await offlineWrite(storage, inheriting, { resource: "projects", operation: "archive", id: "project:q" });
+    await offlineWrite(storage, inheriting, { resource: "goals", operation: "relate", id: "goal:m", relations: { parent: "goal:n" } });
+    const rows = [{ id: "goal:x", title: "X", parentId: "goal:c" }, { id: "goal:y", title: "Y", parentId: "goal:c", projectId: "project:q" }];
+    const omitted = { ...children, omit: ["parentPath"] };
+    expect((await page(storage, inheriting, omitted, rows)).map((row) => row.id)).toEqual(["goal:x"]);
+    expect((await page(storage, inheriting, { ...omitted, metadata: { includeAncestorInactive: true } }, rows))
+      .map((row) => row.id)).toEqual(["goal:x", "goal:y"]);
   });
 
   it("projection-shape: a search or temporal read takes the mask", async () => {
