@@ -34,4 +34,11 @@ describe("runProcessGroup", () => {
     expect(result.timedOut).toBe(true);
     expect(result.stdout).not.toContain("�");
   }, 15_000);
+
+  it("reports the byte length of every stdout and stderr chunk to onOutput", async () => {
+    const seen: number[] = [];
+    const result = await runProcessGroup(process.execPath, ["-e", splitWriter(1)], { ...options, onOutput: bytes => seen.push(bytes) });
+    expect(result.code).toBe(0);
+    expect(seen.reduce((sum, bytes) => sum + bytes, 0)).toBe(Buffer.byteLength("a\u2014\u{1F600}b"));
+  }, 15_000);
 });

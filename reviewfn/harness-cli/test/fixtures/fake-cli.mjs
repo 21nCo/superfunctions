@@ -1,9 +1,10 @@
 // A stand-in agent CLI. It echoes what it received, writes its answer to a file or stdout, and misbehaves on command.
 // Usage: fake-cli.mjs --state <dir> [--answer valid|invalid|invalid-once|not-json] [--prompt <file>] [--out <file>]
 //   [--model-json <model>] [--model-stderr <model>] [--exit <code>] [--stderr <text>] [--hang 1] [--flood 1]
-//   [--enforce-schema <file>] [--extra-json <object>] [--version] [any other --flag value]
+//   [--enforce-schema <file>] [--extra-json <object>] [--mixed <bytes>] [--version] [any other --flag value]
 // --enforce-schema drops every top-level property the schema file does not declare, as a schema-enforcing CLI would.
 // --flood keeps appending to the output file, printing nothing on stdout. --extra-json merges an object into a valid answer.
+// --mixed writes <bytes> to stdout and <bytes> to the output file, then hangs.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -23,7 +24,11 @@ appendFileSync(calls, `${JSON.stringify({ argv, env: process.env, cwd: process.c
 if (options["model-stderr"]) process.stderr.write(`starting\nserved model: ${options["model-stderr"]}\n`);
 if (options.stderr) process.stderr.write(`${options.stderr}\n`);
 
-if (options.flood !== undefined) {
+if (options.mixed !== undefined) {
+  writeFileSync(options.out, "y".repeat(Number(options.mixed)));
+  process.stdout.write("z".repeat(Number(options.mixed)));
+  setInterval(() => {}, 1_000);
+} else if (options.flood !== undefined) {
   const chunk = `${"x".repeat(4_096)}\n`;
   setInterval(() => appendFileSync(options.out, chunk), 5);
 } else if (options.hang !== undefined) {

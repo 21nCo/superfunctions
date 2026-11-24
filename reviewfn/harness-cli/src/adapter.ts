@@ -326,14 +326,15 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const { outputFile } = files;
     const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
-    // An output file is measured while the CLI runs: one that outgrows the remaining budget aborts the run, which
-    // kills the whole process group, and the run ends timed_out like any other overrun, never canceled.
+    // An output file is measured while the CLI runs, together with the stdout and stderr bytes the runner reports: once
+    // they outgrow the remaining budget between them the run is aborted, which kills the whole process group, and it ends
+    // timed_out like any other overrun, never canceled.
     const watch = profile.outputVia === "file" ? watchOutputFile(outputFile, outputBytes, input.signal) : undefined;
     // A stderr reporter's worker starts with the CLI, so a report is matched as soon as the CLI stops.
     const reporter = profile.modelReport.startsWith("stderr-regex:") ? startReporter(profile.modelReport.slice("stderr-regex:".length), input.configuration.inference.model) : undefined;
     try {
       let result: CommandResult;
-      try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
+      try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, onOutput: watch?.onOutput, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
       catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
       finally { watch?.stop(); }
       state.record(result);
@@ -685,30 +686,34 @@ async function readOutputFile(file: string, maxBytes: number): Promise<OutputRea
 }
 
 /**
- * Measure a running CLI's output file (without following a link) against the output budget, and abort the returned
- * signal, which also follows the caller's, once the file outgrows it.
+ * Measure a running CLI's output file (without following a link) plus its stdout and stderr bytes, reported through
+ * `onOutput`, against one output budget, and abort the returned signal, which also follows the caller's, once together
+ * they outgrow it.
  */
-function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined } {
+function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void } {
   const controller = new AbortController();
   let overrun: string | undefined;
   let checking = false;
+  let streamed = 0;
+  let fileSize = 0;
+  const check = () => {
+    if (streamed + fileSize <= maxBytes || controller.signal.aborted) return;
+    overrun = `The CLI output file (${fileSize} bytes) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
+    controller.abort();
+  };
   const onParentAbort = () => controller.abort(parent?.reason);
   if (parent?.aborted) onParentAbort();
   else parent?.addEventListener("abort", onParentAbort, { once: true });
   const timer = setInterval(() => {
     if (checking || controller.signal.aborted) return;
     checking = true;
-    lstat(file).then(stat => {
-      if (stat.size > maxBytes && !controller.signal.aborted) {
-        overrun = `The CLI output file grew past the remaining ${Math.max(0, maxBytes)}-byte output budget (${stat.size} bytes) while it ran.`;
-        controller.abort();
-      }
-    }, () => { /* not written yet */ }).finally(() => { checking = false; });
+    lstat(file).then(stat => { fileSize = stat.size; check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
   }, OUTPUT_FILE_POLL_MS);
   timer.unref();
   return {
     signal: controller.signal,
     stop: () => { clearInterval(timer); parent?.removeEventListener("abort", onParentAbort); },
+    onOutput: bytes => { streamed += bytes; check(); },
     overrun: () => overrun,
   };
 }

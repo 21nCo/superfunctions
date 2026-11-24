@@ -115,6 +115,14 @@ describe("CliHarnessAdapter prompt and output channels", () => {
     expect(output.error).toContain("while it ran");
     expect(Date.now() - started).toBeLessThan(20_000);
   }, 30_000);
+
+  it("kills a CLI whose stdout and output file are each under the budget but together over it, then hangs, as a timeout", async () => {
+    const started = Date.now();
+    const output = await run(profile({ outputVia: "file", extra: ["--mixed", "60000"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 100_000, harnessTimeoutMs: 60_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/grew past the remaining .* of stdout and stderr while it ran/);
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 30_000);
 });
 
 describe("CliHarnessAdapter process boundary", () => {

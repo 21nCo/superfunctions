@@ -14,6 +14,8 @@ export interface CommandRunnerOptions {
   /** Aborting terminates the process group; the result reports `canceled`. */
   signal?: AbortSignal;
   stdin?: string;
+  /** Called with the byte length of each stdout or stderr chunk as it arrives, so a caller can enforce a live budget. */
+  onOutput?: (bytes: number) => void;
 }
 
 /** Runs one command to completion. Harness adapters accept an injected runner so tests never spawn a real harness. */
@@ -47,6 +49,7 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   options.signal?.addEventListener("abort", onAbort, { once: true });
   const append = (target: "stdout" | "stderr", chunk: Buffer) => {
     total += chunk.length;
+    options.onOutput?.(chunk.length);
     if (total > options.maxOutputBytes) { terminate("timeout"); return; }
     if (target === "stdout") stdout += decoders.stdout.write(chunk); else stderr += decoders.stderr.write(chunk);
   };
