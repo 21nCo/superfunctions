@@ -37,6 +37,16 @@ States:
 - **aborted** — explicit abort or implicit cleanup. The session is gone.
 - **expired** — TTL hit. The cleanup job evicts the row and any orphaned storage objects.
 
+## What `init` accepts
+
+`init` checks the body before anything else, including the idempotency lookup, and answers `400 FILEFN_INVALID_REQUEST` (with the offending `field` in `details`) when:
+
+- `fileName` is not a string, is blank, is longer than 255 UTF-16 code units, contains `/`, `\`, a control character or a lone surrogate, or is `.` or `..`;
+- `size` is not a non-negative safe integer;
+- `mimeType` is not one `type/subtype` of RFC 9110 tokens with optional parameters, or is longer than 1024 characters;
+- `metadata` is not a JSON object, is over 16 KiB as JSON, nests more than 32 levels or contains a lone surrogate or a NUL character;
+- the idempotency key is longer than 255 characters or contains a control character.
+
 ## What `init` returns
 
 ```json
