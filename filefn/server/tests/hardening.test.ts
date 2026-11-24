@@ -152,8 +152,9 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     checked.length = 0;
     // Started anonymously, completed after signing in with the session token.
     await fileFn.services.uploads.completeSession(session.uploadSessionId, { principalId: 'later', tenantId: 't1' }, session.uploadSessionToken);
-    expect(checked).toEqual(['anonymous']);
-    expect(usage).toEqual(['anonymous']);
+    // The anonymous owner's account is the provider's unset principal, as before.
+    expect(checked).toEqual([undefined]);
+    expect(usage).toEqual([undefined]);
   });
 
   it('refuses a writer who lost access with 403 before looking at the owner quota (F-13)', async () => {

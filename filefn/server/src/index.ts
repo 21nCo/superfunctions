@@ -177,7 +177,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     stores,
     policies: initialPolicies = [],
     auth = {},
-    quota,
+    quota: hostQuota,
     rateLimiter,
     rateLimit,
     observability,
@@ -192,6 +192,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
     dedup,
     processing: processingConfig,
   } = config;
+  // Anonymous files are owned by 'anonymous'; their quota account is the
+  // provider's unset principal, as anonymous uploads have always been checked
+  // and charged, so existing anonymous usage keeps counting.
+  const quota = hostQuota && anonymousAsUnsetPrincipal(hostQuota);
   const inputDatabase = database ?? config.db;
   if (!inputDatabase) {
     throw new Error('FILEFN_DATABASE_REQUIRED: database is required');
@@ -299,6 +303,14 @@ export function createFileFn(config: FileFnConfig): FileFn {
     completionTimeoutSeconds,
     databaseIdentity: inputDatabase,
   });
+  // A sweep through either entry point (fileFn.cleanupExpiredSessions or
+  // fileFn.services.uploads.cleanupExpiredSessions) counts once it has run.
+  const runSweep = uploadService.cleanupExpiredSessions.bind(uploadService);
+  uploadService.cleanupExpiredSessions = async (...args: Parameters<typeof runSweep>) => {
+    const result = await runSweep(...args);
+    sweepState.ran = true;
+    return result;
+  };
 
   const uploadRoutes = createUploadSessionRoutes({
     service: uploadService,
@@ -501,11 +513,8 @@ export function createFileFn(config: FileFnConfig): FileFn {
       return getSchema({ namespace });
     },
 
-    async cleanupExpiredSessions() {
-      const result = await uploadService.cleanupExpiredSessions();
-      // Counted once a sweep has actually run.
-      sweepState.ran = true;
-      return result;
+    cleanupExpiredSessions() {
+      return uploadService.cleanupExpiredSessions();
     },
 
     cleanupOrphanedArtifacts() {
@@ -673,6 +682,16 @@ function fileFnLoggerFromObservability(logger: ObservationLogger | undefined): L
     warn: (message, context) => logger.warn?.(message, safe(context)),
     error: (message, context) => logger.error?.(message, safe(context)),
     debug: (message, context) => logger.debug?.(message, safe(context)),
+  };
+}
+
+function anonymousAsUnsetPrincipal(quota: QuotaProvider): QuotaProvider {
+  const principal = (id: string | undefined) => (id === 'anonymous' ? undefined : id);
+  return {
+    ...quota,
+    checkQuota: (input) => quota.checkQuota({ ...input, principalId: principal(input.principalId) }),
+    recordUsage: (input) => quota.recordUsage({ ...input, principalId: principal(input.principalId) }),
+    ...(quota.getUsage ? { getUsage: (principalId?: string, tenantId?: string) => quota.getUsage!(principal(principalId), tenantId) } : {}),
   };
 }
 
