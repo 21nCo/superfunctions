@@ -184,4 +184,23 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     expect(first.uploadSessionId).toEqual(expect.any(String));
     expect(calls).toBe(1);
   });
+
+  it('applies the budgets to what toJSON returns, too', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    let node: Record<string, unknown> = { leaf: 1 };
+    for (let i = 0; i < 30; i++) node = { a: node, b: node };
+    const metadata = { toJSON: () => ({ graph: node }) };
+    const started = Date.now();
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata } as never, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('reads fields from the caller object, including accessors, when metadata is present', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const proto = { get policy() { return 'any'; } };
+    const input = Object.assign(Object.create(proto), { fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { a: 1 } });
+    await expect(fileFn.createUploadSession(input, { principalId: 'alice' })).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
+  });
 });

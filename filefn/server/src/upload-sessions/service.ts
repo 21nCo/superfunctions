@@ -1272,9 +1272,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The route passes the JSON body through unchanged, so check every field
       // against the contract before it reaches storage keys, quota or the DB.
       const checked = assertValidUploadInit(input as unknown as UploadInitInput);
-      if (checked.metadata !== undefined) {
-        input = { ...input, metadata: checked.metadata };
-      }
+      // Work on the fields read here (never a spread of the caller's object,
+      // which drops accessors), with the checked metadata snapshot.
+      input = {
+        policy: input.policy,
+        fileName: input.fileName,
+        size: input.size,
+        mimeType: input.mimeType,
+        fileId: input.fileId,
+        idempotencyKey: input.idempotencyKey,
+        ...(checked.metadata !== undefined ? { metadata: checked.metadata } : {}),
+      };
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency

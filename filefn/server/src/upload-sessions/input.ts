@@ -27,6 +27,44 @@ export const MAX_METADATA_DEPTH = 32;
  */
 const MAX_METADATA_NODES = MAX_METADATA_BYTES;
 
+class MetadataBudgetError extends Error {}
+
+/**
+ * The plain JSON value JSON.stringify would write for `value`: `toJSON` is
+ * applied (with the property key), non-finite numbers become null, and
+ * undefined, functions and symbols are dropped from objects (null in arrays).
+ * Throws past MAX_METADATA_DEPTH or the node budget, before expanding a
+ * structure that reuses children, and on BigInt.
+ */
+function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number }): unknown {
+  budget.left -= 1;
+  if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw new MetadataBudgetError();
+  if (value !== null && (typeof value === 'object' || typeof value === 'bigint')) {
+    const toJSON = (value as { toJSON?: unknown }).toJSON;
+    if (typeof toJSON === 'function') value = toJSON.call(value, key);
+  }
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
+  if (typeof value !== 'object') return undefined;
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = normalizeJson(value[i], String(i), depth + 1, budget);
+      out.push(item === undefined ? null : item);
+    }
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  for (const name of Object.keys(value)) {
+    budget.left -= 1;
+    if (budget.left < 0) throw new MetadataBudgetError();
+    const item = normalizeJson((value as Record<string, unknown>)[name], name, depth + 1, budget);
+    if (item !== undefined) Object.defineProperty(out, name, { value: item, enumerable: true, writable: true, configurable: true });
+  }
+  return out;
+}
+
 /**
  * Whether the value holds a lone surrogate, nests deeper than
  * MAX_METADATA_DEPTH, or has more than MAX_METADATA_NODES values (all refused).
@@ -140,34 +178,27 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
   let snapshot: Record<string, unknown> | undefined;
   // Omitted metadata is fine; an explicit null is not an object.
   if (input.metadata !== undefined) {
-    let unsafe = true;
+    // Normalized once, as JSON.stringify would (toJSON applied, with the key
+    // `md` the request fingerprint has always serialized it under), within
+    // depth and node budgets; the plain result is what gets checked, hashed
+    // and stored.
+    let normalized: unknown;
     try {
-      unsafe = input.metadata === null || typeof input.metadata !== 'object' || Array.isArray(input.metadata) || hasLoneSurrogate(input.metadata);
+      normalized = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES });
     } catch {
-      unsafe = true;
+      normalized = undefined;
     }
-    if (unsafe) {
+    if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized) || hasLoneSurrogate(normalized)) {
       throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
     }
-    let encoded: string;
-    try {
-      encoded = JSON.stringify(input.metadata);
-    } catch {
-      throw invalidRequest('metadata must be a JSON object', { field: 'metadata' });
-    }
-    if (typeof encoded !== 'string' || new TextEncoder().encode(encoded).byteLength > MAX_METADATA_BYTES) {
+    const encoded = JSON.stringify(normalized);
+    if (new TextEncoder().encode(encoded).byteLength > MAX_METADATA_BYTES) {
       throw invalidRequest(`metadata must be at most ${MAX_METADATA_BYTES} bytes as JSON`, {
         field: 'metadata',
         maxBytes: MAX_METADATA_BYTES,
       });
     }
-    // The plain JSON snapshot that was checked is what gets hashed and stored,
-    // so a value that serializes differently the next time cannot slip by.
-    snapshot = JSON.parse(encoded) as Record<string, unknown>;
-    // toJSON may have changed the shape: check what will actually be stored.
-    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot) || hasLoneSurrogate(snapshot)) {
-      throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
-    }
+    snapshot = normalized as Record<string, unknown>;
   }
 
   if (input.idempotencyKey !== undefined && input.idempotencyKey !== null) {
