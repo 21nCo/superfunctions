@@ -1823,7 +1823,10 @@ export async function createDatafnServer<TContext = any>(
         ? (config.context ?? undefined)
         : undefined;
     const searchCtx = _ctx === undefined ? staticCtx : (_ctx ?? undefined);
-    const ctxNamespace = async () => extractNamespace((searchCtx ?? {}) as TContext);
+    // An explicit null ctx reaches the namespace resolver as null, as on
+    // earlier versions; {} is used only when no context is available.
+    const ctxNamespace = async () =>
+      extractNamespace((_ctx === null ? _ctx : (searchCtx ?? {})) as TContext);
     const namespaceOverride =
       params.namespace && params.namespace.trim() !== "" ? params.namespace : undefined;
     const namespace = namespaceOverride ?? (await ctxNamespace());

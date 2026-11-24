@@ -806,5 +806,26 @@ describe("Idempotency record ids and in-process search context", () => {
     await aliceStaticServer.search({ query: "x", namespace: "tenant:a" });
     expect(staticGetActorId).toHaveBeenCalledTimes(1);
     await aliceStaticServer.close();
+
+    // An explicit null ctx reaches getNamespace as null, not as {}: a
+    // resolver that tells them apart keeps choosing the same tenant.
+    const seenNamespaces: string[] = [];
+    const record = async (p: { namespaceFilter?: unknown }) => {
+      seenNamespaces.push(JSON.stringify(p.namespaceFilter));
+      return [];
+    };
+    const nullAwareServer = await createDatafnServer<Ctx>({
+      schema,
+      database: db,
+      searchProvider: { ...searchProvider, search: record, searchAll: record } as typeof searchProvider,
+      namespaceProvider: {
+        getNamespace: (ctx) => (ctx === null ? "tenant:public" : (ctx?.ns ?? "tenant:internal")),
+        getActorId: (ctx) => ctx?.actor,
+      },
+    });
+    await nullAwareServer.search({ query: "x" }, null as unknown as Ctx);
+    await nullAwareServer.search({ query: "x" });
+    expect(seenNamespaces).toEqual([JSON.stringify(["tenant:public"]), JSON.stringify(["tenant:internal"])]);
+    await nullAwareServer.close();
   });
 });
