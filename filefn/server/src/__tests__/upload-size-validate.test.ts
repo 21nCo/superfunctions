@@ -27,7 +27,7 @@ describe('Completion Size Validation', () => {
     events: { emit: vi.fn() } as any,
   });
 
-  const routes = createUploadSessionRoutes({ service, auth: { required: false } });
+  const routes = createUploadSessionRoutes({ service, auth: { resolveSession: async () => ({ principalId: 'user_1' }) } });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,7 +43,9 @@ describe('Completion Size Validation', () => {
       size: 100, // Expected
       expiresAt: new Date(Date.now() + 10000).toISOString(),
       storageKey: 'key',
-      storageUploadId: 'uid'
+      storageUploadId: 'uid',
+      ownerId: 'user_1',
+      tenantId: null,
     };
     
     mockDb.findMany.mockResolvedValue([{ partNumber: 1, etag: 'e1' }]);
