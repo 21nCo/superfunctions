@@ -77,6 +77,13 @@ export interface AppleProviderConfig {
   fetch?: typeof fetch;
   environment?: 'production' | 'sandbox';
   /**
+   * With `environment: 'production'` (the default), whether sandbox purchases count: StoreKit reads retry against
+   * the sandbox when production does not know a transaction, and notifications from the sandbox are applied.
+   * Off by default, because a sandbox or TestFlight purchase costs nothing. Turn it on only where it is needed,
+   * such as a build under App Review, which buys in the sandbox against the production server.
+   */
+  allowSandbox?: boolean;
+  /**
    * The app's bundle ID. With it the built-in verifier checks notifications (x5c chain to the pinned Apple Root CA - G3,
    * Apple's OIDs, ES256 signature, certificate validity, bundle ID). Signed data is accepted for this app or any app in
    * `bundleIds`, and rejected for any other app. The built-in signer claims, as `bid`, the app being asked about,
@@ -183,11 +190,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         bundleId
       };
       if (input.price.kind === 'subscription') {
-        const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
+        const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`);
         return mapAppleSubscriptionResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
       }
 
-      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${transactionId}`);
+      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${encodeStoreKitPathSegment(transactionId)}`);
       return mapAppleHistoryResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
     },
     async fetchSubscription(input: BillFnSyncSubscriptionInput) {
@@ -201,15 +208,31 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       // Sync reads a stored subscription whose reference verification, restore or an operator's import already bound to
       // its app, so it grants no new price. BillFn picks the price it passes by product alone, which with several apps may
       // be another app's price of the same product, so the subscription is read from whichever listed app owns it.
-      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      // A deployment that no longer accepts the sandbox still reads it here, in the same order as before, so a
+      // subscription accepted from the sandbox earlier is found and can end; what the sandbox reports never grants
+      // access (see below).
+      const response = await requestStoreKitForTransaction(
+        fetchImpl,
+        config,
+        `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`,
+        {},
+        { sandboxForRevocation: true }
+      );
       // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
-      return mapAppleSubscriptionResponse(response.payload, {
+      const state = mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
         appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId),
         bundleId: null
       }, config.catalogPriceIdFor, input.price.priceId);
+      if (response.environment === 'sandbox' && !acceptsSandbox(config)) {
+        // A sandbox subscription has no access in this deployment: it is expired unless it already ended.
+        return TERMINAL_APPLE_STATES.has(state.subscriptionStatus)
+          ? { ...state, autoRenew: false }
+          : { ...state, subscriptionStatus: 'expired', checkoutStatus: 'failed', autoRenew: false };
+      }
+      return state;
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
@@ -217,7 +240,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         response = await requestStoreKitForTransaction(
           fetchImpl,
           config,
-          `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
+          `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(input.providerReference)}`
         );
       } catch (error) {
         return classifyStoreKitImportError(error);
@@ -267,7 +290,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/cancel/${transactionId}`,
+        `/subscription/cancel/${encodeStoreKitPathSegment(transactionId)}`,
         {
           method: 'POST'
         }
@@ -316,7 +339,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/revoke/${transactionId}`,
+        `/subscription/revoke/${encodeStoreKitPathSegment(transactionId)}`,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -349,8 +372,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         config,
         bundleId,
         input.price.kind === 'subscription'
-          ? `/inApps/v1/subscriptions/${input.purchaseReference}`
-          : `/inApps/v2/history/${input.purchaseReference}`
+          ? `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(input.purchaseReference)}`
+          : `/inApps/v2/history/${encodeStoreKitPathSegment(input.purchaseReference)}`
       );
       const expectation = {
         productId: input.price.providerProductId,
@@ -386,7 +409,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         signedPayload
       });
 
-      return [mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor)];
+      return [mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor, acceptsSandbox(config))];
     },
     async fetchNotificationHistory(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage> {
       if (!config.verifyNotification) {
@@ -427,7 +450,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           rawBody: JSON.stringify({ signedPayload }),
           signedPayload
         });
-        events.push(mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor));
+        events.push(mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor, acceptsSandbox(config)));
       }
 
       return {
@@ -452,13 +475,14 @@ async function requestStoreKitForTransaction(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options: StoreKitReadOptions = {}
 ) {
   const bundleIds = config.bundleIds.length > 0 ? config.bundleIds : [undefined];
   let lastError: unknown;
   for (const bundleId of bundleIds) {
     try {
-      return await requestStoreKitWithFallback(fetchImpl, config, bundleId, path, init);
+      return await requestStoreKitWithFallback(fetchImpl, config, bundleId, path, init, options);
     } catch (error) {
       lastError = error;
       if (!isStoreKitNotFound(error)) {
@@ -510,15 +534,28 @@ function isStoreKitNotFound(error: unknown): boolean {
   return details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode);
 }
 
+interface StoreKitReadOptions {
+  /**
+   * Read the sandbox after production's "transaction not found" even when sandbox purchases are not accepted. The
+   * caller must use a sandbox answer (`environment: 'sandbox'` in the result) only to end access, never to grant it.
+   */
+  sandboxForRevocation?: boolean;
+}
+
 async function requestStoreKitWithFallback(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   bundleId: string | undefined,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options: StoreKitReadOptions = {}
 ) {
   const initial = config.environment ?? 'production';
-  const environments: Array<'production' | 'sandbox'> = initial === 'production' ? ['production', 'sandbox'] : ['sandbox'];
+  // Production falls back to the sandbox only when the host allows sandbox purchases, or for a read whose caller
+  // uses a sandbox answer only to end access (`sandboxForRevocation`).
+  const fallback = config.allowSandbox === true || options.sandboxForRevocation === true;
+  const environments: Array<'production' | 'sandbox'> =
+    initial === 'production' ? (fallback ? ['production', 'sandbox'] : ['production']) : ['sandbox'];
   let lastError: unknown;
 
   for (const environment of environments) {
@@ -530,6 +567,11 @@ async function requestStoreKitWithFallback(
         payload
       };
     } catch (error) {
+      if (environment === 'sandbox' && initial === 'production' && config.allowSandbox !== true) {
+        // A sandbox read only for revocation never decides the lookup: whatever it answers, production's
+        // "not found" stands, so the search goes on to the next app as a production-only read would.
+        throw lastError;
+      }
       lastError = error;
       if (!shouldFallbackToSandbox(error, environment)) {
         throw error;
@@ -553,7 +595,7 @@ async function requestAdvancedCommerce(
 ) {
   const advancedCommerce = config.advancedCommerce ?? {};
   const bundleId = config.bundleIds.length > 1
-    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${encodeURIComponent(transactionId)}`))
+    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${encodeStoreKitPathSegment(transactionId)}`))
         .bundleId
     : config.bundleIds[0];
   const hostTokenProvider = advancedCommerce.tokenProvider;
@@ -609,6 +651,25 @@ function createProviderError(status: number, body: string) {
       body
     }
   });
+}
+
+/** One URL path segment for a transaction or purchase reference; a reference that cannot be encoded is invalid input. */
+function encodeStoreKitPathSegment(reference: string): string {
+  // A dot-only segment stays as it is when encoded, and URL parsing would resolve it out of the path.
+  if (/^\.+$/.test(reference)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Apple transaction reference is not a valid string'
+    });
+  }
+  try {
+    return encodeURIComponent(reference);
+  } catch {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Apple transaction reference is not a valid string'
+    });
+  }
 }
 
 function buildStoreKitBaseUrl(environment: 'production' | 'sandbox') {
@@ -945,15 +1006,32 @@ function mapAppleNotificationEvent(
     signatureVerified: boolean;
   },
   signedPayload: string,
-  catalogPriceIdFor: CatalogPriceIdResolver
+  catalogPriceIdFor: CatalogPriceIdResolver,
+  sandboxAccepted: boolean
 ): BillFnParsedWebhookEvent {
   const notification = decoded.payload;
   const data = asRecord(notification.data) ?? {};
-  const transaction = decodeSignedPayload(data, 'signedTransactionInfo');
-  const renewal = decodeSignedPayload(data, 'signedRenewalInfo');
+  const decodedTransaction = decodeSignedPayload(data, 'signedTransactionInfo');
   const notificationType = readString(notification, ['notificationType']) ?? 'UNKNOWN';
   const subtype = readString(notification, ['subtype']) ?? undefined;
-  const state = mapAppleNotificationState(notificationType, subtype, transaction, renewal);
+  // A production deployment that does not accept sandbox purchases applies a notification only when every
+  // environment it states is Production (Sandbox, Xcode or LocalTesting purchases cost nothing). Any other one is
+  // acknowledged, and applied only when it takes access away (expired, revoked, refunded), so a subscription
+  // accepted from the sandbox before can still lapse; nothing from it grants or keeps access.
+  const statedEnvironments = [readString(data, ['environment']), readString(decodedTransaction ?? {}, ['environment'])].filter(
+    (environment): environment is string => environment !== null && environment !== undefined
+  );
+  const nonProduction = !sandboxAccepted && statedEnvironments.some((environment) => environment !== 'Production');
+  const fullState = mapAppleNotificationState(
+    notificationType,
+    subtype,
+    decodedTransaction,
+    decodeSignedPayload(data, 'signedRenewalInfo'),
+    readNumber(data, ['status']) ?? undefined
+  );
+  const ignored = nonProduction && !(fullState && TERMINAL_APPLE_STATES.has(fullState.subscriptionStatus));
+  const transaction = ignored ? null : decodedTransaction;
+  const state = ignored ? undefined : fullState;
 
   return {
     providerEventId: readString(notification, ['notificationUUID']) ?? readString(notification, ['notificationId']) ?? signedPayload,
@@ -968,20 +1046,38 @@ function mapAppleNotificationEvent(
   };
 }
 
+/** Whether sandbox purchases and notifications count for this adapter. */
+function acceptsSandbox(config: AppleProviderConfig): boolean {
+  return (config.environment ?? 'production') === 'sandbox' || config.allowSandbox === true;
+}
+
+/** States that only take access away; a notification from a non-production environment may still apply them. */
+const TERMINAL_APPLE_STATES: ReadonlySet<string> = new Set(['expired', 'canceled']);
+
 function mapAppleNotificationState(
   notificationType: string,
   subtype: string | undefined,
   transaction: Record<string, unknown> | null,
-  renewal: Record<string, unknown> | null
+  renewal: Record<string, unknown> | null,
+  /** The notification's `data.status` (1-5): the subscription's status, which the signed transaction does not carry. */
+  notificationStatus?: number
 ): BillFnVerifiedBillingState | undefined {
   if (notificationType === 'TEST') {
     return undefined;
   }
 
-  const transactionState = mapTransactionPayload(transaction, renewal);
-  if (!transactionState) {
+  const baseState = mapTransactionPayload(transaction, renewal);
+  if (!baseState) {
     return undefined;
   }
+  const transactionState: BillFnVerifiedBillingState =
+    notificationStatus === undefined
+      ? baseState
+      : {
+          ...baseState,
+          subscriptionStatus: normalizeAppleStatus(notificationStatus),
+          checkoutStatus: notificationStatus === 2 ? 'failed' : 'succeeded'
+        };
 
   switch (notificationType) {
     case 'SUBSCRIBED':
@@ -991,10 +1087,16 @@ function mapAppleNotificationState(
         subscriptionStatus: 'active',
         checkoutStatus: 'succeeded'
       };
+    case 'GRACE_PERIOD_EXPIRED':
+      // The grace period ended while Apple keeps retrying the renewal: billing retry, which grants no access.
+      return notificationStatus === undefined
+        ? { ...transactionState, subscriptionStatus: 'paused', checkoutStatus: 'succeeded' }
+        : transactionState;
     case 'DID_FAIL_TO_RENEW':
       return {
         ...transactionState,
-        subscriptionStatus: subtype === 'GRACE_PERIOD' ? 'grace' : 'past_due',
+        // Without the grace period subtype the subscription is in billing retry, which grants no access.
+        subscriptionStatus: subtype === 'GRACE_PERIOD' ? 'grace' : 'paused',
         checkoutStatus: 'succeeded'
       };
     case 'EXPIRED':
@@ -1015,18 +1117,16 @@ function mapAppleNotificationState(
         autoRenew: false
       };
     case 'DID_CHANGE_RENEWAL_STATUS':
-      return {
-        ...transactionState,
-        subscriptionStatus: 'active',
-        checkoutStatus: 'succeeded',
-        autoRenew: subtype === 'AUTO_RENEW_DISABLED' ? false : transactionState.autoRenew
-      };
     case 'DID_CHANGE_RENEWAL_PREF':
-      return {
-        ...transactionState,
-        subscriptionStatus: 'active',
-        checkoutStatus: 'succeeded'
-      };
+      // A renewal preference change says nothing about payment. The subscription's status comes from the
+      // notification's data.status; without it the change carries no state, rather than marking a subscription
+      // in billing retry or expired as active.
+      if (notificationStatus === undefined) {
+        return undefined;
+      }
+      return notificationType === 'DID_CHANGE_RENEWAL_STATUS'
+        ? { ...transactionState, autoRenew: subtype === 'AUTO_RENEW_DISABLED' ? false : transactionState.autoRenew }
+        : transactionState;
     default:
       return transactionState;
   }
@@ -1227,7 +1327,10 @@ function normalizeAppleStatus(statusCode: number): BillFnVerifiedBillingState['s
     case 2:
       return 'expired';
     case 3:
+      // Billing retry: Apple is still trying to collect the renewal and nothing was paid, so it grants no access.
+      return 'paused';
     case 4:
+      // Billing grace period: the developer chose to keep access while Apple retries.
       return 'grace';
     case 5:
       return 'canceled';

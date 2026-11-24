@@ -64,6 +64,7 @@ describe('@billfn/provider-apple', () => {
     }) as typeof fetch;
 
     const provider = createAppleProvider({
+      allowSandbox: true,
       fetch: fetchMock,
       tokenProvider: async () => 'token'
     });
@@ -704,7 +705,7 @@ describe('@billfn/provider-apple', () => {
       // StoreKit's TransactionIdNotFoundError, answered by production and then by the sandbox fallback.
       const notFound = JSON.stringify({ errorCode: 4040010, errorMessage: 'Transaction id not found.' });
       const fetchMock = vi.fn(async () => new Response(notFound, { status: 404 })) as typeof fetch;
-      const apple = createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' });
+      const apple = createAppleProvider({ allowSandbox: true, fetch: fetchMock, tokenProvider: async () => 'token' });
 
       await expect(apple.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).resolves.toBeNull();
       expect(vi.mocked(fetchMock).mock.calls.map((call) => String(call[0]))).toEqual([
