@@ -2116,6 +2116,24 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(tool(result.tools, "m").operation.requestBody?.contentType).toBe("application/final+json");
     expectArguments(tool(result.tools, "m").inputSchema, { valid: [{ query: { filter: "f" }, body: { n: 1 } }], invalid: [{ body: { n: "x" } }] });
     expectArguments(tool(result.tools, "later").inputSchema, { valid: [{ query: { q: "x" } }], invalid: [{ query: { q: 1 } }] });
+    // Entries sharing one failing schema are converted once.
+    const bogus = { type: "bogus", $defs: filter.schema.$defs };
+    const shared: Record<string, unknown> = {};
+    for (let index = 0; index < 256; index += 1) shared[`application/v${index}+json`] = { schema: bogus };
+    shared["application/final+json"] = content["application/final+json"];
+    const reused = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/m": { patch: { operationId: "m", requestBody: { content: shared }, responses: ok } },
+          "/later": { get: { operationId: "later", parameters: [{ name: "q", in: "query", schema: { type: "string" } }], responses: ok } },
+        },
+      },
+      options(),
+    );
+    expect(reused.skipped).toEqual([]);
+    expect(tool(reused.tools, "m").operation.requestBody?.contentType).toBe("application/final+json");
+    expect(reused.tools.map(({ name }) => name)).toEqual(["m", "later"]);
   });
 
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {

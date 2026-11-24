@@ -326,11 +326,14 @@ class OperationConverter {
    * each entry is tried with the whole input (conversion, projection, a
    * compile check and the assembled copy) within its own node budget. When
    * none works, the first entry's failure is reported. The parameters are
-   * converted once, in the first attempt, and charged to the document once.
+   * converted once, in the first attempt, and charged to the document once;
+   * an entry whose schema object already failed is not converted again.
    */
   private input(path: string, pathItem: JsonObject, raw: JsonObject): { inputs: OperationInputs; inputSchema: McpFnObjectSchema } {
     let bodies: ResolvedBody[] = [];
     let converted: ResolvedParameter[] | undefined;
+    // Within one operation an entry's result depends only on its schema object.
+    const failed = new Map<unknown, OpenApiSkip>();
     const attempt = (index: number) =>
       this.schemas.budgeted(() => {
         // Parameters first, so their skip reasons come before the body's.
@@ -343,11 +346,15 @@ class OperationConverter {
     let failure: OpenApiSkip | undefined;
     for (let index = 0; ; index += 1) {
       try {
+        const known = index > 0 ? failed.get(bodies[index]!.schema) : undefined;
+        if (known) throw known;
         return attempt(index);
       } catch (error) {
         // No body or a sole entry, or the failure came before an entry was chosen.
         if (bodies.length <= 1) throw error;
-        failure ??= candidateFailure(error);
+        const skip = candidateFailure(error);
+        failed.set(bodies[index]!.schema, skip);
+        failure ??= skip;
         if (index + 1 >= bodies.length) throw failure;
       }
     }
@@ -358,6 +365,15 @@ class OperationConverter {
     const refs = new Set<string>();
     const groups: Array<[string, McpFnJsonSchema | boolean]> = [];
     const required: string[] = [];
+    // The body first: an entry that fails costs no work on the parameter groups.
+    let bodyGroup: McpFnJsonSchema | boolean | undefined;
+    const bodyRefs = new Set<string>();
+    if (body) {
+      // A media type object without `schema` declares no schema: it accepts any JSON value.
+      bodyGroup = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
+      this.assertProjectable(body.schema, "input", "request body");
+      if (checkBody) this.assertBodyCompiles(body.schema, bodyGroup, bodyRefs);
+    }
     for (const location of ["path", "query", "header"] as const) {
       const members = parameters.filter(({ parameter }) => parameter.in === location);
       if (members.length === 0) continue;
@@ -384,14 +400,9 @@ class OperationConverter {
       ]);
       if (requiredNames.length > 0) required.push(location);
     }
-    if (body) {
-      // A media type object without `schema` declares no schema: it accepts any JSON value.
-      const bodyRefs = new Set<string>();
-      const converted = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
-      for (const name of bodyRefs) refs.add(name);
-      groups.push(["body", converted]);
-      this.assertProjectable(body.schema, "input", "request body");
-      if (checkBody) this.assertBodyCompiles(body.schema, converted, bodyRefs);
+    for (const name of bodyRefs) refs.add(name);
+    if (body && bodyGroup !== undefined) {
+      groups.push(["body", bodyGroup]);
       if (body.info.required) required.push("body");
     }
     const definitions = this.schemas.definitions(refs, "input");
