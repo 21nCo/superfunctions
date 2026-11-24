@@ -271,6 +271,7 @@ type ParsedProviderEvent = {
   providerSubscriptionId?: string;
   providerChargeId?: string;
   checkoutReferenceId?: string;
+  checkoutReferenceSource?: 'provider' | 'metadata';
   billingState?: VerifiedBillingState;
   raw: Record<string, unknown>;
 };
@@ -5459,12 +5460,14 @@ async function refreshProjectionAfterReplay(deps: ServiceDeps, result: Projectio
 }
 
 /**
- * The event with its checkout reference kept only when it can be trusted. A reference equal to a provider's own
- * checkout id, or to a session that already holds the event's provider references, is the provider's. A reference
- * that names a BillFn checkout session id came from metadata anyone paying the provider can set, so it links the
- * event to that session (and its plan and billing account) only when the event pays for the session's product
- * and any billing account its metadata names is the session's. Otherwise it is dropped and the event is linked,
- * bootstrapped or stored unlinked by its own references, as if it named no session.
+ * The event with its checkout reference kept only when it can be trusted. A reference the provider reported from
+ * its own record (`checkoutReferenceSource` other than `metadata`) that equals a session's provider checkout id,
+ * or any reference to a session that already holds the event's provider references, is the provider's. A
+ * reference copied from metadata anyone paying the provider can set, or one naming a BillFn checkout session id,
+ * links the event to that session (and its plan and billing account) only when the event pays for the session's
+ * product, as the provider reported it, and any billing account its metadata names is the session's. Otherwise it
+ * is dropped and the event is linked, bootstrapped or stored unlinked by its own references, as if it named no
+ * session.
  */
 async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
   deps: ServiceDeps,
@@ -5484,14 +5487,16 @@ async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
     ],
     namespace: deps.namespace
   });
-  if (byProviderId) {
+  if (byProviderId && event.checkoutReferenceSource !== 'metadata') {
     return event;
   }
-  const session = await deps.db.findOne<BillFnCheckoutSession>({
-    model: TABLES.checkoutSessions,
-    where: [{ field: 'checkoutSessionId', operator: 'eq', value: reference }],
-    namespace: deps.namespace
-  });
+  const session =
+    byProviderId ??
+    (await deps.db.findOne<BillFnCheckoutSession>({
+      model: TABLES.checkoutSessions,
+      where: [{ field: 'checkoutSessionId', operator: 'eq', value: reference }],
+      namespace: deps.namespace
+    }));
   if (!session || checkoutReferenceMatchesSession(deps, provider, event, state, session)) {
     return event;
   }
@@ -5499,7 +5504,7 @@ async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
     provider,
     providerEventId: event.providerEventId
   });
-  return { ...event, checkoutReferenceId: undefined };
+  return { ...event, checkoutReferenceId: undefined, checkoutReferenceSource: undefined };
 }
 
 function checkoutReferenceMatchesSession(
@@ -5522,30 +5527,36 @@ function checkoutReferenceMatchesSession(
   if (metadataBillingAccountId && metadataBillingAccountId !== session.billingAccountId) {
     return false;
   }
-  const sessionPrice = resolvePriceReference(deps.catalog, session.priceId);
-  if (!sessionPrice) {
-    return false;
-  }
-  const raw = asRecord(state.raw);
+  // The session's own price, looked up in its plan (a price id may repeat across plans).
+  const sessionPrice = resolvePlan(deps.catalog, session.planKey)?.prices.find(
+    (price) => price.priceId === session.priceId && price.provider === provider
+  );
+  // The event must pay for the session's product, as the provider itself reported it; a price id from metadata
+  // proves nothing.
+  const paidProducts = providerReportedProducts(state);
+  return (
+    sessionPrice !== undefined &&
+    (paidProducts.includes(sessionPrice.providerProductId) || paidProducts.includes(sessionPrice.priceId))
+  );
+}
+
+/**
+ * The products a provider's own record says the event paid for: the state's product, and the product fields of
+ * its raw record (its transaction's for Apple, its cart's for a Dodo payment). Metadata is never read.
+ */
+function providerReportedProducts(state: VerifiedBillingState | undefined): string[] {
+  const raw = asRecord(state?.raw);
   const records = [raw, asRecord(raw?.transaction)];
-  const products = [
-    state.providerProductId,
-    event.priceId,
-    ...records.flatMap((record) =>
-      record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
-    )
-  ];
-  // The event must name the product the session sells: as the product itself, or as a catalog price of it.
-  return products.some((product) => {
-    if (!product) {
-      return false;
-    }
-    if (product === sessionPrice.price.providerProductId) {
-      return true;
-    }
-    const named = resolvePriceReference(deps.catalog, product);
-    return named?.price.provider === provider && named.price.providerProductId === sessionPrice.price.providerProductId;
-  });
+  const cart = Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+  return [
+    state?.providerProductId,
+    ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
+    ...cart.map((item) => readString(asRecord(item) ?? {}, 'product_id'))
+  ].filter((product): product is string => typeof product === 'string' && product.length > 0);
+}
+
+function readCheckoutReferenceSource(value: unknown): 'provider' | 'metadata' | undefined {
+  return value === 'provider' || value === 'metadata' ? value : undefined;
 }
 
 function readBillingAccountMetadata(event: ParsedProviderEvent, state: VerifiedBillingState) {
@@ -5591,7 +5602,20 @@ async function resolveProviderEventPriceReference(
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
     ];
-    const resolved = findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId);
+    // A catalog price id (which can come from metadata) counts only when it sells a product the provider itself
+    // reported the event paying for, whenever the provider reported one.
+    const paidProducts = providerReportedProducts(event.billingState);
+    const trustedReferences =
+      paidProducts.length === 0
+        ? references
+        : references.filter((reference) => {
+            if (!reference || paidProducts.includes(reference)) {
+              return true;
+            }
+            const named = resolvePriceReference(deps.catalog, reference);
+            return !named || named.price.provider !== provider || paidProducts.includes(named.price.providerProductId);
+          });
+    const resolved = findCatalogPriceReference(deps.catalog, provider, trustedReferences, subscription?.priceId);
     if (resolved) {
       return resolved;
     }
@@ -5702,6 +5726,7 @@ function serializeParsedWebhookEvent(event: {
   providerSubscriptionId?: string;
   providerChargeId?: string;
   checkoutReferenceId?: string;
+  checkoutReferenceSource?: 'provider' | 'metadata';
   billingState?: NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
   raw: Record<string, unknown>;
 }) {
@@ -5715,6 +5740,7 @@ function serializeParsedWebhookEvent(event: {
     providerSubscriptionId: event.providerSubscriptionId,
     providerChargeId: event.providerChargeId,
     checkoutReferenceId: event.checkoutReferenceId,
+    ...(event.checkoutReferenceSource ? { checkoutReferenceSource: event.checkoutReferenceSource } : {}),
     billingState: event.billingState,
     raw: event.raw
   };
@@ -5735,6 +5761,7 @@ function deserializeParsedWebhookEvent(value: unknown) {
     providerSubscriptionId: readString(record, 'providerSubscriptionId') ?? undefined,
     providerChargeId: readString(record, 'providerChargeId') ?? undefined,
     checkoutReferenceId: readString(record, 'checkoutReferenceId') ?? undefined,
+    checkoutReferenceSource: readCheckoutReferenceSource(record.checkoutReferenceSource),
     billingState: asRecord(record.billingState) as unknown as NonNullable<
       Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>
     > | undefined,

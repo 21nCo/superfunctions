@@ -668,6 +668,15 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
               : (readString(data, ['checkout_session_id']) ??
                 readMetadataString(data, DODO_CHECKOUT_SESSION_METADATA_KEY) ??
                 undefined),
+          // Dodo's own checkout_session_id is the provider's; the metadata key is whatever the payer's link set.
+          checkoutReferenceSource:
+            recordKind === 'other'
+              ? undefined
+              : readString(data, ['checkout_session_id'])
+                ? 'provider'
+                : readMetadataString(data, DODO_CHECKOUT_SESSION_METADATA_KEY)
+                  ? 'metadata'
+                  : undefined,
           billingState,
           raw: payload
         }

@@ -1022,6 +1022,17 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     return events![0]!;
   }
 
+  it('marks a checkout reference read from metadata as metadata, and Dodo\'s own one as the provider\'s', async () => {
+    const fromMetadata = await parse(recorded.webhooks.subscriptionPastDue);
+    const fromDodo = await parse({
+      ...recorded.webhooks.subscriptionPastDue,
+      data: { ...recorded.webhooks.subscriptionPastDue.data, checkout_session_id: 'cks_native' }
+    });
+
+    expect(fromMetadata).toMatchObject({ checkoutReferenceId: 'chk_123', checkoutReferenceSource: 'metadata' });
+    expect(fromDodo).toMatchObject({ checkoutReferenceId: 'cks_native', checkoutReferenceSource: 'provider' });
+  });
+
   it('maps subscription.past_due to grace, names its product (not the checkout price) and the session', async () => {
     const event = await parse(recorded.webhooks.subscriptionPastDue);
 

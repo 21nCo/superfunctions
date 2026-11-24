@@ -163,6 +163,46 @@ describe('webhook events linked to a checkout session by its BillFn id', () => {
     expect(data?.entitlements?.status).toBe('active');
   });
 
+  it('does not trust a provider checkout id that came from metadata', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+
+    await env.deliver({
+      ...paidEvent(`cks_${session.checkoutSessionId}`, 'pdt_cheap_not_in_catalog'),
+      checkoutReferenceSource: 'metadata'
+    });
+
+    expect((await env.entitlements())?.subscription).toBeNull();
+  });
+
+  it('does not take a price id from metadata as proof of paying for the session product', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+    const forged = paidEvent(session.checkoutSessionId, 'pdt_cheap_not_in_catalog', {
+      billfn_price_id: 'price_enterprise_month',
+      billfn_billing_account_id: 'ba_user_attacker'
+    });
+
+    await env.deliver({ ...forged, priceId: 'price_enterprise_month', checkoutReferenceSource: 'metadata' });
+
+    const data = await env.entitlements();
+    expect(data?.subscription?.planKey).not.toBe('enterprise');
+    expect(data?.entitlements?.status ?? 'inactive').not.toBe('active');
+  });
+
+  it('does not bootstrap the plan a metadata price id names for a payment of another product', async () => {
+    const env = setup();
+    await env.openCheckout('starter');
+    const forged = paidEvent('chk_unknown_session', 'pdt_cheap_not_in_catalog', {
+      billfn_price_id: 'price_enterprise_month',
+      billfn_billing_account_id: 'ba_user_attacker'
+    });
+
+    await env.deliver({ ...forged, priceId: 'price_enterprise_month', checkoutReferenceSource: 'metadata' });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('enterprise');
+  });
+
   it('trusts the provider\'s own checkout id without a product check', async () => {
     const env = setup();
     const session = await env.openCheckout('enterprise');
