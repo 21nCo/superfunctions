@@ -16,7 +16,7 @@ npx @apifn/cli --help
 |---------|-------------|
 | `init [dir]` | Scaffold a new OpenCollection directory |
 | `generate [router]` | Generate an OpenAPI document from a router |
-| `check [router]` | Regenerate the spec, fail on drift, validate it and block unversioned breaking changes |
+| `check [router]` | Not yet in the CLI (lands in 0.1.0). Regenerate the spec, fail on drift, validate it and block unversioned breaking changes |
 | `export [format] [output]` | Export a generated spec as YAML or JSON |
 | `import <kind> <source>` | Import an OpenAPI document as an OpenCollection |
 | `test [collectionDir]` | Run a collection's tests |
@@ -108,6 +108,9 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 Exit codes: `0` all passed · `1` failures/errors · `2` load/run error.
 
 ## check
+
+> **Not yet in the CLI.** `@apifn/cli` 0.0.2 has no `check` command; this section documents
+> the command that lands in 0.1.0 with API-5 slice 2/2.
 
 The one command a developer or CI runs: it regenerates the spec from the router in memory (the
 `generate` code path), fails when the committed spec is stale, validates it, diffs it against a

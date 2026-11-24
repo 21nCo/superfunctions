@@ -34,7 +34,8 @@ so consumers share the same `AdminClient` type.
 
 `@apifn/contracts` **0.1.0** also pins core to exactly 0.1.0 and publishes after
 core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either. `@apifn/cli` **0.1.0** adds `apifn check`
+contracts and is not published yet either. `@apifn/cli` is still version **0.0.2**, which
+has no `check` command yet; `apifn check` lands with API-5 slice 2/2, and `@apifn/cli` **0.1.0** will add it
 (an interrupted `check` rolls back what it wrote; only SIGKILL or a crash can leave an empty file
 at a missing output's name, the accepted residue described in the CLI README);
 its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
