@@ -81,7 +81,8 @@ const url = await client.downloadUrl(fileId);
 
 // A proxied download URL is relative to where FileFn is mounted (the client's
 // baseUrl, e.g. "/files"); a signed storage URL is absolute.
-const fileFnBase = "/files";
+// Your client's baseUrl without a trailing slash ("" for a root mount).
+const fileFnBase = "/files".replace(/\/+$/, "");
 const target = new URL(url.startsWith("/") ? `${fileFnBase}${url}` : url, location.href);
 
 // Send cookies only to your own origin (a proxied download); a signed storage
