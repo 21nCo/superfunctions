@@ -66,22 +66,14 @@ class SharesService:
 
     async def _release_download(self, token_hash: str, written: int) -> None:
         """Gives back one download that could not be handed out: the current count goes down by one,
-        re-read and retried when another download moved it, so it happens once. Best effort (fails closed)."""
+        re-read and retried when another download moved it, so it happens once. Best effort (fails closed).
+        Shielded by its callers, so a cancelled request still finishes it."""
         current = written
         try:
             for _ in range(20):
                 if current <= 0:
                     return
-                updated = await self.db.update(
-                    model="fileShares",
-                    where=[
-                        {"field": "tokenHash", "operator": "eq", "value": token_hash},
-                        {"field": "downloads", "operator": "eq", "value": current},
-                    ],
-                    data={"downloads": current - 1},
-                    namespace=self.namespace,
-                )
-                if updated:
+                if await self._set_downloads_if(token_hash, current, current - 1):
                     return
                 reread = await self.db.find_one(
                     model="fileShares",
@@ -121,6 +113,27 @@ class SharesService:
     async def _can_share_file(self, file: FileRecord, ctx: FileProviderContext) -> bool:
         return file.ownerId == ctx.principalId
 
+    async def _set_downloads_if(self, token_hash: str, from_count: int, to_count: int) -> bool:
+        """Writes downloads = to_count only while it is still from_count; whether this call's write landed.
+
+        update_many reports affected rows and keeps the count predicate in the UPDATE on every adapter;
+        update (for databases without update_many) returns the row, or raises not-found on a miss.
+        """
+        where = [
+            {"field": "tokenHash", "operator": "eq", "value": token_hash},
+            {"field": "downloads", "operator": "eq", "value": from_count},
+        ]
+        data = {"downloads": to_count}
+        update_many = getattr(self.db, "update_many", None)
+        if callable(update_many):
+            return int(await update_many(model="fileShares", where=where, data=data, namespace=self.namespace) or 0) > 0
+        try:
+            return bool(await self.db.update(model="fileShares", where=where, data=data, namespace=self.namespace))
+        except Exception as exc:
+            if type(exc).__name__ == "NotFoundError":
+                return False
+            raise
+
     async def _reserve_download(self, token_hash: str) -> FileShareRecord:
         for _ in range(5):
             current_data = await self.db.find_one(
@@ -139,17 +152,8 @@ class SharesService:
             if current.maxDownloads is not None and current.downloads >= current.maxDownloads:
                 raise errors.share_downloads_exceeded()
 
-            updated = await self.db.update(
-                model="fileShares",
-                where=[
-                    {"field": "tokenHash", "operator": "eq", "value": token_hash},
-                    {"field": "downloads", "operator": "eq", "value": current.downloads},
-                ],
-                data={"downloads": current.downloads + 1},
-                namespace=self.namespace,
-            )
-            if updated:
-                return FileShareRecord(**updated)
+            if await self._set_downloads_if(token_hash, current.downloads, current.downloads + 1):
+                return current.model_copy(update={"downloads": current.downloads + 1})
 
         raise errors.FileFnError(
             code="FILEFN_SHARE_DOWNLOAD_CONFLICT",
@@ -268,7 +272,7 @@ class SharesService:
                     await asyncio.shield(self._release_download(token_hash, written))
                     raise
                 except Exception as exc:
-                    await self._release_download(token_hash, written)
+                    await asyncio.shield(self._release_download(token_hash, written))
                     # Without streaming there is no fallback: the signing error is the answer.
                     if not can_stream:
                         raise
@@ -284,7 +288,7 @@ class SharesService:
                             },
                         )
             else:
-                await self._release_download(token_hash, written)
+                await asyncio.shield(self._release_download(token_hash, written))
             if result is not None:
                 return {
                     "url": result["url"],

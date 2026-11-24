@@ -421,6 +421,7 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
         headers: { 'content-type': contentType, 'x-test-user': 'owner' },
       });
     expect((await post('application/vnd.example_internal+json')).status).toBe(201);
+    expect((await post('model/gltf+json')).status).toBe(201);
     expect((await post('application/+json')).status).toBe(415);
     expect((await post('application/json/x')).status).toBe(415);
     expect((await post('text/json')).status).toBe(415);

@@ -962,3 +962,44 @@ async def test_cancelled_signing_gives_the_download_back() -> None:
             shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False), timeout=0.05
         )
     assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+class UpdateManyDB(FakeDB):
+    """Like the SQLAlchemy adapter: update raises not-found on a miss; update_many reports affected rows."""
+
+    async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+        raise AssertionError("share counting must use update_many when the adapter has it")
+
+    async def update_many(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None) -> int:
+        count = 0
+        for row in self._table(model):
+            if self._matches(row, where):
+                row.update(data)
+                count += 1
+        return count
+
+
+@pytest.mark.asyncio
+async def test_failed_download_is_given_back_once_with_update_many() -> None:
+    db = UpdateManyDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True, "proxyStreamingDownload": False}  # type: ignore[attr-defined]
+    calls = {"n": 0}
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=2), _ctx("user_123"))
+
+    async def sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # While A signs, B counts and succeeds; then A's signing fails.
+            await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+            raise RuntimeError("storage unavailable")
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = sign  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert [row["downloads"] for row in db.tables["fileShares"]] == [1]
+    descriptor = await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert descriptor["url"] == "https://download.local/x"

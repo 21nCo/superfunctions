@@ -9,8 +9,11 @@ const MEDIA_TYPE = /^([!#$%&'*+.^_`|~0-9a-z-]+)\/([!#$%&'*+.^_`|~0-9a-z-]+)$/;
 function isJsonContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const match = MEDIA_TYPE.exec(contentType.split(';', 1)[0].trim().toLowerCase());
-  if (!match || match[1] !== 'application') return false;
-  return match[2] === 'json' || (match[2].endsWith('+json') && match[2].length > '+json'.length);
+  if (!match) return false;
+  // application/json, or any structured +json type (application/ld+json,
+  // model/gltf+json). None of them is a CORS-simple type.
+  if (match[1] === 'application' && match[2] === 'json') return true;
+  return match[2].endsWith('+json') && match[2].length > '+json'.length;
 }
 
 /**
