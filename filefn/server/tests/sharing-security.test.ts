@@ -532,4 +532,11 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(allowed.status).toBe(200);
     expect(allowed.headers.get('cache-control')).toBe('private, no-store');
   });
+
+  it('reads a stored zone-less expiry in local time, as Date.parse always did', async () => {
+    const { parseIsoInstant } = await import('../src/authz/grant-expiry.js');
+    expect(parseIsoInstant('2030-01-01T18:00:00')).toBe(new Date(2030, 0, 1, 18, 0, 0).getTime());
+    expect(parseIsoInstant('2030-01-01T18:00:00Z')).toBe(Date.UTC(2030, 0, 1, 18));
+    expect(parseIsoInstant('2030-01-01')).toBe(Date.UTC(2030, 0, 1));
+  });
 });

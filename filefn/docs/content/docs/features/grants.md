@@ -50,7 +50,7 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` must be an ISO 8601 date or date-time (without a zone it is read as UTC) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date or date-time (send a zone, e.g. `Z`: a date-time without one is read as the server's local time by the TypeScript server and as UTC by the Python server, as each always has; a date alone is UTC midnight) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
 
 ## Tenants
 
