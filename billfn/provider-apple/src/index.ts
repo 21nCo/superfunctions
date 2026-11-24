@@ -1081,11 +1081,9 @@ function mapAppleNotificationState(
       };
     case 'GRACE_PERIOD_EXPIRED':
       // The grace period ended while Apple keeps retrying the renewal: billing retry, which grants no access.
-      return {
-        ...transactionState,
-        subscriptionStatus: notificationStatus === undefined ? 'paused' : transactionState.subscriptionStatus,
-        checkoutStatus: 'succeeded'
-      };
+      return notificationStatus === undefined
+        ? { ...transactionState, subscriptionStatus: 'paused', checkoutStatus: 'succeeded' }
+        : transactionState;
     case 'DID_FAIL_TO_RENEW':
       return {
         ...transactionState,

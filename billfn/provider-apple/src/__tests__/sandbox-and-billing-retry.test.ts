@@ -304,6 +304,7 @@ describe('renewal preference notifications', () => {
     }))!;
 
     expect(event!.billingState?.subscriptionStatus).toBe(expected);
+    expect(event!.billingState?.checkoutStatus).toBe(expected === 'expired' ? 'failed' : 'succeeded');
   });
 
   it('takes the status of another notification type from data.status', async () => {
