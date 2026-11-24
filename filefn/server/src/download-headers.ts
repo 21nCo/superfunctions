@@ -99,7 +99,8 @@ function parseMediaType(value: string | null | undefined): ParsedMediaType | nul
     while (input[i] === ' ' || input[i] === '\t') i += 1;
     if (!parameters.has(name)) parameters.set(name, parsedValue);
   }
-  return { essence: `${type}/${subtype}`.toLowerCase(), parameters };
+  const essence = `${type}/${subtype}`.toLowerCase();
+  return { essence: MIME_ALIASES[essence] ?? essence, parameters };
 }
 
 /** Whether the value is one well-formed media type. */
@@ -107,9 +108,18 @@ function isSingleMediaType(contentType: string | null | undefined): contentType 
   return parseMediaType(contentType) !== null;
 }
 
-/** The MIME type without parameters, lower-cased: `Text/HTML; charset=x` -> `text/html`. */
+// Common aliases of inline-safe types, mapped to their registered names.
+const MIME_ALIASES: Record<string, string> = {
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-wav': 'audio/wav',
+  'audio/x-m4a': 'audio/mp4',
+  'image/jpg': 'image/jpeg',
+};
+
+/** The MIME type without parameters, lower-cased, aliases resolved: `Text/HTML; charset=x` -> `text/html`. */
 export function contentTypeEssence(contentType: string | null | undefined): string {
-  return (contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+  const essence = (contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+  return MIME_ALIASES[essence] ?? essence;
 }
 
 /**

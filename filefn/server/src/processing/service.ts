@@ -657,6 +657,28 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     return false;
   }
 
+  // The artifacts listed for a file (internal kinds excluded); callers authorize first.
+  async function queryArtifacts(fileId: string, page?: { limit?: number; offset?: number }): Promise<FileArtifactRecord[]> {
+    const artifacts = await db.findMany<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
+          { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
+          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
+        ],
+        orderBy: [
+          { field: 'createdAt', direction: 'desc' },
+          { field: 'artifactId', direction: 'asc' },
+        ],
+        limit: page?.limit,
+        offset: page?.offset,
+        namespace,
+      });
+
+    return artifacts;
+  }
+
   async function requireReadableFile(fileId: string, ctx: FileProviderContext): Promise<FileRecord> {
     const file = await db.findOne<FileRecord>({
       model: 'files',
@@ -672,10 +694,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     // artifact (often the whole content: OCR text, previews, transcodes) is
     // never readable by someone the authorizer refuses the file to.
     if (readChecker) {
-      // A caller without a principal (an unauthenticated guest) reads only
-      // public files here, as before, whatever the host authorizer would allow
-      // a context without a principal.
-      if (!ctx.principalId && file.visibility !== 'public') {
+      // An unauthenticated guest (no principal, or the shared 'anonymous'
+      // principal) reads only public files here, as before, whatever the host
+      // authorizer would allow it.
+      if ((!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public') {
         throw errors.forbidden();
       }
       if (await readChecker.canReadFile(fileId, ctx)) {
@@ -2124,25 +2146,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       if (readChecker) {
         await requireReadableFile(fileId, ctx);
       }
-
-      const artifacts = await db.findMany<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [
-          { field: 'fileId', operator: 'eq', value: fileId },
-          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
-          { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
-          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
-        ],
-        orderBy: [
-          { field: 'createdAt', direction: 'desc' },
-          { field: 'artifactId', direction: 'asc' },
-        ],
-        limit: page?.limit,
-        offset: page?.offset,
-        namespace,
-      });
-
-      return artifacts;
+      return queryArtifacts(fileId, page);
     },
 
     async listArtifactsForFile(
@@ -2150,9 +2154,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ctx: FileProviderContext,
       page?: { limit?: number; offset?: number },
     ): Promise<FileArtifactRecord[]> {
+      // Authorized exactly once.
       await requireReadableFile(fileId, ctx);
-      return this.listArtifacts(fileId, ctx, page);
+      return queryArtifacts(fileId, page);
     },
+
 
     async getArtifactDownloadUrl(
       artifactId: string,

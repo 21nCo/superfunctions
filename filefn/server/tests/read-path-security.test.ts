@@ -160,6 +160,9 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(buildDownloadHeaders({ contentType: 'application/pdf', size: 1 })['Content-Disposition']).toBe('inline');
     expect(signedDownloadConstraints('image/svg+xml')).toEqual({ constraints: { responseContentType: 'application/octet-stream' } });
     expect(signedDownloadConstraints('image/png')).toEqual({ constraints: { responseContentType: 'image/png' } });
+    // Known aliases of safe types are resolved.
+    expect(signedDownloadConstraints('audio/mp3')).toEqual({ constraints: { responseContentType: 'audio/mpeg' } });
+    expect(buildDownloadHeaders({ contentType: 'audio/mp3', size: 1 })['Content-Disposition']).toBe('inline');
     expect(signedDownloadConstraints('Image/PNG; x=1')).toEqual({ constraints: { responseContentType: 'image/png' } });
 
     // A list of types is ambiguous: never inline, never labelled with it.
@@ -288,11 +291,10 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     const download = await fileFn.router.handle(new Request(`http://localhost/proxy/files/${file.fileId}/artifacts/${artifact.artifactId}/download`));
     expect(download!.status).toBe(200);
     expect(download!.headers.get('content-disposition')).toMatch(/^attachment; filename="ocr-json\.json"/);
-    // The guest reached the authorizer without a principal.
-    expect(seen).toContain(undefined);
-    expect(seen).not.toContain('anonymous');
+    // The guest reads as 'anonymous', as on the file routes.
+    expect(seen).toContain('anonymous');
 
-    // A guest is never 'anonymous' here: forced processing is refused.
+    // A forced (write) run by a guest carries no principal: refused.
     const forced = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/process`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
     }));
@@ -332,6 +334,8 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     await done;
 
     expect((await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`)))!.status).toBe(403);
+    // The shared 'anonymous' principal is a guest too.
+    await expect(fileFn.services.processing.listArtifactsForFile(file.fileId, { principalId: 'anonymous' })).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
     expect((await fileFn.services.processing.listArtifactsForFile(file.fileId, owner))).toHaveLength(1);
   });
 
