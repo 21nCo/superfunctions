@@ -90,7 +90,11 @@ class SharesService:
             async def give_back() -> None:
                 try:
                     reserved = await task
-                except BaseException:
+                except asyncio.CancelledError:
+                    # This give-back itself was cancelled (shutdown): nothing to undo here.
+                    raise
+                except Exception:
+                    # The count never landed: nothing to give back.
                     return
                 await self._release_download(token_hash, reserved.downloads)
 
