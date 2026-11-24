@@ -1,11 +1,13 @@
 import hashlib
+from decimal import Decimal
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from tempfile import SpooledTemporaryFile
-from typing import Any, Dict, List, Optional, Protocol, cast
+from typing import Any, Dict, List, Optional, Protocol, Union, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictFloat, StrictInt
 
 from .. import errors
 from ..events import (
@@ -18,6 +20,7 @@ from ..models import FileProviderContext, UploadSessionRecord
 from ..policies import (
     PolicyStoragePathContext,
     compute_storage_path,
+    unsafe_storage_key_reason,
     matches_content_type,
     resolve_storage_target,
 )
@@ -61,11 +64,181 @@ class UploadSessionServiceConfig(BaseModel):
 class CreateSessionInput(BaseModel):
     policy: str
     fileName: str
-    size: int
+    # Strict: "12" or True is refused instead of being coerced; an integral
+    # float such as 1.0 (JSON allows it, as the TypeScript server does) is
+    # accepted and normalised to int by _validate_upload_init.
+    size: Union[StrictInt, StrictFloat]
     mimeType: str
     fileId: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     idempotencyKey: Optional[str] = None
+
+
+MAX_FILE_NAME_LENGTH = 255
+MAX_MIME_TYPE_LENGTH = 255
+MAX_IDEMPOTENCY_KEY_LENGTH = 255
+MAX_METADATA_BYTES = 16 * 1024
+MAX_SAFE_INTEGER = 2**53 - 1
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
+_MIME_TYPE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+([ \t]*;.*)?$", re.DOTALL)
+
+
+_LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+MAX_METADATA_DEPTH = 32
+# The characters JavaScript's String.prototype.trim removes, so both servers
+# agree on what a blank name is.
+JS_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
+
+def _has_lone_surrogate(value: Any, depth: int = 0) -> bool:
+    """Whether the value holds a surrogate code point, or nests deeper than MAX_METADATA_DEPTH (also refused)."""
+    # Python strings hold code points, so any surrogate code point is unpaired.
+    if isinstance(value, str):
+        return bool(_LONE_SURROGATE.search(value))
+    if not isinstance(value, (dict, list, tuple)):
+        return False
+    if depth >= MAX_METADATA_DEPTH:
+        return True
+    if isinstance(value, dict):
+        return any(_has_lone_surrogate(k, depth + 1) or _has_lone_surrogate(v, depth + 1) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_has_lone_surrogate(item, depth + 1) for item in value)
+    return False
+
+
+def _js_number_text(value: float) -> str:
+    """Format a float exactly as JavaScript's Number.prototype.toString does."""
+    if value != value or value in (float("inf"), float("-inf")):
+        return "null"  # JSON.stringify writes non-finite numbers as null
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    # Decimal(str) is exact and ignores the context (normalize() would not).
+    _, digit_tuple, exponent = Decimal(repr(abs(value))).as_tuple()
+    digits = "".join(str(d) for d in digit_tuple)
+    exponent = int(exponent)
+    stripped = digits.rstrip("0")
+    exponent += len(digits) - len(stripped)
+    digits = stripped.lstrip("0") or "0"
+    k = len(digits)
+    n = int(exponent) + k
+    if k <= n <= 21:
+        text = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        text = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        text = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        mantissa = digits if k == 1 else digits[0] + "." + digits[1:]
+        text = f"{mantissa}e{'+' if e > 0 else '-'}{abs(e)}"
+    return sign + text
+
+
+def _js_json(value: Any) -> str:
+    """Serialise as JavaScript's JSON.stringify does (compact, numbers in JS format)."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _js_number_text(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + _js_json(v) for k, v in value.items()) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_js_json(v) for v in value) + "]"
+    raise TypeError(f"not JSON-serialisable: {type(value).__name__}")
+
+
+def _utf16_length(value: str) -> int:
+    # Lengths are counted in UTF-16 code units, as the TypeScript server does;
+    # surrogatepass counts a lone surrogate (valid in JSON) as one unit.
+    return len(value.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _validate_upload_init(input: CreateSessionInput) -> None:
+    """Validate the init body as the TypeScript server does; raise a 400 on failure."""
+    # No length cap: the name must match a registered policy anyway.
+    if not isinstance(input.policy, str) or not input.policy or _has_lone_surrogate(input.policy):
+        raise errors.invalid_request("policy must be a non-empty string", {"field": "policy"})
+
+    name = input.fileName
+    if not isinstance(name, str) or not name.strip(JS_WHITESPACE):
+        raise errors.invalid_request("fileName must not be empty", {"field": "fileName"})
+    if _utf16_length(name) > MAX_FILE_NAME_LENGTH:
+        raise errors.invalid_request(
+            f"fileName must be at most {MAX_FILE_NAME_LENGTH} characters",
+            {"field": "fileName", "maxLength": MAX_FILE_NAME_LENGTH},
+        )
+    if "/" in name or "\\" in name:
+        raise errors.invalid_request("fileName must not contain path separators", {"field": "fileName"})
+    if _CONTROL_CHARACTERS.search(name):
+        raise errors.invalid_request("fileName must not contain control characters", {"field": "fileName"})
+    if name in (".", ".."):
+        raise errors.invalid_request("fileName must not be a dot segment", {"field": "fileName"})
+    if _has_lone_surrogate(name):
+        raise errors.invalid_request("fileName must be well-formed Unicode", {"field": "fileName"})
+
+    size = input.size
+    if isinstance(size, float) and size.is_integer():
+        size = int(size)
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0 or size > MAX_SAFE_INTEGER:
+        raise errors.invalid_request("size must be a non-negative integer number of bytes", {"field": "size"})
+    input.size = size
+
+    mime_type = input.mimeType
+    if (
+        not isinstance(mime_type, str)
+        or _utf16_length(mime_type) > MAX_MIME_TYPE_LENGTH
+        or not _MIME_TYPE.match(mime_type.strip(" \t"))
+        or _CONTROL_CHARACTERS.search(mime_type.replace("\t", " "))
+        or _has_lone_surrogate(mime_type)
+    ):
+        raise errors.invalid_request('mimeType must be a MIME type such as "image/png"', {"field": "mimeType"})
+
+    if input.metadata is not None:
+        if not isinstance(input.metadata, dict) or _has_lone_surrogate(input.metadata):
+            raise errors.invalid_request(
+                f"metadata must be a JSON object of well-formed text, nested at most {MAX_METADATA_DEPTH} levels",
+                {"field": "metadata"},
+            )
+        try:
+            # Counted as JSON.stringify writes it (floats in JavaScript's format),
+            # so both servers accept the same metadata. Integers are counted with
+            # every digit, since they are stored exactly as sent: one past 2**53
+            # (which JavaScript would round) can only make Python stricter.
+            encoded = _js_json(input.metadata)
+            # surrogatepass: a lone surrogate is counted (3 bytes) rather than raising.
+            encoded_size = len(encoded.encode("utf-8", "surrogatepass"))
+        except (TypeError, ValueError):
+            raise errors.invalid_request("metadata must be a JSON object", {"field": "metadata"})
+        if encoded_size > MAX_METADATA_BYTES:
+            raise errors.invalid_request(
+                f"metadata must be at most {MAX_METADATA_BYTES} bytes as JSON",
+                {"field": "metadata", "maxBytes": MAX_METADATA_BYTES},
+            )
+
+    key = input.idempotencyKey
+    if key is not None and (
+        not isinstance(key, str)
+        or _utf16_length(key) > MAX_IDEMPOTENCY_KEY_LENGTH
+        or _CONTROL_CHARACTERS.search(key)
+        or _has_lone_surrogate(key)
+    ):
+        raise errors.invalid_request(
+            f"idempotency key must be a string of at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters",
+            {"field": "idempotencyKey"},
+        )
+
 
 
 class UploadSessionService:
@@ -216,6 +389,8 @@ class UploadSessionService:
         if not ctx.principalId and not self.allow_anonymous_uploads:
             raise errors.auth_required()
 
+        _validate_upload_init(input)
+
         if input.idempotencyKey:
             existing_data = await self.db.find_one(
                 model="uploadSessions",
@@ -295,6 +470,14 @@ class UploadSessionService:
             versionId=version_id,
         )
         storage_key = compute_storage_path(policy, storage_ctx)
+        # A `.`/`..` segment, backslash or control character could resolve onto
+        # another file's object on adapters that normalize paths.
+        unsafe_reason = unsafe_storage_key_reason(storage_key)
+        if unsafe_reason:
+            raise errors.invalid_request(
+                "The storage key for this upload is not safe",
+                {"policy": input.policy, "reason": unsafe_reason},
+            )
 
         storage_upload_id: Optional[str] = None
         if upload_mode == "multipart-signed-url":

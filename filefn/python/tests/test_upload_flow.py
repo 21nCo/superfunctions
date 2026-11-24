@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -768,3 +769,258 @@ async def test_nucleus_policy_bundle_enforces_size_and_wildcard_types() -> None:
             _ctx("user_123", "org_123"),
         )
     assert getattr(exc_mime.value, "code", "") == "FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        "../../../../t1/alice/file_a/ver_a-a.png",
+        "..",
+        ".",
+        "a/b.png",
+        "a\\b.png",
+        "bad\x00name.png",
+        "   ",
+        "a" * 256,
+        # 254 ASCII characters and one emoji: 256 UTF-16 code units.
+        "a" * 254 + "\U0001f600",
+    ],
+)
+async def test_create_session_rejects_unsafe_file_names(file_name: str) -> None:
+    # FILE-30 F-01: a traversal name used to land in the storage key unchanged.
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName=file_name, size=3, mimeType="image/png"),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_negative_size() -> None:
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=-5, mimeType="image/png"),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_default_storage_key_sanitizes_tenant_and_principal() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a..b.png", size=3, mimeType="image/png"),
+        _ctx(principal_id="../alice", tenant_id="t1/.."),
+    )
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    assert key.startswith("t1_/_alice/")
+    assert all(segment not in (".", "..", "") for segment in key.split("/"))
+
+
+def test_unsafe_storage_key_reason() -> None:
+    from filefn.server.policies import sanitize_storage_key_segment, unsafe_storage_key_reason
+
+    assert sanitize_storage_key_segment("../a/b") == "_a_b"
+    assert sanitize_storage_key_segment(".") == "_"
+    assert unsafe_storage_key_reason("a/../b") == "dot segment"
+    assert unsafe_storage_key_reason("acme.com/a..b") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"mimeType": "text"},
+        {"mimeType": "text/plain\x00"},
+        {"metadata": {"blob": "x" * (17 * 1024)}},
+        {"idempotencyKey": "k" * 256},
+        {"size": 2**53},
+        {"size": 1.5},
+    ],
+)
+async def test_create_session_validates_init_fields_like_typescript(override: Dict[str, Any]) -> None:
+    service = _make_service()
+    fields: Dict[str, Any] = {"policy": "user-avatar", "fileName": "a.png", "size": 3, "mimeType": "image/png"}
+    fields.update(override)
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(CreateSessionInput(**fields), _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+def test_create_session_input_refuses_coerced_sizes() -> None:
+    from pydantic import ValidationError
+
+    for size in ("12", True, None):
+        with pytest.raises(ValidationError):
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=size, mimeType="image/png")
+
+
+def test_default_storage_key_keeps_version_id_underscores() -> None:
+    from filefn.server.policies import PolicyStoragePathContext, compute_storage_path
+
+    policy = Policy(name="p")
+    a = compute_storage_path(policy, PolicyStoragePathContext(fileName="x", fileId="file_1", versionId="ver_a__b"))
+    b = compute_storage_path(policy, PolicyStoragePathContext(fileName="x", fileId="file_1", versionId="ver_a_b"))
+    assert a == "file_1/ver_a__b-x"
+    assert a != b
+
+
+
+def _nested(depth: int, leaf: Any) -> Any:
+    value: Any = leaf
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def test_metadata_size_counts_numbers_like_javascript() -> None:
+    from filefn.server.upload_sessions.service import _js_json
+
+    # Expected strings are what JSON.stringify returns for the same values.
+    assert _js_json({"n": 1.0, "m": [2.0, 2.5], "t": True, "z": None}) == '{"n":1,"m":[2,2.5],"t":true,"z":null}'
+    assert _js_json([1e-7, 1.5e-7, 0.000001, 1e21, 1e20, 5e-324, -0.0, 123.456]) == (
+        "[1e-7,1.5e-7,0.000001,1e+21,100000000000000000000,5e-324,0,123.456]"
+    )
+    # Integers are counted with every digit (they are stored as sent).
+    assert _js_json({"n": 10**21, "k": 2**53}) == '{"n":1000000000000000000000,"k":9007199254740992}'
+    assert _js_json({"s": "a\"b\n\u00e9"}) == '{"s":"a\\"b\\n\u00e9"}'
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_integral_float_size() -> None:
+    service = _make_service()
+    result = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3.0, mimeType="image/png"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"fileName": "a\ud800.png"},
+        {"fileName": "\ufeff"},
+        {"mimeType": "text/plain; x=\ud800"},
+        {"metadata": {"note": "x\udfff"}},
+        {"metadata": {"\ud800": 1}},
+        {"metadata": {"a": _nested(70, "\ud800")}},
+        {"metadata": {"a": _nested(40, "ok")}},
+        {"idempotencyKey": "k\ud800"},
+    ],
+)
+async def test_create_session_rejects_lone_surrogates(override: Dict[str, Any]) -> None:
+    # A lone surrogate is valid JSON but cannot be stored as text; both servers refuse it.
+    service = _make_service()
+    fields: Dict[str, Any] = {"policy": "user-avatar", "fileName": "a.png", "size": 3, "mimeType": "image/png"}
+    fields.update(override)
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(CreateSessionInput(**fields), _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_core_create_upload_session_maps_type_errors_to_invalid_request() -> None:
+    from filefn.server.core import FileFn
+
+    fake = SimpleNamespace(upload_service=_make_service())
+    for size in ("12", True):
+        with pytest.raises(Exception) as exc_info:
+            await FileFn.create_upload_session(  # type: ignore[arg-type]
+                fake, {"policy": "user-avatar", "fileName": "a.png", "size": size, "mimeType": "image/png"}, _ctx()
+            )
+        assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+def test_metadata_number_format_ignores_decimal_context() -> None:
+    import decimal
+
+    from filefn.server.upload_sessions.service import _js_json
+
+    with decimal.localcontext() as context:
+        context.prec = 3
+        assert _js_json([1.23456, 100.0, 1e-7]) == "[1.23456,100,1e-7]"
+
+
+@pytest.mark.asyncio
+async def test_metadata_with_huge_integers_is_counted_at_full_length() -> None:
+    service = _make_service()
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(
+                policy="user-avatar", fileName="a.png", size=3, mimeType="image/png",
+                metadata={"huge": [int("9" * 1000)] * 20},
+            ),
+            _ctx(),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_metadata_numbers_are_stored_as_sent() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    huge = int("9" * 100)
+    await service.create_session(
+        CreateSessionInput(
+            policy="user-avatar",
+            fileName="a.png",
+            size=3,
+            mimeType="image/png",
+            metadata={"big": 10**21, "huge": [huge] * 2, "safe": 2**53},
+        ),
+        _ctx(),
+    )
+    # Stored exactly as sent; only the size count uses JavaScript's numbers.
+    stored = db.tables["uploadSessions"][0]["metadata"]
+    assert stored == {"big": 10**21, "huge": [huge] * 2, "safe": 2**53}
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_any_http_token_media_type() -> None:
+    service = _make_service()
+    service.policies.register(Policy(name="any"))
+    result = await service.create_session(
+        CreateSessionInput(policy="any", fileName="a.bin", size=3, mimeType="application/x-example~v1"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+async def test_idempotent_replay_hashes_metadata_as_sent() -> None:
+    # The fingerprint uses the metadata as sent, so a session created before
+    # number normalisation still matches its retry.
+    db = FakeDB()
+    service = _make_service(db=db)
+    init = CreateSessionInput(
+        policy="user-avatar",
+        fileName="a.png",
+        size=3,
+        mimeType="image/png",
+        metadata={"n": 9007199254740993},
+        idempotencyKey="retry-key",
+    )
+    first = await service.create_session(init, _ctx())
+    replay = await service.create_session(init, _ctx())
+    assert replay["uploadSessionId"] == first["uploadSessionId"]
+    expected = service._hash_payload(init, _ctx())
+    assert db.tables["uploadSessions"][0]["idempotencyPayloadHash"] == expected
+
+
+@pytest.mark.asyncio
+async def test_long_registered_policy_names_still_work() -> None:
+    service = _make_service()
+    long_name = "p" * 300
+    service.policies.register(Policy(name=long_name))
+    result = await service.create_session(
+        CreateSessionInput(policy=long_name, fileName="a.bin", size=3, mimeType="application/octet-stream"),
+        _ctx(),
+    )
+    assert result["uploadSessionId"]

@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
@@ -82,17 +83,66 @@ def validate_policy_constraints(policy: Policy, mime_type: str, size: int) -> Di
 
     return {'valid': True}
 
+_STORAGE_KEY_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _sanitize_segment(value: str, collapse_underscores: bool) -> str:
+    sanitized = _STORAGE_KEY_CONTROL_CHARACTERS.sub("", value)
+    sanitized = re.sub(r"[\\/]+", "_", sanitized)
+    sanitized = re.sub(r"\.\.+", "_", sanitized)
+    if collapse_underscores:
+        sanitized = re.sub(r"_+", "_", sanitized)
+    # Strip what JavaScript's trim() strips, as the TypeScript server does.
+    sanitized = sanitized.strip(
+        "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+        "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+    )
+    if not sanitized or sanitized == ".":
+        return "_"
+    return sanitized
+
+
+def sanitize_storage_key_segment(value: str) -> str:
+    """Turn one value into a single storage key segment.
+
+    Path separators become ``_``, runs of dots collapse to ``_``, runs of ``_``
+    collapse to one, control characters are dropped, and an empty or dot-only
+    result becomes ``_``. Default keys stay unique because the version ID in
+    them is never collapsed.
+    """
+    return _sanitize_segment(value, True)
+
+
+def unsafe_storage_key_reason(key: str) -> Optional[str]:
+    """Return why a storage key is unsafe, or None when it is safe."""
+    if not isinstance(key, str) or not key:
+        return "empty key"
+    if _STORAGE_KEY_CONTROL_CHARACTERS.search(key):
+        return "control character"
+    if "\\" in key:
+        return "backslash"
+    if key.startswith("/"):
+        return "absolute key"
+    for segment in key.split("/"):
+        if segment == "":
+            return "empty segment"
+        if segment in (".", ".."):
+            return "dot segment"
+    return None
+
+
 def compute_storage_path(policy: Policy, ctx: PolicyStoragePathContext) -> str:
     if policy.storagePath:
         return policy.storagePath(ctx)
 
     parts = []
     if ctx.tenantId:
-        parts.append(ctx.tenantId)
+        parts.append(sanitize_storage_key_segment(ctx.tenantId))
     if ctx.principalId:
-        parts.append(ctx.principalId)
-    parts.append(ctx.fileId)
-    parts.append(f"{ctx.versionId}-{ctx.fileName}")
+        parts.append(sanitize_storage_key_segment(ctx.principalId))
+    parts.append(sanitize_storage_key_segment(ctx.fileId))
+    # Underscores in the version ID are kept: two distinct version IDs must never share a key.
+    parts.append(f"{_sanitize_segment(ctx.versionId, False)}-{sanitize_storage_key_segment(ctx.fileName)}")
     return "/".join(parts)
 
 def resolve_storage_target(policy: Any) -> str:
