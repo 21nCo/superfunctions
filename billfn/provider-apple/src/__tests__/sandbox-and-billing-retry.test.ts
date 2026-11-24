@@ -87,106 +87,73 @@ describe('sandbox purchases in a production deployment', () => {
       providerChargeId: 'txn_legacy',
       status: 'active',
       autoRenew: true,
-      // The StoreKit response BillFn merged into the row when it was verified from the sandbox.
-      metadata: { environment: 'Sandbox' }
+      metadata: { billfnImportedAt: '2026-04-01T00:00:00.000Z' }
     },
     price: { priceId: 'price_apple', providerProductId: 'apple.pro.month' }
   };
-  const withMetadata = (metadata: Record<string, unknown> | undefined) => ({
-    ...storedSubscription,
-    subscription: { ...storedSubscription.subscription, metadata }
-  });
-
-  it('syncs a stored subscription production does not know as expired, so an account scan ends it and moves on', async () => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-
-    const state = await provider(fetchMock).fetchSubscription!(storedSubscription as never);
-
-    expect(state).toMatchObject({ subscriptionStatus: 'expired', providerSubscriptionId: 'orig_legacy', autoRenew: false });
-    expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
-  });
-
-  it('expires a stored subscription whose notification transaction came from the sandbox', async () => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-
-    const state = await provider(fetchMock).fetchSubscription!(withMetadata({ transaction: { environment: 'Sandbox' } }) as never);
-
-    expect(state).toMatchObject({ subscriptionStatus: 'expired' });
-  });
-
-  it('expires a stored subscription whose stored signed transaction came from the sandbox, without a response environment', async () => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-    const metadata = {
+  /** StoreKit's status answer for one subscription. */
+  const subscriptionAnswer = (status: number, originalTransactionId = 'orig_legacy') =>
+    Response.json({
       data: [
         {
           lastTransactions: [
-            { status: 1, signedTransactionInfo: encodePayload(transaction({ originalTransactionId: 'orig_legacy', environment: 'Sandbox' })) }
+            {
+              status,
+              signedTransactionInfo: encodePayload(transaction({ originalTransactionId, transactionId: `${originalTransactionId}_txn` })),
+              signedRenewalInfo: encodePayload({ autoRenewStatus: 1 })
+            }
           ]
         }
       ]
-    };
+    });
+  const sandboxAnswers = (sandbox: () => Response) =>
+    vi.fn(async (url: RequestInfo | URL) =>
+      new URL(String(url)).hostname === 'api.storekit-sandbox.itunes.apple.com' ? sandbox() : notFound()
+    ) as unknown as typeof fetch;
 
-    const state = await provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never);
+  it.each([1, 3, 4])(
+    'syncs a stored subscription only the sandbox knows (status %i) as expired, so an account scan ends it',
+    async (status) => {
+      const state = await provider(sandboxAnswers(() => subscriptionAnswer(status))).fetchSubscription!(storedSubscription as never);
 
-    expect(state).toMatchObject({ subscriptionStatus: 'expired' });
+      expect(state).toMatchObject({ subscriptionStatus: 'expired', providerSubscriptionId: 'orig_legacy', autoRenew: false });
+    }
+  );
+
+  it('keeps a sandbox subscription that already ended as it ended', async () => {
+    const state = await provider(sandboxAnswers(() => subscriptionAnswer(5))).fetchSubscription!(storedSubscription as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'canceled', autoRenew: false });
   });
 
-  it('does not take the sandbox environment of another subscription\'s stored transaction as evidence', async () => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-    const metadata = {
-      data: [{ lastTransactions: [{ status: 1, signedTransactionInfo: encodePayload(transaction({ originalTransactionId: 'orig_other', transactionId: 'txn_other', environment: 'Sandbox' })) }] }]
-    };
-
-    await expect(provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
+  it('rejects a sandbox answer for another subscription, as before', async () => {
+    await expect(
+      provider(sandboxAnswers(() => subscriptionAnswer(1, 'orig_other'))).fetchSubscription!(storedSubscription as never)
+    ).rejects.toBeDefined();
   });
 
   it.each([
-    ['a production subscription', { environment: 'Production' }],
-    ['a subscription with no recorded environment', undefined]
-  ])('keeps a not-found sync of %s an error, preserving its access', async (_name, metadata) => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-
-    await expect(provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
+    ['not found in either', () => notFound(), 'BILLFN_PROVIDER_ERROR'],
+    ['a sandbox failure', () => new Response('', { status: 500 }), 'BILLFN_PROVIDER_ERROR']
+  ])('keeps the sync an error when the sandbox answers %s', async (_name, sandbox, code) => {
+    await expect(provider(sandboxAnswers(sandbox)).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({ code });
   });
 
-  it('expires a stored subscription with no recorded environment that the sandbox knows, without using the sandbox state', async () => {
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
-      new URL(String(url)).hostname === 'api.storekit-sandbox.itunes.apple.com' ? statusAnswer(1) : notFound()
-    ) as unknown as typeof fetch;
+  it('syncs a production subscription from production without reading the sandbox', async () => {
+    const fetchMock = vi.fn(async () => subscriptionAnswer(1)) as unknown as typeof fetch;
 
-    const state = await provider(fetchMock).fetchSubscription!(withMetadata(undefined) as never);
+    const state = await provider(fetchMock).fetchSubscription!(storedSubscription as never);
 
-    expect(state).toMatchObject({ subscriptionStatus: 'expired', autoRenew: false });
+    expect(state).toMatchObject({ subscriptionStatus: 'active' });
+    expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the sync an error when the sandbox probe fails for another reason', async () => {
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
-      new URL(String(url)).hostname === 'api.storekit-sandbox.itunes.apple.com' ? new Response('', { status: 500 }) : notFound()
-    ) as unknown as typeof fetch;
+  it('applies a sandbox sync answer as it is when the sandbox is allowed', async () => {
+    const state = await provider(sandboxAnswers(() => subscriptionAnswer(1)), { allowSandbox: true }).fetchSubscription!(
+      storedSubscription as never
+    );
 
-    await expect(provider(fetchMock).fetchSubscription!(withMetadata(undefined) as never)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
-  });
-
-  it('keeps a not-found sync an error when the sandbox is allowed', async () => {
-    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
-
-    await expect(provider(fetchMock, { allowSandbox: true }).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
-  });
-
-  it('keeps a retryable StoreKit failure during sync an error', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch;
-
-    await expect(provider(fetchMock).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
+    expect(state).toMatchObject({ subscriptionStatus: 'active' });
   });
 
   it('acknowledges a sandbox notification without a billing state or a reference to link', async () => {

@@ -208,44 +208,31 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       // Sync reads a stored subscription whose reference verification, restore or an operator's import already bound to
       // its app, so it grants no new price. BillFn picks the price it passes by product alone, which with several apps may
       // be another app's price of the same product, so the subscription is read from whichever listed app owns it.
-      const path = `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`;
-      let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
-      try {
-        response = await requestStoreKitForTransaction(fetchImpl, config, path);
-      } catch (error) {
-        // A subscription accepted from the sandbox before, in a deployment that no longer accepts the sandbox, is
-        // not found in production: it has expired for this deployment, so sync and account scans end its access
-        // instead of failing on it. Its origin comes from the provider record BillFn stored, or else from the
-        // sandbox knowing the transaction; the sandbox is read only as that evidence and never grants access. Any
-        // other not-found stays an error, since StoreKit can answer it for a real production transaction too.
-        if (
-          !acceptsSandbox(config) &&
-          isStoreKitNotFound(error) &&
-          (storedFromNonProduction(input.subscription.metadata, [
-            input.subscription.providerSubscriptionId,
-            input.subscription.providerChargeId
-          ]) ||
-            (await knownToSandbox(fetchImpl, config, path)))
-        ) {
-          return {
-            subscriptionStatus: 'expired',
-            checkoutStatus: 'failed',
-            providerSubscriptionId: input.subscription.providerSubscriptionId,
-            providerChargeId: input.subscription.providerChargeId,
-            autoRenew: false,
-            raw: { reason: 'not_found_in_production' }
-          } satisfies BillFnVerifiedBillingState;
-        }
-        throw error;
-      }
+      // A deployment that no longer accepts the sandbox still reads it here, in the same order as before, so a
+      // subscription accepted from the sandbox earlier is found and can end; what the sandbox reports never grants
+      // access (see below).
+      const response = await requestStoreKitForTransaction(
+        fetchImpl,
+        config,
+        `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`,
+        {},
+        { sandboxForRevocation: true }
+      );
       // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
-      return mapAppleSubscriptionResponse(response.payload, {
+      const state = mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
         appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId),
         bundleId: null
       }, config.catalogPriceIdFor, input.price.priceId);
+      if (response.environment === 'sandbox' && !acceptsSandbox(config)) {
+        // A sandbox subscription has no access in this deployment: it is expired unless it already ended.
+        return TERMINAL_APPLE_STATES.has(state.subscriptionStatus)
+          ? { ...state, autoRenew: false }
+          : { ...state, subscriptionStatus: 'expired', checkoutStatus: 'failed', autoRenew: false };
+      }
+      return state;
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
@@ -480,13 +467,14 @@ async function requestStoreKitForTransaction(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options: StoreKitReadOptions = {}
 ) {
   const bundleIds = config.bundleIds.length > 0 ? config.bundleIds : [undefined];
   let lastError: unknown;
   for (const bundleId of bundleIds) {
     try {
-      return await requestStoreKitWithFallback(fetchImpl, config, bundleId, path, init);
+      return await requestStoreKitWithFallback(fetchImpl, config, bundleId, path, init, options);
     } catch (error) {
       lastError = error;
       if (!isStoreKitNotFound(error)) {
@@ -538,17 +526,28 @@ function isStoreKitNotFound(error: unknown): boolean {
   return details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode);
 }
 
+interface StoreKitReadOptions {
+  /**
+   * Read the sandbox after production's "transaction not found" even when sandbox purchases are not accepted. The
+   * caller must use a sandbox answer (`environment: 'sandbox'` in the result) only to end access, never to grant it.
+   */
+  sandboxForRevocation?: boolean;
+}
+
 async function requestStoreKitWithFallback(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   bundleId: string | undefined,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options: StoreKitReadOptions = {}
 ) {
   const initial = config.environment ?? 'production';
-  // Production falls back to the sandbox only when the host allows sandbox purchases.
+  // Production falls back to the sandbox only when the host allows sandbox purchases, or for a read whose caller
+  // uses a sandbox answer only to end access (`sandboxForRevocation`).
+  const fallback = config.allowSandbox === true || options.sandboxForRevocation === true;
   const environments: Array<'production' | 'sandbox'> =
-    initial === 'production' ? (config.allowSandbox === true ? ['production', 'sandbox'] : ['production']) : ['sandbox'];
+    initial === 'production' ? (fallback ? ['production', 'sandbox'] : ['production']) : ['sandbox'];
   let lastError: unknown;
 
   for (const environment of environments) {
@@ -1025,53 +1024,6 @@ function mapAppleNotificationEvent(
     billingState: state,
     raw: notification
   };
-}
-
-/**
- * Whether a stored subscription came from a non-production StoreKit environment, by the provider record BillFn merged
- * into its metadata: a StoreKit response's `environment`, a notification transaction's, or the environment of a
- * stored signed transaction for the subscription's references (StoreKit's response `environment` is optional).
- */
-function storedFromNonProduction(
-  metadata: Record<string, unknown> | undefined,
-  references: ReadonlyArray<string | undefined>
-): boolean {
-  const record = metadata ?? {};
-  const referenced = new Set(references.filter((reference): reference is string => typeof reference === 'string'));
-  const signedTransactions = [
-    ...extractLastTransactionRecords(record).map((entry) => decodeSignedPayload(entry, 'signedTransactionInfo')),
-    ...extractHistoryTransactions(record)
-  ].filter(
-    (transaction): transaction is Record<string, unknown> =>
-      transaction !== null &&
-      (referenced.has(readString(transaction, ['originalTransactionId']) ?? '') ||
-        referenced.has(readString(transaction, ['transactionId']) ?? ''))
-  );
-  const stated = [
-    readString(record, ['environment']),
-    readString(asRecord(record.transaction) ?? {}, ['environment']),
-    ...signedTransactions.map((transaction) => readString(transaction, ['environment']))
-  ].filter((environment): environment is string => typeof environment === 'string');
-  return stated.length > 0 && stated.every((environment) => environment !== 'Production');
-}
-
-/**
- * Whether the sandbox knows a transaction that production does not, asked app by app as production was. Only
- * evidence that a stored subscription came from the sandbox; a sandbox failure other than not-found is rethrown.
- */
-async function knownToSandbox(fetchImpl: typeof fetch, config: ResolvedAppleProviderConfig, path: string): Promise<boolean> {
-  const bundleIds = config.bundleIds.length > 0 ? config.bundleIds : [undefined];
-  for (const bundleId of bundleIds) {
-    try {
-      await requestJson(fetchImpl, buildStoreKitBaseUrl('sandbox') + path, await config.tokenFor(bundleId));
-      return true;
-    } catch (error) {
-      if (!isStoreKitNotFound(error)) {
-        throw error;
-      }
-    }
-  }
-  return false;
 }
 
 /** Whether sandbox purchases and notifications count for this adapter. */
