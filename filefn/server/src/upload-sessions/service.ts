@@ -335,6 +335,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return Math.ceil(size / chunkSize);
   }
 
+  // The most bytes one part may hold: the chunk size, or what is left of the
+  // declared size for the last part. Bounds every part, so a session can never
+  // store more than it declared (and was checked against policy and quota for).
+  function maxPartBytes(session: Pick<UploadSession, 'size' | 'chunkSizeBytes' | 'totalParts'>, partNumber: number): number {
+    if (partNumber < session.totalParts) return session.chunkSizeBytes;
+    return Math.max(0, session.size - (session.totalParts - 1) * session.chunkSizeBytes);
+  }
+
   function proxyPartKey(storageKey: string, partNumber: number): string {
     return `${storageKey}.part${partNumber}`;
   }
@@ -1528,6 +1536,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      const partLimit = maxPartBytes(session, partNumber);
+      if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
+        throw errors.invalidRequest('contentLength must be a positive integer', { field: 'contentLength' });
+      }
+      if (contentLength > partLimit) {
+        throw errors.partTooLarge(partNumber, partLimit);
+      }
 
       if (session.uploadMode === 'proxy') {
         // Return URL to the proxy PUT endpoint
@@ -1568,7 +1583,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     },
 
     async uploadPartBytes(uploadSessionId: string, partNumber: number, body: ReadableStream | Blob | Buffer, contentLength: number, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ etag: string; size: number }> {
-      void contentLength;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -1584,6 +1598,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
+      // Counted while streaming: the declared Content-Length is only an early refusal.
+      const partLimit = maxPartBytes(session, partNumber);
+      if (Number.isFinite(contentLength) && contentLength > partLimit) {
+        throw errors.partTooLarge(partNumber, partLimit);
+      }
 
       const existingPart = await db.findOne<{ etag: string; size: number }>({
         model: 'uploadParts',
@@ -1598,8 +1617,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const hasher = createHash('sha256');
         let incomingSize = 0;
         await forEachBodyChunk(body, (chunk) => {
-          hasher.update(chunk);
           incomingSize += chunk.byteLength;
+          if (incomingSize > partLimit) throw errors.partTooLarge(partNumber, partLimit);
+          hasher.update(chunk);
         });
 
         const incomingEtag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -1628,13 +1648,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const writer = writeStream.getWriter();
       try {
         await forEachBodyChunk(body, async (chunk) => {
-          hasher.update(chunk);
           size += chunk.byteLength;
+          if (size > partLimit) throw errors.partTooLarge(partNumber, partLimit);
+          hasher.update(chunk);
           await writer.write(chunk);
         });
-      } finally {
-        await writer.close();
+      } catch (err) {
+        // Nothing of an oversized or failed part is kept.
+        await writer.abort(err).catch(() => {});
+        if (storage.deleteObject) {
+          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
+        }
+        throw err;
       }
+      await writer.close();
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
 
@@ -1950,17 +1977,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
         }
 
-        // Validate size if supported
-        if (storage.statObject) {
-          try {
-            const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
-            if (stat.size !== session.size) {
-              throw errors.uploadSizeMismatch(session.size, stat.size);
-            }
-          } catch (err) {
-              if (err instanceof errors.FileFnError) throw err;
-              // Ignore stat errors if object doesn't exist (should exist though)
-          }
+        // The stored object must be exactly the declared size: policy limits and
+        // quota were checked against it. A stat that fails (or an adapter that
+        // cannot stat) fails the completion, which can be retried; it never
+        // publishes an object of unknown size.
+        if (typeof storage.statObject !== 'function') {
+          throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+        }
+        const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
+        if (stat.size !== session.size) {
+          // Refused while this call still holds the session, then everything it
+          // uploaded is deleted: an oversized object is never left in storage.
+          if (!(await fenceRefusedSession(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+          await deleteRefusedUploads(session);
+          throw errors.uploadSizeMismatch(session.size, stat.size);
         }
 
         // Check for deduplication
