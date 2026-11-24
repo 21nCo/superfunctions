@@ -6,7 +6,13 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { entryHash, mergeTurboCache, pruneRestoredTurboCache, readDryRunHashes } from "./turbo-cache-merge.mjs";
+import {
+  changedTrackedFiles,
+  entryHash,
+  mergeTurboCache,
+  pruneRestoredTurboCache,
+  readDryRunHashes,
+} from "./turbo-cache-merge.mjs";
 
 const script = fileURLToPath(new URL("./turbo-cache-merge.mjs", import.meta.url));
 const scratch = mkdtempSync(path.join(tmpdir(), "turbo-cache-merge-"));
@@ -159,6 +165,8 @@ test("entry files are recognised by Turbo's names only", () => {
   assert.equal(entryHash(`${KEPT}.tar.gz`), null);
   assert.equal(entryHash("notes.txt"), null);
   assert.equal(entryHash(`${KEPT.toUpperCase()}.tar.zst`), null);
+  assert.equal(entryHash("a.tar.zst"), null);
+  assert.equal(entryHash(`${KEPT}0.tar.zst`), null);
 });
 
 test("the dry run's task hashes are read, and a dry run without them is an error", () => {
@@ -170,6 +178,10 @@ test("the dry run's task hashes are read, and a dry run without them is an error
     () => readDryRunHashes(JSON.stringify({ tasks: [{ taskId: "pkg#build" }] })),
     /gives task "pkg#build" no task hash/
   );
+  // A hash that is not 16 hex digits is not a Turbo task hash: such a dry run would keep no entry, so it is refused.
+  for (const hash of ["a", `${KEPT}0`, KEPT.slice(1)]) {
+    assert.throws(() => readDryRunHashes(dryRun([KEPT, hash])), /gives task "pkg-1#build" no task hash/);
+  }
 });
 
 function runCli(args) {
@@ -258,4 +270,78 @@ test("the command fails, leaving the set-aside entries, on a bad dry run or bad 
     assert.equal(run.status, 1, `${args.join(" ")} must fail`);
     assert.match(run.stderr, /turbo-cache-merge: /);
   }
+});
+
+function git(cwd, ...args) {
+  const run = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout;
+}
+
+function commit(cwd, message) {
+  const identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
+  git(cwd, ...identity, "commit", "--quiet", "-m", message);
+}
+
+// A Git checkout with two committed files: a template and the file generated from it, as a build writes it.
+function freshCheckout() {
+  const { root } = freshDirs();
+  mkdirSync(path.join(root, "pkg"), { recursive: true });
+  writeFileSync(path.join(root, "pkg", "template.txt"), "v1\n");
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v1\n");
+  git(root, "init", "--quiet");
+  git(root, "add", ".");
+  commit(root, "init");
+  return root;
+}
+
+function runCheckClean(cwd, args = ["--check-clean"]) {
+  return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
+}
+
+test("tracked files that differ from HEAD are reported, untracked files are not", () => {
+  const root = freshCheckout();
+  assert.deepEqual(changedTrackedFiles(root), []);
+
+  writeFileSync(path.join(root, "pkg", "untracked.txt"), "a build output");
+  assert.deepEqual(changedTrackedFiles(root), []);
+
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+  rmSync(path.join(root, "pkg", "template.txt"));
+  assert.deepEqual(changedTrackedFiles(root), ["pkg/generated.txt", "pkg/template.txt"]);
+
+  git(root, "add", "pkg/generated.txt");
+  assert.deepEqual(changedTrackedFiles(root), ["pkg/generated.txt", "pkg/template.txt"]);
+});
+
+test("--check-clean passes on a clean checkout and fails, naming each file, when a task changed a tracked file", () => {
+  const root = freshCheckout();
+  writeFileSync(path.join(root, "pkg", "untracked.txt"), "a build output");
+  const clean = runCheckClean(root);
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.match(clean.stdout, /no task changed a tracked file/);
+
+  // A build regenerated the committed file: the run fails, whether a later task would have read it or not.
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+  const dirty = runCheckClean(root);
+  assert.equal(dirty.status, 1);
+  assert.match(dirty.stdout, /^::error file=pkg\/generated\.txt,title=Tracked file changed by a task::/m);
+  assert.match(dirty.stdout, /pkg\/generated\.txt \| /);
+  assert.match(dirty.stderr, /turbo-cache-merge: 1 tracked files changed after the tasks ran: pkg\/generated\.txt/);
+
+  const withOthers = runCheckClean(root, ["--check-clean", "--cache-dir", root]);
+  assert.equal(withOthers.status, 1);
+  assert.match(withOthers.stderr, /usage: /);
+});
+
+test("--check-clean escapes annotation properties in a file name", () => {
+  const root = freshCheckout();
+  writeFileSync(path.join(root, "pkg", "a,b:c%.txt"), "x");
+  git(root, "add", ".");
+  commit(root, "more");
+  writeFileSync(path.join(root, "pkg", "a,b:c%.txt"), "y");
+
+  const run = runCheckClean(root);
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /^::error file=pkg\/a%2Cb%3Ac%25\.txt,title=/m);
 });

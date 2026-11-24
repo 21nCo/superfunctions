@@ -13,10 +13,16 @@
 // A pull request replays the restored entries, so it sets none aside: it lists the restored files instead, and the
 // same rules prune the restored entries whose hash is not current, so a pull request's saved cache does not keep every
 // stale entry of its earlier pushes.
+// A replayed task restores only the outputs turbo.json declares for it. A task that also rewrites a tracked file (a
+// generated source or doc that a later task checks) passes when it runs, since it regenerates the file first, and fails
+// when it is replayed, since the stale committed file stays. With `--check-clean` the script fails when the checkout's
+// tracked files differ from HEAD after the tasks, so such a run fails whether its tasks ran or were replayed.
 //
 // Usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <turbo --dry=json output>
 //          (--aside-dir <dir> | --restored-list <file listing the restored cache files, one name per line>)
+//        node scripts/turbo-cache-merge.mjs --check-clean
 
+import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -30,8 +36,8 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The task hash an entry file is named after, or null for any other file.
-const ENTRY_FILE = /^([0-9a-f]+)(?:\.tar\.zst|-meta\.json)$/;
+// The task hash an entry file is named after, or null for any other file. Turbo's task hashes are 16 hex digits.
+const ENTRY_FILE = /^([0-9a-f]{16})(?:\.tar\.zst|-meta\.json)$/;
 
 export function entryHash(fileName) {
   return ENTRY_FILE.exec(fileName)?.[1] ?? null;
@@ -148,9 +154,45 @@ export function pruneRestoredTurboCache({ cacheDir, restoredFiles, currentHashes
   };
 }
 
+// The tracked files of the Git checkout at `cwd` that differ from HEAD (changed, deleted or staged), sorted.
+// Untracked files are not reported.
+export function changedTrackedFiles(cwd) {
+  const output = execFileSync("git", ["diff", "HEAD", "--name-only", "-z", "--no-renames"], {
+    cwd,
+    encoding: "utf8",
+  });
+  return output.split("\0").filter(Boolean).sort();
+}
+
+// A value for a GitHub Actions annotation property (`file=…`).
+function annotationProperty(value) {
+  return value
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A")
+    .replaceAll(":", "%3A")
+    .replaceAll(",", "%2C");
+}
+
+function checkClean() {
+  const changed = changedTrackedFiles(process.cwd());
+  if (changed.length === 0) {
+    console.log("turbo-cache-merge: no task changed a tracked file");
+    return;
+  }
+  for (const file of changed) {
+    console.log(
+      `::error file=${annotationProperty(file)},title=Tracked file changed by a task::A task changed this tracked ` +
+        "file. A replayed task restores only its declared outputs, so regenerate the file and commit it."
+    );
+  }
+  execFileSync("git", ["--no-pager", "diff", "HEAD", "--stat", "--no-renames"], { stdio: "inherit" });
+  throw new Error(`${changed.length} tracked files changed after the tasks ran: ${changed.join(", ")}`);
+}
+
 const USAGE =
   "usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <dry-run JSON file> " +
-  "(--aside-dir <dir> | --restored-list <file>)";
+  "(--aside-dir <dir> | --restored-list <file>), or node scripts/turbo-cache-merge.mjs --check-clean";
 
 function parseArgs(argv) {
   const options = {};
@@ -177,7 +219,13 @@ function parseArgs(argv) {
 }
 
 function main() {
-  const { cacheDir, asideDir, restoredList, dryRun } = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes("--check-clean")) {
+    if (argv.length !== 1) throw new Error(USAGE);
+    checkClean();
+    return;
+  }
+  const { cacheDir, asideDir, restoredList, dryRun } = parseArgs(argv);
   const currentHashes = readDryRunHashes(readFileSync(dryRun, "utf8"));
   const source = asideDir === undefined ? "restored" : "set-aside";
   const result =

@@ -283,6 +283,13 @@ jobs:
             ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
           fi
 
+      # A replayed task restores only its declared outputs. A task that rewrites a tracked file, such as a generated
+      # source or doc a later task checks, would pass when it runs and fail when it is replayed, so a run fails when any
+      # task left a tracked file changed, and a push saves no cache entry then: commit the regenerated file (SFNS-312).
+      - name: Check that no task changed a tracked file
+        if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
+        run: node scripts/turbo-cache-merge.mjs --check-clean
+
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
         if: >-
@@ -374,6 +381,11 @@ jobs:
 
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
+
+      # As in the JavaScript job: the Test step's `^build` tasks are replayed too.
+      - name: Check that no task changed a tracked file
+        if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
+        run: node scripts/turbo-cache-merge.mjs --check-clean
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge

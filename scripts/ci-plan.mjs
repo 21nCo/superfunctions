@@ -30,13 +30,13 @@ const JS_GLOBAL_PATTERNS = [
 ];
 
 // Root scripts that no workspace package uses and that no Turbo task runs (SFNS-307); scripts/turbo-cache-merge.mjs
-// runs in the JavaScript and DevFn tests jobs, but only on Turbo's cache after their tasks (SFNS-312). A change to one
-// neither forces a full JavaScript run nor, since turbo.json's globalDependencies exclude exactly these globs,
-// invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path segment, as in
-// Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/,
-// Markdown and turbo.json aside, names one of them by file name, or names a script that reaches one through other
-// scripts (the root package.json and the data files the test lists may name those), so the list cannot grow to cover
-// a script a package uses.
+// runs only after the tasks of the JavaScript and DevFn tests jobs, on Turbo's cache and the checkout (SFNS-312).
+// A change to one neither forces a full JavaScript run nor, since turbo.json's globalDependencies exclude exactly
+// these globs, invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path
+// segment, as in Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and
+// .github/workflows/, Markdown and turbo.json aside, names one of them by file name, or names a script that reaches one
+// through other scripts (the root package.json and the data files the test lists may name those), so the list cannot
+// grow to cover a script a package uses.
 const STANDALONE_SCRIPTS = [
   "scripts/promote.*",
   "scripts/verify-public-boundary.*",
