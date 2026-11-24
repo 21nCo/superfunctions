@@ -15,6 +15,8 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
 // A UTF-16 surrogate without its partner: valid in JSON, but not text a
 // database or storage provider can store.
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+// Metadata text: no lone surrogate, and no NUL, which PostgreSQL jsonb refuses.
+const BAD_METADATA_TEXT = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|\u0000/;
 
 /** Deepest metadata nesting accepted; deeper metadata is refused. */
 export const MAX_METADATA_DEPTH = 32;
@@ -148,13 +150,13 @@ function normalizeJson(
 }
 
 /**
- * Whether the value holds a lone surrogate, nests deeper than
+ * Whether the value holds a lone surrogate or NUL, nests deeper than
  * MAX_METADATA_DEPTH, or has more than MAX_METADATA_NODES values (all refused).
  */
 function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADATA_NODES }): boolean {
   budget.left -= 1;
   if (budget.left < 0) return true;
-  if (typeof value === 'string') return LONE_SURROGATE.test(value);
+  if (typeof value === 'string') return BAD_METADATA_TEXT.test(value);
   if (value === null || typeof value !== 'object') return false;
   if (depth >= MAX_METADATA_DEPTH) return true;
   // Plain loops and Object.keys only: no method of the value itself is called.
@@ -166,7 +168,7 @@ function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADA
   }
   for (const key of Object.keys(value)) {
     budget.left -= 1;
-    if (budget.left < 0 || LONE_SURROGATE.test(key) || hasLoneSurrogate((value as Record<string, unknown>)[key], depth + 1, budget)) return true;
+    if (budget.left < 0 || BAD_METADATA_TEXT.test(key) || hasLoneSurrogate((value as Record<string, unknown>)[key], depth + 1, budget)) return true;
   }
   return false;
 }

@@ -187,6 +187,15 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     expect(calls).toBe(1);
   });
 
+  it('refuses NUL in metadata keys and values, which PostgreSQL jsonb cannot store', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    for (const metadata of [{ a: 'x\u0000y' }, { ['k\u0000']: 1 }]) {
+      await expect(
+        fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata } as never, { principalId: 'alice' }),
+      ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST', details: { field: 'metadata' } });
+    }
+  });
+
   it('trims HTTP whitespace around a mimeType in linear time', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
     await expect(
