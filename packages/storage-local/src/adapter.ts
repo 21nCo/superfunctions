@@ -233,7 +233,8 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
             };
             const onError = (err: Error) => {
               cleanup();
-              unlink(tempPath).catch(() => {}).finally(() => reject(err));
+              const removed = opened ? unlink(tempPath).catch(() => {}) : Promise.resolve();
+              removed.finally(() => reject(err));
             };
             nodeStream.once('finish', onFinish);
             nodeStream.once('error', onError);
@@ -244,7 +245,9 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
           // Resolves once the stream is closed and its temporary file removed.
           return new Promise<void>((resolve) => {
             const done = () => {
-              unlink(tempPath).catch(() => {}).finally(() => resolve());
+              // Only a file this writer created (see removeTemp).
+              const removed = opened ? unlink(tempPath).catch(() => {}) : Promise.resolve();
+              removed.finally(() => resolve());
             };
             if (nodeStream.closed) {
               done();
