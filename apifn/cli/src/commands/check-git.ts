@@ -399,7 +399,8 @@ function discoveryEntries(dir: string): string {
   const id = (file: string, depth = 0): string => {
     try {
       const stats = lstatSync(file, { bigint: true, throwIfNoEntry: false });
-      if (!stats?.isFile() || depth > 2) return stats ? `${stats.dev}:${stats.ino}` : "-";
+      const followed = stats?.isSymbolicLink() ? statSync(file, { bigint: true, throwIfNoEntry: false }) : stats; // a .git symlink's target too
+      if (!stats?.isFile() || depth > 2) return stats ? `${stats.dev}:${stats.ino}>${followed?.dev}:${followed?.ino}` : "-";
       const text = readFileSync(file, "utf8");
       const named = path.basename(file) === "commondir" ? text.replace(/\n$/, "") : /^gitdir: (.+)\n?$/.exec(text)?.[1];
       const target = named === undefined ? null : path.resolve(path.dirname(file), named);

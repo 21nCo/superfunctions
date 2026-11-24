@@ -2931,14 +2931,16 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     await writeFile(path.join(dir, "router.cjs"), 'const key = ["rou", "ter"].join("");\nmodule.exports = { [key]: { getRoutes() { return [{ meta: { operationId: "nativeCjs" } }]; } } };\n');
     // An ES module default router with its own `default` method and an `__esModule` export stays the router.
     await writeFile(path.join(dir, "router.mjs"), 'export const __esModule = true;\nexport default { default() {}, getRoutes() { return [{ meta: { operationId: "nativeEsm" } }]; } };\n');
+    // A default router's unused, throwing `router` getter is never read, and the loaded module is never evaluated again.
+    await writeFile(path.join(dir, "getter.mjs"), 'globalThis.loads = (globalThis.loads ?? 0) + 1;\nexport default { get router() { throw new Error("unused getter"); }, getRoutes() { return [{ meta: { operationId: `nativeGetter${globalThis.loads}` } }]; } };\n');
     const loader = pathToFileURL(path.join(import.meta.dirname, "..", "src", "utils", "router-loader.ts")).href;
-    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
+    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs", "./getter.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
     const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
       cwd: dir,
       env: { ...process.env, JITI_TRY_NATIVE: "true" },
       encoding: "utf8",
     });
-    expect(out.trim().split("\n")).toEqual(["nativeCjs", "nativeEsm"]);
+    expect(out.trim().split("\n")).toEqual(["nativeCjs", "nativeEsm", "nativeGetter1"]);
   });
 });
 
@@ -4709,12 +4711,13 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     expect(await readFile(path.join(shimDir, "n"), "utf8")).toBe("1\n");
   });
 
-  for (const change of ["rewritten in place", "whose git directory is replaced"] as const) {
+  for (const change of ["rewritten in place", "whose git directory is replaced", "a symlink whose target is replaced"] as const) {
     it.skipIf(POSIX_ONLY)(`a .git file ${change} during discovery exits 2 with no stdout (PR round 3 delta)`, async () => {
       const { root, service } = await breakingAtHead();
       const external = path.join(await tempDir("apifn-check-gitdir-"), "repo.git");
       await rename(path.join(root, ".git"), external);
-      await writeFile(path.join(root, ".git"), `gitdir: ${external}\n`);
+      if (change === "a symlink whose target is replaced") await symlink(external, path.join(root, ".git"));
+      else await writeFile(path.join(root, ".git"), `gitdir: ${external}\n`);
       const other = await tempDir("apifn-check-gitfile-other-");
       git(other, "init", "-q");
       await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
@@ -4941,6 +4944,25 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
       if (swap) expect(statSync(backup, { bigint: true }).ino).toBe(foreign);
       expect(await readFile(path.join(dir, "report.md"), "utf8")).not.toMatch(/^previous (report|REPORT)\n$/);
       expect(errors).not.toContain("No output it wrote is kept");
+    });
+  }
+
+  for (const copied of [false, true]) {
+    it.skipIf(POSIX_ONLY)(`a ${copied ? "copied" : "linked"} backup whose mode changed before the restore is never installed: it is kept and named (PR round 3 delta)`, async () => {
+      const dir = await staleService();
+      let backup = "";
+      const { code, errors } = await failingStdout(dir, (step, destination) => {
+        if (!destination.endsWith("report.md")) return;
+        if (step === "backup") fsFaults.noLink = copied;
+        if (step !== "rollback") return;
+        backup = path.join(realpathSync(dir), readdirSync(dir).find((name) => name.endsWith(".bak")) as string);
+        chmodSync(backup, 0o200);
+      });
+      chmodSync(backup, 0o600);
+      expect(code).toBe(2);
+      expect(errors).toContain(`${backup}, apifn check's backup of`);
+      expect(await readFile(backup, "utf8")).toBe("previous report\n");
+      expect(await readFile(path.join(dir, "report.md"), "utf8")).not.toBe("previous report\n");
     });
   }
 

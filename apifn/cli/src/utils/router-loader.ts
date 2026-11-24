@@ -20,7 +20,8 @@ function interopDefault(namespace: Record<string, unknown>, enabled: boolean): R
   const inner = namespace.default as Record<string, unknown> | null | undefined;
   if (!enabled || inner === null || (typeof inner !== "object" && typeof inner !== "function")) return namespace;
   const unwrapped = !isRouter(inner) && typeof inner.default === "function" && namespace.__esModule ? inner.default : inner;
-  return { ...namespace, default: unwrapped, router: "router" in namespace ? namespace.router : inner.router };
+  // A default that is already a router leaves every other property of it unread.
+  return { ...namespace, default: unwrapped, router: "router" in namespace ? namespace.router : isRouter(inner) ? undefined : inner.router };
 }
 
 /**
@@ -45,8 +46,9 @@ export async function loadRouterModule(
     // its dependencies resolve with the caller's alias table unchanged.
     const evaluate = async () => jiti.evalModule(readFileSync(file, "utf8"), { id: file, filename: file, async: true });
     // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL) with its interop, then fell back.
-    const native = async () => interopDefault(await import(pathToFileURL(file).href), jiti.options.interopDefault !== false);
-    load = jiti.options.tryNative ? () => native().catch(evaluate) : evaluate;
+    // Only a failed native import falls back: a module that loaded is never evaluated again.
+    const native = () => import(pathToFileURL(file).href).then((ns) => interopDefault(ns, jiti.options.interopDefault !== false), evaluate);
+    load = jiti.options.tryNative ? native : evaluate;
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }

@@ -415,8 +415,9 @@ function backupVerified(staged: Staged): boolean {
   const fd = staged.backupFd;
   if (staged.backup === undefined || !made || fd === undefined || !dirsHold(staged)) return false; // never made: not this run's
   const was = stateOf(fstatSync(fd, BIG));
-  if (!sameContent(was, made)) return false;
-  // An incomplete copy (its write failed) is this run's own inode, never restored: only its identity is checked.
+  // A copy is this run's own inode, so its change time is too; a link's mode must still be the recorded one.
+  if (staged.linked ? !sameContent(was, made) || was?.mode !== made.mode : !sameState(was, made)) return false;
+  // An incomplete copy (its write failed) is never restored: its unchanged state is all that is checked.
   const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : staged.previous === undefined || holdsBytes(fd, staged.previous);
   const read = stateOf(fstatSync(fd, BIG)); // an edit, even one restoring the mtime, changes the change time
   return intact && sameState(read, was) && sameState(currentState(staged.backup), read);
@@ -716,11 +717,11 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   backUp(staged);
   verify(staged);
   hook?.("rename", staged.destination);
+  if (staged.backup !== undefined && !backupVerified(staged)) throw changed(staged); // read first: never replace without a restorable backup
   if (!placeHolds(staged) || !sameState(currentState(staged.destination), expectedBeforeRename(staged))) {
     throw changed(staged);
   }
   if (!sameState(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
-  if (staged.backup !== undefined && !backupVerified(staged)) throw changed(staged); // never replace without a restorable backup
   renameSync(staged.temp as string, staged.destination);
   staged.temp = undefined;
   staged.published = true;
@@ -766,6 +767,7 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
     }
     // The destination again after the backup's read: one replaced meanwhile is left as it is.
     if (!sameState(currentState(staged.destination), staged.installed as FileState)) return `${staged.destination} changed after apifn check wrote it, so it was left as it is. Its previous bytes are in ${staged.backup}.`;
+    if (!sameState(currentState(staged.backup), stateOf(fstatSync(staged.backupFd as number, BIG)))) return `${staged.backup}, apifn check's backup of ${staged.destination}, changed, so both were left as they are.`;
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);
