@@ -78,7 +78,7 @@ describe('storage keys (FILE-30 F-01)', () => {
     const result = await upload(fileFn, { principalId: '../alice', tenantId: 't1/..' }, 'report..pdf', 'hello');
     const [key] = await listObjects(rootDir);
     expect(unsafeStorageKeyReason(key)).toBeNull();
-    expect(key).toBe(`t1_../__alice/${result.fileId}/${result.versionId}-report..pdf`);
+    expect(key).toBe(`t1%2F../%2E%2E%2Falice/${result.fileId}/${result.versionId}-report..pdf`);
   });
 
   it('refuses a policy storagePath that yields an unsafe key', async () => {
@@ -101,18 +101,36 @@ describe('storage keys (FILE-30 F-01)', () => {
     expect(a).not.toBe(b);
   });
 
-  it('sanitizes only what could leave the segment', () => {
-    expect(sanitizeStorageKeySegment('../a/b')).toBe('__a_b');
-    expect(sanitizeStorageKeySegment('..')).toBe('_');
-    expect(sanitizeStorageKeySegment('.')).toBe('_');
-    expect(sanitizeStorageKeySegment('\u0000')).toBe('_');
+  it('sanitizes only what could leave the segment, without collisions', () => {
+    expect(sanitizeStorageKeySegment('../a/b')).toBe('%2E%2E%2Fa%2Fb');
+    expect(sanitizeStorageKeySegment('..')).toBe('%2E%2E');
+    expect(sanitizeStorageKeySegment('.')).toBe('%2E');
+    expect(sanitizeStorageKeySegment('')).toBe('_');
+    expect(sanitizeStorageKeySegment('\u0000')).toBe('%00');
+    expect(sanitizeStorageKeySegment('team/east')).toBe('team%2Feast');
+    expect(sanitizeStorageKeySegment('team_east')).toBe('team_east');
+    expect(sanitizeStorageKeySegment('100%2Feast')).toBe('100%252Feast');
     expect(sanitizeStorageKeySegment('org__a')).toBe('org__a');
     expect(sanitizeStorageKeySegment('acme ')).toBe('acme ');
     expect(sanitizeStorageKeySegment('acme.com')).toBe('acme.com');
+    expect(sanitizeStorageKeySegment('.env')).toBe('.env');
     expect(sanitizeStorageKeySegment('report..pdf')).toBe('report..pdf');
     expect(unsafeStorageKeyReason('a/./b')).toBe('dot segment');
     expect(unsafeStorageKeyReason('/a')).toBe('absolute key');
     expect(unsafeStorageKeyReason('a\\b')).toBe('backslash');
     expect(unsafeStorageKeyReason('acme.com/a..b')).toBeNull();
+  });
+
+  it('shortens a long file name in the key so the segment fits a 255-byte filesystem name', async () => {
+    const fileFn = makeFileFn();
+    const longName = `${'f'.repeat(140)}/${'n'.repeat(120)}.txt`;
+    await upload(fileFn, { principalId: 'alice', tenantId: 't1' }, longName, 'hello');
+    const [key] = await listObjects(rootDir);
+    const last = key.split('/').pop()!;
+    expect(new TextEncoder().encode(last).length).toBeLessThan(200);
+    expect(last.endsWith('.txt')).toBe(true);
+    const other = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'m'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
+    const same = computeStoragePath({ name: 'p' }, { fileName: longName, fileId: 'file_1', versionId: 'ver_1' });
+    expect(other).not.toBe(same);
   });
 });

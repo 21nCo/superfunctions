@@ -90,25 +90,61 @@ export function validatePolicyConstraints(
 // eslint-disable-next-line no-control-regex
 const STORAGE_KEY_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
 
+function percentEncode(char: string): string {
+  return Array.from(new TextEncoder().encode(char), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, '0')}`).join('');
+}
+
 /**
- * Turns one value into a single storage key segment: path separators become
- * `_`, control characters are dropped, a leading run of two or more dots
- * becomes `_`, and a segment that is empty or `.` becomes `_`. Everything else is kept as it is
- * (repeated underscores, dots inside a name, surrounding spaces), so a safe ID
- * keeps its own segment and a name keeps its extension. Unsafe values can
- * still map onto one segment; default keys stay unique because they end in
- * the version ID.
+ * Turns one value into a single storage key segment without collisions:
+ * `%`, path separators and control characters are percent-encoded, as are the
+ * dots of a leading run of two or more dots and a segment that is exactly `.`.
+ * Everything else is kept as it is (dots inside a name, underscores, spaces),
+ * so safe IDs keep their own segment and distinct IDs never share one (for
+ * example `team/east` becomes `team%2Feast`, never `team_east`). An empty
+ * value becomes `_`.
  */
 export function sanitizeStorageKeySegment(value: string): string {
-  const sanitized = String(value)
-    .replace(STORAGE_KEY_CONTROL_CHARACTERS, '')
-    .replace(/[\\/]/g, '_')
-    // A segment never starts with `..` (some adapters read that as traversal).
-    .replace(/^\.\.+/, '_');
-  if (sanitized.length === 0 || /^\.+$/.test(sanitized)) {
-    return '_';
+  const encoded = String(value)
+    .replace(/[%\\/\u0000-\u001f\u007f-\u009f]/g, percentEncode)
+    .replace(/^\.\.+/, (dots) => '%2E'.repeat(dots.length));
+  if (encoded.length === 0) return '_';
+  if (encoded === '.') return '%2E';
+  return encoded;
+}
+
+/** Longest file-name part of a default key, in UTF-8 bytes. */
+const MAX_KEY_FILE_NAME_BYTES = 120;
+
+function fnv1a(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return sanitized;
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
+ * The file-name part of a default key: the sanitized name, shortened when it
+ * is longer than MAX_KEY_FILE_NAME_BYTES so the whole segment (with the
+ * version ID before it and part suffixes after it) stays within the 255-byte
+ * name limit of common filesystems. A shortened name keeps its start, a short
+ * hash of the full name and its extension; the full name stays in the files row.
+ */
+function keyFileName(fileName: string): string {
+  const sanitized = sanitizeStorageKeySegment(fileName);
+  const encoder = new TextEncoder();
+  if (encoder.encode(sanitized).length <= MAX_KEY_FILE_NAME_BYTES) return sanitized;
+  const extension = /\.[A-Za-z0-9]{1,10}$/.exec(sanitized)?.[0] ?? '';
+  const suffix = `~${fnv1a(sanitized)}${extension}`;
+  let head = '';
+  for (const char of sanitized) {
+    if (encoder.encode(head + char).length + suffix.length > MAX_KEY_FILE_NAME_BYTES) break;
+    head += char;
+  }
+  // Never end the head inside a percent-escape.
+  head = head.replace(/%[0-9A-F]?$/, '');
+  return `${head}${suffix}`;
 }
 
 /**
@@ -139,7 +175,7 @@ export function computeStoragePath(
   if (ctx.tenantId) parts.push(sanitizeStorageKeySegment(ctx.tenantId));
   if (ctx.principalId) parts.push(sanitizeStorageKeySegment(ctx.principalId));
   parts.push(sanitizeStorageKeySegment(ctx.fileId));
-  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${sanitizeStorageKeySegment(ctx.fileName)}`);
+  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${keyFileName(ctx.fileName)}`);
   return parts.join('/');
 }
 
