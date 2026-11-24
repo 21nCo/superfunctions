@@ -783,10 +783,8 @@ export async function publish(
   try {
     return await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal);
   } finally {
-    for (const staged of all) {
-      // A close failure (nothing is left to flush: each temp was fsynced) never changes the verdict.
-      for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch { /* ignored */ }
-    }
+    // A close failure (each temp was fsynced) never changes the verdict.
+    for (const staged of all) for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch { /* ignored */ }
     if (all.length > 0) onPublishing?.(false);
   }
 }
