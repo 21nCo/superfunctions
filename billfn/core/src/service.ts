@@ -1198,6 +1198,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         providerChargeId,
         mode,
         amount,
+        currency,
         reason
       });
 

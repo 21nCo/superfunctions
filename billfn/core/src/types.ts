@@ -530,6 +530,11 @@ export interface BillFnRefundChargeInput {
   providerChargeId?: string;
   mode: BillFnRefundMode;
   amount?: number;
+  /**
+   * The currency `amount` is in and the refund is recorded in: the subscription's catalog price currency. A
+   * provider refunds a partial amount only when it is the currency the charge was paid in.
+   */
+  currency?: string;
   reason?: string;
 }
 

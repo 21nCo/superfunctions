@@ -253,6 +253,8 @@ describe('router refunds', () => {
     expect(target.request).toBeInstanceOf(Request);
     expect(env.refundCharge).toHaveBeenCalledTimes(1);
     expect(env.refundCharge.mock.calls[0][0].providerChargeId).toBe(target.providerChargeId);
+    // The provider gets the currency the host approved.
+    expect(env.refundCharge.mock.calls[0][0].currency).toBe('USD');
   });
 
   it('refuses a named charge of another subscription before asking the host', async () => {
