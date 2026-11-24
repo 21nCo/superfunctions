@@ -49,7 +49,13 @@ export const MAX_REQUEST_BODY_BYTES = 256 * 1024;
 
 /** Reads a request body as text, refusing one larger than MAX_REQUEST_BODY_BYTES before or while reading it. */
 async function readBoundedText(request: Request): Promise<string> {
-  const bytes = await readBoundedBytes(request, MAX_REQUEST_BODY_BYTES);
+  let bytes: Awaited<ReturnType<typeof readBoundedBytes>>;
+  try {
+    bytes = await readBoundedBytes(request, MAX_REQUEST_BODY_BYTES);
+  } catch {
+    // The body could not be read (a stream locked by middleware, a broken connection).
+    throw createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The request body could not be read' });
+  }
   if (bytes === 'too_large') {
     throw bodyTooLarge();
   }
@@ -72,7 +78,7 @@ const MEDIA_TYPE = /^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/;
 /** application/json, or a valid type/subtype with the +json structured suffix; parameters are ignored. */
 function isJsonContentType(header: string | null) {
   // One media type only: a combined header (`application/json; charset=utf-8, text/plain`) is refused.
-  if (!header || hasUnquotedComma(header)) {
+  if (!header || !isSingleMediaType(header)) {
     return false;
   }
   const essence = header.split(';')[0]!.trim().toLowerCase();
@@ -83,8 +89,11 @@ function isJsonContentType(header: string | null) {
   return essence === 'application/json' || (subtype.endsWith('+json') && subtype.length > '+json'.length);
 }
 
-/** Whether a header has a comma outside a quoted parameter value (with backslash escapes inside quotes). */
-function hasUnquotedComma(header: string) {
+/**
+ * Whether a header holds one well-formed media type: no comma outside a quoted parameter value, and every quoted
+ * value closed (backslash escapes inside quotes).
+ */
+function isSingleMediaType(header: string) {
   let quoted = false;
   for (let index = 0; index < header.length; index += 1) {
     const char = header[index];
@@ -93,10 +102,10 @@ function hasUnquotedComma(header: string) {
     } else if (char === '"') {
       quoted = !quoted;
     } else if (char === ',' && !quoted) {
-      return true;
+      return false;
     }
   }
-  return false;
+  return !quoted;
 }
 
 async function parseJsonBody<T>(request: Request): Promise<T> {

@@ -120,6 +120,21 @@ describe('error details returned to callers', () => {
     expect(payload.error.details).toBeUndefined();
   });
 
+  it('leaves out a plain object with its own serializer', async () => {
+    const env = await setup();
+    const response = { data: 'serializer-internal', status: 502 };
+    Object.defineProperty(response, 'toJSON', { value: () => ({ status: 502 }), enumerable: false });
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, response }
+    });
+
+    const answer = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+
+    expect(await answer.text()).not.toContain('serializer-internal');
+  });
+
   it('leaves out objects in the details that are not plain data', async () => {
     const env = await setup();
     class ProviderResponse {
@@ -157,7 +172,7 @@ describe('error details returned to callers', () => {
 });
 
 describe('request content type', () => {
-  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x', 'application/json; charset=utf-8, text/plain'])(
+  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x', 'application/json; charset=utf-8, text/plain', 'application/json; profile="unfinished'])(
     'refuses a write sent as %j before acting on it',
     async (contentType) => {
       const env = await setup();
@@ -310,6 +325,22 @@ describe('partly read bodies', () => {
 
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: { message: string } }).error.message).toContain('already read');
+  });
+});
+
+describe('unreadable bodies', () => {
+  it('answers 400 when middleware holds a lock on the body', async () => {
+    const env = await setup();
+    const request = new Request('https://billfn.example.test/billfn/checkouts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planKey: 'pro', provider: 'dodo', interval: 'month' })
+    });
+    request.body!.getReader();
+
+    const response = await env.billfn.router.handle(request);
+
+    expect(response.status).toBe(400);
   });
 });
 

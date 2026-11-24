@@ -39,6 +39,11 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   if (prototype !== Array.prototype && prototype !== Object.prototype && prototype !== null) {
     return undefined;
   }
+  // An object with its own serializer (even a non-enumerable toJSON) decides what it shows; it is left out rather
+  // than rebuilt without it.
+  if (!Array.isArray(value) && typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+    return undefined;
+  }
   // Details are small; anything nested deeper than this is not returned at all.
   if (depth >= 8) {
     return undefined;

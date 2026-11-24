@@ -251,7 +251,14 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
       }
       // Provider webhooks are a few kilobytes; a larger body is refused, without reading the rest of it, before any
       // owner lookup.
-      const bytes = await readBoundedBytes(request, MAX_INGRESS_BODY_BYTES);
+      let bytes: Awaited<ReturnType<typeof readBoundedBytes>>;
+      try {
+        bytes = await readBoundedBytes(request, MAX_INGRESS_BODY_BYTES);
+      } catch {
+        return errorResponse(
+          createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The webhook body could not be read' })
+        );
+      }
       if (bytes === 'too_large') {
         return errorResponse(tooLarge());
       }
