@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, lstat, stat, unlink, realpath } from 'node:fs/promises';
+import { mkdir, lstat, stat, unlink, realpath, rename } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { dirname, join, normalize, resolve, isAbsolute, relative } from 'node:path';
 import type { StorageAdapter, StorageAdapterCapabilities, StorageObjectStat } from '@superfunctions/storage';
 import { createNotFoundError } from '@superfunctions/storage/internal/errors';
@@ -152,7 +153,11 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         }
       }
 
-      const nodeStream = createWriteStream(filePath);
+      // Written to a temporary file next to the target and renamed over it on
+      // close, so an aborted or failed upload never leaves partial bytes at the
+      // key, and a reader never sees a half-written object.
+      const tempPath = `${filePath}.upload-${randomBytes(6).toString('hex')}.tmp`;
+      const nodeStream = createWriteStream(tempPath);
       let streamError: Error | null = null;
       nodeStream.on('error', (err) => {
         streamError = err;
@@ -199,11 +204,17 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
             };
             const onFinish = () => {
               cleanup();
-              resolve(undefined);
+              rename(tempPath, filePath).then(
+                () => resolve(undefined),
+                async (err: unknown) => {
+                  await unlink(tempPath).catch(() => {});
+                  reject(err);
+                },
+              );
             };
             const onError = (err: Error) => {
               cleanup();
-              reject(err);
+              unlink(tempPath).catch(() => {}).finally(() => reject(err));
             };
             nodeStream.once('finish', onFinish);
             nodeStream.once('error', onError);
@@ -211,7 +222,18 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
           });
         },
         abort(reason) {
-          nodeStream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+          // Resolves once the stream is closed and its temporary file removed.
+          return new Promise<void>((resolve) => {
+            const done = () => {
+              unlink(tempPath).catch(() => {}).finally(() => resolve());
+            };
+            if (nodeStream.closed) {
+              done();
+              return;
+            }
+            nodeStream.once('close', done);
+            nodeStream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+          });
         },
       });
     },

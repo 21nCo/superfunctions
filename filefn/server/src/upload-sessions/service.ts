@@ -1580,7 +1580,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      // Sessions created before the 10,000-part cap may declare more parts;
+      // parts past it would be outside cleanup.
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
       const partLimit = maxPartBytes(session, partNumber);
       if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
         throw errors.invalidRequest('contentLength must be a positive integer', { field: 'contentLength' });
@@ -1641,7 +1643,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      // Sessions created before the 10,000-part cap may declare more parts;
+      // parts past it would be outside cleanup.
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
       // Counted while streaming: the declared Content-Length is only an early refusal.
       const partLimit = maxPartBytes(session, partNumber);
@@ -1756,7 +1760,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      // Sessions created before the 10,000-part cap may declare more parts;
+      // parts past it would be outside cleanup.
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
       const existingPart = await db.findOne<{ partNumber: number; etag: string; size: number }>({
@@ -1972,6 +1978,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           session.storageUploadId
         ) {
           if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+          // Checked before storage is finalized (sessions created before init
+          // checked it): the size is verified with statObject below.
+          if (typeof storage.statObject !== 'function') {
+            throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+          }
           try {
             await storage.completeMultipartUpload({
               key: session.storageKey,

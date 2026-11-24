@@ -214,9 +214,6 @@ describe('declared upload size is enforced (FILE-30 F-05)', () => {
     await expect(fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, stream, 0, alice)).rejects.toMatchObject({
       code: 'FILEFN_PART_TOO_LARGE',
     });
-    // Let the aborted local write stream settle (it opens its file
-    // asynchronously), as it has long before a real abort or expiry.
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await fileFn.abortUploadSession({ uploadSessionId: session.uploadSessionId }, alice);
     const files = await readdir(rootDir, { recursive: true, withFileTypes: true });
     expect(files.filter((entry) => entry.isFile())).toEqual([]);

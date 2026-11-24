@@ -262,6 +262,25 @@ describe('@superfunctions/storage-local', () => {
     });
   });
 
+  describe('upload streams', () => {
+    it('makes the object visible only on close and leaves nothing on abort', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      const stream = await adapter.openUploadStream!({ key: 'a/part1' });
+      const writer = stream.getWriter();
+      await writer.write(new Uint8Array([1, 2, 3]));
+      await expect(adapter.statObject({ key: 'a/part1' })).rejects.toThrow();
+      await writer.abort(new Error('too large'));
+      const { readdir } = await import('node:fs/promises');
+      expect(await readdir(join(testDir, 'a'))).toEqual([]);
+
+      const ok = (await adapter.openUploadStream!({ key: 'a/part1' })).getWriter();
+      await ok.write(new Uint8Array([1, 2, 3]));
+      await ok.close();
+      expect((await adapter.statObject({ key: 'a/part1' })).size).toBe(3);
+      expect(await readdir(join(testDir, 'a'))).toEqual(['part1']);
+    });
+  });
+
   describe('Security - Path traversal prevention', () => {
     it('should prevent path traversal with ../', async () => {
       const adapter = createLocalStorageAdapter({ rootDir: testDir });
