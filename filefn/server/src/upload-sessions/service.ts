@@ -1297,7 +1297,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         });
         // A row found under the scoped value must be this caller's (a legacy
         // raw key could equal it); otherwise it is not this caller's session.
-        if (existing && (existing.ownerId !== ctx.principalId || (existing.tenantId ?? null) !== (ctx.tenantId ?? null))) {
+        if (existing && (existing.ownerId !== ctx.principalId || (existing.tenantId || null) !== (ctx.tenantId || null))) {
           throw errors.idempotencyConflict();
         }
         if (!existing && !SCOPED_IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
@@ -1312,7 +1312,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           if (
             legacy &&
             legacy.ownerId === ctx.principalId &&
-            (legacy.tenantId ?? null) === (ctx.tenantId ?? null)
+            (legacy.tenantId || null) === (ctx.tenantId || null)
           ) {
             existing = legacy;
           }

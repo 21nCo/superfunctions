@@ -137,6 +137,21 @@ describe('anonymous uploads and idempotency (FILE-30 F-02, F-11, F-18)', () => {
     expect(bob.json.data.uploadSessionId).not.toBe(first.json.data.uploadSessionId);
   });
 
+  it('replays for a caller whose tenant ID is an empty string', async () => {
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'private', contentTypes: ['text/plain'], visibility: 'private' }],
+      auth: { resolveSession: async () => ({ principalId: 'alice', tenantId: '' }) },
+    });
+    const body = { policy: 'private', fileName: 'a.txt', size: 3, mimeType: 'text/plain' };
+    const first = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'empty-tenant' } });
+    const replay = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'empty-tenant' } });
+    expect(replay.status).toBe(200);
+    expect(replay.json.data.uploadSessionId).toBe(first.json.data.uploadSessionId);
+  });
+
   it('never treats a raw key shaped like a scoped one as legacy', async () => {
     const { fileFn, database } = makeFileFn();
     const body = { policy: 'private', fileName: 'a.txt', size: 3, mimeType: 'text/plain' };
