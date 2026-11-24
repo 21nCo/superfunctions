@@ -105,6 +105,25 @@ describe('sandbox purchases in a production deployment', () => {
     expect(event!.billingState).toMatchObject({ subscriptionStatus: 'active', providerSubscriptionId: 'orig_1' });
   });
 
+  it.each(['Xcode', 'LocalTesting'])('ignores a %s notification like a sandbox one', async (environment) => {
+    const verified = renewal('Production');
+    verified.data.environment = environment as 'Production';
+
+    const [event] = (await notification(verified))!;
+
+    expect(event!.billingState).toBeUndefined();
+  });
+
+  it.each([
+    ['EXPIRED', undefined, 'expired'],
+    ['REVOKE', undefined, 'canceled'],
+    ['REFUND', undefined, 'canceled']
+  ])('still applies a sandbox %s notification, which only takes access away', async (notificationType, subtype, expected) => {
+    const [event] = (await notification({ ...renewal('Sandbox'), notificationType, subtype }))!;
+
+    expect(event!.billingState).toMatchObject({ subscriptionStatus: expected, providerSubscriptionId: 'orig_1' });
+  });
+
   it('applies a production notification by default', async () => {
     const [event] = (await notification(renewal('Production')))!;
 
@@ -135,7 +154,61 @@ describe('Apple billing retry', () => {
   });
 });
 
+describe('renewal preference notifications', () => {
+  it('keeps a subscription in billing retry unentitled when the customer turns auto-renew off', async () => {
+    const failed = { ...renewal('Production'), notificationType: 'DID_FAIL_TO_RENEW', data: { ...renewal('Production').data, status: 3 } };
+    const autoRenewOff = {
+      ...renewal('Production'),
+      notificationType: 'DID_CHANGE_RENEWAL_STATUS',
+      subtype: 'AUTO_RENEW_DISABLED',
+      data: { ...renewal('Production').data, status: 3 }
+    };
+
+    const [first] = (await notification(failed))!;
+    const [second] = (await notification(autoRenewOff))!;
+
+    expect(first!.billingState?.subscriptionStatus).toBe('paused');
+    expect(second!.billingState).toMatchObject({ subscriptionStatus: 'paused', autoRenew: false });
+  });
+
+  it.each([
+    [1, 'active'],
+    [2, 'expired'],
+    [4, 'grace'],
+    [5, 'canceled']
+  ])('takes the status of a renewal preference change from data.status %i', async (status, expected) => {
+    const [event] = (await notification({ ...renewal('Production'), notificationType: 'DID_CHANGE_RENEWAL_PREF', data: { ...renewal('Production').data, status } }))!;
+
+    expect(event!.billingState?.subscriptionStatus).toBe(expected);
+  });
+
+  it('records no state for a renewal preference change without data.status', async () => {
+    const [event] = (await notification({ ...renewal('Production'), notificationType: 'DID_CHANGE_RENEWAL_STATUS', subtype: 'AUTO_RENEW_ENABLED' }))!;
+
+    expect(event!.billingState).toBeUndefined();
+  });
+
+  it('takes the status of another notification type from data.status', async () => {
+    const [event] = (await notification({ ...renewal('Production'), notificationType: 'PRICE_INCREASE', data: { ...renewal('Production').data, status: 3 } }))!;
+
+    expect(event!.billingState?.subscriptionStatus).toBe('paused');
+  });
+});
+
 describe('StoreKit paths built from references', () => {
+  it('refuses a reference that cannot be encoded as invalid input', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    await expect(
+      provider(fetchMock).restorePurchases!({
+        billingAccount: { id: 'ba_user_1' },
+        price: { kind: 'subscription', providerProductId: 'apple.pro.month' },
+        purchaseReference: 'txn_\ud800'
+      } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['../transactions/2000000123456789', '..%2Ftransactions%2F2000000123456789'],
     ['x/../../v2/history/2000000999?revoked=true', 'x%2F..%2F..%2Fv2%2Fhistory%2F2000000999%3Frevoked%3Dtrue']
