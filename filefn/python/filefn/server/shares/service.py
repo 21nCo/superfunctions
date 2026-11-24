@@ -302,9 +302,12 @@ class SharesService:
         else:
             can_stream = hasattr(self.storage, "open_download_stream") and capabilities.get("proxyStreamingDownload") is not False
         can_sign = hasattr(self.storage, "sign_download_url") and bool(capabilities.get("signedDownloadUrls"))
-        if can_sign and (self._signed_url_lifetime(share) is not None or not can_stream):
+        if can_sign:
             # Counted first, then signed with the lifetime left at that moment; a
-            # failed signing gives the count back.
+            # failed signing gives the count back. Under a second left, the link
+            # counts as expired: the Python proxy result carries the stored
+            # content type without the TypeScript proxy's protective headers, so
+            # a working signer never hands a recipient over to it.
             written = await self._reserve_download_cancel_safe(token_hash)
             lifetime = self._signed_url_lifetime(share)
             result: Optional[Dict[str, Any]] = None
@@ -337,6 +340,7 @@ class SharesService:
                         )
             else:
                 await asyncio.shield(self._release_download(token_hash, written))
+                raise errors.share_expired()
             if result is not None:
                 # Revoked or expired while signing: the URL is withheld. A failed
                 # or cancelled read withholds it too, and gives the count back.

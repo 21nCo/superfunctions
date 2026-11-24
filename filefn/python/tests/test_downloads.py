@@ -898,7 +898,7 @@ async def test_share_signed_url_never_outlives_the_link_and_bad_stored_expiry_fa
 
 
 @pytest.mark.asyncio
-async def test_share_proxy_fallback_only_for_a_link_that_is_still_valid() -> None:
+async def test_share_with_under_a_second_left_is_expired_on_signing_storage() -> None:
     from filefn.server import errors
 
     db = FakeDB()
@@ -909,9 +909,11 @@ async def test_share_proxy_fallback_only_for_a_link_that_is_still_valid() -> Non
     created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001"), _ctx("user_123"))
     for row in db.tables["fileShares"]:
         row["expiresAt"] = (datetime.now(timezone.utc) + timedelta(milliseconds=500)).isoformat()
-    # Under a second left: the checked proxy serves it.
-    descriptor = await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
-    assert descriptor["url"].startswith("/proxy/share-links/")
+    # Under a second left: expired, not handed over to the proxy, and not counted.
+    with pytest.raises(errors.FileFnError) as last_second:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert last_second.value.code == "FILEFN_SHARE_EXPIRED"
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
 
     for row in db.tables["fileShares"]:
         row["expiresAt"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
