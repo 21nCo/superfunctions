@@ -9,7 +9,7 @@
 export const MAX_INPUT_PIXELS = 100_000_000;
 
 /** sharp options for decoding untrusted input. */
-export const SHARP_INPUT_OPTIONS = { limitInputPixels: MAX_INPUT_PIXELS } as const;
+export const SHARP_INPUT_OPTIONS = Object.freeze({ limitInputPixels: MAX_INPUT_PIXELS });
 
 function startsWith(bytes: Uint8Array, signature: ReadonlyArray<number>, offset = 0): boolean {
   if (bytes.length < offset + signature.length) return false;
