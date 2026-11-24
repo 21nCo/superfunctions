@@ -5533,21 +5533,22 @@ function checkoutReferenceMatchesSession(
   // The adapter's providerProductId may name the catalog price itself (see BillFnVerifiedBillingState).
   return (
     sessionPrice !== undefined &&
-    (providerReportedProducts(state).includes(sessionPrice.providerProductId) ||
+    (providerReportedProducts(provider, state).includes(sessionPrice.providerProductId) ||
       state.providerProductId === sessionPrice.priceId)
   );
 }
 
 /**
  * The products a provider's own record says the event paid for: the state's product, and the product fields of
- * its raw record (its transaction's for Apple, its cart's for a Dodo payment). Metadata is never read.
+ * its raw record (its transaction's for Apple, its cart's for a Dodo one-time payment). Metadata is never read.
  */
-function providerReportedProducts(state: VerifiedBillingState | undefined): string[] {
+function providerReportedProducts(provider: BillingProviderName, state: VerifiedBillingState | undefined): string[] {
   const raw = asRecord(state?.raw);
   const records = [raw, asRecord(raw?.transaction)];
   // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
   // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
-  const cart = !chargesSubscription(state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+  const cart =
+    provider === 'dodo' && !chargesSubscription(state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
   return [
     state?.providerProductId,
     ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
@@ -5614,7 +5615,7 @@ async function resolveProviderEventPriceReference(
       Array.isArray(rawCart) &&
       rawCart.length > 0 &&
       chargesSubscription(event.billingState) &&
-      providerReportedProducts(event.billingState).length === 0;
+      providerReportedProducts(provider, event.billingState).length === 0;
     const references = [
       event.billingState?.providerProductId,
       staleCartHint ? undefined : event.priceId,
@@ -5625,7 +5626,7 @@ async function resolveProviderEventPriceReference(
     // When the provider reported what the event paid for, a price id (which can come from metadata) selects only
     // a catalog price of this provider with that id that sells a reported product; the reported products then
     // select by product id alone, so neither can stand in for the other.
-    const paidProducts = providerReportedProducts(event.billingState);
+    const paidProducts = providerReportedProducts(provider, event.billingState);
     const resolved =
       paidProducts.length === 0
         ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)

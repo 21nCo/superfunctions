@@ -458,3 +458,55 @@ describe('event prices named outside the provider record', () => {
     expect((await env.entitlements())?.subscription?.planKey).toBe('enterprise');
   });
 });
+
+describe('product carts of other providers', () => {
+  it('does not read a non-Dodo record\'s product_cart as the product paid for', async () => {
+    const polarCatalog: BillFnCatalog = {
+      plans: catalog.plans.map((plan) => ({
+        ...plan,
+        prices: plan.prices.map((price) => ({ ...price, provider: 'polar' as const, priceId: `${price.priceId}_polar` }))
+      }))
+    };
+    const polar: BillFnProviderAdapter = {
+      provider: 'polar',
+      capabilities: {
+        createCheckout: false,
+        verifyCheckout: false,
+        cancelSubscription: false,
+        syncSubscription: false,
+        restorePurchases: false,
+        webhookIngestion: true
+      },
+      async parseWebhook() {
+        return [
+          {
+            providerEventId: 'evt_polar',
+            type: 'order.paid',
+            signatureVerified: true,
+            occurredAt: '2026-11-20T00:00:00.000Z',
+            // The adapter names the main purchase of a one-time order; its record lists only an add-on in a cart.
+            priceId: 'price_enterprise_month_polar',
+            providerChargeId: 'order_polar',
+            billingState: {
+              subscriptionStatus: 'active',
+              checkoutStatus: 'succeeded',
+              providerChargeId: 'order_polar',
+              autoRenew: false,
+              raw: { product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+            },
+            raw: {}
+          }
+        ];
+      }
+    };
+    const billfn = createBillFn({ db: memoryAdapter({ debug: false }), catalog: polarCatalog, providers: { polar } });
+    await billfn.quotaProvider.recordUsage({ ...ATTACKER, bytes: 0 });
+
+    const handled = await billfn.handleWebhook({ provider: 'polar', rawBody: '{}', headers: new Headers() });
+
+    expect(handled.ok).toBe(true);
+    const entitlements = await billfn.getEntitlements(ATTACKER);
+    expect(entitlements.ok && entitlements.data.subscription?.planKey).toBe('enterprise');
+  });
+});
+
