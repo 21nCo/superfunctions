@@ -5547,17 +5547,23 @@ function providerReportedProducts(provider: BillingProviderName, state: Verified
   const records = [raw, asRecord(raw?.transaction)];
   // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
   // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
-  // Only a payment Dodo says is one-time (a null subscription_id, or a subscription_ids list) is read by its cart.
-  const saysOneTime = raw !== null && (raw.subscription_id === null || Array.isArray(raw.subscription_ids));
-  const cart =
-    provider === 'dodo' && saysOneTime && !chargesSubscription(state) && Array.isArray(raw?.product_cart)
-      ? raw.product_cart
-      : [];
+  const cart = dodoCartNamesProduct(provider, state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
   return [
     state?.providerProductId,
     ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
     ...cart.map((item) => readString(asRecord(item) ?? {}, 'product_id'))
   ].filter((product): product is string => typeof product === 'string' && product.length > 0);
+}
+
+/**
+ * Whether a record's Dodo product_cart names the product paid for: only for a Dodo payment that says it is one-time
+ * (a null subscription_id, or a subscription_ids list) and charges no subscription. A cart lists a payment's one-time
+ * items, so it says nothing about a subscription's plan, nor about a payment that does not say which it is.
+ */
+function dodoCartNamesProduct(provider: BillingProviderName, state: VerifiedBillingState | undefined): boolean {
+  const raw = asRecord(state?.raw);
+  const saysOneTime = raw !== null && (raw.subscription_id === null || Array.isArray(raw.subscription_ids));
+  return provider === 'dodo' && saysOneTime && !chargesSubscription(state);
 }
 
 /** Whether a record charges a subscription: it names one, or (Dodo) lists subscription ids or is multi-subscription. */
@@ -5611,14 +5617,14 @@ async function resolveProviderEventPriceReference(
     const raw = asRecord(event.billingState?.raw);
     // A provider record may carry its product on the transaction it describes (Apple).
     const records = [raw, asRecord(raw?.transaction)];
-    // A Dodo subscription payment that reports no product names its plan nowhere: a hint the adapter stored
-    // from its cart (before cart items stopped counting for subscription payments) is not used.
+    // A Dodo payment whose cart does not name its product, and that reports no product, names its plan nowhere: a
+    // hint an older adapter stored from its cart is not used.
     const rawCart = asRecord(event.billingState?.raw)?.product_cart;
     const staleCartHint =
       provider === 'dodo' &&
       Array.isArray(rawCart) &&
       rawCart.length > 0 &&
-      chargesSubscription(event.billingState) &&
+      !dodoCartNamesProduct(provider, event.billingState) &&
       providerReportedProducts(provider, event.billingState).length === 0;
     const references = [
       event.billingState?.providerProductId,

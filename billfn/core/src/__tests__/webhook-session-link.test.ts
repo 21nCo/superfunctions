@@ -476,6 +476,26 @@ describe('event prices named outside the provider record', () => {
 
     expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
+
+  it('ignores a stored cart hint of a Dodo payment that does not say whether it charges a subscription', async () => {
+    const env = setup();
+    await env.openCheckout('enterprise');
+
+    await env.deliver({
+      priceId: 'price_starter_month',
+      providerChargeId: 'pay_unclassified_stored',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerChargeId: 'pay_unclassified_stored',
+        autoRenew: false,
+        raw: { product_cart: [{ product_id: 'pdt_cheap_not_in_catalog' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
+  });
 });
 
 describe('product carts of other providers', () => {
