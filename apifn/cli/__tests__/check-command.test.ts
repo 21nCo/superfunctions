@@ -64,9 +64,10 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
  * (the backup takes its copy path), a new .bak file is displaced right after it is created, or
  * the lookup of a .bak whose name contains `failBackupLookup` fails, or another writer takes a .bak
  * name (`occupyBackup` bytes) right before the run creates it, or every close reports EIO after
- * closing (`failClose`), or the lookup of a staged temp file fails (`failTempLookup`).
+ * closing (`failClose`), or the lookup of a staged temp file fails (`failTempLookup`), or the
+ * linked file's mode changes right before the link (`chmodBeforeLink`).
  */
-const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false, failTempLookup: false, partialBackup: false }));
+const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false, failTempLookup: false, partialBackup: false, chmodBeforeLink: 0 }));
 /** Descriptors of .bak files opened while `partialBackup` is on: a write through one stops halfway with ENOSPC. */
 const backupFds = vi.hoisted(() => new Set<number>());
 vi.mock("node:fs", async (importOriginal) => {
@@ -81,6 +82,7 @@ vi.mock("node:fs", async (importOriginal) => {
     ...actual,
     linkSync: ((...args: Parameters<typeof actual.linkSync>) => {
       if (fsFaults.noLink) throw Object.assign(new Error("EXDEV: injected"), { code: "EXDEV" });
+      if (fsFaults.chmodBeforeLink) actual.chmodSync(args[0], fsFaults.chmodBeforeLink);
       return actual.linkSync(...args);
     }) as typeof actual.linkSync,
     copyFileSync: ((...args: Parameters<typeof actual.copyFileSync>) => {
@@ -2924,25 +2926,27 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     }
   });
 
-  // Vitest rewrites import() in the module under test, so a real native import needs a plain Node process.
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  it.skipIf(major < 22 || (major === 22 && minor < 6))("a native import() of a CommonJS router gets jiti's interop in a plain Node process (PR round 3)", async () => {
+  it("beforeImport receives the router's file under JITI_ALIAS, and under JITI_TRY_NATIVE with an ES module router (PR round 4)", async () => {
     const dir = realpathSync(path.join(await fixtures(), "base"));
-    await writeFile(path.join(dir, "router.cjs"), 'const key = ["rou", "ter"].join("");\nmodule.exports = { [key]: { getRoutes() { return [{ meta: { operationId: "nativeCjs" } }]; } } };\n');
-    // An ES module default router with its own `default` method and an `__esModule` export stays the router.
-    await writeFile(path.join(dir, "router.mjs"), 'export const __esModule = true;\nexport default { default() {}, getRoutes() { return [{ meta: { operationId: "nativeEsm" } }]; } };\n');
-    // A default router's unused, throwing `router` getter is never read, and the loaded module is never evaluated again.
-    // A named router beside a default object whose `default` getter throws: the default is never unwrapped.
-    await writeFile(path.join(dir, "named.mjs"), 'export const __esModule = true;\nexport const router = { getRoutes() { return [{ meta: { operationId: "nativeNamed" } }]; } };\nexport default { get default() { throw new Error("unused default"); } };\n');
-    await writeFile(path.join(dir, "getter.mjs"), 'globalThis.loads = (globalThis.loads ?? 0) + 1;\nexport default { get router() { throw new Error("unused getter"); }, getRoutes() { return [{ meta: { operationId: `nativeGetter${globalThis.loads}` } }]; } };\n');
-    const loader = pathToFileURL(path.join(import.meta.dirname, "..", "src", "utils", "router-loader.ts")).href;
-    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs", "./named.mjs", "./getter.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
-    const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
-      cwd: dir,
-      env: { ...process.env, JITI_TRY_NATIVE: "true" },
-      encoding: "utf8",
-    });
-    expect(out.trim().split("\n")).toEqual(["nativeCjs", "nativeEsm", "nativeNamed", "nativeGetter1"]);
+    const route = (id: string) =>
+      `export default { getRoutes() { return [{ method: "GET", path: "/${id}", handler: async () => Response.json({}), meta: { operationId: "${id}" } }]; } };\n`;
+    await mkdir(path.join(dir, "src", "generated"), { recursive: true });
+    await writeFile(path.join(dir, "src", "router.ts"), route("aliasSource"));
+    await writeFile(path.join(dir, "src", "generated", "router.ts"), route("aliasSelected"));
+    await writeFile(path.join(dir, "router.mjs"), route("nativeEsm"));
+    const seen: string[] = [];
+    try {
+      vi.stubEnv("JITI_ALIAS", JSON.stringify({ [path.join(dir, "src")]: path.join(dir, "src", "generated") }));
+      const aliased = await loadRouterModule("./src/router", dir, (file) => seen.push(file));
+      vi.unstubAllEnvs();
+      vi.stubEnv("JITI_TRY_NATIVE", "true");
+      const native = await loadRouterModule("./router.mjs", dir, (file) => seen.push(file));
+      expect(seen).toEqual([path.join(dir, "src", "generated", "router.ts"), path.join(dir, "router.mjs")]);
+      expect([aliased.file, native.file]).toEqual(seen);
+      expect([aliased, native].map((loaded) => loaded.router.getRoutes()[0].meta?.operationId)).toEqual(["aliasSelected", "nativeEsm"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -3245,6 +3249,25 @@ describe("apifn check: directory requirements and created directories survive bi
     });
     expect(code).toBe(2);
     expect(statSync(path.join(dir, "new")).isDirectory()).toBe(true);
+  });
+
+  it("a created directory that is displaced, or that rmdir refuses, is named on stderr and nothing claims no output was kept (PR round 4)", async () => {
+    const displaced = await stagedFailure((created, root) => {
+      if (path.basename(created) !== "deep") return;
+      renameSync(path.join(root, "new"), path.join(root, "moved"));
+      execFileSync("mkdir", [path.join(root, "new")]);
+      throw new Error("injected staging failure");
+    });
+    expect(displaced.errors).toContain(`${path.join(displaced.dir, "new")}, a directory apifn check created, and those it created above it were left as they are: it is no longer`);
+    const refused = await stagedFailure((created) => {
+      if (path.basename(created) !== "deep") return;
+      writeFileSync(path.join(created, "foreign.txt"), "kept\n");
+      throw new Error("injected staging failure");
+    });
+    expect(refused.code).toBe(2);
+    expect(refused.errors).toContain(`${path.join(refused.dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: ENOTEMPTY`);
+    expect(readFileSync(path.join(refused.dir, "new", "deep", "foreign.txt"), "utf8")).toBe("kept\n");
+    for (const { errors } of [displaced, refused]) expect(errors).not.toContain("No output it wrote is kept");
   });
 });
 
@@ -4639,28 +4662,7 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     expect({ code: result.code, base: result.report.base.status }).toEqual({ code: 1, base: "compared" });
   });
 
-  it.skipIf(POSIX_ONLY)("a .git replaced after discovery never supplies the baseline: exit 2 (PR round 2)", async () => {
-    const { root, service } = await breakingAtHead();
-    const other = await tempDir("apifn-check-replaced-repo-");
-    git(other, "init", "-q");
-    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
-    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
-    git(other, "add", "-A");
-    git(other, "commit", "-q", "-m", "head contract");
-    const shimDir = await tempDir("apifn-check-git-");
-    const shim = path.join(shimDir, "git");
-    await shellScript(
-      shim,
-      // After discovery and the spec's own work tree (one rev-parse call each), another repository takes the .git name.
-      `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 2 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
-    );
-    const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
-    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
-    expect(result.stderr).toContain("was replaced while apifn check read it");
-  });
-
-  it.skipIf(POSIX_ONLY)("a linked worktree's commondir retargeted after discovery never supplies the baseline (PR round 2)", async () => {
+  it.skipIf(POSIX_ONLY)("a linked worktree's commondir retargeted after discovery never supplies the baseline (PR rounds 2, 4)", async () => {
     const { root } = await breakingAtHead();
     const linked = path.join(await tempDir("apifn-check-linked-"), "wt");
     git(root, "worktree", "add", "-q", "--detach", linked, "HEAD");
@@ -4680,67 +4682,11 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
       `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
         `if [ $n -eq 2 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
     );
-    const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
-    // The commondir discovery read is bound (PR round 3 delta): its retarget is a replaced repository.
-    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
-    expect(result.stderr).toContain("was replaced while apifn check read it");
+    const result = await withEnv("APIFN_GIT", shim, () => runJson(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
+    // GIT_COMMON_DIR stays pinned to the common directory discovered once: the original repository's baseline.
+    expect({ code: result.code, base: result.report.base.status }).toEqual({ code: 1, base: "compared" });
+    expect(result.report.breaking.length).toBeGreaterThan(0);
   });
-
-  it.skipIf(POSIX_ONLY)("a .git replaced during discovery, right after its rev-parse, exits 2 with no stdout, report or repair (PR round 3)", async () => {
-    const { root, service } = await breakingAtHead();
-    const other = await tempDir("apifn-check-discovery-repo-");
-    git(other, "init", "-q");
-    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
-    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
-    git(other, "add", "-A");
-    git(other, "commit", "-q", "-m", "head contract");
-    const spec = await readFile(path.join(service, SPEC), "utf8");
-    const shimDir = await tempDir("apifn-check-git-");
-    const shim = path.join(shimDir, "git");
-    await shellScript(
-      shim,
-      // The first call is discovery's one rev-parse: another repository takes the .git name as it returns.
-      `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 1 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
-    );
-    const result = await withEnv("APIFN_GIT", shim, () =>
-      run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD", "--write", "--report", "report.md"], service)
-    );
-    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
-    expect(result.stderr).toContain("was replaced while apifn check read it");
-    expect(existsSync(path.join(service, "report.md"))).toBe(false);
-    expect(await readFile(path.join(service, SPEC), "utf8")).toBe(spec);
-    expect(await readFile(path.join(shimDir, "n"), "utf8")).toBe("1\n");
-  });
-
-  for (const change of ["rewritten in place", "whose git directory is replaced", "a symlink whose target is replaced", "with CRLF whose git directory is replaced"] as const) {
-    it.skipIf(POSIX_ONLY)(`a .git file ${change} during discovery exits 2 with no stdout (PR round 3 delta)`, async () => {
-      const { root, service } = await breakingAtHead();
-      const external = path.join(await tempDir("apifn-check-gitdir-"), "repo.git");
-      await rename(path.join(root, ".git"), external);
-      if (change === "a symlink whose target is replaced") await symlink(external, path.join(root, ".git"));
-      else await writeFile(path.join(root, ".git"), `gitdir: ${external}${change.includes("CRLF") ? "\r" : ""}\n`);
-      const other = await tempDir("apifn-check-gitfile-other-");
-      git(other, "init", "-q");
-      await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
-      await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
-      git(other, "add", "-A");
-      git(other, "commit", "-q", "-m", "head contract");
-      const shimDir = await tempDir("apifn-check-git-");
-      const shim = path.join(shimDir, "git");
-      // An in-place rewrite keeps the .git file's inode; a replaced git directory keeps the .git file as it is.
-      const swap = change === "rewritten in place" ? `printf 'gitdir: %s\\n' '${path.join(other, ".git")}' > '${root}/.git'` : `mv '${external}' '${external}-orig'; mv '${other}/.git' '${external}'`;
-      await shellScript(
-        shim,
-        `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-          `if [ $n -eq 1 ]; then ${swap}; fi\nexit $code`
-      );
-      const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD", "--report", "report.md"], service));
-      expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
-      expect(result.stderr).toContain("was replaced while apifn check read it");
-      expect(existsSync(path.join(service, "report.md"))).toBe(false);
-    });
-  }
 
   it.skipIf(POSIX_ONLY)("an unrelated .git FIFO above the repository is never read: the baseline is compared (PR round 3 delta)", async () => {
     const parent = await tempDir("apifn-check-fifo-parent-");
@@ -4755,15 +4701,32 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     expect(baseline.text).toBe("openapi: 3.1.0\n");
   });
 
-  it.skipIf(POSIX_ONLY)("a repository whose path holds a line feed still supplies the baseline (PR round 3 delta)", async () => {
+  it.skipIf(POSIX_ONLY)("a repository whose path holds a line feed is refused after a single rev-parse (PR round 4)", async () => {
     const root = path.join(await tempDir("apifn-check-newline-"), "repo\nline");
     await mkdir(root);
     git(root, "init", "-q");
     await writeFile(path.join(root, "spec.yml"), "openapi: 3.1.0\n");
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "spec");
-    const baseline = readSpecAtRef("HEAD", "spec.yml", path.join(realpathSync(root), "spec.yml"), root);
-    expect({ path: baseline.path, text: baseline.text }).toEqual({ path: "spec.yml", text: "openapi: 3.1.0\n" });
+    const shimDir = await tempDir("apifn-check-git-");
+    const shim = path.join(shimDir, "git");
+    await shellScript(shim, `echo x >> '${shimDir}/calls'\nexec '${realGit()}' "$@"`);
+    await withEnv("APIFN_GIT", shim, async () => {
+      expect(() => readSpecAtRef("HEAD", "spec.yml", path.join(realpathSync(root), "spec.yml"), root)).toThrow("did not print exactly three paths");
+    });
+    expect(await readFile(path.join(shimDir, "calls"), "utf8")).toBe("x\n");
+  });
+
+  it.skipIf(POSIX_ONLY)("rev-parse output other than three lines exits 2 with no second git call (PR round 4)", async () => {
+    const { service } = await breakingAtHead();
+    const shimDir = await tempDir("apifn-check-git-");
+    const shim = path.join(shimDir, "git");
+    await shellScript(shim, `echo x >> '${shimDir}/calls'\n'${realGit()}' "$@"; code=$?\ncase "$*" in *--show-toplevel*) echo extra;; esac\nexit $code`);
+    const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD", "--report", "report.md"], service));
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("did not print exactly three paths");
+    expect(existsSync(path.join(service, "report.md"))).toBe(false);
+    expect(await readFile(path.join(shimDir, "calls"), "utf8")).toBe("x\n");
   });
 });
 
@@ -5013,6 +4976,21 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
     expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
+  });
+
+  it.skipIf(POSIX_ONLY)("a chmod of the destination right before its backup link stops the run and keeps the new mode (PR round 4)", async () => {
+    const dir = await staleService();
+    chmodSync(path.join(dir, "report.md"), 0o644);
+    const { code, errors, stdout } = await check(dir, (step, destination) => {
+      if (step === "backup" && destination.endsWith("report.md")) fsFaults.chmodBeforeLink = 0o600;
+    }).finally(() => {
+      fsFaults.chmodBeforeLink = 0;
+    });
+    expect({ code, stdout }).toEqual({ code: 2, stdout: "" });
+    expect(errors).toContain(`${path.join(dir, "report.md")} changed while apifn check ran`);
+    expect(statSync(path.join(dir, "report.md")).mode & 0o777).toBe(0o600);
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
 
   it("an onPublishing callback that throws after the commit keeps the verdict, the report and the repaired spec (PR round 3)", async () => {

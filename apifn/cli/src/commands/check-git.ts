@@ -27,13 +27,15 @@
  * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
  *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
  *   error, so a symlink can never make another repository's commit the baseline; it is discovered
- *   once (one rev-parse; the `.git` entries it reads are bound first and re-checked), and every later git
- *   call names its git, common and work tree directories (GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE);
+ *   discovered by git itself, once, with one `rev-parse --show-toplevel --absolute-git-dir
+ *   --git-common-dir` (output other than three lines is an error), and every later git call names
+ *   its git, common and work tree directories (GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE); a `.git`
+ *   entry replaced by a concurrent local writer during discovery is a known residual (API-28);
  * - every git failure is an error (exit 2), never a new contract.
  */
 
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { decodeUtf8 } from "./check-io.js";
 import { MAX_SPEC_BYTES } from "./check-parse.js";
@@ -380,43 +382,13 @@ export interface GitBaseline {
 
 /** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
 function workTreeOf(executable: string, dir: string): { root: string; gitDir: string; commonDir: string } | { root: null; reason: string } {
-  // All three paths come from one rev-parse, so they name one repository, never a mix of two.
-  const flags = ["--show-toplevel", "--absolute-git-dir", "--git-common-dir"];
-  const out = new Git(executable, dir).run(["rev-parse", ...flags]);
+  // All three paths come from one rev-parse, so they name one repository; any other shape is an error.
+  const out = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"]);
   if (out.code !== 0) return { root: null, reason: out.stderr.trim() || `exit status ${out.code}` };
-  const combined = out.stdout.replace(/\n$/, "");
-  let paths = combined.split("\n");
-  // A path holding a line feed is split by each flag's own output, which must join back to that one output exactly.
-  if (paths.length !== 3) paths = flags.map((flag) => new Git(executable, dir).ok(["rev-parse", flag]).replace(/\n$/, ""));
-  if (paths.join("\n") !== combined) throw new CheckUsageError(`The git repository at ${dir} changed while apifn check discovered it.`);
+  const paths = out.stdout.replace(/\n$/, "").split("\n");
+  if (paths.length !== 3) throw new CheckUsageError(`git rev-parse in ${dir} did not print exactly three paths (a path holding a line feed is not supported).`);
   const [top, gitDir, common] = paths;
   return { root: realpathSync.native(top), gitDir, commonDir: path.resolve(dir, common) };
-}
-
-/** What git's discovery reads from `dir` up to the root: each `.git` entry's identity, and for a gitfile
- * its bytes and change time, the git directory it names and that directory's commondir (and its target). */
-function discoveryEntries(dir: string): string {
-  const id = (file: string, depth = 0): string => {
-    try {
-      const stats = lstatSync(file, { bigint: true, throwIfNoEntry: false });
-      const followed = stats?.isSymbolicLink() ? statSync(file, { bigint: true, throwIfNoEntry: false }) : stats; // a symlink's target too
-      const own = stats ? `${stats.dev}:${stats.ino}>${followed?.dev}:${followed?.ino}` : "-";
-      if (!followed || depth > 2) return own;
-      if (followed.isDirectory()) return `${own}>${id(path.join(file, "commondir"), depth + 1)}`;
-      if (!followed.isFile()) return own; // never read a FIFO or device
-      const text = readFileSync(file, "utf8");
-      const named = path.basename(file) === "commondir" ? text.replace(/\r?\n$/, "") : /^gitdir: ([^]+?)\r?\n?$/.exec(text)?.[1];
-      const target = named === undefined ? null : path.resolve(path.dirname(file), named);
-      return `${own}:${followed.ctimeNs}:${text}` + (target ? `>${id(target, depth + 1)}` : "");
-    } catch {
-      return "?";
-    }
-  };
-  const ids: string[] = [];
-  for (let at = realpathSync.native(dir); ; at = path.dirname(at)) {
-    ids.push(id(path.join(at, ".git")));
-    if (ids.at(-1) !== "-" || path.dirname(at) === at) return ids.join("/"); // git stops at the first .git
-  }
 }
 
 /**
@@ -430,23 +402,11 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
   const executable = resolveGitExecutable();
-  // The .git entries discovery reads are bound before it runs: one replaced during discovery is an error.
-  const entries = discoveryEntries(cwd);
   const here = workTreeOf(executable, cwd);
   if (here.root === null) {
     throw new CheckUsageError(`--base needs a git work tree; ${cwd} is not inside one: ${here.reason}`);
   }
   const git = new Git(executable, here.root, { GIT_DIR: here.gitDir, GIT_COMMON_DIR: here.commonDir, GIT_WORK_TREE: here.root });
-  // The git and common directories discovered once must still be those directories once every read is done.
-  const bound = [here.gitDir, here.commonDir];
-  const repository = bound.map((dir) => statSync(dir, { bigint: true }));
-  const done = (baseline: GitBaseline): GitBaseline => {
-    const now = bound.map((dir) => statSync(dir, { bigint: true, throwIfNoEntry: false }));
-    if (discoveryEntries(cwd) !== entries || now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
-    return baseline;
-  };
-  // The identities are taken before any ref is resolved: a repository replaced during discovery stops here.
-  done({ commit: "", path: null, text: null });
 
   // The file the check reads and --write writes must be inside the repository, and not inside
   // another work tree nested in it (an untracked clone, or a submodule's checkout).
@@ -482,7 +442,7 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
     }
     // The blob object the walk found, by its id: nothing resolves the path a second time.
     const text = git.ok(["cat-file", "blob", lookup.entry.object], { maxBuffer: MAX_SPEC_BYTES + 1 });
-    return done({ commit, path: lookup.path, text });
+    return { commit, path: lookup.path, text };
   }
-  return done({ commit, path: null, text: null });
+  return { commit, path: null, text: null };
 }

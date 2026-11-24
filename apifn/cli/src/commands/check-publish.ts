@@ -451,15 +451,21 @@ function removeBackup(staged: Staged): string | null {
 
 /**
  * Removes the directories this run created for a destination, deepest first, while empty and
- * still the directory this run created (another process's replacement is left alone).
+ * still the directory this run created; one left behind (another process's replacement, or one
+ * rmdir refused) is named.
  */
 function removeCreatedDirs(staged: Staged): string | null {
   for (const created of staged.created) {
-    if (!stillAnchored(created)) return null;
+    // One left behind is named, with the created directories above it (gone already leaves nothing).
+    const left = `${created.dir}, a directory apifn check created, and those it created above it were left as they are`;
+    if (!stillAnchored(created)) {
+      if (currentState(created.dir) === null) continue;
+      return `${left}: it is no longer the directory apifn check created.`;
+    }
     try {
       rmdirSync(created.dir);
-    } catch {
-      return null;
+    } catch (error) {
+      return `${left}: ${errorMessage(error)}`;
     }
   }
   return null;
@@ -663,8 +669,8 @@ function backUp(staged: Staged): void {
   }
   if (staged.linked) {
     const made = currentState(backup);
-    // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
-    staged.backupState = sameContent(made, before) && sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
+    // Not the observed inode, or its mode changed (sameContent ignores mode): never this run's backup, so it is left and named.
+    staged.backupState = made?.mode === before.mode && sameContent(made, before) && sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
     if (staged.backupState === null) throw changed(staged);
     return;
   }
