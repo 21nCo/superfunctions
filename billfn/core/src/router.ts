@@ -292,23 +292,17 @@ export function createBillFnRouter(config: BillFnConfig) {
           reason?: string;
         }>(request);
         const subject = await resolveRequestSubject(request, config.auth, body.subject);
-        await ensureRefundAuthorized({
-          request,
-          subject,
-          subscriptionId: body.subscriptionId,
-          providerChargeId: body.providerChargeId,
-          mode: body.mode,
-          amount: body.amount,
-          reason: body.reason
-        });
-        const response = await service.refundCharge({
-          subject,
-          subscriptionId: body.subscriptionId,
-          providerChargeId: body.providerChargeId,
-          mode: body.mode,
-          amount: body.amount,
-          reason: body.reason
-        });
+        const response = await service.refundCharge(
+          {
+            subject,
+            subscriptionId: body.subscriptionId,
+            providerChargeId: body.providerChargeId,
+            mode: body.mode,
+            amount: body.amount,
+            reason: body.reason
+          },
+          { authorize: (target) => ensureRefundAuthorized({ request, ...target }) }
+        );
         if (!response.ok) {
           return jsonResponse(response, response.error.status);
         }

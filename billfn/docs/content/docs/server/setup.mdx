@@ -111,10 +111,15 @@ needs a subject:
 
 ## Refunds Through the Router
 
-`POST /billfn/subscriptions/refund` is off by default and answers
-`403 BILLFN_UNAUTHORIZED`. Refunds move money, so the host decides who may ask
-for one through `refunds.authorize`. It receives the request, the resolved
-subject and the refund fields, and only `true` approves:
+`POST /billfn/subscriptions/refund` is off by default. Refunds move money, so
+the host decides who may ask for one through `refunds.authorize`. The route
+first parses the body (400 when it is not a JSON object), resolves the subject
+(401 or 400 as above) and finds the subscription and charge it would refund
+(404 or 409). Only then does it call `refunds.authorize` with the request, the
+subject, and the exact target: `billingAccountId`, `subscriptionId`,
+`providerChargeId`, `mode` (default `full`), `amount` and `reason`. Anything
+but `true` answers `403 BILLFN_UNAUTHORIZED`, and without the hook every
+refund that reaches this step does:
 
 ```ts
 const billfn = createBillFn({

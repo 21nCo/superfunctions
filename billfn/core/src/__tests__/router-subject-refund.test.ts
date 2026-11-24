@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn } from '../index.js';
-import type { BillFnCatalog, BillFnConfig, BillFnProviderAdapter } from '../types.js';
+import type { BillFnCatalog, BillFnConfig, BillFnProviderAdapter, BillFnRefundAuthorizationInput } from '../types.js';
+
+type RefundAuthorizer = (input: BillFnRefundAuthorizationInput) => boolean;
 
 // Router subject resolution (fail closed without a resolver) and the refund
 // route's host authorization.
@@ -199,8 +201,8 @@ describe('router refunds', () => {
     expect(await env.refunds()).toHaveLength(0);
   });
 
-  it('refuses before asking the host when the subject cannot be resolved', async () => {
-    const authorize = vi.fn(() => true);
+  it('refuses before asking the host when there is no resolver', async () => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
     const env = await setup({ refunds: { authorize } });
 
     const { status } = await env.call('POST', '/subscriptions/refund', { subject: VICTIM });
@@ -210,22 +212,55 @@ describe('router refunds', () => {
     expect(env.refundCharge).not.toHaveBeenCalled();
   });
 
-  it('refunds when refunds.authorize approves, passing it the resolved subject and the request fields', async () => {
-    const authorize = vi.fn(() => true);
+  it('answers 400 without asking the host when the resolver returns null', async () => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
+    const env = await setup({ auth: { resolveSubject: () => null }, refunds: { authorize } });
+
+    const { status, payload } = await env.call('POST', '/subscriptions/refund', { subject: VICTIM });
+
+    expect(status).toBe(400);
+    expect(payload.error?.code).toBe('BILLFN_VALIDATION_ERROR');
+    expect(authorize).not.toHaveBeenCalled();
+    expect(env.refundCharge).not.toHaveBeenCalled();
+  });
+
+  it('refunds when refunds.authorize approves, passing it the resolved target', async () => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
     const env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });
+    const entitlements = await env.billfn.getEntitlements(CALLER);
+    const subscription = entitlements.ok ? entitlements.data.subscription : null;
 
     const { status, payload } = await env.call('POST', '/subscriptions/refund', {
       subject: VICTIM,
-      mode: 'full',
       reason: 'requested_by_customer'
     });
 
     expect(status).toBe(200);
     expect(payload.data.refund.billingAccountId).toBe('ba_user_caller');
     expect(authorize).toHaveBeenCalledTimes(1);
-    expect(authorize.mock.calls[0][0]).toMatchObject({ subject: CALLER, mode: 'full', reason: 'requested_by_customer' });
-    expect((authorize.mock.calls[0][0] as { request: unknown }).request).toBeInstanceOf(Request);
+    const [target] = authorize.mock.calls[0];
+    expect(target).toMatchObject({
+      subject: CALLER,
+      billingAccountId: 'ba_user_caller',
+      subscriptionId: subscription?.id,
+      providerChargeId: subscription?.providerChargeId,
+      mode: 'full',
+      reason: 'requested_by_customer'
+    });
+    expect(target.request).toBeInstanceOf(Request);
     expect(env.refundCharge).toHaveBeenCalledTimes(1);
+    expect(env.refundCharge.mock.calls[0][0].providerChargeId).toBe(target.providerChargeId);
+  });
+
+  it('refuses a named charge of another subscription before asking the host', async () => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
+    const env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });
+
+    const { status } = await env.call('POST', '/subscriptions/refund', { providerChargeId: 'charge_of_someone_else' });
+
+    expect(status).toBe(409);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(env.refundCharge).not.toHaveBeenCalled();
   });
 
   it('keeps in-process refundCharge available to host code without the router hook', async () => {

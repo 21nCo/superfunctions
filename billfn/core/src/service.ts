@@ -68,6 +68,7 @@ import type {
   BillFnReconciliationJobKind,
   BillFnReconciliationJobResponse,
   BillFnRefund,
+  BillFnRefundAuthorizationInput,
   BillFnRefundChargeRequest,
   BillFnRefundChargeResponse,
   BillFnRestorePurchasesRequest,
@@ -273,6 +274,12 @@ type ParsedProviderEvent = {
   raw: Record<string, unknown>;
 };
 type ProviderProjectionContext = NonNullable<Awaited<ReturnType<typeof resolveProjectionContextForProviderState>>>;
+
+/** Internal options for `refundCharge`; the public instance method takes none. */
+export interface RefundChargeOptions {
+  /** Runs once the refund target is resolved and before the provider is called; throws to refuse. */
+  authorize?: (target: Omit<BillFnRefundAuthorizationInput, 'request'>) => Promise<void>;
+}
 
 export function createBillFnService(config: BillFnConfig) {
   return createBillFnServiceWithInternals(config).service;
@@ -1086,7 +1093,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         })
       );
     },
-    async refundCharge(input: BillFnRefundChargeRequest): Promise<BillFnRefundChargeResponse> {
+    async refundCharge(
+      input: BillFnRefundChargeRequest,
+      options: RefundChargeOptions = {}
+    ): Promise<BillFnRefundChargeResponse> {
       const subject = requireSubject(input.subject);
       const { billingAccount } = await getOrCreateBillingAccount(deps, subject);
       const subscription = input.subscriptionId
@@ -1108,6 +1118,16 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const provider = requireProvider(deps, providerName, 'refundCharge');
       const mode = input.mode ?? 'full';
       const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
+      // The router's host check sees the exact account, subscription and charge this call refunds.
+      await options.authorize?.({
+        subject,
+        billingAccountId: billingAccount.id,
+        subscriptionId: subscription.id,
+        providerChargeId,
+        mode,
+        amount: input.amount,
+        reason: input.reason
+      });
       const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.refundCharge({
         subscription,

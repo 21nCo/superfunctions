@@ -30,7 +30,7 @@ BillFn’s router divides its surface into:
 | `POST` | `/billfn/subscriptions/cancel` | Cancel a subscription when the provider supports it |
 | `POST` | `/billfn/subscriptions/change` | Change a subscription to a target price id |
 | `POST` | `/billfn/subscriptions/resume` | Resume or reactivate a subscription |
-| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow; answers 403 unless `refunds.authorize` approves ([Setup](/docs/server/setup#refunds-through-the-router)) |
+| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow; answers 403 unless `refunds.authorize` approves the resolved refund target ([Setup](/docs/server/setup#refunds-through-the-router)) |
 | `POST` | `/billfn/subscriptions/sync` | Re-fetch normalized subscription state from the provider |
 | `POST` | `/billfn/purchases/restore` | Restore a purchase into an existing billing account context |
 

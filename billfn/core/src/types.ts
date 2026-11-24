@@ -956,14 +956,20 @@ export interface BillFnRefundChargeRequest {
   reason?: string;
 }
 
-/** What `refunds.authorize` sees for a router refund request. */
+/**
+ * What `refunds.authorize` sees for a router refund request: the target the
+ * refund will act on, resolved before the hook runs (the subscription and
+ * charge the request named, or the account's active subscription and its
+ * latest charge), so an approval cannot apply to another charge.
+ */
 export interface BillFnRefundAuthorizationInput {
   request: Request;
   /** The subject the router resolved for the request. */
   subject: BillableSubject;
-  subscriptionId?: string;
+  billingAccountId: string;
+  subscriptionId: string;
   providerChargeId?: string;
-  mode?: BillFnRefundMode;
+  mode: BillFnRefundMode;
   amount?: number;
   reason?: string;
 }
