@@ -28,7 +28,8 @@
 // which task runs a file, and declaring an input a task does not read only costs cache hits.
 //
 // Usage: node scripts/turbo-inputs-guard.mjs [--root <dir>] [--package <name>]... [--turbo <bin>] [--list] [--json]
-// Turbo comes from --turbo, then $TURBO_BIN, then <root>/node_modules/turbo/bin/turbo. Exit 1 lists each undeclared
+// Turbo comes from --turbo, then $TURBO_BIN, then <root>/node_modules/turbo/bin/turbo; Git from $TURBO_INPUTS_GUARD_GIT
+// (an absolute path), then /usr/bin, /usr/local/bin or /opt/homebrew/bin, never PATH. Exit 1 lists each undeclared
 // read; declare it with "$TURBO_ROOT$/<path>" next to "$TURBO_DEFAULT$" in the task's inputs (the package's turbo.json).
 // Exit 2 reports an error, such as a file the guard cannot tokenize.
 
@@ -823,9 +824,10 @@ function applyPathFunction(name, values, cwd) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-// The first working Git in a fixed system directory, never a PATH lookup (macOS /usr/bin/git can be a shim that fails
-// without developer tools installed).
-const GIT = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].find((candidate) => {
+// Git is never found through PATH: an absolute path in $TURBO_INPUTS_GUARD_GIT, else the first working Git in a fixed
+// system directory (macOS /usr/bin/git can be a shim that fails without developer tools installed).
+const GIT_OVERRIDE = process.env.TURBO_INPUTS_GUARD_GIT;
+const GIT = [GIT_OVERRIDE && path.isAbsolute(GIT_OVERRIDE) ? GIT_OVERRIDE : undefined, "/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].filter(Boolean).find((candidate) => {
   try {
     return existsSync(candidate) && execFileSync(candidate, ["--version"], { stdio: ["ignore", "pipe", "ignore"] }).length > 0;
   } catch {
@@ -834,7 +836,8 @@ const GIT = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].find
 });
 
 function git(root, args) {
-  if (!GIT) throw new Error("git is not installed in /usr/bin, /usr/local/bin or /opt/homebrew/bin");
+  if (GIT_OVERRIDE && GIT !== GIT_OVERRIDE) throw new Error(`TURBO_INPUTS_GUARD_GIT is not a working git at an absolute path: ${GIT_OVERRIDE}`);
+  if (!GIT) throw new Error("no working git in /usr/bin, /usr/local/bin or /opt/homebrew/bin; set TURBO_INPUTS_GUARD_GIT to its absolute path");
   return execFileSync(GIT, args, { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
 }
 
@@ -977,9 +980,13 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
         if (typeof scripts[name] !== "string") continue;
         const at = text.indexOf(`${JSON.stringify(name)}:`, Math.max(0, text.indexOf('"scripts"')));
         const read = { line: at === -1 ? 1 : text.slice(0, at).split("\n").length, form: "script" };
-        // Shell words, with quoted and backslash-escaped characters kept as part of the word.
-        for (const [word] of scripts[name].matchAll(/(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s;&|()<>"'\\])+/g)) {
-          const specifier = word.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'|\\(.)/g, (_, double, single, escaped) => escaped ?? single ?? double.replace(/\\(.)/g, "$1"));
+        // POSIX shell words: quoted and backslash-escaped characters stay in the word, a backslash-newline outside single
+        // quotes joins lines, and inside double quotes a backslash escapes only $, `, ", \\ and newline.
+        for (const [word] of scripts[name].matchAll(/(?:"(?:[^"\\]|\\[\s\S])*"|'[^']*'|\\[\s\S]|[^\s;&|()<>"'\\])+/g)) {
+          const specifier = word.replace(/"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|\\([\s\S])/g, (_, double, single, escaped) => {
+            if (escaped !== undefined) return escaped === "\n" ? "" : escaped;
+            return single ?? double.replace(/\\([$`"\\\n])/g, (__, char) => (char === "\n" ? "" : char));
+          });
           if (!/^\.\.?\//.test(specifier)) continue;
           const resolved = resolveTarget({ ...read, specifier }, manifest, tracked, trackedDirs);
           if (resolved && resolved.files.length > 0) addRead(pkg, manifest, read, resolved, [task]);
