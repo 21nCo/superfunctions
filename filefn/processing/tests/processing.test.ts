@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 import {
+  createImageTransformProcessor,
   createThumbnailProcessor,
   createPdfPreviewProcessor,
   createCompressionProcessor,
@@ -9,6 +10,8 @@ import {
   PDF_PREVIEW_SUPPORTED_MIME_TYPES,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, assertRasterImage, contentMatchesDeclaredType, ffmpegInputArgs, pdfStart } from '../src/content-sniff.js';
+import { createTesseractJsOCRProvider } from '../src/providers/tesseract-ocr.js';
 
 async function createTestImage(width: number, height: number): Promise<Uint8Array> {
   const buffer = await sharp({
@@ -476,6 +479,162 @@ describe('@filefn/processing', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('FILEFN_PROCESSING_PDF_PREVIEW_FAILED');
+    });
+  });
+
+  describe('artifact keys stay inside the source key (FILE-30 F-06)', () => {
+    // P10: tenant `acme.com`, extensionless file names. The old /\.[^.]+$/ matched
+    // from the dot in the tenant across `/`, so every such file's thumbnails
+    // collapsed onto `acme-thumb-small.jpg`.
+    const sources = [
+      { fileId: 'file_a', versionId: 'ver_a', storageKey: 'acme.com/alice/file_a/ver_a-passport-scan' },
+      { fileId: 'file_b', versionId: 'ver_b', storageKey: 'acme.com/bob/file_b/ver_b-holiday' },
+    ];
+
+    it('thumbnail keys of different files never collide', async () => {
+      const processor = createThumbnailProcessor();
+      const image = await createTestImage(64, 64);
+      const keys: string[] = [];
+      for (const source of sources) {
+        const result = await processor.process({ ...source, mimeType: 'image/png', size: image.length, fileName: 'x' }, async () => image);
+        expect(result.success).toBe(true);
+        for (const artifact of result.artifacts) {
+          expect(artifact.storageKey.startsWith(`${source.storageKey}-thumb-`)).toBe(true);
+          keys.push(artifact.storageKey);
+        }
+      }
+      expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    it('image transform keys keep the full source prefix and drop only a real extension', async () => {
+      const processor = createImageTransformProcessor({ operations: [{ operation: 'resize', options: { width: 8, height: 8 } }] });
+      const image = await createTestImage(16, 16);
+      const result = await processor.process(
+        { fileId: 'file_a', versionId: 'ver_a', storageKey: 'acme.com/alice/file_a/ver_a-photo.png', mimeType: 'image/png', size: image.length, fileName: 'photo.png' },
+        async () => image,
+      );
+      expect(result.success).toBe(true);
+      for (const artifact of result.artifacts) {
+        expect(artifact.storageKey.startsWith('acme.com/alice/file_a/ver_a-photo')).toBe(true);
+      }
+    });
+  });
+
+  describe('declared type is checked against the bytes (FILE-30 F-12)', () => {
+    const input = { fileId: 'file_a', versionId: 'ver_a', storageKey: 't/a/file_a/ver_a-x', fileName: 'x' };
+
+    it.each([
+      ['an SVG', '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>'],
+      ['a PDF', '%PDF-1.7\n1 0 obj'],
+      ['HTML', '<html><body>hi</body></html>'],
+    ])('refuses %s declared as image/png before any decoder sees it', async (_label, text) => {
+      const bytes = new TextEncoder().encode(text);
+      const result = await createThumbnailProcessor().process({ ...input, mimeType: 'image/png', size: bytes.length }, async () => bytes);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(CONTENT_TYPE_MISMATCH_ERROR);
+    });
+
+    it('accepts a PNG declared as image/jpeg (same family)', async () => {
+      const image = await createTestImage(32, 32);
+      const result = await createThumbnailProcessor().process({ ...input, mimeType: 'image/jpeg', size: image.length }, async () => image);
+      expect(result.success).toBe(true);
+    });
+
+    it('classifies media and documents by family', () => {
+      // Media is not sniffed: a playlist declared as video/mp4 is parsed only by the pinned mov demuxer.
+      const playlist = new TextEncoder().encode('#EXTM3U\n#EXTINF:1,\nfile:///etc/passwd\n');
+      expect(contentMatchesDeclaredType(playlist, 'video/mp4')).toBe(true);
+      expect(ffmpegInputArgs('video/mp4', playlist)).toEqual(['-protocol_whitelist', 'file', '-f', 'mov']);
+      // A media type without a pinned demuxer is refused by the bundled providers' ffmpegInputArgs;
+      // custom providers decide their own formats.
+      expect(contentMatchesDeclaredType(playlist, 'audio/aiff')).toBe(true);
+      expect(() => ffmpegInputArgs('video/x-unknown')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+      expect(() => ffmpegInputArgs('audio/x-mpegurl')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('junk%PDF-1.4'), 'application/pdf')).toBe(true);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('<svg/>'), 'application/pdf')).toBe(false);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('anything'), 'text/plain')).toBe(true);
+    });
+  });
+
+  describe('content signatures and demuxer pinning (FILE-30 F-12, round 2)', () => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const withHeader = (head: number[], rest = 32) => new Uint8Array([...head, ...new Array(rest).fill(0)]);
+
+    it('accepts BigTIFF', () => {
+      expect(contentMatchesDeclaredType(withHeader([0x49, 0x49, 0x2b, 0x00]), 'image/tiff')).toBe(true);
+      expect(contentMatchesDeclaredType(withHeader([0x4d, 0x4d, 0x00, 0x2b]), 'image/tiff')).toBe(true);
+    });
+
+    it('pins LOAS AAC to the loas demuxer and ADTS to aac', () => {
+      const loas = new Uint8Array([0x56, 0xe0, 0x20, 0, 0]);
+      expect(ffmpegInputArgs('audio/aac', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([0xff, 0xf1, 0x50]))).toEqual(['-protocol_whitelist', 'file', '-f', 'aac']);
+      expect(ffmpegInputArgs('audio/mpeg', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
+      const id3 = new Uint8Array([...bytes('ID3'), 4, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      const nineTags = Array.from({ length: 9 }, () => [...id3]).flat();
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...nineTags, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+    });
+
+    it('thumbnails only raster bytes even for a MIME alias an integrator added', async () => {
+      THUMBNAIL_SUPPORTED_MIME_TYPES.push('image/x-png');
+      try {
+        const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+        const result = await createThumbnailProcessor().process(
+          { fileId: 'f', versionId: 'v', storageKey: 't/f/v-x.png', mimeType: 'image/x-png', size: svg.length, fileName: 'x.png' },
+          async () => svg,
+        );
+        expect(result).toMatchObject({ success: false, error: CONTENT_TYPE_MISMATCH_ERROR });
+      } finally {
+        THUMBNAIL_SUPPORTED_MIME_TYPES.splice(THUMBNAIL_SUPPORTED_MIME_TYPES.indexOf('image/x-png'), 1);
+      }
+    });
+
+    it('maps common media MIME aliases to the pinned demuxer', () => {
+      expect(contentMatchesDeclaredType(bytes('anything'), 'audio/x-wav')).toBe(true);
+      expect(ffmpegInputArgs('audio/x-wav')).toEqual(['-protocol_whitelist', 'file', '-f', 'wav']);
+      expect(ffmpegInputArgs('audio/x-flac')).toEqual(['-protocol_whitelist', 'file', '-f', 'flac']);
+      expect(ffmpegInputArgs('audio/x-aac', new Uint8Array([0x56, 0xe0, 0x20]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+    });
+
+    it('lets only raster images reach sharp in the tesseract.js provider, whatever the declared type', async () => {
+      const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+      expect(() => assertRasterImage(svg)).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+      expect(() => assertRasterImage(withHeader([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).not.toThrow();
+      await expect(
+        createTesseractJsOCRProvider().recognize({
+          input: { fileId: 'f', versionId: 'v', storageKey: 'k.svg', mimeType: 'image/svg', size: svg.length, fileName: 'k.svg' },
+          imageData: svg,
+          language: 'eng',
+          includeHOCR: false,
+        }),
+      ).rejects.toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+    });
+
+    it('refuses two-letter BMP and non-image ftyp headers as images', () => {
+      expect(contentMatchesDeclaredType(bytes('BM<svg xmlns="http://www.w3.org/2000/svg"/>'), 'image/png')).toBe(false);
+      expect(contentMatchesDeclaredType(bytes('AAAAftypXXXX<svg/>'), 'image/png')).toBe(false);
+      expect(contentMatchesDeclaredType(bytes('\0\0\0\x18ftypavif\0\0\0\0'), 'image/avif')).toBe(true);
+    });
+
+    it('renders a PDF preview only from %PDF on, so an SVG mentioning %PDF- gets the placeholder', async () => {
+      const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><!-- %PDF-1.7 --><rect width="10" height="10"/></svg>');
+      expect(pdfStart(svg)).toBeGreaterThan(0);
+      const result = await createPdfPreviewProcessor().process(
+        { fileId: 'f', versionId: 'v', storageKey: 't/f/v-x', mimeType: 'application/pdf', size: svg.length, fileName: 'x.pdf' },
+        async () => svg,
+      );
+      expect(result.success).toBe(true);
+      for (const artifact of result.artifacts) {
+        expect((artifact.metadata as Record<string, unknown> | undefined)?.renderMode).not.toBe('page-rasterized');
+      }
+    });
+
+    it('pins ffmpeg to the declared demuxer with only the file protocol', () => {
+      expect(ffmpegInputArgs('video/mp4')).toEqual(['-protocol_whitelist', 'file', '-f', 'mov']);
+      expect(ffmpegInputArgs('audio/mpeg')).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
+      expect(() => ffmpegInputArgs('application/x-mpegurl')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
     });
   });
 });

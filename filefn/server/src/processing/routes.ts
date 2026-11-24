@@ -4,6 +4,7 @@ import type { AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import * as errors from '../errors.js';
+import { buildDownloadHeaders } from '../download-headers.js';
 import { readJsonBody } from '../http-body.js';
 
 export interface ProcessingRoutesConfig {
@@ -117,7 +118,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest reads as the principal 'anonymous', as on the file routes;
+          // the service lets it read only public files.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -145,6 +148,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
         const ctx = {
+          // A write: a guest keeps no principal, so it can never match an owner.
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
@@ -183,7 +187,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest reads as the principal 'anonymous', as on the file routes;
+          // the service lets it read only public files.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -207,7 +213,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest reads as the principal 'anonymous', as on the file routes;
+          // the service lets it read only public files.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -216,10 +224,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
         return new Response(result.stream, {
           status: 200,
-          headers: {
-            'Content-Type': result.contentType,
-            'Content-Length': result.size.toString(),
-          },
+          headers: buildDownloadHeaders(result),
         });
       } catch (error) {
         if (error instanceof errors.FileFnError) {
@@ -236,11 +241,15 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
 
+        // A guest reads as the principal 'anonymous', as on the file routes (the
+        // service lets it read only public files); a forced (write) run keeps
+        // no principal, so a guest never matches an owner.
         const ctx = {
-          principalId: principal?.principalId,
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
+        const writeCtx = { ...ctx, principalId: principal?.principalId };
 
         const body = (await readJsonBody(request)) as {
           versionId?: string;
@@ -253,7 +262,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         // Forcing replaces client-supplied artifacts, so it needs write access,
         // decided by the configured write check alone.
         const target = force
-          ? await service.getWritableVersionForFile(fileId, ctx, body?.versionId)
+          ? await service.getWritableVersionForFile(fileId, writeCtx, body?.versionId)
           : await service.getReadableVersionForFile(fileId, ctx, body?.versionId);
 
         const result = await service.triggerProcessing(

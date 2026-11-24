@@ -4,6 +4,7 @@ import type { FileProviderContext } from '@superfunctions/files';
 import type { FileRecord, FileVersionRecord } from '../files/service.js';
 import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import { createHash, randomBytes } from 'crypto';
+import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { isGrantExpired, parseIsoInstant } from '../authz/grant-expiry.js';
 
@@ -375,6 +376,7 @@ export function createSharesService(config: SharesServiceConfig) {
               key: version.storageKey,
               target: storageTarget,
               expiresInSeconds: lifetime,
+              ...signedDownloadConstraints(version.mimeType),
             });
           } catch (error) {
             await releaseDownload(tokenHash, written);

@@ -102,9 +102,10 @@ export function effectiveRetention(config: ReviewFnConfig, policy: ReviewPolicy)
 const PULL_REQUEST_AUTH: Readonly<Record<string, { modes: readonly string[]; message: string }>> = Object.freeze({
   codex: { modes: ["action-proxy"], message: "Pull-request review with Codex requires action-proxy authentication." },
   "claude-code": { modes: [], message: "Claude Code serves only trusted local reviews: no auth mode is allowed for pull-request review." },
+  cli: { modes: [], message: "The generic CLI harness serves only trusted local reviews: it enforces no tool restriction, so no auth mode is allowed for pull-request review." },
 });
 
-/** Pull-request review with Codex requires action-proxy authentication; Claude Code refuses pull-request review. */
+/** Pull-request review with Codex requires action-proxy authentication; Claude Code and the generic CLI harness refuse pull-request review. */
 export function harnessAuthDiagnostics(request: Pick<ReviewRunRequest, "pullRequest">, harnessId: string, auth: string): PreflightDiagnostic[] {
   const rule = Object.hasOwn(PULL_REQUEST_AUTH, harnessId) ? PULL_REQUEST_AUTH[harnessId] : undefined;
   return request.pullRequest !== undefined && rule && !rule.modes.includes(auth) ? [{ code: "REVIEWFN_PR_AUTH_REQUIRED", level: "error", message: rule.message }] : [];
@@ -313,8 +314,10 @@ export class ReviewCoordinator {
   public async preflight(request: ReviewRunRequest): Promise<PreflightDiagnostic[]> {
     const harnessId = this.dependencies.harness.capabilities.id;
     const diagnostics: PreflightDiagnostic[] = [...harnessAuthDiagnostics(request, harnessId, request.config.inference.auth)];
+    const refused = diagnostics.length > 0;
     diagnostics.push(...await preflightContexts(this.dependencies, request));
-    diagnostics.push(...componentDiagnostics(harnessId, await this.dependencies.harness.preflight(request.config, request.signal), "Harness preflight refused execution."));
+    // A harness that refuses this request is never preflighted, so its executable never runs.
+    if (!refused) diagnostics.push(...componentDiagnostics(harnessId, await this.dependencies.harness.preflight(request.config, request.signal), "Harness preflight refused execution."));
     diagnostics.push(...await preflightExecution(this.dependencies, request));
     for (const message of await preflightPublishers(this.dependencies.publishers ?? [])) diagnostics.push({ code: "REVIEWFN_PUBLISHER_PREFLIGHT", level: "error", message });
     diagnostics.push(...preflightSince(this.dependencies, request));

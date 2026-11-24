@@ -110,3 +110,13 @@ def test_iso_instant_requires_a_full_ascii_match() -> None:
     assert parse_iso_instant("2099-01-01T00:00:00Z\n") is None
     assert parse_iso_instant("\u0662\u0660\u0669\u0669-01-01") is None
     assert is_grant_expired("2099-01-01T00:00:00Z\n")
+
+
+def test_image_wildcard_does_not_admit_svg() -> None:
+    # FILE-30 F-04: SVG can run script, so `image/*` must not accept it.
+    from filefn.server.policies import matches_content_type
+
+    assert matches_content_type("image/*", "image/png")
+    assert not matches_content_type("image/*", "image/svg+xml")
+    assert not matches_content_type("image/*", "IMAGE/SVG+XML; charset=utf-8")
+    assert matches_content_type("image/svg+xml", "image/svg+xml")
