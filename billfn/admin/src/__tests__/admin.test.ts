@@ -520,6 +520,54 @@ describe("@billfn/admin", () => {
     expect(changeSubscription).not.toHaveBeenCalled();
   });
 
+  it("refuses refund mode and amount combinations at input validation, before confirmation", () => {
+    const operation = billFnAdminCapability.operations.find((candidate) => candidate.id.endsWith(".refund-payment"))!;
+    const schema = operation.inputSchema!;
+    for (const payload of [{}, { mode: "full" }, { mode: "custom", amount: 600 }, { mode: "prorated_remaining_period", amount: 1 }]) {
+      expect(validateAdminValue(schema, { id: "pay_1", payload })).toEqual([]);
+    }
+    for (const payload of [
+      { amount: 600 },
+      { mode: "full", amount: 600 },
+      { mode: "custom" },
+      { mode: "prorated_remaining_period" },
+      { mode: "custom", amount: 0 },
+      { mode: "custom", amount: 2.5 },
+      { mode: "custom", amount: null },
+      { mode: "custom", amount: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(validateAdminValue(schema, { id: "pay_1", payload })).not.toEqual([]);
+    }
+  });
+
+  it("reports a refund BillFn refuses as a client error, not an internal one", async () => {
+    const refundCharge = vi.fn(async () => {
+      throw createBillFnError({ code: "BILLFN_VALIDATION_ERROR", message: "Apple supports only full refunds" });
+    });
+    const adapter = createBillFnAdminAdapter(
+      createBillFnDomainAdminService({
+        billfn: { refundCharge } as unknown as BillFnInstance,
+        subject: (admin) => ({ tenantId: admin.scope.workspaceId }),
+      }),
+    );
+    const dispatcher = createAdminDispatcher({
+      registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["billfn"] }),
+      confirmation: { verify: vi.fn(async () => true) },
+      audit: new MemoryAdminAuditSink(),
+      idempotency: new MemoryAdminIdempotencyStore(),
+    });
+    const operationId = billFnAdminCapability.operations.find((candidate) => candidate.id.endsWith(".refund-payment"))!.id;
+
+    const result = await dispatcher.dispatch({
+      operationId,
+      input: { id: "txn_1", payload: { mode: "custom", amount: 600 }, reason: "customer_request" },
+      context: { ...context, confirmationToken: "token_1" },
+    });
+
+    expect(refundCharge).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+  });
+
   describe("grant-entitlement", () => {
     function grantingBillFn(db: ReturnType<typeof memoryAdapter> = memoryAdapter()) {
       const billfn = createBillFn({

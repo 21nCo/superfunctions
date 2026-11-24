@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { createBillFnError } from './errors.js';
 import type {
   BillFnCatalog,
   BillFnPlanDefinition,
@@ -97,17 +98,35 @@ export function getSubjectFromQuery(url: URL): BillableSubject {
   };
 }
 
+export interface RequestSubjectAuth {
+  resolveSubject?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null;
+  allowClientSubject?: boolean;
+}
+
+/**
+ * The subject a router request acts for. With `auth.resolveSubject`, only its
+ * result counts. Without it, a body or query-string subject is used only when
+ * the host opted in with `auth.allowClientSubject`; otherwise the request is
+ * refused, because any caller could name any account.
+ */
 export async function resolveRequestSubject(
   request: Request,
-  configResolver?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null,
+  auth: RequestSubjectAuth | undefined,
   bodySubject?: BillableSubject
 ): Promise<BillableSubject> {
-  if (configResolver) {
-    const resolved = await configResolver(request);
+  if (auth?.resolveSubject) {
+    const resolved = await auth.resolveSubject(request);
     if (resolved && hasSomeSubjectField(resolved)) {
       return resolved;
     }
     return {};
+  }
+
+  if (auth?.allowClientSubject !== true) {
+    throw createBillFnError({
+      code: 'BILLFN_UNAUTHENTICATED',
+      message: 'BillFn subject routes need auth.resolveSubject, or auth.allowClientSubject for trusted callers'
+    });
   }
 
   if (bodySubject && hasSomeSubjectField(bodySubject)) {
