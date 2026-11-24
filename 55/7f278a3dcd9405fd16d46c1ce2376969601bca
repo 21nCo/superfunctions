@@ -1,0 +1,27 @@
+filefn/server/contracts/filefn-client-v1.openapi.json
+  s_b841cebdcfad95::t_17a90a37491a4f 1907,1909-1910
+filefn/server/src/client-contract.ts
+  s_b841cebdcfad95::t_cf997d4d2bff27 540-541
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_a8c4e3370d637a 55-67,89-92,96,99-101,104-121,123-134,136-138,223,255,263,268-270,284,292,308-310
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_fbe6556b6d6404 198-206,213,217-223,1317,1338,1490
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_c952799f0d8415 294-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "557f278a3dcd9405fd16d46c1ce2376969601bca",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

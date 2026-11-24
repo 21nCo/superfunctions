@@ -1,0 +1,27 @@
+uifn/catalogs/solid/turbo.json
+  s_b841cebdcfad95::t_4ffa256b7ccd81 8-10
+uifn/catalogs/svelte/turbo.json
+  s_b841cebdcfad95::t_731eaebc958aed 8-10
+uifn/examples/solid-workbench/turbo.json
+  s_b841cebdcfad95::t_eb4a0b181765f8 1-13
+uifn/examples/svelte-workbench/turbo.json
+  s_b841cebdcfad95::t_db7c46725070ed 1-13
+scripts/turbo-inputs-guard.test.mjs
+  s_b841cebdcfad95::t_dafb7e10127cc0 706-718
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c94945e8a176041edfa7ae970c1d1becaacf8f41",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
