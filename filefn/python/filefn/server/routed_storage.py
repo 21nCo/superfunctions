@@ -57,11 +57,15 @@ class RoutedStorageAdapter:
 
     def capabilities_for_target(self, target: str) -> Dict[str, bool]:
         adapter, _ = self._pick(target)
-        capabilities = dict(getattr(adapter, "capabilities", {}) or {})
-        # The router has open_download_stream for every target; say whether this one can.
-        if "proxyStreamingDownload" not in capabilities:
-            capabilities["proxyStreamingDownload"] = callable(getattr(adapter, "open_download_stream", None))
-        return capabilities
+        return dict(getattr(adapter, "capabilities", {}) or {})
+
+    def can_stream_downloads(self, target: Optional[str] = None) -> bool:
+        """Whether the chosen target can stream downloads (the router itself has open_download_stream for every target)."""
+        adapter, _ = self._pick(target)
+        declared = (getattr(adapter, "capabilities", {}) or {}).get("proxyStreamingDownload")
+        if declared is not None:
+            return bool(declared)
+        return callable(getattr(adapter, "open_download_stream", None))
 
     async def get_object(self, key: str, target: Optional[str] = None) -> Any:
         adapter, _ = self._pick(target)

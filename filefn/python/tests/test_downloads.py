@@ -937,8 +937,10 @@ def test_routed_storage_reports_streaming_per_target() -> None:
             return {"url": "https://download.local/x"}
 
     routed = create_routed_storage_adapter({"sign": SignOnly(), "stream": FakeStorage()}, default_target="sign")
-    assert routed.capabilities_for_target("sign")["proxyStreamingDownload"] is False
-    assert routed.capabilities_for_target("stream")["proxyStreamingDownload"] is True
+    assert routed.can_stream_downloads("sign") is False
+    assert routed.can_stream_downloads("stream") is True
+    # The capability map itself is unchanged, so upload-mode detection still infers from methods.
+    assert "proxyStreamingDownload" not in routed.capabilities_for_target("stream")
 
 
 @pytest.mark.asyncio
@@ -1003,3 +1005,30 @@ async def test_failed_download_is_given_back_once_with_update_many() -> None:
     assert [row["downloads"] for row in db.tables["fileShares"]] == [1]
     descriptor = await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
     assert descriptor["url"] == "https://download.local/x"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_while_counting_gives_the_landed_count_back() -> None:
+    import asyncio
+
+    class SlowCountDB(FakeDB):
+        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+            row = await super().update(model, where, data, namespace)
+            await asyncio.sleep(0.2)  # the write landed; the result comes back late
+            return row
+
+    db = SlowCountDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False), timeout=0.05
+        )
+    for _ in range(50):
+        if all(row["downloads"] == 0 for row in db.tables["fileShares"]):
+            break
+        await asyncio.sleep(0.05)
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])

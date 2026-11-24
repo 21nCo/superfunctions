@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel
 
@@ -43,6 +43,8 @@ class SharesService:
         self.logger = config.logger
         self.namespace = config.namespace
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
+        # Give-back tasks of cancelled requests, kept alive until they finish.
+        self._background: Set["asyncio.Future[None]"] = set()
 
     def _storage_target_for_file(self, file: FileRecord) -> str:
         policy = self.policies.get(file.policy) if self.policies else None
@@ -63,6 +65,25 @@ class SharesService:
         if remaining < 1:
             return None
         return min(self.signed_url_ttl_seconds, remaining)
+
+    async def _reserve_download_cancel_safe(self, token_hash: str) -> int:
+        """Counts a download; if the caller is cancelled meanwhile, a count that still lands is given back."""
+        task = asyncio.ensure_future(self._reserve_download(token_hash))
+        try:
+            return (await asyncio.shield(task)).downloads
+        except asyncio.CancelledError:
+
+            async def give_back() -> None:
+                try:
+                    reserved = await task
+                except BaseException:
+                    return
+                await self._release_download(token_hash, reserved.downloads)
+
+            pending = asyncio.ensure_future(give_back())
+            self._background.add(pending)
+            pending.add_done_callback(self._background.discard)
+            raise
 
     async def _release_download(self, token_hash: str, written: int) -> None:
         """Gives back one download that could not be handed out: the current count goes down by one,
@@ -252,12 +273,16 @@ class SharesService:
 
         capabilities = get_storage_capabilities(self.storage, storage_target)
         # Streaming is judged for the file's own storage target.
-        can_stream = hasattr(self.storage, "open_download_stream") and capabilities.get("proxyStreamingDownload") is not False
+        target_can_stream = getattr(self.storage, "can_stream_downloads", None)
+        if callable(target_can_stream):
+            can_stream = bool(target_can_stream(storage_target))
+        else:
+            can_stream = hasattr(self.storage, "open_download_stream") and capabilities.get("proxyStreamingDownload") is not False
         can_sign = hasattr(self.storage, "sign_download_url") and bool(capabilities.get("signedDownloadUrls"))
         if can_sign and (self._signed_url_lifetime(share) is not None or not can_stream):
             # Counted first, then signed with the lifetime left at that moment; a
             # failed signing gives the count back.
-            written = (await self._reserve_download(token_hash)).downloads
+            written = await self._reserve_download_cancel_safe(token_hash)
             lifetime = self._signed_url_lifetime(share)
             result: Optional[Dict[str, Any]] = None
             if lifetime is not None:

@@ -49,8 +49,14 @@ async function readTextBounded(request: Request, maxBytes: number): Promise<stri
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      // Not awaited: a body whose source never settles must not hold back the 413.
-      void reader.cancel().catch(() => {});
+      // Stop reading without cancelling the body: cancelling a bridged Node
+      // stream (Express via Readable.toWeb) destroys the socket before the host
+      // can send the 413. The host drains or closes the connection.
+      try {
+        reader.releaseLock();
+      } catch {
+        // A pending read keeps the lock; nothing more is read either way.
+      }
       throw bodyTooLarge(maxBytes);
     }
     chunks.push(value);

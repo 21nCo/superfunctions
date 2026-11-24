@@ -412,6 +412,27 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     await expect(fileFn.services.shares.getDownloadStreamViaShareLink(latest.token, {})).resolves.toBeDefined();
   });
 
+  it('answers 413 for an oversized chunked body without cancelling the request stream', async () => {
+    const { readJsonBody } = await import('../src/http-body.js');
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(16 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = new Request('http://localhost/x', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    await expect(readJsonBody(request)).rejects.toMatchObject({ code: 'FILEFN_BODY_TOO_LARGE' });
+    expect(cancelled).toBe(false);
+  });
+
   it('accepts any valid +json media type and refuses malformed ones', async () => {
     const { fileFn } = makeFileFn();
     const file = await upload(fileFn);
