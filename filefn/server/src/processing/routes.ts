@@ -117,7 +117,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest is the principal 'anonymous', as on the file routes.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -145,7 +146,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest is the principal 'anonymous', as on the file routes.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -183,7 +185,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest is the principal 'anonymous', as on the file routes.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -207,7 +210,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest is the principal 'anonymous', as on the file routes.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -234,7 +238,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
 
         const ctx = {
-          principalId: principal?.principalId,
+          // A guest is the principal 'anonymous', as on the file routes.
+          principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };

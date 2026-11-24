@@ -159,6 +159,72 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(buildDownloadHeaders({ contentType: 'application/pdf', size: 1 })['Content-Security-Policy']).not.toMatch(/sandbox/);
     expect(buildDownloadHeaders({ contentType: 'application/pdf', size: 1 })['Content-Disposition']).toBe('inline');
     expect(signedDownloadConstraints('image/svg+xml')).toEqual({ constraints: { responseContentType: 'application/octet-stream' } });
-    expect(signedDownloadConstraints('image/png')).toEqual({});
+    expect(signedDownloadConstraints('image/png')).toEqual({ constraints: { responseContentType: 'image/png' } });
+    expect(signedDownloadConstraints('Image/PNG; x=1')).toEqual({ constraints: { responseContentType: 'image/png' } });
+
+    // A list of types is ambiguous: never inline, never labelled with it.
+    const listed = buildDownloadHeaders({ contentType: 'application/pdf; x=1, text/html', size: 1 });
+    expect(listed['Content-Disposition']).toBe('attachment');
+    expect(listed['Content-Type']).toBe('application/octet-stream');
+    expect(listed['Content-Security-Policy']).toMatch(/^sandbox/);
+    expect(signedDownloadConstraints('application/pdf, text/html')).toEqual({ constraints: { responseContentType: 'application/octet-stream' } });
+
+    // A lone surrogate in a stored name does not break the header.
+    expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: 'a\uD800.txt' })['Content-Disposition'])
+      .toBe(`inline; filename="a_.txt"; filename*=UTF-8''a%EF%BF%BD.txt`);
+  });
+
+  it('gives SVG no image preview, so a render URL never depends on rendering it', async () => {
+    const fileFn = makeFileFn();
+    const alice = { principalId: 'alice', tenantId: 't1' };
+    const svg = await upload(fileFn, alice, 'svg', 'logo.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const thumb = await fileFn.services.files.getRenderDescriptor(svg.fileId, { intent: 'thumbnail' }, alice);
+    expect(thumb.source.mode).toBe('placeholder');
+  });
+
+  it('artifact downloads are attachments with a kind-based name, and guests use the anonymous principal', async () => {
+    const seen: Array<string | undefined> = [];
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'read_path_guest',
+      policies: [{ name: 'any', visibility: 'public' }],
+      auth: { required: false, resolveSession: async () => null },
+      authorizer: {
+        async canRead(_file, ctx) {
+          seen.push(ctx.principalId);
+          return ctx.principalId === 'anonymous';
+        },
+        async canWrite() { return true; },
+        async canDelete() { return true; },
+      },
+      processing: {
+        enabled: true,
+        processors: [{
+          name: 'ocr-json',
+          supportedMimeTypes: ['text/plain'],
+          async process(input, getData) {
+            return { success: true, artifacts: [{ kind: 'ocr-json', data: await getData(), mimeType: 'application/json', storageKey: `${input.storageKey}.ocr.json` }] };
+          },
+        }],
+      },
+    });
+    const owner = { principalId: 'owner' };
+    const body = Buffer.from('{"a":1}');
+    const session = await fileFn.createUploadSession({ policy: 'any', fileName: 'scan.txt', size: body.length, mimeType: 'text/plain' }, owner);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
+    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
+    const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
+    const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    await fileFn.services.processing.triggerProcessingForFile(file.fileId, { principalId: 'anonymous' }, file.versionId);
+    await done;
+
+    const list = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`));
+    expect(list!.status).toBe(200);
+    const [artifact] = (await list!.json()).data.artifacts;
+    const download = await fileFn.router.handle(new Request(`http://localhost/proxy/files/${file.fileId}/artifacts/${artifact.artifactId}/download`));
+    expect(download!.status).toBe(200);
+    expect(download!.headers.get('content-disposition')).toMatch(/^attachment; filename="ocr-json\.json"/);
+    expect(seen).not.toContain(undefined);
   });
 });

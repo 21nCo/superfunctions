@@ -5,7 +5,7 @@ import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import { FILE_DELETED_CLAIM, type QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
-import { signedDownloadConstraints } from '../download-headers.js';
+import { isInlineSafeContentType, signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
 import { artifactSourceOf } from '../processing/client-artifacts.js';
@@ -212,8 +212,10 @@ function proxyPartKey(storageKey: string, partNumber: number): string {
   return `${storageKey}.part${partNumber}`;
 }
 
+// Images a browser renders from the original without running script. SVG and
+// other image types are served as downloads, so they get no image preview.
 function isImageMimeType(mimeType: string): boolean {
-  return mimeType.startsWith('image/');
+  return mimeType.startsWith('image/') && isInlineSafeContentType(mimeType);
 }
 
 function isPdfMimeType(mimeType: string): boolean {

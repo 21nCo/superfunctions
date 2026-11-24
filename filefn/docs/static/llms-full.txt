@@ -3521,7 +3521,7 @@ The `/proxy/...` routes (files, versions, share links and artifacts) serve the t
 - `X-Content-Type-Options: nosniff` on every response.
 - `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
 
-Signed URLs for any other type are minted with a response content type of `application/octet-stream`, so the storage domain downloads them instead of rendering them.
+Signed URLs always carry an explicit response content type: the type itself for the types above, `application/octet-stream` for any other, so the storage domain downloads those instead of rendering them. A stored type that is not one well-formed media type (for example a comma-separated list) is treated as unsafe. Render descriptors give such files, SVG included, no image preview: the thumbnail and preview intents return a placeholder instead of the original.
 
 Serving downloads from a separate origin (a dedicated download domain or the storage provider's) is still the stronger option when users upload arbitrary files.
 

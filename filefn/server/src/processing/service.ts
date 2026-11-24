@@ -2213,7 +2213,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       fileId: string,
       artifactId: string,
       ctx: FileProviderContext,
-    ): Promise<{ stream: ReadableStream; contentType: string; size: number }> {
+    ): Promise<{ stream: ReadableStream; contentType: string; size: number; fileName: string }> {
       await requireReadableFile(fileId, ctx);
       const artifact = await getBoundArtifact(fileId, artifactId);
 
@@ -2232,6 +2232,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         stream: stream as unknown as ReadableStream,
         contentType: artifact.mimeType,
         size: artifact.size,
+        // A download name for the attachment: the kind plus the stored key's extension.
+        fileName: `${artifact.kind}${/\.[A-Za-z0-9]{1,10}$/.exec(artifact.storageKey.split('/').pop() ?? '')?.[0] ?? ''}`,
       };
     },
 

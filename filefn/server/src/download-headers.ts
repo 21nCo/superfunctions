@@ -33,13 +33,24 @@ export const INLINE_SAFE_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'video/quicktime',
 ]);
 
+// One `type/subtype` of RFC 9110 tokens with optional parameters, and no comma
+// anywhere: a comma-separated list is ambiguous (Fetch MIME sniffing may pick
+// another entry than this code did), so it is never treated as safe.
+const SINGLE_MEDIA_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(\s*;[^,]*)?$/;
+
+/** Whether the value is one well-formed media type (no list, no control characters). */
+function isSingleMediaType(contentType: string | null | undefined): contentType is string {
+  // eslint-disable-next-line no-control-regex
+  return typeof contentType === 'string' && SINGLE_MEDIA_TYPE.test(contentType.trim()) && !/[\u0000-\u001f\u007f]/.test(contentType);
+}
+
 /** The MIME type without parameters, lower-cased: `Text/HTML; charset=x` -> `text/html`. */
 export function contentTypeEssence(contentType: string | null | undefined): string {
   return (contentType ?? '').split(';', 1)[0].trim().toLowerCase();
 }
 
 export function isInlineSafeContentType(contentType: string | null | undefined): boolean {
-  return INLINE_SAFE_CONTENT_TYPES.has(contentTypeEssence(contentType));
+  return isSingleMediaType(contentType) && INLINE_SAFE_CONTENT_TYPES.has(contentTypeEssence(contentType));
 }
 
 // The PDF viewers in Chromium and Firefox refuse to render a document whose
@@ -59,6 +70,8 @@ export function contentDisposition(type: 'inline' | 'attachment', fileName?: str
   if (!fileName) {
     return type;
   }
+  // encodeURIComponent throws on a lone surrogate; replace it with U+FFFD.
+  fileName = fileName.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
   const encoded = encodeURIComponent(fileName).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `${type}; filename="${asciiFallbackFileName(fileName)}"; filename*=UTF-8''${encoded}`;
 }
@@ -74,23 +87,31 @@ export function buildDownloadHeaders(input: DownloadHeadersInput): Record<string
   const inline = isInlineSafeContentType(input.contentType);
   const essence = contentTypeEssence(input.contentType);
   return {
-    // An unsafe type is still labelled as declared; the attachment
-    // disposition, nosniff and the sandbox keep a browser from rendering it.
-    'Content-Type': input.contentType || 'application/octet-stream',
+    // A safe type is sent as its normalised essence; an unsafe but well-formed
+    // type is still labelled as declared (the attachment disposition, nosniff
+    // and the sandbox keep a browser from rendering it); anything ambiguous is
+    // octet-stream.
+    'Content-Type': inline ? essence : isSingleMediaType(input.contentType) ? input.contentType.trim() : 'application/octet-stream',
     'Content-Length': input.size.toString(),
     'Content-Disposition': contentDisposition(inline ? 'inline' : 'attachment', input.fileName),
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': essence === 'application/pdf' ? PDF_CSP : SANDBOX_CSP,
+    'Content-Security-Policy': inline && essence === 'application/pdf' ? PDF_CSP : SANDBOX_CSP,
   };
 }
 
 /**
- * Extra `signDownloadUrl` input for a stored object: an unsafe type is signed
- * with a `application/octet-stream` response type, so a storage domain related
- * to the app never renders an uploader's HTML or SVG.
+ * Extra `signDownloadUrl` input for a stored object: a safe type is signed with
+ * its own essence, any other with `application/octet-stream`, so a storage
+ * domain related to the app never renders an uploader's HTML or SVG.
  */
 export function signedDownloadConstraints(
   contentType: string | null | undefined,
-): { constraints?: { responseContentType: string } } {
-  return isInlineSafeContentType(contentType) ? {} : { constraints: { responseContentType: 'application/octet-stream' } };
+): { constraints: { responseContentType: string } } {
+  // Always explicit: with dedup a version can point at an object stored earlier
+  // under another (possibly unsafe) type, so the object's own type is never used.
+  return {
+    constraints: {
+      responseContentType: isInlineSafeContentType(contentType) ? contentTypeEssence(contentType) : 'application/octet-stream',
+    },
+  };
 }
