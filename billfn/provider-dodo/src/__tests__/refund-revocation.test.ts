@@ -52,7 +52,7 @@ function createDodoApi() {
   return {
     fetchMock,
     /** Records a refund or dispute on the payment, as Dodo does beside its unchanged `succeeded` status. */
-    takeBack(patch: { refunds?: unknown[]; disputes?: unknown[]; total_amount?: number; currency?: string }) {
+    takeBack(patch: { refunds?: unknown[]; disputes?: unknown[]; refund_status?: string }) {
       payment = { ...payment!, ...patch };
     }
   };
@@ -207,11 +207,10 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
     expect(await entitlementStatus()).toBe('inactive');
   });
 
-  it('revokes the purchase on restore when partial refunds add up to the whole payment', async () => {
+  it('revokes the purchase on restore once Dodo reports partial refunds as a full refund', async () => {
     const { billfn, subject, entitlementStatus, api } = await purchased();
     api.takeBack({
-      total_amount: 9900,
-      currency: 'USD',
+      refund_status: 'full',
       refunds: [
         { refund_id: 'ref_a', status: 'succeeded', is_partial: true, amount: 4900, currency: 'USD' },
         { refund_id: 'ref_b', status: 'succeeded', is_partial: true, amount: 5000, currency: 'USD' }

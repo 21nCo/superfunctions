@@ -1110,39 +1110,12 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(event.billingState).toBeUndefined();
   });
 
-  it('revokes the purchase when partial refunds add up to the whole payment', async () => {
-    // Dodo marks the refund of the remaining balance as partial too.
+  it('keeps the purchase while Dodo reports the payment only partially refunded, whatever the amounts', async () => {
+    // Amounts in an adaptive currency are not comparable with the payment total; Dodo's refund_status decides.
     const earlier = { refund_id: 'ref_first', status: 'succeeded', is_partial: true, amount: 9300, currency: 'USD' };
-    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [earlier] } });
-
-    const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
-
-    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
-  });
-
-  it('counts a refund the payment already lists once', async () => {
-    // Counted twice, 5000 would reach the 9900 total.
-    const listed = { refund_id: 'ref_half', status: 'succeeded', is_partial: true, amount: 5000, currency: 'USD' };
-    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [listed] } });
-
-    const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_half', is_partial: true, amount: 5000 } }, fetchMock);
-
-    expect(event.billingState).toBeUndefined();
-  });
-
-  it('takes the webhook amount for a listed refund that has none', async () => {
-    const earlier = { refund_id: 'ref_first', status: 'succeeded', is_partial: true, amount: 9300, currency: 'USD' };
-    const last = { refund_id: 'ref_rest', status: 'succeeded', is_partial: true, amount: null, currency: 'USD' };
-    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [earlier, last] } });
-
-    const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
-
-    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled' });
-  });
-
-  it('does not add refunds in another currency than the payment total', async () => {
-    const settlement = { refund_id: 'ref_first', status: 'succeeded', is_partial: true, amount: 9300, currency: 'EUR' };
-    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [settlement] } });
+    const fetchMock = dodoReads({
+      [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refund_status: 'partial', refunds: [earlier] }
+    });
 
     const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
 
